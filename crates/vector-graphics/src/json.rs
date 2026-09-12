@@ -439,6 +439,55 @@ pub fn string(s: &str) -> String {
 // Reading
 // ---------------------------------------------------------------------------
 
+/// Maximum recursion depth for the raw JSON parser's `value`/`array`/`object`
+/// (any bracket or brace nesting in the input text).
+///
+/// Reproduced on the reference machine (see issue #46): 20,000 levels of
+/// nested arrays parsed cleanly; 50,000 levels overflowed the stack and
+/// aborted the process (`fatal runtime error: stack overflow, aborting`,
+/// exit 134 — not a catchable panic). 1,000 is comfortably above any
+/// legitimate document (a hand-authored or generated display list has no
+/// business nesting brackets anywhere near that deep) and comfortably below
+/// both the observed 20,000-safe depth (20x margin) and the 50,000-abort
+/// depth (50x margin), leaving headroom for machines with a smaller default
+/// thread stack than the one used to measure the crash. Also verified
+/// directly: exactly 1,000 levels does not overflow the stack of a `cargo
+/// test` worker thread in an unoptimized debug build either (debug frames
+/// are much larger than release ones, and `cargo test`'s default per-test
+/// thread stack is smaller than a process's main-thread stack, so this is
+/// the tighter constraint in practice).
+const MAX_JSON_DEPTH: usize = 1000;
+
+/// Maximum recursion depth for the schema-level `read_items`/`read_item`
+/// "group" nesting, tracked independently of [`MAX_JSON_DEPTH`].
+///
+/// The reviewer's reproduction also drove a stack-overflow abort through
+/// [`read_display_list`] directly, via nested `"group"` items, at the same
+/// depth as the raw-JSON case. In principle a document that already parses
+/// (and therefore already satisfies [`MAX_JSON_DEPTH`]) cannot produce a
+/// `Value` tree deeper than that bound, so this check should never be the
+/// one that fires in practice — but it is deliberately independent (not
+/// derived from the parser's counter) so the guarantee does not rely on
+/// exactly mirroring the parser's internal bookkeeping, per the issue's
+/// instruction to bound every recursion site it names, not just the generic
+/// `value` path.
+///
+/// 64 is far beyond any real display list's group nesting (clip/opacity
+/// grouping in practice is at most a handful of levels deep). It is
+/// deliberately much smaller than [`MAX_JSON_DEPTH`]: `read_item`'s stack
+/// frame is considerably heavier than the raw parser's (it builds `Item`
+/// enum variants with several fields), so its safe recursion depth is much
+/// lower in practice — measured directly on this machine, a `cargo test`
+/// debug build overflows the stack building nested `"group"` items via this
+/// path somewhere between 175 and 200 levels deep (verified: 175 is safe,
+/// 200 overflows), even though the same build handles 1,000 levels of plain
+/// array nesting through [`MAX_JSON_DEPTH`] without issue. 64 leaves close
+/// to 3x margin below the smallest depth confirmed safe here, on top of
+/// remaining well clear of the raw parser's own ceiling (each group level
+/// costs two [`MAX_JSON_DEPTH`] units — one for the item object, one for its
+/// `items` array — so 64 group levels is only ~128 raw units).
+const MAX_GROUP_DEPTH: usize = 64;
+
 /// A parse or schema error with a short message.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JsonError(pub String);
@@ -541,6 +590,7 @@ pub fn parse(text: &str) -> Result<Value, JsonError> {
     let mut p = Parser {
         bytes: text.as_bytes(),
         pos: 0,
+        depth: 0,
     };
     p.skip_ws();
     let v = p.value()?;
@@ -554,9 +604,26 @@ pub fn parse(text: &str) -> Result<Value, JsonError> {
 struct Parser<'a> {
     bytes: &'a [u8],
     pos: usize,
+    /// Current `array`/`object` nesting depth; see [`MAX_JSON_DEPTH`].
+    depth: usize,
 }
 
 impl Parser<'_> {
+    /// Enters one level of `array`/`object` nesting, or returns a typed
+    /// error instead of recursing further. Must be paired with decrementing
+    /// `self.depth` once the corresponding `array`/`object` call returns
+    /// (both success and error paths — see callers).
+    fn enter_nesting(&mut self) -> Result<(), JsonError> {
+        self.depth += 1;
+        if self.depth > MAX_JSON_DEPTH {
+            return Err(JsonError(format!(
+                "exceeded maximum JSON nesting depth of {MAX_JSON_DEPTH} at byte {}",
+                self.pos
+            )));
+        }
+        Ok(())
+    }
+
     fn skip_ws(&mut self) {
         while self.pos < self.bytes.len()
             && matches!(self.bytes[self.pos], b' ' | b'\n' | b'\r' | b'\t')
@@ -703,64 +770,74 @@ impl Parser<'_> {
     }
 
     fn array(&mut self) -> Result<Value, JsonError> {
-        self.expect(b'[')?;
-        let mut items = Vec::new();
-        self.skip_ws();
-        if self.peek() == Some(b']') {
-            self.pos += 1;
-            return Ok(Value::Array(items));
-        }
-        loop {
+        self.enter_nesting()?;
+        let result = (|| {
+            self.expect(b'[')?;
+            let mut items = Vec::new();
             self.skip_ws();
-            items.push(self.value()?);
-            self.skip_ws();
-            match self.peek() {
-                Some(b',') => self.pos += 1,
-                Some(b']') => {
-                    self.pos += 1;
-                    return Ok(Value::Array(items));
-                }
-                _ => {
-                    return Err(JsonError(format!(
-                        "expected ',' or ']' at byte {}",
-                        self.pos
-                    )));
+            if self.peek() == Some(b']') {
+                self.pos += 1;
+                return Ok(Value::Array(items));
+            }
+            loop {
+                self.skip_ws();
+                items.push(self.value()?);
+                self.skip_ws();
+                match self.peek() {
+                    Some(b',') => self.pos += 1,
+                    Some(b']') => {
+                        self.pos += 1;
+                        return Ok(Value::Array(items));
+                    }
+                    _ => {
+                        return Err(JsonError(format!(
+                            "expected ',' or ']' at byte {}",
+                            self.pos
+                        )));
+                    }
                 }
             }
-        }
+        })();
+        self.depth -= 1;
+        result
     }
 
     fn object(&mut self) -> Result<Value, JsonError> {
-        self.expect(b'{')?;
-        let mut fields = Vec::new();
-        self.skip_ws();
-        if self.peek() == Some(b'}') {
-            self.pos += 1;
-            return Ok(Value::Object(fields));
-        }
-        loop {
+        self.enter_nesting()?;
+        let result = (|| {
+            self.expect(b'{')?;
+            let mut fields = Vec::new();
             self.skip_ws();
-            let key = self.string()?;
-            self.skip_ws();
-            self.expect(b':')?;
-            self.skip_ws();
-            let v = self.value()?;
-            fields.push((key, v));
-            self.skip_ws();
-            match self.peek() {
-                Some(b',') => self.pos += 1,
-                Some(b'}') => {
-                    self.pos += 1;
-                    return Ok(Value::Object(fields));
-                }
-                _ => {
-                    return Err(JsonError(format!(
-                        "expected ',' or '}}' at byte {}",
-                        self.pos
-                    )));
+            if self.peek() == Some(b'}') {
+                self.pos += 1;
+                return Ok(Value::Object(fields));
+            }
+            loop {
+                self.skip_ws();
+                let key = self.string()?;
+                self.skip_ws();
+                self.expect(b':')?;
+                self.skip_ws();
+                let v = self.value()?;
+                fields.push((key, v));
+                self.skip_ws();
+                match self.peek() {
+                    Some(b',') => self.pos += 1,
+                    Some(b'}') => {
+                        self.pos += 1;
+                        return Ok(Value::Object(fields));
+                    }
+                    _ => {
+                        return Err(JsonError(format!(
+                            "expected ',' or '}}' at byte {}",
+                            self.pos
+                        )));
+                    }
                 }
             }
-        }
+        })();
+        self.depth -= 1;
+        result
     }
 }
 
@@ -780,15 +857,24 @@ pub fn read_display_list(text: &str) -> Result<DisplayList, JsonError> {
         ps.require("width_pt")?.as_f64()?,
         ps.require("height_pt")?.as_f64()?,
     );
-    let items = read_items(v.require("items")?)?;
+    let items = read_items(v.require("items")?, 0)?;
     Ok(DisplayList { page_size, items })
 }
 
-fn read_items(v: &Value) -> Result<Vec<Item>, JsonError> {
-    v.as_array()?.iter().map(read_item).collect()
+/// `depth` counts `"group"` nesting levels seen so far; see [`MAX_GROUP_DEPTH`].
+fn read_items(v: &Value, depth: usize) -> Result<Vec<Item>, JsonError> {
+    if depth > MAX_GROUP_DEPTH {
+        return Err(JsonError(format!(
+            "exceeded maximum group nesting depth of {MAX_GROUP_DEPTH}"
+        )));
+    }
+    v.as_array()?
+        .iter()
+        .map(|item| read_item(item, depth))
+        .collect()
 }
 
-fn read_item(v: &Value) -> Result<Item, JsonError> {
+fn read_item(v: &Value, depth: usize) -> Result<Item, JsonError> {
     let kind = v.require("kind")?.as_str()?;
     let id = ItemId(v.require("id")?.as_u64()?);
     let source = read_source(v.get("source"))?;
@@ -830,7 +916,7 @@ fn read_item(v: &Value) -> Result<Item, JsonError> {
                 Some(c) => Some(read_clip(c)?),
             },
             opacity: v.require("opacity")?.as_f64()?,
-            items: read_items(v.require("items")?)?,
+            items: read_items(v.require("items")?, depth + 1)?,
             source,
         }),
         other => return Err(JsonError(format!("unknown item kind `{other}`"))),
@@ -1038,5 +1124,75 @@ mod tests {
             assert_eq!(back, if v == 0.0 { 0.0 } else { v });
         }
         assert_eq!(number(f64::NAN), "null");
+    }
+
+    /// `n` levels of nested JSON arrays, e.g. `nested_arrays(2)` = `"[[]]"`.
+    fn nested_arrays(n: usize) -> String {
+        format!("{}{}", "[".repeat(n), "]".repeat(n))
+    }
+
+    /// GH#46: the raw parser must reject nesting past [`MAX_JSON_DEPTH`] with
+    /// a typed [`JsonError`] rather than recursing further (which is what
+    /// let the reviewer reproduce an actual `stack overflow, aborting`
+    /// process abort, exit 134, at nesting depth 50,000). We test the bound
+    /// itself here, not the abort — a real Rust stack overflow aborts the
+    /// process and cannot be caught by a test harness.
+    #[test]
+    fn parse_accepts_exactly_max_json_depth() {
+        assert!(parse(&nested_arrays(MAX_JSON_DEPTH)).is_ok());
+    }
+
+    #[test]
+    fn parse_rejects_one_past_max_json_depth_with_typed_error() {
+        let err = parse(&nested_arrays(MAX_JSON_DEPTH + 1)).unwrap_err();
+        assert!(
+            err.0.contains("nesting depth"),
+            "expected a nesting-depth error, got: {}",
+            err.0
+        );
+    }
+
+    /// A display-list document with `groups` levels of nested `"group"`
+    /// items, terminating in an empty `items` array.
+    fn nested_group_display_list(groups: usize) -> String {
+        let mut items = "[]".to_string();
+        for i in 0..groups {
+            items = format!(
+                r#"[{{"kind":"group","id":{i},"transform":[1,0,0,1,0,0],"clip":null,"opacity":1,"items":{items},"source":null}}]"#
+            );
+        }
+        format!(
+            r#"{{"format":"{DISPLAY_LIST_FORMAT}","version":{FORMAT_VERSION},"page_size":{{"width_pt":612,"height_pt":792}},"items":{items}}}"#
+        )
+    }
+
+    /// GH#46: `read_display_list`'s schema-level reader (`read_items`/
+    /// `read_item`) is a separate recursion site from the generic `value`
+    /// parser and needs its own bound — the reviewer reproduced the same
+    /// `stack overflow, aborting` abort through this exact entry point.
+    /// `MAX_GROUP_DEPTH` is deliberately smaller than [`MAX_JSON_DEPTH`] (see
+    /// its doc comment) so this test exercises the schema-level bound
+    /// specifically, without the raw JSON depth bound firing first.
+    #[test]
+    fn read_display_list_accepts_exactly_max_group_depth() {
+        assert!(read_display_list(&nested_group_display_list(MAX_GROUP_DEPTH)).is_ok());
+    }
+
+    #[test]
+    fn read_display_list_rejects_one_past_max_group_depth_with_typed_error() {
+        let err = read_display_list(&nested_group_display_list(MAX_GROUP_DEPTH + 1)).unwrap_err();
+        assert!(
+            err.0.contains("group nesting depth"),
+            "expected a group-nesting-depth error, got: {}",
+            err.0
+        );
+    }
+
+    /// Sibling arrays (breadth, not depth) must not falsely trip the depth
+    /// bound — the counter has to unwind on return, not just accumulate.
+    #[test]
+    fn parse_accepts_many_sibling_arrays_well_past_max_json_depth() {
+        let text = format!("[{}]", "[1],".repeat(MAX_JSON_DEPTH * 3) + "[1]");
+        assert!(parse(&text).is_ok());
     }
 }
