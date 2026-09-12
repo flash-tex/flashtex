@@ -395,7 +395,7 @@ fn parindent_parskip_and_font_units() {
 #[test]
 fn headings_at_12pt() {
     let s = sheet(BaseSize::Pt12, Paper::Letter);
-    let h1 = s.resolve(&[Block::Document, Block::Heading(1)]);
+    let h1 = s.resolve(&[Block::Document, Block::Heading(1)]).unwrap();
     assert_eq!(h1.font_size.0, 17.28);
     assert_eq!(h1.baselineskip.0, 22.0);
     assert!(h1.bold && !h1.italic);
@@ -413,26 +413,28 @@ fn headings_at_12pt() {
     close(h1.space_after.plus, 0.2 * 5.16667, 1e-9, "h1 after plus");
     assert_eq!(h1.run_in_after, None);
 
-    let h2 = s.resolve(&[Block::Document, Block::Section(1), Block::Heading(2)]);
+    let h2 = s
+        .resolve(&[Block::Document, Block::Section(1), Block::Heading(2)])
+        .unwrap();
     assert_eq!(h2.font_size.0, 14.4);
     assert_eq!(h2.baselineskip.0, 18.0);
     close(h2.space_before.pt, 3.25 * 5.16667, 1e-9, "h2 before");
     close(h2.space_after.pt, 1.5 * 5.16667, 1e-9, "h2 after");
 
-    let h3 = s.resolve(&[Block::Document, Block::Heading(3)]);
+    let h3 = s.resolve(&[Block::Document, Block::Heading(3)]).unwrap();
     assert_eq!(h3.font_size.0, 12.0);
     assert_eq!(h3.baselineskip.0, 14.5);
     assert!(h3.bold);
 
     // \paragraph is a run-in heading: 1em after, no vertical after-skip.
-    let h4 = s.resolve(&[Block::Document, Block::Heading(4)]);
+    let h4 = s.resolve(&[Block::Document, Block::Heading(4)]).unwrap();
     assert_eq!(h4.space_after, Skip::ZERO);
     close(h4.run_in_after.unwrap().0, 11.74988, 1e-9, "h4 run-in");
     close(h4.space_before.pt, 3.25 * 5.16667, 1e-9, "h4 before");
     assert!(indent_after_heading(4) && !indent_after_heading(1));
 
     // \subparagraph is additionally indented by \parindent.
-    let h5 = s.resolve(&[Block::Document, Block::Heading(5)]);
+    let h5 = s.resolve(&[Block::Document, Block::Heading(5)]).unwrap();
     close(h5.left_margin.0, 17.62482, 1e-4, "h5 indent");
 
     // Baseline gaps: heading leading + before; body leading + after.
@@ -452,10 +454,14 @@ fn headings_at_12pt() {
 
 #[test]
 fn headings_at_10pt_and_11pt_use_smaller_table() {
-    let h1 = sheet(BaseSize::Pt10, Paper::Letter).resolve(&[Block::Document, Block::Heading(1)]);
+    let h1 = sheet(BaseSize::Pt10, Paper::Letter)
+        .resolve(&[Block::Document, Block::Heading(1)])
+        .unwrap();
     assert_eq!((h1.font_size.0, h1.baselineskip.0), (14.4, 18.0));
     close(h1.space_before.pt, 3.5 * 4.30554, 1e-9, "10pt h1 before");
-    let h2 = sheet(BaseSize::Pt11, Paper::Letter).resolve(&[Block::Document, Block::Heading(2)]);
+    let h2 = sheet(BaseSize::Pt11, Paper::Letter)
+        .resolve(&[Block::Document, Block::Heading(2)])
+        .unwrap();
     assert_eq!((h2.font_size.0, h2.baselineskip.0), (12.0, 14.0));
     close(h2.space_before.pt, 3.25 * 4.71457, 1e-9, "11pt h2 before");
 }
@@ -463,7 +469,9 @@ fn headings_at_10pt_and_11pt_use_smaller_table() {
 #[test]
 fn paragraph_inherits_size_but_not_heading_spacing() {
     let s = sheet(BaseSize::Pt12, Paper::Letter);
-    let p = s.resolve(&[Block::Document, Block::Section(1), Block::Paragraph]);
+    let p = s
+        .resolve(&[Block::Document, Block::Section(1), Block::Paragraph])
+        .unwrap();
     assert_eq!(p.font_size.0, 12.0);
     assert_eq!(p.baselineskip.0, 14.5);
     assert!(!p.bold);
@@ -475,33 +483,41 @@ fn paragraph_inherits_size_but_not_heading_spacing() {
     assert_eq!(p.space_after, Skip::ZERO);
     assert_eq!(p.left_margin, Pt::ZERO);
 
-    let after = s.resolve(&[
-        Block::Document,
-        Block::Section(1),
-        Block::ParagraphAfterHeading,
-    ]);
+    let after = s
+        .resolve(&[
+            Block::Document,
+            Block::Section(1),
+            Block::ParagraphAfterHeading,
+        ])
+        .unwrap();
     assert!(!after.first_line_indent);
     assert_eq!(after.font_size.0, 12.0);
 
     // Inline styles inherit and toggle.
-    let e = s.resolve(&[
-        Block::Document,
-        Block::Paragraph,
-        Block::Inline(InlineStyle::Emph),
-    ]);
+    let e = s
+        .resolve(&[
+            Block::Document,
+            Block::Paragraph,
+            Block::Inline(InlineStyle::Emph),
+        ])
+        .unwrap();
     assert!(e.italic && !e.bold);
-    let ee = s.resolve(&[
-        Block::Document,
-        Block::Paragraph,
-        Block::Inline(InlineStyle::Emph),
-        Block::Inline(InlineStyle::Emph),
-    ]);
+    let ee = s
+        .resolve(&[
+            Block::Document,
+            Block::Paragraph,
+            Block::Inline(InlineStyle::Emph),
+            Block::Inline(InlineStyle::Emph),
+        ])
+        .unwrap();
     assert!(!ee.italic);
-    let sm = s.resolve(&[
-        Block::Document,
-        Block::Paragraph,
-        Block::Inline(InlineStyle::Size(SizeName::Small)),
-    ]);
+    let sm = s
+        .resolve(&[
+            Block::Document,
+            Block::Paragraph,
+            Block::Inline(InlineStyle::Size(SizeName::Small)),
+        ])
+        .unwrap();
     assert_eq!((sm.font_size.0, sm.baselineskip.0), (10.95, 13.6));
     assert_eq!(sm.space_before, Skip::ZERO);
 }
@@ -515,7 +531,7 @@ fn list_indents_and_spacing_per_level_at_12pt() {
     let mut cumulative = 0.0;
     for (i, lm) in expected.iter().enumerate() {
         path.push(Block::List(ListKind::Itemize));
-        let l = s.resolve(&path);
+        let l = s.resolve(&path).unwrap();
         let list = l.list.expect("list style");
         assert_eq!(list.depth as usize, i + 1);
         close(
@@ -564,23 +580,29 @@ fn list_indents_and_spacing_per_level_at_12pt() {
     );
 
     // Vertical space around a top-level list: \topsep + \parskip.
-    let list = s.resolve(&[Block::Document, Block::List(ListKind::Enumerate)]);
+    let list = s
+        .resolve(&[Block::Document, Block::List(ListKind::Enumerate)])
+        .unwrap();
     assert_eq!(list.space_before, Skip::new(10.0, 5.0, 6.0));
     assert_eq!(list.space_after, Skip::new(10.0, 5.0, 6.0));
     // Between items: \itemsep + \parsep.
-    let item = s.resolve(&[
-        Block::Document,
-        Block::List(ListKind::Enumerate),
-        Block::Item,
-    ]);
+    let item = s
+        .resolve(&[
+            Block::Document,
+            Block::List(ListKind::Enumerate),
+            Block::Item,
+        ])
+        .unwrap();
     assert_eq!(item.space_before, Skip::new(10.0, 5.0, 2.0));
     // A paragraph inside an item: \parsep, no indent.
-    let p = s.resolve(&[
-        Block::Document,
-        Block::List(ListKind::Enumerate),
-        Block::Item,
-        Block::Paragraph,
-    ]);
+    let p = s
+        .resolve(&[
+            Block::Document,
+            Block::List(ListKind::Enumerate),
+            Block::Item,
+            Block::Paragraph,
+        ])
+        .unwrap();
     assert_eq!(p.space_before, Skip::new(5.0, 2.5, 1.0));
     assert!(!p.first_line_indent);
     close(p.left_margin.0, 29.3747, 1e-3, "item paragraph margin");
@@ -614,15 +636,19 @@ fn list_margins_at_10pt_and_11pt() {
 #[test]
 fn center_environment_uses_trivlist_spacing() {
     let s = sheet(BaseSize::Pt12, Paper::Letter);
-    let c = s.resolve(&[Block::Document, Block::Align(Alignment::Center)]);
+    let c = s
+        .resolve(&[Block::Document, Block::Align(Alignment::Center)])
+        .unwrap();
     assert_eq!(c.alignment, Alignment::Center);
     assert_eq!(c.space_before, Skip::new(10.0, 5.0, 6.0));
     assert_eq!(c.left_margin, Pt::ZERO);
-    let p = s.resolve(&[
-        Block::Document,
-        Block::Align(Alignment::Center),
-        Block::Paragraph,
-    ]);
+    let p = s
+        .resolve(&[
+            Block::Document,
+            Block::Align(Alignment::Center),
+            Block::Paragraph,
+        ])
+        .unwrap();
     assert_eq!(p.alignment, Alignment::Center);
 }
 
@@ -649,20 +675,24 @@ fn delta_overlay_inherits_and_overrides() {
         ],
     };
     let s = sheet(BaseSize::Pt12, Paper::Letter).with_delta(delta);
-    let p = s.resolve(&[Block::Document, Block::Section(1), Block::Paragraph]);
+    let p = s
+        .resolve(&[Block::Document, Block::Section(1), Block::Paragraph])
+        .unwrap();
     assert_eq!(p.alignment, Alignment::Left, "document rule inherits");
     assert_eq!(p.space_before, Skip::fixed(6.0), "parskip override");
-    let h = s.resolve(&[Block::Document, Block::Heading(1)]);
+    let h = s.resolve(&[Block::Document, Block::Heading(1)]).unwrap();
     assert_eq!(h.font_size.0, 20.0);
     assert_eq!(
         h.baselineskip.0, 22.0,
         "untouched properties keep class values"
     );
-    let e = s.resolve(&[
-        Block::Document,
-        Block::Paragraph,
-        Block::Inline(InlineStyle::Emph),
-    ]);
+    let e = s
+        .resolve(&[
+            Block::Document,
+            Block::Paragraph,
+            Block::Inline(InlineStyle::Emph),
+        ])
+        .unwrap();
     assert!(!e.italic, "wildcard rule applies at every node");
 }
 

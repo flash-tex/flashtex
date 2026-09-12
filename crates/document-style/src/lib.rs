@@ -19,7 +19,9 @@
 //! let sheet = Stylesheet::article(ClassOptions { paper: Paper::Letter, size: BaseSize::Pt12 });
 //! let page = sheet.page_layout();
 //! assert_eq!(page.text_area.width.0, 390.0);
-//! let body = sheet.resolve(&[Block::Document, Block::Section(1), Block::Paragraph]);
+//! let body = sheet
+//!     .resolve(&[Block::Document, Block::Section(1), Block::Paragraph])
+//!     .unwrap();
 //! assert_eq!(body.font_size.0, 12.0);
 //! assert_eq!(body.baselineskip.0, 14.5);
 //! ```
@@ -42,6 +44,6 @@ pub use geometry::{
 pub use json::{JsonError, Value};
 pub use length::{LengthError, Pt, Skip};
 pub use style::{
-    Alignment, Block, DeltaRule, InlineStyle, ListKind, ListStyle, ResolvedStyle, StyleDelta,
-    Stylesheet,
+    Alignment, Block, DeltaRule, InlineStyle, ListKind, ListNestingTooDeep, ListStyle,
+    MAX_LIST_NESTING_DEPTH, ResolvedStyle, StyleDelta, Stylesheet,
 };

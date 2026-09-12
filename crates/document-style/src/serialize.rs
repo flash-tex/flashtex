@@ -197,7 +197,10 @@ impl Stylesheet {
     pub fn to_json_value(&self) -> Value {
         let mut styles = Value::obj();
         for (name, path) in canonical_paths() {
-            styles = styles.set(&name, resolved_json(&self.resolve(&path)));
+            let resolved = self
+                .resolve(&path)
+                .expect("canonical_paths() never exceeds MAX_LIST_NESTING_DEPTH");
+            styles = styles.set(&name, resolved_json(&resolved));
         }
         let mut gaps = Value::obj();
         for level in 1..=3u8 {

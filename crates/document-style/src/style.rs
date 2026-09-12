@@ -160,6 +160,59 @@ pub struct ListStyle {
     pub itemsep: Skip,
 }
 
+/// Maximum supported `List`/`Align` nesting depth in a path passed to
+/// [`Stylesheet::resolve`].
+///
+/// [`list_level`]'s own leftmargin table only distinguishes depths 1-4
+/// (real LaTeX's `\@listdepth` mechanism errors with "Too deeply nested"
+/// above depth 6 — see that function's doc comment), so any real document
+/// is nowhere near this bound. 64 stays comfortably clear of that real
+/// ceiling while remaining far below the 256-level point where the `u8`
+/// counter this replaces used to silently wrap around to 0 (GH#44) —
+/// `resolve` now returns a typed error before the counter could ever get
+/// that close, rather than wrapping or silently aliasing a deep list's
+/// margin to a shallow one's.
+pub const MAX_LIST_NESTING_DEPTH: u8 = 64;
+
+/// Returned by [`Stylesheet::resolve`] when `path` nests more than
+/// [`MAX_LIST_NESTING_DEPTH`] `List`/`Align` blocks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ListNestingTooDeep {
+    pub max: u8,
+}
+
+impl std::fmt::Display for ListNestingTooDeep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "List/Align nesting exceeds the supported maximum depth of {}",
+            self.max
+        )
+    }
+}
+
+impl std::error::Error for ListNestingTooDeep {}
+
+/// Increments `*list_depth`, or returns a typed error instead of wrapping
+/// or silently continuing past [`MAX_LIST_NESTING_DEPTH`] (see GH#44: the
+/// plain `u8` this replaces overflowed at 256+ nested blocks, panicking in
+/// debug and silently aliasing a deep list's margin to a shallow one's in
+/// release).
+fn increment_list_depth(list_depth: &mut u8) -> Result<(), ListNestingTooDeep> {
+    let next = list_depth
+        .checked_add(1)
+        .filter(|&d| d <= MAX_LIST_NESTING_DEPTH);
+    match next {
+        Some(d) => {
+            *list_depth = d;
+            Ok(())
+        }
+        None => Err(ListNestingTooDeep {
+            max: MAX_LIST_NESTING_DEPTH,
+        }),
+    }
+}
+
 /// The fully inherited style of one block.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ResolvedStyle {
@@ -328,7 +381,12 @@ impl Stylesheet {
 
     /// Resolve the style of the innermost block of `path`, inheriting from
     /// every ancestor. An empty path resolves the document root.
-    pub fn resolve(&self, path: &[Block]) -> ResolvedStyle {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ListNestingTooDeep`] if `path` nests more than
+    /// [`MAX_LIST_NESTING_DEPTH`] `List`/`Align` blocks.
+    pub fn resolve(&self, path: &[Block]) -> Result<ResolvedStyle, ListNestingTooDeep> {
         let mut style = self.root_style();
         self.delta.apply(Block::Document, &mut style);
         let mut list_depth: u8 = 0;
@@ -343,10 +401,10 @@ impl Stylesheet {
                 self.delta.apply(block, &mut style);
                 continue;
             }
-            self.apply_block(block, &mut style, &mut list_depth, &mut inside_item);
+            self.apply_block(block, &mut style, &mut list_depth, &mut inside_item)?;
             self.delta.apply(block, &mut style);
         }
-        style
+        Ok(style)
     }
 
     fn apply_block(
@@ -355,7 +413,7 @@ impl Stylesheet {
         style: &mut ResolvedStyle,
         list_depth: &mut u8,
         inside_item: &mut bool,
-    ) {
+    ) -> Result<(), ListNestingTooDeep> {
         let base = self.options.size;
         let body = self.body_font();
         let parskip = self.parskip();
@@ -407,7 +465,7 @@ impl Stylesheet {
                 style.first_line_indent = false;
             }
             Block::List(kind) => {
-                *list_depth += 1;
+                increment_list_depth(list_depth)?;
                 let lp = list_level(base, *list_depth);
                 style.left_margin += lp.leftmargin;
                 style.list = Some(ListStyle {
@@ -439,7 +497,7 @@ impl Stylesheet {
             Block::Align(a) => {
                 // center/flushleft/flushright are \trivlist environments at the
                 // next list depth: \topsep + \parskip around, no margins.
-                *list_depth += 1;
+                increment_list_depth(list_depth)?;
                 let lp = list_level(base, *list_depth);
                 style.alignment = a;
                 style.space_before = lp.topsep.plus(enclosing_parskip);
@@ -457,6 +515,7 @@ impl Stylesheet {
                 }
             },
         }
+        Ok(())
     }
 
     /// Baseline-to-baseline distance from the last body line before a heading
@@ -464,15 +523,21 @@ impl Stylesheet {
     /// `\baselineskip` inside the font group, and `\addvspace` adds the
     /// before-skip.
     pub fn heading_gap_before(&self, level: u8) -> Skip {
-        let h = self.resolve(&[Block::Document, Block::Heading(level)]);
+        let h = self
+            .resolve(&[Block::Document, Block::Heading(level)])
+            .expect("a 2-block path cannot exceed MAX_LIST_NESTING_DEPTH");
         Skip::fixed(h.baselineskip.0).plus(h.space_before)
     }
 
     /// Baseline-to-baseline distance from the heading to the first body line:
     /// the after-skip plus the body `\baselineskip` (the font group has closed).
     pub fn heading_gap_after(&self, level: u8) -> Skip {
-        let h = self.resolve(&[Block::Document, Block::Heading(level)]);
-        let body = self.resolve(&[Block::Document, Block::Paragraph]);
+        let h = self
+            .resolve(&[Block::Document, Block::Heading(level)])
+            .expect("a 2-block path cannot exceed MAX_LIST_NESTING_DEPTH");
+        let body = self
+            .resolve(&[Block::Document, Block::Paragraph])
+            .expect("a 2-block path cannot exceed MAX_LIST_NESTING_DEPTH");
         Skip::fixed(body.baselineskip.0).plus(h.space_after)
     }
 }

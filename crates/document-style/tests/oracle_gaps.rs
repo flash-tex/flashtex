@@ -90,7 +90,7 @@ fn heading_and_list_baseline_gaps_match_pdflatex() {
             &format!("{tag} subsubsection->body"),
         );
 
-        let p = s.resolve(&[Block::Document, Block::Paragraph]);
+        let p = s.resolve(&[Block::Document, Block::Paragraph]).unwrap();
         close(
             p.baselineskip.0 + p.space_before.pt,
             body,
@@ -98,14 +98,18 @@ fn heading_and_list_baseline_gaps_match_pdflatex() {
         );
 
         // Body -> first item: \baselineskip + \topsep + \parskip.
-        let l = s.resolve(&[Block::Document, Block::List(ListKind::Itemize)]);
+        let l = s
+            .resolve(&[Block::Document, Block::List(ListKind::Itemize)])
+            .unwrap();
         close(
             p.baselineskip.0 + l.space_before.pt,
             list,
             &format!("{tag} body->item"),
         );
         // Item -> item: \baselineskip + \itemsep + \parsep.
-        let item = s.resolve(&[Block::Document, Block::List(ListKind::Itemize), Block::Item]);
+        let item = s
+            .resolve(&[Block::Document, Block::List(ListKind::Itemize), Block::Item])
+            .unwrap();
         close(
             p.baselineskip.0 + item.space_before.pt,
             list,
@@ -113,12 +117,14 @@ fn heading_and_list_baseline_gaps_match_pdflatex() {
         );
         // Item -> nested first item: \baselineskip + \topsep(ii) + \parsep(i)
         // (\parskip inside a list is \parsep of the enclosing level).
-        let nested = s.resolve(&[
-            Block::Document,
-            Block::List(ListKind::Itemize),
-            Block::Item,
-            Block::List(ListKind::Itemize),
-        ]);
+        let nested = s
+            .resolve(&[
+                Block::Document,
+                Block::List(ListKind::Itemize),
+                Block::Item,
+                Block::List(ListKind::Itemize),
+            ])
+            .unwrap();
         let outer = item.list.unwrap();
         let inner = nested.list.unwrap();
         close(
