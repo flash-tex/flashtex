@@ -891,7 +891,7 @@ pub fn break_pages_inserts(base: &PageParams, list: &[VItem], short_pages: usize
                 areas.push(None);
             }
         } else {
-            let (page, area) = make_column(p, body, body_less, ejected || fired.is_none(), &placed_notes, ins, false);
+            let (page, area, _) = make_column(p, body, body_less, ejected || fired.is_none(), &placed_notes, ins, &ColumnFloats::default());
             pages.push(page);
             areas.push(Some(area));
         }
@@ -909,25 +909,75 @@ pub fn break_pages_inserts(base: &PageParams, list: &[VItem], short_pages: usize
     (pages, areas)
 }
 
+/// The floats `\@combinefloats` wraps around a column, in `\@makecol`'s
+/// order (latex.ltx, TeX Live 2025).
+///
+/// `\@cflt` puts the top floats above the body with `\floatsep` between
+/// them (`\@comflelt` appends one after each and `\vskip-\floatsep`
+/// cancels the last) and `\textfloatsep` before the body; `\@cflb` puts
+/// `\textfloatsep` after the column's footnotes and then the bottom floats
+/// the same way. Both are plain `\vbox`es: only `\@make@normalcolbox`
+/// packs `\vbox to\@colht`, so these skips are set by the same glue set
+/// ratio as the body's own glue and `\skip\footins`.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ColumnFloats {
+    /// Height of each top and each bottom float box, in order.
+    pub(crate) tops: Vec<f64>,
+    pub(crate) bots: Vec<f64>,
+    /// `\floatsep` and `\textfloatsep` (natural, stretch, shrink).
+    pub(crate) floatsep: (f64, f64, f64),
+    pub(crate) textfloatsep: (f64, f64, f64),
+}
+
+/// Where [`make_column`] put a column's float boxes: the top edge of each,
+/// in the column's coordinates.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct FloatPlacement {
+    pub(crate) tops: Vec<f64>,
+    pub(crate) bots: Vec<f64>,
+    /// Distance from the column's top to the body's own origin (the top
+    /// floats and `\textfloatsep` above it), which is what a caller adds to
+    /// positions it computed in the body's coordinates.
+    pub(crate) text_off: f64,
+}
+
 /// `\@makecol` for a column with footnotes: the body list, `\vfil` when
 /// the page was ended by `\newpage`/`\clearpage`, `\skip\footins`, the
 /// `\footnoterule` and the notes, then `\vskip-\dp` and `\@textbottom`
 /// (`\vskip 0pt plus.0001fil` under `\raggedbottom`), packed `\vbox
 /// to\@colht`. With `keep_depth` the last note's depth stays inside
 /// `p.vsize` (bottom floats follow the notes, `\@cflb`).
-pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil: bool, notes: &[Vec<VItem>], ins: &Insertions, keep_depth: bool) -> (BuiltPage, InsertArea) {
-    // Pass 1: natural size and glue totals.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil: bool, notes: &[Vec<VItem>], ins: &Insertions, floats: &ColumnFloats) -> (BuiltPage, InsertArea, FloatPlacement) {
+    // Pass 1: natural size and glue totals. `p.vsize` is `\@colht`: the
+    // whole column, floats included, is one `\vbox to\@colht`.
     let (mut x, mut d, mut has_box) = (0.0f64, 0.0f64, false);
     let (mut stretch, mut shrink) = (0.0f64, 0.0f64);
     let mut fil_in_body = false;
+    // `\@cflt`.
+    for (k, h) in floats.tops.iter().enumerate() {
+        if k > 0 {
+            x += floats.floatsep.0;
+            stretch += floats.floatsep.1;
+            shrink += floats.floatsep.2;
+        }
+        x += h;
+    }
+    if !floats.tops.is_empty() {
+        x += floats.textfloatsep.0;
+        stretch += floats.textfloatsep.1;
+        shrink += floats.textfloatsep.2;
+    }
+    // `\box\@cclv` starts here; `\topskip` is inside it.
+    let text_off = x;
     if body_less {
-        x = p.topskip;
+        x += p.topskip;
         has_box = true;
     }
     for v in body {
         match v {
             VItem::Box { height, depth, .. } => {
-                x = if has_box { x + d + height } else { (p.topskip - height).max(0.0) + height };
+                x = if has_box { x + d + height } else { text_off + (p.topskip - height).max(0.0) + height };
                 d = *depth;
                 has_box = true;
             }
@@ -966,8 +1016,24 @@ pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil:
             VItem::Penalty(_) => {}
         }
     }
-    // `\vskip-\dp`: the box's height ends at the last baseline.
-    let natural = if keep_depth { x + d } else { x };
+    // `\@cflb`: `\textfloatsep` after the notes (so the notes' last depth
+    // counts), the bottom floats, `\floatsep` between them.
+    if !floats.bots.is_empty() {
+        x += d + floats.textfloatsep.0;
+        stretch += floats.textfloatsep.1;
+        shrink += floats.textfloatsep.2;
+        for (k, h) in floats.bots.iter().enumerate() {
+            if k > 0 {
+                x += floats.floatsep.0;
+                stretch += floats.floatsep.1;
+                shrink += floats.floatsep.2;
+            }
+            x += h;
+        }
+    }
+    // `\vskip-\@outputbox@depth`: the box's height ends at the last
+    // baseline.
+    let natural = x;
     let excess = p.vsize - natural;
     let fil_total = f64::from(u8::from(vfil)) + if p.flushbottom { 0.0 } else { 0.0001 } + f64::from(u8::from(fil_in_body));
     // (stretch ratio for finite glue, shift given to the `\vfil`)
@@ -987,15 +1053,28 @@ pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil:
     let set_glue = |w: f64, st: f64, sh: f64| w + if ratio > 0.0 { ratio * st } else { ratio * sh };
     // Pass 2: positions.
     let mut page = BuiltPage::default();
+    let mut placement = FloatPlacement::default();
     let (mut y, mut d, mut has_box) = (0.0f64, 0.0f64, false);
+    for (k, h) in floats.tops.iter().enumerate() {
+        if k > 0 {
+            y += set_glue(floats.floatsep.0, floats.floatsep.1, floats.floatsep.2);
+        }
+        placement.tops.push(y);
+        y += h;
+    }
+    if !floats.tops.is_empty() {
+        y += set_glue(floats.textfloatsep.0, floats.textfloatsep.1, floats.textfloatsep.2);
+    }
+    placement.text_off = y;
+    let text_off = y;
     if body_less {
-        y = p.topskip;
+        y += p.topskip;
         has_box = true;
     }
     for v in body {
         match v {
             VItem::Box { height, depth, payload } => {
-                y = if has_box { y + d + height } else { (p.topskip - height).max(0.0) + height };
+                y = if has_box { y + d + height } else { text_off + (p.topskip - height).max(0.0) + height };
                 d = *depth;
                 has_box = true;
                 page.lines.push(Placed { payload: *payload, baseline: y, height: *height, depth: *depth });
@@ -1028,13 +1107,23 @@ pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil:
             VItem::Penalty(_) => {}
         }
     }
+    if !floats.bots.is_empty() {
+        y += d + set_glue(floats.textfloatsep.0, floats.textfloatsep.1, floats.textfloatsep.2);
+        for (k, h) in floats.bots.iter().enumerate() {
+            if k > 0 {
+                y += set_glue(floats.floatsep.0, floats.floatsep.1, floats.floatsep.2);
+            }
+            placement.bots.push(y);
+            y += h;
+        }
+    }
     if let Some(last) = page.lines.last() {
         let bottom = last.baseline + (last.depth - p.maxdepth).max(0.0);
         if natural > p.vsize + 1e-6 && shrink <= 0.0 {
             page.overfull_by = (natural - p.vsize).max(bottom - p.vsize).max(0.0);
         }
     }
-    (page, area)
+    (page, area, placement)
 }
 
 /// Glue set ratio of a page box `\vbox to\vsize` holding `items` (from the
