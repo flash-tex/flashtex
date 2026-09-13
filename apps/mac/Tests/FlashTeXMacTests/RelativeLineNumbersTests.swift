@@ -150,24 +150,22 @@ final class RelativeLineNumbersTests: XCTestCase {
         let (_, gutter) = unhostedGutter(text)
         gutter.relativeLineNumbers = true
         gutter.currentLine = 3
-        gutter.needsDisplay = false
+        let before = gutter.redrawRequests
         gutter.currentLine = 9
-        XCTAssertTrue(gutter.needsDisplay, "a caret move must redraw the gutter when numbering is relative")
-        // The same line again is not a change.
-        gutter.needsDisplay = false
+        XCTAssertEqual(gutter.redrawRequests, before + 1, "a caret move must redraw the gutter when numbering is relative")
+        // The same line again is not a change, so it must not redraw.
         gutter.currentLine = 9
-        XCTAssertFalse(gutter.needsDisplay)
+        XCTAssertEqual(gutter.redrawRequests, before + 1, "an unchanged caret line redrew the gutter")
     }
 
     func testTogglingTheModeMarksTheGutterForRedraw() {
         let (_, gutter) = unhostedGutter("a\nb\nc\n")
         gutter.currentLine = 1
-        gutter.needsDisplay = false
+        let before = gutter.redrawRequests
         gutter.relativeLineNumbers = true
-        XCTAssertTrue(gutter.needsDisplay)
-        gutter.needsDisplay = false
+        XCTAssertEqual(gutter.redrawRequests, before + 1)
         gutter.relativeLineNumbers = true // unchanged
-        XCTAssertFalse(gutter.needsDisplay)
+        XCTAssertEqual(gutter.redrawRequests, before + 1, "an unchanged mode redrew the gutter")
     }
 
     /// Width comes from the document's line count, never from the caret, so the

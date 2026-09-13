@@ -555,10 +555,10 @@ final class LineNumberGutter: NSRulerView {
     /// a faint grey tick, never a red or orange dot.
     private(set) var gapLines: Set<Int> = []
     /// Current line (caret), highlighted in the gutter.
-    var currentLine: Int? { didSet { if currentLine != oldValue { needsDisplay = true } } }
+    var currentLine: Int? { didSet { if currentLine != oldValue { setNeedsRedraw() } } }
     /// Hybrid relative numbering for Vim users (`EditorPreferences.relativeLineNumbers`,
     /// off by default and independent of whether Vim keybindings are on).
-    var relativeLineNumbers = false { didSet { if relativeLineNumbers != oldValue { needsDisplay = true } } }
+    var relativeLineNumbers = false { didSet { if relativeLineNumbers != oldValue { setNeedsRedraw() } } }
     /// Test seam, like `CaretFollow.enabledOverride`: a hosted editor reads the
     /// shared preferences, which a test cannot inject into. Set it in `setUp`
     /// and clear it in `tearDown`.
@@ -566,6 +566,16 @@ final class LineNumberGutter: NSRulerView {
     /// The model that answers "which line is this offset on".
     var lineTable: (() -> SyntaxHighlighter)?
     private var digits = 2
+    /// Counts the times the gutter has asked to be redrawn. `needsDisplay` is
+    /// not observable from a test — AppKit re-dirties a view that is in a
+    /// window, and ignores the flag on a view that is not — so the request
+    /// itself is counted, which is the thing the caller controls.
+    private(set) var redrawRequests = 0
+
+    private func setNeedsRedraw() {
+        redrawRequests += 1
+        needsDisplay = true
+    }
 
     init(scrollView: NSScrollView) {
         super.init(scrollView: scrollView, orientation: .verticalRuler)
@@ -588,7 +598,7 @@ final class LineNumberGutter: NSRulerView {
             if EditorDiagnostics.isGap(mark.message) { gaps.insert(line); continue }
             if result[line] != .error { result[line] = mark.severity }
         }
-        if result != severities || gaps != gapLines { severities = result; gapLines = gaps; needsDisplay = true }
+        if result != severities || gaps != gapLines { severities = result; gapLines = gaps; setNeedsRedraw() }
     }
 
     /// Adjusts the width to the line count and the editor font.
@@ -600,7 +610,7 @@ final class LineNumberGutter: NSRulerView {
         if wanted != digits || abs(thickness - ruleThickness) > 0.5 {
             digits = wanted
             ruleThickness = thickness
-            needsDisplay = true
+            setNeedsRedraw()
         }
     }
 
