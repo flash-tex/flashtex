@@ -9,6 +9,7 @@
 //! end-exclusive UTF-8 byte range into the exact input text of the stated
 //! revision, per `docs/contracts/runtime-v1.md`.
 
+pub mod algorithmic;
 pub mod amssymb;
 pub mod bib;
 pub mod color;

@@ -605,6 +605,10 @@ fn configure(engine: &mut Engine) {
         engine.declare_host_command(name);
     }
     engine.declare_host_command("include");
+    // `\renewcommand{\algorithmicrequire}{..}` redefines a package macro.
+    for name in crate::algorithmic::KEYWORD_MACROS {
+        engine.declare_host_command(name);
+    }
 }
 
 fn has_includes(text: &str) -> bool {
