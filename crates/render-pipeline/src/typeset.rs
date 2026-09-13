@@ -1824,7 +1824,12 @@ impl<'a> Context<'a> {
                     }
                     push(&mut out, &mut recs, pl::Item::Glue(glue), None)
                 }
-                AItem::HSpace { pt } => push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(*pt)), None),
+                AItem::HSpace { pt, stretch_pt, shrink_pt } => push(
+                    &mut out,
+                    &mut recs,
+                    pl::Item::Glue(pl::Glue::finite(*pt, *stretch_pt, *shrink_pt)),
+                    None,
+                ),
                 AItem::Table(table) => {
                     if let Some((run, rec)) = self.table_box(table, size) {
                         push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));

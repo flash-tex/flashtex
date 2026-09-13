@@ -10,6 +10,7 @@
 //! pins and limitations.
 
 pub mod adapter;
+pub(crate) mod amsthm;
 pub mod cff;
 pub mod delta;
 pub mod display;

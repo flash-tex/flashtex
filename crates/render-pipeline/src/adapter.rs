@@ -154,8 +154,10 @@ pub enum Item {
     /// compiler does not distinguish the two, so the order is re-read from
     /// the source bytes (`\hfill` when they are not `\hfil`).
     HFill { fill: bool },
-    /// `\hspace{<dimen>}` (compiler `Inline::HSpace`): fixed glue in points.
-    HSpace { pt: f64 },
+    /// Explicit horizontal glue in points: `\hspace{<dimen>}` (compiler
+    /// `Inline::HSpace`, rigid) or an amsthm theorem head's own separator
+    /// (`\hskip\thm@headsep`, `5pt plus 1pt minus 1pt`; `crate::amsthm`).
+    HSpace { pt: f64, stretch_pt: f64, shrink_pt: f64 },
     /// `tabular`/`tabular*` (compiler `Inline::Tabular`): one box in the
     /// paragraph, laid out by `table.rs`.
     Table(Box<crate::table::TableItem>),
@@ -3931,14 +3933,35 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
             Some(gap) => gap_has_space(&gap),
         }
     };
-    // Pushes the space `space_between` found.
+    // An amsthm theorem-like `\item`: the gap between its head and the body
+    // is `\hskip\thm@headsep` (or `proof`'s `\hskip\labelsep`), and the
+    // head's `\ignorespaces` eats the source whitespace that would otherwise
+    // be read as an interword space. See `crate::amsthm`.
+    let mut head_sep = inlines
+        .first()
+        .map(inline_span)
+        .and_then(|s| texts.get(s.document.0))
+        .and_then(|src| crate::amsthm::head_separator(src, inlines, size));
+    let pending_head_sep: std::cell::Cell<Option<(f64, f64, f64)>> = std::cell::Cell::new(None);
+    // Pushes the space `space_between` found, or the theorem head's own glue
+    // in its place.
     let push_gap = |items: &mut Vec<Item>, space: bool, style: TextStyle, factor: u32| {
+        if let Some((pt, stretch_pt, shrink_pt)) = pending_head_sep.take() {
+            items.push(Item::HSpace { pt, stretch_pt, shrink_pt });
+            return;
+        }
         if space {
             items.push(Item::Space { style, factor, no_break: false });
         }
     };
 
     for inline in resolved.iter() {
+        if let Some(sep) = head_sep {
+            if sep.opens_the_body(inline_span(inline)) {
+                pending_head_sep.set(Some((sep.pt, sep.stretch_pt, sep.shrink_pt)));
+                head_sep = None;
+            }
+        }
         match &**inline {
             Inline::Label { key, .. } => items.push(Item::Label { key: key.clone() }),
             Inline::Reference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
@@ -4045,7 +4068,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 // invocation's span, and the next token's gap must start
                 // after the word, not before it.
                 let (item, word) = match &**inline {
-                    Inline::HSpace { pt, .. } => (Item::HSpace { pt: *pt }, "\\hspace"),
+                    Inline::HSpace { pt, .. } => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
                     Inline::TextGlue { em, .. } => (Item::Quad { em: *em }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
                     _ => {
                         let fill = !is_control_word(text_of(span.document), span.start, "hfil");
