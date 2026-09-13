@@ -23,9 +23,14 @@ import FlashTeXProtocol
 ///   it straight back out and start a scroll-per-keystroke loop.
 /// - **Manual scrolling wins.** A live scroll in the preview (wheel, trackpad,
 ///   scroller drag: `NSScrollView.willStartLiveScrollNotification`) disarms
-///   following. The next *edit* re-arms it, as does ⌘⇧J; a caret move or a
-///   recompile on its own does not. So scrolling away to read something stays
-///   put until you actually type again.
+///   following. The next *edit* re-arms it, and so does a caret move that
+///   lands on a different source line or a different preview page than
+///   where the reader scrolled away from — moving on is moving on, even
+///   without typing. A caret move that stays on that same line, or a
+///   recompile on its own, does not. ⌘⇧J always re-arms *and* scrolls at
+///   once, whether or not the preference is even on: it is an explicit
+///   instruction, not a hint. So scrolling away to read something stays put
+///   until you actually type, jump elsewhere, or ask with ⌘⇧J.
 /// - **No mapping, no motion.** Inside a comment, in the preamble, in a region
 ///   the compiler has not produced items for, or in another document, the
 ///   caret maps to nothing and the follower does nothing — quietly, with no
@@ -165,8 +170,11 @@ enum CaretFollow {
 @MainActor
 @Observable
 final class CaretFollowController {
-    /// Why a follow is being considered. `edit` and `explicit` re-arm
-    /// following after a manual scroll; `recompile` and `caretMove` do not.
+    /// Why a follow is being considered. `edit` and `explicit` always re-arm
+    /// following after a manual scroll; `recompile` never does. A bare
+    /// `note(.caretMove)` behaves like `recompile` (does not re-arm) — route
+    /// caret moves through `noteCaretMove()` instead, which re-arms only
+    /// when the caret lands on a different line or page.
     enum Reason: String, Equatable, Sendable { case edit, recompile, caretMove, explicit }
 
     /// One follow, for the pane. The pane acts on a token it has not acted on
@@ -194,6 +202,13 @@ final class CaretFollowController {
     /// `caretPreviewTarget()`.
     @ObservationIgnored var target: (() -> CaretFollow.Target?)?
 
+    /// The editor's one-based source line the caret is on right now. Read
+    /// only at a manual scroll (to remember where the reader was) and when a
+    /// caret move is considered while disarmed (to tell a move within that
+    /// line from a move away from it) — never per keystroke, and never while
+    /// armed. `ShellModel` installs a lookup over the active buffer.
+    @ObservationIgnored var currentLine: (() -> Int?)?
+
     /// Injectable timer: tests replace it to drive the debounce without
     /// sleeping. Default = the main queue, like every other debounce here.
     @ObservationIgnored var schedule: (TimeInterval, DispatchWorkItem) -> Void = { delay, item in
@@ -202,6 +217,12 @@ final class CaretFollowController {
 
     @ObservationIgnored private(set) var pending: DispatchWorkItem?
     @ObservationIgnored private var tokens = 0
+
+    /// Line and (when the caret maps to a preview item) page as of the last
+    /// manual scroll — the baseline a disarmed `.caretMove` is compared
+    /// against in `noteCaretMove()`.
+    @ObservationIgnored private var disarmedAtLine: Int?
+    @ObservationIgnored private var disarmedAtPage: Int?
 
     /// True while a follow is scheduled but has not fired.
     var hasPendingFollow: Bool { pending != nil }
@@ -213,9 +234,9 @@ final class CaretFollowController {
         case .recompile, .caretMove:
             guard isArmed else { skippedDisarmed += 1; return }
         }
-        guard CaretFollow.isEnabled else { cancel(); return }
         cancel()
-        if reason == .explicit { fire(reason); return } // ⌘⇧J is an instruction, not a hint
+        if reason == .explicit { fire(reason); return } // ⌘⇧J is an instruction: scrolls now, preference or not
+        guard CaretFollow.isEnabled else { return }
         let item = DispatchWorkItem { [weak self] in self?.fire(reason) }
         pending = item
         let delay = CaretFollow.debounceInterval
@@ -223,10 +244,28 @@ final class CaretFollowController {
         schedule(delay, item)
     }
 
+    /// A caret move, from `ShellModel.caretUTF16`'s `didSet`. Already armed,
+    /// this is exactly `note(.caretMove)` — it just extends the debounce like
+    /// any other trigger. Disarmed by an earlier manual scroll, it re-arms
+    /// following only when the caret has landed on a different source line,
+    /// or — when it still maps to a preview item — a different page than
+    /// where that scroll happened: the editing moved on, which is exactly
+    /// what following is for. A move that stays on the same line (arrow
+    /// keys, clicking another word on it) does not re-arm, so reading in
+    /// place never yanks the preview back out from under you.
+    func noteCaretMove() {
+        if !isArmed, currentLine?() != disarmedAtLine || target?()?.page != disarmedAtPage {
+            isArmed = true
+        }
+        note(.caretMove)
+    }
+
     /// The reader scrolled the preview themselves: stop following until they
-    /// edit again.
+    /// edit again, jump to another line or page, or ask with ⌘⇧J.
     func userDidScrollPreview() {
         isArmed = false
+        disarmedAtLine = currentLine?()
+        disarmedAtPage = target?()?.page
         cancel()
     }
 
@@ -237,7 +276,7 @@ final class CaretFollowController {
 
     private func fire(_ reason: Reason) {
         pending = nil
-        guard CaretFollow.isEnabled else { return }
+        guard reason == .explicit || CaretFollow.isEnabled else { return }
         guard isArmed else { skippedDisarmed += 1; return }
         guard let target = target?() else { skippedWithoutTarget += 1; return } // no mapping: nothing happens
         tokens += 1

@@ -362,6 +362,59 @@ final class CaretFollowControllerTests: XCTestCase {
         XCTAssertTrue(clock.scheduled.isEmpty)
     }
 
+    /// A caret move re-arms after a manual scroll only when it lands on a
+    /// different source line or a different preview page than where the
+    /// scroll happened — not on a move that merely stays on the same line
+    /// (a different column, an arrow key, clicking another word on it).
+    /// Table-driven over `noteCaretMove()`, the entry point `ShellModel`
+    /// actually calls; a bare `note(.caretMove)` is unaffected (still never
+    /// re-arms, see `testAManualPreviewScrollStopsFollowingUntilTheNextEdit`).
+    func testCaretMoveReArmsOnlyAcrossALineOrPageBoundary() {
+        var line = 1
+        var page: Int? = 1
+        controller.currentLine = { line }
+        controller.target = { page.map { CaretFollow.Target(page: $0, rect: .zero) } }
+
+        let cases: [(fromLine: Int, fromPage: Int?, toLine: Int, toPage: Int?, reArms: Bool, why: String)] = [
+            (5, 1, 5, 1, false, "same line, same page: reading in place"),
+            (5, 1, 5, 2, true, "same line, different page"),
+            (5, 1, 6, 1, true, "different line, same page"),
+            (5, 1, 6, 2, true, "different line and page"),
+            (5, nil, 5, nil, false, "same line, still mapping to nothing"),
+            (5, nil, 5, 1, true, "same line, now maps to a page"),
+        ]
+
+        for c in cases {
+            controller.note(.edit) // start each case armed, with a clean slate
+            clock.advance(1)
+
+            line = c.fromLine; page = c.fromPage
+            controller.userDidScrollPreview() // wheel / trackpad / scroller drag
+            XCTAssertFalse(controller.isArmed, c.why)
+
+            line = c.toLine; page = c.toPage
+            let skippedBefore = controller.skippedDisarmed
+            controller.noteCaretMove()
+            XCTAssertEqual(controller.isArmed, c.reArms, c.why)
+            XCTAssertEqual(controller.skippedDisarmed, skippedBefore + (c.reArms ? 0 : 1), c.why)
+        }
+    }
+
+    /// ⌘⇧J is an instruction, not a hint: it scrolls at once even with
+    /// "Preview follows the caret" off, and even while a manual scroll has
+    /// disarmed following.
+    func testExplicitRevealScrollsAtOnceRegardlessOfThePreference() {
+        CaretFollow.enabledOverride = false
+        controller.userDidScrollPreview()
+        XCTAssertFalse(controller.isArmed)
+
+        controller.note(.explicit)
+        XCTAssertEqual(controller.follows, 1, "⌘⇧J scrolls even though the preference is off")
+        XCTAssertEqual(controller.lastReason, .explicit)
+        XCTAssertTrue(controller.isArmed, "⌘⇧J also re-arms, for when the preference comes back on")
+        XCTAssertTrue(clock.live.isEmpty, "immediate, not scheduled")
+    }
+
     func testThePreferenceIsOnByDefaultAndPersists() throws {
         CaretFollow.enabledOverride = nil
         let defaults = UserDefaults(suiteName: "CaretFollowTests.\(UUID().uuidString)")!
@@ -422,23 +475,39 @@ final class CaretFollowTargetTests: XCTestCase {
     }
 
     /// An edit on this model schedules and fires one follow end to end (zero
-    /// debounce), and the request carries the same target.
+    /// debounce), and the request carries the same target. Also end to end:
+    /// the two re-arm rules, on the real fixture text ("naïve" is one line
+    /// into section 1; "Résumé" is a different line *and*, after the
+    /// `\newpage`, a different page).
     func testAnEditOnTheModelProducesTheFollowRequestThePaneWillSee() throws {
         let model = ShellModel()
         model.previewV2 = false
         model.loadFixtures(request: nil, result: CaretSyncTests.resultURL)
-        model.caretUTF16 = (model.activeText as NSString).range(of: "naïve").location + 3
+        let naive = (model.activeText as NSString).range(of: "naïve").location
+        model.caretUTF16 = naive + 3
         let request = try XCTUnwrap(model.caretFollow.request, "moving the caret is enough to aim the preview")
         XCTAssertEqual(request.target, model.caretPreviewTarget())
         XCTAssertEqual(request.reason, .caretMove)
 
-        // A manual preview scroll stops it; the next edit starts it again.
+        // A manual preview scroll stops it; a caret move that stays on the
+        // same source line does not wake it back up.
         model.caretFollow.userDidScrollPreview()
+        model.caretUTF16 = naive + 1
+        XCTAssertEqual(model.caretFollow.request?.token, request.token, "same line: no new request while the reader is reading")
+
+        // Moving on to "Résumé" — a different line and page — re-arms on its
+        // own and produces a new .caretMove request, without any edit.
         model.caretUTF16 = (model.activeText as NSString).range(of: "Résumé").location
-        XCTAssertEqual(model.caretFollow.request?.token, request.token, "no new request while the reader is reading")
+        let moved = try XCTUnwrap(model.caretFollow.request)
+        XCTAssertGreaterThan(moved.token, request.token, "a different line/page re-arms on its own")
+        XCTAssertEqual(moved.reason, .caretMove)
+        XCTAssertEqual(moved.target, model.caretPreviewTarget())
+
+        // Scrolled away again; this time an edit is what brings it back.
+        model.caretFollow.userDidScrollPreview()
         model.updateActiveText(model.activeText + " more")
         let after = try XCTUnwrap(model.caretFollow.request)
-        XCTAssertGreaterThan(after.token, request.token)
+        XCTAssertGreaterThan(after.token, moved.token)
         XCTAssertEqual(after.reason, .edit)
     }
 

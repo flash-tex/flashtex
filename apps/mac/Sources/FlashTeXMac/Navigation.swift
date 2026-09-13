@@ -677,10 +677,11 @@ extension ShellModel {
 
     /// ⌘⇧J: select the full source span of the preview item under the caret
     /// (so the preview's caret highlight and page scroll follow) and say where
-    /// it landed. It is also the manual re-arm for automatic following
-    /// (`CaretFollow.swift`): asking for the caret explicitly scrolls to it
-    /// without waiting for the debounce, and resumes following if a manual
-    /// preview scroll had stopped it.
+    /// it landed. It is also the manual override for automatic following
+    /// (`CaretFollow.swift`): asking for the caret scrolls to it at once —
+    /// without waiting for the debounce, and without regard to the "Preview
+    /// follows the caret" preference, on or off — and resumes following (once
+    /// the preference is on) if a manual preview scroll had stopped it.
     func revealCaretInPreview() {
         caretFollow.note(.explicit)
         guard let result else {

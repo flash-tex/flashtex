@@ -907,7 +907,14 @@ Navigation (`Navigation.swift`, `Navigate` menu):
   null `source` are skipped and counted in the footer note.
 - **Reveal Caret in Preview** (⌘⇧J): selects the full source span of the preview
   item under the caret (`CaretSync`) so the preview highlight and page scroll
-  follow, and names the page and item.
+  follow, and names the page and item. It is also the manual override for
+  automatic following (`CaretFollow.swift`): it scrolls at once — no debounce,
+  and regardless of the "Preview follows the caret" preference, on or off —
+  and re-arms following (once the preference is on) after a manual preview
+  scroll had stopped it. Automatic following itself re-arms the same way on a
+  text edit, or on its own the moment the caret lands on a different source
+  line or a different preview page (a caret move that stays within the same
+  line does not re-arm it).
 
 Without a compile result the navigation commands are disabled and, if invoked,
 explain that nothing is loaded.

@@ -94,7 +94,7 @@ final class ShellModel {
     }
     struct CaptureRefund: Equatable { var proposal: RuntimeV1.CaptureProposal; var anchorBefore: InsertionAnchor }
     var caretUTF16: Int = 0 {
-        didSet { if caretUTF16 != oldValue { caretFollow.note(.caretMove) } } // CaretFollow.swift (only when already armed)
+        didSet { if caretUTF16 != oldValue { caretFollow.noteCaretMove() } } // CaretFollow.swift: re-arms across a line/page boundary
     }
     /// Debounced "the preview follows what you are editing" (CaretFollow.swift).
     /// Triggers: `updateActiveText` (edit), a result or v2 frame landing
@@ -487,6 +487,12 @@ final class ShellModel {
         // Caret following asks for the target only when a follow actually
         // fires, so this closure runs at most once per debounce interval.
         caretFollow.target = { [weak self] in self?.caretPreviewTarget() }
+        // Only read while disarmed (a manual scroll happened): the line the
+        // caret is on, so a move to another line re-arms following.
+        caretFollow.currentLine = { [weak self] in
+            guard let self, let byte = self.caretByte else { return nil }
+            return EditorDiagnostics.lineNumber(ofByte: byte, in: self.activeText)
+        }
         defer {
             // Demo/automation hooks: seed the editor from a .tex file and attach the
             // built compiler at launch when FLASHTEX_AUTOATTACH=1 (opt-in so tests

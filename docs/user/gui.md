@@ -306,10 +306,13 @@ FlashTeX compiles through a **producer** process that ships inside the app.
   only when that text is off screen or within a line of an edge; anything
   already in view is left exactly where it is, so the preview never twitches
   while you type. Scrolling the preview yourself (wheel, trackpad, scroller)
-  stops it following until your next edit, and ⌘⇧J always brings it back at
-  once. A caret that maps to nothing — a comment, the preamble, text the
-  compiler has not laid out yet — moves nothing. Short hops are animated;
-  long jumps, and "Reduce motion", are instant.
+  stops it following; it starts again on your next edit, or the moment the
+  caret lands on a different line or page (moving it around within the same
+  line does not wake it back up — that's still just reading). A caret that
+  maps to nothing — a comment, the preamble, text the compiler has not laid
+  out yet — moves nothing. Short hops are animated; long jumps, and "Reduce
+  motion", are instant. ⌘⇧J always scrolls to the caret at once, whether or
+  not the preference above is even on.
 - **Dark preview** (toolbar switch): inverts page and text colours on screen
   only; exports are unaffected. Its initial state follows the editor
   appearance preference.
