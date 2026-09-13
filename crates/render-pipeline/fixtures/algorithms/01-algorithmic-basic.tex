@@ -1,0 +1,20 @@
+\documentclass{article}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\begin{document}
+Text before the algorithm.
+
+\begin{algorithm}[h]
+\caption{Euclid's algorithm}\label{alg:euclid}
+\begin{algorithmic}[1]
+\STATE $x \gets a$
+\IF{$a > b$}
+\STATE swap the values
+\ELSE
+\RETURN $b$
+\ENDIF
+\end{algorithmic}
+\end{algorithm}
+
+After the algorithm.
+\end{document}

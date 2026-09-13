@@ -1,0 +1,24 @@
+\documentclass{article}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\begin{document}
+An ordinary figure float and an algorithm float compete for the same page,
+so the column builder sees two float types at once: the figure's type bit is
+1 and float.sty's new float gives the algorithm 4.
+
+\begin{figure}[t]
+\caption{An ordinary figure}
+\end{figure}
+
+\begin{algorithm}[t]
+\caption{And an algorithm beside it}
+\begin{algorithmic}[1]
+\State $x \gets 1$
+\State $y \gets x + 1$
+\end{algorithmic}
+\end{algorithm}
+
+Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut
+aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in
+voluptate velit esse cillum dolore eu fugiat nulla pariatur.
+\end{document}

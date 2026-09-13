@@ -40,7 +40,7 @@ use std::rc::Rc;
 use flashtex_compiler::Span;
 
 use crate::adapter::{Block as ABlock, Item as AItem, ParaStyle, TextStyle};
-use crate::display::{self, Diagnostic, ImageResource, Provenance, Tick};
+use crate::display::{self, Diagnostic, ImageResource, Paint, Provenance, Tick};
 use crate::floats::FloatKind;
 use crate::graphics::{GraphicBox, BP_PER_PT};
 use crate::pagebuild::{self, badness, BuiltPage, InsertArea, InsertState, Insertions, PageIns, PageParams, Placed, VItem, AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY};
@@ -96,6 +96,23 @@ pub enum FloatPart {
     HSkip { width: f64, order: u8 },
     /// An interword space on a line of boxes.
     Space,
+    /// `\hrule height<h>` across the box (float.sty's `ruled`/`boxed`
+    /// styles, `crate::algorithms`): a rule node, so no interline glue
+    /// follows it and `\prevdepth` is left at `ignore_depth` (TeX 1056).
+    Rule { height: f64, span: Span },
+    /// `\kern` of `pt` plus `em` of the body font. A kern, not glue:
+    /// `\lastskip` stays 0 and `\unskip` does not remove it.
+    Kern { pt: f64, em: f64 },
+    /// `\addvspace` of `em` of the body font (`\@endparenv`'s
+    /// `\addvspace\@topsepadd` after a pseudocode list).
+    AddVSpace { em: f64 },
+    /// A float.sty caption (`\floatc@ruled`, `\floatc@plain`): a paragraph
+    /// with no `\abovecaptionskip` of its own, appended with
+    /// `\unvbox\@floatcapt` so it takes no interline glue either; centred
+    /// when `center_if_fits` and it fits on one line.
+    StyleCaption { items: Vec<AItem>, center_if_fits: bool },
+    /// One pseudocode statement line.
+    AlgLine(Box<super::algorithms::AlgLine>),
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +163,8 @@ enum Elem {
     /// A text line: block/line in `blocks`, baseline from the box top.
     Line { block: usize, line: usize, baseline: f64, height: f64, depth: f64 },
     Image { x: f64, baseline: f64, gbox: GraphicBox, resource: Option<Rc<ImageResource>>, clip: Option<[f64; 4]>, provenance: Provenance, demo: bool },
+    /// An `\hrule` of the box's width: its top measured from the box top.
+    Rule { x: f64, top: f64, width: f64, height: f64, provenance: Provenance },
 }
 
 struct FloatBox {
@@ -204,6 +223,26 @@ impl VState {
         self.first_height.get_or_insert(h);
         self.last = Last::Box(d);
         b
+    }
+
+    /// A rule node (`\hrule height<h>`): no interline glue, and
+    /// `\prevdepth` is left at `ignore_depth` (TeX 1056). `\lastskip` is 0
+    /// after it, and `\unskip` cannot remove it.
+    fn rule(&mut self, height: f64) -> f64 {
+        let top = self.y;
+        self.y += height;
+        self.prev_depth = None;
+        self.first_height.get_or_insert(height);
+        self.last = Last::Box(0.0);
+        top
+    }
+
+    /// A kern node: like `vskip` for the box's height, but `\lastskip` is 0
+    /// after it and `\unskip` does not remove it.
+    fn kern(&mut self, pt: f64) {
+        self.y += pt;
+        self.first_height.get_or_insert(0.0);
+        self.last = Last::Box(0.0);
     }
 
     fn vskip(&mut self, pt: f64) {
@@ -326,7 +365,10 @@ fn set_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, parts: &[FloatPart],
     ctx.hsize_override = Some(hsize);
     ctx.sloppy = true;
     ctx.parbox = true;
-    let space = ctx.text_params(TextStyle::default(), s.body_size_pt).space;
+    let text_params = ctx.text_params(TextStyle::default(), s.body_size_pt);
+    let space = text_params.space;
+    // `\kern2pt` and `\topsep` of the pseudocode lists are in ems.
+    let quad = text_params.quad;
     // `\fontdimen22` of the math symbol font (Latin Modern: .25em).
     let axis = 0.25 * s.body_size_pt;
     let mut bx = VBox { v: VState::new(), elems: Vec::new() };
@@ -393,6 +435,72 @@ fn set_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, parts: &[FloatPart],
                     // `\@endparenv`: `\addvspace\@topsepadd`.
                     bx.v.addvspace(topsep + if env_vmode { partopsep } else { 0.0 });
                 }
+            }
+            FloatPart::Rule { height, span } => {
+                flush_line(ctx, blocks, &mut bx, &mut line, centered, bs, hsize, axis);
+                let top = bx.v.rule(*height);
+                bx.elems.push(Elem::Rule { x: 0.0, top, width: hsize, height: *height, provenance: Provenance::Source(ctx.source(*span)) });
+                bx.v.minipage = false;
+            }
+            FloatPart::Kern { pt, em } => {
+                flush_line(ctx, blocks, &mut bx, &mut line, centered, bs, hsize, axis);
+                bx.v.kern(pt + em * quad);
+            }
+            FloatPart::AddVSpace { em } => {
+                flush_line(ctx, blocks, &mut bx, &mut line, centered, bs, hsize, axis);
+                bx.v.addvspace(em * quad);
+            }
+            FloatPart::StyleCaption { items, center_if_fits } => {
+                flush_line(ctx, blocks, &mut bx, &mut line, centered, bs, hsize, axis);
+                // float.sty's `\@fs@capt` runs inside the float box with no
+                // `\abovecaptionskip`; `\float@caption` boxes it and
+                // `\unvbox`es it into place, so its first line takes no
+                // interline glue either.
+                let Some(mut block) = ctx.paragraph_block(items, false, true, false, ParaStyle::Plain, None) else {
+                    i += 1;
+                    continue;
+                };
+                let lines = &block.block.lines.lines;
+                if *center_if_fits && lines.len() == 1 && lines[0].natural_width <= hsize + 1e-6 {
+                    if let Some(b) = ctx.paragraph_block(items, false, true, false, ParaStyle::Center, None) {
+                        block = b;
+                    }
+                }
+                bx.v.prev_depth = None;
+                let bi = blocks.len();
+                for (li, ln) in block.block.lines.lines.iter().enumerate() {
+                    let b = bx.v.add_box(ln.height, ln.depth, normal_bs, ls, lsl);
+                    bx.elems.push(Elem::Line { block: bi, line: li, baseline: b, height: ln.height, depth: ln.depth });
+                }
+                bx.v.minipage = false;
+                blocks.push(block);
+            }
+            FloatPart::AlgLine(alg) => {
+                flush_line(ctx, blocks, &mut bx, &mut line, centered, bs, hsize, axis);
+                if alg.no_text {
+                    // algorithmicx's `\item[]\nointerlineskip` and an empty
+                    // line (algorithmicx.sty 194).
+                    bx.v.prev_depth = None;
+                    bx.v.place_box(0.0, 0.0);
+                    bx.v.minipage = false;
+                    i += 1;
+                    continue;
+                }
+                match ctx.algorithm_line_block(alg) {
+                    Some(block) => {
+                        let bi = blocks.len();
+                        for (li, ln) in block.block.lines.lines.iter().enumerate() {
+                            let b = bx.v.add_box(ln.height, ln.depth, bs, ls, lsl);
+                            bx.elems.push(Elem::Line { block: bi, line: li, baseline: b, height: ln.height, depth: ln.depth });
+                        }
+                        blocks.push(block);
+                    }
+                    // An `\item` without material still sets an empty line.
+                    None => {
+                        bx.v.add_box(0.0, 0.0, bs, ls, lsl);
+                    }
+                }
+                bx.v.minipage = false;
             }
             FloatPart::Caption { items } => {
                 flush_line(ctx, blocks, &mut bx, &mut line, centered, bs, hsize, axis);
@@ -538,6 +646,7 @@ fn flush_line(ctx: &Context, blocks: &mut [BuiltBlock], bx: &mut VBox, line: &mu
                                 Elem::Line { block, line, baseline: top + lb, height, depth }
                             }
                             Elem::Image { x: ix, baseline: ib, gbox, resource, clip, provenance, demo } => Elem::Image { x: x + ix, baseline: top + ib, gbox, resource, clip, provenance, demo },
+                            Elem::Rule { x: rx, top: rt, width, height, provenance } => Elem::Rule { x: x + rx, top: top + rt, width, height, provenance },
                         });
                     }
                     x += width;
@@ -880,6 +989,19 @@ impl Placer<'_> {
         for e in &b.elems {
             match e {
                 Elem::Line { block, line, baseline, height, depth } => lines.push(Placed { payload: (*block, *line), baseline: top + baseline, height: *height, depth: *depth }),
+                Elem::Rule { x, top: rule_top, width, height, provenance } => {
+                    self.images.push((
+                        page,
+                        display::Item::Rule(display::Rule {
+                            x: Tick::from_tex_pt(self.text_x + x),
+                            top: Tick::from_tex_pt(self.text_y + top + rule_top),
+                            width: Tick::from_tex_pt(*width),
+                            height: Tick::from_tex_pt(*height),
+                            paint: Paint::BLACK,
+                            provenance: provenance.clone(),
+                        }),
+                    ));
+                }
                 Elem::Image { x, baseline, gbox, resource, clip, provenance, demo } => {
                     let left = self.text_x + x;
                     let base = self.text_y + top + baseline;

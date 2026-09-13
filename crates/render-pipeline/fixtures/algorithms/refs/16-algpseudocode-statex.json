@@ -1,0 +1,122 @@
+{
+ "fixture": "16-algpseudocode-statex.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/nixos.org)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Unnumbered",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "lines.",
+    "x": 207.9576,
+    "y_top": 134.765
+   },
+   {
+    "text": "Algorithm",
+    "x": 133.768,
+    "y_top": 156.428
+   },
+   {
+    "text": "1",
+    "x": 189.162,
+    "y_top": 156.428
+   },
+   {
+    "text": "Statex",
+    "x": 198.2081,
+    "y_top": 156.428
+   },
+   {
+    "text": "1:",
+    "x": 139.137,
+    "y_top": 169.667
+   },
+   {
+    "text": "first",
+    "x": 150.7048,
+    "y_top": 169.667
+   },
+   {
+    "text": "a",
+    "x": 150.705,
+    "y_top": 181.622
+   },
+   {
+    "text": "line",
+    "x": 159.0038,
+    "y_top": 181.622
+   },
+   {
+    "text": "without",
+    "x": 177.8292,
+    "y_top": 181.622
+   },
+   {
+    "text": "a",
+    "x": 214.91,
+    "y_top": 181.622
+   },
+   {
+    "text": "number",
+    "x": 223.2088,
+    "y_top": 181.622
+   },
+   {
+    "text": "2:",
+    "x": 139.137,
+    "y_top": 193.578
+   },
+   {
+    "text": "second",
+    "x": 150.7048,
+    "y_top": 193.578
+   },
+   {
+    "text": "3:",
+    "x": 139.137,
+    "y_top": 217.488
+   },
+   {
+    "text": "third",
+    "x": 150.7048,
+    "y_top": 217.488
+   },
+   {
+    "text": "End.",
+    "x": 148.712,
+    "y_top": 245.782
+   },
+   {
+    "text": "1",
+    "x": 303.133,
+    "y_top": 702.635
+   }
+  ]
+ ],
+ "rules": [
+  [
+   [
+    133.768,
+    146.7205,
+    343.711,
+    0.797
+   ],
+   [
+    133.768,
+    160.358,
+    343.711,
+    0.398
+   ],
+   [
+    133.768,
+    221.473,
+    343.711,
+    0.398
+   ]
+  ]
+ ]
+}

@@ -10,6 +10,7 @@
 //! pins and limitations.
 
 pub mod adapter;
+pub mod algorithms;
 pub mod cff;
 pub mod display;
 pub mod floats;
@@ -120,9 +121,18 @@ pub fn render_cached(
     // FT-063: float environments are blanked (same byte length) before the
     // compiler parses the document and are laid out by `typeset::floatpage`.
     let float_envs: Vec<Vec<floats::FloatEnv>> = documents.iter().enumerate().map(|(i, d)| floats::scan(d.text, flashtex_compiler::DocumentId(i))).collect();
-    let any_floats = float_envs.iter().any(|e| !e.is_empty());
-    let masked: Vec<String> = documents.iter().zip(&float_envs).map(|(d, e)| if e.is_empty() { String::new() } else { floats::mask(d.text, e) }).collect();
-    let texts: Vec<&str> = documents.iter().zip(&float_envs).zip(&masked).map(|((d, e), m)| if e.is_empty() { d.text } else { m.as_str() }).collect();
+    // Pseudocode floats and bare `algorithmic` environments are blanked the
+    // same way (`crate::algorithms`).
+    let entry_index = documents.iter().position(|d| d.path == entry_path).unwrap_or(0);
+    let pseudocode = algorithms::scan(documents, entry_index, &float_envs);
+    let any_floats = float_envs.iter().any(|e| !e.is_empty()) || !pseudocode.is_empty();
+    let blank = |i: usize| float_envs[i].is_empty() && pseudocode.found[i].is_empty();
+    let masked: Vec<String> = documents
+        .iter()
+        .enumerate()
+        .map(|(i, d)| if blank(i) { String::new() } else { algorithms::mask(&floats::mask(d.text, &float_envs[i]), &pseudocode.found[i]) })
+        .collect();
+    let texts: Vec<&str> = documents.iter().enumerate().zip(&masked).map(|((i, d), m)| if blank(i) { d.text } else { m.as_str() }).collect();
     // `multicols` environments are laid out by `typeset::multicol`: their
     // markup is blanked before the compiler parses (offsets unchanged).
     let multicol_scans: Vec<typeset::multicol::Scan> = texts.iter().map(|t| typeset::multicol::scan(t)).collect();
@@ -131,9 +141,9 @@ pub fn render_cached(
     let parse_docs: Vec<SourceDocument<'_>> = documents.iter().zip(&texts).map(|(d, t)| SourceDocument { path: d.path, text: t }).collect();
     let parsed = flashtex_compiler::parser::parse_project(&parse_docs, entry_path);
     let (float_numbers, float_label_values) = floats::number(&float_envs);
+    let (pseudocode_numbers, pseudocode_labels) = algorithms::number(&pseudocode);
     let mut image_cache = floats::ImageCache::default();
     let paths: Vec<&str> = documents.iter().map(|d| d.path).collect();
-    let entry_index = documents.iter().position(|d| d.path == entry_path).unwrap_or(0);
     // `\graphicspath` and graphics' `draft`/`final` options, read from the
     // entry document; the search path serves floats and running text.
     let entry_source = documents.get(entry_index).map_or("", |d| d.text);
@@ -151,6 +161,7 @@ pub fn render_cached(
     let in_picture = |s: &flashtex_compiler::Span| picture_ranges.get(s.document.0).is_some_and(|r| r.iter().any(|(a, b)| s.start >= *a && s.start < *b));
     let mut labels = adapter::Labels::from_parsed(&parsed);
     labels.values.extend(float_label_values);
+    labels.values.extend(pseudocode_labels);
     // Contents lists: entry pages come from the previous pass (`toc`).
     let entry_text = texts.get(entry_index).copied().unwrap_or("");
     let has_lists = toc::has_lists(entry_text);
@@ -173,7 +184,7 @@ pub fn render_cached(
     let mut passes = 0;
     loop {
         passes += 1;
-        let doc = adapter::adapt_cached(&texts, entry_index, &parsed, options, &labels, cache);
+        let mut doc = adapter::adapt_cached(&texts, entry_index, &parsed, options, &labels, cache);
         let mut diagnostics: Vec<display::Diagnostic> = parsed
             .diagnostics
             .iter()
@@ -207,6 +218,13 @@ pub fn render_cached(
             }
         }
         diagnostics.extend(float_diagnostics);
+        if !pseudocode.is_empty() {
+            let (specs, bare, pseudocode_diagnostics) = algorithms::prepare(&pseudocode, &pseudocode_numbers, documents, entry_index, &texts, &doc.style, options, &labels);
+            float_specs.extend(specs);
+            float_specs.sort_by_key(|s| (s.span.document.0, s.span.start));
+            algorithms::insert_bare(&mut doc, &bare);
+            diagnostics.extend(pseudocode_diagnostics);
+        }
         // The context reads the original sources: outside float environments
         // they equal the masked texts, and a float body's pictures are read
         // from its own bytes.

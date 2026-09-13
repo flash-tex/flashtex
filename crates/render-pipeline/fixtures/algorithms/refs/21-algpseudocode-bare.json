@@ -1,0 +1,153 @@
+{
+ "fixture": "21-algpseudocode-bare.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/nixos.org)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Pseudocode",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "in",
+    "x": 203.1476,
+    "y_top": 134.765
+   },
+   {
+    "text": "the",
+    "x": 214.768,
+    "y_top": 134.765
+   },
+   {
+    "text": "text.",
+    "x": 231.9326,
+    "y_top": 134.765
+   },
+   {
+    "text": "1:",
+    "x": 139.137,
+    "y_top": 148.713
+   },
+   {
+    "text": "procedure",
+    "x": 150.7048,
+    "y_top": 148.713
+   },
+   {
+    "text": "Count(n)",
+    "x": 204.196,
+    "y_top": 148.713
+   },
+   {
+    "text": "2:",
+    "x": 139.137,
+    "y_top": 160.668
+   },
+   {
+    "text": "for",
+    "x": 165.6487,
+    "y_top": 160.668
+   },
+   {
+    "text": "i",
+    "x": 182.9139,
+    "y_top": 160.668
+   },
+   {
+    "text": "1;",
+    "x": 201.8478,
+    "y_top": 160.668
+   },
+   {
+    "text": "n",
+    "x": 211.2605,
+    "y_top": 160.668
+   },
+   {
+    "text": "do",
+    "x": 220.5576,
+    "y_top": 160.668
+   },
+   {
+    "text": "3:",
+    "x": 139.137,
+    "y_top": 172.623
+   },
+   {
+    "text": "c",
+    "x": 180.5926,
+    "y_top": 172.623
+   },
+   {
+    "text": "c",
+    "x": 200.4062,
+    "y_top": 172.623
+   },
+   {
+    "text": "+",
+    "x": 206.9297,
+    "y_top": 172.623
+   },
+   {
+    "text": "1",
+    "x": 216.8903,
+    "y_top": 172.623
+   },
+   {
+    "text": "4:",
+    "x": 139.137,
+    "y_top": 184.578
+   },
+   {
+    "text": "end",
+    "x": 165.6487,
+    "y_top": 184.578
+   },
+   {
+    "text": "for",
+    "x": 186.9477,
+    "y_top": 184.578
+   },
+   {
+    "text": "5:",
+    "x": 139.137,
+    "y_top": 196.533
+   },
+   {
+    "text": "end",
+    "x": 150.7048,
+    "y_top": 196.533
+   },
+   {
+    "text": "procedure",
+    "x": 172.0038,
+    "y_top": 196.533
+   },
+   {
+    "text": "A",
+    "x": 148.712,
+    "y_top": 210.481
+   },
+   {
+    "text": "new",
+    "x": 159.5015,
+    "y_top": 210.481
+   },
+   {
+    "text": "paragraph.",
+    "x": 179.9866,
+    "y_top": 210.481
+   },
+   {
+    "text": "1",
+    "x": 303.133,
+    "y_top": 702.635
+   }
+  ]
+ ],
+ "rules": [
+  []
+ ]
+}

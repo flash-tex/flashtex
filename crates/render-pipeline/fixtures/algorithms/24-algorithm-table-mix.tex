@@ -1,0 +1,27 @@
+\documentclass{article}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\begin{document}
+A bottom table and a top algorithm on one page: two float types, opposite
+areas, and the text-float separation on both sides of the text.
+
+\begin{algorithm}[t]
+\caption{Top of the page}
+\begin{algorithmic}
+\REQUIRE $n \geq 0$
+\STATE $s \gets 0$
+\FOR{$i = 1$ to $n$}
+\STATE $s \gets s + i$
+\ENDFOR
+\ENSURE $s$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{table}[b]
+\caption{Bottom of the page}
+\end{table}
+
+Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut
+aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in
+voluptate velit esse cillum dolore eu fugiat nulla pariatur.
+\end{document}

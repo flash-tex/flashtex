@@ -1,0 +1,23 @@
+\documentclass{article}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\begin{document}
+Three levels.
+
+\begin{algorithm}[h]
+\caption{Nesting}
+\begin{algorithmic}[1]
+\WHILE{\TRUE}
+\FOR{$i \gets 1$ \TO $n$}
+\IF{$a_i > m$}
+\STATE $m \gets a_i$
+\ELSIF{$a_i = m$}
+\STATE count it
+\ENDIF
+\ENDFOR
+\ENDWHILE
+\end{algorithmic}
+\end{algorithm}
+
+End.
+\end{document}

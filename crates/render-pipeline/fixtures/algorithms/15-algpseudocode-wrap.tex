@@ -1,0 +1,19 @@
+\documentclass{article}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\begin{document}
+Long statements.
+
+\begin{algorithm}[h]
+\caption{Wrapping}
+\begin{algorithmic}[1]
+\For{each vertex}
+\If{the vertex has not been visited yet}
+\State mark the vertex as visited and push every one of its neighbours onto the stack so that they are explored later in depth-first order
+\EndIf
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+End.
+\end{document}
