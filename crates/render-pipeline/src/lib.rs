@@ -19,6 +19,7 @@ pub mod graphics;
 pub mod ids;
 pub mod incremental;
 pub mod mathalpha;
+pub mod memsize;
 pub mod mathfont;
 pub mod mathgrid;
 pub mod mathtex;
