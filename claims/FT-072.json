@@ -1,11 +1,11 @@
 {
   "actor": "mac-claude-a",
   "branch": null,
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/217",
   "machine": "mac-m1max-a",
   "note": "preview follows caret",
   "started_utc": "2026-09-13T21:50:20Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "FT-072",
-  "updated_utc": "2026-09-13T21:50:20Z"
+  "updated_utc": "2026-09-13T22:59:37Z"
 }
