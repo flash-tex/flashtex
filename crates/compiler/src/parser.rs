@@ -22,6 +22,7 @@ use crate::theorems::{self, TheoremDef, TheoremStyle};
 use crate::{DocumentId, Span};
 use flashtex_tex_text_encoding::encoding::Encoding;
 
+mod algorithmic;
 mod colors;
 mod lists;
 mod tabular;
@@ -1014,6 +1015,7 @@ pub fn parse_project(documents: &[SourceDocument<'_>], entry_path: &str) -> Pars
         include_stack: vec![entry],
         counters: crate::xref::Counters::article(),
         subequations: Vec::new(),
+        algorithm_counter: 0,
         footnote_counter: 0,
         current_counter: None,
         seen_labels: HashMap::new(),
@@ -1148,6 +1150,9 @@ struct P<'a> {
     /// The `\theequation` in force outside each open `subequations`
     /// environment, restored at its `\end` (amsmath's group).
     subequations: Vec<Vec<crate::xref::Piece>>,
+    /// The `algorithm` float's counter (algorithm.sty's `\newfloat` on
+    /// float.sty); it is not one of `xref::Counters`' class counters.
+    algorithm_counter: u32,
     /// LaTeX's `footnote` counter; article never resets it.
     footnote_counter: u32,
     current_counter: Option<String>,
@@ -1540,6 +1545,16 @@ impl P<'_> {
             "graphicspath" => {
                 let _ = self.required_group(name, span);
             }
+            // Pseudocode package definitions, read from the source bytes by
+            // `crate::algorithmic::setup`; their tokens are consumed here.
+            "algnewcommand" | "algrenewcommand" => self.algorithm_definition(name, span),
+            "algsetup" => {
+                let _ = self.required_group(name, span);
+            }
+            "floatname" => {
+                let _ = self.required_group(name, span);
+                let _ = self.required_group(name, span);
+            }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
@@ -1676,7 +1691,10 @@ impl P<'_> {
             }
             "caption" => {
                 let (tokens, _) = self.required_group(name, span);
-                if self.env_stack.last().map(|(name, _)| name.as_str()) != Some("figure") {
+                let float = self.env_stack.last().map(|(name, _)| name.clone());
+                if matches!(float.as_deref(), Some("algorithm" | "algorithm*")) {
+                    self.algorithm_caption(span, tokens, blocks, para);
+                } else if float.as_deref() != Some("figure") {
                     self.diags.push(Diagnostic::error(
                         "\\caption is only supported inside a figure environment",
                         Some(span),
@@ -2720,10 +2738,14 @@ impl P<'_> {
                 self.verbatim_environment(span, argument_span, &environment, blocks, para);
                 return;
             }
+            // `algorithmic`/`algpseudocode` (see `crate::algorithmic`).
+            if environment == "algorithmic" && self.in_body && self.algorithmic_environment(span, blocks, para) {
+                return;
+            }
             self.env_alignments.push(self.declared_alignment);
             if environment == "document" && self.has_document {
                 self.in_body = true;
-            } else if environment == "figure" && self.in_body {
+            } else if matches!(environment.as_str(), "figure" | "algorithm" | "algorithm*") && self.in_body {
                 self.flush_paragraph(blocks, para);
             } else if let (Some(style), true) = (paragraph_style(&environment), self.in_body) {
                 self.flush_paragraph(blocks, para);
@@ -2925,7 +2947,7 @@ impl P<'_> {
         } else if matches!(environment.as_str(), "multicols" | "multicols*") && self.in_body {
             // `\endmulticols` starts with `\par`.
             self.flush_paragraph(blocks, para);
-        } else if environment == "figure" || self.theorems.contains_key(&environment) {
+        } else if matches!(environment.as_str(), "figure" | "algorithm" | "algorithm*") || self.theorems.contains_key(&environment) {
             self.flush_paragraph(blocks, para);
         } else if environment == "proof" {
             para.push(Inline::HFill { span });
@@ -5346,6 +5368,13 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // array.sty's preamble builder, column types and row strut are
         // implemented (parser/tabular.rs, crate::tabular); no options.
         "array" => options.is_empty(),
+        // Pseudocode (crate::algorithmic): every algorithm.sty option is
+        // modelled (style, counter reset, or the float name through
+        // `\DeclareOption*`); algorithmic's and algpseudocode's end/noend.
+        "algorithm" => true,
+        "algorithmic" => options.iter().all(|option| *option == "noend"),
+        "algpseudocode" => options.iter().all(|option| crate::algorithmic::algpseudocode_option(option)),
+        "algorithmicx" => options.is_empty(),
         // siunitx v3 numbers, units, quantities, lists, ranges and angles
         // (crate::siunitx); its options are \sisetup keys, and a key that
         // is not modelled gets its own diagnostic there.

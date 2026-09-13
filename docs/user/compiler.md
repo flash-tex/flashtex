@@ -275,7 +275,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 241 text-mode and 537 math-mode command entries, 48 environments and 10 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 245 text-mode and 537 math-mode command entries, 51 environments and 14 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -379,7 +379,7 @@ Canonical sources:
 | `\numberwithin` | `[\style]{counter}{parent}` | amsmath: counter reset by parent and printed \theparent.\style{counter} (equation, figure, table; theorem counters within section) |
 | `\counterwithin` | `{counter}{parent}` | counter reset by parent and printed \theparent.\arabic{counter}; starred form keeps the printed form |
 | `\counterwithout` | `{counter}{parent}` | undoes \counterwithin; starred form keeps the printed form |
-| `\caption` | `{...}` | numbered "Figure N:" caption inside figure |
+| `\caption` | `{...}` | numbered "Figure N:" caption inside figure; "Algorithm N" inside algorithm |
 | `\item` | `[label]` | entry of an itemize, enumerate or description list |
 | `\includegraphics` | `*[keys]{file}` | image box in running text (graphicx keys as written) |
 | `\scalebox` | `{x}[y]{...}` | graphics.sty scaled box of the content |
@@ -526,6 +526,10 @@ Canonical sources:
 | `\textbraceright` |  | text symbol \textbraceright: OT1 }, T1 } (tex-text-encoding; unavailable is a LaTeX error) |
 | `\newtheorem` | `{env}[counter]{name}` | defines a numbered theorem-like environment (amsthm) |
 | `\theoremstyle` | `{style}` | selects the amsthm style for following \newtheorem |
+| `\algnewcommand` | `{\name}[n]{body}` | algorithmicx definition: keyword texts (\algorithmicrequire ...), \algorithmicindent, \alglinenumber and \item[...] label commands |
+| `\algrenewcommand` | `{\name}[n]{body}` | algorithmicx redefinition of a keyword text, \algorithmicindent or \alglinenumber |
+| `\algsetup` | `{key=value}` | algorithmic indent, linenosize and linenodelimiter |
+| `\floatname` | `{float}{name}` | the caption name of the algorithm float |
 | `\\` |  | line break; an optional [length] is consumed |
 | `\,` |  | text kern .16667em (\thinspace) |
 | `\!` |  | text kern -.16667em (\negthinspace) |
@@ -746,6 +750,9 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `multline*` | text | multi-line display |
 | `subequations` | text | amsmath: displays inside number as the parent number plus a, b, ...; a \label right after \begin gets the parent number |
 | `figure` | text | numbered captions; no floating |
+| `algorithm` | text | algorithm.sty float: "Algorithm N" captions (plain, ruled, boxed); no floating in this layout |
+| `algorithm*` | text | two-column algorithm float |
+| `algorithmic` | text | algorithmic or algpseudocode statements: nested blocks, bold keywords, line numbers, comments, procedures |
 | `center` | text | centred paragraphs |
 | `flushleft` | text | left-aligned paragraphs |
 | `flushright` | text | right-aligned paragraphs |
@@ -793,6 +800,10 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `geometry` | `letterpaper, margin=1in` | matches the fixed US Letter page with 1in margins |
 | `siunitx` | `any \sisetup keys` | v3 \num, \unit, \qty, lists, ranges, \ang, \sisetup and \DeclareSIUnit; unmodelled keys are diagnosed |
 | `multicol` | `` | multicols and multicols* with preface, \columnbreak, \raggedcolumns (columns set by the render pipeline) |
+| `algorithm` | `plain, ruled, boxed, section` | the algorithm float: style, counter reset and float name options |
+| `algorithmic` | `noend` | \STATE, \IF, \FOR, \WHILE, \REPEAT, \REQUIRE, \COMMENT |
+| `algpseudocode` | `noend` | \State, \If, \For, \While, \Procedure, \Function, \Call, \Comment |
+| `algorithmicx` | `` | the layout algpseudocode builds on |
 
 Any other package, or these packages with other options, is recorded and reported as recognised but not implemented.
 <!-- END GENERATED supported-latex -->

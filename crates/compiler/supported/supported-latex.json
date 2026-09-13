@@ -68,7 +68,7 @@
     {"name": "numberwithin", "mode": "text", "origin": "text_dispatch", "arguments": "[\\style]{counter}{parent}", "description": "amsmath: counter reset by parent and printed \\theparent.\\style{counter} (equation, figure, table; theorem counters within section)", "renders": true},
     {"name": "counterwithin", "mode": "text", "origin": "text_dispatch", "arguments": "{counter}{parent}", "description": "counter reset by parent and printed \\theparent.\\arabic{counter}; starred form keeps the printed form", "renders": true},
     {"name": "counterwithout", "mode": "text", "origin": "text_dispatch", "arguments": "{counter}{parent}", "description": "undoes \\counterwithin; starred form keeps the printed form", "renders": true},
-    {"name": "caption", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "numbered \"Figure N:\" caption inside figure", "renders": true},
+    {"name": "caption", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "numbered \"Figure N:\" caption inside figure; \"Algorithm N\" inside algorithm", "renders": true},
     {"name": "item", "mode": "text", "origin": "text_dispatch", "arguments": "[label]", "description": "entry of an itemize, enumerate or description list", "renders": true},
     {"name": "includegraphics", "mode": "text", "origin": "text_dispatch", "arguments": "*[keys]{file}", "description": "image box in running text (graphicx keys as written)", "renders": true},
     {"name": "scalebox", "mode": "text", "origin": "text_dispatch", "arguments": "{x}[y]{...}", "description": "graphics.sty scaled box of the content", "renders": true},
@@ -215,6 +215,10 @@
     {"name": "textbraceright", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textbraceright: OT1 }, T1 } (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "newtheorem", "mode": "text", "origin": "text_dispatch", "arguments": "{env}[counter]{name}", "description": "defines a numbered theorem-like environment (amsthm)", "renders": true},
     {"name": "theoremstyle", "mode": "text", "origin": "text_dispatch", "arguments": "{style}", "description": "selects the amsthm style for following \\newtheorem", "renders": true},
+    {"name": "algnewcommand", "mode": "text", "origin": "text_dispatch", "arguments": "{\\name}[n]{body}", "description": "algorithmicx definition: keyword texts (\\algorithmicrequire ...), \\algorithmicindent, \\alglinenumber and \\item[...] label commands", "renders": true},
+    {"name": "algrenewcommand", "mode": "text", "origin": "text_dispatch", "arguments": "{\\name}[n]{body}", "description": "algorithmicx redefinition of a keyword text, \\algorithmicindent or \\alglinenumber", "renders": true},
+    {"name": "algsetup", "mode": "text", "origin": "text_dispatch", "arguments": "{key=value}", "description": "algorithmic indent, linenosize and linenodelimiter", "renders": true},
+    {"name": "floatname", "mode": "text", "origin": "text_dispatch", "arguments": "{float}{name}", "description": "the caption name of the algorithm float", "renders": true},
     {"name": "long", "mode": "text", "origin": "expansion", "arguments": "", "description": "prefix: the following definition accepts \\par in arguments", "renders": true},
     {"name": "protected", "mode": "text", "origin": "expansion", "arguments": "", "description": "e-TeX prefix: the following macro is not expanded inside \\edef-like contexts", "renders": true},
     {"name": "providecommand", "mode": "text", "origin": "expansion", "arguments": "{\\name}[n][default]{body}", "description": "defines the macro only when \\name is undefined", "renders": true},
@@ -800,6 +804,9 @@
     {"name": "multline*", "mode": "text", "description": "multi-line display"},
     {"name": "subequations", "mode": "text", "description": "amsmath: displays inside number as the parent number plus a, b, ...; a \\label right after \\begin gets the parent number"},
     {"name": "figure", "mode": "text", "description": "numbered captions; no floating"},
+    {"name": "algorithm", "mode": "text", "description": "algorithm.sty float: \"Algorithm N\" captions (plain, ruled, boxed); no floating in this layout"},
+    {"name": "algorithm*", "mode": "text", "description": "two-column algorithm float"},
+    {"name": "algorithmic", "mode": "text", "description": "algorithmic or algpseudocode statements: nested blocks, bold keywords, line numbers, comments, procedures"},
     {"name": "center", "mode": "text", "description": "centred paragraphs"},
     {"name": "flushleft", "mode": "text", "description": "left-aligned paragraphs"},
     {"name": "flushright", "mode": "text", "description": "right-aligned paragraphs"},
@@ -843,7 +850,11 @@
     {"name": "enumitem", "silent_options": "shortlabels", "description": "list keys (label, start, resume, seps, margins) parsed as options; \\setlist"},
     {"name": "geometry", "silent_options": "letterpaper, margin=1in", "description": "matches the fixed US Letter page with 1in margins"},
     {"name": "siunitx", "silent_options": "any \\sisetup keys", "description": "v3 \\num, \\unit, \\qty, lists, ranges, \\ang, \\sisetup and \\DeclareSIUnit; unmodelled keys are diagnosed"},
-    {"name": "multicol", "silent_options": "", "description": "multicols and multicols* with preface, \\columnbreak, \\raggedcolumns (columns set by the render pipeline)"}
+    {"name": "multicol", "silent_options": "", "description": "multicols and multicols* with preface, \\columnbreak, \\raggedcolumns (columns set by the render pipeline)"},
+    {"name": "algorithm", "silent_options": "plain, ruled, boxed, section", "description": "the algorithm float: style, counter reset and float name options"},
+    {"name": "algorithmic", "silent_options": "noend", "description": "\\STATE, \\IF, \\FOR, \\WHILE, \\REPEAT, \\REQUIRE, \\COMMENT"},
+    {"name": "algpseudocode", "silent_options": "noend", "description": "\\State, \\If, \\For, \\While, \\Procedure, \\Function, \\Call, \\Comment"},
+    {"name": "algorithmicx", "silent_options": "", "description": "the layout algpseudocode builds on"}
   ],
   "coverage": {
     "sources": [
