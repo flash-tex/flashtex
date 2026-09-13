@@ -195,7 +195,7 @@ final class PanelAccessibilityTests: XCTestCase {
         let window = try await host(EditorPreferencesView(preferences: prefs, showConversion: true), title: "Editor Preferences", size: NSSize(width: 480, height: 900))
         let controls = assertControlsTakeKeyboardFocus(in: window, panel: "Settings+Conversion", atLeast: 10)
         let kinds = controls.map { String(describing: type(of: $0)) }
-        XCTAssertEqual(kinds.filter { $0.contains("Switch") }.count, 4, kinds.description)
+        XCTAssertEqual(kinds.filter { $0.contains("Switch") }.count, 7, kinds.description)
         XCTAssertGreaterThanOrEqual(kinds.filter { $0.contains("PopupButton") }.count, 2, "provider + model pickers: \(kinds)")
         window.close()
     }
@@ -206,13 +206,17 @@ final class PanelAccessibilityTests: XCTestCase {
         let model = ShellModel()
         let editor = try await hostEditor(model)
         let window = try await host(EditorPreferencesView(preferences: prefs), title: "Editor Preferences", size: NSSize(width: 480, height: 640))
-        // Pop-up, slider, size stepper, wrap switch, tab-width stepper, segmented control, two typing switches.
+        // Pop-up, slider, size stepper, wrap switch, tab-width stepper, segmented
+        // control, then the Typing switches: auto-close, completion list,
+        // spelling, vim keybindings and the two error-lens rows (ErrorLens.swift).
+        // The count said 4 before this branch: the error-lens rows landed
+        // without updating it, and the vim switch is the seventh.
         let controls = assertControlsTakeKeyboardFocus(in: window, panel: "Settings", atLeast: 8)
         let kinds = controls.map { String(describing: type(of: $0)) }
         XCTAssertTrue(kinds.contains { $0.contains("PopupButton") || $0.contains("PopUpButton") }, kinds.description)
         XCTAssertTrue(kinds.contains { $0.contains("Slider") }, kinds.description)
         XCTAssertEqual(kinds.filter { $0.contains("Stepper") }.count, 2, kinds.description)
-        XCTAssertEqual(kinds.filter { $0.contains("Switch") }.count, 4, kinds.description)
+        XCTAssertEqual(kinds.filter { $0.contains("Switch") }.count, 7, kinds.description)
         XCTAssertTrue(kinds.contains { $0.contains("SegmentedControl") }, kinds.description)
         // Reading order agrees with the table: pop-up first, the typing switches last.
         XCTAssertTrue(kinds.first?.contains("Popup") == true || kinds.first?.contains("PopUp") == true, kinds.description)

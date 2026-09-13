@@ -69,6 +69,12 @@ struct SourceEditorView: NSViewRepresentable {
     /// The user's own definition of a command name for the hover peek
     /// (`ShellModel.definitionSummary`; EditorNavigation.swift).
     var userDefinition: (String) -> String? = { _ in nil }
+    /// Vim mode (VimMode.swift), inert unless `VimModeFeature.isEnabled`.
+    /// `onVimStatus` feeds the mode indicator; `onVimRequest` carries the
+    /// commands only the model can serve (`:w`, `:q`, and `%` falling through
+    /// to Go to Matching). Neither is called while the feature is off.
+    var onVimStatus: (VimModeStatus) -> Void = { _ in }
+    var onVimRequest: (VimRequest) -> Void = { _ in }
 
     /// A navigation selection that would move the caret backwards is deferred
     /// while the last user edit is younger than this.
@@ -692,6 +698,11 @@ struct SourceEditorView: NSViewRepresentable {
         private(set) var currentLine: Int?
         /// Definition targets routed to the owner (evidence for tests).
         private(set) var definitionRequests: [EditorIntelligence.DefinitionTarget] = []
+        /// Vim mode's state machine (VimMode.swift); never touched while the
+        /// feature is off — `handleVimKey` returns before reaching it.
+        let vim = VimMachine()
+        /// Last status pushed to `parent.onVimStatus` (only changes are sent).
+        var lastVimStatus = VimModeStatus.off
         /// The String instance last set on, or read from, the text view.
         var lastKnownText: String
         /// > 0 while this coordinator itself edits the text view (string reset,

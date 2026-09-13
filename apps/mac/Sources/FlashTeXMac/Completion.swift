@@ -2176,6 +2176,16 @@ final class CompletingTextView: NSTextView {
     /// offset of the closer, once, right after `insertSnippet` places the caret.
     var onCloserInserted: ((Int) -> Void)?
 
+    /// Vim's block cursor in normal and visual mode; the standard thin caret
+    /// in insert mode and whenever the feature is off (VimModeEditor.swift).
+    override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        if let co = delegate as? SourceEditorView.Coordinator, let block = co.vimBlockCaretRect(rect, in: self) {
+            super.drawInsertionPoint(in: block, color: color.withAlphaComponent(0.4), turnedOn: flag)
+            return
+        }
+        super.drawInsertionPoint(in: rect, color: color, turnedOn: flag)
+    }
+
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command), !event.modifierFlags.contains(.shift), event.clickCount == 1,
            let handler = commandClickHandler, !hasMarkedText() {
@@ -2374,6 +2384,10 @@ final class CompletingTextView: NSTextView {
 
     override func keyDown(with event: NSEvent) {
         if hasMarkedText() { super.keyDown(with: event); return } // IME composition owns the keys (mac-editor-accessibility)
+        // Vim mode (VimMode.swift / VimModeEditor.swift). Returns false — so
+        // nothing below changes — whenever the preference is off, in insert
+        // mode for anything but Escape, and for every ⌘ or ⌥ shortcut.
+        if let co = delegate as? SourceEditorView.Coordinator, co.handleVimKey(event, in: self) { return }
         if event.modifierFlags.contains(.control), event.charactersIgnoringModifiers == " " {
             requestCompletion()
             return

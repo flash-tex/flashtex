@@ -33,6 +33,8 @@ import SwiftUI
 /// | `autoCloseBraces`       | nothing in AppKit; the editor's typing handler reads the flag            |
 /// | `completionPopup`       | nothing in AppKit; `CompletingTextView.requestCompletion` reads the flag |
 /// | `spellCheck`            | nothing here; `LaTeXSpellChecker` observes the flag                      |
+/// | `vimMode`               | nothing in AppKit; `VimModeFeature.isEnabled` reads the flag, and the    |
+/// |                         | editor's one `keyDown` hook (VimMode.swift) returns at once while off    |
 ///
 /// Reading a property inside `withObservationTracking` (or a SwiftUI body)
 /// registers for its changes; `generation` changes with every property.
@@ -86,6 +88,7 @@ final class EditorPreferences {
         var autoCloseBraces: Bool
         var completionPopup: Bool
         var spellCheck: Bool
+        var vimMode: Bool
     }
 
     // MARK: defaults and ranges
@@ -95,7 +98,7 @@ final class EditorPreferences {
 
     static let defaultSnapshot = Snapshot(
         fontFamily: nil, fontSize: 13, lineWrapping: true, tabWidth: 4, indentStyle: .spaces,
-        appearance: .system, autoCloseBraces: true, completionPopup: true, spellCheck: true)
+        appearance: .system, autoCloseBraces: true, completionPopup: true, spellCheck: true, vimMode: false)
 
     // MARK: storage keys (versioned)
 
@@ -107,7 +110,7 @@ final class EditorPreferences {
     nonisolated static let schemaVersionKey = "FlashTeX.EditorPreferences.schemaVersion"
 
     enum Key: String, CaseIterable {
-        case fontFamily, fontSize, lineWrapping, tabWidth, indentStyle, appearance, autoCloseBraces, completionPopup, spellCheck
+        case fontFamily, fontSize, lineWrapping, tabWidth, indentStyle, appearance, autoCloseBraces, completionPopup, spellCheck, vimMode
         var storageKey: String { "FlashTeX.EditorPreferences.v\(EditorPreferences.schemaVersion).\(rawValue)" }
     }
 
@@ -183,11 +186,19 @@ final class EditorPreferences {
         set { update(\.spellCheck, \.spellCheck, newValue, key: .spellCheck) }
     }
 
+    /// Vim keybinding emulation in the source editor (VimMode.swift). Off by
+    /// default: while it is off the editor's single key hook returns before
+    /// touching anything and every keystroke takes the path it always did.
+    var vimMode: Bool {
+        get { access(keyPath: \.vimMode); return storage.vimMode }
+        set { update(\.vimMode, \.vimMode, newValue, key: .vimMode) }
+    }
+
     /// All properties at once (registers for every property's changes).
     var snapshot: Snapshot {
         Snapshot(fontFamily: fontFamily, fontSize: fontSize, lineWrapping: lineWrapping, tabWidth: tabWidth,
                  indentStyle: indentStyle, appearance: appearance, autoCloseBraces: autoCloseBraces,
-                 completionPopup: completionPopup, spellCheck: spellCheck)
+                 completionPopup: completionPopup, spellCheck: spellCheck, vimMode: vimMode)
     }
 
     // MARK: derived values
@@ -299,6 +310,10 @@ final class EditorPreferences {
             s.spellCheck = value
         } else { repairs.append(.spellCheck) }
 
+        if let value = defaults.object(forKey: Key.vimMode.storageKey) as? Bool {
+            s.vimMode = value
+        } else { repairs.append(.vimMode) }
+
         withMutation(keyPath: \.generation) {
             storage = s
             generation += 1
@@ -312,7 +327,7 @@ final class EditorPreferences {
         let d = Self.defaultSnapshot
         fontFamily = d.fontFamily; fontSize = d.fontSize; lineWrapping = d.lineWrapping; tabWidth = d.tabWidth
         indentStyle = d.indentStyle; appearance = d.appearance; autoCloseBraces = d.autoCloseBraces
-        completionPopup = d.completionPopup; spellCheck = d.spellCheck
+        completionPopup = d.completionPopup; spellCheck = d.spellCheck; vimMode = d.vimMode
     }
 
     /// Versioned migration. Absent stamp: nothing was ever stored (or only
@@ -351,6 +366,7 @@ final class EditorPreferences {
         case .autoCloseBraces: defaults.set(storage.autoCloseBraces, forKey: k)
         case .completionPopup: defaults.set(storage.completionPopup, forKey: k)
         case .spellCheck: defaults.set(storage.spellCheck, forKey: k)
+        case .vimMode: defaults.set(storage.vimMode, forKey: k)
         }
     }
 
@@ -527,6 +543,8 @@ struct EditorPreferencesView: View {
                     .accessibilityHint("When off, the list never opens; Control-Space and Escape do nothing.")
                 Toggle("Check spelling", isOn: $prefs.spellCheck)
                     .accessibilityHint("Underlines misspelled words in prose; commands, math, comments and labels are skipped.")
+                Toggle("Vim keybindings", isOn: $prefs.vimMode)
+                    .accessibilityHint("Off by default. On, the editor starts in Normal mode: motions and operators act on the buffer, and i, a, o or c start typing again. Escape returns to Normal mode; in Normal mode Escape no longer opens the completion list.")
                 ErrorLensPreferenceRows() // inline diagnostic text at line ends (ErrorLens.swift)
             }
             if showConversion { ConversionPreferencesSection() } // provider picker, model, API key (Keychain) (ConversionPreferencesView.swift)

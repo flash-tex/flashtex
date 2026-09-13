@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import FlashTeXProtocol
 import FlashTeXAccessibility
@@ -164,6 +165,9 @@ private struct WorkspaceToolbar: ToolbarContent {
 
 private struct EditorPane: View {
     @Environment(ShellModel.self) var model
+    /// Vim mode's indicator state (VimModeEditor.swift). Stays `.off` — and
+    /// the strip stays out of the layout — unless the preference is on.
+    @State private var vimStatus = VimModeStatus.off
 
     var body: some View {
         @Bindable var model = model
@@ -197,8 +201,23 @@ private struct EditorPane: View {
                     case .file(let path, _): Task { await model.project.openDocument(path, role: .opened) }
                     }
                 },
-                userDefinition: { model.definitionSummary(forCommand: $0) } // hover peek of \newcommand bodies (EditorNavigation.swift)
+                userDefinition: { model.definitionSummary(forCommand: $0) }, // hover peek of \newcommand bodies (EditorNavigation.swift)
+                onVimStatus: { vimStatus = $0 }, // VimMode.swift; always `.off` while the preference is off
+                onVimRequest: { request in
+                    switch request {
+                    case .save: model.saveTexInteractive() // the very action ⌘S runs
+                    case .saveAndClose: model.saveTexInteractive(); closeActiveDocument(model, discardingEdits: false)
+                    case .close: closeActiveDocument(model, discardingEdits: false)
+                    case .discardAndClose: closeActiveDocument(model, discardingEdits: true)
+                    case .goToMatching: model.goToMatching() // ⌘⇧D, for \begin/\end and \label/\ref
+                    case .undo, .redo, .openFind, .findNext, .findPrevious: break // served inside the editor itself
+                    }
+                }
             )
+            // Reading the gate here (rather than `vimStatus.enabled`) registers
+            // the preference for observation, so the strip appears the moment
+            // the switch is turned on instead of at the next keystroke.
+            if VimModeFeature.isEnabled { Divider(); VimModeIndicator(status: vimStatus) }
             CaptureBar()
             // The bridge line is lifecycle telemetry: shown once a bridge is
             // attached or a capture exists, not as a permanent orange
@@ -206,6 +225,20 @@ private struct EditorPane: View {
             if model.bridgeStatus != "no bridge attached" || !model.bridgeCaptures.isEmpty || model.bridgeDestination != nil { BridgeBar() }
         }
     }
+}
+
+/// `:q` / `:q!`. The app has no "close this document" command: a secondary
+/// document is detached from the session the way its tab's ✕ does, and the
+/// entry document falls back to the window's own close, which prompts to save
+/// exactly as ⌘W does. Nothing here can discard the entry document's edits.
+@MainActor
+private func closeActiveDocument(_ model: ShellModel, discardingEdits: Bool) {
+    let path = model.activePath
+    guard path != model.project.entryPath else {
+        NSApp.sendAction(#selector(NSWindow.performClose(_:)), to: nil, from: nil)
+        return
+    }
+    Task { await model.project.detachDocument(path, discardingEdits: discardingEdits) }
 }
 
 private struct CaptureBar: View {
