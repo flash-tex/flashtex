@@ -4396,7 +4396,20 @@ pub fn class_override_of(text: &str, at: usize) -> Option<ml::AtomClass> {
         "mathclose" => ml::AtomClass::Close,
         "mathpunct" => ml::AtomClass::Punct,
         "bot" => ml::AtomClass::Ord,
-        "bigtriangleup" => ml::AtomClass::Bin,
+        "bigtriangleup" | "varbigtriangleup" => ml::AtomClass::Bin,
+        // The LaTeX kernel's second `\DeclareMathSymbol`s for a slot another
+        // command already names (`fontmath.ltx` 398-399, 465-483): `\vert`
+        // and `\backslash` are `\mid`'s and `\setminus`'s cmsy slots as
+        // ordinaries, `\ldotp`/`\cdotp` are `.` and `\cdot` as punctuation,
+        // and mathtools' `\lvert` family are the two bars as fences.
+        "vert" | "backslash" => ml::AtomClass::Ord,
+        "ldotp" | "cdotp" => ml::AtomClass::Punct,
+        "lvert" | "lVert" => ml::AtomClass::Open,
+        "rvert" | "rVert" => ml::AtomClass::Close,
+        // `fontmath.ltx` 263: `\smallint` is cmsy "73, a large operator.
+        "smallint" => ml::AtomClass::Op,
+        // amsopn.sty 98-103 wraps `\varinjlim`/`\varprojlim` in `\mathop`.
+        "varinjlim" | "varprojlim" => ml::AtomClass::Op,
         // amsfonts' dashed arrows: a `\mathrel` group of msam pieces.
         "dashrightarrow" | "dasharrow" | "dashleftarrow" => ml::AtomClass::Rel,
         _ => return None,
@@ -4608,7 +4621,16 @@ pub fn convert_math_classed(
                         Some(Some(c)) => match class(&a.span) {
                             // `\bot` (Ord, same glyph as `\perp`) and
                             // `\bigtriangleup` (Bin, same glyph as `\triangle`).
-                            Some(forced) => vec![ml::Atom::new(forced, ml::Nucleus::Symbol(c))],
+                            // The character still goes through `symbol_atoms`,
+                            // which substitutes the sentinels for the symbols
+                            // that share a code point with another command
+                            // (`\smallint` with `\int`): a forced class and a
+                            // forced advance are independent, and `\smallint`
+                            // needs both.
+                            Some(forced) => symbol_atoms(c, a.width_em)
+                                .into_iter()
+                                .map(|atom| ml::Atom { class: forced, ..atom })
+                                .collect(),
                             None => symbol_atoms(c, a.width_em),
                         },
                         Some(None) => vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Empty)],
@@ -4659,7 +4681,14 @@ pub fn convert_math_classed(
                             Some(X::LeftRight) => ['\u{2190}', '-', '\u{2192}'],
                             _ => ['-', '-', '\u{2192}'],
                         };
-                        ml::Atom::over_arrow(pieces, body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt))
+                        // `\varinjlim`/`\varprojlim` (amsopn.sty 98-103) are
+                        // this construction inside `\mathop`, so the atom
+                        // takes the forced class when the command carries one.
+                        let arrow = ml::Atom::over_arrow(pieces, body, arrow_frame.is_under(), 1.3 * ams_ex(sink.body_size_pt));
+                        match class(&a.span) {
+                            Some(forced) => ml::Atom { class: forced, ..arrow },
+                            None => arrow,
+                        }
                     }
                 }]
             }
@@ -5209,26 +5238,34 @@ fn math_glue_em(list: &flashtex_compiler::math::MathList) -> f64 {
 /// The unicode-math combining mark for a compiler accent command, which is
 /// what Latin Modern Math's `MATH` table carries accent attachment for.
 fn accent_char(a: flashtex_compiler::math::Accent) -> char {
-    use flashtex_compiler::math::Accent as A;
     // The character math-layout's `cm` table slots each `\mathaccent` at
     // (`fontmath.ltx` 410-421): the `operators` (roman) spacing accents
     // "5E `\hat`, "7E `\tilde`, "16 `\bar`, "5F `\dot`, "7F `\ddot`, "14
     // `\check`, "15 `\breve`, "13 `\acute`, "12 `\grave`; `\vec` letters
     // "7E; `\widehat`/`\widetilde` the `largesymbols` chains from "62/"65,
     // which math-layout keys by the combining marks.
-    match a {
-        A::Hat => '\u{02C6}',
-        A::WideHat => '\u{0302}',
-        A::Bar => '\u{00AF}',
-        A::Vec => '\u{20D7}',
-        A::Tilde => '\u{02DC}',
-        A::WideTilde => '\u{0303}',
-        A::Dot => '\u{02D9}',
-        A::Ddot => '\u{00A8}',
-        A::Check => '\u{02C7}',
-        A::Breve => '\u{02D8}',
-        A::Acute => '\u{00B4}',
-        A::Grave => '`',
+    //
+    // Keyed by `Accent::command()` rather than by the variant, because this
+    // crate builds against `vendor/compiler`: a mark the pinned compiler does
+    // not yet have (`\mathring`, `fontmath.ltx` 422, cmr "17) cannot be named
+    // as a variant here until the pin is refreshed. An accent this table does
+    // not know becomes U+FFFD, which math-layout reports as
+    // `Limitation::MissingAccent` rather than drawing something else.
+    match a.command() {
+        "hat" => '\u{02C6}',
+        "widehat" => '\u{0302}',
+        "bar" => '\u{00AF}',
+        "vec" => '\u{20D7}',
+        "tilde" => '\u{02DC}',
+        "widetilde" => '\u{0303}',
+        "dot" => '\u{02D9}',
+        "ddot" => '\u{00A8}',
+        "check" => '\u{02C7}',
+        "breve" => '\u{02D8}',
+        "acute" => '\u{00B4}',
+        "grave" => '`',
+        "mathring" => '\u{02DA}',
+        _ => '\u{FFFD}',
     }
 }
 
@@ -5346,6 +5383,12 @@ fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
         // (`TexMathMetrics`/`MathFonts`), which paint both from cmsy10's
         // `\emptyset` slot but only force this one's advance and outline.
         '\u{2205}' if width_em.is_some() => vec![ml::Atom::symbol(crate::mathfont::VARNOTHING_SENTINEL)],
+        // `\smallint`: cmsy "73, a different glyph from `\int`'s cmex "52,
+        // which the compiler spells U+222B with cmsy's own advance forced
+        // (`math::SMALLINT_CMSY_EM`). Same sentinel shape as `\varnothing`.
+        '\u{222B}' if width_em.is_some() => {
+            vec![ml::Atom::op(crate::mathfont::SMALLINT_SENTINEL)]
+        }
         _ => vec![ml::Atom::symbol(c)],
     }
 }

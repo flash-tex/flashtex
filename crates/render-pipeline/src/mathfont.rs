@@ -117,10 +117,38 @@ pub fn is_script_capital(ch: char) -> bool {
 /// `typeset::symbol_atoms` introduces it; nothing else compares against it.
 pub const VARNOTHING_SENTINEL: char = '\u{F8FF}';
 
+/// Sentinel the pipeline substitutes for `\smallint`'s compiler symbol
+/// (U+222B, identical to `\int`'s) when `MathAtom.width_em` is `Some`, the
+/// same shape [`VARNOTHING_SENTINEL`] uses.
+///
+/// `fontmath.ltx` 263 declares `\smallint` as cmsy `"73`, a text-size
+/// integral that never grows, where `\int` is cmex `"52` with a size chain.
+/// Neither Latin Modern Math nor New Computer Modern Math has a second
+/// integral code point, so the sentinel keeps the two apart for the metrics
+/// providers (which box this one from cmsy) while [`math_char`] maps it back
+/// to U+222B for glyph lookup and text extraction.
+pub const SMALLINT_SENTINEL: char = '\u{F8FE}';
+
+/// `\Arrowvert` (`fontmath.ltx` 463), the compiler's
+/// `math::ARROWVERT_DOUBLE`: cmsy `"6B` grown through cmex's extension
+/// recipe `"3D` rather than `\Vert`'s delimiter recipe `"0D`. Unicode names
+/// no character for it, so it travels as a private-use code point and is
+/// painted from U+2016's outline. Kept in step with
+/// `flashtex_math_layout::cm::ARROWVERT_DOUBLE`, which keys the delimiter
+/// pair by the same value.
+pub const ARROWVERT_DOUBLE: char = '\u{F8FD}';
+
 /// Whether `ch` is drawn from the secondary face ([`BB_FONT`]) when it is
 /// loaded: `\mathbb` and `\mathcal` letters, and [`VARNOTHING_SENTINEL`].
 pub fn is_secondary_face(ch: char) -> bool {
-    is_double_struck(ch) || is_script_capital(ch) || ch == VARNOTHING_SENTINEL || ams_of(ch).is_some()
+    is_double_struck(ch)
+        || is_script_capital(ch)
+        || ch == VARNOTHING_SENTINEL
+        // `\lmoustache`/`\rmoustache`: New Computer Modern Math carries
+        // U+23B0/U+23B1, Latin Modern Math does not (`compiler`'s
+        // `newcm_math::ADVANCES` binds them for the same reason).
+        || matches!(ch, '\u{23B0}' | '\u{23B1}')
+        || ams_of(ch).is_some()
 }
 
 /// First code point of the plane-15 private-use range [`ams_sentinel`] maps
@@ -330,6 +358,12 @@ impl MathFonts {
             '\u{3F1}' => '\u{1D71A}',  // rho variant
             '\u{3D6}' => '\u{1D71B}',  // pi variant
             VARNOTHING_SENTINEL => '\u{2205}',
+            SMALLINT_SENTINEL => '\u{222B}',
+            ARROWVERT_DOUBLE => '\u{2016}',
+            // `\lmoustache`/`\rmoustache` (`fontmath.ltx` 457-460): Latin
+            // Modern Math has no glyph at either code point, so the outline
+            // comes from the secondary face, which does.
+            '\u{23B0}' | '\u{23B1}' => ch,
             _ => match ams_of(ch) {
                 Some(ams) => ams.text.chars().next().unwrap_or(ch),
                 None => ch,

@@ -218,6 +218,23 @@ impl TexMathMetrics {
                 }
             }
         }
+        // `\lmoustache`/`\rmoustache` (`fontmath.ltx` 457-460): the box is
+        // cmex10's brace section "7A/"7B (and the extensible "40/"41 when it
+        // grows), but Latin Modern Math has no glyph at U+23B0/U+23B1 at all.
+        // New Computer Modern Math does, and it is already the secondary face
+        // `\mathbb`/`\mathcal`/`\varnothing` are drawn from; the compiler
+        // binds the same two characters to it (`newcm_math::ADVANCES`).
+        if matches!(ch, '\u{23B0}' | '\u{23B1}') {
+            if let Some(bb) = self.otf.bb_face() {
+                if let Some(gid) = bb.face().glyph_id(ch) {
+                    self.resources
+                        .borrow_mut()
+                        .entry(format!("{} moustaches", lm_name(&name)))
+                        .or_insert((bb.name.clone(), false));
+                    return Some((bb.clone(), gid.0));
+                }
+            }
+        }
         // amssymb/amsfonts symbols: the table's text from New Computer Modern
         // Math (whose symbol designs track msam/msbm) when it carries it,
         // else Latin Modern Math; an empty text (`\dabar@`) paints nothing
@@ -456,6 +473,12 @@ impl TexMathMetrics {
                     0x27 => '\u{1D711}',
                     _ => c,
                 }
+            } else if c == crate::mathfont::ARROWVERT_DOUBLE {
+                // `\Arrowvert`: no character of its own anywhere, drawn
+                // from the double bar it shares with `\Vert` (cmsy "6B).
+                '\u{2016}'
+            } else if c == crate::mathfont::SMALLINT_SENTINEL {
+                '\u{222B}'
             } else if name.starts_with("cmsy") && code == 0x00 {
                 // cmsy slot 0 is the minus sign: the compiler spells it as
                 // the ASCII hyphen, whose Latin Modern Math glyph is the
@@ -702,6 +725,10 @@ fn extra_symbol_slot(ch: char) -> Option<u8> {
         // `symbol_family_glyph`); the outline is painted from New Computer
         // Modern Math via `TexMathMetrics::otf_glyph`'s cmsy branch.
         crate::mathfont::VARNOTHING_SENTINEL => Some(0x3B),
+        // `\smallint` (`fontmath.ltx` 263): cmsy "73, the text-size integral
+        // that never grows, as against `\int`'s cmex "52 chain. Its box and
+        // advance are cmsy's; the outline is Latin Modern Math's U+222B.
+        crate::mathfont::SMALLINT_SENTINEL => Some(0x73),
         _ => script_capital_slot(ch),
     }
 }

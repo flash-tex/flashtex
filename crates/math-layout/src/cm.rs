@@ -419,6 +419,27 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
         '\u{2216}' => (Symbol, 0x6E),
         '\u{2223}' | '|' => (Symbol, 0x6A),
         '\u{2225}' | '\u{2016}' => (Symbol, 0x6B),
+        // `fontmath.ltx` 471-482: the four arrow delimiters' small variants.
+        // `\uparrow`/`\downarrow` are cmsy "22/"23, already above.
+        '\u{21D1}' => (Symbol, 0x2A),
+        '\u{21D3}' => (Symbol, 0x2B),
+        '\u{2195}' => (Symbol, 0x6C),
+        '\u{21D5}' => (Symbol, 0x6D),
+        // `fontmath.ltx` 461-464: `\arrowvert`/`\Arrowvert` set the same two
+        // cmsy bars as `\vert`/`\Vert` (see `delimiter_slot` for why they are
+        // separate characters).
+        '\u{23D0}' => (Symbol, 0x6A),
+        ARROWVERT_DOUBLE => (Symbol, 0x6B),
+        // `fontmath.ltx` 268-269, 398-399.
+        '\u{25B3}' => (Symbol, 0x34),
+        '\u{25BD}' => (Symbol, 0x35),
+        // `fontmath.ltx` 501-505 and 457-460: `largesymbols` delimiters with
+        // no cmsy small variant, so their text-size glyph is the cmex slot.
+        '\u{27EE}' => (Extension, 0x3A),
+        '\u{27EF}' => (Extension, 0x3B),
+        '\u{23AA}' => (Extension, 0x3E),
+        '\u{23B0}' => (Extension, 0x7A),
+        '\u{23B1}' => (Extension, 0x7B),
         '{' => (Symbol, 0x66),
         '}' => (Symbol, 0x67),
         '\u{27E8}' => (Symbol, 0x68),
@@ -489,6 +510,8 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
         '~' | '\u{02DC}' => (Roman, 0x7E),
         '\u{00AF}' => (Roman, 0x16),
         '\u{02D9}' => (Roman, 0x5F),
+        // `fontmath.ltx` 422 `\mathring`: cmr's ring accent "17.
+        '\u{02DA}' => (Roman, 0x17),
         '\u{00A8}' => (Roman, 0x7F),
         '\u{00B4}' => (Roman, 0x13),
         '`' => (Roman, 0x12),
@@ -524,10 +547,41 @@ pub fn delimiter_slot(ch: char) -> Option<((Family, u8), u8)> {
         '\\' | '\u{2216}' => ((Symbol, 0x6E), 0x0F),
         '\u{2191}' => ((Symbol, 0x22), 0x78),
         '\u{2193}' => ((Symbol, 0x23), 0x79),
+        '\u{21D1}' => ((Symbol, 0x2A), 0x7E),
+        '\u{21D3}' => ((Symbol, 0x2B), 0x7F),
         '\u{2195}' => ((Symbol, 0x6C), 0x3F),
+        '\u{21D5}' => ((Symbol, 0x6D), 0x77),
+        // `fontmath.ltx` 501-505. `\lgroup`, `\rgroup` and `\bracevert`
+        // declare the *same* `largesymbols` slot as both variants: cmex has
+        // no discrete sizes for them, only the extensible recipe that slot
+        // already carries, so the chain walk below stops immediately and the
+        // one glyph serves as the small variant.
+        '\u{27EE}' => ((Extension, 0x3A), 0x3A),
+        '\u{27EF}' => ((Extension, 0x3B), 0x3B),
+        '\u{23AA}' => ((Extension, 0x3E), 0x3E),
+        // `fontmath.ltx` 457-460: the moustaches' small variant is the brace
+        // section cmex "7A/"7B, their large one the extensible cmex "40/"41.
+        '\u{23B0}' => ((Extension, 0x7A), 0x40),
+        '\u{23B1}' => ((Extension, 0x7B), 0x41),
+        // `fontmath.ltx` 461-464: the same cmsy bars as `\vert`/`\Vert`, but
+        // grown through cmex's *extension* recipes "3C/"3D instead of the
+        // delimiter recipes "0C/"0D, so they cannot share those rows.
+        '\u{23D0}' => ((Symbol, 0x6A), 0x3C),
+        ARROWVERT_DOUBLE => ((Symbol, 0x6B), 0x3D),
         _ => return None,
     })
 }
+
+/// `\Arrowvert` — `fontmath.ltx` 463's "double arrow without arrowheads".
+///
+/// It sets cmsy `"6B`, the same double bar as `\Vert`, but grows through
+/// cmex's extension recipe `"3D` (a bare repeated piece) rather than `\Vert`'s
+/// delimiter recipe `"0D`, so the two cannot share U+2016. Unicode has no
+/// character for the double vertical *extension* (U+23D0 covers the single
+/// one, which is `\arrowvert`), so this crate names it with a BMP private-use
+/// code point, the convention render-pipeline already uses for `\varnothing`.
+/// Consumers paint U+2016's outline for it.
+pub const ARROWVERT_DOUBLE: char = '\u{F8FD}';
 
 impl MathFontMetrics for CmMathMetrics {
     fn params(&self, size: SizeClass) -> MathParams {

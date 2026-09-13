@@ -568,16 +568,29 @@ pub fn default_class(ch: char) -> (AtomClass, Limits) {
     let class = match ch {
         '+' | '-' | '\u{2212}' | '\u{22C5}' | '\u{00D7}' | '\u{00F7}' | '\u{00B1}' | '\u{2213}'
         | '\u{2217}' | '\u{2218}' | '\u{2229}' | '\u{222A}' | '\u{2228}' | '\u{2227}'
-        | '\u{2295}' | '\u{2297}' | '\u{2216}' => Bin,
+        | '\u{2295}' | '\u{2297}' | '\u{2216}'
+        // `fontmath.ltx` 267/269 `\bigtriangledown`/`\varbigtriangledown`
+        // (symbols "35). `\bigtriangleup` shares `\triangle`'s U+25B3, which
+        // stays Ord here and is forced to Bin at the command.
+        | '\u{25BD}' => Bin,
         '=' | '<' | '>' | ':' | '\u{2264}' | '\u{2265}' | '\u{2261}' | '\u{2248}' | '\u{2260}'
         | '\u{223C}' | '\u{2282}' | '\u{2283}' | '\u{2286}' | '\u{2287}' | '\u{2208}'
         | '\u{220B}' | '\u{2190}' | '\u{2192}' | '\u{2194}' | '\u{21D0}' | '\u{21D2}'
         | '\u{21D4}' | '\u{2225}' | '\u{22A5}' | '\u{2223}'
         // amsmath/plain long arrows (\Longrightarrow etc.) are \mathrel.
         | '\u{27F5}' | '\u{27F6}' | '\u{27F7}' | '\u{27F8}' | '\u{27F9}' | '\u{27FA}'
-        | '\u{27FC}' => Rel,
-        '(' | '[' | '{' | '\u{27E8}' | '\u{2308}' | '\u{230A}' => Open,
-        ')' | ']' | '}' | '\u{27E9}' | '\u{2309}' | '\u{230B}' => Close,
+        | '\u{27FC}'
+        // `fontmath.ltx` 471-482 declares all six arrow delimiters
+        // `\mathrel`; only the horizontal ones were listed here.
+        | '\u{2191}' | '\u{2193}' | '\u{2195}' | '\u{21D1}' | '\u{21D3}' | '\u{21D5}'
+        // `fontmath.ltx` 377 `\hookleftarrow` (`\leftarrow\joinrel\rhook`).
+        | '\u{21A9}' => Rel,
+        '(' | '[' | '{' | '\u{27E8}' | '\u{2308}' | '\u{230A}'
+        // `fontmath.ltx` 457/501 `\lmoustache`/`\lgroup`.
+        | '\u{23B0}' | '\u{27EE}' => Open,
+        ')' | ']' | '}' | '\u{27E9}' | '\u{2309}' | '\u{230B}'
+        // `fontmath.ltx` 459/503 `\rmoustache`/`\rgroup`.
+        | '\u{23B1}' | '\u{27EF}' => Close,
         ',' | ';' => Punct,
         '\u{2211}' | '\u{220F}' | '\u{2210}' | '\u{222B}' | '\u{222E}' | '\u{22C2}'
         | '\u{22C3}' | '\u{2A01}' | '\u{2A02}' | '\u{2A00}' | '\u{22C1}' | '\u{22C0}' => Op,
