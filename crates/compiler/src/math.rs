@@ -237,6 +237,9 @@ pub enum Accent {
     Grave,
     WideHat,
     WideTilde,
+    /// `\mathring` (`fontmath.ltx` 422): `\DeclareMathAccent{\mathring}
+    /// {\mathalpha}{operators}{"17}`, cmr's ring accent.
+    Mathring,
 }
 
 impl Accent {
@@ -254,6 +257,7 @@ impl Accent {
             Accent::Grave => "grave",
             Accent::WideHat => "widehat",
             Accent::WideTilde => "widetilde",
+            Accent::Mathring => "mathring",
         }
     }
 
@@ -282,7 +286,11 @@ impl Accent {
             Accent::Ddot => Some('\u{A8}'),  // diaeresis
             Accent::Acute => Some('\u{B4}'), // acute accent
             Accent::Grave => Some('\u{60}'), // grave accent
-            Accent::Check | Accent::Breve => None,
+            // `\mathring` is cmr's ring accent "17; WinAnsi has no ring
+            // above (its 0xB0 is the degree sign, a different design) and
+            // the Symbol face has none either, so it is reported like
+            // `\check`/`\breve` rather than faked with the degree sign.
+            Accent::Check | Accent::Breve | Accent::Mathring => None,
         }
     }
 }
@@ -802,12 +810,192 @@ impl MathParser<'_> {
             },
             // `\bigtriangleup` renders `\triangle`'s exact glyph (U+25B3) but
             // is Bin where `\triangle` is Ord; same fix as `\bot`/`\perp`.
-            "bigtriangleup" => MathAtom {
+            // `\varbigtriangleup` is `fontmath.ltx` 268's second name for it.
+            "bigtriangleup" | "varbigtriangleup" => MathAtom {
                 class_override: Some(AtomClass::Bin),
                 width_em: None,
                 ams_symbol: None,
                 ..symbol("△".into(), span)
             },
+            // Kernel delimiters that set a glyph another command already
+            // carries, in a different class — the `\bot`/`\perp` shape again.
+            // `fontmath.ltx` 469 `\vert` and 172 `|` are cmsy "6A, `\mid`'s
+            // slot (Rel); 483 `\backslash` is cmsy "6E, `\setminus`'s (Bin);
+            // 465 `\Vert` is cmsy "6B, `\parallel`'s (Rel), but U+2016 is a
+            // character of its own with its own growth chain, so it keeps the
+            // `COMMAND_GLYPHS` row and only needs no override.
+            "vert" => MathAtom {
+                class_override: Some(AtomClass::Ord),
+                width_em: None,
+                ams_symbol: None,
+                ..symbol("∣".into(), span)
+            },
+            "backslash" => MathAtom {
+                class_override: Some(AtomClass::Ord),
+                width_em: None,
+                ams_symbol: None,
+                ..symbol("∖".into(), span)
+            },
+            // mathtools' `\lvert`/`\rvert`/`\lVert`/`\rVert` are
+            // `\mathopen`/`\mathclose` wrappers on those same two bars, so
+            // the glyph is `\mid`'s and `\parallel`'s and only the class
+            // differs. They were previously spelled `∣` and `∣∣`, which made
+            // the single bar a relation and the double one two atoms.
+            "lvert" | "rvert" | "lVert" | "rVert" => MathAtom {
+                class_override: Some(if name.starts_with('l') {
+                    AtomClass::Open
+                } else {
+                    AtomClass::Close
+                }),
+                width_em: None,
+                ams_symbol: None,
+                ..symbol(
+                    if name.ends_with("Vert") { "‖" } else { "∣" }.into(),
+                    span,
+                )
+            },
+            // `fontmath.ltx` 398-399: the punctuation forms of `.` (cmmi "3A,
+            // the same slot a math-mode period sets) and `\cdot` (cmsy "01).
+            // `\ldots`/`\cdots` are `\mathinner{\ldotp\ldotp\ldotp}`.
+            "ldotp" | "cdotp" => MathAtom {
+                class_override: Some(AtomClass::Punct),
+                width_em: None,
+                ams_symbol: None,
+                ..symbol(if name == "ldotp" { "." } else { "⋅" }.into(), span)
+            },
+            // `fontmath.ltx` 263: `\smallint` is cmsy "73, a *different*
+            // glyph from `\int`'s cmex "52 — a text-size integral that never
+            // grows. The base-14 and Latin Modern faces carry only the one
+            // integral outline, so the atom keeps U+222B and forces cmsy's
+            // own advance, exactly as `\varnothing` does for msbm's.
+            "smallint" => MathAtom {
+                class_override: Some(AtomClass::Op),
+                width_em: Some(SMALLINT_CMSY_EM),
+                ams_symbol: None,
+                ..symbol("∫".into(), span)
+            },
+            // `fontmath.ltx` 423: `\DeclareMathRadical{\sqrtsign}`, the
+            // radical `\sqrt` is built on (`\def\sqrt{\@ifnextchar[\@sqrt
+            // \sqrtsign}`), so with no index it *is* `\sqrt`.
+            "sqrtsign" => MathAtom {
+                nucleus: Nucleus::Radical(self.required_group("sqrtsign", span)),
+                span,
+                superscript: None,
+                subscript: None,
+                class_override: None,
+                width_em: None,
+                ams_symbol: None,
+            },
+            // `fontmath.ltx` 334: `\DeclareMathSymbol{\not}{\mathrel}
+            // {symbols}{"36}` — a zero-width relation the *following* atom is
+            // overprinted with, which is how `\neq` is `\not=`. Emitting the
+            // negation slash as its own atom is exactly what the pipeline
+            // already does for `\neq`/`\notin` (`mathtex::NOT_SLASH`), and it
+            // generalises to any relation, which a precomposed table cannot.
+            "not" => symbol(NOT_SLASH.into(), span),
+            // amsopn.sty 72/83: `\injlim`/`\projlim` are `\operatorname*` of
+            // `inj\,lim` / `proj\,lim` — an upright operator name whose
+            // scripts are limits, with a thin space inside.
+            "injlim" | "projlim" => MathAtom {
+                nucleus: Nucleus::Operator {
+                    body: operator_body(MathList {
+                        atoms: vec![
+                            text_atom(
+                                if name == "injlim" { "inj" } else { "proj" }.into(),
+                                span,
+                            ),
+                            space(3.0 / 18.0, span),
+                            text_atom("lim".into(), span),
+                        ],
+                    }),
+                    limits: true,
+                },
+                span,
+                superscript: None,
+                subscript: None,
+                class_override: None,
+                width_em: None,
+                ams_symbol: None,
+            },
+            // amsopn.sty 98-103: `\varinjlim`/`\varprojlim` are `\mathop` of
+            // an upright `lim` with `\rightarrowfill@`/`\leftarrowfill@`
+            // beneath — the same construction amsmath's `\underrightarrow`
+            // and `\underleftarrow` use, over an operator-name body.
+            "varinjlim" | "varprojlim" => MathAtom {
+                nucleus: Nucleus::Framed {
+                    body: MathList {
+                        atoms: vec![MathAtom {
+                            nucleus: Nucleus::Operator {
+                                body: operator_body(MathList {
+                                    atoms: vec![text_atom("lim".into(), span)],
+                                }),
+                                limits: true,
+                            },
+                            span,
+                            superscript: None,
+                            subscript: None,
+                            class_override: None,
+                            width_em: None,
+                            ams_symbol: None,
+                        }],
+                    },
+                    frame: if name == "varinjlim" {
+                        Frame::UnderRightArrow
+                    } else {
+                        Frame::UnderLeftArrow
+                    },
+                },
+                span,
+                superscript: None,
+                subscript: None,
+                // amsopn wraps the whole `\vtop` in `\mathop`, so the atom is
+                // a large operator: measured against pdfTeX, without this the
+                // 3mu an Op adds before an ordinary is missing.
+                class_override: Some(AtomClass::Op),
+                width_em: None,
+                ams_symbol: None,
+            },
+            // amsmath.sty 660-661 `\MultiIntegral{4}` / `{0}`: four `\intop`s
+            // with `\intkern@` between them, and two with `\intdots@`. The
+            // compiler already spells `\iint`/`\iiint` as runs of U+222B, so
+            // these are the same shape one and two steps further on.
+            "iiiint" => symbol("∫∫∫∫".into(), span),
+            "idotsint" => symbol("∫⋅⋅⋅∫".into(), span),
+            // amsmath.sty 907-908: `\pod{x}` is `\allowbreak` plus 8mu (18mu
+            // in display) and the argument in parentheses — `\pmod` without
+            // the `mod`, which the arm below already builds the same way.
+            "pod" => {
+                let body = self.required_group("pod", span);
+                self.pending.push(text_atom("(".into(), span));
+                self.pending.extend(body.atoms);
+                self.pending.push(text_atom(")".into(), span));
+                space(8.0 / 18.0, span)
+            }
+            // amsmath.sty 403-408: `\nobreakdash` only forbids a line break
+            // after the dash that follows it. It sets no glyph and adds no
+            // width, and this compiler has no inter-character break penalty
+            // in math, so it contributes nothing but must not be an error.
+            "nobreakdash" => space(0.0, span),
+            // amsmath.sty (`\pmb`): three copies of the argument overprinted
+            // 0.025em apart. The net advance is the argument's own, which is
+            // why `\pmb{x}` measures exactly as `$x$` does in pdfTeX; only
+            // the apparent weight differs, and this compiler has no
+            // overprint primitive, so the argument is set once and the lost
+            // emboldening is reported rather than faked with a bold font
+            // (which would be a different, wider design).
+            "pmb" => {
+                let body = self.required_group("pmb", span);
+                self.diagnostics.push(Diagnostic::warning(
+                    "\\pmb sets its argument at normal weight",
+                    Some(span),
+                    Some(
+                        "amsmath's poor-man's bold overprints three offset copies; \
+                         the advance is the same, the stroke is not emboldened"
+                            .into(),
+                    ),
+                ));
+                self.group_atom(body, span)
+            }
             // TeXbook Chapter 17's `\mathbin`/`\mathrel`/... family: the
             // argument is a full math list, boxed as one atom whose class is
             // forced regardless of what its own contents would imply.
@@ -1299,6 +1487,7 @@ impl MathParser<'_> {
             "grave" => self.accent_atom(Accent::Grave, span),
             "widehat" => self.accent_atom(Accent::WideHat, span),
             "widetilde" => self.accent_atom(Accent::WideTilde, span),
+            "mathring" => self.accent_atom(Accent::Mathring, span),
             // amsfonts `\dashrightarrow` = `\mathrel{\dabar@\dabar@\mathchar"0\hexnumber@
             // \symAMSa 4B}` (`\dasharrow` its alias) and `\dashleftarrow` with the
             // "4C head first (`amsfonts.sty` 87-95).
@@ -1657,8 +1846,10 @@ impl MathParser<'_> {
             let glyph = match name.as_str() {
                 "lbrace" => Some("{"),
                 "rbrace" => Some("}"),
-                "vert" => Some("|"),
-                "Vert" => Some("∣∣"),
+                // plain.tex 973 `\let\|=\Vert`: the control symbol is a
+                // command token whose name is not a control *word*, so it
+                // cannot have a `COMMAND_GLYPHS` row.
+                "|" => Some("‖"),
                 other => command_glyph(other).filter(|_| DELIMITER_COMMANDS.contains(&other)),
             };
             if let Some(glyph) = glyph {
@@ -1680,8 +1871,10 @@ impl MathParser<'_> {
             return space(0.0, span.merge(token.span));
         }
         if delimiter == "|" && token.span.end - token.span.start == 2 {
+            // `\left||`: TeX reads the two bars as one delimiter only because
+            // `\|` is `\Vert`; the pair spells cmsy "6B, one glyph.
             self.i += 1;
-            return symbol("∣∣".into(), span.merge(token.span));
+            return symbol("‖".into(), span.merge(token.span));
         }
         if delimiter.chars().count() != 1 || !"()[]{}|./<>".contains(delimiter.as_str()) {
             self.diagnostics.push(Diagnostic::error(
@@ -2236,6 +2429,12 @@ fn operator_body(list: MathList) -> MathList {
 /// `\varnothing`'s advance in ems: msbm10.tfm character "3F (CHARWD R 0.777781).
 pub(crate) const VARNOTHING_MSBM_EM: f64 = 0.777781;
 
+/// `\smallint`'s advance in ems: cmsy10.tfm character "73 (CHARWD R 0.416669),
+/// the small integral `fontmath.ltx` 263 declares. `\int` is cmex "52
+/// (0.472222em plus its own chain), so the two are different glyphs; only the
+/// advance separates them for a face that carries one integral outline.
+pub(crate) const SMALLINT_CMSY_EM: f64 = 0.416669;
+
 /// The Unicode mathematical alphanumeric symbol that stands for `ch` in the
 /// math alphabet of `command`: `\mathsf` sans-serif (U+1D5A0, digits
 /// U+1D7E2), `\mathtt` monospace (U+1D670, digits U+1D7F6), `\mathit`
@@ -2504,9 +2703,13 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("rangle", "〉"),
     ("lvert", "∣"),
     ("rvert", "∣"),
-    // Symbol has no double bar U+2016: two real verticalbar glyphs.
-    ("lVert", "∣∣"),
-    ("rVert", "∣∣"),
+    // mathtools' `\lVert`/`\rVert` are `\mathopen`/`\mathclose` on cmsy "6B,
+    // the single double-bar glyph `\parallel` and `\Vert` set. They used to
+    // be spelled as two `\mid` bars because the base-14 Symbol face has no
+    // U+2016; the pinned Latin Modern Math resource carries the real one, and
+    // two atoms is the wrong box as well as the wrong glyph.
+    ("lVert", "‖"),
+    ("rVert", "‖"),
     ("times", "×"),
     ("div", "÷"),
     ("pm", "±"),
@@ -2583,7 +2786,66 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("bigtriangledown", "▽"),
     // `\bot` shares `\perp`'s exact base-14 Symbol glyph above with a forced
     // Ord class (see `command_atom`), so it is not a second row here.
+    //
+    // ---------------------------------------------------------------------
+    // The LaTeX kernel's twelve `\DeclareMathDelimiter`s that had no row
+    // (`fontmath.ltx` 457-505). Each is a *pair* of slots — a small cmsy or
+    // cmex variant and a `largesymbols` growth chain — so the character each
+    // is spelled with has to be the one `math-layout`'s `cm::delimiter_slot`
+    // keys that pair by, not merely a look-alike.
+    //
+    // `\vert` and `\backslash` are cmsy "6A and "6E, exactly the glyphs
+    // `\mid` and `\setminus` already use; they differ only in class (Ord),
+    // which `command_atom` forces the way `\bot` does. `\Vert` is cmsy "6B,
+    // `\parallel`'s glyph, but U+2016 is its own character with its own
+    // growth chain, so it is a row.
+    ("Vert", "‖"),
+    ("vert", "∣"),
+    ("backslash", "∖"),
+    ("updownarrow", "↕"),
+    ("Updownarrow", "⇕"),
+    ("lgroup", "⟮"),
+    ("rgroup", "⟯"),
+    ("lmoustache", "⎰"),
+    ("rmoustache", "⎱"),
+    ("arrowvert", "⏐"),
+    ("Arrowvert", ARROWVERT_DOUBLE_STR),
+    ("bracevert", "⎪"),
+    // `fontmath.ltx` 253-269, 374-377, 391, 398-399: kernel `\mathchar`s and
+    // the two `\joinrel` macros that resolve to a single glyph.
+    ("hookleftarrow", "↩"),
+    ("longmapsto", "⟼"),
+    ("intop", "∫"),
+    ("ointop", "∮"),
+    // `\varbigtriangleup`/`\varbigtriangledown` are `fontmath.ltx` 268-269's
+    // second names for symbols "34/"35 — the same two glyphs as
+    // `\bigtriangleup`/`\bigtriangledown`, declared so a package that
+    // redefines those keeps the kernel shapes reachable.
+    ("varbigtriangledown", "▽"),
 ];
+
+/// `\Arrowvert` (`fontmath.ltx` 463) as a string, for [`COMMAND_GLYPHS`].
+const ARROWVERT_DOUBLE_STR: &str = "\u{F8FD}";
+
+/// `\not` (`fontmath.ltx` 334: `\mathrel` `symbols` `"36`), the zero-width
+/// negation slash the following relation is overprinted with.
+///
+/// U+0338 COMBINING LONG SOLIDUS OVERLAY is the character Latin Modern Math
+/// draws that stroke at, it has the same zero advance cmsy `"36` does, and no
+/// other compiler symbol uses it. render-pipeline already spells the same
+/// slot this way when it decomposes `\neq`/`\notin` (`mathtex::NOT_SLASH`).
+pub const NOT_SLASH: &str = "\u{0338}";
+
+/// `\Arrowvert` — `fontmath.ltx` 463's "double arrow without arrowheads".
+///
+/// It sets cmsy `"6B`, the same double bar as `\Vert`, but grows through
+/// cmex's extension recipe `"3D` rather than `\Vert`'s delimiter recipe
+/// `"0D`, so the two cannot share U+2016. Unicode names the single vertical
+/// extension (U+23D0, which is `\arrowvert`) but not the double one, so this
+/// crate spells it with a BMP private-use code point — the same value
+/// `math-layout`'s `cm::ARROWVERT_DOUBLE` keys the delimiter pair by.
+/// Everything that draws it paints U+2016's outline.
+pub const ARROWVERT_DOUBLE: char = '\u{F8FD}';
 
 /// Named operators typeset as upright roman words (`\sin x`, `\lim_{x\to 0}`).
 pub(crate) const OPERATOR_NAMES: &[&str] = &[
@@ -2610,6 +2872,22 @@ pub(crate) const DELIMITER_COMMANDS: &[&str] = &[
     "rfloor",
     "lceil",
     "rceil",
+    // The kernel's remaining `\DeclareMathDelimiter`s (`fontmath.ltx`
+    // 457-505). `\vert` and `\backslash` name the same cmsy slots as `\mid`
+    // and `\setminus`; `command_glyph` answers with those glyphs, so they
+    // need no rows of their own in `COMMAND_GLYPHS`.
+    "vert",
+    "Vert",
+    "backslash",
+    "updownarrow",
+    "Updownarrow",
+    "lgroup",
+    "rgroup",
+    "lmoustache",
+    "rmoustache",
+    "arrowvert",
+    "Arrowvert",
+    "bracevert",
 ];
 
 fn text_atom(text: String, span: Span) -> MathAtom {
@@ -2740,16 +3018,26 @@ fn symbol_class(glyph: &str) -> AtomClass {
         // HW2 follow-up: the remaining long arrows (issue #62), also from the
         // pinned Latin Modern Math resource. `⊥` above is `\perp`'s glyph;
         // `\bot` shares it but overrides the class to Ord (see `command_atom`).
-        | "⟺" | "⟶" | "⟵" | "⟸" | "⟷" => Rel,
+        | "⟺" | "⟶" | "⟵" | "⟸" | "⟷"
+        // Kernel delimiters and macros `fontmath.ltx` declares `\mathrel`:
+        // `\updownarrow`/`\Updownarrow` (475/481), `\hookleftarrow` (377)
+        // and `\longmapsto` (391).
+        | "↕" | "⇕" | "↩" | "⟼"
+        // `\not` (334), a zero-width relation overprinted on the next atom.
+        | "\u{0338}" => Rel,
         "+" | "-" | "−" | "*" | "±" | "×" | "÷" | "⋅" | "·" | "∗" | "∪" | "∩" | "∨" | "∧" | "⊕"
         | "⊗" | "∖" | "∓" | "∘"
         // `\bigtriangledown`; `\bigtriangleup` shares `\triangle`'s glyph
         // (Ord by default here) and overrides its class to Bin instead.
         | "▽" => Bin,
-        "(" | "[" | "{" | "〈" | "⟨" | "⌊" | "⌈" => Open,
-        ")" | "]" | "}" | "〉" | "⟩" | "!" | "?" | "⌋" | "⌉" => Close,
+        // `\lgroup` (`fontmath.ltx` 501) and `\lmoustache` (457).
+        "(" | "[" | "{" | "〈" | "⟨" | "⌊" | "⌈" | "⟮" | "⎰" => Open,
+        // `\rgroup` (503) and `\rmoustache` (459).
+        ")" | "]" | "}" | "〉" | "⟩" | "!" | "?" | "⌋" | "⌉" | "⟯" | "⎱" => Close,
         "," | ";" => Punct,
-        "∑" | "∏" | "∫" | "∫∫" | "∫∫∫" | "∮" => Op,
+        // amsmath's `\iiiint` and `\idotsint` (`\MultiIntegral` 4 and 0) join
+        // `\iint`/`\iiint` here.
+        "∑" | "∏" | "∫" | "∫∫" | "∫∫∫" | "∫∫∫∫" | "∫⋅⋅⋅∫" | "∮" => Op,
         "⋅⋅⋅" => Inner,
         _ => Ord,
     }

@@ -196,9 +196,26 @@ pub fn map_char(c: char) -> Glyph {
         };
     }
     if crate::newcm_math::advance(c).is_some() {
+        // The moustaches are the only characters bound to that resource which
+        // are not `\mathcal` letters (Latin Modern Math has no code point for
+        // either), so they say so rather than inherit the alphabet's wording,
+        // which would be wrong for every reader of the diagnostic.
         return Glyph::Unrepresentable {
-            reason: "\\mathcal letters are drawn from New Computer Modern Math (newcm.math), \
-                     which the Mac producer bundles but the base-14 PDF writer does not embed",
+            reason: if matches!(c, '\u{23B0}' | '\u{23B1}') {
+                "\\lmoustache and \\rmoustache are drawn from New Computer Modern Math \
+                 (newcm.math), the only bundled face that carries them, which the Mac \
+                 producer embeds but the base-14 PDF writer does not"
+            } else {
+                "\\mathcal letters are drawn from New Computer Modern Math (newcm.math), \
+                 which the Mac producer bundles but the base-14 PDF writer does not embed"
+            },
+        };
+    }
+    if c == crate::math::ARROWVERT_DOUBLE {
+        return Glyph::Unrepresentable {
+            reason: "\\Arrowvert is cmex's double-bar extension recipe, which Unicode does \
+                     not name and no font carries as a character of its own; the Mac producer \
+                     draws it from the U+2016 outline it shares with \\Vert",
         };
     }
     if let Some((_, code)) = SYMBOL_ENCODING.iter().find(|(ch, _)| *ch == c) {
@@ -278,6 +295,15 @@ mod tests {
                     // The only decided non-base-14 outcome: a glyph bound to
                     // the pinned Latin Modern Math resource, which is embedded.
                     Glyph::LatinModernMath => {}
+                    // Two further decided outcomes, both about a glyph the
+                    // base-14 writer genuinely cannot draw rather than one
+                    // nobody looked at: `\lmoustache`/`\rmoustache`, which
+                    // Latin Modern Math has no code point for and the Mac
+                    // producer draws from New Computer Modern Math, and
+                    // `\Arrowvert`, which no font carries as a character.
+                    Glyph::Unrepresentable { .. }
+                        if crate::newcm_math::advance(c).is_some()
+                            || c == crate::math::ARROWVERT_DOUBLE => {}
                     Glyph::Unrepresentable { reason } => {
                         panic!("\\{command} renders {c:?} which cannot be exported: {reason}");
                     }

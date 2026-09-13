@@ -54,6 +54,13 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{1D4B3}', 870),  // \mathcal{X}
     ('\u{1D4B4}', 628),  // \mathcal{Y}
     ('\u{1D4B5}', 726),  // \mathcal{Z}
+    // `fontmath.ltx` 457-460's moustaches. Latin Modern Math has no glyph at
+    // either code point (checked against the bundled `latinmodern-math.otf`),
+    // so these two are the only non-`\mathcal` characters bound here: the
+    // Mac producer draws them from this face, and the base-14 writer reports
+    // the same decided outcome it already reports for `\mathcal`.
+    ('\u{23B0}', 752),   // \lmoustache
+    ('\u{23B1}', 752),   // \rmoustache
 ];
 
 /// The script code point for `\mathcal{letter}`: the Mathematical
@@ -122,7 +129,10 @@ mod tests {
         assert_eq!(script('P'), Some('\u{1D4AB}'));
         assert_eq!(script('B'), Some('ℬ'));
         assert_eq!(script('p'), None);
-        assert_eq!(ADVANCES.len(), 26);
+        // 26 `\mathcal` capitals plus the two moustaches
+        // (`\lmoustache`/`\rmoustache`), which Latin Modern Math has no
+        // code point for.
+        assert_eq!(ADVANCES.len(), 28);
     }
 
     #[test]

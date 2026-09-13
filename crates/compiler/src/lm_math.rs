@@ -98,6 +98,23 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{25A0}', 778),  // \blacksquare
     ('\u{25CA}', 572),  // \lozenge
     ('\u{2713}', 833),  // \checkmark
+    // The LaTeX kernel's `\DeclareMathDelimiter`s and `\mathchar`s that have
+    // no base-14 glyph (`fontmath.ltx` 334, 377, 391, 457-505). `\vert`,
+    // `\backslash`, `\intop` and `\ointop` are absent on purpose: they set
+    // the same characters `\mid`, `\setminus`, `\int` and `\oint` already
+    // resolve, and a second row would be a duplicate, not a new binding.
+    ('\u{2016}', 398),  // \Vert, \lVert, \rVert (cmsy "6B)
+    ('\u{2195}', 500),  // \updownarrow
+    ('\u{21D5}', 611),  // \Updownarrow
+    ('\u{27EE}', 287),  // \lgroup
+    ('\u{27EF}', 287),  // \rgroup
+    ('\u{23D0}', 333),  // \arrowvert
+    ('\u{23AA}', 902),  // \bracevert
+    ('\u{21A9}', 997),  // \hookleftarrow
+    ('\u{27FC}', 1443), // \longmapsto
+    // `\not`: zero advance here as in cmsy "36, so the relation that follows
+    // is overprinted rather than displaced.
+    ('\u{0338}', 0),
     // HW2 coverage (issue #62 follow-up): long arrows, \triangle family, \bot,
     // and the amsthm QED mark, all drawn from the same pinned resource.
     ('\u{27FA}', 1534), // \Longleftrightarrow, and \iff (\;\Longleftrightarrow\;)
@@ -183,7 +200,7 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 75);
+        assert_eq!(ADVANCES.len(), 85);
     }
 
     #[test]
