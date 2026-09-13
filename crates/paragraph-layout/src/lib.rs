@@ -36,7 +36,7 @@ pub use linebreak::{
     Lines, Overfull, PositionedGlyph, PositionedRun, Severity, Stats, layout_paragraph,
     layout_paragraph_microtype,
 };
-pub use microtype::{MicroGlyph, MicroItem, MicroLine, MicroRun, Microtype};
+pub use microtype::{MathNode, MicroGlyph, MicroItem, MicroLine, MicroMath, MicroRun, Microtype};
 pub use metrics::{FontId, FontMetricsSource, Ligature};
 pub use pages::{Page, PageOverflow, PageParams, Pages, ParagraphBlock, PlacedLine, layout_pages};
 

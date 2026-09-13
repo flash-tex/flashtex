@@ -351,6 +351,12 @@ impl TexMathMetrics {
         self.sizes
     }
 
+    /// The roman-family (`\fam0`, OT1) TFM at text size and the size it is
+    /// set at: the font of digits, `(`, `)`, `+`, `=` in a text-style formula.
+    pub fn roman_text_tfm(&self) -> Option<(Rc<Tfm>, f64)> {
+        self.roman[0].clone().map(|t| (t, self.cm.sizes[0]))
+    }
+
     /// Whether the `rm-lmr` TFMs were found (the CM families are embedded).
     pub fn roman_available(&self) -> bool {
         self.roman.iter().all(Option::is_some)

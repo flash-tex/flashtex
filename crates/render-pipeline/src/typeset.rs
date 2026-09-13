@@ -181,6 +181,22 @@ pub struct MathRec {
     /// runs continue the previous piece's items when they land on the
     /// same line, so an unbroken formula assembles exactly as one box.
     pub continues: bool,
+    /// Where the formula's top-level hlist sits in `root` ([`math_top_nodes`]).
+    pub shape: MathShape,
+}
+
+/// How a laid-out formula's root box holds pdfTeX's top-level hlist (the
+/// nodes between `\mathon` and `\mathoff`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MathShape {
+    /// Not modelled (a formula holding a top-level grid): one opaque box.
+    #[default]
+    Opaque,
+    /// `root` is math-layout's `mlist_to_hlist` output for the whole list.
+    List,
+    /// `root` joins kern-split segments (`layout_kerned`): each segment's
+    /// hlist, then the kern standing for the `\quad`/`\,` between them.
+    Kerned,
 }
 
 impl MathRec {
@@ -1114,6 +1130,13 @@ impl<'a> Context<'a> {
             };
             self.report_once(format!("mathlim:{msg}"), Diagnostic::warning("math_limitation", msg, vec![src]));
         }
+        let shape = if has_grid {
+            MathShape::Opaque
+        } else if segments.len() == 1 && segments[0].1.is_none() {
+            MathShape::List
+        } else {
+            MathShape::Kerned
+        };
         self.maths.push(MathRec {
             root: laid.root,
             span,
@@ -1123,6 +1146,7 @@ impl<'a> Context<'a> {
             raise: 0.0,
             inline_breaks,
             continues: false,
+            shape,
         });
         let idx = self.maths.len() - 1;
         self.recs.push(BoxRec::Math(idx));
@@ -1502,7 +1526,12 @@ impl<'a> Context<'a> {
             let rec = recs.get(i).copied().flatten();
             let mut mi = pl::MicroItem::default();
             match item {
-                pl::Item::Box(run) => mi.run = rec.and_then(|r| self.micro_run(r, run)),
+                pl::Item::Box(run) => {
+                    mi.run = rec.and_then(|r| self.micro_run(r, run));
+                    if mi.run.is_none() {
+                        mi.math = rec.and_then(|r| self.micro_math(r));
+                    }
+                }
                 pl::Item::Penalty(p) => {
                     if let Some(pre) = &p.pre_break {
                         mi.pre_break = rec.and_then(|r| self.micro_run(r, pre));
@@ -1516,6 +1545,103 @@ impl<'a> Context<'a> {
             out.push(mi);
         }
         pl::Microtype { protrude_chars: setup.protrude_chars, adjust_spacing: setup.adjust_spacing, items: out }
+    }
+
+    /// An inline formula as the nodes pdfTeX's line breaker and `hpack` see
+    /// (pdflatex `\showbox`: `\mathon \OT1/cmr/m/n/10.95 (+20) ( ...`):
+    /// top-level characters of the text-size roman family (`\fam0`: digits,
+    /// `( ) [ ] + = ; : !`) carry the roman font's microtype parameters and
+    /// expand; OML/OMS/OMX characters are characters microtype leaves alone;
+    /// `\thinmuskip`/`\medmuskip`/`\thickmuskip` are glue with LaTeX's
+    /// stretch and shrink; everything math-layout packed (scripts,
+    /// fractions, operators, fences, `\text`) is a box. `None` for a formula
+    /// laid out without the TFM metrics or whose shape is not modelled.
+    fn micro_math(&mut self, rec: usize) -> Option<pl::MicroMath> {
+        let BoxRec::Math(mi) = &self.recs[rec] else { return None };
+        let m = &self.maths[*mi];
+        let MathProvider::Tex(t) = &m.metrics else { return None };
+        if m.raise != 0.0 {
+            return None;
+        }
+        let t = t.clone();
+        let children = math_top_nodes(&m.root, m.shape)?;
+        let text = ml::Style::TEXT.size_class();
+        let roman_id = ml::MathFontMetrics::text_glyph(&*t, '0', text).map(|g| g.font_id);
+        let mu_sp = (ml::MathFontMetrics::params(&*t, text).mu() * 65536.0).round() as i64;
+        let roman = t.roman_text_tfm();
+        let params = match &roman {
+            Some((tfm, size)) => self.math_roman_microtype(tfm.clone(), *size),
+            None => None,
+        };
+        let sp = |pt: f64| (pt * 65536.0).round() as i32;
+        let nodes = children
+            .into_iter()
+            .map(|(c, normal)| match &c.content.kind {
+                ml::BoxKind::Glyph { font_id, gid, size, .. } if *gid < 256 => {
+                    let code = *gid as u8;
+                    match (&roman, Some(*font_id) == roman_id) {
+                        (Some((tfm, at)), true) if (size - at).abs() < 1e-9 => {
+                            let z = (at * 65536.0).round() as i32;
+                            let width = tfm.metrics(code).map_or(sp(c.content.width), |cm| flashtex_microtype::arith::tfm_scaled(cm.width, z));
+                            pl::MathNode::Char { params: params.clone(), code, width }
+                        }
+                        _ => pl::MathNode::Char { params: None, code, width: sp(c.content.width) },
+                    }
+                }
+                ml::BoxKind::Kern => pl::MathNode::Kern { width: sp(c.content.width), normal },
+                ml::BoxKind::Glue { mu } => {
+                    let width = sp(c.content.width);
+                    // LaTeX's `\medmuskip` 4mu plus 2mu minus 4mu and
+                    // `\thickmuskip` 5mu plus 5mu; `\thinmuskip` is rigid.
+                    let exact = |n: i64| i64::from(width) == n * mu_sp;
+                    let (stretch, shrink) = if *mu == 4.0 && exact(4) {
+                        (2 * mu_sp, 4 * mu_sp)
+                    } else if *mu == 5.0 && exact(5) {
+                        (5 * mu_sp, 0)
+                    } else {
+                        (0, 0)
+                    };
+                    pl::MathNode::Glue { width, stretch: stretch as i32, shrink: shrink as i32 }
+                }
+                _ => pl::MathNode::Box { width: sp(c.content.width) },
+            })
+            .collect();
+        Some(pl::MicroMath { nodes })
+    }
+
+    /// microtype's parameters for the math roman font (`OT1/cmr/m/n` or
+    /// `OT1/lmr/m/n` with `lmodern`, `\DeclareSymbolFont{operators}`) at
+    /// `size`: in the default `alltext` protrusion and `alltext-nott`
+    /// expansion sets, unlike OML/OMS.
+    fn math_roman_microtype(&mut self, tfm: Rc<crate::tfm::Tfm>, size: f64) -> Option<Rc<flashtex_microtype::FontParams>> {
+        let key: (Rc<str>, u64) = (Rc::from("flashtex:math-roman"), size.to_bits());
+        if let Some(hit) = self.microtype_fonts.get(&key) {
+            return hit.clone();
+        }
+        let setup = self.style.microtype.clone()?;
+        let scheme = self.style.nfss;
+        let resolved = match self.style.family {
+            Family::ComputerModern | Family::LatinModern => {
+                let (rm, sf, tt) = (
+                    scheme.family_name(crate::nfss::FamilyKind::Rm),
+                    scheme.family_name(crate::nfss::FamilyKind::Sf),
+                    scheme.family_name(crate::nfss::FamilyKind::Tt),
+                );
+                let font = flashtex_microtype::NfssFont {
+                    encoding: "OT1".to_string(),
+                    family: rm.to_string(),
+                    series: "m".to_string(),
+                    shape: "n".to_string(),
+                    size: format!("{size}"),
+                };
+                let metrics = TfmMicroMetrics { tfm: &tfm, z: (size * 65536.0).round() as i32 };
+                let defaults = flashtex_microtype::NfssDefaults::latex(scheme.encoding(), rm, sf, tt);
+                microtype_config().resolve(&setup.options, &defaults, &font, &metrics).ok().map(|r| Rc::new(r.params))
+            }
+            Family::Times => None,
+        };
+        self.microtype_fonts.insert(key, resolved.clone());
+        resolved
     }
 
     /// A text box record as pdfTeX characters, or `None` for a box that is
@@ -1593,19 +1719,6 @@ impl<'a> Context<'a> {
         };
         let resolved = match (families, face.tfm.clone()) {
             (Some((rm, sf, tt)), Some(tfm)) => {
-                struct Metrics<'t> {
-                    tfm: &'t crate::tfm::Tfm,
-                    z: i32,
-                }
-                impl flashtex_microtype::FontMetrics for Metrics<'_> {
-                    fn char_width(&self, slot: u8) -> flashtex_microtype::Scaled {
-                        self.tfm.metrics(slot).map_or(0, |m| flashtex_microtype::arith::tfm_scaled(m.width, self.z))
-                    }
-                    fn quad(&self) -> flashtex_microtype::Scaled {
-                        self.tfm.param(6).map_or(0, |q| flashtex_microtype::arith::tfm_scaled(q, self.z))
-                    }
-                }
-                static CONFIG: OnceLock<flashtex_microtype::MicrotypeConfig> = OnceLock::new();
                 // `ENC/family/series/shape` as `nfss::Scheme::describe` spells it.
                 let described = scheme.describe(loaded);
                 let mut parts = described.split('/').skip(2);
@@ -1622,9 +1735,9 @@ impl<'a> Context<'a> {
                     shape: shape.to_string(),
                     size: format!("{size}"),
                 };
-                let metrics = Metrics { tfm: &tfm, z: (size * 65536.0).round() as i32 };
+                let metrics = TfmMicroMetrics { tfm: &tfm, z: (size * 65536.0).round() as i32 };
                 let defaults = flashtex_microtype::NfssDefaults::latex(scheme.encoding(), rm, sf, tt);
-                match CONFIG.get_or_init(flashtex_microtype::MicrotypeConfig::bundled).resolve(&setup.options, &defaults, &font, &metrics) {
+                match microtype_config().resolve(&setup.options, &defaults, &font, &metrics) {
                     Ok(r) => Some(Rc::new(r.params)),
                     Err(e) => {
                         let message = format!(
@@ -3895,6 +4008,82 @@ fn seg_span(seg: &adapter::Segment) -> Option<Span> {
     let first = seg.chars.first()?;
     let last = seg.chars.last()?;
     Some(Span::in_document(first.document, first.start.min(last.start), first.end.max(last.end)))
+}
+
+/// A TFM at `z` sp as microtype's font metrics.
+struct TfmMicroMetrics<'t> {
+    tfm: &'t crate::tfm::Tfm,
+    z: i32,
+}
+
+impl flashtex_microtype::FontMetrics for TfmMicroMetrics<'_> {
+    fn char_width(&self, slot: u8) -> flashtex_microtype::Scaled {
+        self.tfm.metrics(slot).map_or(0, |m| flashtex_microtype::arith::tfm_scaled(m.width, self.z))
+    }
+    fn quad(&self) -> flashtex_microtype::Scaled {
+        self.tfm.param(6).map_or(0, |q| flashtex_microtype::arith::tfm_scaled(q, self.z))
+    }
+}
+
+/// The bundled `microtype.cfg` + font configuration files, parsed once.
+fn microtype_config() -> &'static flashtex_microtype::MicrotypeConfig {
+    static CONFIG: OnceLock<flashtex_microtype::MicrotypeConfig> = OnceLock::new();
+    CONFIG.get_or_init(flashtex_microtype::MicrotypeConfig::bundled)
+}
+
+/// The top-level hlist of a laid-out inline formula as pdfTeX's nodes, each
+/// with its offset inside `root` and whether it is a kern of `subtype
+/// normal` (an italic correction). math-layout wraps a character atom in an
+/// hbox when it carries an italic correction or scripts (`[char, kern]`,
+/// `[nucleus, shifted script box]`); in TeX's list those are siblings of the
+/// character, so such an hbox is opened. Every other hbox (a group, a
+/// fraction, a fence, `\text`) was a box in TeX too. `None` when the shape
+/// is not modelled.
+pub fn math_top_nodes(root: &ml::MathBox, shape: MathShape) -> Option<Vec<(ml::Child, bool)>> {
+    fn char_atom(b: &ml::MathBox) -> bool {
+        let ml::BoxKind::HBox(children) = &b.kind else { return false };
+        let Some(first) = children.first() else { return false };
+        let nucleus = first.dx == 0.0
+            && first.dy == 0.0
+            && match &first.content.kind {
+                ml::BoxKind::Glyph { .. } => true,
+                ml::BoxKind::HBox(inner) => {
+                    matches!(inner.as_slice(), [g, k] if matches!(g.content.kind, ml::BoxKind::Glyph { .. }) && matches!(k.content.kind, ml::BoxKind::Kern) && g.dy == 0.0 && k.dy == 0.0)
+                }
+                _ => false,
+            };
+        nucleus
+            && children[1..].iter().all(|c| matches!(c.content.kind, ml::BoxKind::Kern) || (c.dy != 0.0 && !matches!(c.content.kind, ml::BoxKind::Glyph { .. })))
+    }
+    fn atoms(children: &[ml::Child], dx: f64, dy: f64, inside_atom: bool, out: &mut Vec<(ml::Child, bool)>) {
+        for c in children {
+            let at = ml::Child { dx: dx + c.dx, dy: dy + c.dy, content: c.content.clone() };
+            if c.dy == 0.0 && char_atom(&c.content) {
+                if let ml::BoxKind::HBox(inner) = &c.content.kind {
+                    atoms(inner, at.dx, at.dy, true, out);
+                }
+            } else {
+                let normal = inside_atom && matches!(c.content.kind, ml::BoxKind::Kern);
+                out.push((at, normal));
+            }
+        }
+    }
+    let ml::BoxKind::HBox(children) = &root.kind else { return None };
+    let mut out = Vec::new();
+    match shape {
+        MathShape::Opaque => return None,
+        MathShape::List => atoms(children, 0.0, 0.0, false, &mut out),
+        MathShape::Kerned => {
+            for c in children {
+                match &c.content.kind {
+                    ml::BoxKind::HBox(seg) if c.dy == 0.0 => atoms(seg, c.dx, 0.0, false, &mut out),
+                    ml::BoxKind::Kern => out.push((c.clone(), false)),
+                    _ => return None,
+                }
+            }
+        }
+    }
+    Some(out)
 }
 
 fn math_run(root: &ml::MathBox, size: f64, span: Span) -> pl::GlyphRun {
@@ -6642,7 +6831,26 @@ fn math_items(
     items: &mut Vec<display::Item>,
     used: &mut BTreeMap<Rc<str>, Rc<LoadedFace>>,
 ) {
-    let flat = ml::positioned_runs(&m.root, (run.x, -m.root.height - m.raise));
+    // Under microtype the line packer reports where each top-level node of
+    // the formula starts after its glue was set and its characters expanded
+    // (one positioned glyph per node): move the nodes there.
+    let moved = (!run.glyphs.is_empty())
+        .then(|| math_top_nodes(&m.root, m.shape))
+        .flatten()
+        .filter(|nodes| nodes.len() == run.glyphs.len())
+        .map(|nodes| ml::MathBox {
+            kind: ml::BoxKind::HBox(
+                nodes
+                    .into_iter()
+                    .zip(&run.glyphs)
+                    .map(|((c, _), g)| ml::Child { dx: g.x_offset, ..c })
+                    .collect(),
+            ),
+            width: run.width,
+            height: m.root.height,
+            depth: m.root.depth,
+        });
+    let flat = ml::positioned_runs(moved.as_ref().unwrap_or(&m.root), (run.x, -m.root.height - m.raise));
     let src = source_of(m.span);
     // Group consecutive glyphs of one face and size into a run; each glyph
     // is a cluster.

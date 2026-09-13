@@ -108,6 +108,110 @@ pub struct MicroItem {
     /// skipable when looking for a protrudable character and stretches with
     /// its font when it sits directly between two characters of one font.
     pub font_kern: bool,
+    /// For an [`Item::Box`] holding an inline formula: the formula's
+    /// top-level hlist as pdfTeX's `mlist_to_hlist` leaves it between the
+    /// `\mathon`/`\mathoff` nodes. Without it the box is one opaque
+    /// non-character node.
+    pub math: Option<MicroMath>,
+}
+
+/// One node of an inline formula's top-level hlist, lengths in sp.
+///
+/// pdfTeX's line breaker and `hpack` walk these like any other node of the
+/// paragraph: character nodes add `char_stretch`/`char_shrink` and are
+/// expanded, glue (`\thinmuskip`, `\medmuskip`, `\thickmuskip`) stretches
+/// and shrinks with the line, and the first/last character can protrude.
+/// Everything math-layout packed into a box (scripts, fractions, operators,
+/// `\left...\right`, `\text`) is a [`MathNode::Box`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum MathNode {
+    /// A character node. `params` is `None` for a font microtype does not
+    /// configure (OML/OMS/OMX: no protrusion, no expansion).
+    Char { params: Option<Rc<FontParams>>, code: u8, width: Scaled },
+    /// A kern. `normal` is pdfTeX's `subtype normal` (an italic correction),
+    /// which is skipable when looking for a protrudable character.
+    Kern { width: Scaled, normal: bool },
+    /// Math glue with finite stretch and shrink.
+    Glue { width: Scaled, stretch: Scaled, shrink: Scaled },
+    /// A box or rule: a non-skipable non-character node.
+    Box { width: Scaled },
+}
+
+/// An inline formula as pdfTeX's nodes: see [`MathNode`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MicroMath {
+    pub nodes: Vec<MathNode>,
+}
+
+/// What the protrusion search finds at one end of a formula.
+enum MathEdge<'a> {
+    /// A character: its font's parameters (`None`: protrudes by 0).
+    Char(Option<&'a FontParams>, u8),
+    /// A non-skipable non-character node ends the search.
+    Stop,
+    /// Only skipable nodes: the search continues past the formula.
+    Through,
+}
+
+impl MicroMath {
+    fn width(&self) -> i64 {
+        self.nodes
+            .iter()
+            .map(|n| i64::from(match n {
+                MathNode::Char { width, .. }
+                | MathNode::Kern { width, .. }
+                | MathNode::Glue { width, .. }
+                | MathNode::Box { width } => *width,
+            }))
+            .sum()
+    }
+
+    /// `(Σ glue stretch, Σ glue shrink)`: finite order only.
+    fn glue(&self) -> (i64, i64) {
+        self.nodes.iter().fold((0, 0), |(st, sh), n| match n {
+            MathNode::Glue { stretch, shrink, .. } => (st + i64::from(*stretch), sh + i64::from(*shrink)),
+            _ => (st, sh),
+        })
+    }
+
+    /// `(Σ char_stretch + kern_stretch, Σ char_shrink + kern_shrink)`: a
+    /// normal kern stretches when a character of one expandable font sits
+    /// directly on both sides of it (`kern_stretch`).
+    fn font_var(&self) -> (i64, i64) {
+        let (mut st, mut sh) = (0i64, 0i64);
+        for (k, n) in self.nodes.iter().enumerate() {
+            match n {
+                MathNode::Char { params: Some(p), code, width } if p.is_expandable() => {
+                    st += i64::from(p.char_stretch(*code, *width));
+                    sh += i64::from(p.char_shrink(*code, *width));
+                }
+                MathNode::Kern { width, normal: true } if k > 0 => {
+                    if let (Some(MathNode::Char { params: Some(l), code, .. }), Some(MathNode::Char { params: Some(r), .. })) =
+                        (self.nodes.get(k - 1), self.nodes.get(k + 1))
+                        && (Rc::ptr_eq(l, r) || l == r)
+                        && l.is_expandable()
+                    {
+                        st += i64::from(l.kern_stretch(*code, *width));
+                        sh += i64::from(l.kern_shrink(*code, *width));
+                    }
+                }
+                _ => {}
+            }
+        }
+        (st, sh)
+    }
+
+    fn edge<'a>(nodes: impl Iterator<Item = &'a MathNode>) -> MathEdge<'a> {
+        for n in nodes {
+            match n {
+                MathNode::Char { params, code, .. } => return MathEdge::Char(params.as_deref(), *code),
+                MathNode::Kern { width, normal } if *normal || *width == 0 => {}
+                MathNode::Glue { width: 0, stretch: 0, shrink: 0 } => {}
+                _ => return MathEdge::Stop,
+            }
+        }
+        MathEdge::Through
+    }
 }
 
 /// `\pdfprotrudechars`, `\pdfadjustspacing` and the per-item data.
@@ -206,12 +310,27 @@ impl<'a> MtCtx<'a> {
                     // font simply does not set the paragraph's parameters here.
                     let _ = par.note_font(&r.params);
                 }
+                if let Some(m) = c.math_of(i) {
+                    for n in &m.nodes {
+                        if let MathNode::Char { params: Some(p), .. } = n {
+                            let _ = par.note_font(p);
+                        }
+                    }
+                }
             }
             c.par = par;
         }
         for (i, it) in items.iter().enumerate() {
             let (mut w, mut st, mut sh, mut fs, mut fk) = (0i64, [0i64; 4], 0i64, 0i64, 0i64);
             match it {
+                Item::Box(_) if c.math_of(i).is_some() => {
+                    let m = c.math_of(i).expect("checked");
+                    w = m.width();
+                    (st[0], sh) = m.glue();
+                    if c.mt.adjust_spacing > 1 {
+                        (fs, fk) = m.font_var();
+                    }
+                }
                 Item::Box(b) => match usable(b, c.micro(i).run.as_ref()) {
                     Some(r) => {
                         w = r.width();
@@ -243,6 +362,14 @@ impl<'a> MtCtx<'a> {
 
     fn micro(&self, i: usize) -> &MicroItem {
         self.mt.items.get(i).unwrap_or(&self.empty)
+    }
+
+    /// The formula nodes of item `i`, when it is a box that carries them and
+    /// they add up to the box's width (to 0.001pt); otherwise the box stays
+    /// one opaque node.
+    fn math_of(&self, i: usize) -> Option<&MicroMath> {
+        let Some(Item::Box(b)) = self.items.get(i) else { return None };
+        self.micro(i).math.as_ref().filter(|m| b.glyphs.is_empty() && (m.width() - sp(b.width)).abs() <= 66)
     }
 
     fn var(&self, r: &MicroRun) -> (i64, i64) {
@@ -287,6 +414,13 @@ impl<'a> MtCtx<'a> {
     /// (params, code), or `None` when the search ends on a non-character.
     fn left_char(&self, from: usize) -> Option<(&FontParams, u8)> {
         for i in from..self.items.len() {
+            if let Some(m) = self.math_of(i) {
+                match MicroMath::edge(m.nodes.iter()) {
+                    MathEdge::Char(p, c) => return p.map(|p| (p, c)),
+                    MathEdge::Stop => return None,
+                    MathEdge::Through => continue,
+                }
+            }
             if let Some(r) = self.run_of(i) {
                 match r.first_char() {
                     Some(c) => return Some((&r.params, c)),
@@ -303,6 +437,13 @@ impl<'a> MtCtx<'a> {
     /// `find_protchar_right` over items `[lo, hi)` walking backwards.
     fn right_char(&self, lo: usize, hi: usize) -> Option<(&FontParams, u8)> {
         for i in (lo..hi).rev() {
+            if let Some(m) = self.math_of(i) {
+                match MicroMath::edge(m.nodes.iter().rev()) {
+                    MathEdge::Char(p, c) => return p.map(|p| (p, c)),
+                    MathEdge::Stop => return None,
+                    MathEdge::Through => continue,
+                }
+            }
             if let Some(r) = self.run_of(i) {
                 match r.last_char() {
                     Some(c) => return Some((&r.params, c)),
@@ -468,6 +609,8 @@ enum PNode<'r> {
     Glue(Glue),
     Fixed(i64),
     Run { run: &'r GlyphRun, micro: Option<&'r MicroRun>, is_hyphen: bool },
+    /// An inline formula's box walked node by node.
+    Math { run: &'r GlyphRun, math: &'r MicroMath },
 }
 
 /// A line packed by [`MtCtx::pack`].
@@ -522,7 +665,10 @@ impl<'a> MtCtx<'a> {
         let mut kern_var: Vec<(usize, i64, i64)> = Vec::new();
         for i in start..brk {
             match &items[i] {
-                Item::Box(b) => nodes.push(PNode::Run { run: b, micro: self.run_of(i), is_hyphen: false }),
+                Item::Box(b) => match self.math_of(i) {
+                    Some(math) => nodes.push(PNode::Math { run: b, math }),
+                    None => nodes.push(PNode::Run { run: b, micro: self.run_of(i), is_hyphen: false }),
+                },
                 Item::Glue(g) => nodes.push(PNode::Glue(g.clone())),
                 Item::Kern(k) => {
                     let (s, sh) = if i > start && i + 1 < brk { self.kern_var(i) } else { (0, 0) };
@@ -567,6 +713,23 @@ impl<'a> MtCtx<'a> {
                         };
                         ri += 1;
                     }
+                    PNode::Math { math, .. } => {
+                        for (k, n) in math.nodes.iter().enumerate() {
+                            match n {
+                                MathNode::Char { width, .. } => {
+                                    let e = exp.get(ri).and_then(|v| v.get(k)).copied().unwrap_or(0);
+                                    x += i64::from(expanded_width(*width, e));
+                                }
+                                MathNode::Glue { width, stretch, shrink } => {
+                                    x += i64::from(*width);
+                                    st[0] += i64::from(*stretch);
+                                    sh += i64::from(*shrink);
+                                }
+                                MathNode::Kern { width, .. } | MathNode::Box { width } => x += i64::from(*width),
+                            }
+                        }
+                        ri += 1;
+                    }
                 }
             }
             (x, st, sh)
@@ -576,6 +739,7 @@ impl<'a> MtCtx<'a> {
             .iter()
             .filter_map(|n| match n {
                 PNode::Run { micro, .. } => Some(micro.map_or_else(Vec::new, |m| vec![0; m.glyphs.len()])),
+                PNode::Math { math, .. } => Some(vec![0; math.nodes.len()]),
                 _ => None,
             })
             .collect();
@@ -584,11 +748,13 @@ impl<'a> MtCtx<'a> {
             let (x, st, _) = totals(&nodes, &expansion);
             let (mut fs, mut fk) = (0i64, 0i64);
             for n in &nodes {
-                if let PNode::Run { micro: Some(m), .. } = n {
-                    let (s, k) = m.font_var();
-                    fs += s;
-                    fk += k;
-                }
+                let (s, k) = match n {
+                    PNode::Run { micro: Some(m), .. } => m.font_var(),
+                    PNode::Math { math, .. } => math.font_var(),
+                    _ => (0, 0),
+                };
+                fs += s;
+                fk += k;
             }
             for (_, s, k) in &kern_var {
                 fs += s;
@@ -601,15 +767,28 @@ impl<'a> MtCtx<'a> {
             if ratio != 0 {
                 let mut ri = 0;
                 for n in &nodes {
-                    if let PNode::Run { micro, .. } = n {
-                        if let Some(m) = micro {
-                            for (k, g) in m.glyphs.iter().enumerate() {
-                                if let Some(c) = g.code {
-                                    expansion[ri][k] = m.params.char_expansion(c, ratio);
+                    match n {
+                        PNode::Run { micro, .. } => {
+                            if let Some(m) = micro {
+                                for (k, g) in m.glyphs.iter().enumerate() {
+                                    if let Some(c) = g.code {
+                                        expansion[ri][k] = m.params.char_expansion(c, ratio);
+                                    }
                                 }
                             }
+                            ri += 1;
                         }
-                        ri += 1;
+                        PNode::Math { math, .. } => {
+                            for (k, mn) in math.nodes.iter().enumerate() {
+                                if let MathNode::Char { params: Some(p), code, .. } = mn
+                                    && p.is_expandable()
+                                {
+                                    expansion[ri][k] = p.char_expansion(*code, ratio);
+                                }
+                            }
+                            ri += 1;
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -654,23 +833,62 @@ impl<'a> MtCtx<'a> {
         let mut runs = Vec::new();
         let (mut height, mut depth) = (0.0f64, 0.0f64);
         let mut ri = 0;
+        // hlist_out's glue: the set glue rounded from the running total.
+        let mut set_glue = |cur_h: &mut i64, width: i64, stretch_order: usize, stretch: i64, shrink: i64| {
+            let mut rule_wd = width - cur_g;
+            match sign {
+                Sign::Stretching if stretch_order == order => {
+                    cur_glue += stretch as f64;
+                    cur_g = (set * cur_glue).round() as i64;
+                }
+                Sign::Shrinking if order == 0 => {
+                    cur_glue -= shrink as f64;
+                    cur_g = (set * cur_glue).round() as i64;
+                }
+                _ => {}
+            }
+            rule_wd += cur_g;
+            *cur_h += rule_wd;
+        };
         for n in &nodes {
             match n {
-                PNode::Glue(g) => {
-                    let mut rule_wd = sp(g.width) - cur_g;
-                    match sign {
-                        Sign::Stretching if order_idx(g.stretch_order) == order => {
-                            cur_glue += sp(g.stretch) as f64;
-                            cur_g = (set * cur_glue).round() as i64;
+                PNode::Glue(g) => set_glue(&mut cur_h, sp(g.width), order_idx(g.stretch_order), sp(g.stretch), sp(g.shrink)),
+                PNode::Math { run, math } => {
+                    let x0 = cur_h;
+                    let mut glyphs = Vec::with_capacity(math.nodes.len());
+                    for (k, mn) in math.nodes.iter().enumerate() {
+                        let before = cur_h;
+                        match mn {
+                            MathNode::Char { width, .. } => {
+                                let e = expansion[ri].get(k).copied().unwrap_or(0);
+                                cur_h += i64::from(expanded_width(*width, e));
+                            }
+                            MathNode::Glue { width, stretch, shrink } => {
+                                set_glue(&mut cur_h, i64::from(*width), 0, i64::from(*stretch), i64::from(*shrink));
+                            }
+                            MathNode::Kern { width, .. } | MathNode::Box { width } => cur_h += i64::from(*width),
                         }
-                        Sign::Shrinking if order == 0 => {
-                            cur_glue -= sp(g.shrink) as f64;
-                            cur_g = (set * cur_glue).round() as i64;
-                        }
-                        _ => {}
+                        // One entry per node: where it starts in the formula.
+                        glyphs.push(crate::linebreak::PositionedGlyph {
+                            gid: 0,
+                            x_offset: pt(before - x0),
+                            advance: pt(cur_h - before),
+                            cluster: 0..0,
+                        });
                     }
-                    rule_wd += cur_g;
-                    cur_h += rule_wd;
+                    runs.push(crate::linebreak::PositionedRun {
+                        x: pt(x0),
+                        baseline_y: 0.0,
+                        width: pt(cur_h - x0),
+                        font: run.font,
+                        size: run.size,
+                        glyphs,
+                        source: run.source.clone(),
+                        is_hyphen: false,
+                    });
+                    height = height.max(run.height);
+                    depth = depth.max(run.depth);
+                    ri += 1;
                 }
                 PNode::Fixed(w) => cur_h += w,
                 PNode::Run { run, micro, is_hyphen } => {
