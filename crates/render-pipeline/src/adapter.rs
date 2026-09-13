@@ -3459,8 +3459,16 @@ struct LiteralBody {
 }
 
 fn literal_command_body(source: &str, span: Span) -> Option<LiteralBody> {
-    let name = control_word_at(source, span.start, span.end)?;
-    let at = span.end;
+    // Matched from `span.start`, not from `span.end`: the compiler's span
+    // for a `\verb` has been both the control word alone and the whole
+    // `\verb|...|` construct, and this must read the same body either way.
+    let head = source.get(span.start..)?;
+    let name = ["verb", "lstinline"].into_iter().find(|n| {
+        head.strip_prefix('\\')
+            .and_then(|r| r.strip_prefix(*n))
+            .is_some_and(|r| !r.starts_with(|c: char| c.is_ascii_alphabetic()))
+    })?;
+    let at = span.start + 1 + name.len();
     let rest = source.get(at..)?;
     let starred = name == "verb" && rest.starts_with('*');
     let (rest, mut end) = match name {
