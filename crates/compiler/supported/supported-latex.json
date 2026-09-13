@@ -536,6 +536,8 @@
     {"name": "longleftrightarrow", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⟷", "renders": true, "glyph": "⟷"},
     {"name": "triangle", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol △", "renders": true, "glyph": "△"},
     {"name": "bigtriangledown", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ▽", "renders": true, "glyph": "▽"},
+    {"name": "triangleright", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ▷", "renders": true, "glyph": "▷"},
+    {"name": "triangleleft", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ◁", "renders": true, "glyph": "◁"},
     {"name": "boxdot", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊡ (\\mathbin, msam \"00)", "renders": true, "glyph": "⊡"},
     {"name": "boxplus", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊞ (\\mathbin, msam \"01)", "renders": true, "glyph": "⊞"},
     {"name": "boxtimes", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊠ (\\mathbin, msam \"02)", "renders": true, "glyph": "⊠"},

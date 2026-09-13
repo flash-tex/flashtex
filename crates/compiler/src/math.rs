@@ -2581,6 +2581,12 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     // `command_atom`), so it is not a second row here.
     ("triangle", "△"),
     ("bigtriangledown", "▽"),
+    // `\triangleright`/`\triangleleft` are `\DeclareMathSymbol{..}{\mathbin}
+    // {letters}{"2F}` / `{"2E}` (fontmath.ltx): cmmi10, not cmsy, both 0.5 em.
+    // algpseudocode's comment marker is `\hfill\(\triangleright\) #1`
+    // (algorithmicx.sty 579), which was dropped entirely without these.
+    ("triangleright", "▷"),
+    ("triangleleft", "◁"),
     // `\bot` shares `\perp`'s exact base-14 Symbol glyph above with a forced
     // Ord class (see `command_atom`), so it is not a second row here.
 ];
@@ -2745,7 +2751,9 @@ fn symbol_class(glyph: &str) -> AtomClass {
         | "⊗" | "∖" | "∓" | "∘"
         // `\bigtriangledown`; `\bigtriangleup` shares `\triangle`'s glyph
         // (Ord by default here) and overrides its class to Bin instead.
-        | "▽" => Bin,
+        // `\bigtriangledown`, and `\triangleright`/`\triangleleft`, which
+        // fontmath.ltx also declares `\mathbin`.
+        | "▽" | "▷" | "◁" => Bin,
         "(" | "[" | "{" | "〈" | "⟨" | "⌊" | "⌈" => Open,
         ")" | "]" | "}" | "〉" | "⟩" | "!" | "?" | "⌋" | "⌉" => Close,
         "," | ";" => Punct,

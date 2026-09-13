@@ -109,6 +109,12 @@ pub const ADVANCES: &[(char, u16)] = &[
     // \bigtriangleup gets a per-atom class override rather than a second glyph.
     ('\u{25B3}', 968), // \triangle, \bigtriangleup
     ('\u{25BD}', 968), // \bigtriangledown (a distinct glyph, no override needed)
+    // \triangleright/\triangleleft: fontmath.ltx declares both \mathbin in the
+    // `letters` family (cmmi10 "2F/"2E, 0.5 em each), so pdfLaTeX draws them
+    // from cmmi and these Latin Modern Math advances are wider. algpseudocode's
+    // comment marker is \hfill\(\triangleright\) (algorithmicx.sty 579).
+    ('\u{25B7}', 858), // \triangleright
+    ('\u{25C1}', 858), // \triangleleft
     // \bot shares \perp's exact U+22A5 glyph; only its class differs (Ord vs
     // Rel), handled with a per-atom class override, not a second glyph.
     // Proof QED mark (U+220E): not emitted by any command here yet, but
@@ -183,7 +189,7 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 75);
+        assert_eq!(ADVANCES.len(), 77);
     }
 
     #[test]
