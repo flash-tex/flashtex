@@ -40,9 +40,10 @@ pub enum Piece {
     Centering,
     /// `\includegraphics[options]{path}`; `span` covers the whole command.
     Graphic { span: Span, options: String, path: String },
-    /// `\caption{...}`: `span` covers the command, `arg` the argument's
-    /// inner bytes.
-    Caption { span: Span, arg: Span },
+    /// `\caption[...]{...}`: `span` covers the command, `arg` the argument's
+    /// inner bytes, `short` those of the optional argument (latex.ltx
+    /// `\@caption#1[#2]#3` writes `#2` to the list of figures/tables).
+    Caption { span: Span, arg: Span, short: Option<Span> },
     /// `\label{key}`.
     Label { span: Span, key: String },
     /// A blank line or `\par`: ends the current paragraph.
@@ -185,6 +186,24 @@ fn group(text: &str, open: usize) -> Option<(usize, usize)> {
     None
 }
 
+/// The `]` closing the optional argument opened at `open`, outside braces.
+fn optional_end(text: &str, open: usize, end: usize) -> Option<usize> {
+    let b = text.as_bytes();
+    let mut depth = 0usize;
+    let mut i = open + 1;
+    while i < end {
+        match b[i] {
+            b'\\' => i += 1,
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            b']' if depth == 0 => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 fn skip_ws(text: &str, mut i: usize, end: usize) -> usize {
     let b = text.as_bytes();
     while i < end && (b[i] == b' ' || b[i] == b'\t' || b[i] == b'\n' || b[i] == b'\r') {
@@ -244,11 +263,18 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                         }
                     }
                     "caption" | "label" => {
-                        let j = skip_ws(text, name_end, end);
+                        let mut j = skip_ws(text, name_end, end);
+                        let mut short = None;
+                        if name == "caption" && b.get(j) == Some(&b'[') {
+                            if let Some(close) = optional_end(text, j, end) {
+                                short = Some(span(j + 1, close));
+                                j = skip_ws(text, close + 1, end);
+                            }
+                        }
                         match group(text, j).filter(|(_, e)| *e < end) {
                             Some((s, e)) => {
                                 out.push(if name == "caption" {
-                                    Piece::Caption { span: span(i, e + 1), arg: span(s, e) }
+                                    Piece::Caption { span: span(i, e + 1), arg: span(s, e), short }
                                 } else {
                                     Piece::Label { span: span(i, e + 1), key: text[s..e].trim().to_string() }
                                 });
@@ -518,7 +544,7 @@ pub fn prepare(
                             }
                         }
                     }
-                    Piece::Caption { span, arg } => {
+                    Piece::Caption { span, arg, .. } => {
                         let items = caption_items(f.kind, number, *span, *arg, d, documents, entry_index, texts, options, labels);
                         parts.push(FloatPart::Caption { items });
                     }

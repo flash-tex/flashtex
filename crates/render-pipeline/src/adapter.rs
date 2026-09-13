@@ -283,6 +283,8 @@ pub enum Block {
     /// `number` is `None` for `\chapter*`.
     Chapter {
         number: Option<String>,
+        /// After `\appendix`: `\@chapapp` is `\appendixname`.
+        appendix: bool,
         items: Vec<Item>,
         title: String,
         span: Span,
@@ -291,6 +293,13 @@ pub enum Block {
         /// drops the `Chapter <n>.` prefix).
         mark: bool,
     },
+    /// `\part` (the compiler reports the command and sets its argument as
+    /// body text, which is dropped): article.cls lines 268-301 in the
+    /// flow, report.cls 278-328 / book.cls 299-349 on a page of its own.
+    /// `number` is `\thepart` (`None` for `\part*`).
+    /// `eject_before`: a page-break command stands right before it
+    /// (`clear_before`: `\clearpage`/`\cleardoublepage`).
+    Part { number: Option<String>, items: Vec<Item>, span: Span, eject_before: bool, clear_before: bool },
     /// `\maketitle` (article.cls lines 169-251, report.cls 175-257,
     /// book.cls 181-263): the compiler's title, the `\and`-separated
     /// authors (each a `tabular` whose rows are split at `\\`) and the date
@@ -309,6 +318,9 @@ pub enum Block {
     /// A page-style or mark command in the body, attached to the material
     /// that follows it.
     Chrome { event: ChromeEvent, span: Span },
+    /// One `\tableofcontents`/`\listoffigures`/`\listoftables` entry line
+    /// (`crate::toc`).
+    TocEntry(Box<crate::toc::TocEntry>),
     /// A `tikzpicture`, found from the source bytes (the compiler reports the
     /// environment as unknown and sets its body as text, which is dropped
     /// here): its bounding box as one box on a line of its own, flush left
@@ -403,6 +415,9 @@ pub struct Doc {
     pub limitations: Vec<(&'static str, Span, String)>,
     /// `secnumdepth` in force (numbers in running heads).
     pub secnumdepth: u8,
+    /// Indices of the blocks after a `\clearpage`/`\cleardoublepage` (see
+    /// `clear_page_blocks`).
+    pub page_starts: Vec<usize>,
 }
 
 /// Label values (`\ref`) and the pages they fell on in a previous layout
@@ -411,6 +426,13 @@ pub struct Doc {
 pub struct Labels {
     pub values: BTreeMap<String, String>,
     pub pages: BTreeMap<String, u32>,
+    /// `\thepage` of every contents entry (`toc::key`) in the previous pass;
+    /// kept apart from `pages` so the paragraph cache key is unaffected.
+    pub toc_pages: BTreeMap<String, String>,
+    /// Captioned floats: the `\listoffigures`/`\listoftables` entries.
+    pub floats: Vec<crate::toc::FloatEntry>,
+    /// Entry titles taken from source bytes, set as body text.
+    pub entry_items: crate::toc::EntryItems,
 }
 
 fn inlines_of(block: &CBlock) -> &[Inline] {
@@ -433,8 +455,7 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
 ///   source line (the compiler's tab-expanded text, `Mono` family) joined
 ///   by `\\`; the pipeline sets it in the body face, justified off, so
 ///   the lines keep their order but not Courier's fixed pitch.
-/// - `\tableofcontents`: article's own `\section*{\contentsname}` heading
-///   without the entries (the page builder has no contents pass).
+/// - `\tableofcontents`: kept; `crate::toc` sets the list.
 /// - `\maketitle`: three centred paragraphs (title at `\LARGE`, authors
 ///   and date at `\large`, the sizes `\@maketitle` declares) carried by the
 ///   compiler's `TextStyle::size`, which the pipeline already reads; the
@@ -516,24 +537,9 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
                     content,
                 });
             }
-            CBlock::TableOfContents { span } => {
-                limitations.push((
-                    "unsupported_block",
-                    *span,
-                    "\\tableofcontents set as its `Contents` heading only: the pipeline has no contents pass (entries and page numbers omitted)".to_string(),
-                ));
-                out.push(CBlock::Heading {
-                    level: 1,
-                    number: String::new(),
-                    number_span: *span,
-                    content: vec![Inline::Text {
-                        text: "Contents".to_string(),
-                        span: *span,
-                        style: CStyle::BOLD,
-                        space_before: true,
-                    }],
-                });
-            }
+            // Set by `crate::toc` from the source command; the block stays
+            // as the position a following `\clearpage` is measured from.
+            CBlock::TableOfContents { .. } => out.push(block.clone()),
             CBlock::TitleBlock { title, authors, date } if stash_titles => titles.push((title.clone(), authors.clone(), date.clone())),
             CBlock::TitleBlock { title, authors, date } => {
                 if let Some(at) = first {
@@ -635,7 +641,7 @@ impl Labels {
         }
         Labels {
             values,
-            pages: BTreeMap::new(),
+            ..Labels::default()
         }
     }
 
@@ -703,7 +709,13 @@ pub fn adapt_cached(
     if let Some(pt) = parskip(source, size) {
         style.parskip = crate::style::Skip::fixed(pt);
     }
-    let secnumdepth = counter(source, "secnumdepth").unwrap_or(options.default_secnumdepth);
+    // `\c@secnumdepth`: the class default (article.cls 3, report/book.cls 2)
+    // for an explicit standard class.
+    let class_secnumdepth = match (&explicit_class, style.class_geometry.as_ref()) {
+        (Some(_), Some(d)) => u8::try_from(d.secnumdepth).unwrap_or(options.default_secnumdepth),
+        _ => options.default_secnumdepth,
+    };
+    let secnumdepth = counter(source, "secnumdepth").unwrap_or(class_secnumdepth);
     let styles: Vec<Styles> = texts.iter().map(|t| Styles::new(style_intervals(t))).collect();
     let labels_fp = {
         use std::hash::{Hash, Hasher};
@@ -730,6 +742,7 @@ pub fn adapt_cached(
     // article's `\maketitle` (no `titlepage`) issues `\thispagestyle{plain}`.
     let maketitle_plain = style.class_geometry.as_ref().is_some_and(|d| !d.options.titlepage);
     let commands = body_commands(source, has_chapters, book);
+    let heading_math_spans = math_title_spans(source, entry_doc);
     // Every compiler `TitleBlock` is laid out at its `\maketitle` command
     // (the entry document's, in order) when the two correspond one to one;
     // otherwise (a `\maketitle` the compiler rejected, or one in an
@@ -747,17 +760,66 @@ pub fn adapt_cached(
     };
     // book.cls `\if@mainmatter` (true until `\frontmatter`).
     let mut mainmatter = true;
+    // Run-in heading titles as the compiler parsed them (it sets the
+    // argument of `\paragraph`/`\subparagraph` as body text, math included).
+    let run_in_titles: std::collections::HashMap<usize, Vec<Item>> = commands
+        .iter()
+        .filter_map(|c| match c.kind {
+            BodyKind::RunIn { title, .. } => {
+                let inlines: Vec<Inline> = lowered
+                    .iter()
+                    .flat_map(|b| inlines_of(b).iter())
+                    .filter(|i| {
+                        let s = inline_span(i);
+                        s.document == entry_doc && s.start >= title.0 && s.start < title.1
+                    })
+                    .cloned()
+                    .collect();
+                Some((c.start, items_for(&inlines, false)))
+            }
+            _ => None,
+        })
+        .collect();
     strip_command_text(&mut lowered, entry_doc, &commands);
     let mut next_command = 0usize;
     let mut noindent_at: Option<usize> = None;
     // report/book: `\thesection` is `\thechapter.\arabic{section}`.
     let (mut chapter_no, mut section_nos) = (0u32, [0u32; 3]);
+    // `\appendix`: `\thesection` (article) or `\thechapter` (report/book)
+    // becomes `\@Alph`; `chapter_label` is `\thechapter`.
+    let mut appendix = false;
+    // `secnumdepth` where the body is: the preamble's (or the class's)
+    // value, changed by `\setcounter{secnumdepth}` in the body.
+    let preamble = source.find("\\begin{document}").map_or(source, |b| &source[..b]);
+    let mut secnumdepth_now: i32 = counter(preamble, "secnumdepth").map_or(i32::from(class_secnumdepth), i32::from);
+    // `\thesubsubsection` and the `paragraph`/`subparagraph` counters
+    // (`\theparagraph` is `\thesubsubsection.\@arabic\c@paragraph`).
+    let mut subsub_number = String::from("0.0.0");
+    let mut run_in_nos = [0u32; 2];
+    let mut chapter_label = String::new();
+    let mut part_no = 0u32;
+    // Contents lists (`crate::toc`): every `\contentsline` record, where
+    // each list stands, and the label keys of records whose page is that of
+    // the next block. Nothing is collected without a list.
+    let toc_active = commands.iter().any(|c| matches!(c.kind, BodyKind::ContentsList(_)));
+    let toc_settings = crate::toc::Settings::read(source, has_chapters);
+    // `\@sect` writes `\numberline` up to the class's `secnumdepth`
+    // (article.cls 3, report/book.cls 2) when the document declares one.
+    let toc_secnumdepth = counter(source, "secnumdepth").unwrap_or(match (explicit_class.is_some(), has_chapters) {
+        (true, true) => 2,
+        (true, false) => 3,
+        (false, _) => options.default_secnumdepth,
+    });
+    let mut toc_records: Vec<crate::toc::Record> = Vec::new();
+    let mut toc_lists: Vec<(usize, crate::toc::ListKind, Span, bool)> = Vec::new();
+    let mut toc_pending: Vec<String> = Vec::new();
+    let mut chapter_starts: Vec<(usize, String)> = Vec::new();
     let mut after_heading = false;
     // Last source span of the previous paragraph block (None after a
     // heading or rule), for rejoining a display with its paragraph.
     let mut prev_para_end: Option<Span> = None;
     for unit in split_at_page_breaks(texts, &lowered, size, &style) {
-        let eject_before = unit.eject_before;
+        let mut eject_before = unit.eject_before;
         let vspace_before = unit.vspace_before;
         limitations.extend(unit.limitations);
         let unit_start = match &unit.kind {
@@ -781,13 +843,37 @@ pub fn adapt_cached(
                         let number = (!*starred && mainmatter).then(|| {
                             chapter_no += 1;
                             section_nos = [0; 3];
-                            chapter_no.to_string()
+                            chapter_label = if appendix {
+                                flashtex_class_geometry::Numbering::UpperAlph.format(i64::from(chapter_no))
+                            } else {
+                                chapter_no.to_string()
+                            };
+                            chapter_starts.push((cmd.start, chapter_label.clone()));
+                            chapter_label.clone()
                         });
+                        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
+                        let mut items = words_from_source(source, entry_doc, title.0, title.1);
+                        if toc_active {
+                            if let Some(n) = &number {
+                                // report.cls `\@chapter`: `\addcontentsline{toc}{chapter}{\protect\numberline{\thechapter}#1}`.
+                                let key = crate::toc::key(toc_records.len());
+                                toc_records.push(crate::toc::Record {
+                                    list: crate::toc::ListKind::Toc,
+                                    level: 0,
+                                    number: Some((n.clone(), span)),
+                                    title: labels.entry_items.get(entry_doc, title.0, title.1).unwrap_or_else(|| items.clone()),
+                                    key: key.clone(),
+                                });
+                                toc_pending.push(key);
+                            }
+                            items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
+                        }
                         blocks.push(Block::Chapter {
                             number,
-                            items: words_from_source(source, entry_doc, title.0, title.1),
+                            appendix,
+                            items,
                             title: plain_text(&source[title.0..title.1]),
-                            span: Span::in_document(entry_doc, cmd.start, cmd.end),
+                            span,
                             mark: !*starred,
                         });
                         after_heading = true;
@@ -832,6 +918,131 @@ pub fn adapt_cached(
                         }
                         prev_para_end = None;
                     }
+                    BodyKind::ContentsList(kind) => {
+                        // `\newpage` (etc.) right before the command breaks
+                        // before the list's heading.
+                        let before = source[..cmd.start].trim_end();
+                        let eject = ["\\newpage", "\\clearpage", "\\cleardoublepage", "\\pagebreak"].iter().any(|c| before.ends_with(c));
+                        toc_lists.push((blocks.len(), *kind, Span::in_document(entry_doc, cmd.start, cmd.end), eject));
+                    }
+                    BodyKind::AddContentsLine { list, level, text } => {
+                        if let (true, Some(level)) = (toc_active, crate::toc::level_of(level)) {
+                            let (number, title) = crate::toc::contentsline_text(source, entry_doc, text.0, text.1, &labels.entry_items);
+                            let key = crate::toc::key(toc_records.len());
+                            toc_records.push(crate::toc::Record {
+                                list: *list,
+                                level,
+                                number,
+                                title,
+                                key: key.clone(),
+                            });
+                            // The write lands on the page of the heading just
+                            // set, or of the next block.
+                            match blocks.last_mut() {
+                                Some(Block::Heading { items, .. } | Block::Chapter { items, .. } | Block::Part { items, .. }) if after_heading => items.push(Item::Label { key }),
+                                _ => toc_pending.push(key),
+                            }
+                        }
+                    }
+                    BodyKind::Appendix => {
+                        // article.cls/report.cls `\appendix`: the section
+                        // (and chapter) counters restart.
+                        appendix = true;
+                        chapter_no = 0;
+                        section_nos = [0; 3];
+                    }
+                    BodyKind::SecNumDepth(n) => secnumdepth_now = *n,
+                    BodyKind::RunIn { level, starred, title } => {
+                        // `\@sect`: `\refstepcounter` only up to `secnumdepth`;
+                        // `\@seccntformat` is `\the<counter>\quad`.
+                        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
+                        let l = usize::from(*level - 4);
+                        let number = if !*starred && i32::from(*level) <= secnumdepth_now {
+                            run_in_nos[l] += 1;
+                            if l == 0 {
+                                run_in_nos[1] = 0;
+                            }
+                            if l == 0 {
+                                format!("{subsub_number}.{}", run_in_nos[0])
+                            } else {
+                                format!("{subsub_number}.{}.{}", run_in_nos[0], run_in_nos[1])
+                            }
+                        } else {
+                            String::new()
+                        };
+                        let mut items = Vec::new();
+                        if !number.is_empty() {
+                            let chars = number.chars().map(|_| CharSrc { document: entry_doc, start: cmd.start, end: cmd.end }).collect();
+                            push_segment(&mut items, number.clone(), chars, TextStyle::default());
+                            items.push(Item::Quad { em: 1.0 });
+                        }
+                        // A title holding math is re-read as body text
+                        // (`math_title_spans`): the compiler sets the math of
+                        // an unsupported command's argument as plain text.
+                        let reread = labels.entry_items.get(entry_doc, title.0, title.1);
+                        match reread.or_else(|| run_in_titles.get(&cmd.start).filter(|t| !t.is_empty()).cloned()) {
+                            Some(title_items) => items.extend(title_items),
+                            None => items.extend(words_from_source(source, entry_doc, title.0, title.1)),
+                        }
+                        if toc_active {
+                            items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
+                        }
+                        blocks.push(Block::Heading {
+                            level: *level,
+                            items,
+                            eject_before: false,
+                            vspace_before: 0.0,
+                            number,
+                            title: plain_text(&source[title.0..title.1]),
+                            span,
+                        });
+                        // `\@xsect` with a run-in heading: `\@nobreakfalse`.
+                        after_heading = false;
+                        prev_para_end = None;
+                    }
+                    BodyKind::Part { starred, short, title } => {
+                        // `\@part`: `\refstepcounter{part}` (`\thepart` is
+                        // `\@Roman\c@part`) and `\addcontentsline{toc}{part}
+                        // {\thepart\hspace{1em}#1}`; `\@spart` writes nothing.
+                        let number = (!*starred).then(|| {
+                            part_no += 1;
+                            flashtex_class_geometry::Numbering::UpperRoman.format(i64::from(part_no))
+                        });
+                        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
+                        let mut items = words_from_source(source, entry_doc, title.0, title.1);
+                        if toc_active {
+                            if let Some(n) = &number {
+                                let (s, e) = short.unwrap_or(*title);
+                                let key = crate::toc::key(toc_records.len());
+                                toc_records.push(crate::toc::Record {
+                                    list: crate::toc::ListKind::Toc,
+                                    level: -1,
+                                    number: Some((n.clone(), span)),
+                                    title: labels.entry_items.get(entry_doc, s, e).unwrap_or_else(|| words_from_source(source, entry_doc, s, e)),
+                                    key: key.clone(),
+                                });
+                                toc_pending.push(key);
+                            }
+                            items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
+                        }
+                        // The compiler attaches a `\clearpage` before `\part`
+                        // to the next unit; it belongs to the part.
+                        let before = source[..cmd.start].trim_end();
+                        let clear_before = ["\\clearpage", "\\cleardoublepage"].iter().any(|c| before.ends_with(c));
+                        let part_eject = clear_before || ["\\newpage", "\\pagebreak"].iter().any(|c| before.ends_with(c));
+                        if part_eject {
+                            eject_before = false;
+                        }
+                        blocks.push(Block::Part {
+                            number,
+                            items,
+                            span,
+                            eject_before: part_eject,
+                            clear_before,
+                        });
+                        after_heading = true;
+                        prev_para_end = None;
+                    }
                 }
             }
         }
@@ -842,16 +1053,31 @@ pub fn adapt_cached(
                 number_span,
                 content,
             } => {
-                let number: String = if has_chapters && !number.is_empty() && (1..=3).contains(&level) {
+                let number: String = if (has_chapters || appendix) && !number.is_empty() && (1..=3).contains(&level) {
                     let l = usize::from(level) - 1;
                     section_nos[l] += 1;
                     for n in &mut section_nos[l + 1..] {
                         *n = 0;
                     }
-                    std::iter::once(chapter_no).chain(section_nos[..=l].iter().copied()).map(|n| n.to_string()).collect::<Vec<_>>().join(".")
+                    let mut parts: Vec<String> = section_nos[..=l].iter().map(|n| n.to_string()).collect();
+                    if has_chapters {
+                        parts.insert(0, if chapter_no == 0 { "0".to_string() } else { chapter_label.clone() });
+                    } else {
+                        // article.cls `\appendix`: `\thesection` is `\@Alph\c@section`.
+                        parts[0] = flashtex_class_geometry::Numbering::UpperAlph.format(i64::from(section_nos[0]));
+                    }
+                    parts.join(".")
                 } else {
                     number.to_string()
                 };
+                // `\refstepcounter{<level>}` resets the deeper counters.
+                if !number.is_empty() && i32::from(level) <= secnumdepth_now {
+                    run_in_nos = [0; 2];
+                    if level == 3 {
+                        subsub_number = number.clone();
+                    }
+                }
+                let number = if i32::from(level) <= secnumdepth_now { number } else { String::new() };
                 let title = match (content.first(), content.last()) {
                     (Some(a), Some(b)) => {
                         let (a, b) = (inline_span(a), inline_span(b));
@@ -862,7 +1088,7 @@ pub fn adapt_cached(
                 // LaTeX `\@seccntformat`: the counter, then `\quad`, then the
                 // title; the number's bytes are the `\section` command's.
                 let mut items = Vec::new();
-                if !number.is_empty() && level <= secnumdepth {
+                if !number.is_empty() {
                     let chars = number
                         .chars()
                         .map(|_| CharSrc {
@@ -874,7 +1100,31 @@ pub fn adapt_cached(
                     push_segment(&mut items, number.to_string(), chars, TextStyle::default());
                     items.push(Item::Quad { em: 1.0 });
                 }
-                items.extend(items_for(content, true));
+                // A title holding math: the compiler's text-only content is
+                // replaced by the argument re-read as body text.
+                let math_title = content
+                    .first()
+                    .map(inline_span)
+                    .and_then(|f| heading_math_spans.iter().find(|s| s.document == f.document && s.start <= f.start && f.start < s.end))
+                    .and_then(|s| labels.entry_items.get(s.document, s.start, s.end));
+                let content_items = math_title.unwrap_or_else(|| items_for(content, true));
+                if toc_active {
+                    // `\@sect`: `\addcontentsline{toc}{<level>}{\numberline{<number>}<title>}`
+                    // for an unstarred heading (no `\numberline` past `secnumdepth`).
+                    if !number.is_empty() {
+                        let key = crate::toc::key(toc_records.len());
+                        toc_records.push(crate::toc::Record {
+                            list: crate::toc::ListKind::Toc,
+                            level: level as i8,
+                            number: (level <= toc_secnumdepth).then(|| (number.clone(), number_span)),
+                            title: content_items.iter().filter(|i| !matches!(i, Item::Label { .. })).cloned().collect(),
+                            key: key.clone(),
+                        });
+                        toc_pending.push(key);
+                    }
+                    items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
+                }
+                items.extend(content_items);
                 blocks.push(Block::Heading {
                     level,
                     items,
@@ -917,7 +1167,8 @@ pub fn adapt_cached(
                 for inline in inlines {
                     unsupported_inlines(inline, &mut limitations);
                 }
-                let items = items_for(inlines, false);
+                let mut items = items_for(inlines, false);
+                items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
                 let mut parts = Vec::new();
                 let mut current = Vec::new();
                 for item in items {
@@ -1042,6 +1293,11 @@ pub fn adapt_cached(
             }
         }
     }
+    // The contents lists, now that every record is known.
+    for (at, kind, span, eject) in toc_lists.into_iter().rev() {
+        let list = crate::toc::list_blocks(kind, span, eject, &toc_settings, &toc_records, labels, &chapter_starts);
+        blocks.splice(at..at, list);
+    }
     // `\end{...}`: the last paragraph of a run of same-style paragraphs
     // closes the environment (two adjacent environments of one style are
     // read as one; the compiler does not mark the boundary).
@@ -1079,13 +1335,49 @@ pub fn adapt_cached(
             _ => {}
         }
     }
+    let page_starts = clear_page_blocks(texts, &blocks);
     Doc {
         style,
         blocks,
         diagnostics: Vec::new(),
         limitations,
         secnumdepth,
+        page_starts,
     }
+}
+
+/// Blocks whose `eject_before` comes from `\clearpage`/`\cleardoublepage`
+/// (the page-break command nearest before the block): in two-column mode
+/// those end the page, `\newpage`/`\pagebreak` only the column (latex.ltx
+/// `\clearpage` flushes with `\vbox{}\penalty-\@Mi`, `\@outputdblcol` ships
+/// the page).
+fn clear_page_blocks(texts: &[&str], blocks: &[Block]) -> Vec<usize> {
+    let first_span = |items: &[Item]| {
+        items.iter().find_map(|i| match i {
+            Item::Word(w) => Some(w.span()),
+            Item::Math { span, .. } => Some(*span),
+            _ => None,
+        })
+    };
+    blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| {
+            let at = match b {
+                Block::Paragraph { eject_before: true, parts, .. } => parts.iter().find_map(|p| match p {
+                    ParaPart::Lines(items) => first_span(items),
+                    _ => None,
+                }),
+                Block::Heading { eject_before: true, span, .. } | Block::Rule { eject_before: true, span, .. } => Some(*span),
+                Block::Picture { eject_before: true, document, picture, .. } => Some(Span::in_document(*document, picture.start, picture.end)),
+                _ => None,
+            }?;
+            let text = texts.get(at.document.0)?.get(..at.start)?;
+            let clear = text.rfind("\\clearpage").max(text.rfind("\\cleardoublepage"));
+            let column = text.rfind("\\newpage").max(text.rfind("\\pagebreak"));
+            (clear.is_some() && clear > column).then_some(i)
+        })
+        .collect()
 }
 
 fn inline_span(i: &Inline) -> Span {
@@ -1289,6 +1581,11 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
             }
             CBlock::VSpace { pt } => {
                 pending_vspace += pt;
+                continue;
+            }
+            CBlock::TableOfContents { span } => {
+                prev_end = Some(*span);
+                prev_vmode = true;
                 continue;
             }
             CBlock::Rule { span } => {
@@ -2758,6 +3055,21 @@ pub enum BodyKind {
     MakeTitle,
     /// book.cls `\frontmatter`/`\mainmatter`/`\backmatter`.
     Matter(Matter),
+    /// `\tableofcontents`, `\listoffigures`, `\listoftables`.
+    ContentsList(crate::toc::ListKind),
+    /// `\addcontentsline{<ext>}{<level>}{<entry>}`: `text` is the entry
+    /// argument's inner range.
+    AddContentsLine { list: crate::toc::ListKind, level: String, text: (usize, usize) },
+    /// `\appendix`.
+    Appendix,
+    /// `\part[<short>]{<title>}` / `\part*{<title>}` (inner ranges).
+    Part { starred: bool, short: Option<(usize, usize)>, title: (usize, usize) },
+    /// `\paragraph` (level 4) / `\subparagraph` (level 5): run-in
+    /// `\@startsection` headings the compiler sets as body text.
+    RunIn { level: u8, starred: bool, title: (usize, usize) },
+    /// `\setcounter{secnumdepth}{<n>}` in the body (the compiler skips the
+    /// command and its first argument and sets `<n>` as text).
+    SecNumDepth(i32),
 }
 
 /// Which book.cls matter command (lines 284-298).
@@ -2775,6 +3087,53 @@ pub enum Matter {
 /// `\maketitle`, (when the class has chapters) `\chapter` and (book)
 /// `\frontmatter`/`\mainmatter`/`\backmatter` after `\begin{document}`,
 /// in source order, skipping comments.
+/// The argument ranges of `\section`/`\subsection`/`\subsubsection` (starred
+/// or with an optional argument) after `\begin{document}` that hold inline
+/// math: the compiler sets such a title's math as plain text, so the
+/// pipeline re-reads the argument as body text (`toc::entry_items`).
+pub fn math_title_spans(source: &str, document: DocumentId) -> Vec<Span> {
+    let bytes = source.as_bytes();
+    let begin = source.find("\\begin{document}").map_or(0, |b| b + "\\begin{document}".len());
+    let mut out = Vec::new();
+    for name in ["\\section", "\\subsection", "\\subsubsection", "\\paragraph", "\\subparagraph"] {
+        let mut from = begin;
+        while let Some(at) = source[from..].find(name) {
+            let mut k = from + at + name.len();
+            from = k;
+            if bytes.get(k).is_some_and(|b| b.is_ascii_alphabetic()) {
+                continue;
+            }
+            let line_start = source[..k].rfind('\n').map_or(0, |n| n + 1);
+            if source[line_start..k].contains('%') {
+                continue;
+            }
+            if bytes.get(k) == Some(&b'*') {
+                k += 1;
+            }
+            let rest = &source[k..];
+            let trimmed = rest.trim_start();
+            if trimmed.starts_with('[') {
+                match trimmed.find(']') {
+                    Some(close) => k += rest.len() - trimmed.len() + close + 1,
+                    None => continue,
+                }
+            }
+            let rest = &source[k..];
+            let open = k + rest.len() - rest.trim_start().len();
+            if bytes.get(open) != Some(&b'{') {
+                continue;
+            }
+            let Some(close) = matching_brace(bytes, open) else { continue };
+            let inner = &source[open + 1..close];
+            if inner.contains('$') || inner.contains("\\(") {
+                out.push(Span::in_document(document, open + 1, close));
+            }
+        }
+    }
+    out.sort_by_key(|s| s.start);
+    out
+}
+
 pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyCommand> {
     let bytes = source.as_bytes();
     let begin = source.find("\\begin{document}").map_or(0, |b| b + "\\begin{document}".len());
@@ -2835,7 +3194,42 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
                 }
                 group(k).map(|(s, e, after)| (BodyKind::Chapter { starred, title: (s, e) }, after))
             }
+            "part" => {
+                let mut k = j;
+                let starred = bytes.get(k) == Some(&b'*');
+                if starred {
+                    k += 1;
+                }
+                let rest = &source[k..];
+                let trimmed = rest.trim_start();
+                let mut short = None;
+                if trimmed.starts_with('[') {
+                    if let Some(close) = trimmed.find(']') {
+                        let open = k + rest.len() - trimmed.len();
+                        short = Some((open + 1, open + close));
+                        k = open + close + 1;
+                    }
+                }
+                group(k).map(|(s, e, after)| (BodyKind::Part { starred, short, title: (s, e) }, after))
+            }
             "noindent" => Some((BodyKind::NoIndent, j)),
+            "tableofcontents" => Some((BodyKind::ContentsList(crate::toc::ListKind::Toc), j)),
+            "listoffigures" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lof), j)),
+            "listoftables" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lot), j)),
+            "appendix" => Some((BodyKind::Appendix, j)),
+            "addcontentsline" => group(j).and_then(|(s1, e1, a1)| {
+                let list = crate::toc::ListKind::from_ext(source[s1..e1].trim())?;
+                let (s2, e2, a2) = group(a1)?;
+                let (s3, e3, a3) = group(a2)?;
+                Some((
+                    BodyKind::AddContentsLine {
+                        list,
+                        level: source[s2..e2].trim().to_string(),
+                        text: (s3, e3),
+                    },
+                    a3,
+                ))
+            }),
             "pagenumbering" => group(j).and_then(|(s, e, after)| {
                 use flashtex_class_geometry::Numbering;
                 let n = match source[s..e].trim() {
@@ -2848,12 +3242,29 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
                 };
                 Some((BodyKind::Event(ChromeEvent::PageNumbering(n)), after))
             }),
-            "setcounter" => group(j).and_then(|(s1, e1, a1)| {
-                if source[s1..e1].trim() != "page" {
-                    return None;
-                }
-                group(a1).and_then(|(s2, e2, a2)| source[s2..e2].trim().parse::<i64>().ok().map(|n| (BodyKind::Event(ChromeEvent::SetPage(n)), a2)))
+            "setcounter" => group(j).and_then(|(s1, e1, a1)| match source[s1..e1].trim() {
+                "page" => group(a1).and_then(|(s2, e2, a2)| source[s2..e2].trim().parse::<i64>().ok().map(|n| (BodyKind::Event(ChromeEvent::SetPage(n)), a2))),
+                "secnumdepth" => group(a1).and_then(|(s2, e2, a2)| source[s2..e2].trim().parse::<i32>().ok().map(|n| (BodyKind::SecNumDepth(n), a2))),
+                _ => None,
             }),
+            // article.cls lines 314-321: `\paragraph` and `\subparagraph` are
+            // `\@startsection`s with a negative after-skip (run-in).
+            "paragraph" | "subparagraph" => {
+                let mut k = j;
+                let starred = bytes.get(k) == Some(&b'*');
+                if starred {
+                    k += 1;
+                }
+                let rest = &source[k..];
+                let trimmed = rest.trim_start();
+                if trimmed.starts_with('[') {
+                    if let Some(close) = trimmed.find(']') {
+                        k += rest.len() - trimmed.len() + close + 1;
+                    }
+                }
+                let level = if name == "paragraph" { 4 } else { 5 };
+                group(k).map(|(s, e, after)| (BodyKind::RunIn { level, starred, title: (s, e) }, after))
+            }
             "maketitle" => Some((BodyKind::MakeTitle, j)),
             "frontmatter" if book => Some((BodyKind::Matter(Matter::Front), j)),
             "mainmatter" if book => Some((BodyKind::Matter(Matter::Main), j)),
@@ -2877,7 +3288,7 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
 fn strip_command_text(blocks: &mut Vec<CBlock>, document: DocumentId, commands: &[BodyCommand]) {
     let ranges: Vec<(usize, usize)> = commands
         .iter()
-        .filter(|c| matches!(c.kind, BodyKind::Chapter { .. } | BodyKind::Event(ChromeEvent::MarkBoth(..) | ChromeEvent::MarkRight(_) | ChromeEvent::SetPage(_) | ChromeEvent::PageNumbering(_))))
+        .filter(|c| matches!(c.kind, BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::RunIn { .. } | BodyKind::SecNumDepth(_) | BodyKind::AddContentsLine { .. } | BodyKind::Event(ChromeEvent::MarkBoth(..) | ChromeEvent::MarkRight(_) | ChromeEvent::SetPage(_) | ChromeEvent::PageNumbering(_))))
         .map(|c| (c.start, c.end))
         .collect();
     if ranges.is_empty() {
@@ -2898,9 +3309,14 @@ fn strip_command_text(blocks: &mut Vec<CBlock>, document: DocumentId, commands: 
 
 /// Body-font words of `source[start..end]` split at whitespace, every
 /// character carrying its own bytes.
-fn words_from_source(source: &str, document: DocumentId, start: usize, end: usize) -> Vec<Item> {
+pub(crate) fn words_from_source(source: &str, document: DocumentId, start: usize, end: usize) -> Vec<Item> {
+    words_at(&source[start..end], document, start)
+}
+
+/// [`words_from_source`] of `text`, which starts at byte `start` of its
+/// document.
+pub(crate) fn words_at(text: &str, document: DocumentId, start: usize) -> Vec<Item> {
     let mut items = Vec::new();
-    let text = &source[start..end];
     let mut offset = 0usize;
     for word in text.split_whitespace() {
         let at = start + offset + text[offset..].find(word).unwrap_or(0);
@@ -3775,9 +4191,11 @@ mod tests {
                 Block::Rule { .. } => "R".to_string(),
                 Block::Picture { .. } => "P".to_string(),
                 Block::Chapter { .. } => "C".to_string(),
+                Block::Part { .. } => "P".to_string(),
                 Block::Chrome { .. } => "M".to_string(),
                 Block::Title { .. } => "T".to_string(),
                 Block::ClearPage { .. } => "N".to_string(),
+                Block::TocEntry(..) => "E".to_string(),
             })
             .collect();
         // `Problem 1 \hfill \normalfont[4 points]`: one fill, no space after it.

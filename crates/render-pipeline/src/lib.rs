@@ -30,6 +30,7 @@ pub mod style;
 pub mod table;
 pub mod tfm;
 pub mod tikz;
+pub mod toc;
 pub mod typeset;
 pub mod v1;
 
@@ -137,7 +138,25 @@ pub fn render_cached(
     let in_picture = |s: &flashtex_compiler::Span| picture_ranges.get(s.document.0).is_some_and(|r| r.iter().any(|(a, b)| s.start >= *a && s.start < *b));
     let mut labels = adapter::Labels::from_parsed(&parsed);
     labels.values.extend(float_label_values);
-    let max_passes = if adapter::Labels::needs_pages(&parsed) { MAX_LABEL_PASSES } else { 1 };
+    // Contents lists: entry pages come from the previous pass (`toc`).
+    let entry_text = texts.get(entry_index).copied().unwrap_or("");
+    let has_lists = toc::has_lists(entry_text);
+    labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>());
+    // Entry titles from source bytes (`\addcontentsline`, `\chapter`,
+    // `\part`, captions) are set as body text: one parse per document.
+    // Sectioning titles holding math (the compiler sets `$x^2$` in a
+    // `\section` argument as plain text) are re-read the same way.
+    let heading_math = adapter::math_title_spans(entry_text, flashtex_compiler::DocumentId(entry_index));
+    if has_lists || !heading_math.is_empty() {
+        let mut spans = if has_lists { toc::entry_spans(entry_text, flashtex_compiler::DocumentId(entry_index), &labels.floats) } else { Vec::new() };
+        spans.extend(heading_math);
+        labels.entry_items = toc::entry_items(documents, entry_index, &texts, options, &labels, &spans);
+    }
+    // The compiler reports the list commands, `\addcontentsline` and
+    // `\appendix` it has no model for; the pipeline sets them.
+    let superseded = toc::superseded_commands(entry_text);
+    let is_superseded = |s: &flashtex_compiler::Span| s.document.0 == entry_index && superseded.binary_search(&s.start).is_ok();
+    let max_passes = if adapter::Labels::needs_pages(&parsed) || has_lists { MAX_LABEL_PASSES } else { 1 };
     let mut passes = 0;
     loop {
         passes += 1;
@@ -146,6 +165,7 @@ pub fn render_cached(
             .diagnostics
             .iter()
             .filter(|d| !d.span.as_ref().is_some_and(&in_picture))
+            .filter(|d| !d.span.as_ref().is_some_and(&is_superseded))
             .map(|d| display::Diagnostic::from_compiler(d, &paths))
             .collect();
         diagnostics.extend(doc.diagnostics.iter().cloned());
@@ -160,27 +180,39 @@ pub fn render_cached(
                 }],
             )
         }));
-        let (float_specs, float_diagnostics) = if any_floats {
+        let (mut float_specs, float_diagnostics) = if any_floats {
             floats::prepare(&float_envs, &float_numbers, documents, entry_index, &texts, &doc.style, options, &labels, &mut image_cache)
         } else {
             (Vec::new(), Vec::new())
         };
+        // `prepare` makes one spec per float, in `float_envs` order: the
+        // caption's `\addcontentsline` lands on the float's page.
+        if has_lists {
+            let keys = float_envs.iter().enumerate().flat_map(|(d, envs)| (0..envs.len()).map(move |i| toc::float_key(d, i)));
+            for (spec, key) in float_specs.iter_mut().zip(keys) {
+                spec.labels.push(key);
+            }
+        }
         diagnostics.extend(float_diagnostics);
         let mut ctx = typeset::Context::with_texts(fonts, &doc.style, &paths, &texts);
         let laid = typeset::build_with_floats(&mut ctx, &doc, cache, &float_specs);
         diagnostics.extend(ctx.take_diagnostics());
         if max_passes > 1 {
-            let pages = typeset::label_pages(&laid);
-            if pages == labels.pages {
+            let mut pages = typeset::label_pages(&laid);
+            let toc_pages = typeset::toc_pages(&laid, &pages);
+            pages.retain(|key, _| !toc::is_key(key));
+            if pages == labels.pages && toc_pages == labels.toc_pages {
                 // Converged: the numbers shown are the pages they sit on.
             } else if passes < max_passes {
                 labels.pages = pages;
+                labels.toc_pages = toc_pages;
                 continue;
             } else {
                 labels.pages = pages;
+                labels.toc_pages = toc_pages;
                 diagnostics.push(display::Diagnostic::warning(
                     "labels_unstable",
-                    format!("\\pageref values did not converge after {max_passes} layout passes; the last pass is shown"),
+                    format!("\\pageref values and contents-list page numbers did not converge after {max_passes} layout passes; the last pass is shown"),
                     Vec::new(),
                 ));
             }

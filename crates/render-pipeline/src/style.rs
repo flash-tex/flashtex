@@ -49,6 +49,12 @@ pub struct HeadingStyle {
     pub bold: bool,
     pub before: Skip,
     pub after: Skip,
+    /// `\@startsection`'s `#3` (`\subparagraph`: `\parindent`).
+    pub indent_pt: f64,
+    /// A negative `#5`: the heading is set at the start of the next
+    /// paragraph, followed by `run_in_hskip_pt` (`\hskip -#5`).
+    pub run_in: bool,
+    pub run_in_hskip_pt: f64,
 }
 
 /// `\usepackage[...]{microtype}` as pdfTeX sees it: the package options
@@ -119,7 +125,7 @@ pub struct Stylesheet {
     /// `\labelsep` (article: `.5em` of `\normalsize`): the gap between a
     /// list label's right edge and the item text.
     pub labelsep_pt: f64,
-    headings: [HeadingStyle; 3],
+    headings: [HeadingStyle; 5],
     /// The resolved class + geometry frame this stylesheet was built from
     /// ([`Stylesheet::from_resolved`]); `None` for [`Stylesheet::article`].
     pub class_geometry: Option<Box<ResolvedDocument>>,
@@ -178,6 +184,23 @@ impl Stylesheet {
                 bold: h.bold,
                 before: Skip::new(before.pt, before.plus, before.minus),
                 after: Skip::new(after.pt, after.plus, after.minus),
+                indent_pt: 0.0,
+                run_in: false,
+                run_in_hskip_pt: 0.0,
+            }
+        };
+        // article.cls lines 314-321: `\paragraph`/`\subparagraph`,
+        // `{3.25ex \@plus1ex \@minus.2ex}{-1em}{\normalfont\normalsize\bfseries}`.
+        let run_in = |indent_pt: f64| -> HeadingStyle {
+            HeadingStyle {
+                size_pt: body_size,
+                baselineskip_pt: body.baselineskip.0,
+                bold: true,
+                before: Skip::new(3.25 * ex, ex, 0.2 * ex),
+                after: Skip::default(),
+                indent_pt,
+                run_in: true,
+                run_in_hskip_pt: body_size,
             }
         };
         let parskip = ds.parskip();
@@ -217,7 +240,7 @@ impl Stylesheet {
             leftmargini_pt: list.leftmargin.0,
             parsep: Skip::new(list.parsep.pt, list.parsep.plus, list.parsep.minus),
             labelsep_pt: list.labelsep.0,
-            headings: [heading(1), heading(2), heading(3)],
+            headings: [heading(1), heading(2), heading(3), run_in(0.0), run_in(body.parindent.0)],
             class_geometry: None,
             microtype: None,
         }
@@ -268,6 +291,31 @@ impl Stylesheet {
             s.tolerance = 9999.0;
             s.emergency_stretch_pt = 3.0 * s.body_size_pt;
         }
+        // `\@startsection` headings as class-geometry resolves them
+        // (article.cls lines 302-321, identical in report/book): fonts,
+        // indents and run-in forms; the ex-based skips are the class body
+        // font's (Computer Modern and Latin Modern share `ex`), so other
+        // families keep their own TFM `ex` skips.
+        let cm_ex = !matches!(family, Family::Times);
+        for spec in &doc.headings {
+            let Some(h) = usize::try_from(spec.level - 1).ok().and_then(|i| s.headings.get_mut(i)) else { continue };
+            let (size, baselineskip) = spec.size.metrics(doc.options.size);
+            h.size_pt = frame_pt(size);
+            h.baselineskip_pt = frame_pt(baselineskip);
+            h.bold = spec.bold;
+            h.indent_pt = frame_pt(spec.indent);
+            h.run_in = spec.run_in;
+            if cm_ex {
+                let glue = |g: flashtex_class_geometry::Glue| Skip::new(frame_pt(g.natural), frame_pt(g.stretch), frame_pt(g.shrink));
+                h.before = glue(spec.space_before());
+                if spec.run_in {
+                    h.after = Skip::default();
+                    h.run_in_hskip_pt = frame_pt(-spec.afterskip.natural);
+                } else {
+                    h.after = glue(spec.afterskip);
+                }
+            }
+        }
         s.class_geometry = Some(Box::new(doc.clone()));
         s
     }
@@ -296,7 +344,7 @@ impl Stylesheet {
     }
 
     pub fn heading(&self, level: u8) -> HeadingStyle {
-        self.headings[usize::from(level.clamp(1, 3) - 1)]
+        self.headings[usize::from(level.clamp(1, 5) - 1)]
     }
 }
 

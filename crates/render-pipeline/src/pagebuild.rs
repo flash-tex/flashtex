@@ -297,14 +297,21 @@ pub fn break_pages(p: &PageParams, list: &[VItem]) -> Vec<BuiltPage> {
 /// `\@colht` by the height of `\twocolumn[<material>]`'s box plus
 /// `\dbltextfloatsep` for both columns of that page.
 pub fn break_pages_shortened(base: &PageParams, list: &[VItem], short_pages: usize, short: f64) -> Vec<BuiltPage> {
+    break_pages_tops(base, list, short_pages, short, &[], 1)
+}
+
+/// [`break_pages_shortened`] with `\@topnewpage` boxes on later pages too
+/// (report/book `\chapter` in two-column mode: `\@topnewpage[\@makechapterhead]`):
+/// `tops` holds, in order, the first block after each box and the height
+/// the box takes from the columns; the page-builder column whose first line
+/// belongs to that block or a later one and the `columns - 1` after it are
+/// that much shorter (column alignment later puts the first on a page's
+/// first column).
+pub fn break_pages_tops(base: &PageParams, list: &[VItem], short_pages: usize, short: f64, tops: &[(usize, f64)], columns: usize) -> Vec<BuiltPage> {
     let mut pages: Vec<BuiltPage> = Vec::new();
     let mut start = 0usize;
+    let (mut next_top, mut top_left, mut top_short) = (0usize, 0usize, 0.0);
     while start < list.len() {
-        let page_params = PageParams {
-            vsize: if pages.len() < short_pages { base.vsize - short } else { base.vsize },
-            ..*base
-        };
-        let p = &page_params;
         // Discard glue/penalties at the top of the page.
         while start < list.len() && !matches!(list[start], VItem::Box { .. }) {
             start += 1;
@@ -312,6 +319,19 @@ pub fn break_pages_shortened(base: &PageParams, list: &[VItem], short_pages: usi
         if start >= list.len() {
             break;
         }
+        if let (Some(&(block, height)), VItem::Box { payload, .. }) = (tops.get(next_top), &list[start]) {
+            if payload.0 >= block {
+                next_top += 1;
+                top_left = columns.max(1);
+                top_short = height;
+            }
+        }
+        let page_params = PageParams {
+            vsize: base.vsize - if pages.len() < short_pages { short } else { 0.0 } - if top_left > 0 { top_short } else { 0.0 },
+            ..*base
+        };
+        top_left = top_left.saturating_sub(1);
+        let p = &page_params;
         let mut st = PageState::new();
         let mut best: Option<(usize, i64)> = None; // (break index, cost)
         let mut fired: Option<usize> = None;
