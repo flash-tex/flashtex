@@ -1,0 +1,11 @@
+{
+  "actor": "mac-claude-a",
+  "branch": null,
+  "gh_ref": null,
+  "machine": "mac-m1max-a",
+  "note": "preview follows caret",
+  "started_utc": "2026-09-13T21:50:20Z",
+  "state": "claimed",
+  "task_id": "FT-072",
+  "updated_utc": "2026-09-13T21:50:20Z"
+}
