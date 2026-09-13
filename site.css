@@ -209,3 +209,9 @@ button { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
+
+/* First-launch warning on the DMG row, and the inline command block in notes. */
+.row-warn { margin-top: 10px; font-size: 0.92rem; color: var(--text-2); }
+.note pre.cmd { margin: 12px 0 4px; padding: 12px 14px; overflow-x: auto;
+  background: var(--surface-2, rgba(127,127,127,0.08)); border-radius: 8px; }
+.note pre.cmd code { font-size: 0.9rem; white-space: pre; }

@@ -84,7 +84,7 @@
     <h1>Download FlashTeX</h1>
     <div class="dl-meta">
       <span class="ver">v0.1.2</span>
-      <span>September 13, 2026</span>
+      <span>Released September 13, 2026</span>
       <a href="https://github.com/flash-tex/flashtex/releases/tag/v0.1.2">Release notes</a>
     </div>
   </div>
@@ -108,11 +108,12 @@
           <div class="row-actions">
             <a class="btn btn-primary" href="https://github.com/flash-tex/flashtex/releases/download/v0.1.2/FlashTeX.dmg">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M12 3v13m0 0l-5.5-5.5M12 16l5.5-5.5M4 21h16"/></svg>
-              Apple Silicon <span class="btn-meta">13.0 MB</span>
+              Apple Silicon <span class="btn-meta">21.4 MB</span>
             </a>
             <span class="btn is-disabled">Intel <span class="btn-meta">not yet available</span></span>
           </div>
           <p>A disk image containing <code>FlashTeX.app</code>, with the Rust compiler, PDF writer and capture bridge bundled inside. No TeX distribution required.</p>
+          <p class="row-warn">macOS blocks this on first launch, because FlashTeX isn't notarized by Apple yet. You'll need to approve it once — <a href="#first-launch">how to do that</a>, or <a href="#cli-install">install from the command line</a> and skip it entirely.</p>
         </div>
       </li>
 
@@ -129,7 +130,7 @@
             <code><span class="p">$ </span>curl -fsSL https://flash-tex.github.io/flashtex/install.sh | sh</code>
             <button class="copy" type="button" data-copy="curl -fsSL https://flash-tex.github.io/flashtex/install.sh | sh">Copy</button>
           </div>
-          <p>Downloads the release, checks its SHA-256 and copies <code>FlashTeX.app</code> into <code>/Applications</code>. It doesn't go through a browser, so macOS won't ask you to approve the app on first launch. <a href="../install.sh">Read the script</a>.</p>
+          <p id="cli-install">Downloads the release, checks its SHA-256 and copies <code>FlashTeX.app</code> into <code>/Applications</code>. Because it doesn't go through a browser, macOS never quarantines the app and <strong>you get no approval prompt at all</strong>. <a href="../install.sh">Read the script</a>.</p>
         </div>
       </li>
 
@@ -161,14 +162,19 @@
       </li>
     </ul>
 
-    <div class="note">
+    <div class="note" id="first-launch">
       <h2>Opening the app the first time</h2>
-      <p>This build is ad-hoc signed but not yet notarized by Apple, so a browser download is quarantined and macOS asks you to approve it once.</p>
+      <p>FlashTeX is signed, but not <em>notarized</em> by Apple — notarization requires a paid Apple Developer account, which this project doesn't have yet. macOS therefore refuses the first launch of anything downloaded through a browser, with <strong>&ldquo;FlashTeX cannot be opened because it is from an unidentified developer&rdquo;</strong> or a message about an unverified developer. It is not a virus warning: macOS is saying it can't verify who published the app, not that it found anything wrong with it.</p>
+      <p><strong>If you installed from the DMG</strong>, do this once:</p>
       <ol>
         <li>Open <code>FlashTeX.dmg</code> and drag FlashTeX into Applications.</li>
-        <li>Right-click FlashTeX in Applications, choose <strong>Open</strong>, then confirm.</li>
-        <li>If macOS says the app is damaged, run <code>xattr -dr com.apple.quarantine /Applications/FlashTeX.app</code> and open it again.</li>
+        <li><strong>Right-click</strong> (or Control-click) FlashTeX in Applications and choose <strong>Open</strong>, then confirm. Double-clicking will not offer the option — the right-click menu is what does.</li>
+        <li>On recent macOS you may instead need <strong>System Settings &rsaquo; Privacy &amp; Security</strong>, scroll to the FlashTeX message and click <strong>Open Anyway</strong>.</li>
       </ol>
+      <p>You only do this once per version. If macOS claims the app is &ldquo;damaged&rdquo;, the quarantine flag survived the copy: run <code>xattr -dr com.apple.quarantine /Applications/FlashTeX.app</code> and open it again.</p>
+      <p><strong>To avoid the prompt entirely</strong>, install from the command line instead:</p>
+      <pre class="cmd"><code>curl -fsSL https://flash-tex.github.io/flashtex/install.sh | sh</code></pre>
+      <p>That route verifies the release&rsquo;s SHA-256 before installing and never attaches the browser quarantine flag, so the app opens normally the first time. Same build, same checksum &mdash; only the delivery differs.</p>
     </div>
   </section>
 
