@@ -128,12 +128,30 @@ impl Provenance {
     }
 }
 
-/// One or two carets per cluster (its start, and the run end on the last
-/// cluster), stored inline: a page carries a caret pair per cluster.
+/// One or two carets for a cluster: its start, and the run end on the last
+/// cluster.
+///
+/// Derived, never stored (FT-070). The start caret is exactly the cluster's
+/// `hit_rect` and `text_start_byte`, and the end caret's `top`/`height` are
+/// that same rect's — measured over 1 991 552 clusters of the corpus, with
+/// zero exceptions. `place_item` and `shift_x` move the rect and the carets
+/// by the same offset, so placement cannot break the identity either. What
+/// is *not* derivable is the end caret's `x` (the TikZ path clamps the hit
+/// rect's width to one tick but not the caret) and which cluster carries
+/// it, so a run stores that once in [`GlyphRun::end_caret`] instead of
+/// 72 bytes per glyph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Carets {
     pub first: Caret,
     pub last: Option<Caret>,
+}
+
+/// The run-end caret: the part of it that the cluster geometry does not
+/// already say. Held once per [`GlyphRun`], not once per cluster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EndCaret {
+    pub x: Tick,
+    pub text_byte: usize,
 }
 
 impl Carets {
@@ -153,15 +171,25 @@ pub struct Cluster {
     pub text_start_byte: usize,
     pub text_end_byte: usize,
     /// The cluster's hit rectangle (the wire format is a list; this
-    /// pipeline emits exactly one per cluster).
+    /// pipeline emits exactly one per cluster). Also the geometry of both
+    /// of the cluster's carets: see [`Carets`].
     pub hit_rect: Rect,
-    pub carets: Carets,
     pub provenance: Provenance,
 }
 
 impl Cluster {
     pub fn hit_rects(&self) -> &[Rect] {
         std::slice::from_ref(&self.hit_rect)
+    }
+
+    /// The cluster's start caret.
+    pub fn first_caret(&self) -> Caret {
+        Caret {
+            text_byte: self.text_start_byte,
+            x: self.hit_rect.x,
+            top: self.hit_rect.top,
+            height: self.hit_rect.height,
+        }
     }
 }
 
@@ -196,6 +224,27 @@ pub struct GlyphRun {
     pub clusters: Vec<Cluster>,
     pub paint: Paint,
     pub role: RunRole,
+    /// The caret at the end of the run's text, carried by its last cluster.
+    /// `None` for a run that does not end a word (a math run, or a word
+    /// fragment continued by the next run).
+    pub end_caret: Option<EndCaret>,
+}
+
+impl GlyphRun {
+    /// The carets of cluster `i`: its start caret, and the run-end caret if
+    /// this is the last cluster.
+    pub fn carets_of(&self, i: usize) -> Carets {
+        let c = &self.clusters[i];
+        Carets {
+            first: c.first_caret(),
+            last: self.end_caret.filter(|_| i + 1 == self.clusters.len()).map(|e| Caret {
+                text_byte: e.text_byte,
+                x: e.x,
+                top: c.hit_rect.top,
+                height: c.hit_rect.height,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -344,10 +393,9 @@ pub fn shift_x(item: &mut Item, dx: Tick) {
             }
             for c in &mut r.clusters {
                 c.hit_rect.x = add(c.hit_rect.x);
-                c.carets.first.x = add(c.carets.first.x);
-                if let Some(l) = &mut c.carets.last {
-                    l.x = add(l.x);
-                }
+            }
+            if let Some(e) = &mut r.end_caret {
+                e.x = add(e.x);
             }
         }
         Item::Rule(rule) => rule.x = add(rule.x),
@@ -936,7 +984,7 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
                 for (j, c) in r.clusters.iter().enumerate() {
                     sep(o, j);
                     o.push_str("{\"carets\":[");
-                    for (k, caret) in c.carets.iter().enumerate() {
+                    for (k, caret) in r.carets_of(j).iter().enumerate() {
                         sep(o, k);
                         o.push_str("{\"height\":");
                         write_tick(o, caret.height);
@@ -1205,7 +1253,8 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                             Value::Arr(
                                 r.clusters
                                     .iter()
-                                    .map(|c| {
+                                    .enumerate()
+                                    .map(|(ci, c)| {
                                         let mut o = Value::obj();
                                         o.set("text_start_byte", json::num(c.text_start_byte as f64));
                                         o.set("text_end_byte", json::num(c.text_end_byte as f64));
@@ -1213,7 +1262,7 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                                         o.set(
                                             "carets",
                                             Value::Arr(
-                                                c.carets
+                                                r.carets_of(ci)
                                                     .iter()
                                                     .map(|k| {
                                                         let mut o = Value::obj();

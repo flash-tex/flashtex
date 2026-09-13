@@ -143,7 +143,7 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
                     c.u(g.cluster as usize);
                 }
                 c.u(r.clusters.len());
-                for cl in &r.clusters {
+                for (ci, cl) in r.clusters.iter().enumerate() {
                     c.u(cl.text_start_byte);
                     c.u(cl.text_end_byte);
                     let rects = cl.hit_rects();
@@ -154,8 +154,9 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
                         c.t(h.width);
                         c.t(h.height);
                     }
-                    c.u(cl.carets.len());
-                    for k in cl.carets.iter() {
+                    let carets = r.carets_of(ci);
+                    c.u(carets.len());
+                    for k in carets.iter() {
                         c.u(k.text_byte);
                         c.t(k.x);
                         c.t(k.top);
@@ -401,12 +402,15 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
                     && x.text == y.text
                     && x.glyphs == y.glyphs
                     && x.paint == y.paint
+                    // The carets derive from the cluster bytes, the hit rect
+                    // and the run's end caret, all compared here, so this is
+                    // the same comparison the per-cluster `carets` made.
+                    && x.end_caret == y.end_caret
                     && x.clusters.len() == y.clusters.len()
                     && x.clusters.iter().zip(&y.clusters).all(|(c, d)| {
                         c.text_start_byte == d.text_start_byte
                             && c.text_end_byte == d.text_end_byte
                             && c.hit_rect == d.hit_rect
-                            && c.carets == d.carets
                             && provenance_matches(&c.provenance, &d.provenance, relocs, &mut width_delta)
                     })
             }

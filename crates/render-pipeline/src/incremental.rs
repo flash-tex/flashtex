@@ -137,6 +137,34 @@ impl RenderCache {
         self.blocks.borrow().is_empty()
     }
 
+    /// Measurement only (`memsize`): the cached blocks, for deep heap
+    /// accounting. Clones the `Rc`s, so nothing is borrowed across the walk.
+    pub fn debug_blocks(&self) -> Vec<Rc<CachedBlock>> {
+        self.blocks.borrow().values().cloned().collect()
+    }
+
+    /// Measurement only (`memsize`): the assembled blocks.
+    pub fn debug_assembled(&self) -> Vec<Rc<AssembledBlock>> {
+        self.assembled.borrow().values().cloned().collect()
+    }
+
+    /// Measurement only (`memsize`): the adapted blocks.
+    pub fn debug_adapted(&self) -> Vec<Rc<AdaptedBlock>> {
+        self.adapted.borrow().values().cloned().collect()
+    }
+
+    pub fn debug_blocks_len(&self) -> usize {
+        self.blocks.borrow().len()
+    }
+
+    pub fn debug_assembled_len(&self) -> usize {
+        self.assembled.borrow().len()
+    }
+
+    pub fn debug_adapted_len(&self) -> usize {
+        self.adapted.borrow().len()
+    }
+
     /// `(hits, misses)` since creation.
     pub fn stats(&self) -> (u64, u64) {
         (*self.hits.borrow(), *self.misses.borrow())
@@ -551,11 +579,10 @@ pub fn place_item(item: &crate::display::Item, dy: crate::display::Tick, path: &
                 g.baseline_y = add(g.baseline_y);
             }
             for c in &mut r.clusters {
+                // The carets derive from this rect, so moving it moves them
+                // by exactly the same `dy` the three separate fields used
+                // to be moved by.
                 c.hit_rect.top = add(c.hit_rect.top);
-                c.carets.first.top = add(c.carets.first.top);
-                if let Some(l) = &mut c.carets.last {
-                    l.top = add(l.top);
-                }
                 c.provenance = shift_prov(&c.provenance);
             }
             Item::GlyphRun(r)
