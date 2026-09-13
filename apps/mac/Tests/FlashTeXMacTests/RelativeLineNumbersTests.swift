@@ -111,6 +111,25 @@ final class RelativeLineNumbersTests: XCTestCase {
         return (window, scroll, tv, gutter)
     }
 
+    /// A gutter on a scroll view that is in no window. `needsDisplay` is only
+    /// stable off-screen: a hosted view is re-dirtied by AppKit between
+    /// statements, which is exactly what the redraw assertions must not see.
+    private func unhostedGutter(_ text: String) -> (NSScrollView, LineNumberGutter) {
+        let scroll = CompletingTextView.scrollable()
+        scroll.frame = NSRect(x: 0, y: 0, width: 420, height: 300)
+        let tv = scroll.documentView as! CompletingTextView
+        _ = tv.layoutManager
+        tv.isRichText = false
+        tv.string = text
+        var highlighter = SyntaxHighlighter()
+        highlighter.reset(text as NSString)
+        let gutter = LineNumberGutter(scrollView: scroll)
+        gutter.clientView = tv
+        gutter.lineTable = { highlighter }
+        gutter.layoutIfNeeded(lineCount: highlighter.lineCount)
+        return (scroll, gutter)
+    }
+
     private func draw(_ gutter: LineNumberGutter) throws {
         let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil,
                                                  pixelsWide: Int(max(1, gutter.bounds.width)),
@@ -126,10 +145,9 @@ final class RelativeLineNumbersTests: XCTestCase {
 
     /// Moving the caret must redraw: the numbers are relative to it, so a
     /// caret-only move changes every label even though the text did not.
-    func testMovingTheCaretMarksTheGutterForRedraw() throws {
+    func testMovingTheCaretMarksTheGutterForRedraw() {
         let text = (1...20).map { "line \($0)" }.joined(separator: "\n") + "\n"
-        let (window, _, _, gutter) = try hostedGutter(text)
-        defer { window.orderOut(nil) }
+        let (_, gutter) = unhostedGutter(text)
         gutter.relativeLineNumbers = true
         gutter.currentLine = 3
         gutter.needsDisplay = false
@@ -141,10 +159,8 @@ final class RelativeLineNumbersTests: XCTestCase {
         XCTAssertFalse(gutter.needsDisplay)
     }
 
-    func testTogglingTheModeMarksTheGutterForRedraw() throws {
-        let text = "a\nb\nc\n"
-        let (window, _, _, gutter) = try hostedGutter(text)
-        defer { window.orderOut(nil) }
+    func testTogglingTheModeMarksTheGutterForRedraw() {
+        let (_, gutter) = unhostedGutter("a\nb\nc\n")
         gutter.currentLine = 1
         gutter.needsDisplay = false
         gutter.relativeLineNumbers = true
@@ -242,7 +258,9 @@ final class RelativeLineNumbersTests: XCTestCase {
 
         var table = SyntaxHighlighter()
         table.reset(text as NSString)
-        XCTAssertEqual(table.lineCount, 3, "three logical lines")
+        // "first", the long line, "last", and the empty line the trailing
+        // newline opens — the gutter numbers that last one too.
+        XCTAssertEqual(table.lineCount, 4)
 
         let lm = try XCTUnwrap(tv.layoutManager)
         let container = try XCTUnwrap(tv.textContainer)
