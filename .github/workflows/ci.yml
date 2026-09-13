@@ -63,7 +63,12 @@ jobs:
         run: cargo build --release --locked ${{ matrix.features }}
       - name: cargo test --release
         working-directory: crates/${{ matrix.crate }}
-        run: cargo test --release --locked ${{ matrix.features }}
+        # --no-fail-fast: without it cargo aborts at the first failing test
+        # binary, so the rest of the crate's targets never execute and the job
+        # reports only the first casualty. render-pipeline was reporting
+        # "92 passed" while a local --no-fail-fast run at the same commit
+        # executed 177 -- roughly half the suite had never run in CI.
+        run: cargo test --release --locked --no-fail-fast ${{ matrix.features }}
 
   mac-app:
     name: mac app (swift build + test)
