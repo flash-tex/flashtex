@@ -1,0 +1,145 @@
+{
+ "fixture": "10-verse-12pt.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, word origin, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Intro.",
+    "x": 128.413,
+    "y_top": 137.753
+   },
+   {
+    "text": "First",
+    "x": 140.119,
+    "y_top": 162.162
+   },
+   {
+    "text": "line",
+    "x": 168.6298,
+    "y_top": 162.162
+   },
+   {
+    "text": "of",
+    "x": 190.7493,
+    "y_top": 162.162
+   },
+   {
+    "text": "verse",
+    "x": 204.0769,
+    "y_top": 162.162
+   },
+   {
+    "text": "Second",
+    "x": 140.119,
+    "y_top": 176.608
+   },
+   {
+    "text": "line",
+    "x": 180.4798,
+    "y_top": 176.608
+   },
+   {
+    "text": "Lorem",
+    "x": 203.2927,
+    "y_top": 176.608
+   },
+   {
+    "text": "ipsum",
+    "x": 240.5618,
+    "y_top": 176.608
+   },
+   {
+    "text": "dolor",
+    "x": 275.7842,
+    "y_top": 176.608
+   },
+   {
+    "text": "sit",
+    "x": 306.4015,
+    "y_top": 176.608
+   },
+   {
+    "text": "amet,",
+    "x": 323.4137,
+    "y_top": 176.608
+   },
+   {
+    "text": "consectetur",
+    "x": 356.7998,
+    "y_top": 176.608
+   },
+   {
+    "text": "adipiscing",
+    "x": 419.3375,
+    "y_top": 176.608
+   },
+   {
+    "text": "elit,",
+    "x": 157.678,
+    "y_top": 191.054
+   },
+   {
+    "text": "sed",
+    "x": 183.1306,
+    "y_top": 191.054
+   },
+   {
+    "text": "do",
+    "x": 204.9895,
+    "y_top": 191.054
+   },
+   {
+    "text": "eiusmod",
+    "x": 222.8817,
+    "y_top": 191.054
+   },
+   {
+    "text": "tempor",
+    "x": 270.4394,
+    "y_top": 191.054
+   },
+   {
+    "text": "incididunt",
+    "x": 312.7178,
+    "y_top": 191.054
+   },
+   {
+    "text": "ut",
+    "x": 369.9593,
+    "y_top": 191.054
+   },
+   {
+    "text": "labore",
+    "x": 386.5507,
+    "y_top": 191.054
+   },
+   {
+    "text": "et",
+    "x": 423.6262,
+    "y_top": 191.054
+   },
+   {
+    "text": "dolore",
+    "x": 438.9169,
+    "y_top": 191.054
+   },
+   {
+    "text": "magna",
+    "x": 157.678,
+    "y_top": 205.499
+   },
+   {
+    "text": "aliqua.",
+    "x": 195.3943,
+    "y_top": 205.499
+   },
+   {
+    "text": "After.",
+    "x": 110.854,
+    "y_top": 229.908
+   }
+  ]
+ ]
+}

@@ -1,0 +1,165 @@
+{
+ "fixture": "04-nested-mixed-10pt.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, word origin, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "before.",
+    "x": 171.9577,
+    "y_top": 134.765
+   },
+   {
+    "text": "1.",
+    "x": 145.945,
+    "y_top": 154.69
+   },
+   {
+    "text": "One.",
+    "x": 158.6752,
+    "y_top": 154.69
+   },
+   {
+    "text": "?",
+    "x": 170.631,
+    "y_top": 174.615
+   },
+   {
+    "text": "Inner",
+    "x": 180.5926,
+    "y_top": 174.615
+   },
+   {
+    "text": "Lorem",
+    "x": 206.4993,
+    "y_top": 174.615
+   },
+   {
+    "text": "ipsum",
+    "x": 237.2579,
+    "y_top": 174.615
+   },
+   {
+    "text": "dolor",
+    "x": 266.2461,
+    "y_top": 174.615
+   },
+   {
+    "text": "sit",
+    "x": 291.3229,
+    "y_top": 174.615
+   },
+   {
+    "text": "amet,",
+    "x": 304.8133,
+    "y_top": 174.615
+   },
+   {
+    "text": "consectetur",
+    "x": 332.1546,
+    "y_top": 174.615
+   },
+   {
+    "text": "adipiscing",
+    "x": 384.4154,
+    "y_top": 174.615
+   },
+   {
+    "text": "elit,",
+    "x": 430.5522,
+    "y_top": 174.615
+   },
+   {
+    "text": "sed",
+    "x": 450.1557,
+    "y_top": 174.615
+   },
+   {
+    "text": "do",
+    "x": 466.9665,
+    "y_top": 174.615
+   },
+   {
+    "text": "eiusmod",
+    "x": 180.593,
+    "y_top": 186.57
+   },
+   {
+    "text": "tempor",
+    "x": 219.6673,
+    "y_top": 186.57
+   },
+   {
+    "text": "incididunt",
+    "x": 254.2864,
+    "y_top": 186.57
+   },
+   {
+    "text": "ut",
+    "x": 301.6157,
+    "y_top": 186.57
+   },
+   {
+    "text": "labore",
+    "x": 314.3429,
+    "y_top": 186.57
+   },
+   {
+    "text": "et",
+    "x": 344.5346,
+    "y_top": 186.57
+   },
+   {
+    "text": "dolore",
+    "x": 356.1539,
+    "y_top": 186.57
+   },
+   {
+    "text": "magna",
+    "x": 386.0766,
+    "y_top": 186.57
+   },
+   {
+    "text": "aliqua.",
+    "x": 418.1751,
+    "y_top": 186.57
+   },
+   {
+    "text": "(a)",
+    "x": 181.512,
+    "y_top": 202.511
+   },
+   {
+    "text": "Deep.",
+    "x": 199.2235,
+    "y_top": 202.511
+   },
+   {
+    "text": "2.",
+    "x": 145.945,
+    "y_top": 222.436
+   },
+   {
+    "text": "Two.",
+    "x": 158.6752,
+    "y_top": 222.436
+   },
+   {
+    "text": "Text",
+    "x": 133.768,
+    "y_top": 242.361
+   },
+   {
+    "text": "after.",
+    "x": 157.0137,
+    "y_top": 242.361
+   }
+  ]
+ ]
+}

@@ -1,0 +1,160 @@
+{
+ "fixture": "11-enumitem-seps-12pt.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, word origin, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Intro.",
+    "x": 128.413,
+    "y_top": 137.753
+   },
+   {
+    "text": "?",
+    "x": 128.415,
+    "y_top": 155.188
+   },
+   {
+    "text": "Short",
+    "x": 140.1251,
+    "y_top": 155.188
+   },
+   {
+    "text": "item",
+    "x": 171.9881,
+    "y_top": 155.188
+   },
+   {
+    "text": "text.",
+    "x": 198.6482,
+    "y_top": 155.188
+   },
+   {
+    "text": "?",
+    "x": 128.415,
+    "y_top": 177.604
+   },
+   {
+    "text": "Lorem",
+    "x": 140.1251,
+    "y_top": 177.604
+   },
+   {
+    "text": "ipsum",
+    "x": 175.7564,
+    "y_top": 177.604
+   },
+   {
+    "text": "dolor",
+    "x": 209.3529,
+    "y_top": 177.604
+   },
+   {
+    "text": "sit",
+    "x": 238.3203,
+    "y_top": 177.604
+   },
+   {
+    "text": "amet,",
+    "x": 253.7067,
+    "y_top": 177.604
+   },
+   {
+    "text": "consectetur",
+    "x": 285.4669,
+    "y_top": 177.604
+   },
+   {
+    "text": "adipiscing",
+    "x": 346.3786,
+    "y_top": 177.604
+   },
+   {
+    "text": "elit,",
+    "x": 400.1244,
+    "y_top": 177.604
+   },
+   {
+    "text": "sed",
+    "x": 422.7795,
+    "y_top": 177.604
+   },
+   {
+    "text": "do",
+    "x": 442.068,
+    "y_top": 177.604
+   },
+   {
+    "text": "eiusmod",
+    "x": 457.3898,
+    "y_top": 177.604
+   },
+   {
+    "text": "tempor",
+    "x": 140.119,
+    "y_top": 192.05
+   },
+   {
+    "text": "incididunt",
+    "x": 180.7595,
+    "y_top": 192.05
+   },
+   {
+    "text": "ut",
+    "x": 236.3631,
+    "y_top": 192.05
+   },
+   {
+    "text": "labore",
+    "x": 251.3287,
+    "y_top": 192.05
+   },
+   {
+    "text": "et",
+    "x": 286.7663,
+    "y_top": 192.05
+   },
+   {
+    "text": "dolore",
+    "x": 300.4311,
+    "y_top": 192.05
+   },
+   {
+    "text": "magna",
+    "x": 335.5459,
+    "y_top": 192.05
+   },
+   {
+    "text": "aliqua.",
+    "x": 373.2621,
+    "y_top": 192.05
+   },
+   {
+    "text": "?",
+    "x": 128.415,
+    "y_top": 214.466
+   },
+   {
+    "text": "Short",
+    "x": 140.1251,
+    "y_top": 214.466
+   },
+   {
+    "text": "item",
+    "x": 171.9881,
+    "y_top": 214.466
+   },
+   {
+    "text": "text.",
+    "x": 198.6482,
+    "y_top": 214.466
+   },
+   {
+    "text": "After.",
+    "x": 110.854,
+    "y_top": 231.9
+   }
+  ]
+ ]
+}

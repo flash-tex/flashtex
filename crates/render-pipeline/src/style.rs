@@ -119,6 +119,10 @@ pub struct Stylesheet {
     /// `\labelsep` (article: `.5em` of `\normalsize`): the gap between a
     /// list label's right edge and the item text.
     pub labelsep_pt: f64,
+    /// `1em` of `\normalsize`: the body font's quad (`\fontdimen6`;
+    /// cmr12's is 11.74988pt, not 12pt), the unit of every `em` length in
+    /// the class (`\leftmargin<i>`, `\labelsep`).
+    pub em_pt: f64,
     headings: [HeadingStyle; 3],
     /// The resolved class + geometry frame this stylesheet was built from
     /// ([`Stylesheet::from_resolved`]); `None` for [`Stylesheet::article`].
@@ -153,6 +157,12 @@ impl Stylesheet {
         // \section's skips in the current text font).
         let design = if size == 11 { 10 } else { size };
         let ex = params::text_params(family, false, false, design).x_height * body_size;
+        // `\fontdimen6` of the `\normalsize` font: cmr10/cmr12's TFM quads
+        // at the class size (document-style's size1x.clo table).
+        let em = match family {
+            Family::Times => params::text_params(family, false, false, design).quad * body_size,
+            _ => flashtex_document_style::fonts::size_params(base).normal.quad.0,
+        };
         let (script, scriptscript) = match base {
             BaseSize::Pt12 => (8.0, 6.0),
             BaseSize::Pt11 => (8.0, 6.0),
@@ -214,9 +224,12 @@ impl Stylesheet {
             columnseprule_pt: 0.0,
             topsep: Skip::new(list.topsep.pt, list.topsep.plus, list.topsep.minus),
             partopsep: Skip::new(list.partopsep.pt, list.partopsep.plus, list.partopsep.minus),
-            leftmargini_pt: list.leftmargin.0,
+            // article.cls: `\leftmargini 2.5em`, `\labelsep .5em`, in the
+            // quad of the `\normalsize` font.
+            leftmargini_pt: 2.5 * em,
             parsep: Skip::new(list.parsep.pt, list.parsep.plus, list.parsep.minus),
-            labelsep_pt: list.labelsep.0,
+            labelsep_pt: 0.5 * em,
+            em_pt: em,
             headings: [heading(1), heading(2), heading(3)],
             class_geometry: None,
             microtype: None,
@@ -265,6 +278,8 @@ impl Stylesheet {
         s.raggedbottom = !(doc.flags.twoside || doc.flags.twocolumn);
         s.columnseprule_pt = frame_pt(frame.columnseprule);
         if doc.flags.twocolumn {
+            // article.cls: `\if@twocolumn \setlength\leftmargini{2em}`.
+            s.leftmargini_pt = 2.0 * s.em_pt;
             s.tolerance = 9999.0;
             s.emergency_stretch_pt = 3.0 * s.body_size_pt;
         }

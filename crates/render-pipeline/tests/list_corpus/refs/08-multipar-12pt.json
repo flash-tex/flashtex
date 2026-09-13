@@ -1,0 +1,250 @@
+{
+ "fixture": "08-multipar-12pt.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, word origin, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Intro.",
+    "x": 128.413,
+    "y_top": 137.753
+   },
+   {
+    "text": "?",
+    "x": 128.415,
+    "y_top": 162.162
+   },
+   {
+    "text": "Lorem",
+    "x": 140.1251,
+    "y_top": 162.162
+   },
+   {
+    "text": "ipsum",
+    "x": 175.7564,
+    "y_top": 162.162
+   },
+   {
+    "text": "dolor",
+    "x": 209.3529,
+    "y_top": 162.162
+   },
+   {
+    "text": "sit",
+    "x": 238.3203,
+    "y_top": 162.162
+   },
+   {
+    "text": "amet,",
+    "x": 253.7067,
+    "y_top": 162.162
+   },
+   {
+    "text": "consectetur",
+    "x": 285.4669,
+    "y_top": 162.162
+   },
+   {
+    "text": "adipiscing",
+    "x": 346.3786,
+    "y_top": 162.162
+   },
+   {
+    "text": "elit,",
+    "x": 400.1244,
+    "y_top": 162.162
+   },
+   {
+    "text": "sed",
+    "x": 422.7795,
+    "y_top": 162.162
+   },
+   {
+    "text": "do",
+    "x": 442.068,
+    "y_top": 162.162
+   },
+   {
+    "text": "eiusmod",
+    "x": 457.3898,
+    "y_top": 162.162
+   },
+   {
+    "text": "tempor",
+    "x": 140.119,
+    "y_top": 176.608
+   },
+   {
+    "text": "incididunt",
+    "x": 180.7595,
+    "y_top": 176.608
+   },
+   {
+    "text": "ut",
+    "x": 236.3631,
+    "y_top": 176.608
+   },
+   {
+    "text": "labore",
+    "x": 251.3287,
+    "y_top": 176.608
+   },
+   {
+    "text": "et",
+    "x": 286.7663,
+    "y_top": 176.608
+   },
+   {
+    "text": "dolore",
+    "x": 300.4311,
+    "y_top": 176.608
+   },
+   {
+    "text": "magna",
+    "x": 335.5459,
+    "y_top": 176.608
+   },
+   {
+    "text": "aliqua.",
+    "x": 373.2621,
+    "y_top": 176.608
+   },
+   {
+    "text": "Lorem",
+    "x": 140.119,
+    "y_top": 196.035
+   },
+   {
+    "text": "ipsum",
+    "x": 175.7622,
+    "y_top": 196.035
+   },
+   {
+    "text": "dolor",
+    "x": 209.3468,
+    "y_top": 196.035
+   },
+   {
+    "text": "sit",
+    "x": 238.3262,
+    "y_top": 196.035
+   },
+   {
+    "text": "amet,",
+    "x": 253.7006,
+    "y_top": 196.035
+   },
+   {
+    "text": "consectetur",
+    "x": 285.4727,
+    "y_top": 196.035
+   },
+   {
+    "text": "adipiscing",
+    "x": 346.3725,
+    "y_top": 196.035
+   },
+   {
+    "text": "elit,",
+    "x": 400.1303,
+    "y_top": 196.035
+   },
+   {
+    "text": "sed",
+    "x": 422.7854,
+    "y_top": 196.035
+   },
+   {
+    "text": "do",
+    "x": 442.0739,
+    "y_top": 196.035
+   },
+   {
+    "text": "eiusmod",
+    "x": 457.3837,
+    "y_top": 196.035
+   },
+   {
+    "text": "tempor",
+    "x": 140.119,
+    "y_top": 210.481
+   },
+   {
+    "text": "incididunt",
+    "x": 180.7595,
+    "y_top": 210.481
+   },
+   {
+    "text": "ut",
+    "x": 236.3631,
+    "y_top": 210.481
+   },
+   {
+    "text": "labore",
+    "x": 251.3287,
+    "y_top": 210.481
+   },
+   {
+    "text": "et",
+    "x": 286.7663,
+    "y_top": 210.481
+   },
+   {
+    "text": "dolore",
+    "x": 300.4311,
+    "y_top": 210.481
+   },
+   {
+    "text": "magna",
+    "x": 335.5459,
+    "y_top": 210.481
+   },
+   {
+    "text": "aliqua.",
+    "x": 373.2621,
+    "y_top": 210.481
+   },
+   {
+    "text": "Short",
+    "x": 140.119,
+    "y_top": 229.908
+   },
+   {
+    "text": "item",
+    "x": 171.982,
+    "y_top": 229.908
+   },
+   {
+    "text": "text.",
+    "x": 198.6541,
+    "y_top": 229.908
+   },
+   {
+    "text": "?",
+    "x": 128.415,
+    "y_top": 254.316
+   },
+   {
+    "text": "Short",
+    "x": 140.1251,
+    "y_top": 254.316
+   },
+   {
+    "text": "item",
+    "x": 171.9881,
+    "y_top": 254.316
+   },
+   {
+    "text": "text.",
+    "x": 198.6482,
+    "y_top": 254.316
+   },
+   {
+    "text": "After.",
+    "x": 110.854,
+    "y_top": 278.725
+   }
+  ]
+ ]
+}

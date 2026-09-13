@@ -214,8 +214,12 @@ pub enum ParaStyle {
     FlushLeft,
     /// `flushright`: `\raggedleft`.
     FlushRight,
-    /// `quote`/`quotation`: a level-1 list with `\rightmargin=\leftmargin`.
+    /// `quote`: a level-1 list with `\rightmargin=\leftmargin`.
     Quote,
+    /// `quotation`: `quote`'s margins with `\listparindent 1.5em` and
+    /// `\itemindent\listparindent` (article.cls), so every paragraph,
+    /// the first included, is indented 1.5em.
+    Quotation,
 }
 
 impl ParaStyle {
@@ -265,6 +269,9 @@ pub enum Block {
         /// The paragraph is (part of) an `itemize`/`enumerate` `\item`
         /// (compiler `Block::ListItem`): LaTeX's `\list` geometry applies.
         list: Option<ListGeom>,
+        /// A `quote`/`quotation` inside a list, or a `verse`: see
+        /// [`EnvShape`].
+        shape: Option<EnvShape>,
     },
     Heading {
         level: u8,
@@ -352,6 +359,26 @@ pub struct ListGeom {
     /// the glue every paragraph of the item adds. Article's `\@list<i>`
     /// value for the nesting level, or an enumitem `parsep=` key.
     pub parsep: crate::style::Skip,
+    /// The innermost list's `\labelsep`, in points: article's `.5em`, or
+    /// an enumitem `labelsep=` key.
+    pub labelsep: f64,
+    /// The label's font, from how the compiler produced it: `\bfseries`
+    /// (article's `\labelitemii` en dash, a `description` term) and the
+    /// math-font symbols of `\labelitemi`/`iii`/`iv` (`\textbullet`,
+    /// `\textasteriskcentered`, `\textperiodcentered`).
+    pub label_bold: bool,
+    pub label_math: bool,
+    /// `description` (article.cls 360-365): `\labelwidth\z@`,
+    /// `\itemindent-\leftmargin` and `\makelabel` = `\descriptionlabel`
+    /// (`\hspace\labelsep\normalfont\bfseries #1`), so the term starts at
+    /// the enclosing text edge and pushes the item text right.
+    pub description: bool,
+    /// itemize/enumerate: `\makelabel` is `\hss\llap{#1}` (latex.ltx
+    /// 16061/16072; enumitem's default `align=right` alike), so a label
+    /// wider than `\labelwidth` extends left and never moves the text.
+    /// Otherwise (`thebibliography`) the kernel's `\@mklab` box is kept at
+    /// the label's width when wider.
+    pub llap: bool,
 }
 
 /// One list level's `\leftmargin`.
@@ -366,6 +393,34 @@ pub enum ListMargin {
     /// for `\alph`/`\Alph`/`\roman`/`\Roman`/`\arabic`), set in the
     /// body font.
     Widest(String),
+}
+
+/// `\list` geometry of a `quote`/`quotation`/`verse` paragraph other than a
+/// level-1 `quote`/`quotation` (those keep the stylesheet's `\leftmargini`):
+/// one nested in a list, or any `verse` (article.cls 389-410).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnvShape {
+    /// `\leftmargin` of every enclosing list, outermost first.
+    pub outer_margins: Vec<ListMargin>,
+    /// The environment's own `\leftmargin` (`verse`: `\advance\leftmargin
+    /// 1.5em`), in points.
+    pub left_pt: f64,
+    /// `\rightmargin\leftmargin` (before `verse`'s advance), in points.
+    pub right_pt: f64,
+    /// `\itemindent` = `\listparindent`: `quotation` 1.5em, `verse` -1.5em,
+    /// `quote` 0pt.
+    pub parindent_pt: f64,
+    /// `\parsep` (`quotation`: `\z@ \@plus\p@`), `\topsep` and `\partopsep`
+    /// of `\@list<depth>`.
+    pub parsep: crate::style::Skip,
+    pub topsep: f64,
+    pub partopsep: f64,
+    /// `\@outerparskip`: the enclosing list's `\parsep`, or the document's
+    /// `\parskip` at depth 1.
+    pub outer_parskip: f64,
+    /// The paragraph was started by `verse`'s `\\` (`\@centercr`: `\par`,
+    /// `\addvspace{-\parskip}`), with its `[<dimen>]` (0 without one).
+    pub after_line_break: Option<f64>,
 }
 
 /// Body commands that decide the header and footer (latex.ltx
@@ -513,6 +568,8 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
                 ));
                 out.push(CBlock::Styled {
                     style: ParagraphStyle::FlushLeft,
+                    lists: Vec::new(),
+                    line_break_before: None,
                     content,
                 });
             }
@@ -550,6 +607,8 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
                     }
                     out.push(CBlock::Styled {
                         style: ParagraphStyle::Center,
+                        lists: Vec::new(),
+                        line_break_before: None,
                         content: sized(part, size),
                     });
                 }
@@ -913,6 +972,7 @@ pub fn adapt_cached(
                 env_open,
                 after_env,
                 list,
+                shape,
             } => {
                 for inline in inlines {
                     unsupported_inlines(inline, &mut limitations);
@@ -1028,7 +1088,7 @@ pub fn adapt_cached(
                 // ones after it, `quote` likewise.
                 blocks.push(Block::Paragraph {
                     parts,
-                    indent: !after_heading && !caption && styled.is_none() && !after_env && list.is_none() && !noindent,
+                    indent: styled == Some(ParaStyle::Quotation) || shape.as_ref().is_some_and(|s| s.parindent_pt != 0.0) || (!after_heading && !caption && styled.is_none() && !after_env && list.is_none() && !noindent),
                     style: styled.unwrap_or_default(),
                     env_open,
                     env_close: false,
@@ -1037,6 +1097,7 @@ pub fn adapt_cached(
                     addvspace_before: unit.addvspace_before,
                     endlist_adjust: unit.endlist_adjust,
                     list,
+                    shape,
                 });
                 after_heading = false;
             }
@@ -1239,6 +1300,8 @@ enum UnitKind<'p> {
         after_env: bool,
         /// A compiler `ListItem` paragraph: its `\list` geometry.
         list: Option<ListGeom>,
+        /// See [`EnvShape`].
+        shape: Option<EnvShape>,
     },
     Rule {
         span: Span,
@@ -1277,7 +1340,6 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
     // `\begin` was read in vertical mode (`\@topsepadd` keeps `\partopsep`
     // for the closing skip too).
     let mut prev_list = false;
-    let mut list_vmode = false;
     // `tikzpicture` environments per document, and those already emitted.
     let pictures: Vec<Vec<flashtex_vector_graphics::tikz::PictureSource>> = texts.iter().map(|t| flashtex_vector_graphics::tikz::find_pictures(t)).collect();
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
@@ -1363,30 +1425,31 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
         let is_heading = matches!(block, CBlock::Heading { .. });
         let mut addvspace_before = 0.0;
         let mut endlist_adjust = 0.0;
+        // `\@endparenv` of every list closed in the gap: `\addvspace` of its
+        // own level's `\@topsepadd` (successive `\addvspace`s keep the
+        // largest skip, they do not add up).
         if prev_list && !is_heading {
-            if let Some(gap) = first.and_then(gap_before) {
-                if let Some(env) = gap_has_list_end(gap) {
-                    let src = texts.get(prev_end.map_or(0, |p| p.document.0)).copied().unwrap_or("");
-                    let seps = list_seps(src, env, 1, size, style);
-                    addvspace_before += seps.topsep + if list_vmode { seps.partopsep } else { 0.0 };
-                    if let Some(p) = prev_end {
-                        endlist_adjust = list_end_adjust(src, p.end, gap, size, style);
-                    }
+            if let (Some(gap), Some(p)) = (first.and_then(gap_before), prev_end) {
+                let src = texts.get(p.document.0).copied().unwrap_or("");
+                addvspace_before = list_end_skip(src, p.end, gap, size, style);
+                if addvspace_before > 0.0 {
+                    endlist_adjust = list_end_adjust(src, p.end, gap, size, style);
                 }
             }
         }
+        let list_closed = addvspace_before > 0.0;
         let mut list = None;
-        if let CBlock::ListItem { level, label, .. } = block {
+        if let CBlock::ListItem { level, label, lists, item, .. } = block {
             let anchor = label.as_ref().map(|(_, span)| *span).or(first);
             if let Some(at) = anchor {
                 let src = texts.get(at.document.0).copied().unwrap_or("");
                 let stack = list_stack_at(src, at.start);
-                let env = stack.last().map_or("enumerate", |(env, _)| env);
-                let seps = list_seps(src, env, stack.len().max(1), size, style);
+                let (env, options) = stack.last().map_or(("enumerate", ""), |(env, options, _)| (*env, *options));
+                let seps = list_seps(src, env, options, stack.len().max(1), size, style);
                 // `\@outerparskip`: the `\parskip` in force when `\begin`
                 // was read — the enclosing list's `\parsep` when nested.
                 let outer_parskip = match stack.len() {
-                    n if n > 1 => list_seps(src, stack[n - 2].0, n - 1, size, style).parsep,
+                    n if n > 1 => list_seps(src, stack[n - 2].0, stack[n - 2].1, n - 1, size, style).parsep,
                     _ => style.parskip.natural,
                 };
                 if label.is_some() {
@@ -1394,30 +1457,64 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                     match opens {
                         Some((g, b)) if list_env_after_begin(&g[b..]) => {
                             let before = &g[..b];
-                            list_vmode = prev_vmode || prev_end.is_none() || has_blank_line(before) || find_command(before, "par").is_some();
+                            // `\@trivlist`: `\ifvmode \advance\@topsepadd\partopsep`
+                            // — a list closed right before (`\@endparenv` ends
+                            // the paragraph) leaves vertical mode too.
+                            let vmode = prev_vmode || prev_end.is_none() || list_closed || has_blank_line(before) || find_command(before, "par").is_some() || ends_in_vmode(before);
                             if prev_vmode {
-                                // `\@nbitem`: `\addvspace{\@outerparskip - \parskip}`.
-                                addvspace_before += outer_parskip - seps.parsep;
+                                // `\@nbitem`: `\addvspace{\@outerparskip - \parskip}`;
+                                // a negative one is added to the heading's skip.
+                                let nb = outer_parskip - seps.parsep;
+                                if nb < 0.0 {
+                                    vspace_before += nb;
+                                } else {
+                                    addvspace_before = addvspace_before.max(nb);
+                                }
                             } else {
-                                addvspace_before += seps.topsep + outer_parskip + if list_vmode { seps.partopsep } else { 0.0 };
+                                addvspace_before = addvspace_before.max(seps.topsep + outer_parskip + if vmode { seps.partopsep } else { 0.0 });
                                 vspace_before -= seps.parsep;
                             }
                         }
-                        _ => addvspace_before += seps.itemsep,
+                        _ => addvspace_before = addvspace_before.max(seps.itemsep),
                     }
                 }
+                // The label text is the compiler's (article `\labelitem<i>`/
+                // `\labelenum<i>` per `\@itemdepth`/`\@enumdepth`, enumitem
+                // `label`/shortlabels, `start`/`resume`, `\item[...]`); its
+                // font follows from how it was produced.
+                use flashtex_compiler::parser::{ItemLabel, ListEnvironment};
+                let (label_bold, label_math) = match item {
+                    Some(ItemLabel::Symbol { bold, command, .. }) => (*bold, matches!(command.as_str(), "textbullet" | "textasteriskcentered" | "textperiodcentered")),
+                    Some(ItemLabel::Explicit { content, .. }) => (!content.is_empty() && content.iter().all(|i| matches!(i, Inline::Text { style, .. } if style.bold)), false),
+                    _ => (false, false),
+                };
                 list = Some(ListGeom {
                     level: *level,
-                    margins: list_margins(src, at.start, size),
+                    margins: list_margins(src, at.start, size, style.class_geometry.as_ref().is_some_and(|g| g.flags.twocolumn)),
                     label: label.clone(),
                     parsep: seps.parsep_skip,
+                    labelsep: list_labelsep(src, env, options, size, style),
+                    label_bold,
+                    label_math,
+                    description: lists.last().is_some_and(|f| f.environment == ListEnvironment::Description),
+                    llap: lists.last().is_some_and(|f| matches!(f.environment, ListEnvironment::Itemize | ListEnvironment::Enumerate)),
                 });
             }
         }
+        let was_list = prev_list;
         prev_list = list.is_some();
         let limitations = std::mem::take(&mut pending_limitations);
         let styled = match block {
-            CBlock::Styled { style, .. } => Some(ParaStyle::of(*style)),
+            // The compiler reports `quote`, `quotation` and `verse` as one
+            // paragraph style; the innermost list frame tells them apart.
+            CBlock::Styled { style, lists, .. } => Some(match ParaStyle::of(*style) {
+                ParaStyle::Quote if lists.last().is_some_and(|f| f.environment == flashtex_compiler::parser::ListEnvironment::Quotation) => ParaStyle::Quotation,
+                s => s,
+            }),
+            _ => None,
+        };
+        let shape = match block {
+            CBlock::Styled { lists, line_break_before, .. } => first.and_then(|f| env_shape(texts.get(f.document.0).copied().unwrap_or(""), f.start, lists, line_break_before.as_ref(), size, style)),
             _ => None,
         };
         // The environment opens here when the gap before the block holds
@@ -1433,13 +1530,14 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
             };
             let begin = rfind_command(gap, "begin")?;
             let before = &gap[..begin];
-            let vmode = prev_vmode || prev_end.is_none() || has_blank_line(before) || find_command(before, "par").is_some();
+            let vmode = prev_vmode || prev_end.is_none() || list_closed || has_blank_line(before) || find_command(before, "par").is_some() || ends_in_vmode(before);
             Some(EnvOpen { vmode })
         });
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
-        // or `\par` between them) is not indented.
+        // or `\par` between them) is not indented — after `center`/`quote`
+        // and after a list alike (`\endtrivlist`'s `\@endparenv`).
         let after_env = styled.is_none()
-            && prev_styled
+            && (prev_styled || was_list)
             && first.zip(prev_end).is_some_and(|(f, p)| {
                 p.document == f.document
                     && p.end <= f.start
@@ -1527,6 +1625,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                                     env_open: env_open.take(),
                                     after_env,
                                     list: list.clone(),
+                                    shape: shape.clone(),
                                 },
                                 eject_before: eject,
                                 vspace_before: std::mem::take(&mut vspace_before),
@@ -1546,6 +1645,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                             env_open: env_open.take(),
                             after_env,
                             list: list.clone(),
+                            shape: shape.clone(),
                         },
                         eject_before: eject,
                         vspace_before: std::mem::take(&mut vspace_before),
@@ -1880,7 +1980,16 @@ fn parse_dimen(s: &str, size: u32) -> Option<f64> {
     };
     Some(match unit.trim() {
         "pt" => v,
-        "em" => v * body,
+        // `em` is the current font's quad (`\fontdimen6`): cmr12's is
+        // 11.74988pt, cmr10's at 10.95pt 10.95003pt.
+        "em" => {
+            let base = match size {
+                12 => flashtex_document_style::BaseSize::Pt12,
+                11 => flashtex_document_style::BaseSize::Pt11,
+                _ => flashtex_document_style::BaseSize::Pt10,
+            };
+            v * flashtex_document_style::fonts::size_params(base).normal.quad.0
+        }
         "ex" => v * body * 0.430556,
         "in" => v * 72.27,
         "cm" => v * 72.27 / 2.54,
@@ -1904,7 +2013,117 @@ struct ListSeps {
     parsep_skip: crate::style::Skip,
 }
 
-fn list_seps(source: &str, env: &str, depth: usize, size: u32, style: &Stylesheet) -> ListSeps {
+/// enumitem's own keys (enumitem.sty `\enitkv@key{}{...}`): an optional
+/// `\begin` argument made of these is a key list, anything else a
+/// shortlabels template such as `(a)`.
+const ENUMITEM_KEYS: [&str; 30] = [
+    "nosep", "noitemsep", "topsep", "partopsep", "itemsep", "parsep", "label", "label*", "leftmargin", "rightmargin", "labelsep", "labelwidth", "labelindent",
+    "itemindent", "listparindent", "start", "resume", "resume*", "align", "widest", "widest*", "font", "format", "ref", "before", "after", "wide", "series", "style", "beginpenalty",
+];
+
+/// Whether a `\begin{<list>}[<options>]` argument is an enumitem key list.
+fn is_key_list(options: &str) -> bool {
+    options.contains('=') || list_keys(options).any(|(key, _)| ENUMITEM_KEYS.contains(&key))
+}
+
+/// Applies the vertical keys of one enumitem key list, in order:
+/// `nosep` (enumitem.sty: `\partopsep`, `\topsep`, `\itemsep`, `\parsep`
+/// all `\z@skip`), `noitemsep` (`\itemsep`, `\parsep`), and the explicit
+/// `topsep`/`partopsep`/`itemsep`/`parsep` lengths.
+fn apply_sep_keys(seps: &mut ListSeps, keys: &str, size: u32) {
+    for (key, value) in list_keys(keys) {
+        match key {
+            "nosep" => {
+                *seps = ListSeps { topsep: 0.0, partopsep: 0.0, itemsep: 0.0, parsep: 0.0, parsep_skip: crate::style::Skip::fixed(0.0) };
+                continue;
+            }
+            "noitemsep" => {
+                seps.itemsep = 0.0;
+                seps.parsep = 0.0;
+                seps.parsep_skip = crate::style::Skip::fixed(0.0);
+                continue;
+            }
+            _ => {}
+        }
+        let Some(pt) = parse_dimen(value, size) else { continue };
+        match key {
+            "topsep" => seps.topsep = pt,
+            "partopsep" => seps.partopsep = pt,
+            "itemsep" => seps.itemsep = pt,
+            "parsep" => {
+                seps.parsep = pt;
+                seps.parsep_skip = crate::style::Skip::fixed(pt);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `options` is the list's own `\begin` optional argument (applied after
+/// every `\setlist`, as enumitem does).
+fn list_seps(source: &str, env: &str, options: &str, depth: usize, size: u32, style: &Stylesheet) -> ListSeps {
+    let mut seps = class_seps(depth, size, style);
+    for (envs, keys) in setlist_calls(source) {
+        if setlist_names(envs, env) {
+            apply_sep_keys(&mut seps, keys, size);
+        }
+    }
+    if is_key_list(options) {
+        apply_sep_keys(&mut seps, options, size);
+    }
+    seps
+}
+
+/// [`EnvShape`] of a compiler `Styled` paragraph (first byte `at`) whose
+/// innermost frame is `quote`/`quotation`/`verse`, unless it is a level-1
+/// `quote`/`quotation`. article.cls 389-410: `verse` `\itemindent -1.5em
+/// \listparindent\itemindent \rightmargin\leftmargin \advance\leftmargin
+/// 1.5em`; `quotation` `\listparindent 1.5em \itemindent\listparindent
+/// \rightmargin\leftmargin \parsep \z@ \@plus\p@`; `quote`
+/// `\rightmargin\leftmargin`; all take `\@list<depth>`'s other values.
+fn env_shape(source: &str, at: usize, lists: &[flashtex_compiler::parser::ListFrame], line_break: Option<&flashtex_compiler::parser::LineBreakBefore>, size: u32, style: &Stylesheet) -> Option<EnvShape> {
+    use flashtex_compiler::parser::ListEnvironment as E;
+    let kind = lists.last()?.environment;
+    if !kind.is_quote_like() || (lists.len() == 1 && kind != E::Verse) {
+        return None;
+    }
+    let depth = lists.len();
+    let twocolumn = style.class_geometry.as_ref().is_some_and(|g| g.flags.twocolumn);
+    let class_margin = |d: usize| parse_dimen(&format!("{}em", article_leftmargin_em(d, twocolumn)), size).unwrap_or(0.0);
+    let own = if depth == 1 { style.leftmargini_pt } else { class_margin(depth) };
+    let mut outer_margins = list_margins(source, at, size, twocolumn);
+    outer_margins.truncate(depth - 1);
+    while outer_margins.len() < depth - 1 {
+        outer_margins.push(ListMargin::Fixed(class_margin(outer_margins.len() + 1)));
+    }
+    let mut seps = class_seps(depth, size, style);
+    if kind == E::Quotation {
+        seps.parsep = 0.0;
+        seps.parsep_skip = crate::style::Skip::new(0.0, 1.0, 0.0);
+    }
+    let outer_parskip = match list_stack_at(source, at).last() {
+        Some(&(env, options, _)) if depth > 1 => list_seps(source, env, options, depth - 1, size, style).parsep,
+        _ => style.parskip.natural,
+    };
+    Some(EnvShape {
+        outer_margins,
+        left_pt: own + if kind == E::Verse { 1.5 * style.em_pt } else { 0.0 },
+        right_pt: own,
+        parindent_pt: match kind {
+            E::Quotation => 1.5 * style.em_pt,
+            E::Verse => -1.5 * style.em_pt,
+            _ => 0.0,
+        },
+        parsep: seps.parsep_skip,
+        topsep: seps.topsep,
+        partopsep: seps.partopsep,
+        outer_parskip,
+        after_line_break: line_break.map(|l| l.skip_pt.unwrap_or(0.0)),
+    })
+}
+
+/// The class's `\@list<depth>` values (size1x.clo), before enumitem keys.
+fn class_seps(depth: usize, size: u32, style: &Stylesheet) -> ListSeps {
     let base = match size {
         12 => flashtex_document_style::BaseSize::Pt12,
         11 => flashtex_document_style::BaseSize::Pt11,
@@ -1926,31 +2145,84 @@ fn list_seps(source: &str, env: &str, depth: usize, size: u32, style: &Styleshee
         seps.parsep = style.parsep.natural;
         seps.parsep_skip = style.parsep;
     }
-    for (envs, keys) in setlist_calls(source) {
-        if !setlist_names(envs, env) {
-            continue;
-        }
+    seps
+}
+
+/// `\labelsep` of an `env` list: the class's, then enumitem `labelsep=`
+/// keys from `\setlist` calls naming it and from its `\begin` options.
+fn list_labelsep(source: &str, env: &str, options: &str, size: u32, style: &Stylesheet) -> f64 {
+    let mut labelsep = style.labelsep_pt;
+    let keys = setlist_calls(source).into_iter().filter(|(envs, _)| setlist_names(envs, env)).map(|(_, keys)| keys).chain(is_key_list(options).then_some(options));
+    for keys in keys {
         for (key, value) in list_keys(keys) {
-            let Some(pt) = parse_dimen(value, size) else { continue };
-            match key {
-                "topsep" => seps.topsep = pt,
-                "partopsep" => seps.partopsep = pt,
-                "itemsep" => seps.itemsep = pt,
-                "parsep" => {
-                    seps.parsep = pt;
-                    seps.parsep_skip = crate::style::Skip::fixed(pt);
-                }
-                _ => {}
+            if key == "labelsep" {
+                labelsep = parse_dimen(value, size).unwrap_or(labelsep);
             }
         }
     }
-    seps
+    labelsep
 }
 
 /// Whether `rest` (starting at a `\begin`) opens `itemize`/`enumerate`.
 fn list_env_after_begin(rest: &str) -> bool {
     let after = rest.strip_prefix("\\begin").unwrap_or(rest).trim_start();
-    after.starts_with("{itemize}") || after.starts_with("{enumerate}")
+    after.starts_with("{itemize}") || after.starts_with("{enumerate}") || after.starts_with("{description}")
+}
+
+/// The environments built on `\trivlist`, whose `\end` runs
+/// `\@endparenv` and so leaves TeX in vertical mode.
+const TRIVLIST_ENVS: [&str; 9] = ["itemize", "enumerate", "description", "center", "flushleft", "flushright", "quote", "quotation", "verse"];
+
+/// The environments that nest as `\list`s (`\@listdepth`).
+const LIST_ENVS: [&str; 3] = ["itemize", "enumerate", "description"];
+
+/// Whether the source `before` a `\begin` leaves TeX in vertical mode by
+/// its last material alone: an `\end{<trivlist env>}`, `\begin{document}`
+/// or a display heading (`\section{...}` and friends) on the last line.
+fn ends_in_vmode(before: &str) -> bool {
+    let t = before.trim_end();
+    if let Some(inner) = t.strip_suffix('}') {
+        if let Some(open) = inner.rfind('{') {
+            let (head, name) = (inner[..open].trim_end(), &inner[open + 1..]);
+            if head.ends_with("\\end") && TRIVLIST_ENVS.contains(&name) || head.ends_with("\\begin") && name == "document" {
+                return true;
+            }
+        }
+        let line = t.rsplit('\n').next().unwrap_or("").trim_start();
+        return ["\\chapter", "\\section", "\\subsection", "\\subsubsection"].iter().any(|c| line.starts_with(c));
+    }
+    false
+}
+
+/// Whether the `\begin` at byte `begin` of `source` is read in vertical
+/// mode (see [`ends_in_vmode`]; also after a blank line or `\par`).
+fn begin_vmode(source: &str, begin: usize) -> bool {
+    let before = &source[..begin];
+    let t = before.trim_end();
+    ends_in_vmode(before) || has_blank_line(&before[t.len()..]) || t.ends_with("\\par") || t.is_empty()
+}
+
+/// `\@endparenv`'s `\addvspace\@topsepadd` for the lists closed by the
+/// `\end`s in `gap` (starting at byte `gap_start` of `source`): each
+/// level's `\topsep`, plus its `\partopsep` when its `\begin` was read in
+/// vertical mode; successive `\addvspace`s keep the largest. 0 when the
+/// gap closes no list.
+fn list_end_skip(source: &str, gap_start: usize, gap: &str, size: u32, style: &Stylesheet) -> f64 {
+    let mut skip: f64 = 0.0;
+    let mut from = 0;
+    while let Some(at) = find_command(&gap[from..], "end") {
+        let abs = from + at;
+        from = abs + 1;
+        let rest = gap[abs + "\\end".len()..].trim_start();
+        if !LIST_ENVS.iter().any(|e| rest.strip_prefix('{').is_some_and(|r| r.starts_with(e) && r[e.len()..].starts_with('}'))) {
+            continue;
+        }
+        let stack = list_stack_at(source, gap_start + abs);
+        let Some(&(env, options, begin)) = stack.last() else { continue };
+        let seps = list_seps(source, env, options, stack.len(), size, style);
+        skip = skip.max(seps.topsep + if begin_vmode(source, begin) { seps.partopsep } else { 0.0 });
+    }
+    skip
 }
 
 /// `\endtrivlist` for every `\end{itemize}`/`\end{enumerate}` in `gap`
@@ -1966,25 +2238,19 @@ fn list_end_adjust(source: &str, gap_start: usize, gap: &str, size: u32, style: 
         let abs = from + at;
         from = abs + 1;
         let rest = gap[abs + "\\end".len()..].trim_start();
-        if !rest.starts_with("{itemize}") && !rest.starts_with("{enumerate}") {
+        if !rest.starts_with("{itemize}") && !rest.starts_with("{enumerate}") && !rest.starts_with("{description}") {
             continue;
         }
         let stack = list_stack_at(source, gap_start + abs);
-        let Some(&(env, _)) = stack.last() else { continue };
+        let Some(&(env, options, _)) = stack.last() else { continue };
         let depth = stack.len();
-        let parsep = list_seps(source, env, depth, size, style).parsep;
-        let outer = if depth > 1 { list_seps(source, stack[depth - 2].0, depth - 1, size, style).parsep } else { style.parskip.natural };
+        let parsep = list_seps(source, env, options, depth, size, style).parsep;
+        let outer = if depth > 1 { list_seps(source, stack[depth - 2].0, stack[depth - 2].1, depth - 1, size, style).parsep } else { style.parskip.natural };
         adjust += parsep - outer;
     }
     adjust
 }
 
-/// The environment of the last `\end{itemize}`/`\end{enumerate}` in `gap`.
-fn gap_has_list_end(gap: &str) -> Option<&'static str> {
-    let end = rfind_command(gap, "end")?;
-    let rest = gap[end + "\\end".len()..].trim_start();
-    ["itemize", "enumerate"].into_iter().find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}"))))
-}
 
 /// The `\setlist[<envs>]{<keys>}` calls of `source`, in order:
 /// `(environment list or "" for all, keys)`.
@@ -2026,10 +2292,11 @@ fn setlist_names(envs: &str, env: &str) -> bool {
     envs.trim().is_empty() || envs.split(',').map(str::trim).any(|e| e == env || e.parse::<u8>().is_ok())
 }
 
-/// The `itemize`/`enumerate` environments open at byte `at` of `source`,
-/// outermost first: `(environment, `\begin` optional argument)`.
-fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str)> {
-    let mut stack: Vec<(&str, &str)> = Vec::new();
+/// The `itemize`/`enumerate`/`description` environments open at byte `at`
+/// of `source`, outermost first: `(environment, `\begin` optional
+/// argument, byte offset of the `\begin`)`.
+fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str, usize)> {
+    let mut stack: Vec<(&str, &str, usize)> = Vec::new();
     let mut from = 0;
     while from < at {
         let next_begin = find_command(&source[from..at], "begin").map(|i| from + i);
@@ -2046,7 +2313,7 @@ fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str)> {
         let Some(inner) = rest.strip_prefix('{') else { continue };
         let Some(close) = inner.find('}') else { continue };
         let env = inner[..close].trim();
-        if !matches!(env, "itemize" | "enumerate") {
+        if !LIST_ENVS.contains(&env) {
             continue;
         }
         if is_begin {
@@ -2055,8 +2322,8 @@ fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str)> {
                 Some(o) => o.find(']').map_or("", |c| &o[..c]),
                 None => "",
             };
-            stack.push((env, options));
-        } else if stack.last().is_some_and(|(open, _)| *open == env) {
+            stack.push((env, options, pos));
+        } else if stack.last().is_some_and(|(open, _, _)| *open == env) {
             stack.pop();
         }
     }
@@ -2064,9 +2331,18 @@ fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str)> {
 }
 
 /// article's `\leftmargin<i>` for nesting `depth` (1-based), in em of
-/// the body font (`\leftmarginv`/`vi` are 1em).
-fn article_leftmargin_em(depth: usize) -> f64 {
-    [2.5, 2.2, 1.87, 1.7, 1.0, 1.0][depth.clamp(1, 6) - 1]
+/// the body font (article.cls: `\if@twocolumn` `\leftmargini` 2em and
+/// `\leftmarginv`/`vi` .5em, else 2.5em and 1em).
+fn article_leftmargin_em(depth: usize, twocolumn: bool) -> f64 {
+    match (depth.clamp(1, 6), twocolumn) {
+        (1, true) => 2.0,
+        (1, false) => 2.5,
+        (2, _) => 2.2,
+        (3, _) => 1.87,
+        (4, _) => 1.7,
+        (_, true) => 0.5,
+        (_, false) => 1.0,
+    }
 }
 
 /// The widest label enumitem assumes for the `leftmargin=*` computation:
@@ -2114,17 +2390,17 @@ fn widest_label(env: &str, depth: usize, label_key: Option<&str>, template: Opti
 /// class's `\leftmargin<i>` unless a `\setlist` naming the environment or
 /// the `\begin` options set enumitem's `leftmargin` (`*` = the widest
 /// label's width plus `\labelsep`; a `<dimen>` as given).
-fn list_margins(source: &str, at: usize, size: u32) -> Vec<ListMargin> {
+fn list_margins(source: &str, at: usize, size: u32, twocolumn: bool) -> Vec<ListMargin> {
     let calls = setlist_calls(source);
-    let class_margin = |depth: usize| ListMargin::Fixed(parse_dimen(&format!("{}em", article_leftmargin_em(depth)), size).unwrap_or(0.0));
+    let class_margin = |depth: usize| ListMargin::Fixed(parse_dimen(&format!("{}em", article_leftmargin_em(depth, twocolumn)), size).unwrap_or(0.0));
     list_stack_at(source, at)
         .iter()
         .enumerate()
-        .map(|(i, (env, options))| {
+        .map(|(i, (env, options, _))| {
             let depth = i + 1;
             let mut leftmargin: Option<&str> = None;
             let mut label_key: Option<&str> = None;
-            let begin_keys = options.contains('=');
+            let begin_keys = is_key_list(options);
             let all_keys = calls
                 .iter()
                 .filter(|(envs, _)| setlist_names(envs, env))

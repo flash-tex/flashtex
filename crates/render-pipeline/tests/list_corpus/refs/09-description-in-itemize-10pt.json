@@ -1,0 +1,130 @@
+{
+ "fixture": "09-description-in-itemize-10pt.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, word origin, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Intro.",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "?",
+    "x": 148.714,
+    "y_top": 154.69
+   },
+   {
+    "text": "Outer.",
+    "x": 158.6756,
+    "y_top": 154.69
+   },
+   {
+    "text": "Term",
+    "x": 158.675,
+    "y_top": 174.615
+   },
+   {
+    "text": "Lorem",
+    "x": 190.1867,
+    "y_top": 174.615
+   },
+   {
+    "text": "ipsum",
+    "x": 222.6987,
+    "y_top": 174.615
+   },
+   {
+    "text": "dolor",
+    "x": 253.4402,
+    "y_top": 174.615
+   },
+   {
+    "text": "sit",
+    "x": 280.2705,
+    "y_top": 174.615
+   },
+   {
+    "text": "amet,",
+    "x": 295.5143,
+    "y_top": 174.615
+   },
+   {
+    "text": "consectetur",
+    "x": 324.8781,
+    "y_top": 174.615
+   },
+   {
+    "text": "adipiscing",
+    "x": 378.8923,
+    "y_top": 174.615
+   },
+   {
+    "text": "elit,",
+    "x": 426.7925,
+    "y_top": 174.615
+   },
+   {
+    "text": "sed",
+    "x": 448.3984,
+    "y_top": 174.615
+   },
+   {
+    "text": "do",
+    "x": 466.9627,
+    "y_top": 174.615
+   },
+   {
+    "text": "eiusmod",
+    "x": 180.593,
+    "y_top": 186.57
+   },
+   {
+    "text": "tempor",
+    "x": 219.6673,
+    "y_top": 186.57
+   },
+   {
+    "text": "incididunt",
+    "x": 254.2864,
+    "y_top": 186.57
+   },
+   {
+    "text": "ut",
+    "x": 301.6157,
+    "y_top": 186.57
+   },
+   {
+    "text": "labore",
+    "x": 314.3429,
+    "y_top": 186.57
+   },
+   {
+    "text": "et",
+    "x": 344.5346,
+    "y_top": 186.57
+   },
+   {
+    "text": "dolore",
+    "x": 356.1539,
+    "y_top": 186.57
+   },
+   {
+    "text": "magna",
+    "x": 386.0766,
+    "y_top": 186.57
+   },
+   {
+    "text": "aliqua.",
+    "x": 418.1751,
+    "y_top": 186.57
+   },
+   {
+    "text": "After.",
+    "x": 133.768,
+    "y_top": 206.496
+   }
+  ]
+ ]
+}

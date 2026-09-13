@@ -1,0 +1,110 @@
+{
+ "fixture": "11-enumitem-start-resume-10pt.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, word origin, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Intro.",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "3.",
+    "x": 145.945,
+    "y_top": 154.69
+   },
+   {
+    "text": "Short",
+    "x": 158.6752,
+    "y_top": 154.69
+   },
+   {
+    "text": "item",
+    "x": 185.8213,
+    "y_top": 154.69
+   },
+   {
+    "text": "text.",
+    "x": 208.5201,
+    "y_top": 154.69
+   },
+   {
+    "text": "4.",
+    "x": 145.945,
+    "y_top": 174.615
+   },
+   {
+    "text": "Short",
+    "x": 158.6752,
+    "y_top": 174.615
+   },
+   {
+    "text": "item",
+    "x": 185.8213,
+    "y_top": 174.615
+   },
+   {
+    "text": "text.",
+    "x": 208.5201,
+    "y_top": 174.615
+   },
+   {
+    "text": "Middle",
+    "x": 133.768,
+    "y_top": 194.54
+   },
+   {
+    "text": "text.",
+    "x": 167.2513,
+    "y_top": 194.54
+   },
+   {
+    "text": "5.",
+    "x": 145.945,
+    "y_top": 214.466
+   },
+   {
+    "text": "Short",
+    "x": 158.6752,
+    "y_top": 214.466
+   },
+   {
+    "text": "item",
+    "x": 185.8213,
+    "y_top": 214.466
+   },
+   {
+    "text": "text.",
+    "x": 208.5201,
+    "y_top": 214.466
+   },
+   {
+    "text": "6.",
+    "x": 145.945,
+    "y_top": 234.391
+   },
+   {
+    "text": "Short",
+    "x": 158.6752,
+    "y_top": 234.391
+   },
+   {
+    "text": "item",
+    "x": 185.8213,
+    "y_top": 234.391
+   },
+   {
+    "text": "text.",
+    "x": 208.5201,
+    "y_top": 234.391
+   },
+   {
+    "text": "After.",
+    "x": 133.768,
+    "y_top": 254.316
+   }
+  ]
+ ]
+}

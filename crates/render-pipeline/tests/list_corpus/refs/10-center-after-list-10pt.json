@@ -1,0 +1,90 @@
+{
+ "fixture": "10-center-after-list-10pt.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, word origin, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Intro.",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "?",
+    "x": 148.714,
+    "y_top": 154.69
+   },
+   {
+    "text": "Short",
+    "x": 158.6756,
+    "y_top": 154.69
+   },
+   {
+    "text": "item",
+    "x": 185.8217,
+    "y_top": 154.69
+   },
+   {
+    "text": "text.",
+    "x": 208.5205,
+    "y_top": 154.69
+   },
+   {
+    "text": "Centred",
+    "x": 276.552,
+    "y_top": 176.608
+   },
+   {
+    "text": "text.",
+    "x": 314.4976,
+    "y_top": 176.608
+   },
+   {
+    "text": "Left",
+    "x": 133.768,
+    "y_top": 198.526
+   },
+   {
+    "text": "text.",
+    "x": 154.6586,
+    "y_top": 198.526
+   },
+   {
+    "text": "1.",
+    "x": 145.945,
+    "y_top": 220.443
+   },
+   {
+    "text": "Short",
+    "x": 158.6752,
+    "y_top": 220.443
+   },
+   {
+    "text": "item",
+    "x": 185.8213,
+    "y_top": 220.443
+   },
+   {
+    "text": "text.",
+    "x": 208.5201,
+    "y_top": 220.443
+   },
+   {
+    "text": "Right",
+    "x": 429.742,
+    "y_top": 242.361
+   },
+   {
+    "text": "text.",
+    "x": 457.2726,
+    "y_top": 242.361
+   },
+   {
+    "text": "After.",
+    "x": 133.768,
+    "y_top": 264.279
+   }
+  ]
+ ]
+}

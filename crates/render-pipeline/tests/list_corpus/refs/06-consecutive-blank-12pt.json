@@ -1,0 +1,120 @@
+{
+ "fixture": "06-consecutive-blank-12pt.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, word origin, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Intro",
+    "x": 128.413,
+    "y_top": 137.753
+   },
+   {
+    "text": "paragraph",
+    "x": 157.6722,
+    "y_top": 137.753
+   },
+   {
+    "text": "text.",
+    "x": 213.5986,
+    "y_top": 137.753
+   },
+   {
+    "text": "?",
+    "x": 128.415,
+    "y_top": 165.151
+   },
+   {
+    "text": "Short",
+    "x": 140.1251,
+    "y_top": 165.151
+   },
+   {
+    "text": "item",
+    "x": 171.9881,
+    "y_top": 165.151
+   },
+   {
+    "text": "text.",
+    "x": 198.6482,
+    "y_top": 165.151
+   },
+   {
+    "text": "?",
+    "x": 128.415,
+    "y_top": 189.559
+   },
+   {
+    "text": "Short",
+    "x": 140.1251,
+    "y_top": 189.559
+   },
+   {
+    "text": "item",
+    "x": 171.9881,
+    "y_top": 189.559
+   },
+   {
+    "text": "text.",
+    "x": 198.6482,
+    "y_top": 189.559
+   },
+   {
+    "text": "1.",
+    "x": 125.162,
+    "y_top": 216.956
+   },
+   {
+    "text": "Short",
+    "x": 140.1251,
+    "y_top": 216.956
+   },
+   {
+    "text": "item",
+    "x": 171.9881,
+    "y_top": 216.956
+   },
+   {
+    "text": "text.",
+    "x": 198.6482,
+    "y_top": 216.956
+   },
+   {
+    "text": "2.",
+    "x": 125.162,
+    "y_top": 241.365
+   },
+   {
+    "text": "Short",
+    "x": 140.1251,
+    "y_top": 241.365
+   },
+   {
+    "text": "item",
+    "x": 171.9881,
+    "y_top": 241.365
+   },
+   {
+    "text": "text.",
+    "x": 198.6482,
+    "y_top": 241.365
+   },
+   {
+    "text": "After",
+    "x": 128.413,
+    "y_top": 268.762
+   },
+   {
+    "text": "the",
+    "x": 158.9705,
+    "y_top": 268.762
+   },
+   {
+    "text": "lists.",
+    "x": 179.1389,
+    "y_top": 268.762
+   }
+  ]
+ ]
+}
