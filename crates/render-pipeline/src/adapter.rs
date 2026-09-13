@@ -43,6 +43,22 @@ pub struct TextStyle {
     pub caps: bool,
     /// `\rmfamily`/`\sffamily`/`\ttfamily`.
     pub family: crate::nfss::FamilyKind,
+    /// Literal text: `\verb`, a `verbatim` body, a `lstlisting` line.
+    ///
+    /// latex.ltx's `\@noligs` makes ``` ` ``` `'`, `,`, `-`, `<` and `>`
+    /// active inside `\verb` and `\@verbatim`, each expanding to
+    /// `\leavevmode\kern\z@\char`<c>`. The zero kern ends the current
+    /// ligature/kern run, so no ligature can form across one of those six
+    /// characters and no pair kern reaches it — `--` stays two hyphens
+    /// rather than becoming an en dash. [`crate::shape::Shaper::shape_with`]
+    /// reproduces that by splitting the run before each of them; everything
+    /// else about the text shapes normally, so a listing set in a roman
+    /// `basicstyle` still gets its ordinary ligatures.
+    ///
+    /// Hyphenation and microtype need no extra rule here: the typewriter
+    /// families declare `\hyphenchar\font=-1` and microtype's default sets
+    /// are `rm*`/`sf*`, so both are already off for `Tt`.
+    pub literal: bool,
     /// The shape LaTeX reported undefined on the way to this style
     /// (`\wrong@fontshape`); the typesetter reports it once.
     pub undefined: Option<crate::nfss::FontKey>,
@@ -135,6 +151,19 @@ pub enum Item {
     /// Interword glue. `factor` is TeX's space factor (1000 normal, 3000
     /// after sentence-ending punctuation, 999 after an uppercase letter).
     Space { style: TextStyle, factor: u32, no_break: bool },
+    /// One space or tab of literal text: latex.ltx's `\@xobeysp`
+    /// (`\leavevmode\nobreak\ `) and `\@xobeytab`, which `\@vobeyspaces`
+    /// and `\@vobeytabs` bind the active space and tab to inside `\verb`
+    /// and `\@verbatim`.
+    ///
+    /// It is *not* [`Item::Space`]. Interword glue is discardable: after a
+    /// line break TeX drops it (§879), which would swallow a verbatim
+    /// line's indentation, and the character it stands for must not be
+    /// shaped either — T1 slot 32 of `ectt` is the *visible* space, not a
+    /// blank. It is set as an empty box one interword space wide, which is
+    /// what `\leavevmode`'s `\hbox{}` plus the unstretchable typewriter
+    /// space comes to, and is never a break point.
+    LiteralSpace { style: TextStyle, span: Span },
     Math { list: MathList, span: Span },
     /// `\\`; `skip_pt` is the optional `[<dimen>]` (LaTeX `\@xnewline`:
     /// `\vadjust{\vskip <dimen>}` after the line, or `\vskip` after the
@@ -539,7 +568,7 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
 /// - `\vfill`: dropped (the page builder has no stretchable vertical
 ///   glue), reported on the next block.
 fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<CBlock>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>) {
-    use flashtex_compiler::parser::{FontSizeLevel, ParagraphStyle, TextFamily, TextStyle as CStyle};
+    use flashtex_compiler::parser::{FontSizeLevel, ParagraphStyle, TextStyle as CStyle};
     let mut out: Vec<CBlock> = Vec::with_capacity(blocks.len());
     let mut limitations: Vec<(&'static str, Span, String)> = Vec::new();
     let mut titles: Vec<StashedTitle> = Vec::new();
@@ -593,21 +622,23 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
                             },
                         });
                     }
-                    content.push(Inline::Text {
-                        text: line.text.clone(),
+                    // `lower_inline` turns each line into literal typewriter
+                    // text (`\@verbatim`'s `\tt\@noligs`, one `\nobreak\ `
+                    // per space) selected through NFSS.
+                    // The line as the source has it (`verbatim_display`
+                    // expands tabs to 8-column stops; LaTeX sets a tab as
+                    // one ordinary space).
+                    let raw = texts
+                        .get(line.span.document.0)
+                        .and_then(|t: &&str| t.get(line.span.start..line.span.end))
+                        .map_or_else(|| line.text.clone(), str::to_string);
+                    content.push(Inline::Verbatim {
+                        text: raw,
                         span: line.span,
-                        style: CStyle {
-                            family: TextFamily::Mono,
-                            ..CStyle::default()
-                        },
-                        space_before: true,
+                        space_before: false,
                     });
                 }
-                limitations.push((
-                    "unsupported_block",
-                    *span,
-                    format!("verbatim ({} line(s)) set as a flush-left paragraph in the body face with forced line breaks: the pipeline has no monospaced face or literal-text block", lines.len()),
-                ));
+                let _ = span;
                 out.push(CBlock::Styled {
                     style: ParagraphStyle::FlushLeft,
                     content,
@@ -1537,9 +1568,9 @@ fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, Strin
                 }
             }
         }
-        Inline::Verbatim { text, span, .. } => {
-            out.push(("unsupported_block", *span, format!("\\verb {text:?} set in the body face: the pipeline has no monospaced face")));
-        }
+        // `\verb`, a `verbatim` line and `\lstinline` are set as literal
+        // typewriter text by `lower_inline`; nothing to report.
+        Inline::Verbatim { .. } => {}
         #[cfg(feature = "amsmath-inline")]
         Inline::MathRows { rows, .. } => {
             for i in rows.iter().flat_map(|r| &r.intertext).flat_map(|t| &t.content) {
@@ -1555,7 +1586,14 @@ fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, Strin
 /// footnote becomes its mark (plain text) followed by its note text; a
 /// tabular becomes its cells' inlines in reading order with `\\` between
 /// rows; `\verb` becomes `Mono` text. Everything else is borrowed.
-fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut Vec<Span>, out: &mut Vec<std::borrow::Cow<'a, Inline>>) {
+fn lower_inline<'a>(
+    inline: &'a Inline,
+    texts: &[&str],
+    labels: &Labels,
+    reference_spans: &mut Vec<Span>,
+    literal_spans: &mut Vec<Span>,
+    out: &mut Vec<std::borrow::Cow<'a, Inline>>,
+) {
     use flashtex_compiler::parser::{TextFamily, TextStyle as CStyle};
     match inline {
         Inline::Reference { key, page, equation, span, .. } => {
@@ -1579,8 +1617,24 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
         }
         Inline::Verbatim { text, span, space_before } => {
             reference_spans.push(*span);
+            // `\verb`'s `\ttfamily\@noligs`, `\@verbatim`'s `\tt\@noligs`
+            // and `\lstinline`'s `\lst@basicstyle`: the family goes through
+            // NFSS like every other `\ttfamily`, and `literal` turns off the
+            // ligature program across `` ` `` `'` `,` `-` `<` `>`.
+            literal_spans.push(*span);
+            // The body as the source has it: the compiler's `text` is a
+            // *display* string (`verbatim_display` expands a tab to an
+            // 8-column stop and renders `\verb*`'s space as U+00B7), and
+            // LaTeX does neither.
+            let raw = texts
+                .get(span.document.0)
+                .and_then(|src: &&str| {
+                    let b = literal_command_body(src, *span)?;
+                    src.get(b.text)
+                })
+                .map_or_else(|| text.clone(), str::to_string);
             out.push(std::borrow::Cow::Owned(Inline::Text {
-                text: text.clone(),
+                text: raw,
                 span: *span,
                 style: CStyle {
                     family: TextFamily::Mono,
@@ -3364,6 +3418,84 @@ fn kern_command_text(source: &str, span: Span, amount: &TextDimen) -> Option<Str
         .find(|s| body.contains(s.as_str()))
 }
 
+/// Where the reader stands after the `\verb`/`\verb*`/`\lstinline`
+/// **command token ending at `at`** — that is, after its closing delimiter.
+///
+/// The compiler's `Inline::Verbatim` span is the control word alone
+/// (`parser.rs` pushes `tok.span`), not the delimited body, so the bytes
+/// `|x y|` would otherwise be read as the gap before the *next* token and
+/// their space typeset as an interword space. `\verb|x y|Z` came out
+/// 3.32 pt (one `cmr10` space) too wide because of exactly that.
+///
+/// TeX skips blanks after a control word, then `\@sverb` takes the next
+/// character as the delimiter and reads to its next occurrence; an
+/// unterminated `\verb` ends at the end of the line (latex.ltx's
+/// `\verb@eol@error`). `\lstinline` additionally takes an optional
+/// `[<keys>]` first, and `\lstinline{...}` closes on `}`.
+fn literal_command_end(source: &str, span: Span) -> Option<usize> {
+    literal_command_body(source, span).map(|b| b.end)
+}
+
+/// The delimited body of a `\verb`/`\verb*`/`\lstinline` whose control
+/// word is `span`: the source byte range of the text itself, where the
+/// reader stands afterwards, and whether the star form was used.
+///
+/// The body is taken from the source, not from the compiler's
+/// `Inline::Verbatim::text`, which is a *display* string: `verbatim_display`
+/// expands a tab to an 8-column tab stop and renders `\verb*`'s space as
+/// U+00B7. LaTeX does neither — `\@verbatim` sets a tab as one ordinary
+/// space character, which is why `\tone` starts one typewriter width from
+/// the margin in pdfTeX and not eight.
+struct LiteralBody {
+    text: std::ops::Range<usize>,
+    end: usize,
+    /// `\verb*`. Not consumed yet: the star form sets each space as
+    /// `\char32` of the T1 typewriter font (`visiblespace`), and the
+    /// bundled OpenType Latin Modern carries no such glyph — pdfTeX draws it
+    /// from the Type 1 ec font. Parsed here so the delimiter scan is right
+    /// either way, and so the follow-up has the flag it needs.
+    #[allow(dead_code)]
+    starred: bool,
+}
+
+fn literal_command_body(source: &str, span: Span) -> Option<LiteralBody> {
+    let name = control_word_at(source, span.start, span.end)?;
+    let at = span.end;
+    let rest = source.get(at..)?;
+    let starred = name == "verb" && rest.starts_with('*');
+    let (rest, mut end) = match name {
+        "verb" => (rest.strip_prefix('*').unwrap_or(rest), at + usize::from(starred)),
+        "lstinline" => {
+            // `[<keys>]`, when it closes before the end of the line.
+            let (r, e) = match rest.strip_prefix('[') {
+                Some(keys) => match keys.find(']').filter(|k| !keys[..*k].contains('\n')) {
+                    Some(k) => (&keys[k + 1..], at + k + 2),
+                    None => (rest, at),
+                },
+                None => (rest, at),
+            };
+            (r, e)
+        }
+        _ => return None,
+    };
+    let skipped = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+    let rest = &rest[skipped..];
+    end += skipped;
+    let open = rest.chars().next()?;
+    if open == '\n' {
+        return Some(LiteralBody { text: end..end, end, starred });
+    }
+    end += open.len_utf8();
+    let start = end;
+    let body = &rest[open.len_utf8()..];
+    let close = if open == '{' { '}' } else { open };
+    let line_end = body.find('\n').unwrap_or(body.len());
+    Some(match body[..line_end].find(close) {
+        Some(k) => LiteralBody { text: start..start + k, end: start + k + close.len_utf8(), starred },
+        None => LiteralBody { text: start..start + line_end, end: start + line_end, starred },
+    })
+}
+
 /// [`gap_has_space`] for the bytes after a control word: the whitespace
 /// TeX eats right after the word does not count.
 fn gap_has_space_after_control_word(rest: &str) -> bool {
@@ -4040,8 +4172,10 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
     // bytes; `\label` becomes a zero-width marker.
     let mut resolved: Vec<std::borrow::Cow<Inline>> = Vec::with_capacity(inlines.len());
     let mut reference_spans: Vec<Span> = Vec::new();
+    // Spans whose text is literal (`\verb`, a `verbatim` line, `\lstinline`).
+    let mut literal_spans: Vec<Span> = Vec::new();
     for inline in inlines {
-        lower_inline(inline, labels, &mut reference_spans, &mut resolved);
+        lower_inline(inline, texts, labels, &mut reference_spans, &mut literal_spans, &mut resolved);
     }
     let mut items: Vec<Item> = Vec::new();
     let mut prev_end: Option<usize> = None;
@@ -4356,6 +4490,16 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     style.bold = compiler_style.bold;
                     style.italic = compiler_style.italic;
                 }
+                // The compiler's own family, for text whose bytes carry no
+                // `\ttfamily` for `style_intervals` to see: `\verb`, a
+                // `verbatim` line and `\lstinline` are lowered with
+                // `TextFamily::Mono`, and the pipeline selects that family
+                // through NFSS (`FamilyKind::Tt`) like any other `\texttt`.
+                if compiler_style.family == flashtex_compiler::parser::TextFamily::Mono {
+                    style.family = crate::nfss::FamilyKind::Tt;
+                }
+                let literal = literal_spans.contains(span);
+                style.literal |= literal;
                 let has_space = space_between(prev_end, prev_span, *span, Some(text), after_control_word);
                 after_control_word = false;
                 if has_space {
@@ -4420,7 +4564,10 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                         }
                     }
                 }
-                let chars = tex_ligatures(chars);
+                // `\@noligs` puts a `\kern\z@` in front of `` ` ``, `'` and
+                // `-`, so `--` never becomes an en dash and ``` `` ``` never
+                // becomes an opening quote inside literal text.
+                let chars = if literal { chars } else { tex_ligatures(chars) };
                 // `~` is an unbreakable space.
                 let mut run: Vec<(char, CharSrc)> = Vec::new();
                 let flush = |run: &mut Vec<(char, CharSrc)>, items: &mut Vec<Item>, factor: &mut u32| {
@@ -4436,6 +4583,21 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     run.clear();
                 };
                 for (ch, src) in chars {
+                    // `\@vobeyspaces`/`\@vobeytabs` make a space and a tab
+                    // active in `\verb` and `\@verbatim`, each expanding to
+                    // `\@xobeysp` = `\leavevmode\nobreak\ `: one unbreakable
+                    // interword space of the typewriter font, which has zero
+                    // stretch and shrink. It must not be shaped as a glyph --
+                    // T1 slot 32 of `ectt` is the *visible* space.
+                    if literal && (ch == ' ' || ch == '\t') {
+                        flush(&mut run, &mut items, &mut factor);
+                        items.push(Item::LiteralSpace {
+                            style,
+                            span: Span { document: src.document, start: src.start, end: src.end },
+                        });
+                        factor = 1000;
+                        continue;
+                    }
                     // A blank inside replacement text (`!exact`: a theorem
                     // head, `\today`, any macro body) stands for a space
                     // *token*, so it is interword glue in the font in force,
@@ -4449,7 +4611,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     }
                     // Only a typed `~` is the active tie; `\textasciitilde`
                     // (the compiler's symbol text) is the character itself.
-                    if ch == '~' && source.get(src.start..src.end) == Some("~") {
+                    if !literal && ch == '~' && source.get(src.start..src.end) == Some("~") {
                         flush(&mut run, &mut items, &mut factor);
                         items.push(Item::Space {
                             style,
@@ -4478,7 +4640,11 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 // `\ss`, `\today`): TeX skips the blanks after the word. User
                 // macro replacements keep their own cursor (`token_gap`).
                 after_control_word = control_word_at(source, span.start, span.end).is_some() && !is_invocation_span(source, *span);
-                prev_end = Some(span.end);
+                // The compiler's `\verb`/`\lstinline` span is the control
+                // word alone; the reader really stands after the closing
+                // delimiter, so the delimited body is not read as the next
+                // gap (`literal_command_end`).
+                prev_end = Some(if literal { literal_command_end(source, *span).unwrap_or(span.end) } else { span.end });
                 prev_span = Some(*span);
             }
         }
