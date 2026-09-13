@@ -9,8 +9,8 @@
 # FLASHTEX_INSTALL_DIR to install somewhere else.
 set -eu
 
-VERSION="v0.1.1"
-SHA256="3f9af6c8be5fca008fe191e9cfb012e31fa47e775cf3ab813af3d7974f026c94"
+VERSION="v0.1.2"
+SHA256="d2346b478fbbe179c7abd040d927c0fa5e90ce9ce8d5da36a4c90041fd3ab0a2"
 URL="https://github.com/flash-tex/flashtex/releases/download/${VERSION}/FlashTeX.dmg"
 
 say() { printf '%s\n' "$*"; }
