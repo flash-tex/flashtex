@@ -19,6 +19,8 @@ struct PreviewView: View {
     /// pane with the setting off never schedules a debounce for nothing.
     var followTarget: FollowCaret.Target? = nil
     var followEnabled: Bool = false
+    /// `ShellModel.forceRevealInPreview` (⌘⇧J always scrolls, even when `followEnabled` is false).
+    var forceRevealToken: Int = 0
     /// Zoom multiplier over the fit-to-width scale (PreviewZoom.swift).
     var zoom: CGFloat = 1
     /// Reports the fit-to-width scale so the shell can compute Actual Size / the percentage.

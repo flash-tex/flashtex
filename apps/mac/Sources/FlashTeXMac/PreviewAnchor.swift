@@ -132,11 +132,15 @@ struct PreviewAnchorKeeper: NSViewRepresentable {
     let layout: PreviewPageLayout
     var followTarget: FollowCaret.Target? = nil
     var followEnabled: Bool = false
+    /// `ShellModel.forceRevealInPreview`: bumped by the manual ⌘⇧J command, which
+    /// scrolls to `followTarget` right away regardless of `followEnabled`.
+    var forceRevealToken: Int = 0
 
     func makeNSView(context: Context) -> PreviewAnchorProbe { PreviewAnchorProbe() }
     func updateNSView(_ view: PreviewAnchorProbe, context: Context) {
         view.layoutDidChange(to: layout)
         view.followCaretDidChange(followTarget, enabled: followEnabled)
+        view.forceRevealDidChange(forceRevealToken, target: followTarget)
     }
 }
 
@@ -172,6 +176,9 @@ final class PreviewAnchorProbe: NSView {
     private var followTarget: FollowCaret.Target?
     private var followEnabled = false
     private var followDebounceItem: DispatchWorkItem?
+    /// Matches `ShellModel.forceRevealInPreview`'s initial value so mounting
+    /// the view never fires a reveal that was never requested.
+    private var lastForceRevealToken: Int? = 0
     /// When the user last scrolled manually (live scroll: wheel/trackpad/scrollbar)
     /// and the follow target current at that moment (for the re-arm rule).
     private(set) var lastUserScrollAt: Date?
@@ -341,6 +348,23 @@ final class PreviewAnchorProbe: NSView {
         let item = DispatchWorkItem { [weak self] in self?.evaluateFollow() }
         followDebounceItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + followDebounceInterval, execute: item)
+    }
+
+    /// `ShellModel.forceRevealInPreview` changed (the manual ⌘⇧J command):
+    /// scroll to `target` right away — no debounce, ignoring `followEnabled`
+    /// and the manual-scroll yield, since this is an explicit user action.
+    /// Still a no-op when already visible or when `target` is nil (no mapping).
+    func forceRevealDidChange(_ token: Int, target: FollowCaret.Target?) {
+        guard lastForceRevealToken != token else { return }
+        lastForceRevealToken = token
+        followDebounceItem?.cancel()
+        followTarget = target
+        guard let target, let scaled = scaledTarget(target) else { return }
+        let input = FollowCaret.Input(preferenceEnabled: true, target: scaled, visibleRect: documentVisibleRectTopDown,
+                                      now: now(), margin: followMargin)
+        let action = FollowCaret.decide(input)
+        followActions.append(action)
+        if case .scroll(let rect) = action { performFollowScroll(to: rect) }
     }
 
     /// RAW target (page points, scale 1) → document-coordinate target: the

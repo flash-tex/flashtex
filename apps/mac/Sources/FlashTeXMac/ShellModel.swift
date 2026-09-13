@@ -26,6 +26,12 @@ final class ShellModel {
     var loadError: String?
     var selection: Selection?
     var navigationNote: String?
+    /// Bumped by `revealCaretInPreview()` (⌘⇧J): tells `PreviewAnchorProbe` to
+    /// scroll to the caret's item right away, ignoring "Preview follows the
+    /// caret" (the manual command always works, FollowCaret.swift) and the
+    /// recent-manual-scroll yield — still a no-op when already visible or
+    /// when the caret has no preview mapping.
+    var forceRevealInPreview = 0
     var darkPreview = EditorPreferences.shared.darkPreviewDefault // EditorPreferences.swift: appearance preference
     /// Openers the editor auto-closes (`{`, `[`, `$`, and `(` for `\(`/`\[`); SourceEditorView.
     var autoClosePairs: Set<Character> = ["{", "[", "$", "("]

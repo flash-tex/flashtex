@@ -704,6 +704,10 @@ extension ShellModel {
                 : "."
             navigationNote = "Caret is in page \(hit.page) item \(hit.index) “\(item.text)”" + more
         }
+        // Scroll the preview to this item right away, whether or not "Preview
+        // follows the caret" is on (FollowCaret.swift) — the manual command
+        // always works.
+        forceRevealInPreview += 1
     }
 }
 
