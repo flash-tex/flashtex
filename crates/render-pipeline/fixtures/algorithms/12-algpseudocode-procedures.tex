@@ -1,0 +1,26 @@
+\documentclass{article}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\begin{document}
+Procedures and functions.
+
+\begin{algorithm}[h]
+\caption{Procedures}
+\begin{algorithmic}[1]
+\Require $a, b \ge 0$
+\Ensure the greatest common divisor
+\Procedure{Euclid}{$a,b$}
+\State $r \gets$ \Call{Mod}{$a, b$}
+\State \Return $r$
+\EndProcedure
+\Function{Mod}{$a,b$}
+\State \Return $a \bmod b$
+\EndFunction
+\Procedure{Main}{}
+\State \Call{Euclid}{$6, 4$}
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+End.
+\end{document}

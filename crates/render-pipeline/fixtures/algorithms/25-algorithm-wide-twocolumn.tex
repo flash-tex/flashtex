@@ -1,0 +1,26 @@
+\documentclass[twocolumn]{article}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\begin{document}
+A starred algorithm float in a two-column document: the double-float hook puts it
+in the same float lists, where the width test keeps it out of the
+columns, and the combine step spans it across the text width.
+
+\begin{algorithm*}[t]
+\caption{A wide algorithm}
+\begin{algorithmic}[1]
+\State $x \gets 1$
+\While{$x < 10$}
+\State $x \gets 2x$
+\EndWhile
+\State \Return $x$
+\end{algorithmic}
+\end{algorithm*}
+
+Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut
+aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in
+voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint
+occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit
+anim id est laborum. Sed ut perspiciatis unde omnis iste natus error sit
+voluptatem accusantium doloremque laudantium, totam rem aperiam.
+\end{document}

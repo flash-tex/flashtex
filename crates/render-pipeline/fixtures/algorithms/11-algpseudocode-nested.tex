@@ -1,0 +1,23 @@
+\documentclass{article}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\begin{document}
+Three levels.
+
+\begin{algorithm}[h]
+\caption{Nesting}
+\begin{algorithmic}[1]
+\While{$x \neq 0$}
+\For{$i \gets 1, n$}
+\If{$a_i > m$}
+\State $m \gets a_i$
+\ElsIf{$a_i = m$}
+\State count it
+\EndIf
+\EndFor
+\EndWhile
+\end{algorithmic}
+\end{algorithm}
+
+End.
+\end{document}

@@ -1,0 +1,108 @@
+{
+ "fixture": "22-algorithm-plain-style.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/nixos.org)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Plain",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "float",
+    "x": 174.8618,
+    "y_top": 134.765
+   },
+   {
+    "text": "style:",
+    "x": 197.5616,
+    "y_top": 134.765
+   },
+   {
+    "text": "the",
+    "x": 224.7306,
+    "y_top": 134.765
+   },
+   {
+    "text": "caption",
+    "x": 241.8952,
+    "y_top": 134.765
+   },
+   {
+    "text": "goes",
+    "x": 277.3152,
+    "y_top": 134.765
+   },
+   {
+    "text": "below.",
+    "x": 299.2309,
+    "y_top": 134.765
+   },
+   {
+    "text": "1:",
+    "x": 139.137,
+    "y_top": 155.078
+   },
+   {
+    "text": "x",
+    "x": 150.7048,
+    "y_top": 155.078
+   },
+   {
+    "text": "1",
+    "x": 171.9002,
+    "y_top": 155.078
+   },
+   {
+    "text": "2:",
+    "x": 139.137,
+    "y_top": 167.033
+   },
+   {
+    "text": "y",
+    "x": 150.7048,
+    "y_top": 167.033
+   },
+   {
+    "text": "2",
+    "x": 171.44,
+    "y_top": 167.033
+   },
+   {
+    "text": "Algorithm",
+    "x": 252.517,
+    "y_top": 187.844
+   },
+   {
+    "text": "1:",
+    "x": 300.4182,
+    "y_top": 187.844
+   },
+   {
+    "text": "Plain",
+    "x": 312.6004,
+    "y_top": 187.844
+   },
+   {
+    "text": "style",
+    "x": 338.7503,
+    "y_top": 187.844
+   },
+   {
+    "text": "End.",
+    "x": 148.712,
+    "y_top": 211.754
+   },
+   {
+    "text": "1",
+    "x": 303.133,
+    "y_top": 702.635
+   }
+  ]
+ ],
+ "rules": [
+  []
+ ]
+}

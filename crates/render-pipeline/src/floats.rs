@@ -15,6 +15,8 @@ use flashtex_compiler::{DocumentId, Span};
 pub enum FloatKind {
     Figure,
     Table,
+    /// algorithm.sty's float (`crate::algorithms`).
+    Algorithm,
 }
 
 impl FloatKind {
@@ -22,13 +24,16 @@ impl FloatKind {
         match self {
             FloatKind::Figure => "Figure",
             FloatKind::Table => "Table",
+            FloatKind::Algorithm => "Algorithm",
         }
     }
-    /// `\ftype@figure` = 1, `\ftype@table` = 2.
+    /// `\ftype@figure` = 1, `\ftype@table` = 2; float.sty's `\newfloat`
+    /// continues from 4 when `figure` and `table` exist (float.sty 24-27).
     pub fn type_bit(self) -> u32 {
         match self {
             FloatKind::Figure => 1,
             FloatKind::Table => 2,
+            FloatKind::Algorithm => 4,
         }
     }
 }
@@ -527,7 +532,9 @@ fn captions_and_labels<'p>(pieces: &'p [Piece], out: &mut Vec<&'p Piece>) {
 /// float's number is its first caption's (the counter itself when it has
 /// none); every `\caption` steps the counter.
 pub fn number(envs: &[Vec<FloatEnv>]) -> (Vec<Vec<u32>>, Vec<(String, String)>) {
-    let (mut figures, mut tables) = (0u32, 0u32);
+    // `algorithm` floats are numbered by `crate::algorithms::number`; `scan`
+    // never yields them.
+    let (mut figures, mut tables, mut algorithms) = (0u32, 0u32, 0u32);
     let mut numbers = Vec::new();
     let mut labels = Vec::new();
     for doc in envs {
@@ -536,6 +543,7 @@ pub fn number(envs: &[Vec<FloatEnv>]) -> (Vec<Vec<u32>>, Vec<(String, String)>) 
             let counter = match f.kind {
                 FloatKind::Figure => &mut figures,
                 FloatKind::Table => &mut tables,
+                FloatKind::Algorithm => &mut algorithms,
             };
             let mut seq = Vec::new();
             captions_and_labels(&f.pieces, &mut seq);
@@ -751,6 +759,10 @@ fn body_parts(
     };
     for block in &doc.blocks {
         match block {
+            // A bare `algorithmic` is never inside a `figure`/`table` body:
+            // `algorithms::scan` leaves those to this module, which reports
+            // them, and `insert_bare` only inserts at document level.
+            adapter::Block::Algorithmic(_) => {}
             adapter::Block::Paragraph { parts, style, env_open, env_close, vspace_before, addvspace_before, list: None, .. } if parts.iter().all(|p| matches!(p, ParaPart::Lines(_))) => {
                 let n = parts.len();
                 for (pi, part) in parts.iter().enumerate() {

@@ -1,0 +1,21 @@
+\documentclass{article}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\begin{document}
+Text before the algorithm.
+
+\begin{algorithm}[h]
+\caption{Euclid's algorithm}\label{euclid}
+\begin{algorithmic}[1]
+\State $r\gets a\bmod b$
+\If{$a > b$}
+\State swap
+\Else
+\State nothing
+\EndIf
+\State \Return $b$
+\end{algorithmic}
+\end{algorithm}
+
+After the algorithm.
+\end{document}

@@ -128,6 +128,9 @@ pub fn float_entries(envs: &[Vec<FloatEnv>], texts: &[&str]) -> Vec<FloatEntry> 
                 list: match f.kind {
                     FloatKind::Figure => ListKind::Lof,
                     FloatKind::Table => ListKind::Lot,
+                    // `algorithm` floats (`crate::algorithms`) are not
+                    // `floats::scan` results; `\listofalgorithms` is not set.
+                    FloatKind::Algorithm => continue,
                 },
                 at: f.span.start,
                 caption,

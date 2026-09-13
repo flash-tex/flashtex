@@ -495,6 +495,7 @@ fn block_start(b: &Block) -> Option<(usize, usize)> {
         | Block::ClearPage { span, .. }
         | Block::Chrome { span, .. }
         | Block::Rule { span, .. } => Some((span.document.0, span.start)),
+        Block::Algorithmic(a) => Some((a.span.document.0, a.span.start)),
         Block::TocEntry(e) => Some((e.list_span.document.0, e.list_span.start)),
         Block::Picture { document, picture, .. } => Some((document.0, picture.start)),
     }

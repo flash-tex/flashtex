@@ -485,6 +485,9 @@ pub enum Block {
         eject_before: bool,
         vspace_before: f64,
     },
+    /// A bare `algorithmic` environment (`crate::algorithms`), inserted by
+    /// source position after adaptation.
+    Algorithmic(std::rc::Rc<crate::typeset::algorithms::BareAlgorithm>),
     /// `\hrule` in vertical mode: a full-measure rule 0.4pt high with no
     /// interline glue on either side (TeX §1056 sets `prev_depth` to
     /// `ignore_depth`).
@@ -5914,6 +5917,7 @@ mod tests {
                     })
                     .collect(),
                 Block::Rule { .. } => "R".to_string(),
+                Block::Algorithmic(_) => "A".to_string(),
                 Block::Picture { .. } => "P".to_string(),
                 Block::Chapter { .. } => "C".to_string(),
                 Block::Part { .. } => "P".to_string(),
