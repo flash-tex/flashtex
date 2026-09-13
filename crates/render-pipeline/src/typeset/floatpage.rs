@@ -25,7 +25,7 @@ use crate::adapter::{Item as AItem, ParaStyle};
 use crate::display::{self, Diagnostic, ImageResource, Provenance, Tick};
 use crate::floats::FloatKind;
 use crate::graphics::{GraphicBox, BP_PER_PT};
-use crate::pagebuild::{self, badness, BuiltPage, PageParams, Placed, VItem, AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY};
+use crate::pagebuild::{self, badness, BuiltPage, InsertArea, InsertState, Insertions, PageIns, PageParams, Placed, VItem, AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY};
 
 use super::{BoxRec, BuiltBlock, Context};
 
@@ -463,12 +463,28 @@ fn block_source(ctx: &Context, b: &BuiltBlock, items: impl Iterator<Item = usize
         .collect()
 }
 
-/// Breaks the text into pages with the floats placed. Returns the pages,
-/// the image items per page number and the page of every float `\label`.
-pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams, list: &[VItem], specs: &[FloatSpec]) -> (Vec<BuiltPage>, Vec<(u32, display::Item)>, Vec<(String, u32)>) {
-    let text_blocks = blocks.len();
+/// Breaks the text into pages with the floats placed and, when the document
+/// also has footnotes, the `\footins` insertions charged against the same
+/// page goal. Returns the pages, the image items per page number, the page
+/// of every float `\label` and each page's note area (`None` where the
+/// column carries no note; always as long as the page list).
+pub fn paginate(
+    ctx: &mut Context,
+    blocks: &mut Vec<BuiltBlock>,
+    p: &PageParams,
+    list: &[VItem],
+    specs: &[FloatSpec],
+    ins: Option<&Insertions>,
+    body_blocks: usize,
+) -> (Vec<BuiltPage>, Vec<(u32, display::Item)>, Vec<(String, u32)>, Vec<Option<InsertArea>>) {
+    // `body_blocks` is what `list` was built from. `footnotes::prepare` has
+    // already appended one block per note, and a note's text is source that
+    // can precede a float's `\begin{figure}`: searching those for the block
+    // a float follows would put its marker past the end of `list`, where
+    // the node list below never emits it and the float is lost.
+    let text_blocks = body_blocks;
     // Marker positions, before caption blocks are appended.
-    let vblocks: Vec<pagebuild::VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
+    let vblocks: Vec<pagebuild::VBlock> = blocks.iter().take(body_blocks).map(|b| b.vertical.clone()).collect();
     let mut markers: Vec<(usize, usize)> = Vec::new();
     for (f, spec) in specs.iter().enumerate() {
         let at = spec.span;
@@ -538,6 +554,13 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
             _ => None,
         }
     };
+    // With no footnotes the empty class never starts, so `goal` stays
+    // `\@colroom`, `penalties` stays 0 and every test below is the one the
+    // float-only builder made.
+    let no_inserts = Insertions::default();
+    let ins = ins.unwrap_or(&no_inserts);
+    let mut areas: Vec<Option<InsertArea>> = Vec::new();
+    let mut held: Vec<PageIns> = Vec::new();
     let mut start = 0usize;
     loop {
         while start < nodes.len() {
@@ -548,9 +571,15 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
                 _ => start += 1,
             }
         }
-        if start >= nodes.len() {
+        // `\@doclearpage` with `\footins` not void ships one more ordinary
+        // column (`\setbox\@cclv\vbox{\box\@cclv\vfil}\@makecol\@opcol`)
+        // before any float page is made, so a held-over note gets a
+        // body-less page of its own rather than being lost.
+        let body_less = start >= nodes.len();
+        if body_less && held.is_empty() {
             break;
         }
+        let held_at_start = held.clone();
         let vsize = pl.col.colroom;
         let (mut total, mut stretch, mut shrink, mut fil, mut depth, mut has_box) = (0.0f64, 0.0f64, 0.0f64, false, 0.0f64, false);
         let mut lines_seen = 0usize;
@@ -558,19 +587,34 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
         let mut fired = None;
         let mut restart = false;
         let mut prev_box = false;
+        let mut is = InsertState::new(ins, vsize);
+        if body_less {
+            total = p.topskip;
+            has_box = true;
+        }
+        for h in std::mem::take(&mut held) {
+            is.append(h.list, h.height_plus_depth, None, total, depth, &mut stretch, &mut shrink);
+        }
+        let mut best_ins: Option<usize> = is.last_ins;
         let mut i = start;
-        while i < nodes.len() {
+        while i < nodes.len() && !body_less {
             if let N::Marker(f) = nodes[i] {
                 if !processed[f] {
                     processed[f] = true;
-                    let pageht = if has_box { total + depth } else { 0.0 };
+                    // `\@specialoutput`: `\@pageht` is the page so far plus
+                    // its depth plus, when `\footins` is not void,
+                    // `\ht\footins + \skip\footins + \dp\footins`, and
+                    // `\@addtocurcol` takes that as `\@reqcolroom`. The
+                    // notes already on the page therefore keep a float off
+                    // it exactly as body lines of the same height would.
+                    let pageht = if has_box { total + depth + is.page_height() } else { is.page_height() };
                     let before = pl.col.colroom;
                     let here = pl.add_to_cur_col(f, pageht, !specs[f].hmode);
-                    let mut ins = here.unwrap_or_default();
+                    let mut nodes_here = here.unwrap_or_default();
                     // `\@specialoutput` ends with `\addpenalty\interlinepenalty`.
-                    let pos = if ins.len() == 6 { 5 } else { ins.len() };
-                    ins.insert(pos, N::Penalty(0));
-                    nodes.splice(i + 1..i + 1, ins);
+                    let pos = if nodes_here.len() == 6 { 5 } else { nodes_here.len() };
+                    nodes_here.insert(pos, N::Penalty(0));
+                    nodes.splice(i + 1..i + 1, nodes_here);
                     if pl.col.colroom != before {
                         restart = true;
                         break;
@@ -586,30 +630,32 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
                 _ => (false, 0),
             };
             if legal && has_box {
-                let b = if total < vsize {
+                let b = if total < is.goal {
                     if fil {
                         0
                     } else {
-                        badness(vsize - total, stretch)
+                        badness(is.goal - total, stretch)
                     }
-                } else if total - vsize > shrink {
+                } else if total - is.goal > shrink {
                     AWFUL_BAD
                 } else {
-                    badness(total - vsize, shrink)
+                    badness(total - is.goal, shrink)
                 };
                 let c = if b < AWFUL_BAD {
                     if pi <= EJECT_PENALTY {
                         i64::from(pi)
                     } else if b < INF_BAD {
-                        b + i64::from(pi)
+                        b + i64::from(pi) + is.penalties
                     } else {
                         DEPLORABLE
                     }
                 } else {
                     b
                 };
+                let c = if is.penalties >= i64::from(INF_PENALTY) { AWFUL_BAD } else { c };
                 if best.is_none_or(|(_, lc)| c <= lc) {
                     best = Some((i, c));
+                    best_ins = is.last_ins;
                 }
                 if c == AWFUL_BAD || pi <= EJECT_PENALTY {
                     fired = Some(best.map_or(i, |(bi, _)| bi));
@@ -630,10 +676,27 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
                 }
                 lines_seen += 1;
                 prev_box = true;
-                if total > vsize + 1e-9 && lines_seen > 1 {
+                // §1005: the page is only hopeless once the excess passes
+                // what the glue can shrink. Without insertions that shrink
+                // is zero in a body of `\parskip 0pt plus 1pt`, but
+                // `\skip\footins`'s `minus 2pt` (and an `h` float's
+                // `\intextsep`) buys the page a line TeX keeps.
+                if total > is.goal + shrink + 1e-9 && lines_seen > 1 {
                     if let Some((bi, _)) = best {
                         fired = Some(bi);
                         break;
+                    }
+                }
+                // §655: the `\insert`s that migrated out of this line are
+                // contributed right after its box, before the interline
+                // penalty and glue.
+                if let N::V(j) = nodes[i] {
+                    if let VItem::Box { payload, .. } = list[j] {
+                        for &n in ins.after.get(&payload).map(Vec::as_slice).unwrap_or(&[]) {
+                            let note = ins.notes[n].clone();
+                            let hd = pagebuild::natural_height_plus_depth(&note);
+                            is.append(note, hd, Some(i), total, depth, &mut stretch, &mut shrink);
+                        }
                     }
                 }
             } else {
@@ -663,84 +726,144 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
             }
             i += 1;
         }
+        // The document's end (`\clearpage`: `\vfil\penalty-\@M`) is a
+        // breakpoint like any other once insertions are on the page: if the
+        // notes make the rest of the body overflow, the column breaks at the
+        // best earlier break instead.
+        if !restart && fired.is_none() && !is.is_empty() && !body_less {
+            let b = if total < is.goal {
+                if fil {
+                    0
+                } else {
+                    badness(is.goal - total, stretch)
+                }
+            } else if total - is.goal > shrink {
+                AWFUL_BAD
+            } else {
+                badness(total - is.goal, shrink)
+            };
+            if b == AWFUL_BAD || is.penalties >= i64::from(INF_PENALTY) {
+                if let Some((bi, _)) = best {
+                    fired = Some(bi);
+                }
+            } else {
+                best_ins = is.last_ins;
+            }
+        }
         if restart {
+            // The output routine put the page back (`\@reinserts` returns
+            // `\footins` to the contribution list too) and `\vsize` is the
+            // new `\@colroom`: the whole column is rebuilt, insertions and
+            // all.
+            held = held_at_start;
             continue;
         }
         let end = fired.unwrap_or(nodes.len());
         let page_no = pl.pages.len() as u32 + 1;
+        let ejected = matches!(nodes.get(end), Some(N::Penalty(pen)) if *pen <= EJECT_PENALTY);
+        let placed_notes = is.resolve(best_ins, end, &mut held);
+        let has_notes = placed_notes.iter().any(|l| !l.is_empty());
         let tops = std::mem::take(&mut pl.col.top);
         let bots = std::mem::take(&mut pl.col.bot);
-        let text_off = if tops.is_empty() {
-            0.0
+        let body = if body_less { &nodes[0..0] } else { &nodes[start..end] };
+        if has_notes {
+            let col = make_float_column(p, body, list, &boxes, &tops, &bots, body_less, ejected || fired.is_none(), &placed_notes, ins, &fp, pl.colht);
+            let mut lines = Vec::new();
+            for (&f, &y) in tops.iter().zip(&col.top_y) {
+                pl.emit(f, y, page_no, &mut lines);
+            }
+            for &(f, y) in &col.float_lines {
+                pl.emit(f, y, page_no, &mut lines);
+            }
+            lines.extend(col.lines.iter().copied());
+            for (&f, &y) in bots.iter().zip(&col.bot_y) {
+                pl.emit(f, y, page_no, &mut lines);
+            }
+            pl.pages.push(BuiltPage { lines, overfull_by: col.overfull_by });
+            while areas.len() + 1 < pl.pages.len() {
+                areas.push(None);
+            }
+            areas.push(Some(col.area));
         } else {
-            tops.iter().map(|f| boxes[*f].height).sum::<f64>() + (tops.len() as f64 - 1.0) * fp.floatsep.n + fp.textfloatsep.n
-        };
-        let mut lines: Vec<Placed> = Vec::new();
-        let mut y = 0.0;
-        for &f in &tops {
-            pl.emit(f, y, page_no, &mut lines);
-            y += boxes[f].height + fp.floatsep.n;
-        }
-        let (mut total, mut depth, mut has_box) = (0.0f64, 0.0f64, false);
-        let mut last_text: Option<Placed> = None;
-        for n in &nodes[start..end] {
-            let bx = match n {
-                N::FBox(f) => Some((boxes[*f].height, 0.0, None, Some(*f))),
-                N::V(j) => match list[*j] {
-                    VItem::Box { height, depth, payload } => Some((height, depth, Some(payload), None)),
-                    VItem::Glue { width, .. } => {
+            let text_off = if tops.is_empty() {
+                0.0
+            } else {
+                tops.iter().map(|f| boxes[*f].height).sum::<f64>() + (tops.len() as f64 - 1.0) * fp.floatsep.n + fp.textfloatsep.n
+            };
+            let mut lines: Vec<Placed> = Vec::new();
+            let mut y = 0.0;
+            for &f in &tops {
+                pl.emit(f, y, page_no, &mut lines);
+                y += boxes[f].height + fp.floatsep.n;
+            }
+            let (mut total, mut depth, mut has_box) = (0.0f64, 0.0f64, false);
+            let mut last_text: Option<Placed> = None;
+            for n in body {
+                let bx = match n {
+                    N::FBox(f) => Some((boxes[*f].height, 0.0, None, Some(*f))),
+                    N::V(j) => match list[*j] {
+                        VItem::Box { height, depth, payload } => Some((height, depth, Some(payload), None)),
+                        VItem::Glue { width, .. } => {
+                            if has_box {
+                                total += depth + width;
+                                depth = 0.0;
+                            }
+                            None
+                        }
+                        VItem::Penalty(_) => None,
+                    },
+                    N::Glue(w, ..) => {
                         if has_box {
-                            total += depth + width;
+                            total += depth + w;
                             depth = 0.0;
                         }
                         None
                     }
-                    VItem::Penalty(_) => None,
-                },
-                N::Glue(w, ..) => {
-                    if has_box {
-                        total += depth + w;
-                        depth = 0.0;
+                    _ => None,
+                };
+                if let Some((h, d, payload, float)) = bx {
+                    let baseline = if has_box { total + depth + h } else { (p.topskip - h).max(0.0) + h };
+                    total = baseline;
+                    depth = d;
+                    has_box = true;
+                    if let Some(payload) = payload {
+                        let placed = Placed { payload, baseline: baseline + text_off, height: h, depth: d };
+                        last_text = Some(placed);
+                        lines.push(placed);
                     }
-                    None
-                }
-                _ => None,
-            };
-            if let Some((h, d, payload, float)) = bx {
-                let baseline = if has_box { total + depth + h } else { (p.topskip - h).max(0.0) + h };
-                total = baseline;
-                depth = d;
-                has_box = true;
-                if let Some(payload) = payload {
-                    let placed = Placed { payload, baseline: baseline + text_off, height: h, depth: d };
-                    last_text = Some(placed);
-                    lines.push(placed);
-                }
-                if let Some(f) = float {
-                    pl.emit(f, baseline - h + text_off, page_no, &mut lines);
+                    if let Some(f) = float {
+                        pl.emit(f, baseline - h + text_off, page_no, &mut lines);
+                    }
                 }
             }
-        }
-        let mut overfull_by = 0.0;
-        if let Some(last) = last_text {
-            let bottom = last.baseline - text_off + (last.depth - p.maxdepth).max(0.0);
-            if bottom > vsize + 1e-6 {
-                overfull_by = bottom - vsize;
+            let mut overfull_by = 0.0;
+            if let Some(last) = last_text {
+                let bottom = last.baseline - text_off + (last.depth - p.maxdepth).max(0.0);
+                if bottom > vsize + 1e-6 {
+                    overfull_by = bottom - vsize;
+                }
             }
-        }
-        if !bots.is_empty() {
-            let span: f64 = bots.iter().map(|f| boxes[*f].height).sum::<f64>() + (bots.len() as f64 - 1.0) * fp.floatsep.n;
-            let mut y = pl.colht - span;
-            for &f in &bots {
-                pl.emit(f, y, page_no, &mut lines);
-                y += boxes[f].height + fp.floatsep.n;
+            if !bots.is_empty() {
+                let span: f64 = bots.iter().map(|f| boxes[*f].height).sum::<f64>() + (bots.len() as f64 - 1.0) * fp.floatsep.n;
+                let mut y = pl.colht - span;
+                for &f in &bots {
+                    pl.emit(f, y, page_no, &mut lines);
+                    y += boxes[f].height + fp.floatsep.n;
+                }
             }
+            pl.pages.push(BuiltPage { lines, overfull_by });
         }
-        pl.pages.push(BuiltPage { lines, overfull_by });
         pl.col.mid.clear();
+        if body_less {
+            if !has_notes {
+                // Nothing could be placed (a note taller than any page).
+                break;
+            }
+            continue;
+        }
         start = end;
         pl.start_column();
-        if fired.is_none() {
+        if fired.is_none() && held.is_empty() {
             break;
         }
     }
@@ -763,6 +886,261 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
             }
         }
     }
+    while areas.len() < pl.pages.len() {
+        areas.push(None);
+    }
     let _ = FloatKind::Figure;
-    (pl.pages, pl.images, pl.labels)
+    (pl.pages, pl.images, pl.labels, areas)
+}
+
+/// One cell of the column's vertical list: the body nodes flattened so the
+/// natural-size pass and the position pass walk exactly the same material.
+enum Cell {
+    Box { h: f64, d: f64, payload: Option<(usize, usize)>, float: Option<usize> },
+    Glue { w: f64, st: f64, sh: f64, fil: bool },
+}
+
+fn body_cells(body: &[N], list: &[VItem], boxes: &[FloatBox]) -> Vec<Cell> {
+    body.iter()
+        .filter_map(|n| match n {
+            N::FBox(f) => Some(Cell::Box { h: boxes[*f].height, d: 0.0, payload: None, float: Some(*f) }),
+            N::Glue(w, st, sh) => Some(Cell::Glue { w: *w, st: *st, sh: *sh, fil: false }),
+            N::V(j) => match list[*j] {
+                VItem::Box { height, depth, payload } => Some(Cell::Box { h: height, d: depth, payload: Some(payload), float: None }),
+                VItem::Glue { width, stretch, shrink, fil } => Some(Cell::Glue { w: width, st: stretch, sh: shrink, fil }),
+                VItem::Penalty(_) => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// One column assembled by `\@makecol` when it carries both footnotes and
+/// floats.
+struct FloatColumn {
+    /// Body lines, in the column's coordinates.
+    lines: Vec<Placed>,
+    /// `\skip\footins`, the `\footnoterule` and the notes.
+    area: InsertArea,
+    /// Top edge of each top float (`\@cflt`) and each bottom float
+    /// (`\@cflb`), in order.
+    top_y: Vec<f64>,
+    bot_y: Vec<f64>,
+    /// `h` floats spliced into the body (`\@addtocurcol`'s `\@midlist`).
+    float_lines: Vec<(usize, f64)>,
+    overfull_by: f64,
+}
+
+/// `\@makecol` for a column with footnotes *and* floats (latex.ltx, TeX Live
+/// 2025). The default `build/column/outputbox` plug is
+/// `footnotes-floats-legacy`: `\@outputbox@reinsertbskip`, then
+/// `\@outputbox@appendfootnotes` (`\vskip\skip\footins \footnoterule
+/// \unvbox\footins`), then `\@outputbox@attachfloats`. So the notes attach
+/// to the body *before* the floats wrap around it and the column reads
+///
+/// > top floats, `\floatsep` between them, `\textfloatsep`, the body, the
+/// > `\vfil` `\@outputbox@removebskip` lifted off the body's end,
+/// > `\skip\footins`, `\footnoterule`, the notes, `\textfloatsep`, the
+/// > bottom floats, `\vskip-\dp`, `\@textbottom`.
+///
+/// `\@cflt`/`\@cflb` pack that in plain `\vbox`es and only
+/// `\@make@normalcolbox` packs `\vbox to\@colht`, so one glue set ratio
+/// covers the body's glue, `\skip\footins` and the float separations
+/// together — the float skips stretch and shrink with everything else.
+#[allow(clippy::too_many_arguments)]
+fn make_float_column(
+    p: &PageParams,
+    body: &[N],
+    list: &[VItem],
+    boxes: &[FloatBox],
+    tops: &[usize],
+    bots: &[usize],
+    body_less: bool,
+    vfil: bool,
+    notes: &[Vec<VItem>],
+    ins: &Insertions,
+    fp: &FloatParams,
+    colht: f64,
+) -> FloatColumn {
+    let cells = body_cells(body, list, boxes);
+    let (mut x, mut d) = (0.0f64, 0.0f64);
+    let (mut stretch, mut shrink) = (0.0f64, 0.0f64);
+    let mut fil_in_body = false;
+    // `\@cflt`: `\floatsep` after every top float, the last one cancelled
+    // by `\vskip-\floatsep`, then `\textfloatsep` before the body.
+    for (k, &f) in tops.iter().enumerate() {
+        if k > 0 {
+            x += fp.floatsep.n;
+            stretch += fp.floatsep.st;
+            shrink += fp.floatsep.sh;
+        }
+        x += boxes[f].height;
+    }
+    if !tops.is_empty() {
+        x += fp.textfloatsep.n;
+        stretch += fp.textfloatsep.st;
+        shrink += fp.textfloatsep.sh;
+    }
+    // `\box\@cclv`: `\topskip` before its first box.
+    let body_top = x;
+    if body_less {
+        x += p.topskip;
+    }
+    let mut body_has_box = body_less;
+    for c in &cells {
+        match c {
+            Cell::Box { h, d: bd, .. } => {
+                x = if body_has_box { x + d + h } else { body_top + (p.topskip - h).max(0.0) + h };
+                d = *bd;
+                body_has_box = true;
+            }
+            Cell::Glue { w, st, sh, fil } => {
+                if body_has_box {
+                    x += d + w;
+                    d = 0.0;
+                    if *fil {
+                        fil_in_body = true;
+                    } else {
+                        stretch += st;
+                    }
+                    shrink += sh;
+                }
+            }
+        }
+    }
+    // `\@outputbox@appendfootnotes`.
+    x += d + ins.skip.0;
+    d = 0.0;
+    stretch += ins.skip.1;
+    shrink += ins.skip.2;
+    // `\footnoterule` is `\kern-3pt \hrule height.4pt \kern2.6pt`: zero net.
+    x += ins.rule.0 + ins.rule.1 + ins.rule.2;
+    for v in notes.iter().flatten() {
+        match v {
+            VItem::Box { height, depth, .. } => {
+                x += d + height;
+                d = *depth;
+            }
+            VItem::Glue { width, stretch: st, shrink: sh, .. } => {
+                x += d + width;
+                d = 0.0;
+                stretch += st;
+                shrink += sh;
+            }
+            VItem::Penalty(_) => {}
+        }
+    }
+    // `\@cflb`: `\textfloatsep` after the notes, `\floatsep` between the
+    // bottom floats, the last one cancelled.
+    if !bots.is_empty() {
+        x += d + fp.textfloatsep.n;
+        stretch += fp.textfloatsep.st;
+        shrink += fp.textfloatsep.sh;
+        for (k, &f) in bots.iter().enumerate() {
+            if k > 0 {
+                x += fp.floatsep.n;
+                stretch += fp.floatsep.st;
+                shrink += fp.floatsep.sh;
+            }
+            x += boxes[f].height;
+        }
+    }
+    // `\vskip-\@outputbox@depth`: the column's height ends at the last
+    // baseline.
+    let natural = x;
+    let excess = colht - natural;
+    let fil_total = f64::from(u8::from(vfil)) + if p.flushbottom { 0.0 } else { 0.0001 } + f64::from(u8::from(fil_in_body));
+    let (ratio, vfil_shift) = if excess > 0.0 {
+        if fil_total > 0.0 {
+            (0.0, if vfil { excess / fil_total } else { 0.0 })
+        } else if stretch > 0.0 {
+            (excess / stretch, 0.0)
+        } else {
+            (0.0, 0.0)
+        }
+    } else if excess < 0.0 && shrink > 0.0 {
+        (-(-excess / shrink).min(1.0), 0.0)
+    } else {
+        (0.0, 0.0)
+    };
+    let set = |w: f64, st: f64, sh: f64| w + if ratio > 0.0 { ratio * st } else { ratio * sh };
+    // Pass 2: positions.
+    let mut col = FloatColumn { lines: Vec::new(), area: InsertArea::default(), top_y: Vec::new(), bot_y: Vec::new(), float_lines: Vec::new(), overfull_by: 0.0 };
+    let (mut y, mut d) = (0.0f64, 0.0f64);
+    for (k, &f) in tops.iter().enumerate() {
+        if k > 0 {
+            y += set(fp.floatsep.n, fp.floatsep.st, fp.floatsep.sh);
+        }
+        col.top_y.push(y);
+        y += boxes[f].height;
+    }
+    if !tops.is_empty() {
+        y += set(fp.textfloatsep.n, fp.textfloatsep.st, fp.textfloatsep.sh);
+    }
+    let body_top = y;
+    if body_less {
+        y += p.topskip;
+    }
+    let mut body_has_box = body_less;
+    let mut last_text: Option<Placed> = None;
+    for c in &cells {
+        match c {
+            Cell::Box { h, d: bd, payload, float } => {
+                y = if body_has_box { y + d + h } else { body_top + (p.topskip - h).max(0.0) + h };
+                d = *bd;
+                body_has_box = true;
+                if let Some(payload) = payload {
+                    let placed = Placed { payload: *payload, baseline: y, height: *h, depth: *bd };
+                    last_text = Some(placed);
+                    col.lines.push(placed);
+                }
+                if let Some(f) = float {
+                    col.float_lines.push((*f, y - h));
+                }
+            }
+            Cell::Glue { w, st, sh, fil } => {
+                if body_has_box {
+                    y += d + if *fil { *w } else { set(*w, *st, *sh) };
+                    d = 0.0;
+                }
+            }
+        }
+    }
+    y += d + vfil_shift + set(ins.skip.0, ins.skip.1, ins.skip.2);
+    d = 0.0;
+    col.area.rule_top = y + ins.rule.0;
+    y += ins.rule.0 + ins.rule.1 + ins.rule.2;
+    for v in notes.iter().flatten() {
+        match v {
+            VItem::Box { height, depth, payload } => {
+                y += d + height;
+                d = *depth;
+                col.area.lines.push(Placed { payload: *payload, baseline: y, height: *height, depth: *depth });
+            }
+            VItem::Glue { width, stretch: st, shrink: sh, .. } => {
+                y += d + set(*width, *st, *sh);
+                d = 0.0;
+            }
+            VItem::Penalty(_) => {}
+        }
+    }
+    if !bots.is_empty() {
+        y += d + set(fp.textfloatsep.n, fp.textfloatsep.st, fp.textfloatsep.sh);
+        for (k, &f) in bots.iter().enumerate() {
+            if k > 0 {
+                y += set(fp.floatsep.n, fp.floatsep.st, fp.floatsep.sh);
+            }
+            col.bot_y.push(y);
+            y += boxes[f].height;
+        }
+    }
+    if let Some(last) = last_text {
+        // `\@makecol` packs `\vbox to\@colht`: the column is overfull when
+        // its natural size passes `\@colht` and no glue can shrink.
+        let bottom = last.baseline + (last.depth - p.maxdepth).max(0.0);
+        if natural > colht + 1e-6 && shrink <= 0.0 {
+            col.overfull_by = (natural - colht).max(bottom - colht).max(0.0);
+        }
+    }
+    col
 }

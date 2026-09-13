@@ -5486,8 +5486,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     let params = page_params(s);
     let vblocks: Vec<VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
     let list = pagebuild::vlist(&params, &vblocks);
+    let body_blocks = vblocks.len();
     // Footnote blocks are appended after the body's (not in `vblocks`).
-    let insertions = footnotes::prepare(ctx, &mut blocks, &params, !floats.is_empty());
+    let insertions = footnotes::prepare(ctx, &mut blocks, &params);
     // Two-column documents: the page builder fills columns of `\textheight`
     // (`\@colht`); `\@outputdblcol` ships the first column and the second
     // side by side, the second `\columnwidth + \columnsep` to the right.
@@ -5515,7 +5516,11 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 src,
             ));
         }
-        floatpage::paginate(ctx, &mut blocks, &params, &list, floats)
+        let (mut pages, images, float_labels, areas) = floatpage::paginate(ctx, &mut blocks, &params, &list, floats, insertions.as_ref(), body_blocks);
+        if insertions.is_some() {
+            footnotes::place(ctx, &mut blocks, &mut pages, areas);
+        }
+        (pages, images, float_labels)
     };
     // The `\twocolumn[...]` box sits at the top of the first page
     // (`\@combinedblfloats`), both columns `\dbltextfloatsep` below it.

@@ -21,9 +21,9 @@
 //!   width .4\columnwidth \kern2.6pt`) and the notes at the column foot.
 //!
 //! Not here yet: `minipage` footnotes (`\@mpfootnotetext`, alph marks, set
-//! at the minipage's end; see [`MinipageNotes`] for the hook), footnotes
-//! in documents with floats, headings, captions and table cells (reported),
-//! and `\thanks` (the compiler strips it).
+//! at the minipage's end; see [`MinipageNotes`] for the hook), footnotes in
+//! headings, captions and table cells (reported), and `\thanks` (the
+//! compiler strips it).
 
 use flashtex_compiler::Span;
 use flashtex_paragraph_layout as pl;
@@ -275,21 +275,13 @@ fn note_vlist(page: &PageParams, fp: &FootnoteParams, b: &BuiltBlock, bi: usize)
 /// Sets every anchored note and returns the insertion class for the page
 /// builder, or `None` when the document has no footnotes. Marks whose line
 /// is not in the body's vertical list (headings, captions, cells) are
-/// reported and their notes dropped. With floats the notes are reported
-/// and not placed (the float placement does not charge insertions yet).
-pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &PageParams, with_floats: bool) -> Option<Insertions> {
+/// reported and their notes dropped. Documents with floats use the same
+/// class: [`floatpage::paginate`](super::floatpage::paginate) charges it
+/// against `\@colroom` and `\@makecol` sets the notes between the body and
+/// the bottom floats.
+pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &PageParams) -> Option<Insertions> {
     let anchors = std::mem::take(&mut ctx.note_anchors);
     if anchors.is_empty() {
-        return None;
-    }
-    if with_floats {
-        let span = ctx.notes.first().map(|n| n.span);
-        let src = span.map(|s| vec![ctx.source(s)]).unwrap_or_default();
-        ctx.diagnostics.push(Diagnostic::warning(
-            "unsupported_block",
-            format!("{} footnote(s) in a document with floats: the float placement does not set footnotes yet; their text is omitted", anchors.len()),
-            src,
-        ));
         return None;
     }
     let mut line_of: std::collections::HashMap<usize, (usize, usize)> = std::collections::HashMap::new();

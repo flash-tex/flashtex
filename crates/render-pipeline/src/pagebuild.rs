@@ -511,12 +511,12 @@ pub struct InsertArea {
 /// An `\insert` on the current page: what is left of the note's list (all
 /// of it, or the remainder after a split) and its height plus depth.
 #[derive(Debug, Clone)]
-struct PageIns {
-    list: Vec<VItem>,
-    height_plus_depth: f64,
-    /// Index in the main list of the line box it follows (`None`: held
-    /// over from the previous page, ahead of the page's material).
-    at: Option<usize>,
+pub(crate) struct PageIns {
+    pub(crate) list: Vec<VItem>,
+    pub(crate) height_plus_depth: f64,
+    /// Index in the caller's node list of the line box it follows (`None`:
+    /// held over from the previous page, ahead of the page's material).
+    pub(crate) at: Option<usize>,
 }
 
 /// `vert_break(p, h, d)` (§970–§976) on a note's list: the index of the best
@@ -599,7 +599,7 @@ fn prune_page_top(list: &[VItem], split_top_skip: f64) -> Vec<VItem> {
 }
 
 /// Height plus depth of a list packed at its natural size (`vpack`).
-fn natural_height_plus_depth(list: &[VItem]) -> f64 {
+pub(crate) fn natural_height_plus_depth(list: &[VItem]) -> f64 {
     let (mut x, mut d) = (0.0, 0.0);
     for v in list {
         match v {
@@ -619,30 +619,30 @@ fn natural_height_plus_depth(list: &[VItem]) -> f64 {
 
 /// The insertion part of TeX's page builder for one class (§1008–§1010)
 /// and the state `fire_up` reads (§1018–§1021).
-struct InsertState<'a> {
+pub(crate) struct InsertState<'a> {
     ins: &'a Insertions,
     /// `page_goal`.
-    goal: f64,
+    pub(crate) goal: f64,
     /// The class has a page-insertion record (its `\skip` is charged).
-    started: bool,
+    pub(crate) started: bool,
     /// The record's `height`, `split_up`, `broken_ins`/`broken_ptr`.
-    height: f64,
+    pub(crate) height: f64,
     split_up: bool,
     broken: Option<(usize, Option<usize>)>,
-    last_ins: Option<usize>,
-    penalties: i64,
+    pub(crate) last_ins: Option<usize>,
+    pub(crate) penalties: i64,
     page: Vec<PageIns>,
 }
 
 impl<'a> InsertState<'a> {
-    fn new(ins: &'a Insertions, vsize: f64) -> InsertState<'a> {
+    pub(crate) fn new(ins: &'a Insertions, vsize: f64) -> InsertState<'a> {
         InsertState { ins, goal: vsize, started: false, height: 0.0, split_up: false, broken: None, last_ins: None, penalties: 0, page: Vec::new() }
     }
 
     /// §1008–§1010 for an insertion arriving with the page at `total`,
     /// `depth` and `shrink` (TeX's `page_so_far`); `stretch`/`shrink` get
     /// `\skip\footins` when the class first appears on the page.
-    fn append(&mut self, list: Vec<VItem>, height_plus_depth: f64, at: Option<usize>, total: f64, depth: f64, stretch: &mut f64, shrink: &mut f64) {
+    pub(crate) fn append(&mut self, list: Vec<VItem>, height_plus_depth: f64, at: Option<usize>, total: f64, depth: f64, stretch: &mut f64, shrink: &mut f64) {
         let index = self.page.len();
         if !self.started {
             // §1009: `\box\footins` is void at the start of a page.
@@ -673,6 +673,58 @@ impl<'a> InsertState<'a> {
         self.broken = Some((index, (at_break < list.len()).then_some(at_break)));
         self.penalties += i64::from(pi);
         self.page.push(PageIns { list, height_plus_depth, at });
+    }
+
+    /// What the class already on the page adds to LaTeX's `\@pageht`
+    /// (`\@specialoutput`: `\ht\footins + \skip\footins + \dp\footins`),
+    /// which `\@addtocurcol` uses as `\@reqcolroom` when deciding whether a
+    /// float still fits the column. `self.height` is the sum of each
+    /// accepted insert's height plus depth, which is exactly the packed
+    /// `\ht\footins + \dp\footins`.
+    pub(crate) fn page_height(&self) -> f64 {
+        if self.started && self.height > 0.0 {
+            self.ins.skip.0 + self.height
+        } else {
+            0.0
+        }
+    }
+
+    /// No insertion of the class landed on this page.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.page.is_empty()
+    }
+
+    /// §1018-§1021 (`fire_up`): the insertions that go in `\box\footins`,
+    /// the one that is split there, and the rest pushed onto `held` for the
+    /// next page. `best_ins` is `last_ins` as of the chosen breakpoint and
+    /// `end` is that breakpoint in the caller's node indices (an insert
+    /// contributed at or after it goes back with its line, not held over).
+    pub(crate) fn resolve(self, best_ins: Option<usize>, end: usize, held: &mut Vec<PageIns>) -> Vec<Vec<VItem>> {
+        let (ins, split_up, broken) = (self.ins, self.split_up, self.broken);
+        let mut placed: Vec<Vec<VItem>> = Vec::new();
+        for (k, pi) in self.page.into_iter().enumerate() {
+            if pi.at.is_some_and(|a| a >= end) {
+                // Contributed after the break: back on the contribution list
+                // with its line.
+                continue;
+            }
+            match best_ins {
+                Some(b) if k < b => placed.push(pi.list),
+                Some(b) if k == b => match broken {
+                    Some((bk, Some(bp))) if split_up && bk == k => {
+                        placed.push(pi.list[..bp].to_vec());
+                        let rest = prune_page_top(&pi.list[bp..], ins.split_top_skip);
+                        if !rest.is_empty() {
+                            let hd = natural_height_plus_depth(&rest);
+                            held.push(PageIns { list: rest, height_plus_depth: hd, at: None });
+                        }
+                    }
+                    _ => placed.push(pi.list),
+                },
+                _ => held.push(PageIns { at: None, ..pi }),
+            }
+        }
+        placed
     }
 }
 
@@ -819,31 +871,9 @@ pub fn break_pages_inserts(base: &PageParams, list: &[VItem], short_pages: usize
             None => list.len(),
         };
         let ejected = matches!(list.get(end), Some(VItem::Penalty(pen)) if *pen <= EJECT_PENALTY);
-        // §1018–§1021: which insertions go on the page, which are split and
+        // §1018-§1021: which insertions go on the page, which are split and
         // which wait.
-        let mut placed_notes: Vec<Vec<VItem>> = Vec::new();
-        for (k, pi) in is.page.into_iter().enumerate() {
-            if pi.at.is_some_and(|a| a >= end) {
-                // Contributed after the break: back on the contribution list
-                // with its line.
-                continue;
-            }
-            match best_ins {
-                Some(b) if k < b => placed_notes.push(pi.list),
-                Some(b) if k == b => match is.broken {
-                    Some((bk, Some(bp))) if is.split_up && bk == k => {
-                        placed_notes.push(pi.list[..bp].to_vec());
-                        let rest = prune_page_top(&pi.list[bp..], ins.split_top_skip);
-                        if !rest.is_empty() {
-                            let hd = natural_height_plus_depth(&rest);
-                            held.push(PageIns { list: rest, height_plus_depth: hd, at: None });
-                        }
-                    }
-                    _ => placed_notes.push(pi.list),
-                },
-                _ => held.push(PageIns { at: None, ..pi }),
-            }
-        }
+        let placed_notes = is.resolve(best_ins, end, &mut held);
         let has_notes = placed_notes.iter().any(|l| !l.is_empty());
         let body = if body_less { &list[0..0] } else { &list[start..end] };
         if !has_notes {
