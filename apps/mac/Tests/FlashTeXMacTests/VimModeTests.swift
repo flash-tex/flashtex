@@ -437,6 +437,24 @@ final class VimModeTests: XCTestCase {
         XCTAssertNil(VimModeFeature.key(for: Self.event("", code: 125, flags: [.shift])), "⇧↓ keeps AppKit's selection")
     }
 
+    /// The landing offset a command reports is in the buffer the edits
+    /// *produce*. Clamping it against the pre-edit length silently dragged the
+    /// caret back on every command that grows the buffer (`o`, `O`, `p`, `P`).
+    func testTheAppliedSelectionIsClampedAgainstThePostEditBuffer() {
+        let open = [EditorKeyHandling.LineEdit(range: NSRange(location: 7, length: 0), replacement: "\n")]
+        XCTAssertEqual(VimModeFeature.length(after: open, from: 7), 8)
+        XCTAssertEqual(VimModeFeature.clamp(NSRange(location: 8, length: 0), to: 8), NSRange(location: 8, length: 0))
+        XCTAssertEqual(VimModeFeature.clamp(NSRange(location: 8, length: 0), to: 7), NSRange(location: 7, length: 0),
+                       "the pre-edit length is what used to strand the caret")
+
+        let cut = [EditorKeyHandling.LineEdit(range: NSRange(location: 0, length: 4), replacement: "")]
+        XCTAssertEqual(VimModeFeature.length(after: cut, from: 7), 3)
+        XCTAssertEqual(VimModeFeature.clamp(NSRange(location: 9, length: 2), to: 3), NSRange(location: 3, length: 0))
+        XCTAssertEqual(VimModeFeature.clamp(NSRange(location: -4, length: -1), to: 3), NSRange(location: 0, length: 0),
+                       "never a negative or out-of-range NSRange")
+        XCTAssertEqual(VimModeFeature.length(after: [], from: 12), 12)
+    }
+
     // MARK: hosted — the feature gate on the real editor
 
     func testWithThePreferenceOffEveryKeystrokeTypesAsBefore() async throws {
@@ -480,6 +498,23 @@ final class VimModeTests: XCTestCase {
         XCTAssertEqual(tv.string, "beta")
         tv.undoManager?.undo()                   // and ⌘Z is the same stack
         XCTAssertEqual(tv.string, "alpha\nbeta")
+    }
+
+    func testOpenLineAndPasteAtTheBufferEndLandOnTheNewText() async throws {
+        VimModeFeature.enabledOverride = true
+        let (window, tv) = try await hostEditor("one\ntwo")
+        defer { window.close() }
+        tv.setSelectedRange(NSRange(location: 4, length: 0))
+        Self.type(tv, "o")
+        XCTAssertEqual(tv.string, "one\ntwo\n")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 8, length: 0),
+                       "the caret is on the opened line, not clamped back onto the old buffer end")
+        Self.type(tv, "x")                        // insert mode: AppKit types it
+        XCTAssertEqual(tv.string, "one\ntwo\nx")
+        Self.type(tv, "\u{1b}", code: 53)
+        Self.type(tv, "yyp")                      // paste below the last line
+        XCTAssertEqual(tv.string, "one\ntwo\nx\nx")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 11, length: 0))
     }
 
     func testTheIndicatorReportsTheMode() async throws {

@@ -25,6 +25,22 @@ enum VimModeFeature {
         return EditorPreferences.shared.vimMode
     }
 
+    /// Length of a buffer of `length` once `edits` are applied. A vim
+    /// outcome's selection is in *post-edit* coordinates, and `o`, `p` and
+    /// friends grow the buffer, so it must be clamped against this — clamping
+    /// against the pre-edit length drags the caret back onto the old end.
+    static func length(after edits: [EditorKeyHandling.LineEdit], from length: Int) -> Int {
+        edits.reduce(length) { $0 + ($1.replacement as NSString).length - $1.range.length }
+    }
+
+    /// `range` clamped inside a buffer of `length` (never a negative or
+    /// out-of-range `NSRange`, which `setSelectedRange` would reject).
+    static func clamp(_ range: NSRange, to length: Int) -> NSRange {
+        let limit = max(0, length)
+        let location = min(max(range.location, 0), limit)
+        return NSRange(location: location, length: min(max(range.length, 0), limit - location))
+    }
+
     /// One `NSEvent` as the machine sees it, or nil when the event is not
     /// something vim should look at (a Command/Option shortcut, a modified
     /// arrow, a dead key). Option is excluded on purpose: on a non-US layout
@@ -117,13 +133,16 @@ extension SourceEditorView.Coordinator {
     /// path, then the selection, then the requests only the app can serve.
     func apply(vim outcome: VimOutcome, to tv: NSTextView) {
         if outcome.beep { NSSound.beep() }
+        let length = tv.textStorage?.length ?? 0
         if !outcome.edits.isEmpty {
-            let selection = outcome.selection ?? tv.selectedRange()
-            applyLineEdits(outcome.edits, to: tv, actionName: outcome.actionName ?? "Vim Command",
-                           selection: clampToStorage(selection, in: tv))
+            // Clamp against the buffer the edits *produce*: `o` and `p` grow it,
+            // and the machine's landing offset is already in those coordinates.
+            let wanted = outcome.selection ?? tv.selectedRange()
+            let selection = VimModeFeature.clamp(wanted, to: VimModeFeature.length(after: outcome.edits, from: length))
+            applyLineEdits(outcome.edits, to: tv, actionName: outcome.actionName ?? "Vim Command", selection: selection)
             tv.scrollRangeToVisible(tv.selectedRange())
         } else if let selection = outcome.selection {
-            tv.setSelectedRange(clampToStorage(selection, in: tv))
+            tv.setSelectedRange(VimModeFeature.clamp(selection, to: length))
             tv.scrollRangeToVisible(tv.selectedRange())
         }
         for request in outcome.requests { perform(vim: request, in: tv) }
@@ -147,12 +166,6 @@ extension SourceEditorView.Coordinator {
         case .save, .close, .saveAndClose, .discardAndClose, .goToMatching:
             parent.onVimRequest(request)
         }
-    }
-
-    private func clampToStorage(_ range: NSRange, in tv: NSTextView) -> NSRange {
-        let length = tv.textStorage?.length ?? 0
-        let location = min(max(range.location, 0), length)
-        return NSRange(location: location, length: min(max(range.length, 0), length - location))
     }
 
     /// Pushes the indicator's state out to SwiftUI. Called after every key and
