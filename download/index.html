@@ -20,6 +20,13 @@
   .dl-meta { display: grid; justify-items: end; gap: 6px; font-size: 0.92rem; color: var(--ink-2); text-align: right; }
   .ver { font: 400 0.9rem/1 var(--mono); color: var(--on-ink); background: var(--ink); padding: 7px 10px; }
 
+  .path-lede { color: var(--ink-2); font-size: 1rem; max-width: 72ch; padding-block: 4px clamp(28px, 4vw, 44px); }
+  .group-head {
+    font-size: clamp(1.3rem, 2.4vw, 1.7rem); font-weight: 700; letter-spacing: -0.01em;
+    margin-top: clamp(36px, 5vw, 56px); padding-top: 22px; border-top: 1px solid var(--ink);
+  }
+  .group-sub { font: 400 0.78rem/1 var(--mono); color: var(--ink-3); margin-left: 12px; vertical-align: middle; }
+
   .tabs { display: flex; gap: 28px; border-bottom: 1px solid var(--ink); }
   .tab {
     font: 600 1rem/1 var(--text); color: var(--ink-3); background: none; border: 0; cursor: pointer;
@@ -95,12 +102,78 @@
   </div>
 
   <section id="panel-stable" role="tabpanel" aria-labelledby="tab-stable">
+    <p class="path-lede">Two ways to install: <strong>A</strong> gets you just the LaTeX engine and the <code>flashtex</code> command line, for macOS or Linux, any editor; <strong>B</strong> gets the native Mac app — a SwiftUI IDE with a live preview, built on that same engine — and bundles the CLI inside it too.</p>
+
+    <h2 class="group-head" id="cli-install">A — Engine + CLI <span class="group-sub">macOS · Linux</span></h2>
+    <ul class="rows">
+      <li class="row">
+        <div>
+          <h2 class="row-name">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M4 17l6-5-6-5M12 19h8"/></svg>
+            Command line
+          </h2>
+          <div class="row-sub">macOS (Apple Silicon) · Linux (x86_64)</div>
+        </div>
+        <div class="row-body">
+          <div class="snippet">
+            <code><span class="p">$ </span>curl -fsSL https://flash-tex.github.io/flashtex/install-cli.sh | sh</code>
+            <button class="copy" type="button" data-copy="curl -fsSL https://flash-tex.github.io/flashtex/install-cli.sh | sh">Copy</button>
+          </div>
+          <p>Detects your OS and CPU, downloads the matching <code>flashtex-cli-v0.1.2-&lt;platform&gt;.tar.gz</code>, verifies it against the release's <a href="https://github.com/flash-tex/flashtex/releases/download/v0.1.2/SHA256SUMS">SHA256SUMS</a> and refuses on a mismatch, then installs <code>flashtex</code> into <code>~/.local/bin</code> and its fonts/metrics into <code>~/.local/share/flashtex</code>. Pass <code>--prefix /usr/local</code> for a system install, <code>--version vX.Y.Z</code> for another release, or <code>--uninstall</code> to remove it. <a href="../install-cli.sh">Read the script</a>.</p>
+        </div>
+      </li>
+
+      <li class="row">
+        <div>
+          <h2 class="row-name">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M12 3v13m0 0l-5.5-5.5M12 16l5.5-5.5M4 21h16"/></svg>
+            Direct download
+          </h2>
+          <div class="row-sub">flashtex-cli-v0.1.2</div>
+        </div>
+        <div class="row-body">
+          <div class="row-actions">
+            <a class="btn btn-primary" href="https://github.com/flash-tex/flashtex/releases/download/v0.1.2/flashtex-cli-0.1.2-macos-arm64.tar.gz">
+              macOS arm64 <span class="btn-meta">11.1 MB</span>
+            </a>
+            <a class="btn" href="https://github.com/flash-tex/flashtex/releases/download/v0.1.2/flashtex-cli-0.1.2-linux-x86_64.tar.gz">
+              Linux x86_64 <span class="btn-meta">12.0 MB</span>
+            </a>
+            
+          </div>
+          <p>Extract anywhere and run <code>bin/flashtex build main.tex</code> — no TeX installation, no environment variables. <code>bin/flashtex install-cli</code> symlinks it into <code>/usr/local/bin</code> without breaking the fonts it finds next to itself.</p>
+        </div>
+      </li>
+
+      <li class="row">
+        <div>
+          <h2 class="row-name">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/></svg>
+            Checksums
+          </h2>
+          <div class="row-sub">SHA-256</div>
+        </div>
+        <div class="row-body">
+          <div class="snippet">
+            <code class="hash">116cf5005d9a4a84a54949c93b123dbb1cb88dce9985a4d5ce5a8277d6a41e38</code>
+            <button class="copy" type="button" data-copy="116cf5005d9a4a84a54949c93b123dbb1cb88dce9985a4d5ce5a8277d6a41e38">Copy</button>
+          </div>
+          <div class="snippet">
+            <code class="hash">760264a899c3af6ca7b84f9e45f57057d08675fef8ea23176ecd6c271acf9ad7</code>
+            <button class="copy" type="button" data-copy="760264a899c3af6ca7b84f9e45f57057d08675fef8ea23176ecd6c271acf9ad7">Copy</button>
+          </div>
+          <p><code>install-cli.sh</code> checks this automatically; by hand, compare with <a href="https://github.com/flash-tex/flashtex/releases/download/v0.1.2/SHA256SUMS">SHA256SUMS</a> from the release.</p>
+        </div>
+      </li>
+    </ul>
+
+    <h2 class="group-head" id="gui-install">B — Engine + native GUI <span class="group-sub">macOS only, for now</span></h2>
     <ul class="rows">
       <li class="row">
         <div>
           <h2 class="row-name">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.37 12.62c-.02-2.33 1.9-3.45 1.99-3.5-1.08-1.59-2.77-1.8-3.370-1.83-1.43-.15-2.8.85-3.53.85-.74 0-1.86-.83-3.06-.81-1.57.02-3.02.92-3.830 2.33-1.64 2.84-.42 7.04 1.17 9.35.78 1.13 1.7 2.39 2.92 2.35 1.18-.05 1.62-.76 3.04-.76 1.42 0 1.82.76 3.06.73 1.27-.02 2.07-1.14 2.84-2.28.9-1.31 1.26-2.59 1.28-2.66-.03-.01-2.46-.94-2.51-3.77zM14.04 5.78c.64-.79 1.08-1.87.96-2.96-.93.04-2.060.62-2.72 1.4-.6.69-1.12 1.8-.98 2.86 1.04.08 2.1-.53 2.74-1.3z"/></svg>
-            macOS
+            macOS app
           </h2>
           <div class="row-sub">macOS 14 Sonoma or later</div>
         </div>
@@ -112,8 +185,8 @@
             </a>
             <span class="btn is-disabled">Intel <span class="btn-meta">not yet available</span></span>
           </div>
-          <p>A disk image containing <code>FlashTeX.app</code>, with the Rust compiler, PDF writer and capture bridge bundled inside. No TeX distribution required.</p>
-          <p class="row-warn">macOS blocks this on first launch, because FlashTeX isn't notarized by Apple yet. You'll need to approve it once — <a href="#first-launch">how to do that</a>, or <a href="#cli-install">install from the command line</a> and skip it entirely.</p>
+          <p>A disk image containing <code>FlashTeX.app</code> — the Rust engine, PDF writer and capture bridge bundled inside, plus the CLI at <code>Contents/MacOS/flashtex-cli</code> (run its <code>install-cli</code> subcommand to also link it into <code>/usr/local/bin</code>). No TeX distribution required.</p>
+          <p class="row-warn">macOS blocks this on first launch, because FlashTeX isn't notarized by Apple yet. You'll need to approve it once — <a href="#first-launch">how to do that</a>, or <a href="#app-cli-install">install from the command line</a> and skip it entirely.</p>
         </div>
       </li>
 
@@ -121,7 +194,7 @@
         <div>
           <h2 class="row-name">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M4 17l6-5-6-5M12 19h8"/></svg>
-            Command line
+            Command line (app)
           </h2>
           <div class="row-sub">macOS · Apple Silicon</div>
         </div>
@@ -130,7 +203,7 @@
             <code><span class="p">$ </span>curl -fsSL https://flash-tex.github.io/flashtex/install.sh | sh</code>
             <button class="copy" type="button" data-copy="curl -fsSL https://flash-tex.github.io/flashtex/install.sh | sh">Copy</button>
           </div>
-          <p id="cli-install">Downloads the release, checks its SHA-256 and copies <code>FlashTeX.app</code> into <code>/Applications</code>. Because it doesn't go through a browser, macOS never quarantines the app and <strong>you get no approval prompt at all</strong>. <a href="../install.sh">Read the script</a>.</p>
+          <p id="app-cli-install">Downloads the same disk image, checks its SHA-256 and copies <code>FlashTeX.app</code> into <code>/Applications</code>. Because it doesn't go through a browser, macOS never quarantines the app and <strong>you get no approval prompt at all</strong>. This installs the app, not just the CLI — for the CLI alone, use <a href="#cli-install">path A</a> above. <a href="../install.sh">Read the script</a>.</p>
         </div>
       </li>
 
@@ -150,17 +223,21 @@
           <p>Compare it with the output of <code>shasum -a 256 ~/Downloads/FlashTeX.dmg</code>.</p>
         </div>
       </li>
-
-      <li class="row">
-        <div>
-          <h2 class="row-name">Windows &amp; Linux</h2>
-          <div class="row-sub">Not available</div>
-        </div>
-        <div class="row-body">
-          <p>FlashTeX is a native Mac app, written in Swift on top of a Rust engine. Other platforms aren't on the roadmap.</p>
-        </div>
-      </li>
     </ul>
+
+    <div class="note" id="platforms">
+      <h2>Platform support</h2>
+      <p>FlashTeX is two things — a LaTeX engine with a command line, and a native Mac app built on it — and they don't have to ship on the same platforms.</p>
+      <ul class="reqs">
+        <li><span>Engine / CLI — macOS</span><span>Available (Apple Silicon)</span></li>
+        <li><span>Engine / CLI — Linux</span><span>Available (x86_64)</span></li>
+        <li><span>Engine / CLI — Windows</span><span>Planned</span></li>
+        <li><span>Engine / CLI — Web (WASM)</span><span>Exploring</span></li>
+        <li><span>Native GUI — macOS (SwiftUI)</span><span>Available today</span></li>
+        <li><span>Native GUI — other platforms</span><span>Not yet</span></li>
+      </ul>
+      <p>No GUI on your platform yet? The CLI works with any editor or CI, and the JSON&nbsp;Lines <code>worker</code> protocol it speaks is documented for integrations: <a href="https://github.com/flash-tex/flashtex/blob/main/docs/user/compiler.md#worker">The <code>flashtex</code> command line</a> and <a href="https://github.com/flash-tex/flashtex/blob/main/docs/extensibility.md">Extending FlashTeX</a>.</p>
+    </div>
 
     <div class="note" id="first-launch">
       <h2>Opening the app the first time</h2>
@@ -259,8 +336,9 @@
     <div>
       <h2>Install</h2>
       <ul>
+        <li><a href="../install-cli.sh">install-cli.sh</a> <span class="row-sub">engine + CLI</span></li>
+        <li><a href="../install.sh">install.sh</a> <span class="row-sub">Mac app</span></li>
         <li><a href="https://github.com/flash-tex/flashtex/releases/download/v0.1.2/FlashTeX.dmg">FlashTeX.dmg</a></li>
-        <li><a href="../install.sh">install.sh</a></li>
       </ul>
     </div>
   </div>

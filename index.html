@@ -28,6 +28,9 @@
   .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
   .fine { margin-top: 18px; font: 400 0.8rem/1.5 var(--mono); color: var(--ink-3); }
 
+  .path-row { display: grid; gap: 8px; }
+  .path-tag { font: 600 0.72rem/1 var(--mono); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.04em; }
+
   .hero-proof { margin: 26px; }
   .hero-proof figcaption {
     margin-top: 40px; font: 400 0.76rem/1.5 var(--mono); color: var(--magenta);
@@ -174,6 +177,7 @@
         <a class="btn" href="https://github.com/flash-tex/flashtex">View source</a>
       </div>
       <p class="fine">v0.1.2 · Apple Silicon · macOS 14 or later · MIT</p>
+      <p class="fine"><a class="text-link" href="download/#cli-install">Just the engine + CLI? macOS or Linux, no GUI</a></p>
     </div>
 
     <figure class="hero-proof">
@@ -266,12 +270,22 @@
       <span class="mark tl"></span><span class="mark tr"></span><span class="mark bl"></span><span class="mark br"></span>
       <div>
         <h2 id="install-title">Install in one line.</h2>
-        <p class="sub">Downloads v0.1.2, checks its SHA-256 and copies FlashTeX into Applications.</p>
+        <p class="sub">Two paths: the native Mac app, or just the engine + CLI for macOS or Linux.</p>
       </div>
       <div class="install-go">
-        <div class="snippet">
-          <code><span class="p">$ </span>curl -fsSL https://flash-tex.github.io/flashtex/install.sh | sh</code>
-          <button class="copy" type="button" data-copy="curl -fsSL https://flash-tex.github.io/flashtex/install.sh | sh">Copy</button>
+        <div class="path-row">
+          <span class="path-tag">Mac app</span>
+          <div class="snippet">
+            <code><span class="p">$ </span>curl -fsSL https://flash-tex.github.io/flashtex/install.sh | sh</code>
+            <button class="copy" type="button" data-copy="curl -fsSL https://flash-tex.github.io/flashtex/install.sh | sh">Copy</button>
+          </div>
+        </div>
+        <div class="path-row">
+          <span class="path-tag">Engine + CLI</span>
+          <div class="snippet">
+            <code><span class="p">$ </span>curl -fsSL https://flash-tex.github.io/flashtex/install-cli.sh | sh</code>
+            <button class="copy" type="button" data-copy="curl -fsSL https://flash-tex.github.io/flashtex/install-cli.sh | sh">Copy</button>
+          </div>
         </div>
         <div class="row">
           <a class="btn btn-primary" href="https://github.com/flash-tex/flashtex/releases/download/v0.1.2/FlashTeX.dmg">
@@ -310,7 +324,7 @@
     <div>
       <h2>Install</h2>
       <ul>
-        <li><a href="https://github.com/flash-tex/flashtex/releases/download/v0.1.2/FlashTeX.dmg">FlashTeX.dmg</a></li>
+        <li><a href="install-cli.sh">install-cli.sh</a></li>
         <li><a href="install.sh">install.sh</a></li>
         <li><a href="download/#source">Build from source</a></li>
       </ul>
