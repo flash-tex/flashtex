@@ -1193,14 +1193,57 @@ impl MathParser<'_> {
             | "Bigr" | "biggr" | "Biggr" | "bigm" | "Bigm" | "biggm" | "Biggm" => {
                 sized_delimiter(self.take_delimiter(&name, span), &name)
             }
-            "dots" | "ldots" | "dotsc" | "dotso" => text_atom("...".into(), span),
-            "cdots" | "dotsb" | "dotsm" | "dotsi" => symbol("⋅⋅⋅".into(), span),
+            // `fontmath.ltx` 400-402: `\ldots` and `\cdots` are
+            // `\mathinner{\ldotp\ldotp\ldotp}` and `{\cdotp\cdotp\cdotp}` —
+            // three *punctuation* atoms, so TeX puts 3mu between each pair.
+            // Setting them as one three-character run loses both gaps, which
+            // is 1.66 bp each at 10pt (pdfTeX: `\hbox{$\dots$}` is 11.66661pt
+            // where three bare `\ldotp`s side by side would be 8.33337pt).
+            "dots" | "ldots" | "dotsc" | "dotso" | "cdots" | "dotsb" | "dotsm" | "dotsi" => {
+                // `\dotsb`/`\dotsm`/`\dotsi` are amsmath's semantic names for
+                // the binary/multiplication/integral dots, all `\cdots`.
+                let centred = matches!(name.as_str(), "cdots" | "dotsb" | "dotsm" | "dotsi");
+                let glyph = if centred { "⋅" } else { "." };
+                let dot = || MathAtom {
+                    class_override: Some(AtomClass::Punct),
+                    width_em: None,
+                    ams_symbol: None,
+                    ..symbol(glyph.into(), span)
+                };
+                MathAtom {
+                    nucleus: Nucleus::Group(MathList {
+                        atoms: vec![dot(), dot(), dot()],
+                    }),
+                    span,
+                    superscript: None,
+                    subscript: None,
+                    class_override: Some(AtomClass::Inner),
+                    width_em: None,
+                    ams_symbol: None,
+                }
+            }
             // Symbol has no U+222C/U+222D: repeated real integral glyphs.
             "iint" => symbol("∫∫".into(), span),
             "lbrace" => symbol("{".into(), span),
             "rbrace" => symbol("}".into(), span),
             "iiint" => symbol("∫∫∫".into(), span),
-            "bmod" | "mod" => text_atom("mod".into(), span),
+            // amsopn.sty: `\bmod` is `\nonscript\mskip-\medmuskip\mkern5mu
+            // \mathbin{\operator@font mod}\penalty900\mkern5mu\nonscript
+            // \mskip-\medmuskip`. The `-\medmuskip` exactly cancels the
+            // binary's own inter-atom glue, so what is left is 5mu on each
+            // side whatever the neighbours are — and `\mkern`, unlike
+            // `\mskip`, is not suppressed in script styles. Classifying the
+            // word `mod` as a binary gets 4mu in text style and 0 in scripts;
+            // the explicit kerns get both right, and reach the render
+            // pipeline too, which does not read the compiler's atom classes
+            // for a text nucleus (measured: 2.77 bp missing on each side of
+            // `$a \bmod b$`).
+            "bmod" => {
+                self.pending.push(text_atom("mod".into(), span));
+                self.pending.push(space(5.0 / 18.0, span));
+                space(5.0 / 18.0, span)
+            }
+            "mod" => text_atom("mod".into(), span),
             // amsmath.sty lines 237-241: `\dfrac` = `\genfrac{}{}{}0`,
             // `\tfrac` = `\genfrac{}{}{}1`, `\binom` = `\genfrac()\z@{}`,
             // `\dbinom` = `\genfrac(){0pt}0`, `\tbinom` = `\genfrac(){0pt}1`.
