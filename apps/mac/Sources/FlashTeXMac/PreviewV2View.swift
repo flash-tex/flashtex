@@ -838,6 +838,7 @@ struct PreviewV2Pane: View {
 
     private func pages(_ frame: V2Frame, stale: Bool) -> some View {
         PreviewV2View(frame: frame, dark: model.darkPreview, stale: stale, caretPath: model.activePath, caretByte: model.caretByte,
+                      followTarget: model.followCaretTargetV2(), followEnabled: EditorPreferences.shared.previewFollowsCaret,
                       zoom: model.previewZoom, onFitScale: { model.previewFitScale = $0 }) { hit in
             model.navigateV2(hit)
         }
@@ -957,6 +958,11 @@ struct PreviewV2View: View {
     var stale = false
     let caretPath: String
     let caretByte: Int?
+    /// "Preview follows the caret" (FollowCaret.swift): the caret's page item
+    /// in raw page points (`ShellModel.followCaretTargetV2()`), nil when it
+    /// has no preview mapping; `followEnabled` mirrors the preference.
+    var followTarget: FollowCaret.Target? = nil
+    var followEnabled: Bool = false
     /// Zoom multiplier over the fit-to-width scale (PreviewZoom.swift).
     var zoom: CGFloat = 1
     var onFitScale: ((CGFloat) -> Void)? = nil
@@ -993,7 +999,7 @@ struct PreviewV2View: View {
                     }
                 }
                 .padding(24)
-                .background(PreviewAnchorKeeper(layout: layout))
+                .background(PreviewAnchorKeeper(layout: layout, followTarget: followTarget, followEnabled: followEnabled))
             }
             .onChange(of: fit, initial: true) { _, f in onFitScale?(f) }
         }

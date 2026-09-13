@@ -13,19 +13,21 @@ struct PreviewView: View {
     let dark: Bool
     /// Items under the editor caret, `page number -> item indices` (see `CaretSync`).
     var caretItems: [Int: Set<Int>] = [:]
+    /// "Preview follows the caret" (FollowCaret.swift): the caret's page item
+    /// in raw page points (`ShellModel.followCaretTargetV1()`), nil when it
+    /// has no preview mapping; `followEnabled` mirrors the preference so a
+    /// pane with the setting off never schedules a debounce for nothing.
+    var followTarget: FollowCaret.Target? = nil
+    var followEnabled: Bool = false
     /// Zoom multiplier over the fit-to-width scale (PreviewZoom.swift).
     var zoom: CGFloat = 1
     /// Reports the fit-to-width scale so the shell can compute Actual Size / the percentage.
     var onFitScale: ((CGFloat) -> Void)? = nil
     let onSelect: (RuntimeV1.SourceRange?, String?) -> Void
 
-    /// First page holding a caret item, or nil; drives page-level auto-scroll.
-    private var caretPage: Int? { caretItems.filter { !$0.value.isEmpty }.keys.min() }
-
     var body: some View {
         let _ = TypingBench.shared.willRender(revision: result.revision, pages: result.pages.count)
         GeometryReader { geo in
-        ScrollViewReader { proxy in
             let widest = result.pages.map(\.widthPt).max() ?? 612
             // Fit the widest page to the pane (never upscale past 100%), times the zoom.
             let fit = min(1, max(0.2, (geo.size.width - 48) / widest))
@@ -49,15 +51,9 @@ struct PreviewView: View {
                     }
                 }
                 .padding(24)
-                .background(PreviewAnchorKeeper(layout: layout))
+                .background(PreviewAnchorKeeper(layout: layout, followTarget: followTarget, followEnabled: followEnabled))
             }
             .onChange(of: fit, initial: true) { _, f in onFitScale?(f) }
-            .onChange(of: caretPage) { _, page in
-                // Page-level only: keeps the page under the caret in view when the
-                // editor moves across pages; no scrolling within a page.
-                if let page { ReduceMotion.animate { proxy.scrollTo(page, anchor: .top) } }
-            }
-        }
         }
         .background(dark ? Color(white: 0.12) : Color(nsColor: .windowBackgroundColor))
     }

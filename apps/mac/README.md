@@ -892,10 +892,37 @@ Navigation (`Navigation.swift`, `Navigate` menu):
   null `source` are skipped and counted in the footer note.
 - **Reveal Caret in Preview** (⌘⇧J): selects the full source span of the preview
   item under the caret (`CaretSync`) so the preview highlight and page scroll
-  follow, and names the page and item.
+  follow, and names the page and item. This manual command always works.
 
 Without a compile result the navigation commands are disabled and, if invoked,
 explain that nothing is loaded.
+
+### Preview follows the caret (`FollowCaret.swift`)
+
+Automatic counterpart of Reveal Caret in Preview, on by default (Settings ›
+Preview › "Preview follows the caret", `EditorPreferences.previewFollowsCaret`).
+On caret move or typing, once the current revision's frame is painted (the
+same point `caretHighlights` update from — `ShellModel.followCaretTargetV1()`/
+`followCaretTargetV2()`), a ~250 ms debounce (`PreviewAnchorProbe.followCaretDidChange`
+in `PreviewAnchor.swift`) coalesces a typing burst into one check, decided by
+the pure `FollowCaret.decide(_:)`:
+
+- no-op when the target is already inside the visible rect (24pt margin);
+- no-op ("yielding to user") when the user scrolled manually (wheel, trackpad,
+  or scrollbar — `NSScrollView` live-scroll notifications) within the last 3s,
+  unless the caret has since moved to a different page/line, which re-arms
+  following immediately;
+- no-op while a scrollbar drag/live scroll is in progress;
+- quiet no-op when the caret has no preview mapping (preamble, comment,
+  uncompiled region);
+- at most one short animated scroll per debounce window (reduce-motion: an
+  immediate jump).
+
+Works on both the v1 and v2 panes (both host `PreviewAnchorKeeper`/
+`PreviewAnchorProbe`, the same probe that keeps the scroll anchor across a
+page-count or scale change). `FollowCaretTests.swift` covers the decision
+logic and debounce coalescing; `FollowCaretLiveTests.swift` compiles HW1 via
+`FLASHTEX_RENDER` and checks a page-3 caret resolves to a page-3 target.
 
 ## Keyboard shortcuts
 

@@ -120,11 +120,24 @@ struct PreviewAnchorCorrection: Equatable {
 /// `ScrollView`: finds the backing `NSScrollView`, captures the anchor on every
 /// user scroll while `layout` is unchanged, and re-scrolls to the anchor when
 /// `layout` (page set or scale) changes. A no-op when no scroll view encloses it.
+///
+/// Also hosts "Preview follows the caret" (gap: follow-caret, FollowCaret.swift):
+/// `followTarget` is the caret's page item in RAW page points (nil: no
+/// mapping), resolved by `ShellModel.followCaretTargetV1()`/`followCaretTargetV2()`
+/// and re-supplied on every SwiftUI body pass, i.e. only once the pane's
+/// layout/frame reflects the caret's revision — the same reactive dependency
+/// `caretHighlights` update from. The probe debounces, tracks manual scrolls,
+/// and performs the scroll; see `PreviewAnchorProbe.followCaretDidChange`.
 struct PreviewAnchorKeeper: NSViewRepresentable {
     let layout: PreviewPageLayout
+    var followTarget: FollowCaret.Target? = nil
+    var followEnabled: Bool = false
 
     func makeNSView(context: Context) -> PreviewAnchorProbe { PreviewAnchorProbe() }
-    func updateNSView(_ view: PreviewAnchorProbe, context: Context) { view.layoutDidChange(to: layout) }
+    func updateNSView(_ view: PreviewAnchorProbe, context: Context) {
+        view.layoutDidChange(to: layout)
+        view.followCaretDidChange(followTarget, enabled: followEnabled)
+    }
 }
 
 /// The AppKit side of `PreviewAnchorKeeper`. Test-visible: `anchor`, `layout`,
@@ -149,6 +162,29 @@ final class PreviewAnchorProbe: NSView {
     /// (evidence) and the anchor is re-captured where the content is.
     private(set) var driftsLeftUncorrected = 0
     private(set) var corrections: [PreviewAnchorCorrection] = []
+
+    // MARK: follow-caret (FollowCaret.swift)
+
+    /// The caret's target, in RAW page points, as last supplied by
+    /// `PreviewAnchorKeeper`; nil is the "no mapping" case. Compared by
+    /// identity (`!=`) to decide whether the caret actually moved, so a
+    /// SwiftUI pass that resupplies the same target does not reset the timer.
+    private var followTarget: FollowCaret.Target?
+    private var followEnabled = false
+    private var followDebounceItem: DispatchWorkItem?
+    /// When the user last scrolled manually (live scroll: wheel/trackpad/scrollbar)
+    /// and the follow target current at that moment (for the re-arm rule).
+    private(set) var lastUserScrollAt: Date?
+    private(set) var lastUserScrollTarget: FollowCaret.Target?
+    private(set) var isLiveScrolling = false
+    /// Test injection; real time otherwise.
+    var now: () -> Date = Date.init
+    /// Debounce/behavior constants (`var` so tests can shrink the wait).
+    var followDebounceInterval: TimeInterval = 0.25
+    var followMargin: CGFloat = 24
+    var followYieldWindow: TimeInterval = 3
+    /// Every decision `evaluateFollow()` reached, in order (evidence for tests).
+    private(set) var followActions: [FollowCaret.Action] = []
     /// Event trace for the acceptance harness: (ms since first event, event, visible top, document height).
     private(set) var trace: [(ms: Double, event: String, top: CGFloat, docHeight: CGFloat)] = []
     private var traceStart = Date()
@@ -187,7 +223,25 @@ final class PreviewAnchorProbe: NSView {
                 MainActor.assumeIsolated { self?.note("docFrame"); self?.applyPending() }
             })
         }
+        // Follow-caret "yield to the user": live scroll notifications fire for
+        // every user-initiated scroll (scroll wheel, trackpad, AND scrollbar
+        // knob dragging), never for our own programmatic `setBoundsOrigin` —
+        // so this is the whole "did the user just scroll, or is dragging"
+        // signal `FollowCaret.decide` needs, with no flag to distinguish our
+        // own scroll from theirs.
+        observers.append(NotificationCenter.default.addObserver(forName: NSScrollView.willStartLiveScrollNotification, object: scroll, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated { self?.isLiveScrolling = true }
+        })
+        observers.append(NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveScrollNotification, object: scroll, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated { self?.userDidScroll() }
+        })
         capture()
+    }
+
+    private func userDidScroll() {
+        isLiveScrolling = false
+        lastUserScrollAt = now()
+        lastUserScrollTarget = followTarget.flatMap { scaledTarget($0) }
     }
 
     /// The visible rect in document coordinates with y down, or nil when not
@@ -268,6 +322,84 @@ final class PreviewAnchorProbe: NSView {
             scroll.reflectScrolledClipView(clip)
             corrections.append(PreviewAnchorCorrection(anchor: pending, before: before, after: target))
             note(String(format: "corrected %.1f→%.1f", before.y, target.y))
+        }
+    }
+
+    // MARK: follow-caret (FollowCaret.swift)
+
+    /// `target`/`enabled` as supplied by `PreviewAnchorKeeper.updateNSView`,
+    /// i.e. on every SwiftUI body pass — after both the caret and the current
+    /// frame/result are the ones the body read, the same dependency
+    /// `caretHighlights` update from. A resupplied, unchanged target does not
+    /// reset the debounce timer (requirement: never jitter).
+    func followCaretDidChange(_ target: FollowCaret.Target?, enabled: Bool) {
+        followEnabled = enabled
+        guard target != followTarget else { return }
+        followTarget = target
+        followDebounceItem?.cancel()
+        guard enabled, target != nil else { return }
+        let item = DispatchWorkItem { [weak self] in self?.evaluateFollow() }
+        followDebounceItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + followDebounceInterval, execute: item)
+    }
+
+    /// RAW target (page points, scale 1) → document-coordinate target: the
+    /// page's frame under the current layout (already at `layout.scale`) plus
+    /// the local rect scaled the same way.
+    private func scaledTarget(_ raw: FollowCaret.Target) -> FollowCaret.Target? {
+        guard let layout, let frame = layout.frame(of: raw.page) else { return nil }
+        let scale = layout.scale
+        let rect = CGRect(x: frame.minX + raw.rect.minX * scale, y: frame.minY + raw.rect.minY * scale,
+                          width: raw.rect.width * scale, height: raw.rect.height * scale)
+        return FollowCaret.Target(page: raw.page, rect: rect)
+    }
+
+    /// Fires `followDebounceInterval` after the last caret move to a new
+    /// target: resolves the document rect fresh (the pane may have resized
+    /// or rescaled during the wait) and asks `FollowCaret.decide`.
+    private func evaluateFollow() {
+        guard let raw = followTarget, let target = scaledTarget(raw) else { return }
+        let input = FollowCaret.Input(preferenceEnabled: followEnabled, target: target, visibleRect: documentVisibleRectTopDown,
+                                      now: now(), lastUserScrollAt: lastUserScrollAt, lastUserScrollTarget: lastUserScrollTarget,
+                                      isUserDragging: isLiveScrolling, margin: followMargin, yieldWindow: followYieldWindow)
+        let action = FollowCaret.decide(input)
+        followActions.append(action)
+        if case .scroll(let rect) = action { performFollowScroll(to: rect) }
+    }
+
+    /// One short animated scroll (skipped under reduce motion) that brings
+    /// `rect` (document coordinates) into view with `followMargin` of slack —
+    /// a minimal correction, not a re-center, so the caret's neighborhood
+    /// stays on screen. Never posts a live-scroll notification (`setBoundsOrigin`
+    /// is programmatic), so this never re-arms `isLiveScrolling`/`lastUserScrollAt`.
+    private func performFollowScroll(to rect: CGRect) {
+        guard let scroll = enclosingScrollView, let doc = scroll.documentView, let visible = documentVisibleRectTopDown else { return }
+        let clip = scroll.contentView
+        let size = clip.bounds.size
+        var top = visible.minY, left = visible.minX
+        if rect.minY < visible.minY + followMargin { top = rect.minY - followMargin }
+        else if rect.maxY > visible.maxY - followMargin { top = rect.maxY - size.height + followMargin }
+        if rect.minX < visible.minX + followMargin { left = rect.minX - followMargin }
+        else if rect.maxX > visible.maxX - followMargin { left = rect.maxX - size.width + followMargin }
+        let content = doc.bounds.size
+        top = min(max(top, 0), max(0, content.height - size.height))
+        left = min(max(left, 0), max(0, content.width - size.width))
+        var origin = CGPoint(x: left, y: top)
+        if !doc.isFlipped { origin.y = content.height - top - size.height }
+        guard abs(origin.y - clip.bounds.origin.y) > 0.5 || abs(origin.x - clip.bounds.origin.x) > 0.5 else { return }
+        note(String(format: "follow %.1f→%.1f", clip.bounds.origin.y, origin.y))
+        if reduceMotion() {
+            clip.setBoundsOrigin(origin)
+            scroll.reflectScrolledClipView(clip)
+        } else {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.2
+                ctx.allowsImplicitAnimation = true
+                clip.animator().setBoundsOrigin(origin)
+            } completionHandler: { [weak scroll, weak clip] in
+                guard let scroll, let clip else { return }
+                scroll.reflectScrolledClipView(clip)
+            }
         }
     }
 }

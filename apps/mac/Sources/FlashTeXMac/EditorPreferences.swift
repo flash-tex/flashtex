@@ -86,6 +86,7 @@ final class EditorPreferences {
         var autoCloseBraces: Bool
         var completionPopup: Bool
         var spellCheck: Bool
+        var previewFollowsCaret: Bool
     }
 
     // MARK: defaults and ranges
@@ -95,7 +96,7 @@ final class EditorPreferences {
 
     static let defaultSnapshot = Snapshot(
         fontFamily: nil, fontSize: 13, lineWrapping: true, tabWidth: 4, indentStyle: .spaces,
-        appearance: .system, autoCloseBraces: true, completionPopup: true, spellCheck: true)
+        appearance: .system, autoCloseBraces: true, completionPopup: true, spellCheck: true, previewFollowsCaret: true)
 
     // MARK: storage keys (versioned)
 
@@ -108,6 +109,7 @@ final class EditorPreferences {
 
     enum Key: String, CaseIterable {
         case fontFamily, fontSize, lineWrapping, tabWidth, indentStyle, appearance, autoCloseBraces, completionPopup, spellCheck
+        case previewFollowsCaret
         var storageKey: String { "FlashTeX.EditorPreferences.v\(EditorPreferences.schemaVersion).\(rawValue)" }
     }
 
@@ -183,11 +185,20 @@ final class EditorPreferences {
         set { update(\.spellCheck, \.spellCheck, newValue, key: .spellCheck) }
     }
 
+    /// Whether the preview auto-scrolls to the caret's page item after a
+    /// short debounce (FollowCaret.swift; `PreviewAnchorProbe` reads this).
+    /// The manual "Reveal Caret in Preview" command (⌘⇧J) always works
+    /// regardless of this setting.
+    var previewFollowsCaret: Bool {
+        get { access(keyPath: \.previewFollowsCaret); return storage.previewFollowsCaret }
+        set { update(\.previewFollowsCaret, \.previewFollowsCaret, newValue, key: .previewFollowsCaret) }
+    }
+
     /// All properties at once (registers for every property's changes).
     var snapshot: Snapshot {
         Snapshot(fontFamily: fontFamily, fontSize: fontSize, lineWrapping: lineWrapping, tabWidth: tabWidth,
                  indentStyle: indentStyle, appearance: appearance, autoCloseBraces: autoCloseBraces,
-                 completionPopup: completionPopup, spellCheck: spellCheck)
+                 completionPopup: completionPopup, spellCheck: spellCheck, previewFollowsCaret: previewFollowsCaret)
     }
 
     // MARK: derived values
@@ -299,6 +310,10 @@ final class EditorPreferences {
             s.spellCheck = value
         } else { repairs.append(.spellCheck) }
 
+        if let value = defaults.object(forKey: Key.previewFollowsCaret.storageKey) as? Bool {
+            s.previewFollowsCaret = value
+        } else { repairs.append(.previewFollowsCaret) }
+
         withMutation(keyPath: \.generation) {
             storage = s
             generation += 1
@@ -312,7 +327,7 @@ final class EditorPreferences {
         let d = Self.defaultSnapshot
         fontFamily = d.fontFamily; fontSize = d.fontSize; lineWrapping = d.lineWrapping; tabWidth = d.tabWidth
         indentStyle = d.indentStyle; appearance = d.appearance; autoCloseBraces = d.autoCloseBraces
-        completionPopup = d.completionPopup; spellCheck = d.spellCheck
+        completionPopup = d.completionPopup; spellCheck = d.spellCheck; previewFollowsCaret = d.previewFollowsCaret
     }
 
     /// Versioned migration. Absent stamp: nothing was ever stored (or only
@@ -351,6 +366,7 @@ final class EditorPreferences {
         case .autoCloseBraces: defaults.set(storage.autoCloseBraces, forKey: k)
         case .completionPopup: defaults.set(storage.completionPopup, forKey: k)
         case .spellCheck: defaults.set(storage.spellCheck, forKey: k)
+        case .previewFollowsCaret: defaults.set(storage.previewFollowsCaret, forKey: k)
         }
     }
 
@@ -528,6 +544,10 @@ struct EditorPreferencesView: View {
                 Toggle("Check spelling", isOn: $prefs.spellCheck)
                     .accessibilityHint("Underlines misspelled words in prose; commands, math, comments and labels are skipped.")
                 ErrorLensPreferenceRows() // inline diagnostic text at line ends (ErrorLens.swift)
+            }
+            Section("Preview") {
+                Toggle("Preview follows the caret", isOn: $prefs.previewFollowsCaret)
+                    .accessibilityHint("Scrolls the preview to the caret's page item shortly after you move the caret or stop typing. \"Reveal Caret in Preview\" (⌘⇧J) always works regardless of this setting.")
             }
             if showConversion { ConversionPreferencesSection() } // provider picker, model, API key (Keychain) (ConversionPreferencesView.swift)
             Section {

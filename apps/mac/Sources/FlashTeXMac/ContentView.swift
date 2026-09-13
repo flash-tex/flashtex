@@ -281,6 +281,7 @@ private struct PreviewPane: View {
                     .modifier(PreviewMagnify()) // pinch to zoom (PreviewZoom.swift)
             } else if let result = model.result {
                 PreviewView(result: result, dark: model.darkPreview, caretItems: model.caretItems,
+                            followTarget: model.followCaretTargetV1(), followEnabled: EditorPreferences.shared.previewFollowsCaret,
                             zoom: model.previewZoom, onFitScale: { model.previewFitScale = $0 }) { source, text in
                     guard let source else { model.navigationNote = "This item has no source mapping."; return }
                     model.navigate(to: source, expectedText: text)

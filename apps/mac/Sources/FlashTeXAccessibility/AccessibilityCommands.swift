@@ -443,6 +443,7 @@ public enum PanelFocusOrder {
                 Control(name: "Auto-close brackets & math", sourceMarker: "Toggle(\"Auto-close brackets & math\""),
                 Control(name: "Show completion list", sourceMarker: "Toggle(\"Show completion list\""),
                 Control(name: "Check spelling", sourceMarker: "Toggle(\"Check spelling\""),
+                Control(name: "Preview follows the caret", sourceMarker: "Toggle(\"Preview follows the caret\""),
                 Control(name: "Restore Defaults", sourceMarker: "Button(\"Restore Defaults\""),
               ],
               sourceFile: "EditorPreferences.swift"),
