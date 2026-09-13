@@ -4408,6 +4408,17 @@ pub fn class_override_of(text: &str, at: usize) -> Option<ml::AtomClass> {
         "rvert" | "rVert" => ml::AtomClass::Close,
         // `fontmath.ltx` 263: `\smallint` is cmsy "73, a large operator.
         "smallint" => ml::AtomClass::Op,
+        // `fontmath.ltx` 400-402: `\ldots`/`\cdots` are
+        // `\mathinner{\ldotp\ldotp\ldotp}`. The compiler emits the three
+        // punctuation atoms as a group, and all four atoms carry the
+        // command's span, so this answers for the group *and* its dots. That
+        // is not a compromise: TeX's table gives Punct-Punct and Inner-Inner
+        // the same 3mu, in the same text-styles-only way, so the three gaps
+        // measure identically either way (verified against pdfTeX, text and
+        // script style).
+        "dots" | "ldots" | "dotsc" | "dotso" | "cdots" | "dotsb" | "dotsm" | "dotsi" => {
+            ml::AtomClass::Inner
+        }
         // amsopn.sty 98-103 wraps `\varinjlim`/`\varprojlim` in `\mathop`.
         "varinjlim" | "varprojlim" => ml::AtomClass::Op,
         // amsfonts' dashed arrows: a `\mathrel` group of msam pieces.
