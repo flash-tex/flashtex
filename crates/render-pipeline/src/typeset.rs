@@ -447,6 +447,11 @@ pub struct Context<'a> {
     note_anchors: Vec<(usize, usize)>,
     /// `multicols` environments of the project (`multicol::attach`).
     multicol: multicol::State,
+    /// Footnote marks are `\rlap`ped (article/report/book `\maketitle`).
+    rlap_marks: bool,
+    /// Math providers for text sizes other than the body's (footnotes), by
+    /// size in centipoints; `None` when that size's metrics are missing.
+    math_fonts_sized: BTreeMap<u32, Option<MathProvider>>,
 }
 
 impl<'a> Context<'a> {
@@ -488,6 +493,8 @@ impl<'a> Context<'a> {
             notes: Vec::new(),
             note_anchors: Vec::new(),
             multicol: multicol::State::default(),
+            rlap_marks: false,
+            math_fonts_sized: BTreeMap::new(),
         }
     }
 
@@ -765,6 +772,42 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// The math provider for text at `size`: the body's, except at the
+    /// class's `\footnotesize` below it, where LaTeX selects the math fonts
+    /// of that size (`\DeclareMathSizes`: 8/6/5 pt in a 10pt class, 10/7/5 in
+    /// a 12pt class). A size whose TeX metrics are not available (9 pt, the
+    /// 11pt class's notes: cmmi9/cmsy9 are not embedded) keeps the body's
+    /// metrics and is reported once.
+    fn math_fonts_at(&mut self, span: Span, size: f64) -> Option<MathProvider> {
+        let body = self.math_fonts(span)?;
+        let note_size = footnotes::FootnoteParams::of(self.style).size;
+        if (size - self.style.body_size_pt).abs() < 0.01 || (size - note_size).abs() > 0.01 || !matches!(body, MathProvider::Tex(_)) {
+            return Some(body);
+        }
+        let key = (size * 100.0).round() as u32;
+        if let Some(sized) = self.math_fonts_sized.get(&key) {
+            return Some(sized.clone().unwrap_or(body));
+        }
+        let (script, script_script) = match (size * 100.0).round() as u32 {
+            800 | 900 => (6.0, 5.0),
+            1000 => (7.0, 5.0),
+            _ => (8.0, 6.0),
+        };
+        let r = self.fonts.resolve(self.style.family, Role::Math, size);
+        let sized = MathFonts::new(r.face, MathSizes { text: size, script, script_script })
+            .map(|m| Rc::new(m.with_double_struck(self.fonts.otf(crate::mathfont::BB_FONT_FILE))))
+            .and_then(|m| TexMathMetrics::at_text_size(size, self.style.cmex_designs, m, self.fonts))
+            .filter(TexMathMetrics::roman_available)
+            .map(|t| MathProvider::Tex(Rc::new(t)));
+        if sized.is_none() {
+            let src = self.source(span);
+            let msg = format!("math at {size}pt (\\footnotesize) is laid out with the {}pt math metrics: TeX's math fonts for that size are not available", self.style.body_size_pt);
+            self.report_once(format!("mathlim:{msg}"), Diagnostic::warning("math_limitation", msg, vec![src]));
+        }
+        self.math_fonts_sized.insert(key, sized.clone());
+        Some(sized.unwrap_or(body))
+    }
+
     /// `\fontdimen`s of the face for `style` at `size`: the face's TFM
     /// when it has one (exact fixwords), else the transcribed table.
     fn text_params(&self, style: TextStyle, size: f64) -> params::TextParamsPt {
@@ -852,7 +895,7 @@ impl<'a> Context<'a> {
         let params = self.text_params(style, size);
         let mut epsilon: Option<(usize, f64, f64)> = None;
         if logo == TextLogo::LaTeXe {
-            if let Some(rec) = self.math_box(&flashtex_compiler::math::varepsilon_list(span), span, false) {
+            if let Some(rec) = self.math_box(&flashtex_compiler::math::varepsilon_list(span), span, false, size) {
                 if let BoxRec::Math(mi) = &self.recs[rec] {
                     let root = &self.maths[*mi].root;
                     epsilon = Some((rec, root.width, root.height));
@@ -1030,13 +1073,13 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn math_box(&mut self, list: &flashtex_compiler::math::MathList, span: Span, display: bool) -> Option<usize> {
-        let fonts = self.math_fonts(span)?;
+    fn math_box(&mut self, list: &flashtex_compiler::math::MathList, span: Span, display: bool, size: f64) -> Option<usize> {
+        let fonts = self.math_fonts_at(span, size)?;
         let mut sink = crate::mathtext::TextSink::default();
         // `\quad` in math is `\hskip1em` of the text font (`\fontdimen6`),
         // not 18 mu of the math symbol font.
         let fam2_quad = ml::MathFontMetrics::params(fonts.metrics(), ml::Style::TEXT.size_class()).quad;
-        let text_quad = self.text_params(TextStyle::default(), self.style.body_size_pt).quad;
+        let text_quad = self.text_params(TextStyle::default(), size).quad;
         if fam2_quad > 0.0 && text_quad > 0.0 {
             sink.text_quad = Some((text_quad, text_quad / fam2_quad));
         }
@@ -1808,7 +1851,11 @@ impl<'a> Context<'a> {
                     if *mark {
                         // `\@footnotemark`: `\nobreak\@makefnmark`.
                         push(&mut out, &mut recs, pl::Item::penalty(pl::INFINITE_PENALTY), None);
-                        if let Some((run, rec)) = self.footnote_mark(number, *span, size) {
+                        if let Some((mut run, rec)) = self.footnote_mark(number, *span, size) {
+                            if self.rlap_marks {
+                                // `\rlap{\@textsuperscript{...}}`.
+                                run.width = 0.0;
+                            }
                             push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                             anchor = Some(rec);
                         }
@@ -1857,7 +1904,11 @@ impl<'a> Context<'a> {
                     push(&mut out, &mut recs, pl::Item::Glue(glue), None);
                 }
                 AItem::Math { list, span } => {
-                    if let Some(rec) = self.math_box(list, *span, false) {
+                    // `size`, not the body size: math inside a footnote is set
+                    // with that size's math fonts (`math_fonts_at`). The split
+                    // into `math_pieces` is main's inline-math line breaking and
+                    // is orthogonal.
+                    if let Some(rec) = self.math_box(list, *span, false, size) {
                         for (item, rec) in self.math_pieces(rec, size, *span) {
                             push(&mut out, &mut recs, item, rec);
                         }
@@ -1887,6 +1938,18 @@ impl<'a> Context<'a> {
                     push(&mut out, &mut recs, pl::Item::Glue(glue), None)
                 }
                 AItem::HSpace { pt } => push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(*pt)), None),
+                AItem::NoteParBreak => {
+                    // `\par` (`\parfillskip`), then `\indent`: an empty box
+                    // `\parindent` (1em of the note's font) wide.
+                    push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fil()), None);
+                    push(&mut out, &mut recs, pl::Item::penalty(pl::FORCED_BREAK), None);
+                    // A rule of no height: every box needs a record, and
+                    // pdfTeX ships no rule whose height plus depth is 0.
+                    let quad = self.text_params(base, size).quad;
+                    self.recs.push(BoxRec::Rule { width: quad, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    let indent = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width: quad, height: 0.0, depth: 0.0, source: 0..0 };
+                    push(&mut out, &mut recs, pl::Item::Box(indent), Some(self.recs.len() - 1));
+                }
                 AItem::Table(table) => {
                     if let Some((run, rec)) = self.table_box(table, size) {
                         push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
@@ -2730,6 +2793,24 @@ impl<'a> Context<'a> {
     /// `\tabcolsep` on both sides; rows abut (`\baselineskip\z@
     /// \lineskip\z@`). The author line breaks only between `tabular`s.
     fn title_blocks(&mut self, title: &[AItem], authors: &[Vec<Vec<AItem>>], date: Option<&[AItem]>, g: &flashtex_class_geometry::ResolvedDocument, form: TitleForm, columns: usize) -> Vec<BuiltBlock> {
+        // `\maketitle` sets `\@makefnmark` to `\rlap{\@textsuperscript
+        // {\normalfont\@thefnmark}}` and issues `\@thanks` (the
+        // `\footnotetext`s of `\thanks`) after `\@maketitle` in vertical
+        // mode: the notes' inserts follow the title's last line.
+        let before = self.note_anchors.len();
+        self.rlap_marks = true;
+        let out = self.title_blocks_set(title, authors, date, g, form, columns);
+        self.rlap_marks = false;
+        let last = out.iter().rev().find_map(|b| b.block.lines.lines.last().and_then(|l| b.recs.get(l.items.clone()).and_then(|r| r.iter().rev().find_map(|r| *r))));
+        if let Some(rec) = last {
+            for anchor in &mut self.note_anchors[before..] {
+                anchor.0 = rec;
+            }
+        }
+        out
+    }
+
+    fn title_blocks_set(&mut self, title: &[AItem], authors: &[Vec<Vec<AItem>>], date: Option<&[AItem]>, g: &flashtex_class_geometry::ResolvedDocument, form: TitleForm, columns: usize) -> Vec<BuiltBlock> {
         use crate::style::frame_pt;
         use flashtex_class_geometry::FontSize;
         let s = self.style;
@@ -3423,7 +3504,7 @@ impl<'a> Context<'a> {
         style: ParaStyle,
         list_geom: Option<&ListGeom>,
     ) -> Option<BuiltBlock> {
-        let rec = self.math_box(list, span, true)?;
+        let rec = self.math_box(list, span, true, self.style.body_size_pt)?;
         let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
         let mi = *mi;
         let size = self.style.body_size_pt;
@@ -3729,7 +3810,7 @@ impl<'a> Context<'a> {
                     list.atoms.insert(0, empty);
                 }
                 let cspan = list.atoms.iter().map(|a| a.span).reduce(Span::merge).unwrap_or(row.span);
-                let run = self.math_box(&list, cspan, true).map(|rec| {
+                let run = self.math_box(&list, cspan, true, self.style.body_size_pt).map(|rec| {
                     let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
                     (math_run(&self.maths[*mi].root, size, cspan), rec)
                 });
@@ -6109,7 +6190,8 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     let vblocks: Vec<VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
     let list = pagebuild::vlist(&params, &vblocks);
     // Footnote blocks are appended after the body's (not in `vblocks`).
-    let insertions = footnotes::prepare(ctx, &mut blocks, &params, !floats.is_empty());
+    let body_blocks = blocks.len();
+    let insertions = footnotes::prepare(ctx, &mut blocks, &params);
     // Two-column documents: the page builder fills columns of `\textheight`
     // (`\@colht`); `\@outputdblcol` ships the first column and the second
     // side by side, the second `\columnwidth + \columnsep` to the right.
@@ -6139,7 +6221,11 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 src,
             ));
         }
-        floatpage::paginate(ctx, &mut blocks, &params, &list, floats)
+        let (mut pages, images, labels, areas) = floatpage::paginate(ctx, &mut blocks, &params, &list, floats, body_blocks, insertions.as_ref());
+        if insertions.is_some() {
+            footnotes::place(ctx, &mut blocks, &mut pages, areas);
+        }
+        (pages, images, labels)
     };
     // The `\twocolumn[...]` box sits at the top of the first page
     // (`\@combinedblfloats`), both columns `\dbltextfloatsep` below it.

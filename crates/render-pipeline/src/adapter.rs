@@ -148,6 +148,10 @@ pub enum Item {
     /// `\/` after a `\textit`/`\emph`/`\textbf` argument (LaTeX's
     /// `\text@command` adds it unless `.` or `,` follows).
     ItalicCorrection,
+    /// A paragraph break inside a footnote's text (the compiler attributes
+    /// it to the `\footnote` command's span): `\par`, then the next
+    /// paragraph's `\indent` box (`\@makefntext`'s `\parindent` 1em).
+    NoteParBreak,
     /// `\hfill`/`\hfil` (compiler `Inline::HFill`): infinitely stretchable
     /// glue; a legal break point that is discarded at a line break. `fill`
     /// is the `\hfill` order (it beats `\parfillskip`'s `fil`); the
@@ -4118,7 +4122,16 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
-                let note = text.as_ref().map(|t| items_from_inlines_styled(texts, t, styles, labels, size, false, compiler_weight));
+                let note = text.as_ref().map(|t| {
+                    let mut note = Vec::new();
+                    for (k, part) in t.split(|i| matches!(i, Inline::LineBreak { span: at } if at == span)).enumerate() {
+                        if k > 0 {
+                            note.push(Item::NoteParBreak);
+                        }
+                        note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight));
+                    }
+                    note
+                });
                 items.push(Item::Footnote { number: number.clone(), mark: *mark, span: *span, text: note });
                 after_control_word = end == span.end;
                 prev_end = Some(end);

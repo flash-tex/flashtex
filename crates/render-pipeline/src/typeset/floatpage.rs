@@ -25,7 +25,7 @@ use crate::adapter::{Item as AItem, ParaStyle};
 use crate::display::{self, Diagnostic, ImageResource, Provenance, Tick};
 use crate::floats::FloatKind;
 use crate::graphics::{GraphicBox, BP_PER_PT};
-use crate::pagebuild::{self, badness, BuiltPage, PageParams, Placed, VItem, AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY};
+use crate::pagebuild::{self, badness, BuiltPage, InsertArea, InsertState, Insertions, PageIns, PageParams, Placed, VItem, AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY};
 
 use super::{BoxRec, BuiltBlock, Context};
 
@@ -464,10 +464,24 @@ fn block_source(ctx: &Context, b: &BuiltBlock, items: impl Iterator<Item = usize
         .collect()
 }
 
-/// Breaks the text into pages with the floats placed. Returns the pages,
-/// the image items per page number and the page of every float `\label`.
-pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams, list: &[VItem], specs: &[FloatSpec]) -> (Vec<BuiltPage>, Vec<(u32, display::Item)>, Vec<(String, u32)>) {
-    let text_blocks = blocks.len();
+/// Breaks the text into pages with the floats placed. `text_blocks` is the
+/// number of body blocks (the blocks `list` was made from; footnote blocks
+/// follow them) and `ins` the footnote insertions, charged against the
+/// page goal (`\@colroom`) as TeX's page builder does and set below the
+/// text and above bottom floats (`\@makecol`: `\@outputbox@appendfootnotes`
+/// before `\@outputbox@attachfloats`). Returns the pages, the image items
+/// per page number, the page of every float `\label` and each page's
+/// footnote area.
+#[allow(clippy::type_complexity)]
+pub fn paginate(
+    ctx: &mut Context,
+    blocks: &mut Vec<BuiltBlock>,
+    p: &PageParams,
+    list: &[VItem],
+    specs: &[FloatSpec],
+    text_blocks: usize,
+    ins: Option<&Insertions>,
+) -> (Vec<BuiltPage>, Vec<(u32, display::Item)>, Vec<(String, u32)>, Vec<Option<InsertArea>>) {
     // Marker positions, before caption blocks are appended.
     let vblocks: Vec<pagebuild::VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
     let mut markers: Vec<(usize, usize)> = Vec::new();
@@ -539,6 +553,10 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
             _ => None,
         }
     };
+    let no_ins = Insertions::default();
+    let insr = ins.unwrap_or(&no_ins);
+    let mut held: Vec<PageIns> = Vec::new();
+    let mut areas: Vec<Option<InsertArea>> = Vec::new();
     let mut start = 0usize;
     loop {
         while start < nodes.len() {
@@ -554,17 +572,58 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
         }
         let vsize = pl.col.colroom;
         let (mut total, mut stretch, mut shrink, mut fil, mut depth, mut has_box) = (0.0f64, 0.0f64, 0.0f64, false, 0.0f64, false);
+        // Held-over notes are contributed ahead of the page's material.
+        let mut is = InsertState::new(insr, vsize);
+        for h in &held {
+            is.append(h.list.clone(), h.height_plus_depth, None, total, depth, &mut stretch, &mut shrink);
+        }
+        let mut best_ins = is.last_ins;
         let mut lines_seen = 0usize;
         let mut best: Option<(usize, i64)> = None;
         let mut fired = None;
         let mut restart = false;
         let mut prev_box = false;
         let mut i = start;
+        let cost = |total: f64, stretch: f64, shrink: f64, fil: bool, is: &InsertState, pi: i32| -> i64 {
+            let goal = is.goal;
+            let b = if total < goal {
+                if fil {
+                    0
+                } else {
+                    badness(goal - total, stretch)
+                }
+            } else if total - goal > shrink {
+                AWFUL_BAD
+            } else {
+                badness(total - goal, shrink)
+            };
+            let c = if b < AWFUL_BAD {
+                if pi <= EJECT_PENALTY {
+                    i64::from(pi)
+                } else if b < INF_BAD {
+                    b + i64::from(pi) + is.penalties
+                } else {
+                    DEPLORABLE
+                }
+            } else {
+                b
+            };
+            if is.penalties >= i64::from(INF_PENALTY) {
+                AWFUL_BAD
+            } else {
+                c
+            }
+        };
         while i < nodes.len() {
             if let N::Marker(f) = nodes[i] {
                 if !processed[f] {
                     processed[f] = true;
-                    let pageht = if has_box { total + depth } else { 0.0 };
+                    // `\@specialoutput`: `\@pageht` is the held page plus
+                    // `\ht\footins + \skip\footins + \dp\footins`.
+                    let mut pageht = if has_box { total + depth } else { 0.0 };
+                    if is.started && is.height > 0.0 {
+                        pageht += is.height + insr.skip.0;
+                    }
                     let before = pl.col.colroom;
                     let here = pl.add_to_cur_col(f, pageht, !specs[f].hmode);
                     let mut ins = here.unwrap_or_default();
@@ -587,30 +646,10 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
                 _ => (false, 0),
             };
             if legal && has_box {
-                let b = if total < vsize {
-                    if fil {
-                        0
-                    } else {
-                        badness(vsize - total, stretch)
-                    }
-                } else if total - vsize > shrink {
-                    AWFUL_BAD
-                } else {
-                    badness(total - vsize, shrink)
-                };
-                let c = if b < AWFUL_BAD {
-                    if pi <= EJECT_PENALTY {
-                        i64::from(pi)
-                    } else if b < INF_BAD {
-                        b + i64::from(pi)
-                    } else {
-                        DEPLORABLE
-                    }
-                } else {
-                    b
-                };
+                let c = cost(total, stretch, shrink, fil, &is, pi);
                 if best.is_none_or(|(_, lc)| c <= lc) {
                     best = Some((i, c));
+                    best_ins = is.last_ins;
                 }
                 if c == AWFUL_BAD || pi <= EJECT_PENALTY {
                     fired = Some(best.map_or(i, |(bi, _)| bi));
@@ -631,10 +670,19 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
                 }
                 lines_seen += 1;
                 prev_box = true;
-                if total > vsize + 1e-9 && lines_seen > 1 {
+                if total > is.goal + 1e-9 && lines_seen > 1 {
                     if let Some((bi, _)) = best {
                         fired = Some(bi);
                         break;
+                    }
+                }
+                if let N::V(j) = nodes[i] {
+                    if let VItem::Box { payload, .. } = list[j] {
+                        for &n in insr.after.get(&payload).map(Vec::as_slice).unwrap_or(&[]) {
+                            let note = insr.notes[n].clone();
+                            let hd = pagebuild::natural_height_plus_depth(&note);
+                            is.append(note, hd, Some(i), total, depth, &mut stretch, &mut shrink);
+                        }
                     }
                 }
             } else {
@@ -667,7 +715,21 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
         if restart {
             continue;
         }
+        // The document's end is a breakpoint like any other once notes are
+        // on the page.
+        if fired.is_none() && !is.page.is_empty() {
+            if cost(total, stretch, shrink, fil, &is, EJECT_PENALTY) == AWFUL_BAD {
+                if let Some((bi, _)) = best {
+                    fired = Some(bi);
+                }
+            } else {
+                best_ins = is.last_ins;
+            }
+        }
         let end = fired.unwrap_or(nodes.len());
+        let ejected = matches!(nodes.get(end), Some(N::Penalty(pen)) if *pen <= EJECT_PENALTY);
+        held.clear();
+        let notes = pagebuild::settle_inserts(is, end, best_ins, insr.split_top_skip, &mut held);
         let page_no = pl.pages.len() as u32 + 1;
         let tops = std::mem::take(&mut pl.col.top);
         let bots = std::mem::take(&mut pl.col.bot);
@@ -682,59 +744,101 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
             pl.emit(f, y, page_no, &mut lines);
             y += boxes[f].height + fp.floatsep.n;
         }
-        let (mut total, mut depth, mut has_box) = (0.0f64, 0.0f64, false);
-        let mut last_text: Option<Placed> = None;
-        for n in &nodes[start..end] {
-            let bx = match n {
-                N::FBox(f) => Some((boxes[*f].height, 0.0, None, Some(*f))),
-                N::V(j) => match list[*j] {
-                    VItem::Box { height, depth, payload } => Some((height, depth, Some(payload), None)),
-                    VItem::Glue { width, .. } => {
+        let bots_span: f64 = if bots.is_empty() { 0.0 } else { bots.iter().map(|f| boxes[*f].height).sum::<f64>() + (bots.len() as f64 - 1.0) * fp.floatsep.n };
+        let mut overfull_by = 0.0;
+        if notes.iter().any(|l| !l.is_empty()) {
+            // `\@makecol` with `\footins`: the body (here floats as boxes),
+            // `\skip\footins`, `\footnoterule` and the notes, then the
+            // bottom floats `\textfloatsep` below, in `\@colroom`.
+            let mut body: Vec<VItem> = Vec::with_capacity(end - start);
+            for n in &nodes[start..end] {
+                match n {
+                    N::FBox(f) => body.push(VItem::Box { height: boxes[*f].height, depth: 0.0, payload: (usize::MAX, *f) }),
+                    N::V(j) => body.push(list[*j].clone()),
+                    N::Glue(w, st, sh) => body.push(VItem::Glue { width: *w, stretch: *st, shrink: *sh, fil: false }),
+                    N::Penalty(pen) => body.push(VItem::Penalty(*pen)),
+                    N::Marker(_) => {}
+                }
+            }
+            let vfil = ejected || fired.is_none();
+            let colp = PageParams { vsize, ..*p };
+            let (page, area) = pagebuild::make_column(&colp, &body, false, vfil, &notes, insr, !bots.is_empty());
+            overfull_by = page.overfull_by;
+            for l in page.lines {
+                if l.payload.0 == usize::MAX {
+                    pl.emit(l.payload.1, l.baseline - l.height + text_off, page_no, &mut lines);
+                } else {
+                    lines.push(Placed { baseline: l.baseline + text_off, ..l });
+                }
+            }
+            if !bots.is_empty() {
+                // Glue set to `\@colht` pushes them to the bottom; under
+                // `\raggedbottom` without a `\vfil` they follow the notes.
+                let natural = area.lines.last().map_or(vsize, |l| l.baseline + l.depth) + text_off + fp.textfloatsep.n;
+                let mut y = if vfil || p.flushbottom { pl.colht - bots_span } else { natural };
+                for &f in &bots {
+                    pl.emit(f, y, page_no, &mut lines);
+                    y += boxes[f].height + fp.floatsep.n;
+                }
+            }
+            areas.resize(pl.pages.len(), None);
+            areas.push(Some(InsertArea {
+                rule_top: area.rule_top + text_off,
+                lines: area.lines.into_iter().map(|l| Placed { baseline: l.baseline + text_off, ..l }).collect(),
+            }));
+        } else {
+            let (mut total, mut depth, mut has_box) = (0.0f64, 0.0f64, false);
+            let mut last_text: Option<Placed> = None;
+            for n in &nodes[start..end] {
+                let bx = match n {
+                    N::FBox(f) => Some((boxes[*f].height, 0.0, None, Some(*f))),
+                    N::V(j) => match list[*j] {
+                        VItem::Box { height, depth, payload } => Some((height, depth, Some(payload), None)),
+                        VItem::Glue { width, .. } => {
+                            if has_box {
+                                total += depth + width;
+                                depth = 0.0;
+                            }
+                            None
+                        }
+                        VItem::Penalty(_) => None,
+                    },
+                    N::Glue(w, ..) => {
                         if has_box {
-                            total += depth + width;
+                            total += depth + w;
                             depth = 0.0;
                         }
                         None
                     }
-                    VItem::Penalty(_) => None,
-                },
-                N::Glue(w, ..) => {
-                    if has_box {
-                        total += depth + w;
-                        depth = 0.0;
+                    _ => None,
+                };
+                if let Some((h, d, payload, float)) = bx {
+                    let baseline = if has_box { total + depth + h } else { (p.topskip - h).max(0.0) + h };
+                    total = baseline;
+                    depth = d;
+                    has_box = true;
+                    if let Some(payload) = payload {
+                        let placed = Placed { payload, baseline: baseline + text_off, height: h, depth: d };
+                        last_text = Some(placed);
+                        lines.push(placed);
                     }
-                    None
-                }
-                _ => None,
-            };
-            if let Some((h, d, payload, float)) = bx {
-                let baseline = if has_box { total + depth + h } else { (p.topskip - h).max(0.0) + h };
-                total = baseline;
-                depth = d;
-                has_box = true;
-                if let Some(payload) = payload {
-                    let placed = Placed { payload, baseline: baseline + text_off, height: h, depth: d };
-                    last_text = Some(placed);
-                    lines.push(placed);
-                }
-                if let Some(f) = float {
-                    pl.emit(f, baseline - h + text_off, page_no, &mut lines);
+                    if let Some(f) = float {
+                        pl.emit(f, baseline - h + text_off, page_no, &mut lines);
+                    }
                 }
             }
-        }
-        let mut overfull_by = 0.0;
-        if let Some(last) = last_text {
-            let bottom = last.baseline - text_off + (last.depth - p.maxdepth).max(0.0);
-            if bottom > vsize + 1e-6 {
-                overfull_by = bottom - vsize;
+            if let Some(last) = last_text {
+                let bottom = last.baseline - text_off + (last.depth - p.maxdepth).max(0.0);
+                if bottom > vsize + 1e-6 {
+                    overfull_by = bottom - vsize;
+                }
             }
-        }
-        if !bots.is_empty() {
-            let span: f64 = bots.iter().map(|f| boxes[*f].height).sum::<f64>() + (bots.len() as f64 - 1.0) * fp.floatsep.n;
-            let mut y = pl.colht - span;
-            for &f in &bots {
-                pl.emit(f, y, page_no, &mut lines);
-                y += boxes[f].height + fp.floatsep.n;
+            if !bots.is_empty() {
+                let mut y = pl.colht - bots_span;
+                for &f in &bots {
+                    pl.emit(f, y, page_no, &mut lines);
+                    y += boxes[f].height + fp.floatsep.n;
+                }
             }
         }
         pl.pages.push(BuiltPage { lines, overfull_by });
@@ -744,6 +848,54 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
         if fired.is_none() {
             break;
         }
+    }
+    // `\@doclearpage` with `\footins` not void: `\vbox{}` and the held notes
+    // (with the floats already queued for the column) make a page of their
+    // own before the deferred floats are flushed.
+    while !held.is_empty() {
+        let vsize = pl.col.colroom;
+        let mut is = InsertState::new(insr, vsize);
+        let (mut stretch, mut shrink) = (0.0, 0.0);
+        for h in std::mem::take(&mut held) {
+            is.append(h.list, h.height_plus_depth, None, p.topskip, 0.0, &mut stretch, &mut shrink);
+        }
+        let best_ins = is.last_ins;
+        let notes = pagebuild::settle_inserts(is, 0, best_ins, insr.split_top_skip, &mut held);
+        if !notes.iter().any(|l| !l.is_empty()) {
+            break;
+        }
+        let page_no = pl.pages.len() as u32 + 1;
+        let tops = std::mem::take(&mut pl.col.top);
+        let bots = std::mem::take(&mut pl.col.bot);
+        let text_off = if tops.is_empty() {
+            0.0
+        } else {
+            tops.iter().map(|f| boxes[*f].height).sum::<f64>() + (tops.len() as f64 - 1.0) * fp.floatsep.n + fp.textfloatsep.n
+        };
+        let mut lines: Vec<Placed> = Vec::new();
+        let mut y = 0.0;
+        for &f in &tops {
+            pl.emit(f, y, page_no, &mut lines);
+            y += boxes[f].height + fp.floatsep.n;
+        }
+        let colp = PageParams { vsize, ..*p };
+        let (_, area) = pagebuild::make_column(&colp, &[], true, true, &notes, insr, !bots.is_empty());
+        if !bots.is_empty() {
+            let span: f64 = bots.iter().map(|f| boxes[*f].height).sum::<f64>() + (bots.len() as f64 - 1.0) * fp.floatsep.n;
+            let mut y = pl.colht - span;
+            for &f in &bots {
+                pl.emit(f, y, page_no, &mut lines);
+                y += boxes[f].height + fp.floatsep.n;
+            }
+        }
+        areas.resize(pl.pages.len(), None);
+        areas.push(Some(InsertArea {
+            rule_top: area.rule_top + text_off,
+            lines: area.lines.into_iter().map(|l| Placed { baseline: l.baseline + text_off, ..l }).collect(),
+        }));
+        pl.pages.push(BuiltPage { lines, overfull_by: 0.0 });
+        pl.col.mid.clear();
+        pl.start_column();
     }
     // `\end{document}` -> `\clearpage` -> `\@doclearpage`: floats already
     // queued for the unstarted column go back to the deferred list, then
@@ -765,5 +917,6 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
         }
     }
     let _ = FloatKind::Figure;
-    (pl.pages, pl.images, pl.labels)
+    areas.resize(pl.pages.len(), None);
+    (pl.pages, pl.images, pl.labels, areas)
 }
