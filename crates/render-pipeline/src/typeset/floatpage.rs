@@ -450,6 +450,17 @@ impl Placer<'_> {
     }
 }
 
+/// The column's float material for `\@makecol` (`\@cflt`/`\@cflb`).
+fn column_floats(boxes: &[FloatBox], tops: &[usize], bots: &[usize], fp: &FloatParams) -> pagebuild::ColumnFloats {
+    let sk = |s: Skip| (s.n, s.st, s.sh);
+    pagebuild::ColumnFloats {
+        tops: tops.iter().map(|f| boxes[*f].height).collect(),
+        bots: bots.iter().map(|f| boxes[*f].height).collect(),
+        floatsep: sk(fp.floatsep),
+        textfloatsep: sk(fp.textfloatsep),
+    }
+}
+
 fn block_source(ctx: &Context, b: &BuiltBlock, items: impl Iterator<Item = usize>) -> Vec<Span> {
     items
         .filter_map(|i| b.recs.get(i).copied().flatten())
@@ -670,7 +681,12 @@ pub fn paginate(
                 }
                 lines_seen += 1;
                 prev_box = true;
-                if total > is.goal + 1e-9 && lines_seen > 1 {
+                // §1005: the page is hopeless only once the excess passes
+                // what the glue can shrink. In a body of `\parskip 0pt
+                // plus 1pt` that shrink is zero, but `\skip\footins`'s
+                // `minus 2pt` (and an `h` float's `\intextsep`) buys the
+                // column a line TeX keeps.
+                if total > is.goal + shrink + 1e-9 && lines_seen > 1 {
                     if let Some((bi, _)) = best {
                         fired = Some(bi);
                         break;
@@ -739,17 +755,19 @@ pub fn paginate(
             tops.iter().map(|f| boxes[*f].height).sum::<f64>() + (tops.len() as f64 - 1.0) * fp.floatsep.n + fp.textfloatsep.n
         };
         let mut lines: Vec<Placed> = Vec::new();
-        let mut y = 0.0;
-        for &f in &tops {
-            pl.emit(f, y, page_no, &mut lines);
-            y += boxes[f].height + fp.floatsep.n;
-        }
-        let bots_span: f64 = if bots.is_empty() { 0.0 } else { bots.iter().map(|f| boxes[*f].height).sum::<f64>() + (bots.len() as f64 - 1.0) * fp.floatsep.n };
         let mut overfull_by = 0.0;
         if notes.iter().any(|l| !l.is_empty()) {
-            // `\@makecol` with `\footins`: the body (here floats as boxes),
-            // `\skip\footins`, `\footnoterule` and the notes, then the
-            // bottom floats `\textfloatsep` below, in `\@colroom`.
+            // `\@makecol` with `\footins` and floats. The notes attach to
+            // `\box\@cclv` first (the default `build/column/outputbox`
+            // plug is `footnotes-floats-legacy`) and `\@combinefloats`
+            // wraps the floats around that, so the column reads: top
+            // floats, `\textfloatsep`, the body, `\skip\footins`, the
+            // `\footnoterule`, the notes, `\textfloatsep`, the bottom
+            // floats. `\@cflt`/`\@cflb` are plain `\vbox`es and only
+            // `\@make@normalcolbox` packs `\vbox to\@colht`, so one glue
+            // set ratio covers the body's glue, `\skip\footins` and both
+            // float separations together: `\@colht`, not `\@colroom`, is
+            // the size to reach.
             let mut body: Vec<VItem> = Vec::with_capacity(end - start);
             for n in &nodes[start..end] {
                 match n {
@@ -761,32 +779,31 @@ pub fn paginate(
                 }
             }
             let vfil = ejected || fired.is_none();
-            let colp = PageParams { vsize, ..*p };
-            let (page, area) = pagebuild::make_column(&colp, &body, false, vfil, &notes, insr, !bots.is_empty());
+            let colp = PageParams { vsize: pl.colht, ..*p };
+            let cf = column_floats(&boxes, &tops, &bots, &fp);
+            let (page, area, placed) = pagebuild::make_column(&colp, &body, false, vfil, &notes, insr, &cf);
             overfull_by = page.overfull_by;
+            for (&f, &y) in tops.iter().zip(&placed.tops) {
+                pl.emit(f, y, page_no, &mut lines);
+            }
             for l in page.lines {
                 if l.payload.0 == usize::MAX {
-                    pl.emit(l.payload.1, l.baseline - l.height + text_off, page_no, &mut lines);
+                    pl.emit(l.payload.1, l.baseline - l.height, page_no, &mut lines);
                 } else {
-                    lines.push(Placed { baseline: l.baseline + text_off, ..l });
+                    lines.push(l);
                 }
             }
-            if !bots.is_empty() {
-                // Glue set to `\@colht` pushes them to the bottom; under
-                // `\raggedbottom` without a `\vfil` they follow the notes.
-                let natural = area.lines.last().map_or(vsize, |l| l.baseline + l.depth) + text_off + fp.textfloatsep.n;
-                let mut y = if vfil || p.flushbottom { pl.colht - bots_span } else { natural };
-                for &f in &bots {
-                    pl.emit(f, y, page_no, &mut lines);
-                    y += boxes[f].height + fp.floatsep.n;
-                }
+            for (&f, &y) in bots.iter().zip(&placed.bots) {
+                pl.emit(f, y, page_no, &mut lines);
             }
             areas.resize(pl.pages.len(), None);
-            areas.push(Some(InsertArea {
-                rule_top: area.rule_top + text_off,
-                lines: area.lines.into_iter().map(|l| Placed { baseline: l.baseline + text_off, ..l }).collect(),
-            }));
+            areas.push(Some(area));
         } else {
+            let mut y = 0.0;
+            for &f in &tops {
+                pl.emit(f, y, page_no, &mut lines);
+                y += boxes[f].height + fp.floatsep.n;
+            }
             let (mut total, mut depth, mut has_box) = (0.0f64, 0.0f64, false);
             let mut last_text: Option<Placed> = None;
             for n in &nodes[start..end] {
@@ -834,7 +851,8 @@ pub fn paginate(
                 }
             }
             if !bots.is_empty() {
-                let mut y = pl.colht - bots_span;
+                let span: f64 = bots.iter().map(|f| boxes[*f].height).sum::<f64>() + (bots.len() as f64 - 1.0) * fp.floatsep.n;
+                let mut y = pl.colht - span;
                 for &f in &bots {
                     pl.emit(f, y, page_no, &mut lines);
                     y += boxes[f].height + fp.floatsep.n;
@@ -867,32 +885,18 @@ pub fn paginate(
         let page_no = pl.pages.len() as u32 + 1;
         let tops = std::mem::take(&mut pl.col.top);
         let bots = std::mem::take(&mut pl.col.bot);
-        let text_off = if tops.is_empty() {
-            0.0
-        } else {
-            tops.iter().map(|f| boxes[*f].height).sum::<f64>() + (tops.len() as f64 - 1.0) * fp.floatsep.n + fp.textfloatsep.n
-        };
         let mut lines: Vec<Placed> = Vec::new();
-        let mut y = 0.0;
-        for &f in &tops {
+        let colp = PageParams { vsize: pl.colht, ..*p };
+        let cf = column_floats(&boxes, &tops, &bots, &fp);
+        let (_, area, placed) = pagebuild::make_column(&colp, &[], true, true, &notes, insr, &cf);
+        for (&f, &y) in tops.iter().zip(&placed.tops) {
             pl.emit(f, y, page_no, &mut lines);
-            y += boxes[f].height + fp.floatsep.n;
         }
-        let colp = PageParams { vsize, ..*p };
-        let (_, area) = pagebuild::make_column(&colp, &[], true, true, &notes, insr, !bots.is_empty());
-        if !bots.is_empty() {
-            let span: f64 = bots.iter().map(|f| boxes[*f].height).sum::<f64>() + (bots.len() as f64 - 1.0) * fp.floatsep.n;
-            let mut y = pl.colht - span;
-            for &f in &bots {
-                pl.emit(f, y, page_no, &mut lines);
-                y += boxes[f].height + fp.floatsep.n;
-            }
+        for (&f, &y) in bots.iter().zip(&placed.bots) {
+            pl.emit(f, y, page_no, &mut lines);
         }
         areas.resize(pl.pages.len(), None);
-        areas.push(Some(InsertArea {
-            rule_top: area.rule_top + text_off,
-            lines: area.lines.into_iter().map(|l| Placed { baseline: l.baseline + text_off, ..l }).collect(),
-        }));
+        areas.push(Some(area));
         pl.pages.push(BuiltPage { lines, overfull_by: 0.0 });
         pl.col.mid.clear();
         pl.start_column();
