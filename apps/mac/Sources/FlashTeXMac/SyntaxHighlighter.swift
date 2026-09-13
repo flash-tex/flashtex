@@ -64,8 +64,12 @@ struct SyntaxHighlighter {
         case displayMath
         /// `\(…\)`.
         case parenMath
-        /// Inside a math environment (`equation`, `align`, …).
-        case mathEnvironment
+        /// Inside math environments (`equation`, `align`, …), `depth` of them
+        /// deep. Math environments nest in real documents — `cases` inside
+        /// `align`, `split` inside `equation`, `array` inside `equation` — so
+        /// the mode counts them; a flat flag left everything between the inner
+        /// `\end{cases}` and the outer `\end{align}` lexed as text.
+        case mathEnvironment(depth: Int)
         /// Inside a verbatim-like environment; ends at `\end{name}`.
         case verbatim(String)
         /// Inside `\begin{comment}`.
@@ -349,9 +353,18 @@ struct SyntaxHighlighter {
                 if word == "begin" {
                     if SyntaxHighlighter.verbatimEnvironments.contains(env) { mode = .verbatim(env) }
                     else if env == "comment" { mode = .commentEnvironment }
-                    else if SyntaxHighlighter.mathEnvironments.contains(env), mode == .text { mode = .mathEnvironment }
-                } else if mode == .mathEnvironment, SyntaxHighlighter.mathEnvironments.contains(env) {
-                    mode = .text
+                    else if SyntaxHighlighter.mathEnvironments.contains(env) {
+                        // Entering math, or nesting one math environment inside
+                        // another (`cases` in `align`, `split` in `equation`).
+                        switch mode {
+                        case .text: mode = .mathEnvironment(depth: 1)
+                        case .mathEnvironment(let depth): mode = .mathEnvironment(depth: depth + 1)
+                        default: break // `$…$`, verbatim and comment bodies are not entered
+                        }
+                    }
+                } else if case .mathEnvironment(let depth) = mode, SyntaxHighlighter.mathEnvironments.contains(env) {
+                    // Only the outermost `\end` leaves math.
+                    mode = depth <= 1 ? .text : .mathEnvironment(depth: depth - 1)
                 }
                 return b.next
             case "verb", "verb*":
