@@ -242,7 +242,15 @@ fn cm_less_symbols_are_painted_from_latin_modern_math() {
         eprintln!("skipping: Latin Modern not installed");
         return;
     }
-    let r = render_one(&doc("A $\\mathbb{Z}\\aleph$ $\\mathbb{R}\\setminus\\mathbb{Q}$ $x\\Longrightarrow y$ $10 - x$ B"));
+    // A control for the *fallback* face, so it must not see
+    // `NewCMMath-Regular.otf`: with NewCM in `FLASHTEX_FONT_DIRS` the
+    // double-struck glyphs paint from it instead and `ℤℵ` splits into two
+    // runs, which is the documented NewCM behaviour, not the drop this test
+    // guards against. `mathbb_paints_from_new_computer_modern_when_bundled`
+    // covers the bundled case.
+    let staged = stage_faces_without("cm_less_symbols", &["NewCMMath-Regular.otf"]);
+    let fonts = staged.font_set(&[], ambient_tfm_dirs());
+    let r = render_one_with(&doc("A $\\mathbb{Z}\\aleph$ $\\mathbb{R}\\setminus\\mathbb{Q}$ $x\\Longrightarrow y$ $10 - x$ B"), &fonts);
     let runs: Vec<(String, u16)> = r.v2.pages[0]
         .items
         .iter()
@@ -280,6 +288,7 @@ fn mathbb_paints_from_new_computer_modern_when_bundled() {
         return;
     }
     const NEWCM: &str = "NewCMMath-Regular.otf";
+    const CONTROL_TAG: &str = "mathbb";
     const NEWCM_SHA: &str = "60394d357348f68cd301764fe61cc502a5858e1c4ff21b948a1d14d82586a7a2";
     let candidates = [
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/mac/Fonts"),
@@ -287,8 +296,17 @@ fn mathbb_paints_from_new_computer_modern_when_bundled() {
     ];
     let text = doc("A $\\mathbb{Z}_{>0}$ and $\\mathbb{R}\\setminus\\mathbb{Q}$ and $x \\in \\mathbb{N}$.");
     let sources = [SourceDocument { path: "main.tex", text: &text }];
+    // Hermetic, not `FontSet::with_default_dirs(extra)`: that reads
+    // `FLASHTEX_FONT_DIRS`, and `apps/mac/Fonts` -- exactly what CI exports --
+    // ships `NewCMMath-Regular.otf` beside the Latin Modern faces. The
+    // `without` half is a control that asserts NewCM is absent, so under a
+    // real font environment it saw the very face it exists to rule out. Stage
+    // the faces explicitly, omitting NewCM, and let the bundled half add it
+    // back through `extra`.
+    let staged = stage_faces_without(CONTROL_TAG, &[NEWCM]);
+    let tfm_dirs = ambient_tfm_dirs();
     let render_with = |extra: &[PathBuf]| {
-        let fonts = FontSet::with_default_dirs(extra);
+        let fonts = staged.font_set(extra, tfm_dirs.clone());
         render(&sources, "main.tex", 1, "bb", &fonts, &RenderOptions::default())
     };
     // The face each double-struck run paints from, by its `fonts` entry.
@@ -386,6 +404,7 @@ fn mathcal_sets_at_cmsy_metrics_and_paints_from_new_computer_modern_when_bundled
         return;
     }
     const NEWCM: &str = "NewCMMath-Regular.otf";
+    const CONTROL_TAG: &str = "mathcal";
     const NEWCM_SHA: &str = "60394d357348f68cd301764fe61cc502a5858e1c4ff21b948a1d14d82586a7a2";
     let candidates = [
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/mac/Fonts"),
@@ -393,8 +412,17 @@ fn mathcal_sets_at_cmsy_metrics_and_paints_from_new_computer_modern_when_bundled
     ];
     let text = doc("power set $\\mathcal{P}(T)$ and $\\mathcal{A}\\cup\\mathcal{B}$.");
     let sources = [SourceDocument { path: "main.tex", text: &text }];
+    // Hermetic, not `FontSet::with_default_dirs(extra)`: that reads
+    // `FLASHTEX_FONT_DIRS`, and `apps/mac/Fonts` -- exactly what CI exports --
+    // ships `NewCMMath-Regular.otf` beside the Latin Modern faces. The
+    // `without` half is a control that asserts NewCM is absent, so under a
+    // real font environment it saw the very face it exists to rule out. Stage
+    // the faces explicitly, omitting NewCM, and let the bundled half add it
+    // back through `extra`.
+    let staged = stage_faces_without(CONTROL_TAG, &[NEWCM]);
+    let tfm_dirs = ambient_tfm_dirs();
     let render_with = |extra: &[PathBuf]| {
-        let fonts = FontSet::with_default_dirs(extra);
+        let fonts = staged.font_set(extra, tfm_dirs.clone());
         render(&sources, "main.tex", 1, "cal", &fonts, &RenderOptions::default())
     };
     let is_cal = |c: char| flashtex_compiler::newcm_math::advance(c).is_some();
@@ -490,6 +518,7 @@ fn varnothing_sets_at_msbm_width_and_paints_from_new_computer_modern_when_bundle
         return;
     }
     const NEWCM: &str = "NewCMMath-Regular.otf";
+    const CONTROL_TAG: &str = "varnothing";
     const NEWCM_SHA: &str = "60394d357348f68cd301764fe61cc502a5858e1c4ff21b948a1d14d82586a7a2";
     const VARNOTHING_EM: f64 = 0.777781;
     const EMPTYSET_EM: f64 = 0.5;
@@ -499,8 +528,17 @@ fn varnothing_sets_at_msbm_width_and_paints_from_new_computer_modern_when_bundle
     ];
     let text = doc("$\\varnothing X$ and $\\emptyset X$.");
     let sources = [SourceDocument { path: "main.tex", text: &text }];
+    // Hermetic, not `FontSet::with_default_dirs(extra)`: that reads
+    // `FLASHTEX_FONT_DIRS`, and `apps/mac/Fonts` -- exactly what CI exports --
+    // ships `NewCMMath-Regular.otf` beside the Latin Modern faces. The
+    // `without` half is a control that asserts NewCM is absent, so under a
+    // real font environment it saw the very face it exists to rule out. Stage
+    // the faces explicitly, omitting NewCM, and let the bundled half add it
+    // back through `extra`.
+    let staged = stage_faces_without(CONTROL_TAG, &[NEWCM]);
+    let tfm_dirs = ambient_tfm_dirs();
     let render_with = |extra: &[PathBuf]| {
-        let fonts = FontSet::with_default_dirs(extra);
+        let fonts = staged.font_set(extra, tfm_dirs.clone());
         render(&sources, "main.tex", 1, "varnothing", &fonts, &RenderOptions::default())
     };
     // Every glyph of page 1 as `(text, painting face, sha256, origin x, size)`.

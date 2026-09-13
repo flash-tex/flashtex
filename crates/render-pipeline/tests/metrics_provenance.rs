@@ -57,7 +57,10 @@ fn missing_required_metrics_are_a_blocking_diagnostic_not_a_silent_fallback() {
         let _ = std::fs::copy(src_dir.join(f), otf_dir.join(f));
     }
     let _ = std::fs::copy(math_dir.join("latinmodern-math.otf"), otf_dir.join("latinmodern-math.otf"));
-    let fonts = FontSet::new(vec![otf_dir.clone()]);
+    // `with_dirs` with an empty metric list, not `FontSet::new`: `new` reads
+    // `FLASHTEX_TFM_DIRS`, so under CI's exported metric trees this control
+    // would resolve the very TFMs it exists to prove are missing.
+    let fonts = FontSet::with_dirs(vec![otf_dir.clone()], Vec::new());
     assert!(fonts.required_metrics().is_err());
     assert!(matches!(fonts.tfm("ec-lmr12.tfm"), Err(TfmStatus::RequiredUnavailable(_))));
     let docs = [SourceDocument { path: "main.tex", text: "\\begin{document}Body $x^2$ text.\\end{document}" }];
@@ -96,7 +99,11 @@ fn a_flat_bundle_directory_with_tfms_and_licence_satisfies_the_required_set() {
         std::fs::copy(tfm_dir.join(f), flat.join(f)).unwrap();
     }
     std::fs::copy(format!("{texmf}/doc/fonts/lm/GUST-FONT-LICENSE.TXT"), flat.join("GUST-FONT-LICENSE.TXT")).unwrap();
-    let fonts = FontSet::new(vec![flat.clone()]);
+    // The flat directory is its own metric directory, named explicitly:
+    // `FontSet::new` would add whatever `FLASHTEX_TFM_DIRS` holds, so this
+    // would pass from the ambient texmf trees without proving the flat
+    // layout resolves anything.
+    let fonts = FontSet::with_dirs(vec![flat.clone()], vec![flat.clone()]);
     fonts.required_metrics().expect("flat layout loads the pinned set");
     assert_eq!(fonts.tfm("ec-lmr12.tfm").unwrap().sha256(), REQUIRED_TFMS[0].1);
     let docs = [SourceDocument { path: "main.tex", text: "\\begin{document}Body $x^2$ text.\\end{document}" }];
