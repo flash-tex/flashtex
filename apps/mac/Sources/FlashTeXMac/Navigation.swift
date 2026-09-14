@@ -754,9 +754,5 @@ struct NavigationCommands: Commands {
                 .keyboardShortcut("j", modifiers: [.command, .shift])
                 .disabled(!model.toolbarHasResult) // change-only mirror: a per-reply `result` read here re-evaluates the App scene (FlashTeXMacApp.commands)
         }
-        CommandMenu("Editor") {
-            Button("Change Environment…") { model.presentChangeEnvironment() }
-                .keyboardShortcut("e", modifiers: [.control, .command])
-        }
     }
 }

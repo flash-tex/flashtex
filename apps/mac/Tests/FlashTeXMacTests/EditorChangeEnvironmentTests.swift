@@ -117,6 +117,13 @@ final class EditorChangeEnvironmentTests: XCTestCase {
         XCTAssertTrue(CE.suggestions(query: "", in: doc).contains("myenv"))
         XCTAssertTrue(CE.suggestions(query: "item", in: doc).contains("itemize"))
         XCTAssertFalse(CE.suggestions(query: "item", in: doc).contains("enumerate"))
+        let hidden = "% \\begin{onlycomment}\\end{onlycomment}\n\\begin{verbatim}\n\\begin{onlyverb}\\end{onlyverb}\n\\end{verbatim}\n\\begin{realenv}\\end{realenv}"
+        XCTAssertFalse(CE.suggestions(query: "", in: hidden).contains("onlycomment"))
+        XCTAssertFalse(CE.suggestions(query: "", in: hidden).contains("onlyverb"))
+        XCTAssertTrue(CE.suggestions(query: "", in: hidden).contains("realenv"))
+        XCTAssertFalse(Completion.documentEnvironments(in: hidden).contains("onlycomment"))
+        XCTAssertFalse(Completion.documentEnvironments(in: hidden).contains("onlyverb"))
+        XCTAssertTrue(Completion.documentEnvironments(in: hidden).contains("realenv"))
     }
 
     func testLinkedNamesOnlyOnNameSpansOfBalancedPairs() throws {

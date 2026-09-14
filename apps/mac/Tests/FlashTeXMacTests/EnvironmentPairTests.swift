@@ -52,6 +52,16 @@ final class EnvironmentPairTests: XCTestCase {
         XCTAssertEqual(EN.selectEnvironment(around: NSRange(location: 16, length: 0), in: open)?.whole(limit: open.length), NSRange(location: 0, length: open.length))
     }
 
+    func testBeginInsideACommentDoesNotPair() {
+        let s = "% \\begin{foo}\n\\begin{foo}\\end{foo}" as NSString
+        XCTAssertEqual(EN.environmentPairs(in: s).map(\.name), ["foo"])
+        XCTAssertEqual(EN.environmentPairs(in: s).count, 1)
+        XCTAssertNotNil(EN.environmentPairs(in: s)[0].end, "only the live pair matches")
+        let commented = s.range(of: "foo")
+        XCTAssertNil(EN.environmentPair(at: commented.location, in: s), "a \\begin{foo} after % is not a pair")
+        XCTAssertNil(EditorChangeEnvironment.linkedNames(at: commented.location, in: s))
+    }
+
     func testWrapInlineBlockAndEmptySelection() {
         // Inline: a selection inside a line.
         let s = "see x + y here" as NSString
