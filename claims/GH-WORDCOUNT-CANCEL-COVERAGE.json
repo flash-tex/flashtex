@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead",
+  "branch": "agent/daniel-muse-lead/wordcount-cancel-coverage",
+  "gh_ref": null,
+  "machine": "Overpriced-Hardware",
+  "note": "Add debounce-cancel coverage to WordCountModelTests, follow-up review from daniel-parent on #374",
+  "started_utc": "2026-09-14T16:02:33Z",
+  "state": "claimed",
+  "task_id": "GH-WORDCOUNT-CANCEL-COVERAGE",
+  "updated_utc": "2026-09-14T16:02:33Z"
+}
