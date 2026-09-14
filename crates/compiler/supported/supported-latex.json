@@ -21,6 +21,8 @@
     {"name": "section", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "numbered section heading; starred form unnumbered", "renders": true},
     {"name": "subsection", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "numbered subsection heading; starred form unnumbered", "renders": true},
     {"name": "subsubsection", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "numbered subsubsection heading; starred form unnumbered", "renders": true},
+    {"name": "paragraph", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "run-in heading: bold, flush, set into the first line of the paragraph that follows it", "renders": true},
+    {"name": "subparagraph", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "run-in heading indented by \\parindent, set into the first line of the paragraph that follows it", "renders": true},
     {"name": "tableofcontents", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "article contents list from the previous layout pass", "renders": true},
     {"name": "textbf", "mode": "text", "origin": "text_style", "arguments": "{...}", "description": "bold text", "renders": true},
     {"name": "textmd", "mode": "text", "origin": "text_style", "arguments": "{...}", "description": "medium-weight text", "renders": true},
@@ -42,7 +44,8 @@
     {"name": "ProvidesPackage", "mode": "text", "origin": "text_dispatch", "arguments": "{name}[release]", "description": "accepted no-op; a .sty declaration with no visible output", "renders": true},
     {"name": "ProvidesFile", "mode": "text", "origin": "text_dispatch", "arguments": "{name}[release]", "description": "accepted no-op; a file declaration with no visible output", "renders": true},
     {"name": "DocumentMetadata", "mode": "text", "origin": "text_dispatch", "arguments": "{keys}", "description": "diagnosed: PDF metadata keys have no effect here; an error after \\documentclass", "renders": true},
-    {"name": "setlength", "mode": "text", "origin": "text_dispatch", "arguments": "{\\length}{dimension}", "description": "preamble \\parskip, and \\parindent of 0pt; other lengths warn", "renders": true},
+    {"name": "setlength", "mode": "text", "origin": "text_dispatch", "arguments": "{\\length}{dimension}", "description": "preamble page geometry and \\parskip; \\parindent of 0pt; other lengths warn", "renders": true},
+    {"name": "addtolength", "mode": "text", "origin": "text_dispatch", "arguments": "{\\length}{dimension}", "description": "preamble page geometry and \\parskip; accumulates onto the current value", "renders": true},
     {"name": "usepackage", "mode": "text", "origin": "text_dispatch", "arguments": "[options]{a,b,c}", "description": "records packages; layout-neutral ones are silent, every other package warns that it is not implemented", "renders": true},
     {"name": "definecolor", "mode": "text", "origin": "text_dispatch", "arguments": "[class]{name}{model}{spec}", "description": "colour definition in rgb, cmy, cmyk, gray, RGB, HTML or Gray (model lists pick the target model)", "renders": true},
     {"name": "providecolor", "mode": "text", "origin": "text_dispatch", "arguments": "[class]{name}{model}{spec}", "description": "\\definecolor unless the colour is already defined", "renders": true},
@@ -346,6 +349,11 @@
     {"name": "operatorname", "mode": "math", "origin": "math_structure", "arguments": "{name}", "description": "upright named operator (\\mathop); starred and withlimits forms take limits", "renders": true},
     {"name": "operatornamewithlimits", "mode": "math", "origin": "math_structure", "arguments": "{name}", "description": "upright named operator (\\mathop); starred and withlimits forms take limits", "renders": true},
     {"name": "colon", "mode": "math", "origin": "math_structure", "arguments": "", "description": "function-arrow colon: punctuation (0mu/3mu) as the kernel declares it, amsmath's 2mu/6mu when amsmath is loaded", "renders": true},
+    {"name": "eqqcolon", "mode": "math", "origin": "math_structure", "arguments": "", "description": "mathtools =: (reverse of \\coloneqq) as a relation; needs mathtools", "renders": true},
+    {"name": "Coloneqq", "mode": "math", "origin": "math_structure", "arguments": "", "description": "mathtools ::= and =:: (each three real glyphs) as one relation; needs mathtools", "renders": true},
+    {"name": "Eqqcolon", "mode": "math", "origin": "math_structure", "arguments": "", "description": "mathtools ::= and =:: (each three real glyphs) as one relation; needs mathtools", "renders": true},
+    {"name": "vcentcolon", "mode": "math", "origin": "math_structure", "arguments": "", "description": "mathtools vertically centred colon: the same glyph as \\colon as a relation; needs mathtools", "renders": true},
+    {"name": "dblcolon", "mode": "math", "origin": "math_structure", "arguments": "", "description": "mathtools double vertically centred colon (two \\vcentcolon) as one relation; needs mathtools", "renders": true},
     {"name": "bmod", "mode": "math", "origin": "math_structure", "arguments": "", "description": "upright mod", "renders": true},
     {"name": "mod", "mode": "math", "origin": "math_structure", "arguments": "", "description": "upright mod", "renders": true},
     {"name": "pmod", "mode": "math", "origin": "math_structure", "arguments": "{n}", "description": "parenthesised (mod n)", "renders": true},
@@ -934,7 +942,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 185, "percent": 45.1},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 188, "percent": 45.9},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 17, "percent": 56.7},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 41, "percent": 40.2},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -949,6 +957,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 17, "percent": 7.1}
     ],
-    "total": {"canonical": 1314, "supported": 526, "percent": 40}
+    "total": {"canonical": 1314, "supported": 529, "percent": 40.3}
   }
 }

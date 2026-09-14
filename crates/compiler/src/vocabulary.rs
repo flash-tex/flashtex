@@ -35,7 +35,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // LaTeX2e document structure and front matter.
-    "part", "chapter", "subsubsection", "paragraph", "subparagraph", "appendix", "maketitle",
+    "part", "chapter", "subsubsection", "appendix", "maketitle",
     "title", "author", "date", "thanks", "and", "today", "tableofcontents", "listoffigures",
     "listoftables", "abstractname", "footnote", "footnotemark", "footnotetext", "marginpar",
     "index", "glossary", "bibliography", "bibliographystyle", "bibitem", "cite", "nocite",
@@ -58,7 +58,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "newtheorem", "newcounter", "setcounter", "addtocounter", "stepcounter", "refstepcounter",
     "value", "arabic", "roman", "Roman", "alph", "Alph", "fnsymbol", "the", "makeatletter",
     "makeatother", "ifthenelse", "newif", "relax", "expandafter", "csname", "endcsname",
-    "newlength", "addtolength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
+    "newlength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
     "verb", "hyphenation", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
     "PassOptionsToPackage", "AtBeginDocument",
     // Cross-references and links.
@@ -71,7 +71,8 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // amsmath and amssymb.
     "intertext", "shortintertext", "substack", "sideset", "xrightarrow", "xleftarrow", "overbrace",
     "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",
-    "limits", "nolimits", "displaylimits", "colon", "vdots", "ddots", "iff", "implies", "impliedby",
+    "limits", "nolimits", "displaylimits", "colon", "eqqcolon", "Coloneqq", "Eqqcolon",
+    "vcentcolon", "dblcolon", "vdots", "ddots", "iff", "implies", "impliedby",
     "genfrac", "operatornamewithlimits", "dddot", "ddddot", "cancel", "bcancel", "xcancel",
     "cancelto", "numberwithin", "allowdisplaybreaks", "mathring", "lvert", "rvert", "lVert",
     "rVert", "varepsilon", "vartheta", "varphi", "varrho", "varsigma", "varpi", "digamma",
