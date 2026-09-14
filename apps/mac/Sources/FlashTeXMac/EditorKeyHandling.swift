@@ -102,6 +102,37 @@ enum EditorKeyHandling {
         return (edits, selectionAfter(edits, range: range, firstLineStart: starts[0]))
     }
 
+    // MARK: duplicate line (⌥⇧↓ / ⌥⇧↑)
+
+    /// Copies every line `range` touches, placing the copy below (`below`) or
+    /// above the block, as one edit. The returned `selection` lands on the
+    /// **copy** in both directions, so holding the key stacks copies and the
+    /// caret keeps its column — which is the point of the shortcut when you
+    /// are working an equation down the page a line at a time.
+    ///
+    /// Duplicating downward inserts after the block and shifts the selection
+    /// by the inserted length; duplicating upward inserts before it, which
+    /// leaves the original offsets describing the copy, so the selection does
+    /// not move at all. The last line of a document has no newline to copy,
+    /// so one is supplied on whichever side the copy is joined.
+    static func duplicateLinesEdit(in text: String, range: NSRange, below: Bool) -> (edit: LineEdit, selection: NSRange)? {
+        let ns = text as NSString
+        guard range.location >= 0, NSMaxRange(range) <= ns.length else { return nil }
+        let starts = lineStarts(in: text, range: range)
+        guard let first = starts.first, let last = starts.last else { return nil }
+        let blockStart = first
+        let blockEnd = NSMaxRange(ns.lineRange(for: NSRange(location: last, length: 0)))
+        let block = ns.substring(with: NSRange(location: blockStart, length: blockEnd - blockStart))
+        // `lineRange(for:)` includes the terminator when there is one; the
+        // document's last line has none.
+        let terminated = block.hasSuffix("\n") || block.hasSuffix("\r") || block.hasSuffix("\r\n")
+        let replacement = terminated ? block : (below ? "\n" + block : block + "\n")
+        let at = below ? blockEnd : blockStart
+        let edit = LineEdit(range: NSRange(location: at, length: 0), replacement: replacement)
+        let shift = below ? (replacement as NSString).length : 0
+        return (edit, NSRange(location: range.location + shift, length: range.length))
+    }
+
     // MARK: completion-inserted closers (Completion.swift's small hook)
 
     /// A programmatic multi-character insertion (a completion snippet like

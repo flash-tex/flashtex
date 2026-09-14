@@ -1171,7 +1171,8 @@ impl<'a> Context<'a> {
             let src = self.source(span);
             self.report_once(format!("mathlim:{msg}"), Diagnostic::warning("math_limitation", msg, vec![src]));
         }
-        let style = if display { ml::Style::DISPLAY } else { ml::Style::TEXT };
+        let default_style = if display { ml::Style::DISPLAY } else { ml::Style::TEXT };
+        let style = leading_style_switch(list, texts).unwrap_or(default_style);
         let has_grid = segments.iter().any(|(atoms, _)| top_level_grids(atoms, &fence).into_iter().any(|top| top));
         // Every `\text` must be collected before the metrics borrow the sink.
         let grid_pieces = if has_grid { grid_pieces(&segments, &mut sink, &fence, &class, texts) } else { Vec::new() };
@@ -1570,9 +1571,27 @@ impl<'a> Context<'a> {
         if points.is_empty() {
             return self.whole_word(seg, size);
         }
-        let upem = shaped.units_per_em as f64;
-        let pt = |units: i64| size * units as f64 / upem;
-        let width = |t: &str| shaper.shape(&face, t).width_units;
+        // Each measurement carries the units of the shaping that produced
+        // it: a substring whose characters all have T1 slots is measured by
+        // the TFM ligature/kern program (2^20 per em), one that carries a
+        // character with no T1 slot falls back to the font program (the
+        // face's own units per em). `shape` decides that per string, so two
+        // substrings of the same word can come back in different units;
+        // measuring in points is the only scale they share. Dividing a TFM
+        // width by the face's 1000 units instead put the tail of a word like
+        // `ellipsis\dots` (U+2026 has no T1 slot, `ellip` does) 12676 pt to
+        // the left of the page, and every later word on its line with it.
+        let width_pt = |t: &str| shaper.shape(&face, t).width_pt(size);
+        // Whole minus parts, with the exact integer subtraction kept for the
+        // usual case where all three came back in the same units.
+        let residual_pt = |whole: &str, head: &str, tail: &str| {
+            let (w, h, t) = (shaper.shape(&face, whole), shaper.shape(&face, head), shaper.shape(&face, tail));
+            if w.units_per_em == h.units_per_em && h.units_per_em == t.units_per_em {
+                size * (w.width_units - h.width_units - t.width_units) as f64 / w.units_per_em as f64
+            } else {
+                w.width_pt(size) - h.width_pt(size) - t.width_pt(size)
+            }
+        };
         // Byte offset -> char index, for the fragments' `chars`.
         let mut char_index = vec![0usize; text.len() + 1];
         for (ci, (bi, _)) in text.char_indices().enumerate() {
@@ -1600,7 +1619,7 @@ impl<'a> Context<'a> {
                     };
                     self.text_box(&hyphen, size).map(|(mut run, rec)| {
                         self.mark_continues(rec);
-                        let adv = pt(width(&format!("{}-", &text[prev..at])) - width(&text[prev..at]));
+                        let adv = width_pt(&format!("{}-", &text[prev..at])) - width_pt(&text[prev..at]);
                         let doc_at = seg.chars[char_index[at]].start;
                         for g in &mut run.glyphs {
                             g.cluster = doc_at..doc_at;
@@ -1630,7 +1649,7 @@ impl<'a> Context<'a> {
                     }),
                     rec,
                 ));
-                let kern = pt(width(&text[prev..b]) - width(&text[prev..at]) - width(&text[at..b]));
+                let kern = residual_pt(&text[prev..b], &text[prev..at], &text[at..b]);
                 if kern != 0.0 {
                     out.push((pl::Item::kern(kern), None));
                 }
@@ -5575,6 +5594,54 @@ pub fn fence_before(text: &str, at: usize) -> Option<Fence> {
         }
     }
     None
+}
+
+/// The math style a formula opening with `\displaystyle`, `\textstyle`,
+/// `\scriptstyle` or `\scriptscriptstyle` is set in, re-read from the control
+/// word at the atom's span like [`class_override_of`].
+///
+/// A style switch is not a command with an argument: it changes the style for
+/// the rest of the enclosing group (TeX §1171, `\mathchoice`-free). The pinned
+/// compiler does not model that at all — all four switches, and `\nonumber`,
+/// `\notag` and `\middle` with them, are one zero-width `Nucleus::Space` atom
+/// (`crates/compiler/src/math.rs`), which the pipeline then skips. So
+/// `$\displaystyle\sum_{n=1}^{\infty}x_n$` was laid out in *text* style: the
+/// limits sat beside the operator as scripts instead of above and below it,
+/// and the box was 8 pt shorter than pdfTeX's. That is a vertical defect as
+/// much as a horizontal one, because a short box never trips TeX's interline
+/// rule (`\baselineskip - \prevdepth - height < \lineskiplimit` -> `\lineskip`,
+/// §679), so the following baseline stayed a plain `\baselineskip` away and
+/// every later line in the document was that much too high.
+///
+/// Only a switch that is the formula's *first* atom is honoured, which is the
+/// case where it governs the whole formula and nothing else — the idiom in
+/// every corpus use (`$\displaystyle\int_0^{\pi/2}\dots$`). A switch in the
+/// middle of a list, or inside a grid cell or sub-formula, still needs the
+/// compiler to emit an atom for it (math-layout is ready: it already has
+/// `Nucleus::Styled`, laid out at `layout.rs:345`).
+pub fn leading_style_switch(list: &flashtex_compiler::math::MathList, texts: &[&str]) -> Option<ml::Style> {
+    let a = list.atoms.first()?;
+    if a.superscript.is_some() || a.subscript.is_some() {
+        return None;
+    }
+    let flashtex_compiler::math::Nucleus::Space { em, .. } = a.nucleus else { return None };
+    if em != 0.0 {
+        return None;
+    }
+    style_switch_of(texts.get(a.span.document.0).copied().unwrap_or(""), a.span.start)
+}
+
+/// The style a style-switch control word at byte `at` of `text` selects.
+pub fn style_switch_of(text: &str, at: usize) -> Option<ml::Style> {
+    let rest = text.get(at..)?.strip_prefix('\\')?;
+    let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
+    Some(match &rest[..word_len] {
+        "displaystyle" => ml::Style::DISPLAY,
+        "textstyle" => ml::Style::TEXT,
+        "scriptstyle" => ml::Style::SCRIPT,
+        "scriptscriptstyle" => ml::Style::SCRIPT_SCRIPT,
+        _ => return None,
+    })
 }
 
 /// [`convert_math_with`] with `fence` telling which delimiter atoms follow a
