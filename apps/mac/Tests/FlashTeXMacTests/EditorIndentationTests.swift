@@ -1,5 +1,6 @@
 import AppKit
 import XCTest
+import HostedWindows
 @testable import FlashTeXMac
 
 /// Pure reindent rules plus the hosted CompletingTextView undo/selection
@@ -292,7 +293,7 @@ final class EditorIndentationTests: XCTestCase {
 final class EditorIndentationHostTests: XCTestCase {
     func host(_ text: String) throws -> (NSWindow, CompletingTextView) {
         HostedWindowSupport.prepare()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled])
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
