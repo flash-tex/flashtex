@@ -497,6 +497,9 @@ fn block_start(b: &Block) -> Option<(usize, usize)> {
         | Block::Rule { span, .. } => Some((span.document.0, span.start)),
         Block::TocEntry(e) => Some((e.list_span.document.0, e.list_span.start)),
         Block::Picture { document, picture, .. } => Some((document.0, picture.start)),
+        // A longtable is contributed straight to the vertical list, so its
+        // origin is the environment's own span (`crate::longtable`).
+        Block::LongTable { table, .. } => Some((table.span.document.0, table.span.start)),
     }
 }
 

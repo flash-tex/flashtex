@@ -246,14 +246,10 @@ and embeds the Latin Modern OpenType faces (plus New Computer Modern Math for
 Without the TFMs the OpenType metrics are used and a `tfm_missing` /
 `math_metrics_opentype` warning says so; a missing required metric set is the
 blocking `required_metrics_unavailable` error, never a silent fallback. The
-bundle covers Latin Modern Roman regular/bold/italic at 5–17 pt, the math
-faces, and — despite older notes here — sans (`lmsans*`, including demi-condensed),
-slanted (`lmromanslant*`/`lmmonoslant*`), small caps (`lmromancaps*`/
-`lmmonocaps*`) and typewriter (`lmmono*`, including bold via `lmmonolt*`):
-`\textsf`/`\texttt`/`\textsl`/small caps all resolve to real bundled faces
-(`crates/render-pipeline/src/fonts.rs`'s `latin_modern_file`), not a
-substitution. The PDF writer resolves each face by content hash in the same
-directories, so the embedded program is exactly the file the layout used.
+bundle covers Latin Modern Roman regular/bold/italic at 5–17 pt and the math
+faces; sans, typewriter and small caps are not bundled. The PDF writer
+resolves each face by content hash in the same directories, so the embedded
+program is exactly the file the layout used.
 
 ## Helper binaries
 
@@ -300,7 +296,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 242 text-mode and 546 math-mode command entries, 48 environments and 10 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 244 text-mode and 546 math-mode command entries, 48 environments and 14 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -393,6 +389,8 @@ Canonical sources:
 | `\fcolorbox` | `[model]{frame}{fill}{text}` | \colorbox inside a \fboxrule frame |
 | `\newcolumntype` | `{X}[n]{spec}` | array column type expanded in later tabular specifications |
 | `\arraybackslash` |  | array no-op: \\ already ends the row inside p, m and b entries |
+| `\arrayrulecolor` | `[model]{colour}` | colortbl: colour of later table rules |
+| `\doublerulesepcolor` | `[model]{colour}` | colortbl: colour of the gap between double rules |
 | `\setlist` | `[list]{options}` | enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn |
 | `\newcommand` | `{\name}[n]{body}` | defines a macro with 0-9 arguments; rejects an existing name |
 | `\renewcommand` | `{\name}[n]{body}` | redefines an existing macro |
@@ -818,6 +816,10 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `xcolor` | `natural, rgb, cmy, cmyk, gray, dvipsnames, svgnames, x11names, table` | xcolor 3.02 definitions, expressions and target models with pdfTeX's exact operator values; hsb models, colour series and table colours are diagnosed |
 | `amsthm` | `` | \newtheorem, \theoremstyle and the proof environment |
 | `array` | `` | tabular >{} <{} !{} m b w columns, \newcolumntype and \extrarowheight |
+| `booktabs` | `` | \toprule, \midrule, \bottomrule, \cmidrule(trim), \addlinespace, \specialrule, \morecmidrules |
+| `longtable` | `` | the page-breaking longtable environment: \endfirsthead, \endhead, \endfoot, \endlastfoot, \caption, \kill, \\* |
+| `multirow` | `` | \multirow[vpos]{rows}[bigstruts]{width}[vmove]{text} in table entries |
+| `colortbl` | `` | \rowcolor, \cellcolor, >{\columncolor}, \arrayrulecolor, \doublerulesepcolor |
 | `enumitem` | `shortlabels` | list keys (label, start, resume, seps, margins) parsed as options; \setlist |
 | `geometry` | `letterpaper, margin=1in` | matches the fixed US Letter page with 1in margins |
 | `siunitx` | `any \sisetup keys` | v3 \num, \unit, \qty, lists, ranges, \ang, \sisetup and \DeclareSIUnit; unmodelled keys are diagnosed |

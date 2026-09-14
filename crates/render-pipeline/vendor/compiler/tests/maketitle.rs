@@ -110,14 +110,14 @@ fn custom_date_text_is_used_verbatim() {
 }
 
 #[test]
-fn thanks_is_stripped_with_a_diagnostic_not_leaked_as_title_text() {
+fn thanks_is_a_symbol_footnote_not_title_text() {
     let source = doc(
         "\\title{Zzztitle\\thanks{Funded by a grant}}\\author{Zzzauthor}",
         "\\maketitle",
     );
     let parsed = parse(&source);
     assert!(
-        parsed
+        !parsed
             .diagnostics
             .iter()
             .any(|d| d.message.contains("\\thanks")),
@@ -132,12 +132,28 @@ fn thanks_is_stripped_with_a_diagnostic_not_leaked_as_title_text() {
     else {
         unreachable!()
     };
-    let text = format!("{title:?}");
+    let plain: Vec<&Inline> = title
+        .iter()
+        .filter(|i| !matches!(i, Inline::Footnote { .. }))
+        .collect();
+    let text = format!("{plain:?}");
     assert!(text.contains("Zzztitle"));
     assert!(
         !text.contains("grant"),
         "footnote text leaked into the title: {text}"
     );
+    let note = title
+        .iter()
+        .find_map(|i| match i {
+            Inline::Footnote {
+                number, mark, text, ..
+            } => Some((number.clone(), *mark, format!("{text:?}"))),
+            _ => None,
+        })
+        .expect("the \\thanks footnote");
+    assert_eq!(note.0, "\u{2217}");
+    assert!(note.1);
+    assert!(note.2.contains("grant"), "{}", note.2);
 }
 
 #[test]
