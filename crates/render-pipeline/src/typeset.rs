@@ -394,6 +394,17 @@ pub struct Context<'a> {
     /// count). A field rather than a memo so that `math_box` has no
     /// re-derivation to reach for.
     ams_symbol_fonts: bool,
+    /// Whether `amsmath` itself is loaded. Distinct from
+    /// [`Self::ams_symbol_fonts`]: `amssymb`/`amsfonts` bring the msam/msbm
+    /// symbol fonts, they do **not** bring `amsmath`, and a document may
+    /// load either without the other. `\big`..`\Bigg` key off this one,
+    /// because `\bBigg@` is amsmath's (amsmath.sty 721-738) and the kernel
+    /// keeps its own fixed lengths (fontmath.ltx 513-520) without it.
+    ///
+    /// Answered once, here, for the same reason `ams_symbol_fonts` is: a
+    /// per-formula `\usepackage` re-scan made a whole-document render
+    /// quadratic in (source size x formula count).
+    amsmath_loaded: bool,
     reported: BTreeSet<String>,
     /// Diagnostics emitted while a cacheable block is being built (with
     /// their once-only keys, suppressed ones included).
@@ -444,6 +455,9 @@ impl<'a> Context<'a> {
             ams_symbol_fonts: texts
                 .iter()
                 .any(|t| crate::adapter::package_options(t, "amssymb").is_some() || crate::adapter::package_options(t, "amsfonts").is_some()),
+            amsmath_loaded: texts
+                .iter()
+                .any(|t| crate::adapter::package_options(t, "amsmath").is_some()),
             reported: BTreeSet::new(),
             capture: None,
             path_rcs: std::cell::RefCell::new(BTreeMap::new()),
@@ -1007,6 +1021,7 @@ impl<'a> Context<'a> {
         }
         sink.body_size_pt = self.style.body_size_pt;
         sink.amsfonts = self.ams_symbol_fonts;
+        sink.amsmath = self.amsmath_loaded;
         let texts = self.texts;
         let fence = |sp: &Span| fence_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // The atom's own class when the pinned compiler exposes it, and the
@@ -4553,7 +4568,25 @@ pub fn convert_math_classed(
                     DelimiterRole::Rel => ml::AtomClass::Rel,
                     _ => ml::AtomClass::Ord,
                 };
-                vec![ml::Atom::big_delimiter(class, glyph.chars().next(), scale / 1.2)]
+                // Which of the two `\big` rules applies is a fact about the
+                // package list, not about the formula: amsmath's `\bBigg@`
+                // when amsmath is loaded, the LaTeX kernel's fixed `\vbox`
+                // lengths when it is not. The compiler's `scale` is
+                // amsmath's 1.2/1.8/2.4/3.0, so `scale / 1.2` is its
+                // 1/1.5/2/2.5 factor; `BigSizing::kernel_for_factor` maps
+                // that same factor onto the kernel's 8.5/11.5/14.5/17.5pt,
+                // so the two rules stay in one place rather than the
+                // constants being copied into this crate.
+                let factor = scale / 1.2;
+                let delim = glyph.chars().next();
+                vec![if sink.amsmath {
+                    ml::Atom::big_delimiter(class, delim, factor)
+                } else {
+                    let ml::BigSizing::Kernel { pt } = ml::BigSizing::kernel_for_factor(factor) else {
+                        unreachable!("kernel_for_factor always returns BigSizing::Kernel")
+                    };
+                    ml::Atom::big_delimiter_kernel(class, delim, pt)
+                }]
             }
             // `\big(`..`\Bigg]` (and an unmatched `\right`): math-layout has
             // no fixed-step delimiter atom, so the glyph is set at text size

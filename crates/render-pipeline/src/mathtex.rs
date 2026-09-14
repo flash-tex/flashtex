@@ -685,8 +685,8 @@ impl MathFontMetrics for TexMathMetrics {
         self.cm.accent_sizes(ch, size)
     }
 
-    fn extension_glyph(&self, code: u8, ch: char) -> Option<Glyph> {
-        self.cm.extension_glyph(code, ch)
+    fn extension_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
+        self.cm.extension_glyph(code, ch, size)
     }
 
     fn delimiter_extensible(&self, ch: char, size: SizeClass) -> Option<Extensible> {
