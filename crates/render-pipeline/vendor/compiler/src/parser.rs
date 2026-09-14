@@ -16,7 +16,7 @@ use crate::expansion::{self, ExpansionSite};
 use crate::lexer::{apply_text_ligatures, tokenize_document, Token, TokenKind};
 #[cfg(test)]
 use crate::lexer::tokenize;
-use crate::math::{self, MathList};
+use crate::math::{self, MathList, MathPackages};
 use crate::siunitx;
 use crate::text_builtins::{self, SymbolOutcome, TextDimen, TextLogo, TextRule};
 use crate::theorems::{self, TheoremDef, TheoremStyle};
@@ -665,6 +665,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "fcolorbox",
     "newcolumntype",
     "arraybackslash",
+    "arrayrulecolor",
+    "doublerulesepcolor",
     "setlist",
     "newcommand",
     "renewcommand",
@@ -1022,6 +1024,7 @@ pub fn parse_project_with(
         class_size_pt: None,
         parskip_pt: None,
         packages: Vec::new(),
+        math_packages: MathPackages::KERNEL,
         font_encoding: Encoding::OT1,
         block_dependencies: Vec::new(),
         current_dependencies: BTreeMap::new(),
@@ -1034,7 +1037,11 @@ pub fn parse_project_with(
         include_stack: vec![entry],
         counters: crate::xref::Counters::article(),
         subequations: Vec::new(),
+        table_rule_color: None,
+        table_double_rule_sep_color: None,
         footnote_counter: 0,
+        mpfootnote_counter: 0,
+        chapter_class: false,
         current_counter: None,
         seen_labels: HashMap::new(),
         list_stack: Vec::new(),
@@ -1146,6 +1153,11 @@ struct P<'a> {
     class_size_pt: Option<f64>,
     parskip_pt: Option<f64>,
     packages: Vec<String>,
+    /// The loaded packages that redefine math commands (`math::MathPackages`),
+    /// folded in as `\documentclass` and `\usepackage` are read. Math parsed
+    /// before the class line is parsed with the kernel's definitions, which is
+    /// what pdfLaTeX does too: a redefinition applies only after it runs.
+    math_packages: MathPackages,
     /// array's `\newcolumntype{X}[n]{spec}` definitions (`parser/tabular.rs`).
     column_types: HashMap<char, (usize, Vec<InputToken>)>,
     /// The loaded colour package (`crate::color`), `None` before one.
@@ -1169,8 +1181,18 @@ struct P<'a> {
     /// The `\theequation` in force outside each open `subequations`
     /// environment, restored at its `\end` (amsmath's group).
     subequations: Vec<Vec<crate::xref::Piece>>,
-    /// LaTeX's `footnote` counter; article never resets it.
+    /// colortbl `\arrayrulecolor`/`\doublerulesepcolor` (global assignments).
+    table_rule_color: Option<crate::tabular::ColorSpec>,
+    table_double_rule_sep_color: Option<crate::tabular::ColorSpec>,
+    /// LaTeX's `footnote` counter; article never resets it, report and
+    /// book reset it at every numbered `\chapter` (`\@addtoreset`).
     footnote_counter: u32,
+    /// `mpfootnote`: `\footnote` inside a `minipage` (zeroed by every
+    /// `\begin{minipage}`, printed `\alph`).
+    mpfootnote_counter: u32,
+    /// The class is report or book: `\chapter` exists and numbers
+    /// sections, figures and equations within it.
+    chapter_class: bool,
     current_counter: Option<String>,
     seen_labels: HashMap<String, Span>,
     /// Environment name, item count, an enumitem label template if given,
@@ -1344,10 +1366,10 @@ impl P<'_> {
                     }
                 }
                 TokenKind::Space | TokenKind::Comment => self.i += 1,
-                TokenKind::Word(word) if control_symbol_kern(&word, tok.span).is_some() => {
+                TokenKind::Word(word) if control_symbol_kern(&word, tok.span, self.math_packages.amsmath).is_some() => {
                     self.i += 1;
                     if render {
-                        if let Some(amount) = control_symbol_kern(&word, tok.span) {
+                        if let Some(amount) = control_symbol_kern(&word, tok.span, self.math_packages.amsmath) {
                             para.push(Inline::Kern {
                                 amount,
                                 span: tok.span,
@@ -1505,6 +1527,22 @@ impl P<'_> {
             // array.sty 247: `\let\\\tabularnewline`; this parser already
             // ends table rows at `\\` inside `p`-column entries.
             "arraybackslash" => {}
+            // colortbl.sty 156-165: global colour of later rules and
+            // `\doublerulesep` gaps (inside a table the row scanner takes them).
+            "arrayrulecolor" | "doublerulesepcolor" => {
+                let color = self.table_color_argument(name, span);
+                if !self.colortbl() {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\{name} needs the colortbl package (or xcolor with the table option)"),
+                        Some(span),
+                        Some("ignored the colour".into()),
+                    ));
+                } else if name == "arrayrulecolor" {
+                    self.table_rule_color = Some(color);
+                } else {
+                    self.table_double_rule_sep_color = Some(color);
+                }
+            }
             "setlist" => self.set_list(span),
             // Definitions run in the expansion pass (`crate::expansion`); the
             // parser only sees their expansions, never these names.
@@ -1619,6 +1657,7 @@ impl P<'_> {
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
+            "chapter" if self.chapter_class => self.chapter(span, blocks, para),
             "section" | "subsection" | "subsubsection" => {
                 let level = match name {
                     "section" => 1,
@@ -2098,7 +2137,7 @@ impl P<'_> {
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
             "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
             | "negthickspace" | "enspace" => {
-                if let Some(amount) = text_builtins::text_kern(name) {
+                if let Some(amount) = text_builtins::text_kern(name, self.math_packages.amsmath) {
                     para.push(Inline::Kern {
                         amount,
                         span,
@@ -2243,6 +2282,11 @@ impl P<'_> {
                 Some("no document class was recorded".into()),
             ));
         } else if self.document_class.is_none() {
+            self.math_packages.load_class(&class);
+            if matches!(class.as_str(), "report" | "book") {
+                self.chapter_class = true;
+                self.counters = crate::xref::Counters::report();
+            }
             self.document_class = Some(class);
         }
     }
@@ -2276,6 +2320,9 @@ impl P<'_> {
             // Read by `\colorbox`/`\fcolorbox` (not group-scoped here).
             "fboxsep" => self.fboxsep_pt = pt,
             "fboxrule" => self.fboxrule_pt = pt,
+            // longtable's lengths are read from the source by the render
+            // pipeline's longtable layout.
+            "LTleft" | "LTright" | "LTpre" | "LTpost" | "LTcapwidth" => {}
             "parskip" if in_preamble => self.parskip_pt = Some(pt),
             "parindent" if in_preamble && pt == 0.0 => {}
             "parindent" if in_preamble => self.diags.push(Diagnostic::warning(
@@ -2420,7 +2467,14 @@ impl P<'_> {
         }
         self.packages.extend(packages.iter().cloned());
         for package in &packages {
+            self.math_packages.load_package(package);
             self.load_color_package(package, &options);
+        }
+        // xcolor.sty's `table` option loads colortbl (and so array).
+        if packages.iter().any(|package| package == "xcolor")
+            && options.split(',').any(|option| option.trim() == "table")
+        {
+            self.packages.push("colortbl".into());
         }
         // multicol.sty lines 111-113: the global `twocolumn` class option
         // reaches the package's option handler.
@@ -2615,8 +2669,9 @@ impl P<'_> {
             return;
         };
 
-        let stripped_title = self.strip_thanks(title_tokens);
-        let title_content = self.inlines_from_tokens(stripped_title, TextStyle::default());
+        // `\@maketitle` sets `\@title`, `\@author`, `\@date` in that
+        // order; each `\thanks` steps `footnote` there.
+        let title_content = self.thanks_inlines(title_tokens, TextStyle::default());
         if title_content.is_empty() {
             self.diags.push(Diagnostic::error(
                 "\\title was given an empty title",
@@ -2631,8 +2686,7 @@ impl P<'_> {
         let mut author_content: Vec<Inline> = Vec::new();
         let mut wrote_author = false;
         for group in author_groups {
-            let stripped = self.strip_thanks(group);
-            let inlines = self.inlines_from_tokens(stripped, TextStyle::default());
+            let inlines = self.thanks_inlines(group, TextStyle::default());
             if inlines.is_empty() {
                 // A blank `\and`-separated slot (`\author{A \and }`)
                 // contributes nothing, like an empty tabular column.
@@ -2673,8 +2727,7 @@ impl P<'_> {
                 }])
             }
             Some((date_tokens, _)) => {
-                let stripped = self.strip_thanks(date_tokens);
-                let inlines = self.inlines_from_tokens(stripped, TextStyle::default());
+                let inlines = self.thanks_inlines(date_tokens, TextStyle::default());
                 if inlines.is_empty() {
                     None // `\date{}`: suppressed, matching `DateField::Suppressed`.
                 } else {
@@ -2696,18 +2749,22 @@ impl P<'_> {
             authors: author_content,
             date: date_content,
         });
+        // `\maketitle` ends with `\setcounter{footnote}{0}`.
+        self.footnote_counter = 0;
         self.finish_block_dependencies();
     }
 
-    /// Strips `\thanks{...}` out of a captured `\title`/`\author`/`\date`
-    /// argument. Real `article.cls` turns `\thanks` into a footnote mark in
-    /// the title block plus footnote text at the page foot; this compiler
-    /// has no footnote implementation, so the honest recovery is to omit the
-    /// mark and its text — never leak the footnote prose into the centred
-    /// title/author/date line — and say so once per occurrence, per the
-    /// recovery policy documented on `unsupported` above.
-    fn strip_thanks(&mut self, tokens: Vec<InputToken>) -> Vec<InputToken> {
-        let mut out = Vec::with_capacity(tokens.len());
+    /// A captured `\title`/`\author`/`\date` argument as inline content
+    /// with every `\thanks{...}` turned into a footnote. article/report/
+    /// book's `\maketitle` sets `\thefootnote` to `\@fnsymbol\c@footnote`
+    /// and `\thanks` is `\footnotemark` plus a `\footnotetext[n]{...}`
+    /// queued in `\@thanks` (set after `\@maketitle`, in vertical mode):
+    /// the inline carries the symbol mark and the note text at the mark's
+    /// position; the layout decides where the text goes. The span is the
+    /// `\thanks` token.
+    fn thanks_inlines(&mut self, tokens: Vec<InputToken>, style: TextStyle) -> Vec<Inline> {
+        let mut out: Vec<Inline> = Vec::new();
+        let mut segment: Vec<InputToken> = Vec::new();
         let mut i = 0;
         while i < tokens.len() {
             let is_thanks = matches!(
@@ -2715,7 +2772,7 @@ impl P<'_> {
                 TokenKind::Command(name) if name == "thanks"
             );
             if !is_thanks {
-                out.push(tokens[i].clone());
+                segment.push(tokens[i].clone());
                 i += 1;
                 continue;
             }
@@ -2726,28 +2783,92 @@ impl P<'_> {
             {
                 j += 1;
             }
-            if j < tokens.len() && tokens[j].token.kind == TokenKind::LBrace {
-                let mut depth = 0usize;
-                while j < tokens.len() {
-                    match tokens[j].token.kind {
-                        TokenKind::LBrace => depth += 1,
-                        TokenKind::RBrace => depth -= 1,
-                        _ => {}
-                    }
-                    j += 1;
-                    if depth == 0 {
-                        break;
-                    }
+            if j >= tokens.len() || tokens[j].token.kind != TokenKind::LBrace {
+                self.diags.push(Diagnostic::warning(
+                    "\\thanks without a braced argument",
+                    Some(thanks_span),
+                    Some("omitted the footnote mark".into()),
+                ));
+                i += 1;
+                continue;
+            }
+            let open = j;
+            let mut depth = 0usize;
+            while j < tokens.len() {
+                match tokens[j].token.kind {
+                    TokenKind::LBrace => depth += 1,
+                    TokenKind::RBrace => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+                if depth == 0 {
+                    break;
                 }
             }
-            self.diags.push(Diagnostic::warning(
-                "\\thanks is recognised but footnotes are not implemented; the footnote mark and text were omitted",
-                Some(thanks_span),
-                Some("omitted the footnote mark and its text".into()),
-            ));
+            let close = if depth == 0 { j - 1 } else { j };
+            let argument = tokens[open + 1..close].to_vec();
+            let before = std::mem::take(&mut segment);
+            out.extend(self.inlines_from_tokens(before, style));
+            self.document_global_state = true;
+            self.footnote_counter += 1;
+            let number = match fnsymbol(self.footnote_counter) {
+                Some(symbol) => symbol.to_string(),
+                None => {
+                    self.diags.push(Diagnostic::error(
+                        format!(
+                            "\\thanks number {} is outside \\@fnsymbol's nine symbols",
+                            self.footnote_counter
+                        ),
+                        Some(thanks_span),
+                        Some("printed the number in arabic instead".into()),
+                    ));
+                    self.footnote_counter.to_string()
+                }
+            };
+            let text = self.footnote_inlines(argument, thanks_span);
+            out.push(Inline::Footnote {
+                number,
+                span: thanks_span,
+                mark: true,
+                text: Some(text),
+                space_before: false,
+            });
             i = j;
         }
+        out.extend(self.inlines_from_tokens(segment, style));
         out
+    }
+
+    /// `\chapter[*][<short>]{<title>}` in report/book:
+    /// `\refstepcounter{chapter}` for the numbered form, which resets
+    /// `section` (and below), `figure`, `table` and `equation` through the
+    /// counter table (report.cls/book.cls `\@addtoreset`), and `footnote`,
+    /// which this parser still counts in a field of its own. The head itself
+    /// (`\@makechapterhead`, the page break, the running marks) is layout:
+    /// the title is kept as a bold paragraph.
+    fn chapter(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let starred = self.take_optional_star();
+        if !starred {
+            let _short = self.optional_bracket_argument();
+        }
+        let (tokens, _) = self.required_group("chapter", span);
+        self.flush_paragraph(blocks, para);
+        self.document_global_state = true;
+        if !starred {
+            // Stepping `chapter` resets every counter registered within it
+            // (`Counters::report`), so `figure`/`table`/`equation` need no
+            // zeroing here; `footnote` is not in the counter table yet.
+            let number = self.counters.step("chapter").unwrap_or_default();
+            self.footnote_counter = 0;
+            self.current_counter = Some(number);
+        }
+        let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
+        if content.is_empty() {
+            self.current_dependencies.clear();
+        } else {
+            blocks.push(Block::Paragraph(content));
+            self.finish_block_dependencies();
+        }
     }
 
     fn environment(
@@ -2787,6 +2908,10 @@ impl P<'_> {
             }
             if matches!(environment.as_str(), "tabular" | "tabular*") && self.in_body {
                 self.tabular_environment(span, &environment, para);
+                return;
+            }
+            // Package environments (inventoried with their package).
+            if self.in_body && self.package_table_environment(span, &environment, blocks, para) {
                 return;
             }
             if matches!(
@@ -2883,6 +3008,10 @@ impl P<'_> {
                     Some(span),
                     Some("typeset the body without the environment's formatting".into()),
                 ));
+            }
+            if is_minipage(&environment) {
+                // `\@iiiminipage`: `\c@mpfootnote\z@`.
+                self.mpfootnote_counter = 0;
             }
             self.env_stack
                 .push((environment.clone(), span.merge(argument_span)));
@@ -3410,7 +3539,7 @@ impl P<'_> {
                 ),
             ));
         }
-        let list = math::parse_tokens(&raw, &mut self.diags);
+        let list = math::parse_tokens(&raw, self.math_packages, &mut self.diags);
         let color_ranges = self.math_color_ranges(&raw);
         para.push(Inline::Math {
             color: self.style.color,
@@ -3629,9 +3758,10 @@ impl P<'_> {
                     span: label_span,
                 });
             }
+            let packages = self.math_packages;
             let cells = cells
                 .iter()
-                .map(|cell| math::parse_tokens(cell, &mut self.diags))
+                .map(|cell| math::parse_tokens(cell, packages, &mut self.diags))
                 .collect();
             math_rows.push(MathRow {
                 cells,
@@ -3765,7 +3895,12 @@ impl P<'_> {
             }
             raw.push(input.token.clone());
         }
-        let (list, unclosed) = math::parse_tokens_reporting_unclosed(&raw, &mut self.diags, !found);
+        let (list, unclosed) = math::parse_tokens_reporting_unclosed(
+            &raw,
+            self.math_packages,
+            &mut self.diags,
+            !found,
+        );
         let end = if found {
             close_end
         } else {
@@ -3824,6 +3959,11 @@ impl P<'_> {
     fn required_group(&mut self, command: &str, command_span: Span) -> (Vec<InputToken>, Span) {
         self.required_group_bounded(command, command_span, false)
     }
+
+    /// `long`: a `\long` argument (`\@footnotetext`), where a blank line is
+    /// an ordinary paragraph break inside the argument rather than its end.
+    /// An argument that is never closed at all is still closed at the end of
+    /// its first paragraph, so a missing brace cannot swallow the document.
 
     fn required_group_bounded(
         &mut self,
@@ -4394,6 +4534,7 @@ impl P<'_> {
                         pre_unit.as_deref(),
                         &args,
                         false,
+                        self.math_packages,
                         span,
                         &mut self.diags,
                     );
@@ -4427,8 +4568,8 @@ impl P<'_> {
                         style = previous;
                     }
                 }
-                TokenKind::Word(text) if control_symbol_kern(text, input.token.span).is_some() => {
-                    if let Some(amount) = control_symbol_kern(text, input.token.span) {
+                TokenKind::Word(text) if control_symbol_kern(text, input.token.span, self.math_packages.amsmath).is_some() => {
+                    if let Some(amount) = control_symbol_kern(text, input.token.span, self.math_packages.amsmath) {
                         content.push(Inline::Kern {
                             amount,
                             span: input.token.span,
@@ -4436,8 +4577,12 @@ impl P<'_> {
                         });
                     }
                 }
-                TokenKind::Command(name) if text_builtins::text_kern(name).is_some() => {
-                    if let Some(amount) = text_builtins::text_kern(name) {
+                TokenKind::Command(name)
+                    if text_builtins::text_kern(name, self.math_packages.amsmath).is_some() =>
+                {
+                    if let Some(amount) =
+                        text_builtins::text_kern(name, self.math_packages.amsmath)
+                    {
                         content.push(Inline::Kern {
                             amount,
                             span: input.token.span,
@@ -4578,6 +4723,7 @@ impl P<'_> {
             pre_unit.as_deref(),
             &args,
             false,
+            self.math_packages,
             full,
             &mut self.diags,
         );
@@ -4695,22 +4841,49 @@ impl P<'_> {
                 }
                 parsed
             });
-        let number = match explicit {
+        // Inside a `minipage`, `\footnote` and `\footnotetext` use
+        // `\@mpfn` = `mpfootnote` (`\thempfootnote`: `\alph`);
+        // `\footnotemark` always uses `footnote`.
+        let minipage =
+            name != "footnotemark" && self.env_stack.iter().any(|(env, _)| is_minipage(env));
+        let counter = if minipage {
+            &mut self.mpfootnote_counter
+        } else {
+            &mut self.footnote_counter
+        };
+        let value = match explicit {
             Some(number) => number,
-            None if name == "footnotetext" => self.footnote_counter,
+            None if name == "footnotetext" => *counter,
             None => {
-                self.footnote_counter += 1;
-                self.footnote_counter
+                *counter += 1;
+                *counter
             }
+        };
+        let number = if minipage {
+            match alph(value) {
+                Some(letter) => letter,
+                None => {
+                    self.diags.push(Diagnostic::error(
+                        format!("minipage footnote number {value} is outside \\alph's a-z"),
+                        Some(span),
+                        Some("printed the number in arabic instead".into()),
+                    ));
+                    value.to_string()
+                }
+            }
+        } else {
+            value.to_string()
         };
         let text = if name == "footnotemark" {
             None
         } else {
-            let (tokens, _) = self.required_group(name, span);
+            // `\@footnotetext` is `\long` (latex.ltx): a blank line inside
+            // the argument is a paragraph break in the note, not its end.
+            let (tokens, _) = self.required_group_bounded(name, span, true);
             Some(self.footnote_inlines(tokens, span))
         };
         para.push(Inline::Footnote {
-            number: number.to_string(),
+            number,
             span,
             mark: name != "footnotetext",
             text,
@@ -5491,6 +5664,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         "multicol" => options
             .iter()
             .all(|option| matches!(*option, "errorshow" | "infoshow" | "balancingshow" | "markshow" | "debugshow")),
+        // Table packages (parser/tabular.rs, crate::tabular): booktabs rules
+        // and spacing, longtable page-breaking tables, multirow entries and
+        // colortbl row/column/cell colours and rule colours.
+        "booktabs" | "longtable" | "multirow" | "colortbl" => options.is_empty(),
         // amsmath/amssymb (math typesetting: \mathbb, \forall, gather,
         // align, ...) and microtype (character protrusion/expansion kerning)
         // are genuinely unimplemented and change real output; they must keep
@@ -5640,13 +5817,13 @@ fn preamble_source(text: &str, has_document: bool, tokens: &[InputToken]) -> Str
 
 /// The kern a control-symbol token (`\,` lexed as the word `,` with a
 /// two-byte span, the same test `math.rs` uses) stands for in text mode.
-fn control_symbol_kern(word: &str, span: Span) -> Option<TextDimen> {
+fn control_symbol_kern(word: &str, span: Span, amsmath: bool) -> Option<TextDimen> {
     let mut chars = word.chars();
     match (chars.next(), chars.next()) {
         (Some(c), None)
             if span.end - span.start == 2 && text_builtins::KERN_CONTROL_SYMBOLS.contains(&c) =>
         {
-            text_builtins::text_kern(word)
+            text_builtins::text_kern(word, amsmath)
         }
         _ => None,
     }
@@ -5827,37 +6004,53 @@ fn url_segments(text: &str) -> Vec<&str> {
     segments
 }
 
-/// Expands tabs to the next multiple of 8 columns (a common editor default;
-/// real TeX has no tab stops of its own and would simply treat a raw tab as
-/// an ordinary space, which this crate treats as too lossy for source code)
-/// and, for a starred `\verb*`/`verbatim*`, marks every resulting literal
-/// space with a middle dot. That dot is a deliberate, honest stand-in for
-/// TeX's `\textvisiblespace`: the Core 14 Courier face has no such glyph, and
-/// a middle dot is both WinAnsi-safe (see `export.rs`) and a widely
-/// recognised "visible space" mark on its own. CRLF line endings are not
-/// specially handled; a trailing `\r` is kept as a literal character.
+/// Renders one raw verbatim source line for layout: a tab becomes exactly one
+/// space, and for a starred `\verb*`/`verbatim*` every resulting space becomes
+/// a middle dot. CRLF line endings are not specially handled; a trailing `\r`
+/// is kept as a literal character.
+///
+/// **Tabs are one space, not a column stop.** `\@vobeytabs` in `latex.ltx`
+/// makes TAB active and `\let`s it to `\@xobeytab`, which is `\let` to
+/// `\@xobeysp` (`= \nobreakspace = \leavevmode\nobreak\ `); `verbatim*`
+/// re-points both through `\@setupverbvisibletab`. Either way a tab is
+/// whatever *one* space is — TeX has no tab stops, and nothing in the
+/// expansion depends on the current column. pdfTeX 3.141592653-2.6-1.40.27
+/// (TeX Live 2025) confirms it: in `\showbox`, `<TAB>one` in `verbatim`
+/// yields a single `\glue 5.24995` (cmtt10's `\fontdimen2`, stretch and
+/// shrink both 0) — byte-identical to the one-literal-space baseline — and
+/// glyph origins in the generated PDF put the first letter at these offsets
+/// from the left text edge:
+///
+/// | source line          | measured | one-space rule | old 8-column rule |
+/// |----------------------|----------|----------------|-------------------|
+/// | `<TAB>Q`             |  5.23 bp | 5.23 bp (1)    | 41.84 bp (8)      |
+/// | `ab<TAB>W`           | 15.69 bp | 15.69 bp (3)   | 41.84 bp (8)      |
+/// | `abcdefgh<TAB>R`     | 47.07 bp | 47.07 bp (9)   | 83.99 bp (16)     |
+/// | `abc<TAB><TAB>T`     | 26.15 bp | 26.15 bp (5)   | 83.99 bp (16)     |
+/// | `<TAB><TAB><TAB>Y`   | 15.69 bp | 15.69 bp (3)   | 125.99 bp (24)    |
+///
+/// (`abcdefg<TAB>E` at 41.84 bp is the one column where the two rules happen
+/// to agree, which is why it alone cannot settle the question.) `verbatim*`
+/// measures identically. This function used to expand to the next multiple of
+/// 8 columns, which encoded a *text-editor* convention rather than anything
+/// pdflatex does.
+///
+/// **The middle dot is a width-equivalent stand-in.** On pdfTeX
+/// `\verbvisiblespace` is `\asciispace` = `\char32`, and cmtt10's slot 32 is
+/// `/visiblespace` — U+2423 OPEN BOX. The Core 14 Courier face this crate
+/// lays out on has no U+2423 at all, so some substitute is unavoidable. A
+/// middle dot is the honest choice because it costs nothing geometrically:
+/// Courier's AFM width table is uniform, and `periodcentered` (U+00B7) and
+/// `space` (U+0020) both advance 600/1000 em — 6.0 pt at the 10 pt body size
+/// — so the substitution moves no glyph. It is also WinAnsi-safe (see
+/// `export.rs`) and a widely recognised "visible space" mark on its own.
 fn verbatim_display(line: &str, starred: bool) -> String {
-    const TAB_STOP: usize = 8;
     const VISIBLE_SPACE: char = '\u{B7}';
     let mut out = String::with_capacity(line.len());
-    let mut column = 0usize;
     for ch in line.chars() {
         match ch {
-            '\t' => {
-                let spaces = TAB_STOP - (column % TAB_STOP);
-                for _ in 0..spaces {
-                    out.push(if starred { VISIBLE_SPACE } else { ' ' });
-                }
-                column += spaces;
-            }
-            ' ' => {
-                out.push(if starred { VISIBLE_SPACE } else { ' ' });
-                column += 1;
-            }
-            _ => {
-                out.push(ch);
-                column += 1;
-            }
+            '\t' | ' ' => out.push(if starred { VISIBLE_SPACE } else { ' ' }),
+            _ => out.push(ch),
         }
     }
     out
@@ -5984,6 +6177,37 @@ fn document_begin_end(tokens: &[InputToken]) -> Option<usize> {
     })
 }
 
+/// `\@fnsymbol` (latex.ltx): `\textasteriskcentered`, `\textdagger`,
+/// `\textdaggerdbl`, `\textsection`, `\textparagraph`, `\textbardbl` and
+/// the doubled first three; `None` past nine (`\@ctrerr`).
+pub(crate) fn fnsymbol(n: u32) -> Option<&'static str> {
+    const SYMBOLS: [&str; 9] = [
+        "\u{2217}",
+        "\u{2020}",
+        "\u{2021}",
+        "\u{a7}",
+        "\u{b6}",
+        "\u{2016}",
+        "\u{2217}\u{2217}",
+        "\u{2020}\u{2020}",
+        "\u{2021}\u{2021}",
+    ];
+    SYMBOLS.get(n.checked_sub(1)? as usize).copied()
+}
+
+/// `minipage`, whose footnotes number `mpfootnote` (the environment itself
+/// is not implemented: its body is set as running text).
+fn is_minipage(environment: &str) -> bool {
+    environment == "minipage"
+}
+
+/// `\@alph`: 1-26 as a-z; `None` otherwise (`\@ctrerr`).
+pub(crate) fn alph(n: u32) -> Option<String> {
+    (1..=26)
+        .contains(&n)
+        .then(|| char::from(b'a' + (n - 1) as u8).to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6033,6 +6257,63 @@ mod tests {
         assert_eq!(heading, Some(vec![7]));
         // 1 2 3 4 5: ungrouped digits.
         assert_eq!(paragraph, Some(vec![5]));
+    }
+
+    /// The document's packages reach math parsing, so the same `$f\colon A$`
+    /// is the kernel's single punctuation atom in an `article` and amsmath's
+    /// glue-`:`-glue trio once amsmath is loaded — directly, through a
+    /// package that loads it, or through the document class.
+    ///
+    /// Verified against TeX Live 2025 pdflatex at 10pt: `\hbox{$a\colon b$}`
+    /// is 14.02196pt without amsmath and 16.79967pt with it, a 5mu
+    /// difference, and `\usepackage{mathtools}` and `\documentclass{amsart}`
+    /// both measure the same as `\usepackage{amsmath}`.
+    #[test]
+    fn math_parsing_takes_the_documents_package_definitions() {
+        fn colon_atoms(preamble: &str) -> usize {
+            let source =
+                format!("{preamble}\\begin{{document}}\n$f\\colon A$\n\\end{{document}}\n");
+            let parsed = parse(&source);
+            // amsmath itself still reports that it is not implemented as a
+            // whole (`package_matches_layout`); what must not appear is any
+            // complaint about the formula.
+            assert!(
+                !parsed
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.message.contains("colon")),
+                "{preamble}: {:?}",
+                parsed.diagnostics
+            );
+            let mut found = None;
+            for block in &parsed.blocks {
+                if let Block::Paragraph(content) = block {
+                    for inline in content {
+                        if let Inline::Math { list, .. } = inline {
+                            found = Some(list.atoms.len());
+                        }
+                    }
+                }
+            }
+            found.unwrap_or_else(|| panic!("{preamble}: no formula"))
+        }
+
+        // `f`, the colon, `A`.
+        assert_eq!(colon_atoms("\\documentclass{article}\n"), 3);
+        // `f`, 2mu, the colon, 6mu, `A`.
+        for preamble in [
+            "\\documentclass{article}\n\\usepackage{amsmath}\n",
+            "\\documentclass{article}\n\\usepackage{mathtools}\n",
+            "\\documentclass{article}\n\\usepackage{amssymb,amsmath}\n",
+            "\\documentclass{amsart}\n",
+        ] {
+            assert_eq!(colon_atoms(preamble), 5, "{preamble}");
+        }
+        // A package that does not load amsmath leaves the kernel's definition.
+        assert_eq!(
+            colon_atoms("\\documentclass{article}\n\\usepackage{amsthm}\n"),
+            3
+        );
     }
 
     #[test]
@@ -7446,15 +7727,36 @@ mod tests {
         assert_eq!(lines[0].text, "a\u{B7}b");
     }
 
+    /// A tab in `verbatim` is one space, never a jump to a column stop: LaTeX
+    /// `\let`s the active tab to `\@xobeysp`, and pdflatex measurably puts the
+    /// following glyph exactly one cmtt10 space (5.24995 pt) further along, at
+    /// every starting column. See `verbatim_display` for the measurements.
     #[test]
-    fn verbatim_expands_tabs_to_the_next_stop() {
-        let source = "\\begin{verbatim}\n\ta\n\\end{verbatim}";
+    fn verbatim_sets_a_tab_as_a_single_space_not_a_column_stop() {
+        // Column 0, column 2, column 8 and two consecutive tabs. Under the old
+        // 8-column rule these would have been 8, 8, 16 and 16 cells wide.
+        let source = "\\begin{verbatim}\n\ta\nab\tcd\nabcdefgh\tX\nabc\t\tX\n\\end{verbatim}";
         let parsed = parse(source);
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
         let Block::Verbatim { lines, .. } = &parsed.blocks[0] else {
             panic!("expected a Block::Verbatim, got {:?}", parsed.blocks[0]);
         };
-        assert_eq!(lines[0].text, format!("{}a", " ".repeat(8)));
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, [" a", "ab cd", "abcdefgh X", "abc  X"]);
+    }
+
+    /// `\@setupverbvisibletab` points the active tab at the same visible-space
+    /// box as an ordinary space, so a starred tab is one dot, not eight.
+    #[test]
+    fn verbatim_star_sets_a_tab_as_a_single_visible_space() {
+        let source = "\\begin{verbatim*}\n\ta\nabc\t\tX\n\\end{verbatim*}";
+        let parsed = parse(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let Block::Verbatim { lines, .. } = &parsed.blocks[0] else {
+            panic!("expected a Block::Verbatim, got {:?}", parsed.blocks[0]);
+        };
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["\u{B7}a", "abc\u{B7}\u{B7}X"]);
     }
 
     #[test]

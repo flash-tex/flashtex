@@ -1,0 +1,84 @@
+\section{Method}
+\label{sec:method}
+
+We now describe the estimator used throughout the remainder of the thesis.
+The construction proceeds in two stages: first we define a spatially
+weighted intensity estimate that corrects for the irregular sensor density
+illustrated in Figure~\ref{fig:network}, and second we derive an interval
+estimator for the recurrence time from that intensity, together with a
+confidence procedure that accounts for the finite number of observed
+events.
+
+\subsection{Spatially Weighted Intensity Estimation}
+Let $s_1, \dots, s_n$ denote the locations of the $n$ deployed sensors, and
+let $E_i$ denote the set of event times recorded by sensor $i$ during the
+observation window $[0, T]$. Under the independence assumption discussed in
+Section~\ref{sec:background}, each sensor observes a thinned version of the
+global event process, with thinning probability proportional to a local
+coverage function $\pi(s_i)$. We estimate the aggregate intensity as a
+coverage-corrected sum over sensors,
+\begin{equation}
+\label{eq:intensity}
+\hat{\lambda}(t) = \sum_{i=1}^{n} \frac{1}{\pi(s_i)} \sum_{\tau \in E_i}
+K_h(t - \tau),
+\end{equation}
+where $K_h$ is a smoothing kernel with bandwidth $h$ and $\pi(s_i)$ is
+estimated from the sensor placement study described in
+Section~\ref{sec:background}, following the placement-aware correction of
+\citet{fictional2020}. The bandwidth $h$ controls the bias--variance
+trade-off of the estimate in the usual way: small values of $h$ track rapid
+changes in the underlying rate but produce a noisy estimate, whereas large
+values smooth over genuine rate variation.
+
+Several practical considerations affect the choice of kernel and bandwidth
+in this setting:
+\begin{itemize}
+  \item The bandwidth should be chosen relative to the shortest recurrence
+  interval of interest, since a bandwidth much larger than the interval of
+  interest will average away the signal entirely.
+  \item Boundary effects near $t = 0$ and $t = T$ bias the raw kernel
+  estimate downward; we correct for this using the standard reflection
+  method.
+  \item When sensor dropout is correlated with local event intensity, the
+  coverage correction in Equation~\eqref{eq:intensity} is no longer
+  unbiased, and a more elaborate missing-data model is required.
+\end{itemize}
+
+\subsection{Recurrence Interval Estimation}
+Given the smoothed intensity estimate $\hat{\lambda}(t)$, we define the
+estimated recurrence interval at time $t$ as the reciprocal of the local
+intensity, $\hat{r}(t) = 1 / \hat{\lambda}(t)$. A first-order delta-method
+argument yields an approximate confidence interval for $\hat{r}(t)$ in terms
+of the variance of $\hat{\lambda}(t)$, which we estimate using a block
+bootstrap over sensor-level event sequences to account for spatial
+correlation between nearby sensors. This bootstrap procedure resamples
+whole sensors rather than individual events, which preserves the
+dependence structure within each sensor's event sequence and yields
+substantially more conservative, and we believe more realistic, confidence
+intervals than a naive event-level bootstrap would produce.
+
+\subsection{Evaluation on Synthetic Data}
+We first validate the estimator on synthetic event sequences generated from
+a known Hawkes process with a time-varying baseline intensity, so that the
+true recurrence interval is known exactly and can be compared against the
+estimate produced by Equation~\eqref{eq:intensity}. Across a range of
+sensor densities and dropout rates, the coverage-corrected estimator
+recovers the true recurrence interval with markedly lower bias than an
+uncorrected estimator that ignores the spatial coverage function, confirming
+that the correction term derived from \citet{fictional2020} is necessary
+rather than a merely theoretical refinement.
+
+\subsection{Field Study}
+We then apply the estimator to a field-collected dataset gathered from the
+sensor deployment shown in Figure~\ref{fig:network}, spanning several
+months of continuous monitoring. The estimated recurrence intervals from
+the field data are broadly consistent with maintenance records collected
+independently by facility operators, which we take as external validation
+of the method beyond the synthetic study. Discrepancies that do arise are
+concentrated near sensors with the lowest local coverage, consistent with
+the variance inflation predicted by the block-bootstrap confidence
+procedure described above, and consistent with the general caution urged
+by \citep{daley2003} regarding inference from sparsely sampled point
+processes. The remaining chapters of the thesis build on this estimator to
+address the downstream problem of scheduling preventive maintenance under
+uncertainty in the estimated recurrence interval.

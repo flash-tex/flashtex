@@ -1,7 +1,11 @@
 //! A small, strict JSON reader. Enough for runtime-v1 envelopes; written here so
 //! the crate builds offline with no dependencies, matching `crates/compiler`.
-
-use std::collections::BTreeMap;
+//!
+//! An object is a `Vec` of pairs in source order, not a map. A rendering-v2
+//! display list is mostly tens of thousands of six-key glyph objects, and a
+//! `BTreeMap` allocates a node per object; the pairs are only ever read back
+//! through [`Value::get`], never iterated, so a short linear scan is both
+//! faster and enough. Duplicate keys keep the last value, as the map did.
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -10,13 +14,13 @@ pub enum Value {
     Number(f64),
     String(String),
     Array(Vec<Value>),
-    Object(BTreeMap<String, Value>),
+    Object(Vec<(String, Value)>),
 }
 
 impl Value {
     pub fn get(&self, key: &str) -> Option<&Value> {
         match self {
-            Value::Object(m) => m.get(key),
+            Value::Object(m) => m.iter().find(|(k, _)| k == key).map(|(_, v)| v),
             _ => None,
         }
     }
@@ -246,7 +250,7 @@ impl Parser<'_> {
 
     fn object(&mut self) -> Result<Value, String> {
         self.expect(b'{')?;
-        let mut map = BTreeMap::new();
+        let mut map: Vec<(String, Value)> = Vec::new();
         self.skip_ws();
         if self.peek() == Some(b'}') {
             self.pos += 1;
@@ -259,7 +263,10 @@ impl Parser<'_> {
             self.expect(b':')?;
             self.skip_ws();
             let v = self.value()?;
-            map.insert(key, v);
+            match map.iter_mut().find(|(k, _)| *k == key) {
+                Some(slot) => slot.1 = v,
+                None => map.push((key, v)),
+            }
             self.skip_ws();
             match self.peek() {
                 Some(b',') => self.pos += 1,

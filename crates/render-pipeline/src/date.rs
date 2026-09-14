@@ -11,9 +11,11 @@
 //!
 //! `crates/compiler` owns the real [`TodayDate`] and the `\today` formatting.
 //! This crate links `vendor/compiler`, a read-only pinned mirror
-//! (`vendor/VENDORING.md`) that predates it, so the type is mirrored here until
-//! that pin is refreshed. On re-pin this module collapses into a re-export of
-//! `flashtex_compiler::date` and the `request-date` feature becomes default —
+//! (`vendor/VENDORING.md`); the pin now carries `flashtex_compiler::date` (see
+//! `vendor/compiler/src/date.rs`) and `request-date` is a **default** Cargo
+//! feature (`Cargo.toml`), so `RenderOptions::today` already reaches the real
+//! parser end to end. This module still exists as its own copy rather than a
+//! re-export — collapsing it is unfinished cleanup, not a functionality gap —
 //! see `RenderOptions::today`.
 
 /// Why a supplied date was refused. Never rounded, clamped, or replaced by the

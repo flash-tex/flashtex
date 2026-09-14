@@ -799,6 +799,10 @@ struct SourceEditorView: NSViewRepresentable {
                 // (EditorKeyHandling.swift computes the offset; Completion.swift
                 // calls this hook once, right after it places the caret).
                 completing.onCloserInserted = { [weak self] offset in self?.registerPendingCloser(offset) }
+                // GH#2: and the reverse question, so accepting a completion that
+                // supplies its own closer eats the one already sitting there
+                // instead of stranding it (`\begin{proof}` … `\end{proof}}`).
+                completing.isPendingCloser = { [weak self] offset in self?.pendingClosers.contains(offset) ?? false }
             }
             errorLens.lineTable = { [weak self] in self?.syntax.highlighter ?? SyntaxHighlighter() }
             errorLens.attach(tv)

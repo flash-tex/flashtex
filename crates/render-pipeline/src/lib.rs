@@ -12,6 +12,7 @@
 pub mod date;
 pub use date::TodayDate;
 pub mod adapter;
+pub(crate) mod amsthm;
 pub mod cff;
 pub mod delta;
 pub mod display;
@@ -20,6 +21,7 @@ pub mod fonts;
 pub mod graphics;
 pub mod ids;
 pub mod incremental;
+pub mod longtable;
 pub mod mathalpha;
 pub mod mathfont;
 pub mod mathgrid;
@@ -33,6 +35,7 @@ pub mod protocol;
 pub mod shape;
 pub mod style;
 pub mod table;
+pub mod tablecolor;
 pub mod tfm;
 pub mod tikz;
 pub mod toc;
@@ -89,13 +92,13 @@ pub struct RenderOptions {
     /// rendered before the field existed, so every old client and every
     /// committed fixture is unchanged.
     ///
-    /// **Not yet reaching the parser.** `vendor/compiler` is a read-only pin
-    /// that predates `parser::parse_project_with`, so the value is threaded and
-    /// cache-keyed here but only handed to the compiler behind the
-    /// `request-date` feature. Flip that feature on when the vendor pin carries
-    /// it; until then a request's date is validated and carried but `\today`
-    /// still renders the epoch. Same convention as `amsmath-inline` and
-    /// `compiler-text-nucleus` before their re-pins.
+    /// **Reaches the parser.** `vendor/compiler` (pin `ea4ee5c8`) carries
+    /// `parser::parse_project_with`, and `request-date` is a default Cargo
+    /// feature (`Cargo.toml`), so this value is threaded, cache-keyed and
+    /// handed to the compiler by default: `\today` renders the supplied date,
+    /// not the epoch, in an ordinary build. Same convention as
+    /// `amsmath-inline`, which went default after its own re-pin.
+    /// `--no-default-features` still builds against the epoch-only path.
     pub today: TodayDate,
 }
 
@@ -150,11 +153,11 @@ pub fn render_cached(
     let multicol_masked: Vec<Option<String>> = texts.iter().zip(&multicol_scans).map(|(t, s)| s.masked(t)).collect();
     let texts: Vec<&str> = texts.iter().zip(&multicol_masked).map(|(t, m)| m.as_deref().unwrap_or(t)).collect();
     let parse_docs: Vec<SourceDocument<'_>> = documents.iter().zip(&texts).map(|(d, t)| SourceDocument { path: d.path, text: t }).collect();
-    // The request's date reaches `\today` here. `vendor/compiler` is a
-    // read-only pin (vendor/VENDORING.md) that predates
-    // `parser::parse_project_with`, so the call that actually carries the date
-    // sits behind the `request-date` feature; without it the vendored parser
-    // renders the epoch exactly as it always has. See `RenderOptions::today`.
+    // The request's date reaches `\today` here. `request-date` is a default
+    // Cargo feature (vendor/compiler carries `parser::parse_project_with`),
+    // so this is the normal build path; `--no-default-features` falls back to
+    // the vendored parser rendering the epoch, as it always has. See
+    // `RenderOptions::today`.
     #[cfg(feature = "request-date")]
     let parsed = flashtex_compiler::parser::parse_project_with(
         &parse_docs,

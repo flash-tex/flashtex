@@ -1,0 +1,14 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{multirow}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Text before the table.
+
+\begin{tabular}{ll}\multirow{2}{*}[4pt]{M} & one\\ & two\\\multirow{2}{*}[-3pt]{N} & three\\ & four\\\end{tabular}
+
+Text after the table.
+\end{document}

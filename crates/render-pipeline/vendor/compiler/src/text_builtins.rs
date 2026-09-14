@@ -183,8 +183,22 @@ pub const KERN_COMMANDS: &[&str] = &[
 /// `\;`=`\thickspace` `+.2777em`, `\negthickspace` `-.2777em`
 /// (latex.ltx 15669-15681) and `\enspace` = `\kern.5em` (latex.ltx 9432).
 /// `name` is a control word, or the one-character name of a control symbol.
-pub fn text_kern(name: &str) -> Option<TextDimen> {
+///
+/// `amsmath` says whether the document loaded amsmath, which renews
+/// `\thinspace` and `\negthinspace` to `.1667em` (`amsmath.sty` 476-477) —
+/// one digit shorter than the kernel's `.16667em`, and a real difference
+/// because `\tmspace` scales the factor rather than rounding it: measured
+/// with TeX Live 2025 pdflatex, `\hbox{a\,b}` is 12.2223pt under the kernel
+/// and 12.22261pt under amsmath, **20sp** apart at 10pt (24sp at 12pt), and
+/// `\hbox{a\!b}` 8.88887pt against 8.88857pt. `\:`/`\;` and their negatives
+/// are byte-identical under both and do not read the flag.
+///
+/// In *math* mode these are `\mskip\thinmuskip`, which amsmath leaves alone:
+/// `$a\,b$` measured identical under both. Only the text-mode kern moves.
+pub fn text_kern(name: &str, amsmath: bool) -> Option<TextDimen> {
     let factor = match name {
+        "," | "thinspace" if amsmath => ".1667em",
+        "!" | "negthinspace" if amsmath => "-.1667em",
         "," | "thinspace" => ".16667em",
         "!" | "negthinspace" => "-.16667em",
         ":" | ">" | "medspace" => ".2222em",
@@ -733,13 +747,53 @@ mod tests {
             quad: 10 * 65536,
             ..DimenContext::default()
         };
-        let em = |n: &str| text_kern(n).unwrap().resolve(&cx);
+        let em = |n: &str| text_kern(n, false).unwrap().resolve(&cx);
         // .16667 * 10pt through scale_internal (TeX §455).
         assert_eq!(em(","), 109_230);
         assert_eq!(em("negthinspace"), -109_230);
         assert_eq!(em(">"), em("medspace"));
         assert_eq!(em("enspace"), 5 * 65536);
-        assert!(text_kern("quad").is_none());
+        assert!(text_kern("quad", false).is_none());
+        assert!(text_kern("quad", true).is_none());
+    }
+
+    /// amsmath renews `\thinspace`/`\negthinspace` to `.1667em`
+    /// (`amsmath.sty` 476-477), which is 20sp wider at 10pt and 24sp at
+    /// 12pt than the kernel's `.16667em`. Both sizes measured with TeX Live
+    /// 2025 pdflatex: `\hbox{a\,b}` is 12.22230pt against 12.22261pt at 10pt,
+    /// and `\hbox{a\!b}` 8.88887pt against 8.88857pt. Everything else in the
+    /// table is byte-identical under amsmath, `\:`/`\;` included.
+    #[test]
+    fn amsmath_renews_only_the_thin_spaces() {
+        let at = |quad: i32| DimenContext {
+            quad: quad * 65536,
+            ..DimenContext::default()
+        };
+        let kern = |n: &str, amsmath: bool, cx: &DimenContext| {
+            text_kern(n, amsmath).unwrap().resolve(cx)
+        };
+        for (quad, delta) in [(10, 20), (12, 24)] {
+            let cx = at(quad);
+            assert_eq!(
+                kern(",", true, &cx) - kern(",", false, &cx),
+                delta,
+                "\\, at {quad}pt"
+            );
+            assert_eq!(
+                kern("!", true, &cx) - kern("!", false, &cx),
+                -delta,
+                "\\! at {quad}pt"
+            );
+            assert_eq!(kern("thinspace", true, &cx), kern(",", true, &cx));
+            assert_eq!(kern("negthinspace", true, &cx), kern("!", true, &cx));
+            for unchanged in [":", ">", ";", "medspace", "thickspace", "enspace"] {
+                assert_eq!(
+                    kern(unchanged, true, &cx),
+                    kern(unchanged, false, &cx),
+                    "\\{unchanged} at {quad}pt"
+                );
+            }
+        }
     }
 
     #[test]

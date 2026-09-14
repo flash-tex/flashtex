@@ -77,6 +77,7 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{210F}', 576),  // \hbar
     ('\u{2218}', 412),  // \circ
     ('\u{2225}', 500),  // \parallel
+    ('\u{2016}', 398),  // \| / \Vert / \lVert / \rVert
     ('\u{2224}', 388),  // \nmid
     ('\u{2270}', 778),  // \nleq
     ('\u{2271}', 778),  // \ngeq
@@ -194,7 +195,7 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 79);
+        assert_eq!(ADVANCES.len(), 80);
     }
 
     #[test]

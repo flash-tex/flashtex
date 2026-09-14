@@ -122,7 +122,9 @@ fn messages(reply: &Value) -> Vec<String> {
 
 #[test]
 fn mathcal_emits_script_capitals_with_the_new_cm_hint() {
-    let reply = compile("$\\mathcal{P}x$ and $\\varnothing x$\n");
+    // `\varnothing` is msbm "3F, declared by `amssymb.sty` and undefined in
+    // base LaTeX2e; `\mathcal` is the kernel's and needs no package.
+    let reply = compile("\\usepackage{amssymb}\n$\\mathcal{P}x$ and $\\varnothing x$\n");
     let items = items(&reply);
     let messages = messages(&reply);
     assert!(
