@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/list-labels",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/422",
   "machine": "Overpriced-Hardware",
   "note": null,
   "started_utc": "2026-09-14T16:41:26Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-LIST-LABELS",
-  "updated_utc": "2026-09-14T16:41:26Z"
+  "updated_utc": "2026-09-14T17:32:03Z"
 }
