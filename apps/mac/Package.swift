@@ -58,7 +58,8 @@ let package = Package(
                 "FlashTeXMac",
                 "HostedWindows",
                 .product(name: "SnapshotTesting", package: "swift-snapshot-testing"),
-            ]
+            ],
+            exclude: ["__Snapshots__"] // the recorded reference PNGs
         ),
         // Pure accessibility models (reading sequence, editor navigation,
         // command table) plus the SwiftUI attachment views; depends only on
