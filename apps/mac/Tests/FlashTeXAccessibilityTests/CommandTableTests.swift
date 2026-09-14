@@ -164,7 +164,7 @@ final class CommandTableTests: XCTestCase {
                 // Undo and Settings (⌘,) are system items; completion, toggle
                 // comment, signature help, the preview click and the search
                 // window's ⌘G are not menu items.
-                XCTAssertTrue([.undo, .completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource, .editorPreferences, .nextSearchMatch].contains(e.command), "\(e.command) has no menu item")
+                XCTAssertTrue([.undo, .completion, .completionList, .toggleComment, .duplicateLine, .signatureHelp, .selectPreviewItemSource, .editorPreferences, .nextSearchMatch].contains(e.command), "\(e.command) has no menu item")
                 continue
             }
             let matches = wired.filter { $0.title == item }

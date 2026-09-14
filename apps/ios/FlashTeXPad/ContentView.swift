@@ -408,6 +408,16 @@ struct MacLinkPanel: View {
             Section("Destination (hello_ack / destination_query)") {
                 if let d = model.destination {
                     Text("\(d.projectId)/\(d.path) destination \(d.destinationId) base_revision \(d.baseRevision)").font(.caption.monospaced())
+                    // What kind of place the Mac's caret is in, so it is clear
+                    // before sending whether a formula will come back wrapped in
+                    // $ … $, in \[ … \], or not wrapped at all. Absent from a Mac
+                    // that predates `caret_context` (nearby-v1, additive).
+                    if let caret = d.caretContext {
+                        Text(caret.label)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("destination.caret")
+                    }
                 } else { Text("null — pin an insertion point on the Mac (⌘⇧P)").foregroundStyle(.secondary) }
                 Button("Refresh") { Task { await model.refreshDestination() } }.disabled(!model.link.isConnected)
             }

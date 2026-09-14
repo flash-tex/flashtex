@@ -964,7 +964,25 @@ pub fn adapt_cached(
     if let Some(pt) = setlength_in(source, "parskip", size, em_ex) {
         style.parskip = crate::style::Skip::fixed(pt);
     }
-    let secnumdepth = counter(source, "secnumdepth").unwrap_or(options.default_secnumdepth);
+    // `\c@secnumdepth`. LaTeX has exactly one such counter and `\@sect` reads
+    // it twice: `\ifnum #2>\c@secnumdepth` suppresses the printed number, and
+    // the same test suppresses the `\numberline` written to the contents
+    // list. Its value is the class's own (`article.cls` line 255
+    // `\setcounter{secnumdepth}{3}`; `report.cls`/`book.cls` 2) unless the
+    // document sets the counter itself.
+    //
+    // This used to be a flat `options.default_secnumdepth` (2), so every
+    // `\subsubsection` in an `article` came out unnumbered while the contents
+    // list — which already derived the class default below — wrote `1.1.1`
+    // for the same heading. `\documentclass`-less input (the visual-oracle
+    // harness and the Mac app send body-only documents, and `resolve` hands
+    // those article geometry regardless) keeps the caller's default.
+    let secnumdepth = counter(source, "secnumdepth").unwrap_or_else(|| {
+        match (&style.class_geometry, explicit_class.is_some()) {
+            (Some(d), true) => d.secnumdepth.clamp(0, i32::from(u8::MAX)) as u8,
+            _ => options.default_secnumdepth,
+        }
+    });
     style.nfss = crate::nfss::Scheme::for_document(&parsed.packages, t1_encoding(source));
     let styles: Vec<Styles> = texts.iter().map(|t| Styles::new(t, style_intervals(t), style.nfss)).collect();
     let labels_fp = {
@@ -1027,13 +1045,9 @@ pub fn adapt_cached(
     // the next block. Nothing is collected without a list.
     let toc_active = commands.iter().any(|c| matches!(c.kind, BodyKind::ContentsList(_)));
     let toc_settings = crate::toc::Settings::read(source, has_chapters);
-    // `\@sect` writes `\numberline` up to the class's `secnumdepth`
-    // (article.cls 3, report/book.cls 2) when the document declares one.
-    let toc_secnumdepth = counter(source, "secnumdepth").unwrap_or(match (explicit_class.is_some(), has_chapters) {
-        (true, true) => 2,
-        (true, false) => 3,
-        (false, _) => options.default_secnumdepth,
-    });
+    // `\@sect` writes `\numberline` up to the same `\c@secnumdepth` that
+    // decides the printed number; the two are one counter, resolved above.
+    let toc_secnumdepth = secnumdepth;
     let mut toc_records: Vec<crate::toc::Record> = Vec::new();
     let mut toc_lists: Vec<(usize, crate::toc::ListKind, Span, bool)> = Vec::new();
     let mut toc_pending: Vec<String> = Vec::new();
@@ -1307,15 +1321,43 @@ pub fn adapt_cached(
                     items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
                 }
                 items.extend(content_items);
-                blocks.push(Block::Heading {
-                    level,
-                    items,
-                    eject_before,
-                    vspace_before,
-                    number,
-                    title,
-                    span: number_span,
-                });
+                // report.cls/book.cls open `thebibliography` with
+                // `\chapter*{\bibname\@mkboth{...}}`, not article.cls's
+                // `\section*{\refname}`: a `\clearpage`, the `\@makeschapterhead`
+                // drop and the name `Bibliography`. The compiler synthesises one
+                // unnumbered level-1 heading reading `References` for every class
+                // (`parser.rs`, `thebibliography`), so a `report` bibliography was
+                // set in the flow of the preceding page under the wrong name —
+                // which is why `fixtures/real-world/thesis-chapter` came out 4
+                // pages against pdflatex's 5.
+                if has_chapters && bibliography_heading(texts, level, &number, number_span) {
+                    // Keep whatever `\label`s the contents-list machinery put
+                    // in front of the title; replace the compiler's
+                    // `References` text with `\bibname`.
+                    let mut head: Vec<Item> = items.into_iter().take_while(|i| matches!(i, Item::Label { .. })).collect();
+                    head.extend(command_words(BIBNAME, number_span));
+                    blocks.push(Block::Chapter {
+                        number: None,
+                        appendix,
+                        items: head,
+                        title: BIBNAME.to_string(),
+                        span: number_span,
+                        // `\chapter*` issues no `\chaptermark`; `thebibliography`'s
+                        // own `\@mkboth` sets both marks, which only a `headings`
+                        // page style would show (report/book default to `plain`).
+                        mark: false,
+                    });
+                } else {
+                    blocks.push(Block::Heading {
+                        level,
+                        items,
+                        eject_before,
+                        vspace_before,
+                        number,
+                        title,
+                        span: number_span,
+                    });
+                }
                 after_heading = true;
                 prev_para_end = None;
             }
@@ -1347,6 +1389,7 @@ pub fn adapt_cached(
                 theorem_item,
                 in_theorem,
                 list,
+                run_in,
             } => {
                 for inline in inlines {
                     unsupported_inlines(inline, &mut limitations);
@@ -1357,6 +1400,15 @@ pub fn adapt_cached(
                 // `\begin` command), so the weights come from the compiler's
                 // own scoping inside a theorem-like environment.
                 let mut items = items_for_weighted(inlines, in_theorem);
+                // `\paragraph`/`\subparagraph`: `{\normalfont\normalsize
+                // \bfseries <title>}` then `\hskip 1em`, run into this
+                // paragraph's first line. The compiler set the title as
+                // plain body text, so the weight and the `em` are applied
+                // here, over exactly the items whose bytes are the title's.
+                if let Some(run_in) = run_in {
+                    let h = style.heading(run_in.level);
+                    apply_run_in_heading(&mut items, &run_in, h.run_in_after_em.unwrap_or(1.0), h.bold);
+                }
                 items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
                 let mut parts = Vec::new();
                 let mut current = Vec::new();
@@ -1524,16 +1576,40 @@ pub fn adapt_cached(
                 // paragraph carries no indent and `\list` sets
                 // `\parindent\listparindent` (0pt in article) for the
                 // ones after it, `quote` likewise.
+                // `\@xsect`'s run-in branch discards the `\parindent` box and
+                // sets `\hskip #3` instead: 0 for `\paragraph`, `\parindent`
+                // for `\subparagraph` (article.cls `indent_parindent`).
+                let run_in_indent = run_in.map(|r| flashtex_document_style::section_spec(r.level).is_some_and(|s| s.indent_parindent));
+                // `\@startsection`'s `\addpenalty\@secpenalty \addvspace{#4}`
+                // above the head: `3.25ex \@plus1ex \@minus.2ex` of the body
+                // font for both levels. `\addvspace` keeps whichever of the
+                // new skip and `\lastskip` is larger (`\@xaddvskip`), so
+                // when the head follows something that already contributed
+                // one — `\endtrivlist`'s `\addvspace\@topsepadd` after a
+                // list, which is how every `\paragraph{Solution.}` in
+                // `fixtures/real-world/ps-calculus` is reached — the two do
+                // not add up.
+                // `\@xaddvskip` keeps whichever glue is the larger, whole:
+                // its stretch and shrink come with it, and #405 made these
+                // skips real glue rather than rigid kerns.
+                let run_in_skip = run_in.map(|r| style.heading(r.level).before);
+                let (addvspace_before, addvspace_flex) = match run_in_skip {
+                    Some(s) if s.natural > unit.addvspace_before => (s.natural, (s.stretch, s.shrink)),
+                    _ => (unit.addvspace_before, unit.addvspace_flex),
+                };
                 blocks.push(Block::Paragraph {
                     parts,
-                    indent: !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent,
+                    indent: match run_in_indent {
+                        Some(indent) => indent,
+                        None => !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent,
+                    },
                     style: styled.unwrap_or_default(),
                     env_open,
                     env_close: false,
                     eject_before,
                     vspace_before,
-                    addvspace_before: unit.addvspace_before,
-                    addvspace_flex: unit.addvspace_flex,
+                    addvspace_before,
+                    addvspace_flex,
                     vspace_flex: unit.vspace_flex,
                     endlist_adjust: unit.endlist_adjust,
                     list,
@@ -1836,6 +1912,9 @@ enum UnitKind<'p> {
         in_theorem: bool,
         /// A compiler `ListItem` paragraph: its `\list` geometry.
         list: Option<ListGeom>,
+        /// The paragraph opens with a run-in heading (`\paragraph`,
+        /// `\subparagraph`); see [`RunIn`] and [`run_in_heading_at`].
+        run_in: Option<RunIn>,
     },
     Rule {
         span: Span,
@@ -2133,6 +2212,12 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
             });
         let in_theorem = theorem_item
             || first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| in_theorem_environment(t, f.start, &theorem_envs)));
+        // `\paragraph{...}`/`\subparagraph{...}`: the compiler set the title
+        // as body text at the front of this very paragraph, so the head is
+        // recognised from the bytes immediately before its first word.
+        let mut run_in = (list.is_none() && styled.is_none())
+            .then(|| first.and_then(|f| texts.get(f.document.0).and_then(|t| run_in_heading_at(t, f.start))))
+            .flatten();
         prev_styled = styled.is_some();
         prev_vmode = matches!(block, CBlock::Heading { .. });
         match block {
@@ -2218,6 +2303,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                                     theorem_item: std::mem::take(&mut theorem_item),
                                     in_theorem,
                                     list: list.clone(),
+                                    run_in: std::mem::take(&mut run_in),
                                 },
                                 eject_before: eject,
                                 vspace_before: std::mem::take(&mut vspace_before),
@@ -2241,6 +2327,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                             theorem_item: std::mem::take(&mut theorem_item),
                             in_theorem,
                             list: list.clone(),
+                            run_in: std::mem::take(&mut run_in),
                         },
                         eject_before: eject,
                         vspace_before: std::mem::take(&mut vspace_before),
@@ -4424,6 +4511,193 @@ pub(crate) fn words_at(text: &str, document: DocumentId, start: usize) -> Vec<It
         push_segment(&mut items, word.to_string(), chars, TextStyle::default());
     }
     items
+}
+
+/// `\bibname` (report.cls line 665, book.cls line 690). article.cls has
+/// `\refname` = `References` instead, which is what the compiler puts in
+/// the heading it synthesises for `thebibliography` whatever the class is.
+const BIBNAME: &str = "Bibliography";
+
+/// Whether this heading is the one the compiler synthesises for
+/// `\begin{thebibliography}`: unnumbered, level 1, and its span — which the
+/// compiler sets to the `\begin` merged with its widest-label argument —
+/// really does start there in the source.
+fn bibliography_heading(texts: &[&str], level: u8, number: &str, span: Span) -> bool {
+    if level != 1 || !number.is_empty() {
+        return false;
+    }
+    texts
+        .get(span.document.0)
+        .and_then(|t| t.get(span.start..span.end))
+        .and_then(|t| t.strip_prefix("\\begin"))
+        .is_some_and(|r| r.trim_start().starts_with("{thebibliography}"))
+}
+
+/// A run-in heading (`\@startsection` with a negative after-skip) opening a
+/// paragraph: article.cls's `\paragraph` (level 4) and `\subparagraph`
+/// (level 5).
+///
+/// ```tex
+/// \newcommand\paragraph{\@startsection{paragraph}{4}{\z@}%
+///   {3.25ex \@plus1ex \@minus.2ex}{-1em}{\normalfont\normalsize\bfseries}}
+/// ```
+///
+/// `\@xsect`'s negative-`#5` branch does not set the head as a vertical
+/// block at all. It arms `\everypar`, which throws away the following
+/// paragraph's `\parindent` box (`{\setbox\z@\lastbox}`), sets
+/// `\hskip #3 <head>` in its place and then `\hskip -#5` — so the head
+/// *is* the first words of that paragraph, bold, at indent `#3`, followed
+/// by 1 em rather than an interword space. The `\addvspace{#4}` above it is
+/// the only vertical contribution.
+///
+/// The compiler does not parse these commands: it reports them and sets the
+/// braced argument as ordinary body text, which lands at the front of
+/// exactly the paragraph LaTeX runs the head into. So the title words are
+/// already in the right place with the right spans, and all that is missing
+/// is the weight, the indent, the 1 em and the skip above — no new block
+/// type and no compiler change.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RunIn {
+    /// 4 (`\paragraph`) or 5 (`\subparagraph`).
+    pub level: u8,
+    /// First byte of the braced title. Normally the paragraph's first
+    /// character, but for the starred form the compiler sets the `*` itself
+    /// as body text, so anything before this is dropped.
+    pub title_start: usize,
+    /// End of the braced title in the source (the byte after the last
+    /// character of the argument), so the title's words can be told from
+    /// the body text that follows them in the same paragraph.
+    pub title_end: usize,
+}
+
+/// Turn the leading items whose bytes lie in the run-in heading's title
+/// into the heading: `\bfseries` weight, and `\hskip <em>` in place of the
+/// interword space that separates the title from the body text.
+fn apply_run_in_heading(items: &mut [Item], run_in: &RunIn, em: f64, bold: bool) {
+    // How many leading items are the title's. A word straddling the closing
+    // brace cannot happen: the compiler ends the title's last inline at the
+    // `}`. `Space`/`Label` inside the title carry no bytes worth testing, so
+    // they only count once a later word proves they were still inside it.
+    let mut title = 0usize;
+    for (i, item) in items.iter().enumerate() {
+        match item {
+            Item::Word(word) if word.segments.iter().flat_map(|s| s.chars.iter()).all(|c| c.end <= run_in.title_end) => title = i + 1,
+            Item::Space { .. } | Item::Label { .. } => {}
+            _ => break,
+        }
+    }
+    if title == 0 {
+        return;
+    }
+    for item in &mut items[..title] {
+        match item {
+            Item::Word(word) => {
+                // `\paragraph*`: the compiler does not consume the star, so
+                // it arrives as the first character of the title's first
+                // word. LaTeX sets no star, only a heading without a number.
+                for seg in &mut word.segments {
+                    if seg.chars.first().is_some_and(|c| c.start < run_in.title_start) {
+                        let keep: Vec<bool> = seg.chars.iter().map(|c| c.start >= run_in.title_start).collect();
+                        seg.text = seg.text.chars().zip(&keep).filter(|(_, k)| **k).map(|(c, _)| c).collect();
+                        let mut it = keep.iter();
+                        seg.chars.retain(|_| *it.next().unwrap_or(&true));
+                    }
+                }
+                word.segments.retain(|s| !s.text.is_empty());
+                for seg in &mut word.segments {
+                    seg.style.bold = bold;
+                    // `\normalfont`: the head's own weight, not a shape or
+                    // family inherited from around the command.
+                    seg.style.medium = false;
+                }
+            }
+            // The interword glue inside the title is the *head* font's
+            // `\fontdimen2`/`3`/`4` — `ecbx1000`'s, not `ecrm1000`'s, which
+            // is 0.47 bp wider per space at 10 pt.
+            Item::Space { style, .. } => {
+                style.bold = bold;
+                style.medium = false;
+            }
+            _ => {}
+        }
+    }
+    // The interword space right after the title is `\@xsect`'s `\hskip -#5`.
+    if let Some(Item::Space { .. }) = items.get(title) {
+        items[title] = Item::Quad { em };
+    }
+}
+
+/// [`RunIn`] when the bytes before `at` are `\paragraph{` / `\subparagraph{`
+/// (with an optional `*`), i.e. `at` is the first byte of a run-in
+/// heading's title. `text` is that document's source.
+fn run_in_heading_at(text: &str, at: usize) -> Option<RunIn> {
+    let head = text.get(..at)?;
+    // Scan back over the title's `{`, the optional `*` and any whitespace.
+    // The compiler starts the title's first inline just after the `{`, except
+    // for the starred form, whose `*` it leaves for the inline to start at —
+    // so the `{` can be on either side of `at`.
+    let bytes = head.as_bytes();
+    let (mut i, mut saw_open) = (head.len(), false);
+    while i > 0 {
+        match bytes[i - 1] {
+            c if c.is_ascii_whitespace() => i -= 1,
+            b'{' if !saw_open => {
+                saw_open = true;
+                i -= 1;
+            }
+            b'*' => i -= 1,
+            _ => break,
+        }
+    }
+    let before = &head[..i];
+    // `\paragraph*` takes the same run-in shape; the star only suppresses a
+    // number, and level 4/5 is past `secnumdepth` anyway.
+    let level = if let Some(r) = before.strip_suffix("subparagraph") {
+        r.ends_with('\\').then_some(5u8)
+    } else if let Some(r) = before.strip_suffix("paragraph") {
+        // Not `\subparagraph`, already handled, and not a control word this
+        // is only the tail of (`\myparagraph`).
+        r.ends_with('\\').then_some(4u8)
+    } else {
+        None
+    }?;
+    // The title's group must open at or before `at`; when it opens after,
+    // only the star and whitespace may stand between.
+    let title_start = if saw_open {
+        at
+    } else {
+        let rest = text.get(at..)?;
+        let open = rest.find('{')?;
+        if !rest[..open].trim().trim_start_matches('*').is_empty() {
+            return None;
+        }
+        at + open + 1
+    };
+    // The matching `}` of the title group.
+    let rest = text.get(title_start..)?;
+    let (mut depth, mut escaped) = (1i32, false);
+    for (i, c) in rest.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' => escaped = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(RunIn {
+                        level,
+                        title_start,
+                        title_end: title_start + i,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Words of generated text (`Chapter 1`) whose characters all point at

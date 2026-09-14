@@ -2239,6 +2239,20 @@ final class CompletingTextView: NSTextView {
     // MARK: ⌘/ line comment
 
     /// Toggles `% ` on every line the selection touches (one undo step).
+    /// ⌥⇧↓ / ⌥⇧↑: copy the line (or every line the selection touches) below or
+    /// above itself, leaving the caret on the copy. One undo step, like
+    /// `toggleLineComment`.
+    func duplicateLines(below: Bool) {
+        guard !hasMarkedText() else { return }
+        let sel = selectedRange()
+        guard let (edit, selection) = EditorKeyHandling.duplicateLinesEdit(in: string, range: sel, below: below) else { return }
+        breakUndoCoalescing()
+        insertText(edit.replacement, replacementRange: edit.range)
+        setSelectedRange(selection)
+        undoManager?.setActionName(selection.length > 0 || sel.length > 0 ? "Duplicate Lines" : "Duplicate Line")
+        breakUndoCoalescing()
+    }
+
     func toggleLineComment() {
         guard !hasMarkedText() else { return }
         let text = string as NSString
@@ -2745,6 +2759,14 @@ final class CompletingTextView: NSTextView {
         }
         if modifiers == .command, event.charactersIgnoringModifiers == "/" { // ⌘/: toggle line comment
             toggleLineComment()
+            return
+        }
+        // ⌥⇧↓ / ⌥⇧↑: duplicate the line(s) down/up (the Overleaf shortcut).
+        // This takes the key from AppKit's extend-selection-by-paragraph
+        // binding, which no LaTeX editor's users reach for and which ⇧↓ and
+        // ⌥↓ still cover between them.
+        if modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 {
+            duplicateLines(below: event.keyCode == 125)
             return
         }
         guard session != nil else {
