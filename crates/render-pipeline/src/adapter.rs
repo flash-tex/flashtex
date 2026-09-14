@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use flashtex_compiler::math::MathList;
-use flashtex_compiler::parser::{Block as CBlock, Inline, Parsed};
+use flashtex_compiler::parser::{Block as CBlock, FillLeader, Inline, Parsed};
 use flashtex_compiler::text_builtins::{TextDimen, TextLogo, TextRule};
 use flashtex_compiler::{DocumentId, Span};
 
@@ -169,7 +169,7 @@ pub enum Item {
     /// is the `\hfill` order (it beats `\parfillskip`'s `fil`); the
     /// compiler does not distinguish the two, so the order is re-read from
     /// the source bytes (`\hfill` when they are not `\hfil`).
-    HFill { fill: bool },
+    HFill { fill: bool, leader: FillLeader },
     /// Explicit horizontal glue in points: `\hspace{<dimen>}` (compiler
     /// `Inline::HSpace`, rigid) or an amsthm theorem head's own separator
     /// (`\hskip\thm@headsep`, `5pt plus 1pt minus 1pt`; `crate::amsthm`).
@@ -1680,6 +1680,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::Kern { span, .. } => *span,
         Inline::Tabular(t) => t.span,
         Inline::ColorBox(b) => b.span,
+        Inline::Underline(u) => u.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
     }
@@ -4661,6 +4662,10 @@ fn items_cached(
                 15u8.hash(&mut h);
                 format!("{b:?}").hash(&mut h);
             }
+            Inline::Underline(u) => {
+                18u8.hash(&mut h);
+                format!("{u:?}").hash(&mut h);
+            }
             Inline::Logo { logo, style, .. } => {
                 12u8.hash(&mut h);
                 logo.hash(&mut h);
@@ -4676,7 +4681,10 @@ fn items_cached(
                 amount.hash(&mut h);
                 style.hash(&mut h);
             }
-            Inline::HFill { .. } => 6u8.hash(&mut h),
+            Inline::HFill { leader, .. } => {
+                6u8.hash(&mut h);
+                leader.hash(&mut h);
+            }
             Inline::HSpace { pt, .. } => {
                 7u8.hash(&mut h);
                 pt.to_bits().hash(&mut h);
@@ -4870,6 +4878,18 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 prev_span = Some(span);
                 factor = 1000;
             }
+            Inline::Underline(u) => {
+                let span = u.span;
+                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
+                after_control_word = false;
+                items.extend(items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight));
+                prev_end = Some(span.end);
+                prev_span = Some(span);
+                factor = 1000;
+            }
             Inline::LineBreak { span } => {
                 let skip_pt = line_break_skip(text_of(span.document), span.end, size).unwrap_or(0.0);
                 items.push(Item::LineBreak { skip_pt });
@@ -4918,10 +4938,11 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let (item, word) = match &**inline {
                     Inline::HSpace { pt, .. } => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
                     Inline::TextGlue { em, .. } => (Item::Quad { em: *em }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
-                    _ => {
+                    Inline::HFill { leader, .. } => {
                         let fill = !is_control_word(text_of(span.document), span.start, "hfil");
-                        (Item::HFill { fill }, if fill { "\\hfill" } else { "\\hfil" })
+                        (Item::HFill { fill, leader: *leader }, if fill { "\\hfill" } else { "\\hfil" })
                     }
+                    _ => unreachable!(),
                 };
                 let gap = space_between(prev_end, prev_span, *span, Some(word), after_control_word);
                 let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());
