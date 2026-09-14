@@ -147,18 +147,25 @@ fn argument_at(text: &str, at: usize, name: &str) -> Option<usize> {
     (inner[..close].trim() == name).then_some(at + skipped + 1 + close + 1)
 }
 
-/// Why an `abstract` could not be set exactly here (`None`: it can).
+/// Which branch of the environment this document takes, when it is one
+/// this module does not set (`None`: the one-column form, which it does).
+///
+/// Neither is reported again. The compiler's own "environment 'abstract' is
+/// not implemented; its body is typeset as plain text" is already exactly
+/// true of both, and it is superseded only for the form that is now set; a
+/// second message would change the diagnostics of every two-column document
+/// whose layout this leaves untouched.
 fn unsupported(style: &Stylesheet) -> Option<&'static str> {
     let g = style.class_geometry.as_ref()?;
     if g.options.twocolumn {
-        return Some(
-            "two-column `abstract` is `\\section*{\\abstractname}` (article.cls 379); the body is set as plain text at the full measure",
-        );
+        // article.cls 379: `\section*{\abstractname}` at `\normalsize` and
+        // the column measure — a different shape, not a narrower one.
+        return Some("two-column");
     }
     if g.options.titlepage {
-        return Some(
-            "`titlepage` `abstract` is a page of its own between `\\null\\vfil`s (article.cls 367-375); the body is set in the flow as plain text",
-        );
+        // article.cls 367-375 (report's and book's default): a page of its
+        // own between `\null\vfil`s, inside `\titlepage`.
+        return Some("titlepage");
     }
     None
 }
@@ -183,8 +190,7 @@ pub fn apply(texts: &[&str], blocks: &mut Vec<Block>, style: &Stylesheet) -> (Ve
     }
     for (document, range) in found.into_iter().rev() {
         let span = Span::in_document(flashtex_compiler::DocumentId(document), range.begin.0, range.begin.1);
-        if let Some(why) = unsupported(style) {
-            limitations.push(("unsupported_block", span, why.to_string()));
+        if unsupported(style).is_some() {
             continue;
         }
         let inside = |b: &Block| -> bool {
