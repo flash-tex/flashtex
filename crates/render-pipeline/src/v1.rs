@@ -41,6 +41,11 @@ pub const CAP_DELTA: &str = crate::delta::CAP;
 /// and the echoed capabilities stay). Negotiated only next to
 /// `display-list-v2`; echoed only when the pages were actually elided.
 pub const CAP_V2_ONLY: &str = "display-list-v2-only";
+/// PROPOSAL (`protocol/proposals/display-list-v2-compact.md`): the sibling's
+/// glyph runs use the compact cluster encoding (`crate::display_list_compact`).
+/// Negotiated only next to `display-list-v2`; echoed only on the replies
+/// that actually carry a sibling line.
+pub const CAP_COMPACT: &str = crate::display_list_compact::CAP;
 
 /// Capabilities the producer accepted for one request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -52,6 +57,7 @@ pub struct Capabilities {
     pub device_color: bool,
     pub delta: bool,
     pub v2_only: bool,
+    pub compact: bool,
 }
 
 impl Capabilities {
@@ -89,6 +95,10 @@ impl Capabilities {
                 }
                 CAP_V2_ONLY if !caps.v2_only && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
                     caps.v2_only = true;
+                    accepted.push(r.clone());
+                }
+                CAP_COMPACT if !caps.compact && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
+                    caps.compact = true;
                     accepted.push(r.clone());
                 }
                 _ => {}

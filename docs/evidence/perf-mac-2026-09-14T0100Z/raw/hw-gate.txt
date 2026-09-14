@@ -1,0 +1,9 @@
+before HW1: exit 0 status recovered pages 3 (pdf 3) errors 0 overfull 0 font-failure 0 (informational math_resource_profile/math_glyph_unmapped 4, total diagnostics 6) version flashtex 0.1.0 (eea975c330aa)
+before HW2: exit 0 status recovered pages 3 (pdf 3) errors 0 overfull 0 font-failure 0 (informational math_resource_profile/math_glyph_unmapped 7, total diagnostics 9) version flashtex 0.1.0 (eea975c330aa)
+after HW1: exit 0 status recovered pages 3 (pdf 3) errors 0 overfull 0 font-failure 0 (informational math_resource_profile/math_glyph_unmapped 4, total diagnostics 6) version flashtex 0.1.0 (eea975c330aa)
+after HW2: exit 0 status recovered pages 3 (pdf 3) errors 0 overfull 0 font-failure 0 (informational math_resource_profile/math_glyph_unmapped 7, total diagnostics 9) version flashtex 0.1.0 (eea975c330aa)
+pdf md5 before/after (HW1 before, HW1 after, HW2 before, HW2 after):
+86bc56a84962dcca98b02b1273ab4a72
+86bc56a84962dcca98b02b1273ab4a72
+8abf50a89cb2adbc4c31552fb8a06664
+8abf50a89cb2adbc4c31552fb8a06664

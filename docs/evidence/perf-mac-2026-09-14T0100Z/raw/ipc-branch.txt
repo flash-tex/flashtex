@@ -1,0 +1,19 @@
+branch binary: eea975c3 ad728b184734d9bd1e797811243d123d
+load: 10.72 10.46 11.12
+hw1.tex      v2             steps=20 first(cold) 68.4 ms (v1 185184 B, v2 1152024 B) | warm p50 5.24 p95 5.55 max 5.70 ms | v1 185679 B v2 1155862 B | deltas 0 full 21 declined 0 | md5 14f3274a1c741931
+hw1.tex      v2+delta+only  steps=20 first(cold) 77.0 ms (v1 1854 B, v2 1152024 B) | warm p50 8.00 p95 8.22 max 8.52 ms | v1 1879 B v2 259481 B | deltas 20 full 1 declined 0 | md5 cf052dd1d6dd629f
+hw1.tex      v2+compact     steps=20 first(cold) 66.1 ms (v1 185210 B, v2 356207 B) | warm p50 4.30 p95 4.42 max 4.45 ms | v1 185705 B v2 357316 B | deltas 0 full 21 declined 0 | md5 b7705ee04c879ba3
+hw1.tex      v2+delta+only+compact steps=20 first(cold) 70.7 ms (v1 1880 B, v2 356207 B) | warm p50 7.81 p95 12.51 max 14.61 ms | v1 1905 B v2 77752 B | deltas 20 full 1 declined 0 | md5 85ab316b9b1883ee
+hw2.tex      v2             steps=20 first(cold) 95.1 ms (v1 194186 B, v2 1029984 B) | warm p50 6.83 p95 34.84 max 53.64 ms | v1 194681 B v2 1033822 B | deltas 0 full 21 declined 0 | md5 eedc4d9ffd729594
+hw2.tex      v2+delta+only  steps=20 first(cold) 70.0 ms (v1 2755 B, v2 1029984 B) | warm p50 7.63 p95 7.87 max 7.96 ms | v1 2780 B v2 150710 B | deltas 20 full 1 declined 0 | md5 e37771cef3977bce
+hw2.tex      v2+compact     steps=20 first(cold) 65.5 ms (v1 194212 B, v2 340583 B) | warm p50 4.50 p95 4.65 max 4.84 ms | v1 194707 B v2 341692 B | deltas 0 full 21 declined 0 | md5 5dbf55bf27e94365
+hw2.tex      v2+delta+only+compact steps=20 first(cold) 70.0 ms (v1 2781 B, v2 340583 B) | warm p50 7.52 p95 7.88 max 7.94 ms | v1 2806 B v2 58709 B | deltas 20 full 1 declined 0 | md5 89459cb3e18ab0f1
+demo.tex     v2             steps=20 first(cold) 26.2 ms (v1 222044 B, v2 1941498 B) | warm p50 6.73 p95 7.22 max 7.35 ms | v1 222541 B v2 1945350 B | deltas 0 full 21 declined 0 | md5 f3733bc5fabace0b
+demo.tex     v2+delta+only  steps=20 first(cold) 34.3 ms (v1 255 B, v2 1941498 B) | warm p50 12.40 p95 12.85 max 13.10 ms | v1 280 B v2 807836 B | deltas 20 full 1 declined 0 | md5 e523b6fe38e7639f
+demo.tex     v2+compact     steps=20 first(cold) 24.1 ms (v1 222070 B, v2 540454 B) | warm p50 4.87 p95 5.09 max 5.39 ms | v1 222567 B v2 541567 B | deltas 0 full 21 declined 0 | md5 630f79493d5377cd
+demo.tex     v2+delta+only+compact steps=20 first(cold) 30.9 ms (v1 281 B, v2 540454 B) | warm p50 11.49 p95 11.84 max 11.94 ms | v1 306 B v2 225400 B | deltas 20 full 1 declined 0 | md5 b1c82c3d34c46aa6
+body60k.tex  v2             steps=20 first(cold) 83.9 ms (v1 2493699 B, v2 0 B) | warm p50 55.20 p95 57.39 max 59.44 ms | v1 2494207 B v2 0 B | deltas 0 full 0 declined 21 | md5 a08c2e68ee71446f
+body60k.tex  v2+delta+only  steps=20 first(cold) 84.8 ms (v1 2493699 B, v2 0 B) | warm p50 55.54 p95 57.21 max 57.91 ms | v1 2494207 B v2 0 B | deltas 0 full 0 declined 21 | md5 a08c2e68ee71446f
+body60k.tex  v2+compact     steps=20 first(cold) 101.2 ms (v1 2493515 B, v2 5986729 B) | warm p50 70.51 p95 110.38 max 139.00 ms | v1 2494023 B v2 5987853 B | deltas 0 full 21 declined 0 | md5 efe990273e46604d
+body60k.tex  v2+delta+only+compact steps=20 first(cold) 177.8 ms (v1 281 B, v2 5986729 B) | warm p50 138.45 p95 140.60 max 140.68 ms | v1 306 B v2 228992 B | deltas 20 full 1 declined 0 | md5 e9741beb77b62065
+load after: 9.76 10.25 11.03

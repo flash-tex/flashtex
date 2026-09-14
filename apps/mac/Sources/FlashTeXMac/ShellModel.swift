@@ -860,6 +860,9 @@ final class ShellModel {
         var displayListBase: RuntimeV1.CompileRequest.DisplayListBase?
         if previewV2, capabilities.contains(V2Live.capability) {
             if DisplayListDelta.v2OnlyEnabled { sent.append(DisplayListDelta.v2OnlyCapability) }
+            // Compact clusters (carets/hit_rects derived on this side) — the
+            // producer echoes it only with a v2 sibling (DisplayListCompactSupport.swift).
+            if DisplayListCompact.enabled { sent.append(DisplayListCompact.capability) }
             if DisplayListDelta.enabled, let installed = deltaInstalled, installed.list.projectId == projectId {
                 sent.append(DisplayListDelta.capability)
                 displayListBase = installed.acknowledgement
