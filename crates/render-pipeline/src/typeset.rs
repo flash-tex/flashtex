@@ -7400,6 +7400,12 @@ fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
         '\u{00B7}' => vec![ml::Atom::symbol('\u{22C5}')],
         '\u{2260}' => vec![ml::Atom::rel(crate::mathtex::NOT_SLASH), ml::Atom::symbol('=')],
         '\u{2209}' => vec![ml::Atom::rel(crate::mathtex::NOT_SLASH), ml::Atom::symbol('\u{2208}')],
+        // A bare `\not` (compiler `COMMAND_GLYPHS` row `("not", "\u{0338}")`,
+        // `fontmath.ltx` 432). It is the same zero-width cmsy `"36` atom the
+        // two composites above expand to, and math-layout's `default_class`
+        // would otherwise make the combining character Ord, which would open
+        // a thick space between `\not` and the relation it negates.
+        crate::mathtex::NOT_SLASH => vec![ml::Atom::rel(crate::mathtex::NOT_SLASH)],
         // `\varnothing`: same U+2205 as `\emptyset`, but forced to msbm10's
         // width. A sentinel keeps the two apart for the metrics providers
         // (`TexMathMetrics`/`MathFonts`), which paint both from cmsy10's
@@ -9589,6 +9595,41 @@ fn vertical_assemblies(glyphs: &[ml::PositionedGlyph], m: &MathRec) -> (BTreeMap
     (runs, swallowed)
 }
 
+/// The centre of a glyph's painted ink, in pt from its own origin.
+fn ink_centre(face: &LoadedFace, b: &crate::fonts::Bounds, size: f64) -> f64 {
+    face.pt(i64::from(b.x_min) + i64::from(b.x_max), size) / 2.0
+}
+
+/// Where to paint the zero-width `\not` slash so it strikes the relation it
+/// negates instead of the thick space in front of it: the following glyph's
+/// painted ink centre, less the slash's own. `None` when there is nothing to
+/// negate or either glyph has no ink, and the caller then keeps TeX's origin.
+///
+/// This moves no box. The slash's advance stays zero and the relation keeps
+/// its TFM width, so `\neq` still measures exactly `=` and `a \ne b` exactly
+/// `a = b`, which is what pdflatex sets.
+fn not_overlay_x(
+    m: &MathRec,
+    slash_face: &LoadedFace,
+    slash: &crate::fonts::Bounds,
+    slash_glyph: &ml::PositionedGlyph,
+    negated: Option<&ml::PositionedGlyph>,
+) -> Option<f64> {
+    let negated = negated?;
+    if slash.empty {
+        return None;
+    }
+    let (face, gid) = m.otf_glyph(negated)?;
+    if gid == 0 {
+        return None;
+    }
+    let b = face.bounds(crate::ids::GlyphId(gid), Some(negated.ch));
+    if b.empty {
+        return None;
+    }
+    Some(negated.x + ink_centre(&face, &b, negated.size) - ink_centre(slash_face, slash, slash_glyph.size))
+}
+
 fn math_items(
     run: &pl::PositionedRun,
     m: &MathRec,
@@ -9739,6 +9780,27 @@ fn math_items(
             ('\u{23DE}', 0x7B) | ('\u{23DF}', 0x7D) => (g.x + g.width - face_adv, face_adv),
             ('\u{23DE}' | '\u{23DF}', _) => (g.x, face_adv),
             _ if ams.is_some_and(|a| a.name == "dashrightarrow@") => (g.x + g.width - face_adv, adv),
+            // `\not` (`fontmath.ltx` 432: `\mathchar"3236`, cmsy `"36`) is a
+            // zero-width overlay. TeX boxes it empty and the slash strikes
+            // the relation that *follows* it, which is why `\neq` is exactly
+            // as wide as `=` (pdflatex TL2025: both 7.77780 pt at 10 pt).
+            //
+            // The painting face draws that slash at U+0338, and U+0338 is a
+            // Unicode *combining* mark: it composes with the character
+            // *before* it, so its ink lies entirely to the LEFT of its own
+            // origin -- Latin Modern Math puts it at x in [-4.58, -0.69] pt
+            // at 10 pt. Painted at the TeX box's origin it therefore lands
+            // in the thick space in front of the relation, 1.25 pt of clear
+            // air short of the `=`, and never touches it.
+            //
+            // So kern it onto the following relation's painted ink centre.
+            // That is the rule the amssymb negated sentinels below already
+            // use, and it is what this face's own precomposed negations do:
+            // Latin Modern Math's U+2260/U+2209/U+2270 ink boxes are exactly
+            // their base relation's, the slash drawn inside them.
+            _ if g.ch == crate::mathtex::NOT_SLASH => {
+                (not_overlay_x(m, &face, &b, g, flat.glyphs.get(gi + 1)).unwrap_or(g.x), adv)
+            }
             _ => (g.x, adv),
         };
         let start = r.text.len();
@@ -9776,10 +9838,11 @@ fn math_items(
         {
             let sb = face.bounds(slash, Some('\u{0338}'));
             if !b.empty && !sb.empty {
-                let centre = |x0: i32, x1: i32| face.pt(i64::from(x0) + i64::from(x1), g.size) / 2.0;
                 r.glyphs.push(Glyph {
                     gid: slash.0,
-                    origin_x: Tick::from_tex_pt(paint_x + centre(b.x_min, b.x_max) - centre(sb.x_min, sb.x_max)),
+                    origin_x: Tick::from_tex_pt(
+                        paint_x + ink_centre(&face, &b, g.size) - ink_centre(&face, &sb, g.size),
+                    ),
                     baseline_y: Tick::from_tex_pt(baseline_y),
                     advance_x: Tick(0),
                     advance_y: Tick(0),
