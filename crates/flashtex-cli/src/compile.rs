@@ -26,6 +26,9 @@ pub struct Diagnostic {
     pub code: String,
     pub message: String,
     pub recovery: Option<String>,
+    /// Replacement text for the source span (pipeline `suggestion`), when the
+    /// compiler offered a did-you-mean edit. `None` is omitted from `--json`.
+    pub suggestion: Option<String>,
 }
 
 impl Diagnostic {
@@ -45,7 +48,8 @@ impl Diagnostic {
             _ => format!("{}: ", self.path),
         };
         let tail = self.recovery.as_deref().map_or(String::new(), |r| format!(" (recovery: {r})"));
-        format!("{at}{}[{}] {}{tail}", self.severity(), self.code, self.message)
+        let hint = self.suggestion.as_deref().map_or(String::new(), |s| format!(" (did you mean {s}?)"));
+        format!("{at}{}[{}] {}{tail}{hint}", self.severity(), self.code, self.message)
     }
 }
 
@@ -100,6 +104,7 @@ pub fn compile(project: &Project, fonts: &FontSet, options: &RenderOptions, revi
                 code: d.code.to_string(),
                 message: d.message.clone(),
                 recovery: None,
+                suggestion: None,
             }
         })
         .collect();
@@ -115,6 +120,7 @@ pub fn compile(project: &Project, fonts: &FontSet, options: &RenderOptions, revi
             end_byte: source.map(|s| s.end_byte),
             error: d.severity == Severity::Error,
             code: d.code.clone(),
+            suggestion: d.suggestion.clone(),
             message: d.message.clone(),
             recovery: d.recovery.clone(),
         });
@@ -205,6 +211,9 @@ pub fn report_json(project: &Project, outcome: &Outcome, outputs: &[(&str, &Path
                     v.set("code", json::str_(d.code.clone()));
                     v.set("message", json::str_(d.message.clone()));
                     v.set("recovery", d.recovery.clone().map_or(Value::Null, json::str_));
+                    if let Some(s) = &d.suggestion {
+                        v.set("suggestion", json::str_(s.clone()));
+                    }
                     v
                 })
                 .collect(),
