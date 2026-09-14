@@ -397,7 +397,7 @@ enum EditorIntelligence {
         /// `CompletionTests.testCommandDocsNameOnlyKnownCommands`), and a
         /// name listed here must leave the list once the compiler renders it.
         static let beyondCompiler: Set<String> = [
-            "chapter", "part", "paragraph", "autoref", "cref", "citep", "citet",
+            "chapter", "part", "paragraph", "autoref", "cref",
             "def", "newline", "hline", "toprule", "midrule",
             "bottomrule", "multicolumn", "verb", "%", "$", "&", "#", "_", "{", "}",
             "geometry", "onehalfspacing", "doublespacing",
