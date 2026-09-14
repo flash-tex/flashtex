@@ -82,12 +82,17 @@ impl Paint {
     }
 }
 
-/// Negotiated display-list proposals: image items (FT-063) and device
-/// colours (`display-list-v2-device-color`).
+/// Negotiated display-list proposals: image items (FT-063), device
+/// colours (`display-list-v2-device-color`), and structured diagnostics
+/// (`display-list-v2-diagnostics`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Wire {
     pub images: bool,
     pub device_color: bool,
+    /// Serialise `suggestion` on each diagnostic (proposal
+    /// `display-list-v2-diagnostics`). Labels/notes/help wait for a
+    /// vendor/compiler re-pin past #346.
+    pub diagnostics: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -414,6 +419,11 @@ pub struct Diagnostic {
     pub sources: Vec<SourceRange>,
     /// The compiler's recovery note, when it produced this diagnostic.
     pub recovery: Option<String>,
+    /// Replacement text for the source range (runtime-v1 `suggestion`).
+    /// Serialised on display-list-v2 only when `Wire.diagnostics` is set
+    /// (`protocol/proposals/display-list-v2-diagnostics.md`); omitted from
+    /// the frozen four-key object otherwise.
+    pub suggestion: Option<String>,
 }
 
 impl Diagnostic {
@@ -424,6 +434,7 @@ impl Diagnostic {
             severity: Severity::Error,
             sources,
             recovery: None,
+            suggestion: None,
         }
     }
     pub fn warning(code: &str, message: impl Into<String>, sources: Vec<SourceRange>) -> Diagnostic {
@@ -433,14 +444,20 @@ impl Diagnostic {
             severity: Severity::Warning,
             sources,
             recovery: None,
+            suggestion: None,
         }
     }
 
     /// Converts a compiler diagnostic; `paths` is indexed by `DocumentId`.
     pub fn from_compiler(d: &flashtex_compiler::diagnostics::Diagnostic, paths: &[&str]) -> Diagnostic {
-        use flashtex_compiler::diagnostics::Severity as S;
+        use flashtex_compiler::diagnostics::{default_code, Severity as S};
         Diagnostic {
-            code: "compiler".into(),
+            code: d
+                .code
+                .or_else(|| default_code(&d.message))
+                .map(|c| c.as_str())
+                .unwrap_or("compiler")
+                .into(),
             message: d.message.clone(),
             severity: match d.severity {
                 S::Error => Severity::Error,
@@ -457,6 +474,7 @@ impl Diagnostic {
                 })
                 .unwrap_or_default(),
             recovery: d.recovery.clone(),
+            suggestion: d.suggestion.clone(),
         }
     }
 }
@@ -479,7 +497,7 @@ impl DisplayList {
     pub fn estimated_json_bytes(&self) -> usize {
         let mut n = 512 + self.fonts.len() * 400 + self.documents.len() * 200;
         for d in &self.diagnostics {
-            n += 160 + d.message.len() + d.sources.len() * 80;
+            n += 160 + d.message.len() + d.sources.len() * 80 + d.suggestion.as_ref().map(|s| s.len() + 20).unwrap_or(0);
         }
         for p in &self.pages {
             n += 64;
@@ -501,7 +519,7 @@ impl DisplayList {
 
     /// `images`: whether image items are serialised (adds `image`).
     pub fn required_features_with(&self, images: bool) -> Vec<&'static str> {
-        self.required_features_wire(Wire { images, device_color: false })
+        self.required_features_wire(Wire { images, device_color: false, diagnostics: false })
     }
 
     /// `device-color` is listed when negotiated and some paint carries one.
@@ -553,7 +571,7 @@ impl DisplayList {
     /// [`to_json`](Self::to_json); `images` also serialises image items
     /// and lists the `image` feature (negotiated `display-list-v2-images`).
     pub fn to_json_with(&self, id: &str, images: bool) -> Value {
-        self.to_json_wire(id, Wire { images, device_color: false })
+        self.to_json_wire(id, Wire { images, device_color: false, diagnostics: false })
     }
 
     /// [`to_json_with`](Self::to_json_with) with every negotiated proposal.
@@ -608,7 +626,7 @@ impl DisplayList {
         payload.set("pages", Value::Arr(self.pages.iter().map(|p| page_json(p, wire)).collect()));
         payload.set(
             "diagnostics",
-            Value::Arr(self.diagnostics.iter().map(diagnostic_json).collect()),
+            Value::Arr(self.diagnostics.iter().map(|d| diagnostic_json_wire(d, wire)).collect()),
         );
         let mut v = Value::obj();
         v.set("protocol_version", json::num(PROTOCOL_VERSION as f64));
@@ -630,7 +648,7 @@ impl DisplayList {
     /// `json::write(&self.to_json_with(id, images))` written directly:
     /// `images` also serialises image items and lists the `image` feature.
     pub fn write_json_with(&self, id: &str, images: bool) -> String {
-        self.write_json_wire(id, Wire { images, device_color: false })
+        self.write_json_wire(id, Wire { images, device_color: false, diagnostics: false })
     }
 
     /// [`write_json_with`](Self::write_json_with) with every negotiated proposal.
@@ -663,7 +681,7 @@ impl DisplayList {
         o.push_str("{\"id\":");
         json::write_string_into(id, &mut o);
         o.push_str(",\"payload\":{\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":");
-        write_diagnostics(&mut o, &self.diagnostics);
+        write_diagnostics(&mut o, &self.diagnostics, wire);
         o.push_str(",\"documents\":");
         write_documents(&mut o, &self.documents);
         o.push_str(",\"fonts\":");
@@ -702,7 +720,7 @@ pub const FULL_LINE_FRAME_BYTES: usize = "{\"id\":".len()
     + ",\"text_extraction\":\"cluster-actualtext\"},\"protocol_version\":2,\"type\":\"display_list\"}".len();
 
 /// The `diagnostics` array of the full line (also carried complete by a delta).
-pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic]) {
+pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic], wire: Wire) {
     o.push('[');
     for (i, d) in diagnostics.iter().enumerate() {
         sep(o, i);
@@ -717,6 +735,12 @@ pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic]) {
         });
         o.push_str(",\"sources\":");
         write_sources(o, &d.sources);
+        if wire.diagnostics {
+            if let Some(s) = &d.suggestion {
+                o.push_str(",\"suggestion\":");
+                json::write_string_into(s, o);
+            }
+        }
         o.push('}');
     }
     o.push(']');
@@ -1149,6 +1173,12 @@ fn rect_json(r: &Rect) -> Value {
 }
 
 pub fn diagnostic_json(d: &Diagnostic) -> Value {
+    diagnostic_json_wire(d, Wire::default())
+}
+
+/// [`diagnostic_json`](diagnostic_json) with negotiated proposals: `suggestion`
+/// is present only when `wire.diagnostics` is set and the value is `Some`.
+pub fn diagnostic_json_wire(d: &Diagnostic, wire: Wire) -> Value {
     let mut o = Value::obj();
     o.set("code", json::str_(d.code.clone()));
     o.set("message", json::str_(d.message.clone()));
@@ -1160,6 +1190,11 @@ pub fn diagnostic_json(d: &Diagnostic) -> Value {
         }),
     );
     o.set("sources", Value::Arr(d.sources.iter().map(source_json).collect()));
+    if wire.diagnostics {
+        if let Some(s) = &d.suggestion {
+            o.set("suggestion", json::str_(s.clone()));
+        }
+    }
     o
 }
 
@@ -1354,6 +1389,43 @@ mod tests {
         assert_eq!(Tick::from_tex_pt(72.27), Tick(72 * 1_048_576));
         assert_eq!(Tick::from_bp(612.0).0, 612 * 1_048_576);
         assert_eq!(Tick::from_tex_pt(0.0), Tick(0));
+    }
+
+    #[test]
+    fn from_compiler_forwards_code_and_suggestion() {
+        use flashtex_compiler::diagnostics::{Diagnostic as C, DiagnosticCode, Severity as CS};
+        let unknown = C {
+            severity: CS::Error,
+            message: r"\alpah is not supported by this compiler version".into(),
+            span: None,
+            recovery: None,
+            code: Some(DiagnosticCode::UnknownCommand),
+            suggestion: Some(r"\alpha".into()),
+        };
+        let out = Diagnostic::from_compiler(&unknown, &[]);
+        assert_eq!(out.code, "unknown_command");
+        assert_eq!(out.suggestion.as_deref(), Some(r"\alpha"));
+
+        let no_explicit = C {
+            severity: CS::Error,
+            message: r"\tikz is not supported by this compiler version".into(),
+            span: None,
+            recovery: None,
+            code: None,
+            suggestion: None,
+        };
+        assert_eq!(Diagnostic::from_compiler(&no_explicit, &[]).code, "unsupported_feature");
+
+        let none = C {
+            severity: CS::Error,
+            message: "layout_capabilities must be a list".into(),
+            span: None,
+            recovery: None,
+            code: None,
+            suggestion: None,
+        };
+        assert_eq!(Diagnostic::from_compiler(&none, &[]).code, "compiler");
+        assert_eq!(Diagnostic::from_compiler(&none, &[]).suggestion, None);
     }
 
     #[test]
@@ -1557,5 +1629,45 @@ mod tests {
         };
         assert_eq!(empty.write_json(""), json::write(&empty.to_json("")));
         assert_eq!(empty.write_json_with("", true), json::write(&empty.to_json_with("", true)));
+    }
+
+    fn diag_list(suggestion: Option<&str>) -> DisplayList {
+        let mut d = Diagnostic::error("unknown_command", r"\alpah", vec![SourceRange {
+            path: std::rc::Rc::from("notes.tex"),
+            start_byte: 0,
+            end_byte: 6,
+        }]);
+        d.suggestion = suggestion.map(str::to_string);
+        DisplayList {
+            project_id: "p".into(),
+            revision: 1,
+            documents: Vec::new(),
+            fonts: Vec::new(),
+            pages: Vec::new(),
+            diagnostics: vec![d],
+        }
+    }
+
+    #[test]
+    fn diagnostics_capability_gates_suggestion_on_the_wire() {
+        let off = Wire::default();
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        let with = diag_list(Some(r"\alpha"));
+        let without = diag_list(None);
+        let off_with = with.write_json_wire("r1", off);
+        let off_without = without.write_json_wire("r1", off);
+        assert_eq!(off_with, off_without, "without the cap, suggestion must not appear");
+        assert!(!off_with.contains("suggestion"), "{off_with}");
+        assert_eq!(off_with, json::write(&with.to_json_wire("r1", off)));
+
+        let on_with = with.write_json_wire("r1", on);
+        let on_without = without.write_json_wire("r1", on);
+        assert_ne!(on_with, on_without);
+        assert!(on_with.contains(r#""suggestion":"\\alpha""#), "{on_with}");
+        assert!(!on_with.contains(r#""suggestion":null"#), "{on_with}");
+        assert!(!on_without.contains("suggestion"), "{on_without}");
+        assert_eq!(on_with, json::write(&with.to_json_wire("r1", on)));
+        assert_eq!(on_without, json::write(&without.to_json_wire("r1", on)));
+        assert_eq!(on_without, off_without);
     }
 }

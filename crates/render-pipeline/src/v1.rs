@@ -30,6 +30,11 @@ pub const CAP_IMAGES: &str = "display-list-v2-images";
 /// carry `device_color` (pdfTeX's exact colour operands). Accepted only
 /// together with `display-list-v2`.
 pub const CAP_DEVICE_COLOR: &str = "display-list-v2-device-color";
+/// PROPOSAL (`protocol/proposals/display-list-v2-diagnostics.md`): v2
+/// diagnostics may carry `suggestion` (and later `labels`/`notes`/`help`).
+/// Accepted only together with `display-list-v2`; without it the diagnostic
+/// objects stay the frozen four keys.
+pub const CAP_DIAGNOSTICS: &str = "display-list-v2-diagnostics";
 /// PROPOSAL (`docs/proposals/display-list-v2-delta.md` r5): the sibling
 /// line may be one `display_list_delta` against the consumer's acknowledged
 /// installed base. Negotiated only next to `display-list-v2`; echoed only
@@ -50,6 +55,7 @@ pub struct Capabilities {
     pub display_list: bool,
     pub images: bool,
     pub device_color: bool,
+    pub diagnostics: bool,
     pub delta: bool,
     pub v2_only: bool,
 }
@@ -81,6 +87,10 @@ impl Capabilities {
                 }
                 CAP_IMAGES if !caps.images && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
                     caps.images = true;
+                    accepted.push(r.clone());
+                }
+                CAP_DIAGNOSTICS if !caps.diagnostics && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
+                    caps.diagnostics = true;
                     accepted.push(r.clone());
                 }
                 CAP_DELTA if !caps.delta && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
@@ -308,6 +318,9 @@ pub fn diagnostic_json(d: &display::Diagnostic) -> Value {
     v.set("source", d.sources.first().map(source_json).unwrap_or(Value::Null));
     v.set("recovery", d.recovery.clone().map(json::str_).unwrap_or(Value::Null));
     v.set("code", json::str_(d.code.clone()));
+    if let Some(s) = &d.suggestion {
+        v.set("suggestion", json::str_(s.clone()));
+    }
     v
 }
 
@@ -522,6 +535,10 @@ fn jdiag(out: &mut String, d: &display::Diagnostic) {
         Some(s) => jsource(out, s),
         None => out.push_str("null"),
     }
+    if let Some(s) = &d.suggestion {
+        out.push_str(",\"suggestion\":");
+        js(out, s);
+    }
     out.push('}');
 }
 
@@ -655,6 +672,11 @@ mod tests {
         let (c, acc) = Capabilities::negotiate(&["unknown".into()]);
         assert_eq!(c, Capabilities::default());
         assert!(acc.is_empty());
+        let (c, acc) = Capabilities::negotiate(&["display-list-v2-diagnostics".into()]);
+        assert!(!c.diagnostics && acc.is_empty());
+        let (c, acc) = Capabilities::negotiate(&["display-list-v2".into(), "display-list-v2-diagnostics".into(), "display-list-v2-diagnostics".into()]);
+        assert!(c.display_list && c.diagnostics);
+        assert_eq!(acc, vec!["display-list-v2".to_string(), "display-list-v2-diagnostics".to_string()]);
     }
 
     #[test]
@@ -719,6 +741,15 @@ mod tests {
         none.diagnostics.clear();
         env.set("payload", none.to_json());
         assert_eq!(none.write_envelope("r-1"), json::write(&env));
+        let mut with_suggestion = display::Diagnostic::error("unknown_command", r"\alpah", vec![src("main.tex", 5, 11)]);
+        with_suggestion.suggestion = Some(r"\alpha".into());
+        let mut suggested = payload.clone();
+        suggested.diagnostics = vec![with_suggestion, display::Diagnostic::error("unsupported_feature", r"\tikz", Vec::new())];
+        env.set("payload", suggested.to_json());
+        let line = suggested.write_envelope("r-1");
+        assert_eq!(line, json::write(&env));
+        assert!(line.contains(r#""suggestion":"\\alpha""#), "{line}");
+        assert!(!line.contains(r#""suggestion":null"#), "{line}");
     }
 
     /// `jpt`/`js` fast paths print exactly what `fmt` printed before.

@@ -238,6 +238,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 key.hash(h);
             }
             Item::ItalicCorrection => 6u8.hash(h),
+            Item::NoteParBreak => 200u8.hash(h),
             Item::HFill { fill } => {
                 7u8.hash(h);
                 fill.hash(h);
