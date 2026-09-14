@@ -235,6 +235,10 @@
     {"name": "textgreater", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textgreater: OT1 >, T1 > (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "textbraceleft", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textbraceleft: OT1 {, T1 { (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "textbraceright", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textbraceright: OT1 }, T1 } (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
+    {"name": "labelitemi", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "article default itemize level-1 marker: \\textbullet", "renders": true},
+    {"name": "labelitemii", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "article default itemize level-2 marker: bold \\textendash", "renders": true},
+    {"name": "labelitemiii", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "article default itemize level-3 marker: \\textasteriskcentered", "renders": true},
+    {"name": "labelitemiv", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "article default itemize level-4 marker: \\textperiodcentered", "renders": true},
     {"name": "c", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "cedilla text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
     {"name": "v", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "caron text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
     {"name": "u", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "breve text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
@@ -909,7 +913,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 174, "percent": 42.4},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 178, "percent": 43.4},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 17, "percent": 56.7},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 41, "percent": 40.2},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -924,6 +928,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 17, "percent": 7.1}
     ],
-    "total": {"canonical": 1314, "supported": 515, "percent": 39.2}
+    "total": {"canonical": 1314, "supported": 519, "percent": 39.5}
   }
 }
