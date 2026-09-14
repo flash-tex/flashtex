@@ -964,7 +964,25 @@ pub fn adapt_cached(
     if let Some(pt) = setlength_in(source, "parskip", size, em_ex) {
         style.parskip = crate::style::Skip::fixed(pt);
     }
-    let secnumdepth = counter(source, "secnumdepth").unwrap_or(options.default_secnumdepth);
+    // `\c@secnumdepth`. LaTeX has exactly one such counter and `\@sect` reads
+    // it twice: `\ifnum #2>\c@secnumdepth` suppresses the printed number, and
+    // the same test suppresses the `\numberline` written to the contents
+    // list. Its value is the class's own (`article.cls` line 255
+    // `\setcounter{secnumdepth}{3}`; `report.cls`/`book.cls` 2) unless the
+    // document sets the counter itself.
+    //
+    // This used to be a flat `options.default_secnumdepth` (2), so every
+    // `\subsubsection` in an `article` came out unnumbered while the contents
+    // list — which already derived the class default below — wrote `1.1.1`
+    // for the same heading. `\documentclass`-less input (the visual-oracle
+    // harness and the Mac app send body-only documents, and `resolve` hands
+    // those article geometry regardless) keeps the caller's default.
+    let secnumdepth = counter(source, "secnumdepth").unwrap_or_else(|| {
+        match (&style.class_geometry, explicit_class.is_some()) {
+            (Some(d), true) => d.secnumdepth.clamp(0, i32::from(u8::MAX)) as u8,
+            _ => options.default_secnumdepth,
+        }
+    });
     style.nfss = crate::nfss::Scheme::for_document(&parsed.packages, t1_encoding(source));
     let styles: Vec<Styles> = texts.iter().map(|t| Styles::new(t, style_intervals(t), style.nfss)).collect();
     let labels_fp = {
@@ -1027,13 +1045,9 @@ pub fn adapt_cached(
     // the next block. Nothing is collected without a list.
     let toc_active = commands.iter().any(|c| matches!(c.kind, BodyKind::ContentsList(_)));
     let toc_settings = crate::toc::Settings::read(source, has_chapters);
-    // `\@sect` writes `\numberline` up to the class's `secnumdepth`
-    // (article.cls 3, report/book.cls 2) when the document declares one.
-    let toc_secnumdepth = counter(source, "secnumdepth").unwrap_or(match (explicit_class.is_some(), has_chapters) {
-        (true, true) => 2,
-        (true, false) => 3,
-        (false, _) => options.default_secnumdepth,
-    });
+    // `\@sect` writes `\numberline` up to the same `\c@secnumdepth` that
+    // decides the printed number; the two are one counter, resolved above.
+    let toc_secnumdepth = secnumdepth;
     let mut toc_records: Vec<crate::toc::Record> = Vec::new();
     let mut toc_lists: Vec<(usize, crate::toc::ListKind, Span, bool)> = Vec::new();
     let mut toc_pending: Vec<String> = Vec::new();
