@@ -906,6 +906,45 @@ pub(crate) fn path_is_safe(path: &str) -> bool {
 /// One parser input token (see `crate::expansion::ExpandedToken`).
 type InputToken = expansion::ExpandedToken;
 
+/// The token a math list should see for `input`, with one correction.
+///
+/// The lexer encodes a control symbol's escape in its *span width*: `\,`
+/// becomes `Word(",")` spanning two source bytes, and `math::MathParser::atom`
+/// (like `\|` and the text kerns) tells `\,` from a literal comma by that
+/// width alone. A token copied out of a macro's replacement text carries the
+/// *invocation's* span instead, so the width test failed and every control
+/// symbol in a macro body decayed into the bare character:
+/// `\DeclareMathOperator{\argmax}{arg\,max}` — amsopn's own documented
+/// example — set `arg,max`, printing a comma the author never wrote, while
+/// the identical `\operatorname*{arg\,max}` written out in the body set
+/// `arg max` correctly. `ExpandedToken::definition` holds the token's own
+/// bytes in that case; when they really are `\<c>`, hand math those instead
+/// so the two routes agree. Only the span moves — never the token kind — so
+/// nothing downstream of math sees a new shape, and `definition`/
+/// `maps_to_invocation` are left alone for the expansion-site mapping.
+fn math_token(documents: &[SourceDocument<'_>], input: &InputToken) -> Token {
+    let TokenKind::Word(word) = &input.token.kind else {
+        return input.token.clone();
+    };
+    let (Some(definition), true) = (input.definition, input.maps_to_invocation) else {
+        return input.token.clone();
+    };
+    if definition.end - definition.start != 2 || word.chars().count() != 1 {
+        return input.token.clone();
+    }
+    let escaped: String = std::iter::once('\\').chain(word.chars()).collect();
+    let source = documents
+        .get(definition.document.0)
+        .and_then(|d| d.text.get(definition.start..definition.end));
+    if source != Some(escaped.as_str()) {
+        return input.token.clone();
+    }
+    Token {
+        kind: input.token.kind.clone(),
+        span: definition,
+    }
+}
+
 /// Whether the token at `index` in `tokens` sits directly against real
 /// source whitespace — a preceding `TokenKind::Space`/`ParBreak` — or is the
 /// first token, in which case there is nothing before it to glue against.
@@ -3437,7 +3476,7 @@ impl P<'_> {
                 continue;
             }
             end = self.t[self.i].token.span.end;
-            raw.push(self.t[self.i].token.clone());
+            raw.push(math_token(self.documents, &self.t[self.i]));
             self.i += 1;
         }
         if !found_end {
@@ -3599,7 +3638,7 @@ impl P<'_> {
                     row.0
                         .last_mut()
                         .expect("at least one cell")
-                        .push(token.clone());
+                        .push(math_token(self.documents, &self.t[self.i]));
                 }
             }
             end = token.span.end;
@@ -3797,7 +3836,8 @@ impl P<'_> {
         let content_end = content_end.clamp(content_start, self.t.len());
         let mut raw = Vec::new();
         for input in &self.t[content_start..content_end] {
-            if input.maps_to_invocation {
+            let token = math_token(self.documents, input);
+            if input.maps_to_invocation && token.span == input.token.span {
                 if let TokenKind::Word(word) = &input.token.kind {
                     for ch in word.chars() {
                         raw.push(Token {
@@ -3808,7 +3848,7 @@ impl P<'_> {
                     continue;
                 }
             }
-            raw.push(input.token.clone());
+            raw.push(token);
         }
         let (list, unclosed) = math::parse_tokens_reporting_unclosed(
             &raw,

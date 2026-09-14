@@ -954,6 +954,25 @@ impl MathParser<'_> {
         symbol(format!("\\{name}"), span)
     }
 
+    /// An `UNDECLARED_OPERATORS` name: correctly spelled, defined by no
+    /// package, and fixable by one line the author can paste. pdflatex
+    /// answers "Undefined control sequence", so the code is
+    /// `unknown_command` like any other undefined name; only the advice
+    /// differs.
+    fn undeclared_operator(&mut self, name: &str, text: &str, span: Span) -> MathAtom {
+        let mut diagnostic = Diagnostic::error(
+            format!(
+                "\\{name} is not defined by LaTeX or amsmath; amsopn expects the document to declare it"
+            ),
+            Some(span),
+            Some("typeset the command literally and continued".into()),
+        )
+        .with_code(crate::diagnostics::DiagnosticCode::UnknownCommand);
+        diagnostic.suggestion = Some(format!("\\DeclareMathOperator{{\\{name}}}{{{text}}}"));
+        self.diagnostics.push(diagnostic);
+        symbol(format!("\\{name}"), span)
+    }
+
     fn command_atom(&mut self, name: String, span: Span) -> MathAtom {
         // The `amsfonts.sty` math alphabets (`\mathbb` 108, `\mathfrak` 106)
         // and its two obsolete spellings exist only once the package is
@@ -975,6 +994,14 @@ impl MathParser<'_> {
         };
         if let Some(operator) = OPERATOR_NAMES.iter().find(|op| **op == name) {
             return text_atom(operator.to_string(), span);
+        }
+        // Deliberately an `if`, not a `match` arm: a quoted arm head here
+        // would make `tests/supported_latex.rs`'s
+        // `math_inventory_equals_the_math_arms` require an inventory row for
+        // the name, republishing exactly the "renders: true" claim this path
+        // exists to retract.
+        if let Some(&(_, text)) = UNDECLARED_OPERATORS.iter().find(|(op, _)| *op == name) {
+            return self.undeclared_operator(&name, text, span);
         }
         match name.as_str() {
             // Plain TeX's `\iff` and mathtools's `\implies`/`\impliedby` are
@@ -2979,11 +3006,33 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
 ];
 
 /// Named operators typeset as upright roman words (`\sin x`, `\lim_{x\to 0}`).
+///
+/// Exactly the 32 log-like functions LaTeX2e's `fontmath.ltx` defines (lines
+/// 455-503, `\DeclareMathOperator`-equivalent `\mathop{\operator@font ...}`
+/// pairs). Nothing else belongs here: a name this table renders but no
+/// package defines is a document that typesets cleanly in FlashTeX and fails
+/// in pdflatex, which is the worst divergence this engine can ship. Probed
+/// name by name under TeX Live 2025 with `amsmath` and `amssymb` loaded
+/// (`\ifcsname`): all 32 are defined, and `\sgn` — which this table used to
+/// carry — is not. `\sgn` is `UNDECLARED_OPERATORS` below.
 pub(crate) const OPERATOR_NAMES: &[&str] = &[
     "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh",
     "coth", "log", "ln", "lg", "exp", "lim", "liminf", "limsup", "max", "min", "sup", "inf", "det",
-    "gcd", "deg", "dim", "ker", "arg", "hom", "Pr", "sgn",
+    "gcd", "deg", "dim", "ker", "arg", "hom", "Pr",
 ];
+
+/// Operator names no LaTeX layer defines, which authors are expected to
+/// declare themselves, paired with the operator text `amsopn`'s own
+/// documentation uses for them (`amsldoc.pdf` section 5: "\DeclareMathOperator
+/// {\sgn}{sgn}" is the manual's worked example, and `amsopn.sty` deliberately
+/// ships no `\sgn`).
+///
+/// These get their own diagnostic rather than the generic unknown-command
+/// one: the edit-distance suggester answers `\sin` for `\sgn` (one
+/// substitution), which is confidently wrong advice for a name the author
+/// spelled correctly. `\DeclareMathOperator` is implemented (see
+/// `crate::expansion::HOST_PRELUDE`), so the suggestion is actionable.
+pub(crate) const UNDECLARED_OPERATORS: &[(&str, &str)] = &[("sgn", "sgn")];
 
 /// Named commands that `\left`, `\right` and `\big...` accept as fences.
 pub(crate) const DELIMITER_COMMANDS: &[&str] = &[
