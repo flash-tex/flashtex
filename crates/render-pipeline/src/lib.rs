@@ -26,6 +26,7 @@ pub mod mathgrid;
 pub mod mathtex;
 pub mod mathtext;
 pub mod nfss;
+pub mod packages;
 pub mod pagebuild;
 pub mod params;
 pub mod pdf;
@@ -188,6 +189,7 @@ pub fn render_cached(
     // Contents lists: entry pages come from the previous pass (`toc`).
     let entry_text = texts.get(entry_index).copied().unwrap_or("");
     let has_lists = toc::has_lists(entry_text);
+    let has_class = adapter::class_options(entry_text).is_some();
     labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>());
     // Entry titles from source bytes (`\addcontentsline`, `\chapter`,
     // `\part`, captions) are set as body text: one parse per document.
@@ -209,7 +211,13 @@ pub fn render_cached(
             .iter()
             .filter(|d| !d.span.as_ref().is_some_and(&in_picture))
             .filter(|d| !d.span.as_ref().is_some_and(&is_superseded))
+            .filter(|d| !packages::preamble_command_superseded(&d.message, has_class))
             .map(|d| display::Diagnostic::from_compiler(d, &paths))
+            // `\usepackage` gaps the pipeline fills (`packages`).
+            .filter_map(|mut d| {
+                d.message = packages::supersede_message(&d.message)?;
+                Some(d)
+            })
             .collect();
         diagnostics.extend(doc.diagnostics.iter().cloned());
         diagnostics.extend(doc.limitations.iter().map(|(code, span, message)| {

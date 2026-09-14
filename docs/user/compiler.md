@@ -819,6 +819,13 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 Any other package, or these packages with other options, is recorded and reported as recognised but not implemented.
 <!-- END GENERATED supported-latex -->
 
+Through `flashtex-render` (what the `flashtex` CLI and the app run), packages the
+render pipeline sets on the compiler's behalf are silent too, with any options:
+`amsmath`, `amssymb`, `amsfonts`, `lmodern`, `microtype`, `geometry`, `graphicx`
+and `tikz`. The same goes for `\pagestyle` in the preamble of a document with a
+`\documentclass`, which the pipeline's page-frame reader takes. Running
+`flashtex-compiler` on its own still reports them.
+
 ## Troubleshooting
 
 Diagnostics appear on `flashtex`'s stderr, in the app's Problems panel and
