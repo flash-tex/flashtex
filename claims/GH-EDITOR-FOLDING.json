@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/editor-folding",
+  "gh_ref": "#2",
+  "machine": "mac-m5pro-dq222",
+  "note": "Mac editor code folding for environments and sectioning; Cursor",
+  "started_utc": "2026-09-14T16:20:37Z",
+  "state": "claimed",
+  "task_id": "GH-EDITOR-FOLDING",
+  "updated_utc": "2026-09-14T16:20:37Z"
+}
