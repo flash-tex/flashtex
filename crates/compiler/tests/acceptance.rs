@@ -367,10 +367,11 @@ fn math_and_unsupported_commands_are_reported_never_silent() {
         .iter()
         .map(|d| d.get("message").unwrap().as_str().unwrap().to_string())
         .collect();
+    // `$x^2$` is implemented and reports nothing. This used to assert a
+    // "math mode is not implemented" message, which was satisfied only by
+    // the same suffix wrongly appended to the unsupported *text* command.
     assert!(
-        messages
-            .iter()
-            .any(|m| m.contains("math mode is not implemented")),
+        !messages.iter().any(|m| m.contains("math mode")),
         "got {:?}",
         messages
     );
