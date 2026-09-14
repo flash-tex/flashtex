@@ -549,6 +549,9 @@ fn compile(id: &str, payload: &Value) -> Value {
                 recovery: None,
                 code: None,
                 suggestion: None,
+                labels: Vec::new(),
+                notes: Vec::new(),
+                help: None,
             };
             return failed(
                 id,
@@ -571,6 +574,9 @@ fn compile(id: &str, payload: &Value) -> Value {
             recovery: None,
             code: None,
             suggestion: None,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
         };
         return failed(
             id,
@@ -619,6 +625,9 @@ fn compile(id: &str, payload: &Value) -> Value {
                 recovery: None,
                 code: None,
                 suggestion: None,
+                labels: Vec::new(),
+                notes: Vec::new(),
+                help: None,
             };
             return failed(
                 id,

@@ -47,7 +47,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "vskip", "hskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
     "multicolumn", "tabularnewline", "arraystretch",
     // Fonts and text symbols.
-    "textsuperscript", "textsubscript", "underbar", "sout", "uline", "LaTeX",
+    "textsuperscript", "textsubscript", "underbar", "LaTeX",
     "LaTeXe", "TeX", "dag", "ddag", "S", "P", "copyright", "pounds", "textbackslash",
     "textasciitilde", "textasciicircum", "textbar", "textless", "textgreater", "textendash",
     "textemdash", "textbullet", "textperiodcentered", "textquoteleft", "textquoteright",
@@ -158,6 +158,102 @@ pub fn suggest_command(name: &str) -> Option<&'static str> {
     best.map(|(_, candidate)| candidate)
 }
 
+/// Closest of `names` to `needle`, same distance limit as [`suggest_command`].
+pub fn nearest_name<'a>(needle: &str, names: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    let limit = if needle.chars().count() <= 3 { 1 } else { 2 };
+    let mut best: Option<(usize, &'a str)> = None;
+    for candidate in names {
+        if candidate == needle {
+            continue;
+        }
+        let distance = edit_distance(needle, candidate);
+        if distance <= limit && best.is_none_or(|(d, _)| distance < d) {
+            best = Some((distance, candidate));
+        }
+    }
+    best.map(|(_, name)| name)
+}
+
+fn is_math_command(name: &str) -> bool {
+    MATH_COMMANDS.contains(&name)
+        || COMMAND_GLYPHS.iter().any(|(n, _)| *n == name)
+        || OPERATOR_NAMES.contains(&name)
+        || DELIMITER_COMMANDS.contains(&name)
+}
+
+/// Package that defines `name`, when that is the useful help.
+pub fn command_package(name: &str) -> Option<&'static str> {
+    match name {
+        "tikz" | "usetikzlibrary" | "draw" | "node" | "fill" | "path" => Some("tikz"),
+        "includegraphics" | "graphicspath" | "scalebox" | "resizebox" | "rotatebox"
+        | "reflectbox" => Some("graphicx"),
+        "lstinline" | "listoflistings" => Some("listings"),
+        "mintinline" => Some("minted"),
+        "citep" | "citet" | "citeauthor" => Some("natbib"),
+        "addbibresource" | "printbibliography" => Some("biblatex"),
+        "eqref" | "intertext" | "shortintertext" | "substack" | "DeclareMathOperator"
+        | "numberwithin" | "allowdisplaybreaks" => Some("amsmath"),
+        "cref" | "Cref" => Some("cleveref"),
+        "autoref" | "nameref" | "url" | "href" | "hyperref" | "hyperlink" | "hypertarget"
+        | "hypersetup" => Some("hyperref"),
+        "geometry" => Some("geometry"),
+        _ => None,
+    }
+}
+
+/// `= help:` for an unsupported text-mode command (issue #277).
+///
+/// Returns `None` when the diagnostic message already says everything useful
+/// (a known command with no extra package/mode hint).
+pub fn command_help(name: &str) -> Option<String> {
+    if is_math_command(name) {
+        return Some(format!("wrap this in math mode: \\(\\{name}\\)"));
+    }
+    if let Some(package) = command_package(name) {
+        return Some(format!(
+            "\\{name} is a {package} command, which this compiler does not implement"
+        ));
+    }
+    if is_known_command(name) {
+        return None;
+    }
+    if let Some(known) = suggest_command(name) {
+        return Some(format!("did you mean \\{known}?"));
+    }
+    Some("no known LaTeX command has this name; check the spelling".into())
+}
+
+/// Help when a command has no math-mode definition. Known text commands get a
+/// mode hint; otherwise the message already says it is unsupported.
+pub fn math_mode_help(name: &str) -> Option<String> {
+    if is_known_command(name) && !is_math_command(name) {
+        Some(format!(
+            "\\{name} is a text command; use it outside math or inside \\text{{...}}"
+        ))
+    } else {
+        None
+    }
+}
+
+/// `= help:` for an unimplemented environment. Only when a package name is
+/// extra information; the diagnostic already says the body is plain text.
+pub fn environment_help(name: &str) -> Option<String> {
+    let package = match name {
+        "tikzpicture" => Some("tikz"),
+        "lstlisting" => Some("listings"),
+        "minted" => Some("minted"),
+        "longtable" => Some("longtable"),
+        "tabularx" => Some("tabularx"),
+        "wrapfigure" => Some("wrapfig"),
+        "subfigure" => Some("subcaption"),
+        "landscape" => Some("lscape"),
+        _ => None,
+    };
+    package.map(|p| {
+        format!("environment '{name}' needs the {p} package, which this compiler does not implement")
+    })
+}
+
 /// Optimal string alignment distance: Levenshtein plus adjacent transposition,
 /// so `alpah` is one edit from `alpha`.
 fn edit_distance(a: &str, b: &str) -> usize {
@@ -199,6 +295,8 @@ mod tests {
         assert_eq!(suggest_command("sectoin"), Some("section"));
         assert_eq!(suggest_command("frobnicate"), None);
         assert_eq!(suggest_command("alpha"), None);
+        assert_eq!(nearest_name("s2", ["s1", "sec2"].into_iter()), Some("s1"));
+        assert_eq!(nearest_name("nope", ["intro", "later"].into_iter()), None);
     }
 
     #[test]
@@ -211,6 +309,38 @@ mod tests {
         assert!(is_known_environment("tabular"));
         assert!(is_known_environment("pmatrix"));
         assert!(!is_known_environment("itemze"));
+    }
+
+    #[test]
+    fn help_does_not_restate_the_diagnostic_message() {
+        assert_eq!(
+            command_help("tikz").as_deref(),
+            Some("\\tikz is a tikz command, which this compiler does not implement")
+        );
+        assert_eq!(
+            command_help("alpha").as_deref(),
+            Some("wrap this in math mode: \\(\\alpha\\)")
+        );
+        assert!(command_help("maketitle").is_none(), "{:?}", command_help("maketitle"));
+        assert_eq!(
+            command_help("alpah").as_deref(),
+            Some("did you mean \\alpha?")
+        );
+        assert_eq!(
+            command_help("frobnicate").as_deref(),
+            Some("no known LaTeX command has this name; check the spelling")
+        );
+        assert_eq!(
+            math_mode_help("centering").as_deref(),
+            Some("\\centering is a text command; use it outside math or inside \\text{...}")
+        );
+        assert!(math_mode_help("bogusxyz").is_none());
+        assert!(math_mode_help("alpha").is_none());
+        assert!(environment_help("tabbing").is_none());
+        assert_eq!(
+            environment_help("tikzpicture").as_deref(),
+            Some("environment 'tikzpicture' needs the tikz package, which this compiler does not implement")
+        );
     }
 
     /// `MATH_COMMANDS` is hand-kept beside `math.rs`'s dispatch; an entry the

@@ -279,6 +279,9 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LaTeX", "", "latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \\TeX"),
     ("LaTeXe", "", "\\LaTeX, kern .15em, 2 and a text-style subscript varepsilon"),
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
+    ("uline", "{...}", "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)"),
+    ("underline", "{...}", "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox"),
+    ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
     ("thinspace", "", "text kern .16667em (math: thin muskip)"),
     ("negthinspace", "", "text kern -.16667em"),
     ("medspace", "", "text kern .2222em"),
@@ -842,6 +845,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "natbib",
         "numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak",
         "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; sort, compress, super and openbib are diagnosed",
+    ),
+    (
+        "ulem",
+        "normalem",
+        "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined",
     ),
 ];
 
