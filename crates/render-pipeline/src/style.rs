@@ -49,6 +49,15 @@ pub struct HeadingStyle {
     pub bold: bool,
     pub before: Skip,
     pub after: Skip,
+    /// `\@startsection`'s `#3`: the heading's own indent
+    /// (`\subparagraph`'s `\parindent`; zero above it).
+    pub indent_pt: f64,
+    /// `\@startsection`'s `#5` when it is not positive
+    /// (`\paragraph`/`\subparagraph`: `-1em`), in em of the body font.
+    /// `\@xsect` then sets the heading into the first line of the following
+    /// paragraph and follows it with `\hskip -#5`; `after` is the zero
+    /// vertical skip such a heading contributes.
+    pub run_in_em: Option<f64>,
 }
 
 /// `\usepackage[...]{microtype}` as pdfTeX sees it: the package options
@@ -142,7 +151,7 @@ pub struct Stylesheet {
     /// `\labelsep` (article: `.5em` of `\normalsize`): the gap between a
     /// list label's right edge and the item text.
     pub labelsep_pt: f64,
-    headings: [HeadingStyle; 3],
+    headings: [HeadingStyle; 5],
     /// The resolved class + geometry frame this stylesheet was built from
     /// ([`Stylesheet::from_resolved`]); `None` for [`Stylesheet::article`].
     pub class_geometry: Option<Box<ResolvedDocument>>,
@@ -189,11 +198,13 @@ impl Stylesheet {
         };
         let heading = |level: u8| -> HeadingStyle {
             let h = ds.resolve(&[Block::Document, Block::Heading(level)]);
-            let spec = flashtex_document_style::section_spec(level).expect("levels 1..=3");
+            let spec = flashtex_document_style::section_spec(level).expect("levels 1..=5");
             let before = spec.before_ex.scale(ex);
-            let after = match spec.after {
-                flashtex_document_style::SectionAfter::VerticalEx(s) => s.scale(ex),
-                flashtex_document_style::SectionAfter::RunInEm(_) => flashtex_document_style::Skip::ZERO,
+            let (after, run_in_em) = match spec.after {
+                flashtex_document_style::SectionAfter::VerticalEx(s) => (s.scale(ex), None),
+                // `\@xsect`'s run-in branch adds no vertical skip at all;
+                // `-#5` is the horizontal one after the heading.
+                flashtex_document_style::SectionAfter::RunInEm(em) => (flashtex_document_style::Skip::ZERO, Some(em)),
             };
             HeadingStyle {
                 size_pt: h.font_size.0,
@@ -201,6 +212,8 @@ impl Stylesheet {
                 bold: h.bold,
                 before: Skip::new(before.pt, before.plus, before.minus),
                 after: Skip::new(after.pt, after.plus, after.minus),
+                indent_pt: if spec.indent_parindent { body.parindent.0 } else { 0.0 },
+                run_in_em,
             }
         };
         let parskip = ds.parskip();
@@ -248,7 +261,7 @@ impl Stylesheet {
             leftmargini_pt: list.leftmargin.0,
             parsep: Skip::new(list.parsep.pt, list.parsep.plus, list.parsep.minus),
             labelsep_pt: list.labelsep.0,
-            headings: [heading(1), heading(2), heading(3)],
+            headings: [heading(1), heading(2), heading(3), heading(4), heading(5)],
             class_geometry: None,
             microtype: None,
         }
@@ -327,7 +340,7 @@ impl Stylesheet {
     }
 
     pub fn heading(&self, level: u8) -> HeadingStyle {
-        self.headings[usize::from(level.clamp(1, 3) - 1)]
+        self.headings[usize::from(level.clamp(1, 5) - 1)]
     }
 
     /// Set `\baselinestretch` and apply it to every leading this stylesheet

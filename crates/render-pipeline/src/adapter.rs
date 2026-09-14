@@ -487,6 +487,44 @@ pub enum ChromeEvent {
     SetPage(i64),
 }
 
+/// A `\paragraph`/`\subparagraph` heading held until the paragraph it runs
+/// into (`\@startsection` with `#5 <= 0`).
+///
+/// `\@sect` puts such a heading in `\@svsechd` instead of setting it, and
+/// `\@xsect` installs an `\everypar` that, on the *next* paragraph, removes
+/// that paragraph's `\parindent` box (`{\setbox\z@\lastbox}`), unboxes the
+/// heading and adds `\hskip -#5`. So the heading is never a vertical block:
+/// its words open the following paragraph's first line, and only
+/// `\@startsection`'s `\addvspace{#4}` stands above it.
+#[derive(Debug, Clone)]
+struct RunInHeading {
+    /// The heading's items, `\@startsection`'s `#3` indent first (if any)
+    /// and the `\hskip -#5` last.
+    items: Vec<Item>,
+    /// `\addvspace{#4}` plus whatever the heading's own unit carried.
+    addvspace_before: f64,
+    eject_before: bool,
+    vspace_before: f64,
+}
+
+/// Set a held run-in heading as a paragraph of its own, for the case where
+/// no paragraph follows it.
+fn flush_run_in(blocks: &mut Vec<Block>, head: Option<RunInHeading>) {
+    let Some(head) = head else { return };
+    blocks.push(Block::Paragraph {
+        parts: vec![ParaPart::Lines(head.items)],
+        indent: false,
+        style: ParaStyle::default(),
+        env_open: None,
+        env_close: false,
+        eject_before: head.eject_before,
+        vspace_before: head.vspace_before,
+        addvspace_before: head.addvspace_before,
+        endlist_adjust: 0.0,
+        list: None,
+    });
+}
+
 /// How a paragraph-shape environment began (see [`Block::Paragraph`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnvOpen {
@@ -918,10 +956,21 @@ pub fn adapt_cached(
     // Last source span of the previous paragraph block (None after a
     // heading or rule), for rejoining a display with its paragraph.
     let mut prev_para_end: Option<Span> = None;
+    // A `\paragraph`/`\subparagraph` heading waiting for the paragraph it
+    // runs into (see `RunInHeading`).
+    let mut run_in: Option<RunInHeading> = None;
     for unit in split_at_page_breaks(texts, &lowered, size, &style) {
         let mut eject_before = unit.eject_before;
         let vspace_before = unit.vspace_before;
         limitations.extend(unit.limitations);
+        // A run-in heading with nothing to run into (a heading, rule or
+        // picture follows it): `\@xsect`'s `\everypar` fires on whatever
+        // paragraph comes next, and with none it is set on its own.
+        if run_in.is_some() && !matches!(unit.kind, UnitKind::Paragraph { .. }) {
+            flush_run_in(&mut blocks, run_in.take());
+            after_heading = false;
+            prev_para_end = None;
+        }
         let unit_start = match &unit.kind {
             UnitKind::Heading { number_span, .. } => Some(*number_span),
             UnitKind::Paragraph { inlines, .. } => inlines.iter().map(inline_span).next(),
@@ -1182,7 +1231,44 @@ pub fn adapt_cached(
                     }
                     items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
                 }
+                let content_items_len = content_items.len();
                 items.extend(content_items);
+                let h = style.heading(level);
+                if let Some(em) = h.run_in_em {
+                    // `\@startsection` with `#5 <= 0`: `\@xsect` puts the
+                    // heading in `\@svsechd` and sets it from the *next*
+                    // paragraph's `\everypar`, which first takes that
+                    // paragraph's `\parindent` box back off
+                    // (`{\setbox\z@\lastbox}`) and then follows the heading
+                    // with `\hskip -#5`. So the heading never becomes a
+                    // vertical block of its own; it is held here until the
+                    // paragraph it belongs to.
+                    //
+                    // It is also set inside that paragraph, whose base style
+                    // is not bold, so `\@startsection`'s `\bfseries` has to
+                    // reach the items themselves -- the display form takes it
+                    // from `heading_block`'s base style instead and only
+                    // cancels it where the title says `\normalfont`.
+                    let mut items = items;
+                    items.truncate(items.len() - content_items_len);
+                    items.extend(items_for_weighted(content, true));
+                    if h.indent_pt != 0.0 {
+                        // `#3`: `\subparagraph` starts `\parindent` in.
+                        items.insert(0, Item::HSpace { pt: h.indent_pt });
+                    }
+                    items.push(Item::Quad { em });
+                    run_in = Some(RunInHeading {
+                        items,
+                        // `\addvspace{#4}` before the heading, as for any
+                        // other `\@startsection` level.
+                        addvspace_before: unit.addvspace_before + h.before.natural,
+                        eject_before,
+                        vspace_before,
+                    });
+                    after_heading = false;
+                    prev_para_end = None;
+                    continue;
+                }
                 blocks.push(Block::Heading {
                     level,
                     items,
@@ -1234,6 +1320,12 @@ pub fn adapt_cached(
                 // own scoping inside a theorem-like environment.
                 let mut items = items_for_weighted(inlines, in_theorem);
                 items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
+                // A held `\paragraph`/`\subparagraph` heading opens this
+                // paragraph's first line (`\@xsect`'s `\everypar`).
+                let run_in_head = run_in.take();
+                if let Some(head) = &run_in_head {
+                    items.splice(0..0, head.items.iter().cloned());
+                }
                 let mut parts = Vec::new();
                 let mut current = Vec::new();
                 for item in items {
@@ -1319,7 +1411,8 @@ pub fn adapt_cached(
                 // empty opener line, no indent after the display).
                 let first_span = inlines.iter().map(inline_span).next();
                 let starts_display = matches!(parts.first(), Some(ParaPart::Display { .. } | ParaPart::Rows { .. }));
-                if let (Some(Block::Paragraph { parts: prev_parts, style: prev_style, list: prev_list, .. }), Some(f), Some(p)) = (blocks.last_mut(), first_span, prev_para_end) {
+                let joinable = run_in_head.is_none();
+                if let (Some(Block::Paragraph { parts: prev_parts, style: prev_style, list: prev_list, .. }), Some(f), Some(p)) = (blocks.last_mut().filter(|_| joinable), first_span, prev_para_end) {
                     // Labels only, or a `label_line` (labels then one space).
                     let label_only = |p: &ParaPart| matches!(p, ParaPart::Lines(items) if items.iter().all(|i| matches!(i, Item::Label { .. } | Item::Space { .. })));
                     // A display's `\label` is flushed after it as a part of
@@ -1385,13 +1478,15 @@ pub fn adapt_cached(
                 // ones after it, `quote` likewise.
                 blocks.push(Block::Paragraph {
                     parts,
-                    indent: !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent,
+                    // `\@xsect`'s `{\setbox\z@\lastbox}` takes the
+                    // `\parindent` box off a run-in heading's paragraph.
+                    indent: run_in_head.is_none() && !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent,
                     style: styled.unwrap_or_default(),
                     env_open,
                     env_close: false,
-                    eject_before,
-                    vspace_before,
-                    addvspace_before: unit.addvspace_before,
+                    eject_before: eject_before || run_in_head.as_ref().is_some_and(|h| h.eject_before),
+                    vspace_before: vspace_before + run_in_head.as_ref().map_or(0.0, |h| h.vspace_before),
+                    addvspace_before: unit.addvspace_before + run_in_head.as_ref().map_or(0.0, |h| h.addvspace_before),
                     endlist_adjust: unit.endlist_adjust,
                     list,
                 });
@@ -1399,6 +1494,7 @@ pub fn adapt_cached(
             }
         }
     }
+    flush_run_in(&mut blocks, run_in.take());
     // The contents lists, now that every record is known.
     for (at, kind, span, eject) in toc_lists.into_iter().rev() {
         let list = crate::toc::list_blocks(kind, span, eject, &toc_settings, &toc_records, labels, &chapter_starts);
