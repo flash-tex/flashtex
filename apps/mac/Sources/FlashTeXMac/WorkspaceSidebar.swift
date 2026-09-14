@@ -1,16 +1,19 @@
 import SwiftUI
 import FlashTeXProtocol
 
-/// The main window's sidebar (mac-ui-redesign): the project's members with
-/// their kind and state, the active buffer's Outline (sections,
-/// environments, labels — DocumentOutline.swift) and a Problems summary.
-/// Every row drives an existing model operation: switching goes through
-/// `ProjectDocuments.switchDocument`, includes open through
-/// `openDocument`, outline rows select through `reveal(outlineItem:)`, and
-/// the Problems rows show/filter the bottom panel. Nothing here is a new
-/// source of truth.
+/// The tool column (design-principles §4): tool windows stack sharing this
+/// column — the Project tree, and under it the Outline of the active buffer
+/// (sections, environments, labels — DocumentOutline.swift), each toggled
+/// from the rail (ContentView.swift). The Outline ships collapsed. Problems
+/// moved out of this column entirely: its homes are the bottom panel and the
+/// status-bar badge. Every row drives an existing model operation: switching
+/// goes through `ProjectDocuments.switchDocument`, includes open through
+/// `openDocument`, outline rows select through `reveal(outlineItem:)`.
+/// Nothing here is a new source of truth.
 struct WorkspaceSidebar: View {
     @Environment(ShellModel.self) var model
+    let projectVisible: Bool
+    let outlineVisible: Bool
     /// Outline of the active buffer, rescanned ~150 ms after edits settle so
     /// a keystroke never pays for a scan on its own frame (TypingBench).
     @State private var outline: [DocumentOutline.Item] = []
@@ -20,15 +23,30 @@ struct WorkspaceSidebar: View {
     static let identifier = "workspace.sidebar"
 
     var body: some View {
-        List {
-            ProjectSection()
-            OutlineSection(outline: outline, expanded: $expanded, stale: outlineFor.revision != model.chrome.editorRevision) // throttled (ShellChrome): not per keystroke
-            ProblemsSection()
+        VStack(spacing: 0) {
+            if projectVisible {
+                List {
+                    ProjectSection()
+                }
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                .environment(\.defaultMinListRowHeight, DS.Row.tree)
+            }
+            if projectVisible && outlineVisible { Divider() }
+            if outlineVisible {
+                List {
+                    OutlineSection(outline: outline, expanded: $expanded, stale: outlineFor.revision != model.chrome.editorRevision) // throttled (ShellChrome): not per keystroke
+                }
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                .environment(\.defaultMinListRowHeight, DS.Row.outline)
+            }
         }
-        .listStyle(.sidebar)
+        .background(DS.Colors.surfaceSecondary)
         .accessibilityIdentifier(Self.identifier)
         .modifier(ProjectScaffoldSheets()) // New Project / New File / Rename / Delete (ProjectScaffoldViews.swift)
-        .task(id: "\(model.activePath)@\(model.chrome.editorRevision)") {
+        .task(id: "\(model.activePath)@\(model.chrome.editorRevision)/\(outlineVisible)") {
+            guard outlineVisible else { return } // no scans for a hidden panel
             // Rescan after a short quiet period; the previous scan is cancelled.
             let revision = model.chrome.editorRevision, path = model.activePath
             if outlineFor.revision >= 0 { try? await Task.sleep(for: .milliseconds(150)) }
@@ -59,15 +77,17 @@ private struct ProjectSection: View {
                     model.switchOrNote(doc.path)
                 } label: {
                     Label {
-                        HStack(spacing: 4) {
+                        HStack(spacing: DS.Space.xs) {
                             Text(doc.path).lineLimit(1).truncationMode(.middle)
-                            if doc.isDirty { Circle().fill(.orange).frame(width: 6, height: 6).accessibilityLabel("edited") }
+                            if doc.isDirty { Circle().fill(DS.Colors.statusModified).frame(width: DS.Size.modifiedDot, height: DS.Size.modifiedDot).accessibilityLabel("edited") }
                             Spacer(minLength: 0)
-                            if let r = doc.durableRevision { Text("r\(r)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit() }
+                            if let r = doc.durableRevision { Text("r\(r)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary) }
                         }
                     } icon: {
-                        Image(systemName: Self.icon(for: doc, kind: kinds.kind(of: doc.path)))
-                            .foregroundStyle(doc.path == model.activePath ? Color.accentColor : Color.secondary)
+                        let style = FileTypeStyle.of(path: doc.path, entry: doc.role == .entry,
+                                                     bibliography: kinds.kind(of: doc.path) == .bibliography)
+                        Image(systemName: style.systemImage)
+                            .foregroundStyle(style.color)
                     }
                 }
                 .help(Self.tooltip(for: doc, kind: kinds.kind(of: doc.path)))
@@ -102,11 +122,11 @@ private struct ProjectSection: View {
                     Task { await model.project.createMissingInclude(n.reference.argument, from: n.from); model.navigationNote = model.project.status }
                 } label: {
                     Label {
-                        HStack(spacing: 4) {
-                            Text(name).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
-                            Text("missing — create").font(.caption2).foregroundStyle(.orange)
+                        HStack(spacing: DS.Space.xs) {
+                            Text(name).lineLimit(1).truncationMode(.middle).foregroundStyle(DS.Colors.textSecondary)
+                            Text("missing — create").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning)
                         }
-                    } icon: { Image(systemName: "doc.badge.plus").foregroundStyle(.orange) }
+                    } icon: { Image(systemName: "doc.badge.plus").foregroundStyle(DS.Colors.severityWarning) }
                 }
                 .help("\\\(n.reference.kind.rawValue){\(n.reference.argument)} from \(n.from) has no file — click to create \(name)")
                 .accessibilityLabel("\(name), missing, included from \(n.from); activate to create it")
@@ -115,21 +135,15 @@ private struct ProjectSection: View {
             HStack {
                 Label("Project", systemImage: "folder")
                 Spacer()
-                Text("\(listing.count)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
+                Text("\(listing.count)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
                 Button { model.scaffold.presentNewFile() } label: { Image(systemName: "plus") } // ProjectScaffoldViews.swift
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .buttonStyle(.plain).foregroundStyle(DS.Colors.textSecondary)
                     .disabled(model.project.projectRoot == nil)
                     .help("New File… (⌘N): a rooted .tex file in this project, opened in a tab")
                     .accessibilityLabel("New file")
                     .accessibilityIdentifier("project.newfile")
             }
         }
-    }
-
-    static func icon(for doc: ProjectDocument, kind: DocumentKind?) -> String {
-        if kind == .bibliography { return "books.vertical" }
-        if doc.role == .entry { return "doc.text.fill" }
-        return "doc.text"
     }
 
     static func tooltip(for doc: ProjectDocument, kind: DocumentKind?) -> String {
@@ -181,7 +195,7 @@ private struct OutlineSection: View {
             CaretFollower(outline: outline, currentID: $currentID)
             if outline.isEmpty {
                 Text(stale ? "Scanning…" : "No sections, environments or labels in \(model.activePath)")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
             }
             ForEach(DocumentOutline.Kind.allCases, id: \.self) { kind in
                 let items = DocumentOutline.items(kind, in: outline)
@@ -192,13 +206,13 @@ private struct OutlineSection: View {
                             SidebarRow(selected: item.id == currentID) {
                                 model.reveal(outlineItem: item)
                             } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: Self.icon(item)).foregroundStyle(.secondary).font(.caption)
+                                HStack(spacing: DS.Space.xs) {
+                                    Image(systemName: Self.icon(item)).foregroundStyle(DS.Colors.textSecondary).font(DS.Fonts.secondary)
                                     Text(item.displayTitle.isEmpty ? "(untitled)" : item.displayTitle).lineLimit(1)
                                     Spacer(minLength: 0)
-                                    Text("\(item.line)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
+                                    Text("\(item.line)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
                                 }
-                                .padding(.leading, CGFloat(min(max(0, item.kind == .section ? item.level - topLevel : item.level), 4)) * 10)
+                                .padding(.leading, CGFloat(min(max(0, item.kind == .section ? item.level - topLevel : item.level), 4)) * DS.Space.m)
                             }
                             .help(Self.tooltip(item))
                             .accessibilityLabel(Self.spoken(item))
@@ -207,7 +221,7 @@ private struct OutlineSection: View {
                         HStack {
                             Text(kind.title)
                             Spacer()
-                            Text("\(counts[kind] ?? 0)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
+                            Text("\(counts[kind] ?? 0)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
                         }
                     }
                 }
@@ -267,43 +281,6 @@ private struct CaretFollower: View {
     }
 }
 
-// MARK: - Problems
-
-/// Counts by severity; activating a row shows the Problems panel filtered to
-/// that severity (ProblemsPanel.swift), the "all" row clears the filter.
-private struct ProblemsSection: View {
-    @Environment(ShellModel.self) var model
-
-    var body: some View {
-        let diags = model.problemsList // change-only (ShellModel): `displayedDiagnostics` reads `result`, replaced per reply
-        let (errors, warnings, gaps) = EditorDiagnostics.counts(diags)
-        Section {
-            if diags.isEmpty {
-                Label { Text("No problems").foregroundStyle(.secondary) } icon: { Image(systemName: "checkmark.circle").foregroundStyle(.green) }
-                    .font(.caption)
-            } else {
-                row("\(errors) error\(errors == 1 ? "" : "s")", icon: "xmark.octagon.fill", tint: .red, filter: .error, enabled: errors > 0)
-                row("\(warnings) warning\(warnings == 1 ? "" : "s")", icon: "exclamationmark.triangle.fill", tint: .orange, filter: .warning, enabled: warnings > 0)
-                if gaps > 0 { row("\(gaps) not implemented", icon: "puzzlepiece.extension", tint: .secondary, filter: nil, enabled: true) }
-                row("All \(diags.count)", icon: "list.bullet.rectangle", tint: .secondary, filter: nil, enabled: true)
-            }
-        } header: {
-            Label("Problems", systemImage: "exclamationmark.triangle")
-        }
-    }
-
-    private func row(_ title: String, icon: String, tint: Color, filter: RuntimeV1.Severity?, enabled: Bool) -> some View {
-        SidebarRow(selected: model.problemsVisible && model.problemsSeverityFilter == filter && filter != nil) {
-            model.problemsSeverityFilter = filter
-            model.problemsVisible = true
-        } label: {
-            Label { Text(title) } icon: { Image(systemName: icon).foregroundStyle(enabled ? tint : Color.secondary) }
-        }
-        .disabled(!enabled)
-        .help("Show the Problems panel (⌘⇧M)\(filter.map { " filtered to \($0.rawValue)s" } ?? "")")
-    }
-}
-
 // MARK: - Row
 
 /// A sidebar row that is a button (keyboard + VoiceOver activation) and
@@ -312,6 +289,7 @@ struct SidebarRow<Label: View>: View {
     let selected: Bool
     let action: () -> Void
     @ViewBuilder let label: () -> Label
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
@@ -320,9 +298,14 @@ struct SidebarRow<Label: View>: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 6).padding(.vertical, 2)
-        .background(selected ? Color.accentColor.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
-        .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
+        .padding(.horizontal, DS.Space.s)
+        .frame(height: DS.Row.tree)
+        // Full-row highlight, hover and selected (design-principles §6).
+        .background(selected ? DS.Colors.accentSelection.opacity(DS.State.selectionTintOpacity)
+                             : hovering ? DS.Colors.textPrimary.opacity(DS.State.hoverOpacity) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: DS.Radius.tab))
+        .onHover { hovering = $0 }
+        .listRowInsets(EdgeInsets(top: 0, leading: DS.Space.xs, bottom: 0, trailing: DS.Space.xs))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

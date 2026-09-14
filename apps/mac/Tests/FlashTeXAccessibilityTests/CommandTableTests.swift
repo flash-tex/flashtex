@@ -228,22 +228,23 @@ final class CommandTableTests: XCTestCase {
 
     func testFocusOrderMatchesContentViewPaneOrder() throws {
         let text = try String(contentsOf: Self.shellSources.appendingPathComponent("ContentView.swift"), encoding: .utf8)
-        // 1. The window is a NavigationSplitView: the sidebar column first, then
-        //    the detail's HSplitView places the editor column before the preview
-        //    column, and the Problems panel follows both.
+        // 1. The window is the flat tool-window shell: the rail first, then the
+        //    tool column, then the HSplitView places the editor column before
+        //    the preview column, and the Problems panel follows both.
         let root = try Self.structBody("ContentView", in: text)
-        let sidebar = try XCTUnwrap(root.range(of: "WorkspaceSidebar()"))
+        let rail = try XCTUnwrap(root.range(of: "ToolRail("))
+        let sidebar = try XCTUnwrap(root.range(of: "WorkspaceSidebar(projectVisible:"))
         let editor = try XCTUnwrap(root.range(of: "EditorPane()"))
         let preview = try XCTUnwrap(root.range(of: "PreviewPane()"))
         let problems = try XCTUnwrap(root.range(of: "ProblemsPanel()"))
+        XCTAssertLessThan(rail.lowerBound, sidebar.lowerBound)
         XCTAssertLessThan(sidebar.lowerBound, editor.lowerBound)
         XCTAssertLessThan(editor.lowerBound, preview.lowerBound)
         XCTAssertLessThan(preview.lowerBound, problems.lowerBound)
-        XCTAssertTrue(root[..<sidebar.lowerBound].contains("NavigationSplitView"))
         XCTAssertTrue(root[sidebar.upperBound..<editor.lowerBound].contains("HSplitView"))
         // 2. Within each container the markers appear in the table's order, and
         //    the table lists the containers in the window's order.
-        let containers = ["WorkspaceSidebar", "EditorPane", "PreviewPane", "ProblemsPanel"]
+        let containers = ["ContentView", "WorkspaceSidebar", "EditorPane", "PreviewPane", "ProblemsPanel"]
         var flattened: [String] = []
         for c in containers {
             let panes = FocusOrder.panes.filter { $0.container == c }
@@ -265,29 +266,32 @@ final class CommandTableTests: XCTestCase {
         for marker in ["ProjectSection()", "DocumentTabBar()", "SourceEditorView(", "CaptureBar()", "BridgeBar()", "PreviewView(", "problemsList("] {
             XCTAssertTrue(FocusOrder.panes.contains { $0.sourceMarker == marker }, marker)
         }
-        XCTAssertEqual(FocusOrder.description, "Sidebar → Tabs → Editor → Capture bar → Bridge bar → Preview → Problems")
-        // The sidebar's three sections are in the sidebar source in that order
+        XCTAssertEqual(FocusOrder.description, "Tool rail → Sidebar → Tabs → Editor → Capture bar → Bridge bar → Preview → Problems")
+        // The tool column stacks Project above Outline (Problems left the
+        // column: its homes are the bottom panel and the status-bar badge)
         // and the Problems panel hosts the shared diagnostics list.
         let sidebarSource = try String(contentsOf: Self.shellSources.appendingPathComponent("WorkspaceSidebar.swift"), encoding: .utf8)
         let sidebarBody = try Self.structBody("WorkspaceSidebar", in: sidebarSource)
         var cursor = sidebarBody.startIndex
-        for section in ["ProjectSection()", "OutlineSection(", "ProblemsSection()"] {
+        for section in ["ProjectSection()", "OutlineSection("] {
             let r = try XCTUnwrap(sidebarBody.range(of: section, range: cursor..<sidebarBody.endIndex), section)
             cursor = r.upperBound
         }
+        XCTAssertFalse(sidebarBody.contains("ProblemsSection"), "Problems has left the tool column")
         let problemsSource = try String(contentsOf: Self.shellSources.appendingPathComponent("ProblemsPanel.swift"), encoding: .utf8)
         XCTAssertTrue(problemsSource.contains("DiagnosticsListView(diagnostics: diags, panel: model.problemsPanel"), "the Problems panel hosts the diagnostics list")
     }
 
     func testFocusOrderHelpText() {
-        XCTAssertEqual(FocusOrder.panes.count, 7)
+        XCTAssertEqual(FocusOrder.panes.count, 8)
         for p in FocusOrder.panes {
             XCTAssertGreaterThan(p.rationale.count, 30, p.name)
             XCTAssertGreaterThan(p.contents.count, 20, p.name)
         }
-        XCTAssertTrue(FocusOrder.helpLines[0].hasPrefix("1. Sidebar: "))
-        XCTAssertTrue(FocusOrder.helpLines[2].hasPrefix("3. Editor: "))
-        XCTAssertTrue(FocusOrder.helpLines[6].hasPrefix("7. Problems: "))
+        XCTAssertTrue(FocusOrder.helpLines[0].hasPrefix("1. Tool rail: "))
+        XCTAssertTrue(FocusOrder.helpLines[1].hasPrefix("2. Sidebar: "))
+        XCTAssertTrue(FocusOrder.helpLines[3].hasPrefix("4. Editor: "))
+        XCTAssertTrue(FocusOrder.helpLines[7].hasPrefix("8. Problems: "))
         XCTAssertEqual(FocusOrder.statusLines.count, 3)
         XCTAssertTrue(FocusOrder.statusLines[0].hasPrefix("Toolbar: "))
         XCTAssertTrue(FocusOrder.statusLines[0].contains("⌘⇧P"), "the palette is discoverable from the toolbar line")

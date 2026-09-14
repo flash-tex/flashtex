@@ -670,7 +670,7 @@ final class LineNumberGutter: NSRulerView {
         (tv.backgroundColor).setFill()
         bounds.fill()
         // Hairline separator.
-        NSColor.separatorColor.withAlphaComponent(0.5).setFill()
+        DS.NSColors.gutterHairline.setFill()
         NSRect(x: bounds.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()
 
         let visible = tv.visibleRect
@@ -713,10 +713,10 @@ final class LineNumberGutter: NSRulerView {
             if let severity = severities[line] {
                 let d: CGFloat = 7
                 let dot = NSRect(x: 6, y: inRuler.midY - d / 2, width: d, height: d)
-                (severity == .error ? NSColor.systemRed : NSColor.systemOrange).setFill()
+                (severity == .error ? DS.NSColors.severityError : DS.NSColors.severityWarning).setFill()
                 NSBezierPath(ovalIn: dot).fill()
             } else if gapLines.contains(line) {
-                NSColor.tertiaryLabelColor.setFill()
+                DS.NSColors.gapDot.setFill()
                 NSBezierPath(ovalIn: NSRect(x: 7.5, y: inRuler.midY - 2, width: 4, height: 4)).fill()
             }
             line += 1
@@ -726,7 +726,7 @@ final class LineNumberGutter: NSRulerView {
     /// Disclosure triangle in the marker column: collapsed ▶ when folded, ▼ when open.
     private func drawFoldMark(folded: Bool, midY: CGFloat) {
         let r = NSRect(x: 3, y: midY - 4, width: 8, height: 8)
-        NSColor.secondaryLabelColor.setFill()
+        DS.NSColors.gutterGlyph.setFill()
         let path = NSBezierPath()
         if folded {
             path.move(to: NSPoint(x: r.minX + 1, y: r.minY + 1))
@@ -872,31 +872,31 @@ struct QuickInfoView: View {
     let info: EditorIntelligence.QuickInfo
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
                 Text(info.title).font(.system(.body, design: .monospaced).weight(.semibold)).lineLimit(2)
-                Text(info.detail).font(.caption).foregroundStyle(.secondary)
+                Text(info.detail).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
             }
             if let doc = info.documentation {
                 Text(doc).font(.callout).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
             }
             ForEach(Array(info.diagnostics.enumerated()), id: \.offset) { _, d in
                 Divider()
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: DS.Space.s) {
                     Image(systemName: d.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(d.severity == .error ? Color.red : Color.orange)
+                        .foregroundStyle(d.severity == .error ? DS.Colors.severityError : DS.Colors.severityWarning)
                         .accessibilityLabel(d.severity == .error ? "Error" : "Warning")
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: DS.Space.xxs) {
                         Text(d.message).font(.callout).fixedSize(horizontal: false, vertical: true)
                         ForEach(Array(d.lines.enumerated()), id: \.offset) { _, line in
-                            Text(line).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            Text(line).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
             }
         }
-        .padding(10)
-        .frame(minWidth: 180, maxWidth: 380, alignment: .leading)
+        .padding(DS.Space.m)
+        .frame(minWidth: DS.Layout.quickInfoMinWidth, maxWidth: DS.Layout.quickInfoMaxWidth, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Quick info: \(info.title), \(info.detail)")
     }
