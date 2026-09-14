@@ -1,6 +1,6 @@
 //! Glyphs drawn from the pinned Latin Modern Math resource, not the base-14 fonts.
 //!
-//! Blackboard bold, `\setminus`, the long `\Longrightarrow` arrow, a
+//! Blackboard bold, `\odot`, `\setminus`, the long `\Longrightarrow` arrow, a
 //! further set of common amssymb/latexsym symbols (issue #62: `\mp`, `\ll`,
 //! `\gg`, `\simeq`, `\vdots`, `\ddots`, the floor/ceiling fences, `\oint`,
 //! `\mapsto`, `\ell`, `\hbar`, `\circ`, `\parallel`, and the relations/order
@@ -92,6 +92,7 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{2293}', 667),  // \sqcap
     ('\u{2291}', 778),  // \sqsubseteq
     ('\u{2292}', 778),  // \sqsupseteq
+    ('\u{2299}', 778),  // \odot, cmsy10 "0C
     ('\u{2272}', 776),  // \lesssim
     ('\u{2273}', 776),  // \gtrsim
     ('\u{225C}', 778),  // \triangleq
@@ -195,7 +196,7 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 80);
+        assert_eq!(ADVANCES.len(), 81);
     }
 
     #[test]

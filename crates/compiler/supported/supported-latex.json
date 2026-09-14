@@ -465,6 +465,7 @@
     {"name": "emptyset", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ∅", "renders": true, "glyph": "∅"},
     {"name": "oplus", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊕", "renders": true, "glyph": "⊕"},
     {"name": "otimes", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊗", "renders": true, "glyph": "⊗"},
+    {"name": "odot", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊙", "renders": true, "glyph": "⊙"},
     {"name": "wedge", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ∧", "renders": true, "glyph": "∧"},
     {"name": "land", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ∧", "renders": true, "glyph": "∧"},
     {"name": "lor", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ∨", "renders": true, "glyph": "∨"},

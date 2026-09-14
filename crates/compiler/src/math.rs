@@ -2861,6 +2861,7 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("varnothing", "∅"),
     ("oplus", "⊕"),
     ("otimes", "⊗"),
+    ("odot", "⊙"),
     ("wedge", "∧"),
     ("land", "∧"),
     ("lor", "∨"),
@@ -3138,7 +3139,7 @@ fn symbol_class(glyph: &str) -> AtomClass {
         // cmsy "76/"77 (kernel, not amssymb).
         | "⊑" | "⊒" => Rel,
         "+" | "-" | "−" | "*" | "±" | "×" | "÷" | "⋅" | "·" | "∗" | "∪" | "∩" | "∨" | "∧" | "⊕"
-        | "⊗" | "∖" | "∓" | "∘"
+        | "⊗" | "⊙" | "∖" | "∓" | "∘"
         // fontmath.ltx 278-279: `\sqcap`/`\sqcup`, `\mathbin` at cmsy "75/"74.
         | "⊓" | "⊔"
         // `\bigtriangledown`; `\bigtriangleup` shares `\triangle`'s glyph
