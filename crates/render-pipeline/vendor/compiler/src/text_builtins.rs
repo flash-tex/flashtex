@@ -145,6 +145,53 @@ pub fn text_symbol(name: &str, enc: Encoding) -> Option<SymbolOutcome> {
     Some(SymbolOutcome::Char(ch))
 }
 
+/// Kernel text accents whose argument is one letter: `\c` cedilla, `\v`
+/// caron, `\u` breve, `\H` double acute, `\r` ring, `\k` ogonek, `\d` dot
+/// below, `\b` bar below. `\t` (a tie over two letters) is not among them.
+pub const TEXT_ACCENTS: &[&str] = &["c", "v", "u", "H", "r", "k", "d", "b"];
+
+/// What a text accent over one base typesets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccentOutcome {
+    /// The precomposed character the `*.dfu` tables declare for
+    /// `\<accent> <base>`, so text extraction round-trips.
+    Char(char),
+    /// No declared character: pdfLaTeX builds it with `\accent`, which this
+    /// compiler does not draw yet.
+    NoComposite,
+    /// `LaTeX Error: Command \cmd unavailable in encoding E.` (`\k` in OT1).
+    Unavailable(String),
+}
+
+/// `accent` is a [`TEXT_ACCENTS`] name; `base` a letter, `\i` or `\j` spelled
+/// as the dfu keys spell it (`"s"`, `"\\i"`), or `""` for an empty argument
+/// (`\k{}` declares U+02DB). `None` when `accent` is not a text accent.
+pub fn text_accent(accent: &str, base: &str, enc: Encoding) -> Option<AccentOutcome> {
+    if !TEXT_ACCENTS.contains(&accent) {
+        return None;
+    }
+    let command = format!("\\{accent}");
+    if let Resolution::Unavailable = encoding::resolve(enc, &command) {
+        return Some(AccentOutcome::Unavailable(encoding::unavailable_message(
+            enc, &command,
+        )));
+    }
+    // The dfu files are not uniform: U+01D0 is `\v \i` but U+01F0 `\v\j`.
+    // Only a control-sequence base may drop the space: `\dh` is ð, not `\d h`.
+    let keys = match base {
+        "" => [format!("{command}{{}}"), String::new()],
+        _ if base.starts_with('\\') => [format!("{command} {base}"), format!("{command}{base}")],
+        _ => [format!("{command} {base}"), String::new()],
+    };
+    Some(
+        UNICODE_DECLARATIONS
+            .iter()
+            .find(|(_, expansion, _)| keys.iter().any(|key| !key.is_empty() && expansion == key))
+            .and_then(|(cp, ..)| char::from_u32(*cp))
+            .map_or(AccentOutcome::NoComposite, AccentOutcome::Char),
+    )
+}
+
 /// The encoding `\usepackage[<options>]{fontenc}` leaves current: fontenc
 /// loads every listed encoding and selects the last one (`fontenc.sty`,
 /// `\fontencoding` of the last option). Unknown encodings are ignored.

@@ -59,7 +59,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "value", "arabic", "roman", "Roman", "alph", "Alph", "fnsymbol", "the", "makeatletter",
     "makeatother", "ifthenelse", "newif", "relax", "expandafter", "csname", "endcsname",
     "newlength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
-    "verb", "hyphenation", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "RequirePackage",
+    "verb", "hyphenation", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
     "PassOptionsToPackage", "AtBeginDocument",
     // Cross-references and links.
     "eqref", "autoref", "nameref", "url", "href", "hyperref", "hyperlink",
@@ -245,7 +245,7 @@ pub fn command_package(name: &str) -> Option<&'static str> {
         "tikz" | "usetikzlibrary" | "draw" | "node" | "fill" | "path" => Some("tikz"),
         "includegraphics" | "graphicspath" | "scalebox" | "resizebox" | "rotatebox"
         | "reflectbox" => Some("graphicx"),
-        "lstinline" | "listoflistings" => Some("listings"),
+        "lstinline" | "listoflistings" | "lstset" => Some("listings"),
         "mintinline" => Some("minted"),
         "citep" | "citet" | "citeauthor" => Some("natbib"),
         "addbibresource" | "printbibliography" => Some("biblatex"),

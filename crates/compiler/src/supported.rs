@@ -271,6 +271,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("counterwithin", "{counter}{parent}", "counter reset by parent and printed \\theparent.\\arabic{counter}; starred form keeps the printed form"),
     ("counterwithout", "{counter}{parent}", "undoes \\counterwithin; starred form keeps the printed form"),
     ("hypersetup", "{key=value,...}", "hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them"),
+    ("lstset", "{key=value,...}", "listings defaults, global from that point on; the key names are checked and nothing is typeset here"),
     ("url", "{url}", "monospaced URL text, breaking as url.sty does; links are not clickable"),
     ("href", "{url}{text}", "link text; links are not clickable"),
     ("nolinkurl", "{url}", "monospaced URL text without a link, breaking as url.sty does"),

@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use flashtex_compiler::math::MathList;
-use flashtex_compiler::parser::{Block as CBlock, Inline, Parsed};
+use flashtex_compiler::parser::{Block as CBlock, FillLeader, Inline, Parsed, UnderlineGeom};
 use flashtex_compiler::text_builtins::{TextDimen, TextLogo, TextRule};
 use flashtex_compiler::{DocumentId, Span};
 
@@ -197,6 +197,9 @@ pub enum Item {
     Footnote { number: String, mark: bool, span: Span, text: Option<Vec<Item>> },
     /// `\colorbox`/`\fcolorbox` (compiler `Inline::ColorBox`).
     ColorBox(Box<ColorBoxItem>),
+    /// ulem `\uline`/`\sout` or kernel text `\underline` (compiler
+    /// `Inline::Underline`).
+    Underline(Box<UnderlineItem>),
     /// LaTeX's `\leavevmode`: an empty zero-width `\hbox`.
     ///
     /// Emitted only in front of a verbatim blank that would otherwise open
@@ -222,6 +225,17 @@ pub struct ColorBoxItem {
     pub frame: Option<DeviceColor>,
     pub sep_pt: f64,
     pub rule_pt: f64,
+    pub items: Vec<Item>,
+    pub span: Span,
+}
+
+/// A `\uline`/`\sout`/`\underline`: `items` set as an `\hbox`, with a
+/// `thickness_pt` rule placed by `geom` (ulem descender, TeXbook Rule 10,
+/// or a 0.55ex strike).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnderlineItem {
+    pub thickness_pt: f64,
+    pub geom: UnderlineGeom,
     pub items: Vec<Item>,
     pub span: Span,
 }
@@ -1764,6 +1778,7 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
                     }
                 }
                 Inline::ColorBox(b) => walk(&b.content, out),
+                Inline::Underline(u) => walk(&u.content, out),
                 _ => {}
             }
         }
@@ -1829,7 +1844,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::MathRows { span, .. }
         | Inline::Label { span, .. }
         | Inline::Reference { span, .. }
-        | Inline::HFill { span }
+        | Inline::HFill { span, .. }
         | Inline::HSpace { span, .. }
         | Inline::Footnote { span, .. }
         | Inline::Verbatim { span, .. }
@@ -1839,6 +1854,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::Kern { span, .. } => *span,
         Inline::Tabular(t) => t.span,
         Inline::ColorBox(b) => b.span,
+        Inline::Underline(u) => u.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
     }
@@ -1850,6 +1866,30 @@ fn inline_span(i: &Inline) -> Span {
 /// columns or rules) and `\verb` (body face). Footnote text is scanned too.
 fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, String)>) {
     match inline {
+        // `\hrulefill` / `\dotfill` (compiler `FillLeader`, #320). The glue
+        // itself is set exactly — LaTeX defines both as `\leaders<box>\hfill
+        // \kern\z@`, so everything after them on the line lands where
+        // pdflatex puts it — but the leader box is not painted: this pipeline
+        // has no leaders outside the table of contents' own `leader_dots`
+        // (`typeset/toc.rs`, tex.web §626), and the resolved width of one
+        // glue is not reported by `flashtex-paragraph-layout` (only
+        // `Line::ratio`, `Line::set_width` and box positions), so painting
+        // them is its own change rather than a re-pin's. Named here so the
+        // missing rule is never silent.
+        Inline::HFill { leader, span } if !matches!(leader, FillLeader::None) => {
+            let (command, ink) = match leader {
+                FillLeader::Rule => ("\\hrulefill", "a 0.4pt rule"),
+                _ => ("\\dotfill", "dots in 0.44em boxes"),
+            };
+            out.push((
+                "unsupported_inline",
+                *span,
+                format!(
+                    "{command} is set as \\hfill: the glue is exact, but {ink} filling it is not painted \
+                     (this pipeline has no leaders outside the table of contents)"
+                ),
+            ));
+        }
         Inline::Footnote { text, .. } => {
             // Set by `typeset::footnotes`; contexts it does not reach
             // (headings, captions, floats) are diagnosed there.
@@ -5785,6 +5825,10 @@ fn items_cached(
                 15u8.hash(&mut h);
                 format!("{b:?}").hash(&mut h);
             }
+            Inline::Underline(u) => {
+                18u8.hash(&mut h);
+                format!("{u:?}").hash(&mut h);
+            }
             Inline::Logo { logo, style, .. } => {
                 12u8.hash(&mut h);
                 logo.hash(&mut h);
@@ -5800,7 +5844,18 @@ fn items_cached(
                 amount.hash(&mut h);
                 style.hash(&mut h);
             }
-            Inline::HFill { .. } => 6u8.hash(&mut h),
+            // The leader is hashed: `\hfill` and `\hrulefill` differ only in
+            // it, and they carry different diagnostics, so an edit between
+            // them must not reuse the cached block.
+            Inline::HFill { leader, .. } => {
+                6u8.hash(&mut h);
+                match leader {
+                    FillLeader::None => 0u8,
+                    FillLeader::Rule => 1u8,
+                    FillLeader::Dots => 2u8,
+                }
+                .hash(&mut h);
+            }
             Inline::HSpace { pt, .. } => {
                 7u8.hash(&mut h);
                 pt.to_bits().hash(&mut h);
@@ -5994,6 +6049,24 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 prev_span = Some(span);
                 factor = 1000;
             }
+            Inline::Underline(u) => {
+                let span = u.span;
+                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
+                after_control_word = false;
+                let content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight);
+                items.push(Item::Underline(Box::new(UnderlineItem {
+                    thickness_pt: u.thickness_pt,
+                    geom: u.geom,
+                    items: content,
+                    span,
+                })));
+                prev_end = Some(span.end);
+                prev_span = Some(span);
+                factor = 1000;
+            }
             Inline::LineBreak { span } => {
                 let skip_pt = line_break_skip(text_of(span.document), span.end, size).unwrap_or(0.0);
                 items.push(Item::LineBreak { skip_pt });
@@ -6029,7 +6102,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 prev_span = Some(span);
                 factor = 1000;
             }
-            Inline::HFill { span } | Inline::HSpace { span, .. } | Inline::TextGlue { span, .. } => {
+            Inline::HFill { span, .. } | Inline::HSpace { span, .. } | Inline::TextGlue { span, .. } => {
                 // Explicit horizontal glue: the interword space read before
                 // it stays (TeX keeps both glue nodes). `TextGlue` is the
                 // compiler's text-mode `\quad`/`\qquad` (`em` ems of the
@@ -6042,6 +6115,27 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let (item, word) = match &**inline {
                     Inline::HSpace { pt, .. } => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
                     Inline::TextGlue { em, .. } => (Item::Quad { em: *em }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
+                    // `\hrulefill` and `\dotfill` (compiler `FillLeader`, #320)
+                    // are `\leavevmode\leaders<box>\hfill\kern\z@`: the glue is
+                    // exactly `\hfill`, so it is set here like any other, and
+                    // only the leader box is missing. `unsupported_inlines`
+                    // names the command for that; the glue must still be
+                    // emitted or the rest of the line lands in the wrong place,
+                    // which is what `fixtures/divergence-probes/min-hrulefill`
+                    // measured against pdflatex before the re-pin.
+                    //
+                    // The `\leavevmode` is theirs, not an invention here, and
+                    // it is load-bearing: a `\hrulefill` alone in its paragraph
+                    // (the fill-in rules of `enumitem-worksheet`) otherwise
+                    // leaves a paragraph with glue and no box, which this
+                    // pipeline drops together with the `\vspace` in front of
+                    // it — that is what took the worksheet from 3 pages to 2.
+                    // With the empty `\hbox` the paragraph is a line, as it is
+                    // in pdflatex. (A bare `\hfill` alone in a paragraph still
+                    // vanishes the same way; that is a separate pre-existing
+                    // defect, reproducible on the previous pin, not this one.)
+                    Inline::HFill { leader: FillLeader::Rule, .. } => (Item::HFill { fill: true }, "\\hrulefill"),
+                    Inline::HFill { leader: FillLeader::Dots, .. } => (Item::HFill { fill: true }, "\\dotfill"),
                     _ => {
                         let fill = !is_control_word(text_of(span.document), span.start, "hfil");
                         (Item::HFill { fill }, if fill { "\\hfill" } else { "\\hfil" })
@@ -6051,7 +6145,30 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
+                // The `\leavevmode` that opens `\hrulefill`/`\dotfill`: an
+                // empty `\hbox` in front of the glue (see the arms above).
+                let leader_fill =
+                    matches!(&**inline, Inline::HFill { leader, .. } if !matches!(leader, FillLeader::None));
+                if leader_fill {
+                    items.push(Item::LeaveVmode);
+                }
                 items.push(item);
+                // ...and the `\kern\z@` that closes them, which is doing real
+                // work: TeX ends a paragraph by deleting the final glue item
+                // (tex.web §816, `hlist`'s trailing-glue loop) before adding
+                // `\parfillskip`. A trailing bare `\hfill` is therefore eaten,
+                // which is why `Name: \hfill Date: \hfill` sets `Date:` flush
+                // right in pdflatex. The zero kern after `\hrulefill`'s fill
+                // saves it, so both fills survive and share the leftover width
+                // equally — pdflatex puts `Date:` at x 317.830 in
+                // `fixtures/divergence-probes/min-hrulefill`, not at the
+                // margin. Without this kern the pipeline set it at 511.918.
+                if leader_fill {
+                    items.push(Item::Kern {
+                        amount: flashtex_compiler::text_builtins::TextDimen::zero(),
+                        style: TextStyle::default(),
+                    });
+                }
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
                 factor = 1000;
