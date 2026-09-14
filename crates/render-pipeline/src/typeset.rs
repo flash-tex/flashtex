@@ -140,6 +140,8 @@ pub struct ColorBoxRec {
 pub struct TableRec {
     pub pieces: Vec<TablePiece>,
     pub rules: Vec<crate::table::PlacedRule>,
+    /// colortbl fills, painted under the pieces and rules.
+    pub fills: Vec<crate::table::PlacedRule>,
     pub span: Span,
 }
 
@@ -332,6 +334,15 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
+/// What `Block::Paragraph` carries from one block to the next.
+struct ParaState {
+    /// LaTeX's `\@afterheading` is still in force (`\clubpenalty 10000`).
+    after_heading: bool,
+    /// The open paragraph-shape environment began in vertical mode
+    /// (`\@topsepadd` keeps `\partopsep` for the closing skip too).
+    env_vmode: bool,
+}
+
 /// LaTeX/plain penalties (article defaults).
 const CLUB_PENALTY: i32 = 150;
 const WIDOW_PENALTY: i32 = 150;
@@ -447,6 +458,17 @@ pub struct Context<'a> {
     note_anchors: Vec<(usize, usize)>,
     /// `multicols` environments of the project (`multicol::attach`).
     multicol: multicol::State,
+    /// Footnote marks are `\rlap`ped (article/report/book `\maketitle`).
+    rlap_marks: bool,
+    /// Math providers for text sizes other than the body's (footnotes), by
+    /// size in centipoints; `None` when that size's metrics are missing.
+    math_fonts_sized: BTreeMap<u32, Option<MathProvider>>,
+    /// LaTeX's `\@parboxrestore` is in force: the material is being set in
+    /// a box of its own (a float body), not in the page's text. It sets
+    /// `\parindent` and `\parskip` to zero and ends with `\sloppy`
+    /// (`\tolerance 9999`, `\emergencystretch 3em`), so a paragraph inside
+    /// the box breaks the way LaTeX breaks it there.
+    parbox: bool,
 }
 
 impl<'a> Context<'a> {
@@ -487,7 +509,10 @@ impl<'a> Context<'a> {
             label_recs: BTreeSet::new(),
             notes: Vec::new(),
             note_anchors: Vec::new(),
+            parbox: false,
             multicol: multicol::State::default(),
+            rlap_marks: false,
+            math_fonts_sized: BTreeMap::new(),
         }
     }
 
@@ -765,6 +790,42 @@ impl<'a> Context<'a> {
         }
     }
 
+    /// The math provider for text at `size`: the body's, except at the
+    /// class's `\footnotesize` below it, where LaTeX selects the math fonts
+    /// of that size (`\DeclareMathSizes`: 8/6/5 pt in a 10pt class, 10/7/5 in
+    /// a 12pt class). A size whose TeX metrics are not available (9 pt, the
+    /// 11pt class's notes: cmmi9/cmsy9 are not embedded) keeps the body's
+    /// metrics and is reported once.
+    fn math_fonts_at(&mut self, span: Span, size: f64) -> Option<MathProvider> {
+        let body = self.math_fonts(span)?;
+        let note_size = footnotes::FootnoteParams::of(self.style).size;
+        if (size - self.style.body_size_pt).abs() < 0.01 || (size - note_size).abs() > 0.01 || !matches!(body, MathProvider::Tex(_)) {
+            return Some(body);
+        }
+        let key = (size * 100.0).round() as u32;
+        if let Some(sized) = self.math_fonts_sized.get(&key) {
+            return Some(sized.clone().unwrap_or(body));
+        }
+        let (script, script_script) = match (size * 100.0).round() as u32 {
+            800 | 900 => (6.0, 5.0),
+            1000 => (7.0, 5.0),
+            _ => (8.0, 6.0),
+        };
+        let r = self.fonts.resolve(self.style.family, Role::Math, size);
+        let sized = MathFonts::new(r.face, MathSizes { text: size, script, script_script })
+            .map(|m| Rc::new(m.with_double_struck(self.fonts.otf(crate::mathfont::BB_FONT_FILE))))
+            .and_then(|m| TexMathMetrics::at_text_size(size, self.style.cmex_designs, m, self.fonts))
+            .filter(TexMathMetrics::roman_available)
+            .map(|t| MathProvider::Tex(Rc::new(t)));
+        if sized.is_none() {
+            let src = self.source(span);
+            let msg = format!("math at {size}pt (\\footnotesize) is laid out with the {}pt math metrics: TeX's math fonts for that size are not available", self.style.body_size_pt);
+            self.report_once(format!("mathlim:{msg}"), Diagnostic::warning("math_limitation", msg, vec![src]));
+        }
+        self.math_fonts_sized.insert(key, sized.clone());
+        Some(sized.unwrap_or(body))
+    }
+
     /// `\fontdimen`s of the face for `style` at `size`: the face's TFM
     /// when it has one (exact fixwords), else the transcribed table.
     fn text_params(&self, style: TextStyle, size: f64) -> params::TextParamsPt {
@@ -852,7 +913,7 @@ impl<'a> Context<'a> {
         let params = self.text_params(style, size);
         let mut epsilon: Option<(usize, f64, f64)> = None;
         if logo == TextLogo::LaTeXe {
-            if let Some(rec) = self.math_box(&flashtex_compiler::math::varepsilon_list(span), span, false) {
+            if let Some(rec) = self.math_box(&flashtex_compiler::math::varepsilon_list(span), span, false, size) {
                 if let BoxRec::Math(mi) = &self.recs[rec] {
                     let root = &self.maths[*mi].root;
                     epsilon = Some((rec, root.width, root.height));
@@ -1030,13 +1091,13 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn math_box(&mut self, list: &flashtex_compiler::math::MathList, span: Span, display: bool) -> Option<usize> {
-        let fonts = self.math_fonts(span)?;
+    fn math_box(&mut self, list: &flashtex_compiler::math::MathList, span: Span, display: bool, size: f64) -> Option<usize> {
+        let fonts = self.math_fonts_at(span, size)?;
         let mut sink = crate::mathtext::TextSink::default();
         // `\quad` in math is `\hskip1em` of the text font (`\fontdimen6`),
         // not 18 mu of the math symbol font.
         let fam2_quad = ml::MathFontMetrics::params(fonts.metrics(), ml::Style::TEXT.size_class()).quad;
-        let text_quad = self.text_params(TextStyle::default(), self.style.body_size_pt).quad;
+        let text_quad = self.text_params(TextStyle::default(), size).quad;
         if fam2_quad > 0.0 && text_quad > 0.0 {
             sink.text_quad = Some((text_quad, text_quad / fam2_quad));
         }
@@ -1813,7 +1874,11 @@ impl<'a> Context<'a> {
                     if *mark {
                         // `\@footnotemark`: `\nobreak\@makefnmark`.
                         push(&mut out, &mut recs, pl::Item::penalty(pl::INFINITE_PENALTY), None);
-                        if let Some((run, rec)) = self.footnote_mark(number, *span, size) {
+                        if let Some((mut run, rec)) = self.footnote_mark(number, *span, size) {
+                            if self.rlap_marks {
+                                // `\rlap{\@textsuperscript{...}}`.
+                                run.width = 0.0;
+                            }
                             push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                             anchor = Some(rec);
                         }
@@ -1862,7 +1927,11 @@ impl<'a> Context<'a> {
                     push(&mut out, &mut recs, pl::Item::Glue(glue), None);
                 }
                 AItem::Math { list, span } => {
-                    if let Some(rec) = self.math_box(list, *span, false) {
+                    // `size`, not the body size: math inside a footnote is set
+                    // with that size's math fonts (`math_fonts_at`). The split
+                    // into `math_pieces` is main's inline-math line breaking and
+                    // is orthogonal.
+                    if let Some(rec) = self.math_box(list, *span, false, size) {
                         for (item, rec) in self.math_pieces(rec, size, *span) {
                             push(&mut out, &mut recs, item, rec);
                         }
@@ -1891,7 +1960,24 @@ impl<'a> Context<'a> {
                     }
                     push(&mut out, &mut recs, pl::Item::Glue(glue), None)
                 }
-                AItem::HSpace { pt } => push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(*pt)), None),
+                AItem::HSpace { pt, stretch_pt, shrink_pt } => push(
+                    &mut out,
+                    &mut recs,
+                    pl::Item::Glue(pl::Glue::finite(*pt, *stretch_pt, *shrink_pt)),
+                    None,
+                ),
+                AItem::NoteParBreak => {
+                    // `\par` (`\parfillskip`), then `\indent`: an empty box
+                    // `\parindent` (1em of the note's font) wide.
+                    push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fil()), None);
+                    push(&mut out, &mut recs, pl::Item::penalty(pl::FORCED_BREAK), None);
+                    // A rule of no height: every box needs a record, and
+                    // pdfTeX ships no rule whose height plus depth is 0.
+                    let quad = self.text_params(base, size).quad;
+                    self.recs.push(BoxRec::Rule { width: quad, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    let indent = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width: quad, height: 0.0, depth: 0.0, source: 0..0 };
+                    push(&mut out, &mut recs, pl::Item::Box(indent), Some(self.recs.len() - 1));
+                }
                 AItem::Table(table) => {
                     if let Some((run, rec)) = self.table_box(table, size) {
                         push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
@@ -1963,6 +2049,39 @@ impl<'a> Context<'a> {
     /// set as an hbox (a `p{}` entry as its `\vtop`), then placed by the
     /// kernel's alignment rules. The record keeps the pieces to paint.
     fn table_box(&mut self, t: &crate::table::TableItem, outer_size: f64) -> Option<(pl::GlyphRun, usize)> {
+        let (metrics, rows, mut blocks) = self.table_measure(t, outer_size);
+        let size = if t.size_cpt == 0 { outer_size } else { f64::from(t.size_cpt) / 100.0 };
+        let mut geometry = crate::table::layout(t, &rows, &metrics);
+        self.resolve_table_colors(t.span, &mut geometry);
+        let mut pieces = Vec::new();
+        for p in &geometry.placed {
+            if let Some(block) = blocks.remove(&(p.row, p.cell, p.slot)) {
+                pieces.push(TablePiece { x: p.x, baseline: p.baseline, block });
+            }
+        }
+        self.recs.push(BoxRec::Table(Rc::new(TableRec { pieces, rules: geometry.rules, fills: geometry.fills, span: t.span })));
+        let run = pl::GlyphRun {
+            font: MATH_SENTINEL,
+            size,
+            glyphs: Vec::new(),
+            width: geometry.width,
+            height: geometry.height,
+            depth: geometry.depth,
+            source: t.span.start..t.span.end,
+        };
+        Some((run, self.recs.len() - 1))
+    }
+
+    /// Sets every entry of a table and measures its cells: the `\@arstrut`
+    /// metrics, the measured cells in `row_slots` order, and the built
+    /// block of each piece by `(row, cell, slot)`. `table::layout` turns
+    /// these into a geometry; a longtable measures once and sets each
+    /// chunk against the result (`\LT@get@widths`).
+    fn table_measure(
+        &mut self,
+        t: &crate::table::TableItem,
+        outer_size: f64,
+    ) -> (crate::table::Metrics, Vec<Vec<crate::table::MCell>>, std::collections::HashMap<(usize, usize, crate::table::Slot), BuiltBlock>) {
         use crate::table::{self as tb, Dims, MCell, Slot, TableMaterial};
         use flashtex_compiler::parser::ParagraphStyle;
         use flashtex_compiler::tabular::Align;
@@ -1995,6 +2114,12 @@ impl<'a> Context<'a> {
                 };
                 let before = self.table_pieces(before_m, size, (ri, ci), true, &mut blocks);
                 let mut content_offset = (0.0, 0.0);
+                if let Some(mr) = &cell.multirow {
+                    let content = self.multirow_box(mr, &cell.items, size, bskip, quad, align, &metrics, (ri, ci), &mut blocks, &mut content_offset);
+                    let after = self.table_pieces(after_m, size, (ri, ci), false, &mut blocks);
+                    out.push(MCell { column, columns, align, before, content, after, content_offset });
+                    continue;
+                }
                 let content = match align {
                     Align::Paragraph(len) | Align::Middle(len) | Align::Bottom(len) => {
                         let width = tb::resolve(len, measure).max(0.0);
@@ -2033,24 +2158,402 @@ impl<'a> Context<'a> {
             }
             rows.push(out);
         }
-        let geometry = tb::layout(t, &rows, &metrics);
-        let mut pieces = Vec::new();
-        for p in &geometry.placed {
-            if let Some(block) = blocks.remove(&(p.row, p.cell, p.slot)) {
-                pieces.push(TablePiece { x: p.x, baseline: p.baseline, block });
+        (metrics, rows, blocks)
+    }
+
+    /// A `longtable` as a block of the page's vertical list
+    /// (`crate::longtable`). Every row, rule row and head or foot box is a
+    /// "line" of the block set at `\LTleft`; the repeating head and foot
+    /// are built too but kept out of the contributed list, for the page
+    /// builder to insert at a break (`\LT@output`).
+    fn longtable_block(&mut self, t: &crate::table::TableItem, lengths: &adapter::LongtableLengths) -> Option<(BuiltBlock, pagebuild::Region)> {
+        use crate::longtable::{self as lt, UnitKind};
+        let outer_size = self.style.body_size_pt;
+        let size = if t.size_cpt == 0 { outer_size } else { f64::from(t.size_cpt) / 100.0 };
+        let mut blocks_for_captions: std::collections::HashMap<(usize, usize, crate::table::Slot), BuiltBlock> = std::collections::HashMap::new();
+        // `\LT@makecaption` sets each `\caption` in its own parbox before
+        // the alignment is measured, so the table below works on a copy
+        // whose caption entries carry their boxes.
+        let mut owned;
+        let t = if t.entries.iter().any(|e| matches!(e, crate::table::TableEntry::Caption { .. })) {
+            owned = t.clone();
+            self.longtable_captions(&mut owned, lengths, outer_size, &mut blocks_for_captions);
+            &owned
+        } else {
+            t
+        };
+        let (metrics, rows, mut blocks) = self.table_measure(t, outer_size);
+        blocks.extend(std::mem::take(&mut blocks_for_captions));
+        // `\LT@get@widths` measures every chunk, `\kill` rows included.
+        let cols = crate::table::widths(t, &rows, &metrics);
+        let parts = lt::parts(t);
+        // `\tabskip\LTleft`/`\LTright` carry the difference between the
+        // table's natural width and `\hsize` (longtable.sty 167-171).
+        let measure = self.style.text_width_pt;
+        let x = match (lengths.left, lengths.right) {
+            (Some(l), _) => l,
+            (None, Some(r)) => (measure - cols.box_width - r).max(0.0),
+            (None, None) => lt::indent(t.longtable.as_ref().and_then(|l| l.align), cols.box_width, measure),
+        };
+        let span = t.span;
+        let width = cols.box_width;
+        let mut lines: Vec<pl::Line> = Vec::new();
+        let mut vlines: Vec<(f64, f64)> = Vec::new();
+        let mut items: Vec<pl::Item> = Vec::new();
+        let mut recs: Vec<Option<usize>> = Vec::new();
+        let mut line_penalty: Vec<(usize, i32)> = Vec::new();
+        // One "line" holding the slice `top..bottom` of a chunk's geometry,
+        // its own baseline at y = 0 like any other box on a line.
+        let push = |ctx: &mut Context,
+                        chunk: &lt::Chunk,
+                        top: f64,
+                        bottom: f64,
+                        baseline: Option<f64>,
+                        blocks: &mut std::collections::HashMap<(usize, usize, crate::table::Slot), BuiltBlock>,
+                        lines: &mut Vec<pl::Line>,
+                        vlines: &mut Vec<(f64, f64)>,
+                        items: &mut Vec<pl::Item>,
+                        recs: &mut Vec<Option<usize>>| {
+            let base = baseline.unwrap_or(bottom);
+            let inside = |v: f64| v > top - 1e-9 && v < bottom - 1e-9 || (v - top).abs() < 1e-9;
+            let mut pieces = Vec::new();
+            for p in &chunk.geometry.placed {
+                if !inside(p.baseline) {
+                    continue;
+                }
+                // Cloned, not removed: without `\endfirsthead` the opening
+                // head *is* `\LT@head` (longtable.sty 239), and without
+                // `\endlastfoot` the closing foot *is* `\LT@foot` (506), so
+                // the same cells are set once in the contributed list and
+                // again in the box the output routine repeats — `\copy`,
+                // not `\box`. Removing left the repeated head and foot with
+                // their rules but no text.
+                if let Some(block) = blocks.get(&(p.row, p.cell, p.slot)) {
+                    pieces.push(TablePiece { x: p.x, baseline: p.baseline - base, block: block.clone() });
+                }
+            }
+            let cut = |rs: &[crate::table::PlacedRule]| -> Vec<crate::table::PlacedRule> {
+                rs.iter()
+                    .filter(|r| inside(r.top))
+                    .map(|r| crate::table::PlacedRule { top: r.top - base, ..r.clone() })
+                    .collect()
+            };
+            let rec = TableRec { pieces, rules: cut(&chunk.geometry.rules), fills: cut(&chunk.geometry.fills), span };
+            let (height, depth) = (base - top, bottom - base);
+            ctx.recs.push(BoxRec::Table(Rc::new(rec)));
+            let run = pl::GlyphRun {
+                font: MATH_SENTINEL,
+                size,
+                glyphs: Vec::new(),
+                width,
+                height,
+                depth,
+                source: span.start..span.end,
+            };
+            let index = lines.len();
+            lines.push(pl::Line {
+                index,
+                runs: vec![position_run(&run, x, 0.0)],
+                baseline_y: height,
+                height,
+                depth,
+                natural_width: width,
+                set_width: width,
+                ratio: 0.0,
+                badness: 0.0,
+                items: items.len()..items.len() + 1,
+                hyphenated: false,
+            });
+            items.push(pl::Item::Box(run));
+            recs.push(Some(ctx.recs.len() - 1));
+            vlines.push((height, depth));
+        };
+        // `\ifvoid\LT@firsthead\copy\LT@head\else\box\LT@firsthead\fi`
+        // followed by `\nobreak` (longtable.sty 239).
+        let opening = parts.opening_head().to_vec();
+        let mut opening_depth = None;
+        if !opening.is_empty() {
+            let mut chunk = lt::chunk_geometry(t, &rows, &metrics, &cols, &opening);
+            self.resolve_table_colors(span, &mut chunk.geometry);
+            let (h, d) = (chunk.height, chunk.depth);
+            opening_depth = Some(d);
+            push(self, &chunk, 0.0, h + d, Some(h), &mut blocks, &mut lines, &mut vlines, &mut items, &mut recs);
+            line_penalty.push((vlines.len(), pagebuild::INF_PENALTY));
+        }
+        // The body, row by row, so the page builder can break inside it.
+        let body = parts.body.clone();
+        if !body.is_empty() {
+            let mut chunk = lt::chunk_geometry(t, &rows, &metrics, &cols, &body);
+            self.resolve_table_colors(span, &mut chunk.geometry);
+            let mut pending: Option<i32> = None;
+            for unit in lt::units(t, &chunk) {
+                if let Some(p) = unit.penalty_before {
+                    pending = Some(pending.map_or(p, |q: i32| q.min(p)));
+                }
+                if unit.kind == UnitKind::Box {
+                    if let Some(p) = pending.take() {
+                        line_penalty.push((vlines.len(), p));
+                    }
+                    push(self, &chunk, unit.top, unit.bottom, unit.baseline, &mut blocks, &mut lines, &mut vlines, &mut items, &mut recs);
+                }
             }
         }
-        self.recs.push(BoxRec::Table(Rc::new(TableRec { pieces, rules: geometry.rules, span: t.span })));
-        let run = pl::GlyphRun {
-            font: MATH_SENTINEL,
-            size,
-            glyphs: Vec::new(),
-            width: geometry.width,
-            height: geometry.height,
-            depth: geometry.depth,
-            source: t.span.start..t.span.end,
+        // `\box\ifvoid\LT@lastfoot\LT@foot\else\LT@lastfoot\fi` (506).
+        let closing = parts.closing_foot().to_vec();
+        let tail_from = vlines.len();
+        let mut tail_foot_height = 0.0;
+        let mut closing_depth = None;
+        if !closing.is_empty() {
+            let mut chunk = lt::chunk_geometry(t, &rows, &metrics, &cols, &closing);
+            self.resolve_table_colors(span, &mut chunk.geometry);
+            let (h, d) = (chunk.height, chunk.depth);
+            tail_foot_height = h;
+            closing_depth = Some(d);
+            push(self, &chunk, 0.0, h + d, Some(h), &mut blocks, &mut lines, &mut vlines, &mut items, &mut recs);
+        }
+        if vlines.is_empty() {
+            return None;
+        }
+        let contributed = vlines.len();
+        // `\LT@head` and `\LT@foot` are built but not contributed: the page
+        // builder inserts them at a break inside the table (`\LT@output`).
+        let reserve = |ctx: &mut Context,
+                           indices: &[usize],
+                           blocks: &mut std::collections::HashMap<(usize, usize, crate::table::Slot), BuiltBlock>,
+                           lines: &mut Vec<pl::Line>,
+                           vlines: &mut Vec<(f64, f64)>,
+                           items: &mut Vec<pl::Item>,
+                           recs: &mut Vec<Option<usize>>|
+         -> Option<(usize, f64, f64)> {
+            if indices.is_empty() {
+                return None;
+            }
+            let mut chunk = lt::chunk_geometry(t, &rows, &metrics, &cols, indices);
+            ctx.resolve_table_colors(span, &mut chunk.geometry);
+            let at = vlines.len();
+            let (h, d) = (chunk.height, chunk.depth);
+            push(ctx, &chunk, 0.0, h + d, Some(h), blocks, lines, vlines, items, recs);
+            Some((at, h, d))
         };
-        Some((run, self.recs.len() - 1))
+        let head = reserve(self, parts.head.as_slice(), &mut blocks, &mut lines, &mut vlines, &mut items, &mut recs);
+        let foot = reserve(self, parts.foot.as_slice(), &mut blocks, &mut lines, &mut vlines, &mut items, &mut recs);
+        // `\LTpre`/`\LTpost` default to `\bigskipamount` (size1X.clo:
+        // 12pt plus 4pt minus 4pt in every standard size).
+        let bigskip = crate::style::Skip { natural: 12.0, stretch: 4.0, shrink: 4.0 };
+        let pre = lengths.pre.map_or(bigskip, crate::style::Skip::fixed);
+        let post = lengths.post.map_or(bigskip, crate::style::Skip::fixed);
+        let vertical = VBlock {
+            lines: vlines,
+            penalty_before: Some(0),
+            space_before: Some(skip_tuple(pre)),
+            parskip: None,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalty: 0,
+            penalty_after: Some(0),
+            space_after: Some(skip_tuple(post)),
+            no_interline_first: true,
+            no_interline_after: false,
+            // longtable.sty 191: `\lineskip\z@\baselineskip\z@`, so the
+            // rows abut and every gap between them is a legal breakpoint.
+            baselineskip: Some(0.0),
+            lineskip: Some(0.0),
+            vskip_after: Vec::new(),
+            pre_space_after: None,
+            contributed: Some(contributed),
+            line_penalty,
+            // The chunks are `\unvbox`ed, which leaves `\prevdepth` alone,
+            // so only a `\box` sets it. `\LT@start` runs `\box\LT@firsthead`
+            // (or `\copy\LT@head`) on the outer vertical list, so the
+            // opening head's depth is what the table leaves behind.
+            //
+            // The closing foot does *not*: `\box\ifvoid\LT@lastfoot\LT@foot
+            // \else\LT@lastfoot\fi` is inside `\LT@output` (longtable.sty
+            // 506), and the output routine builds its own vertical list
+            // (§1025 `push_nest`), whose `prev_depth` is discarded when
+            // §1026 hands the material back to the contribution list.
+            // Measured: a table whose `\endfoot` ends in a text row and
+            // whose opening head ends in `\hline` leaves `\prevdepth` 0,
+            // not 4.35pt — and the paragraph after it is the same distance
+            // below whether the paragraph *before* the table had a
+            // descender or not, so the value is fixed, not inherited
+            // (106-longtable-head-foot-only).
+            depth_after: match opening_depth {
+                Some(d) => pagebuild::DepthAfter::Fixed(d),
+                None => pagebuild::DepthAfter::Unchanged,
+            },
+        };
+        let region = pagebuild::Region {
+            lines: 0..contributed,
+            head: head.map(|(i, h, d)| (i, h, d)),
+            foot: foot.map(|(i, h, d)| (i, h, d)),
+            tail_from,
+            tail_foot_height,
+        };
+        let height = lines.first().map_or(0.0, |l| l.height);
+        let block = pl::ParagraphBlock::body(pl::Lines {
+            lines,
+            breaks: Vec::new(),
+            stats: one_line_stats(),
+            diagnostics: Vec::new(),
+            height,
+        });
+        Some((BuiltBlock { block, items, recs, vertical, labels: Vec::new(), cache_key: None }, region))
+    }
+
+    /// `\LT@makecaption` (longtable.sty 475-485): every `\caption` of a
+    /// longtable is set in a `\parbox[t]\LTcapwidth` that the row centres
+    /// on the table. The whole caption goes on one centred line when it
+    /// fits in `\LTcapwidth` (`\hbox to\hsize{\hfil\box\@tempboxa\hfil}`)
+    /// and is set as a paragraph otherwise, followed by
+    /// `\endgraf\vskip\baselineskip`. The parbox is a `\vtop`, so its
+    /// height is the first line's and its depth everything below.
+    fn longtable_captions(
+        &mut self,
+        t: &mut crate::table::TableItem,
+        lengths: &adapter::LongtableLengths,
+        outer_size: f64,
+        blocks: &mut std::collections::HashMap<(usize, usize, crate::table::Slot), BuiltBlock>,
+    ) {
+        let size = if t.size_cpt == 0 { outer_size } else { f64::from(t.size_cpt) / 100.0 };
+        let body_size = self.style.body_size_pt;
+        let bskip = if (size - body_size).abs() < 1e-9 {
+            self.style.baselineskip_pt
+        } else {
+            crate::table::baselineskip_pt(adapter::class_size_of(body_size), (size * 100.0).round() as u16)
+        };
+        let quad = self.text_params(TextStyle::default(), size).quad;
+        let width = crate::longtable::caption_width(lengths.capwidth);
+        let mut set: Vec<(usize, crate::table::CaptionBox, BuiltBlock)> = Vec::new();
+        for (index, entry) in t.entries.iter().enumerate() {
+            let crate::table::TableEntry::Caption { items, .. } = entry else { continue };
+            // `\sbox\@tempboxa{...}`: does the whole caption fit on a line?
+            let natural = self.table_hbox(items, size).map_or(0.0, |(_, d)| d.width);
+            let style = if natural > width { ParaStyle::Plain } else { ParaStyle::Center };
+            let Some((block, lines)) = self.table_pbox(items, size, width, bskip, quad, style) else { continue };
+            set.push((
+                index,
+                crate::table::CaptionBox {
+                    width,
+                    height: lines.first_height,
+                    depth: lines.inner + lines.last_depth + bskip,
+                },
+                block,
+            ));
+        }
+        for (index, box_, block) in set {
+            if let crate::table::TableEntry::Caption { box_: slot, .. } = &mut t.entries[index] {
+                *slot = Some(box_);
+            }
+            // `table::layout_with` places a caption as `(usize::MAX, index)`.
+            blocks.insert((usize::MAX, index, crate::table::Slot::Content), block);
+        }
+    }
+
+    /// Resolves colortbl colours to sRGB; an unresolvable colour paints
+    /// black and is reported once per specification.
+    fn resolve_table_colors(&mut self, span: Span, geometry: &mut crate::table::Geometry) {
+        let defined = crate::tablecolor::definitions(self.texts.get(span.document.0).copied().unwrap_or(""));
+        let mut unresolved = Vec::new();
+        for r in geometry.rules.iter_mut().chain(geometry.fills.iter_mut()) {
+            let Some(c) = &r.color else { continue };
+            r.rgb = crate::tablecolor::resolve(c.model.as_deref(), &c.spec, &defined);
+            if r.rgb.is_none() && !unresolved.iter().any(|(s, _): &(String, Span)| *s == c.spec) {
+                unresolved.push((c.spec.clone(), c.span));
+            }
+        }
+        for (spec, at) in unresolved {
+            let src = vec![self.source(at)];
+            self.emit(
+                None,
+                Diagnostic::warning(
+                    "table_limitation",
+                    format!("table colour '{spec}' is not a colour this pipeline resolves yet (base xcolor names, \\definecolor rgb/RGB/HTML/gray/cmyk, a!p!b mixes); painted black"),
+                    src,
+                ),
+            );
+        }
+    }
+
+    /// multirow.sty v2.9 `\@xmultirow` (168-201): the text is set in box 0,
+    /// `\vtop to\multirow@dima` of `nrows` strut rows plus the bigstruts
+    /// (with `\vfill` above and/or below by `vpos`), raised by the final
+    /// `\multirow@dima` plus `vmove`, and entered as a box of no height and
+    /// no depth. Returns that box; `offset.1` is the first baseline's y
+    /// below the row's baseline.
+    #[allow(clippy::too_many_arguments)]
+    fn multirow_box(
+        &mut self,
+        mr: &flashtex_compiler::tabular::Multirow,
+        items: &[AItem],
+        size: f64,
+        bskip: f64,
+        quad: f64,
+        align: flashtex_compiler::tabular::Align,
+        m: &crate::table::Metrics,
+        key: (usize, usize),
+        blocks: &mut std::collections::HashMap<(usize, usize, crate::table::Slot), BuiltBlock>,
+        offset: &mut (f64, f64),
+    ) -> crate::table::Dims {
+        use crate::table::{self as tb, Dims, Slot};
+        use flashtex_compiler::tabular::{MultirowPos, MultirowWidth};
+        const BIGSTRUTJOT: f64 = 3.0; // `\bigstrutjot=\jot`
+        // `\strut` inside the box is `\strutbox` of the size in force.
+        let plain_height = tb::sp(0.7 * bskip);
+        let plain_depth = tb::sp(0.3 * bskip);
+        let (ht, dp) = (m.strut_height, m.strut_depth);
+        let jot = |on: bool| if on { BIGSTRUTJOT } else { 0.0 };
+        let d0 = mr.rows.abs() * (ht + dp) + f64::from(mr.bigstrut_count) * BIGSTRUTJOT;
+        // (width, first line height, first-to-last baseline, last depth).
+        let (width, first, inner, last) = match mr.width {
+            MultirowWidth::Natural => match self.table_hbox(items, size) {
+                Some((block, dims)) => {
+                    blocks.insert((key.0, key.1, Slot::Content), block);
+                    (dims.width, dims.height.max(plain_height), 0.0, dims.depth.max(plain_depth))
+                }
+                None => (0.0, plain_height, 0.0, plain_depth),
+            },
+            MultirowWidth::Column | MultirowWidth::Fixed(_) => {
+                let width = match mr.width {
+                    MultirowWidth::Fixed(len) => tb::resolve(len, m.measure),
+                    _ => align.paragraph_width().map_or(m.measure, |len| tb::resolve(len, m.measure)),
+                }
+                .max(0.0);
+                // `\multirowsetup` is `\raggedright`.
+                match self.table_pbox(items, size, width, bskip, quad, ParaStyle::FlushLeft) {
+                    Some((block, lines)) => {
+                        blocks.insert((key.0, key.1, Slot::Content), block);
+                        (width, lines.first_height.max(plain_height), lines.inner, lines.last_depth.max(plain_depth))
+                    }
+                    None => (width, plain_height, 0.0, plain_depth),
+                }
+            }
+        };
+        // The first baseline below box 0's top: `\vfill` glue does not
+        // shrink, so an overfull box keeps its natural positions.
+        let within = match mr.vpos {
+            MultirowPos::Top => first,
+            MultirowPos::Center => ((d0 - first - inner - last) / 2.0).max(0.0) + first,
+            MultirowPos::Bottom => (d0 - first - inner).max(0.0) + first,
+        };
+        // `\ht0`: box 0 is a `\vtop` whose first item is the text for `t`.
+        let ht0 = if mr.vpos == MultirowPos::Top { first } else { 0.0 };
+        let mut raise = if mr.rows > 0.0 {
+            match mr.vpos {
+                MultirowPos::Top => ht0,
+                MultirowPos::Center => ht + jot(mr.bigstrut_top),
+                MultirowPos::Bottom => ht + jot(mr.bigstrut_top) + dp + jot(mr.bigstrut_bottom),
+            }
+        } else {
+            match mr.vpos {
+                MultirowPos::Bottom => d0,
+                MultirowPos::Center => d0 - dp - jot(mr.bigstrut_bottom),
+                MultirowPos::Top => d0 - dp - jot(mr.bigstrut_bottom) - ht - jot(mr.bigstrut_top) + ht0,
+            }
+        };
+        raise += mr.vmove_pt;
+        offset.1 = within - raise;
+        Dims { width, height: 0.0, depth: 0.0 }
     }
 
     /// Measures a template's `u`/`v` material, shaping `@{}` text.
@@ -2069,6 +2572,7 @@ impl<'a> Context<'a> {
                 TableMaterial::Space(pt) => MPiece::Space(*pt),
                 TableMaterial::Rule(span) => MPiece::Rule(*span),
                 TableMaterial::VLine(span, width) => MPiece::VLine(*span, *width),
+                TableMaterial::DoubleRuleGap(width) => MPiece::DoubleRuleGap(*width),
                 TableMaterial::Text(items) => match self.table_hbox(items, size) {
                     Some((block, dims)) => {
                         blocks.insert((key.0, key.1, if before { Slot::Before(i) } else { Slot::After(i) }), block);
@@ -2140,7 +2644,7 @@ impl<'a> Context<'a> {
         // `\list`: `\parshape` every line `\@totalleftmargin` in (`\rightmargin`
         // is 0pt), on top of any `quote` margin.
         let left_skip = if hang_pt != 0.0 { pl::Glue::fixed(left_skip.width + hang_pt) } else { left_skip };
-        pl::LineBreakParams {
+        let mut params = pl::LineBreakParams {
             line_width: s.text_width_pt,
             mode,
             algorithm: pl::Algorithm::TotalFit,
@@ -2159,14 +2663,36 @@ impl<'a> Context<'a> {
             lineskiplimit: s.lineskiplimit_pt,
             hfuzz: 0.1,
             hbadness: 1000.0,
+        };
+        // `\@parboxrestore`: `\parindent\z@ ... \sloppy`, the same values
+        // `\@startpbox` gives a `p{}` cell.
+        if self.parbox {
+            params.parindent = 0.0;
+            params.tolerance = 9999.0;
+            params.emergency_stretch = 3.0 * self.text_params(TextStyle::default(), s.body_size_pt).quad;
+            params.hfuzz = 0.5;
+            params.hbadness = 10_000.0;
         }
+        params
     }
 
     /// A body paragraph (or the part of one before/after a display).
     /// `starts_paragraph` adds `\parskip`; `after_heading` is LaTeX's
-    /// `\@afterheading` (`\clubpenalty 10000`).
-    fn paragraph_block(&mut self, items: &[AItem], indent: bool, starts_paragraph: bool, after_heading: bool, style: ParaStyle, list_geom: Option<&ListGeom>) -> Option<BuiltBlock> {
-        let size = self.style.body_size_pt;
+    /// `\@afterheading` (`\clubpenalty 10000`). `sized` sets the paragraph
+    /// at a size other than `\normalsize` with that size's own leading and
+    /// `em` (`abstract`; see [`adapter::SizedPara`]).
+    fn paragraph_block(
+        &mut self,
+        items: &[AItem],
+        indent: bool,
+        starts_paragraph: bool,
+        after_heading: bool,
+        style: ParaStyle,
+        list_geom: Option<&ListGeom>,
+        sized: Option<adapter::SizedPara>,
+    ) -> Option<BuiltBlock> {
+        let size = sized.map_or(self.style.body_size_pt, |s| s.size_pt);
+        let baselineskip = sized.map_or(self.style.baselineskip_pt, |s| s.baselineskip_pt);
         let (mut list, mut recs, labels, mut skips) = self.hlist(items, size, TextStyle::default(), style);
         if !list.iter().any(|i| matches!(i, pl::Item::Box(_))) {
             return None;
@@ -2203,11 +2729,30 @@ impl<'a> Context<'a> {
                 }
             }
         }
-        let params = self.line_params(indent, self.style.baselineskip_pt, style, hang_pt);
+        let mut params = self.line_params(indent, baselineskip, style, hang_pt);
+        // `\list` sets `\parindent\listparindent`, evaluated in the `em`
+        // (`\fontdimen6`) of the font the list's own text is set in.
+        if let (true, Some(em)) = (indent, sized.and_then(|s| s.parindent_em)) {
+            params.parindent = em * self.text_params(TextStyle::default(), size).quad;
+        }
         let lines = self.break_paragraph(&list, &params, items, Some(&recs))?;
         self.report_overfull(&lines, &list, &recs);
+        // `\vspace{<n>em}` inside the paragraph's last group (the abstract
+        // head's `\vspace{-.5em}`): `\@vspace` puts it after the line
+        // through `\vadjust`, so it is evaluated in the `em` of the font in
+        // force there — the style of the paragraph's last word.
+        let vspace_after = match sized.map(|s| s.vspace_after_em).filter(|em| *em != 0.0) {
+            Some(em) => {
+                let last = items.iter().rev().find_map(|i| match i {
+                    AItem::Word(w) => w.segments.last().map(|s| s.style.clone()),
+                    _ => None,
+                });
+                em * self.text_params(last.unwrap_or_default(), size).quad
+            }
+            None => 0.0,
+        };
         // `\list` sets `\parskip\parsep`: an item paragraph adds `\parsep`.
-        let parskip = list_geom.map_or(self.style.parskip, |g| g.parsep);
+        let parskip = self.parskip_of(list_geom);
         let vertical = VBlock {
             lines: line_extents(&lines),
             penalty_before: None,
@@ -2217,18 +2762,30 @@ impl<'a> Context<'a> {
             club_penalty: if after_heading { pagebuild::INF_PENALTY } else { CLUB_PENALTY },
             widow_penalty: WIDOW_PENALTY,
             penalty_after: None,
-            space_after: trailing_skip.map(|pt| {
-                // `\@xcentercr`: `\par \addvspace{-\parskip} \vskip <dimen>`;
-                // the paragraph that follows adds `\parskip` back, so under
-                // `\centering` only the `[<dimen>]` separates the lines.
-                let p = self.style.parskip;
-                if matches!(style, ParaStyle::Center | ParaStyle::FlushRight) { (pt - p.natural, -p.stretch, -p.shrink) } else { (pt, 0.0, 0.0) }
-            }),
+            space_after: match (trailing_skip, vspace_after) {
+                (None, 0.0) => None,
+                (None, pt) => Some((pt, 0.0, 0.0)),
+                (Some(pt), after) => {
+                    // `\@xcentercr`: `\par \addvspace{-\parskip} \vskip <dimen>`;
+                    // the paragraph that follows adds `\parskip` back, so under
+                    // `\centering` only the `[<dimen>]` separates the lines.
+                    let p = self.style.parskip;
+                    Some(if matches!(style, ParaStyle::Center | ParaStyle::FlushRight) {
+                        (pt + after - p.natural, -p.stretch, -p.shrink)
+                    } else {
+                        (pt + after, 0.0, 0.0)
+                    })
+                }
+            },
             no_interline_first: false,
             no_interline_after: false,
-            baselineskip: None,
+            baselineskip: sized.map(|s| s.baselineskip_pt),
             vskip_after: vskips_of(&lines, &skips),
             pre_space_after: None,
+            lineskip: None,
+            contributed: None,
+            line_penalty: Vec::new(),
+            depth_after: pagebuild::DepthAfter::default(),
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
@@ -2238,6 +2795,390 @@ impl<'a> Context<'a> {
             labels,
             cache_key: None,
         })
+    }
+
+    /// The `Block::Paragraph` arm of [`build_with_floats`]: one paragraph,
+    /// `\item`, display or `tabular`-carrying block of a vertical list,
+    /// with the `\addvspace`/`\topsep` bookkeeping that joins it to the
+    /// block before it. A float body sets its own blocks through this same
+    /// method ([`Context::box_blocks`]), so there is one code path for
+    /// ordinary body content wherever it stands.
+    fn build_paragraph(&mut self, blocks: &mut Vec<BuiltBlock>, block: &Block, st: &mut ParaState, cache: Option<&RenderCache>, style_fp: u64, quad: f64) {
+        use std::hash::{Hash, Hasher};
+        let Block::Paragraph {
+            parts,
+            indent,
+            style,
+            env_open,
+            env_close,
+            eject_before,
+            vspace_before,
+            addvspace_before,
+            endlist_adjust,
+            list,
+            sized,
+        } = block
+        else {
+            return;
+        };
+        let ctx = self;
+        let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp, tag, items, flags);
+            let mut first = true;
+            let mut eject = *eject_before;
+            let mut vspace = *vspace_before;
+            // `\endtrivlist`: a positive trailing skip of the previous
+            // block is changed in place before `\@endparenv`'s
+            // `\addvspace` compares against it.
+            if *endlist_adjust != 0.0 {
+                if let Some(prev) = blocks.last_mut() {
+                    if let Some(s) = prev.vertical.space_after.filter(|s| s.0 > 0.0) {
+                        prev.vertical.space_after = Some((s.0 + endlist_adjust, s.1, s.2));
+                    }
+                }
+            }
+            // `\addvspace`: only the excess over the skip the previous
+            // block already left (`\@xaddvskip`).
+            if *addvspace_before != 0.0 {
+                let prev_after = blocks.last().and_then(|b| b.vertical.space_after).map_or(0.0, |s| s.0);
+                vspace += (addvspace_before - prev_after).max(0.0);
+            }
+            // `\begin{center}`/`\begin{quote}`: `\addvspace{\topsep}` (plus
+            // `\partopsep` from vertical mode) before the first paragraph;
+            // `\end{...}` adds the same after the last (`\@endparenv`).
+            let env_skip = |vmode: bool| {
+                let t = ctx.style.topsep;
+                let p = if vmode { ctx.style.partopsep } else { crate::style::Skip::default() };
+                (t.natural + p.natural, t.stretch + p.stretch, t.shrink + p.shrink)
+            };
+            if let Some(e) = env_open {
+                st.env_vmode = e.vmode;
+            }
+            // `\@item` opens the environment with `\addvspace{\@topsep}`,
+            // not `\vskip`, and only when `\if@nobreak` is false:
+            //
+            // * `\@xaddvskip` keeps whichever of `\@topsep` and `\lastskip`
+            //   is larger, so a skip the previous block already left
+            //   absorbs it. `\@maketitle`'s trailing `\vskip 1.5em` (15pt
+            //   at a 10pt base, 16.425pt at 11pt) beats `\topsep +
+            //   \partopsep` (10pt / 12pt) at every class size, so an
+            //   `abstract` or a `quote` right after `\maketitle` opens with
+            //   no skip of its own at all.
+            // * right after a heading `\@afterheading` has set
+            //   `\@nobreaktrue`, so `\@nbitem` runs instead:
+            //   `\addvspace{\@outerparskip - \parskip}` cancels `\lastskip`
+            //   and the list's own `\parskip` restores it, leaving exactly
+            //   the heading's after-skip and no `\@topsep` at all.
+            //
+            // Both are read off pdfTeX's vertical list; the probes and the
+            // quoted `\showoutput` glue are in `tests/abstract_env.rs`.
+            let mut env_before = env_open.map(|e| {
+                let (n, stretch, shrink) = env_skip(e.vmode);
+                let last = blocks.last().and_then(|b| b.vertical.space_after).map_or(0.0, |s| s.0);
+                if st.after_heading || last >= n {
+                    (0.0, 0.0, 0.0)
+                } else {
+                    (n - last, stretch, shrink)
+                }
+            });
+            // `\endlist` of a list opened at another size takes *that*
+            // size's `\@listi` (`abstract`'s `quotation` under `\small`),
+            // not the class's `\normalsize` one.
+            let env_after = env_close.then(|| match sized.and_then(|s| s.close_skip) {
+                Some(s) => (s.natural, s.stretch, s.shrink),
+                None => env_skip(st.env_vmode),
+            });
+            let first_block = blocks.len();
+            // TeX's pre_display_size: the width of the line before a
+            // display plus 2em; -infinity when nothing precedes it.
+            let mut pre_display: Option<f64> = None;
+            let geom = list.as_ref();
+            let list_fp = geom.map_or(0, |g| {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                g.level.hash(&mut h);
+                for m in &g.margins {
+                    match m {
+                        ListMargin::Fixed(pt) => pt.to_bits().hash(&mut h),
+                        ListMargin::Widest(text) => text.hash(&mut h),
+                    }
+                }
+                if let Some((text, span)) = &g.label {
+                    text.hash(&mut h);
+                    (span.end - span.start).hash(&mut h);
+                }
+                g.parsep.natural.to_bits().hash(&mut h);
+                h.finish()
+            });
+            for part in parts {
+                match part {
+                    ParaPart::Lines(items) => {
+                        // TeX discards the space token right after a
+                        // display's closing `$$` (§1200 resume_after_display).
+                        let items = if !first && matches!(items.first(), Some(AItem::Space { .. })) { &items[1..] } else { &items[..] };
+                        let (ind, starts, ah) = (*indent && first, first, st.after_heading && first);
+                        let sized_fp = sized.map_or(0, |s| {
+                            let mut h = std::collections::hash_map::DefaultHasher::new();
+                            s.size_pt.to_bits().hash(&mut h);
+                            s.baselineskip_pt.to_bits().hash(&mut h);
+                            s.parindent_em.map(f64::to_bits).hash(&mut h);
+                            s.vspace_after_em.to_bits().hash(&mut h);
+                            h.finish()
+                        });
+                        let (key, origin) = key_for(b'P', items, &[u64::from(ind), u64::from(starts), u64::from(ah), *style as u64, list_fp, sized_fp]);
+                        let st = *style;
+                        let sz = *sized;
+                        // `\label` whatsits and a space left in horizontal
+                        // mode after a display (the adapter's
+                        // `label_line` part): TeX's line_break still sets
+                        // them as an empty line, and `\predisplaysize` of a
+                        // display after it is -\maxdimen (§1145-§1146).
+                        let label_line = !items.is_empty()
+                            && matches!(items.last(), Some(AItem::Space { .. }))
+                            && items.iter().all(|i| matches!(i, AItem::Label { .. } | AItem::Space { .. }))
+                            && items.iter().any(|i| matches!(i, AItem::Label { .. }));
+                        if label_line && !first {
+                            blocks.push(ctx.empty_line_block());
+                            pre_display = None;
+                        } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz)) {
+                            pre_display = b.block.lines.lines.last().map(|l| l.natural_width + 2.0 * quad);
+                            if std::mem::take(&mut eject) {
+                                b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                            }
+                            add_vspace(&mut b.vertical, std::mem::take(&mut vspace));
+                            add_skip_before(&mut b.vertical, env_before.take());
+                            blocks.push(b);
+                        }
+                    }
+                    ParaPart::Rows { env, rows, span, bracket } => {
+                        if first {
+                            let (mut opener, _) = ctx.display_opener_block(*bracket, geom);
+                            if std::mem::take(&mut eject) {
+                                opener.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                            }
+                            add_vspace(&mut opener.vertical, std::mem::take(&mut vspace));
+                            add_skip_before(&mut opener.vertical, env_before.take());
+                            blocks.push(opener);
+                        }
+                        let (key, origin) = if cache.is_some() {
+                            let mut h = std::collections::hash_map::DefaultHasher::new();
+                            b'A'.hash(&mut h);
+                            style_fp.hash(&mut h);
+                            span.document.0.hash(&mut h);
+                            env.hash(&mut h);
+                            (span.end - span.start).hash(&mut h);
+                            for row in rows {
+                                (row.span.start.wrapping_sub(span.start), row.span.end.wrapping_sub(span.start)).hash(&mut h);
+                                row.number.as_ref().map(|(n, _)| n).hash(&mut h);
+                                row.cells.len().hash(&mut h);
+                                for cell in &row.cells {
+                                    incremental::hash_math(cell, &mut h);
+                                }
+                                row.intertext.len().hash(&mut h);
+                                for text in &row.intertext {
+                                    (text.short, text.mathtools).hash(&mut h);
+                                    incremental::hash_items(&text.items, span.start, &mut h);
+                                }
+                            }
+                            bracket.hash(&mut h);
+                            (Some(h.finish()), Some((span.document, span.start)))
+                        } else {
+                            (None, None)
+                        };
+                        if let Some(b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span)) {
+                            blocks.push(b);
+                        }
+                        pre_display = None;
+                    }
+                    ParaPart::Display {
+                        list,
+                        span,
+                        number,
+                        bracket,
+                    } => {
+                        // TeX §1145: a display that opens a paragraph whose
+                        // list is still empty sets no line — after a
+                        // heading, `\@afterheading`'s `\everypar` has
+                        // removed the indent box — so only `\parskip`
+                        // precedes it and `\predisplaysize` is -\maxdimen.
+                        let mut empty_start = None;
+                        if first && st.after_heading && geom.is_none_or(|g| g.label.is_none()) {
+                            empty_start = Some((std::mem::take(&mut eject), std::mem::take(&mut vspace), env_before.take()));
+                            pre_display = None;
+                        } else if first {
+                            let (mut opener, size) = ctx.display_opener_block(*bracket, geom);
+                            if std::mem::take(&mut eject) {
+                                opener.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                            }
+                            add_vspace(&mut opener.vertical, std::mem::take(&mut vspace));
+                            add_skip_before(&mut opener.vertical, env_before.take());
+                            blocks.push(opener);
+                            pre_display = Some(size);
+                        }
+                        let (key, origin) = if cache.is_some() {
+                            let mut h = std::collections::hash_map::DefaultHasher::new();
+                            b'D'.hash(&mut h);
+                            style_fp.hash(&mut h);
+                            span.document.0.hash(&mut h);
+                            incremental::hash_math(list, &mut h);
+                            (span.end - span.start).hash(&mut h);
+                            pre_display.map(f64::to_bits).hash(&mut h);
+                            if let Some((n, ns)) = number {
+                                n.hash(&mut h);
+                                (ns.start.wrapping_sub(span.start), ns.end.wrapping_sub(span.start)).hash(&mut h);
+                            }
+                            bracket.hash(&mut h);
+                            (*style as u64).hash(&mut h);
+                            list_fp.hash(&mut h);
+                            (Some(h.finish()), Some((span.document, span.start)))
+                        } else {
+                            (None, None)
+                        };
+                        let pd = pre_display;
+                        let st = *style;
+                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.display_block(list, *span, pd, number.as_ref(), st, geom)) {
+                            if let Some((ej, vs, env)) = empty_start {
+                                let parskip = geom.map_or(ctx.style.parskip, |g| g.parsep);
+                                if ej {
+                                    b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                                }
+                                add_skip_before(&mut b.vertical, Some(skip_tuple(parskip)));
+                                add_vspace(&mut b.vertical, vs);
+                                add_skip_before(&mut b.vertical, env);
+                            }
+                            blocks.push(b);
+                        }
+                        pre_display = None;
+                    }
+                }
+                first = false;
+            }
+            if let Some(skip) = env_after {
+                if blocks.len() > first_block {
+                    if let Some(last) = blocks.last_mut() {
+                        last.vertical.space_after = Some(match last.vertical.space_after {
+                            Some((n, s, k)) => (n + skip.0, s + skip.1, k + skip.2),
+                            None => skip,
+                        });
+                    }
+                }
+            }
+            st.after_heading = false;
+    }
+
+    /// The vertical material of a float body: `\@xfloat` opens a `\vbox`
+    /// of `\hsize\columnwidth`, runs `\@parboxrestore` and
+    /// `\@floatboxreset` (`\reset@font\normalsize`), and the body is
+    /// contributed to that box's vertical list like any other body text.
+    /// Every block goes through the same builder the page uses, so a
+    /// `tabular`, an `itemize`, a display or a paragraph of prose is set
+    /// inside a float exactly as it is outside one. Returns the range of
+    /// `blocks` the body added.
+    pub(crate) fn box_blocks(&mut self, body: &[Block], out: &mut Vec<BuiltBlock>, float: Span, minipage: bool) -> std::ops::Range<usize> {
+        // The box has a vertical list of its own: `\addvspace` compares
+        // against what *it* left last (`\lastskip`), not against the page's
+        // last block, so the body builds into its own vector.
+        let mut owned: Vec<BuiltBlock> = Vec::new();
+        let blocks = &mut owned;
+        let quad = self.text_params(TextStyle::default(), self.style.body_size_pt).quad;
+        // `\footnote` inside a float box: `footnotes::prepare` has already
+        // run, so a note raised here would set its mark and never be placed.
+        let (notes, anchors) = (self.notes.len(), self.note_anchors.len());
+        let mut st = ParaState { after_heading: false, env_vmode: false };
+        let outer = std::mem::replace(&mut self.parbox, true);
+        // `\@floatboxreset` runs `\@setminipage`, and `\addvspace` does
+        // nothing while `\if@minipage` holds (latex.ltx: it is cleared by
+        // the first paragraph's `\everypar`). So the `\topsep` of a list
+        // that opens the float box, and an environment's `\@topsepadd`, add
+        // no glue above the box's first paragraph.
+        let mut minipage = minipage;
+        for block in body {
+            match block {
+                Block::Paragraph { .. } if minipage => {
+                    let mut opened = block.clone();
+                    if let Block::Paragraph { addvspace_before, env_open, vspace_before, list, .. } = &mut opened {
+                        *addvspace_before = 0.0;
+                        *env_open = None;
+                        // `\@item`'s `\addvspace\@topsep` and its paired
+                        // `\addvspace{-\parskip}` are both suppressed.
+                        if list.is_some() {
+                            *vspace_before = 0.0;
+                        }
+                    }
+                    let at = blocks.len();
+                    self.build_paragraph(blocks, &opened, &mut st, None, 0, quad);
+                    // TeX 1091: a paragraph that starts an empty internal
+                    // vertical list adds no `\parskip` glue either.
+                    if let Some(b) = blocks.get_mut(at) {
+                        b.vertical.parskip = None;
+                        b.vertical.space_before = None;
+                    }
+                    // A block that set nothing (a paragraph with no boxes)
+                    // started no paragraph, so `\if@minipage` still holds.
+                    minipage = blocks.len() == at;
+                }
+                // The cache is keyed on a block's own bytes and the page's
+                // parameters, which `\@parboxrestore` has changed: a float
+                // body builds uncached.
+                Block::Paragraph { .. } => self.build_paragraph(blocks, block, &mut st, None, 0, quad),
+                Block::Rule { span, vspace_before, .. } => {
+                    let mut b = self.rule_block(*span);
+                    add_vspace(&mut b.vertical, *vspace_before);
+                    blocks.push(b);
+                }
+                Block::Picture { document, picture, centered, vspace_before, .. } => {
+                    let mut b = self.picture_block(*document, picture, *centered);
+                    add_vspace(&mut b.vertical, *vspace_before);
+                    blocks.push(b);
+                    // A picture is set in a paragraph: `\everypar` has run.
+                    minipage = false;
+                }
+                // Page-level material: LaTeX forbids it in a float box (a
+                // `\section` there would number and mark out of order, and
+                // `longtable` breaks pages, which a float cannot).
+                other => {
+                    let what = match other {
+                        Block::Heading { .. } => "a sectioning command",
+                        Block::Chapter { .. } => "\\chapter",
+                        Block::Part { .. } => "\\part",
+                        Block::Title { .. } => "\\maketitle",
+                        Block::ClearPage { .. } => "\\clearpage",
+                        Block::Chrome { .. } => "a page-style command",
+                        Block::TocEntry(_) => "a contents list",
+                        Block::LongTable { .. } => "longtable",
+                        Block::Paragraph { .. } | Block::Rule { .. } | Block::Picture { .. } => unreachable!(),
+                    };
+                    let source = vec![self.source(float)];
+                    self.diagnostics.push(Diagnostic::warning(
+                        "float_content_unsupported",
+                        format!("{what} cannot be set inside a float box; it is omitted"),
+                        source,
+                    ));
+                }
+            }
+        }
+        self.parbox = outer;
+        if self.notes.len() > notes {
+            let source = vec![self.source(float)];
+            self.notes.truncate(notes);
+            self.note_anchors.truncate(anchors);
+            self.diagnostics.push(Diagnostic::warning(
+                "float_footnote_unplaced",
+                "a \\footnote inside a float body is not placed yet (LaTeX needs \\footnotemark here and \\footnotetext outside the float); the mark is set and the note text is omitted",
+                source,
+            ));
+        }
+        let first = out.len();
+        out.append(blocks);
+        first..out.len()
+    }
+
+    /// `\parskip` as the box being set has it: `\@parboxrestore` zeroed it
+    /// for a float body, and `\list` sets it to `\parsep` inside a list.
+    fn parskip_of(&self, list_geom: Option<&ListGeom>) -> crate::style::Skip {
+        match list_geom {
+            Some(g) => g.parsep,
+            None if self.parbox => crate::style::Skip::default(),
+            None => self.style.parskip,
+        }
     }
 
     /// `(\@totalleftmargin, \labelwidth)` of an item paragraph, in points:
@@ -2351,6 +3292,10 @@ impl<'a> Context<'a> {
             baselineskip: Some(h.baselineskip_pt),
             vskip_after: vskips_of(&lines, &skips),
             pre_space_after: None,
+            lineskip: None,
+            contributed: None,
+            line_penalty: Vec::new(),
+            depth_after: pagebuild::DepthAfter::default(),
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock {
@@ -2400,7 +3345,9 @@ impl<'a> Context<'a> {
                 items.push(pl::Item::Box(run));
                 recs.push(Some(rec));
             }
-            None => width += s.parindent_pt,
+            // `\@parboxrestore` has zeroed `\parindent`, so the box a
+            // display opens a paragraph with is empty in a float body.
+            None => width += if self.parbox { 0.0 } else { s.parindent_pt },
         }
         let n = items.len();
         let line = pl::Line {
@@ -2433,8 +3380,7 @@ impl<'a> Context<'a> {
             height: height + depth,
         };
         let quad = self.text_params(TextStyle::default(), size).quad;
-        // `\list` sets `\parskip\parsep`.
-        let parskip = list_geom.map_or(s.parskip, |g| g.parsep);
+        let parskip = self.parskip_of(list_geom);
         let vertical = VBlock {
             lines: vec![(height, depth)],
             penalty_before: None,
@@ -2450,6 +3396,10 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             pre_space_after: None,
+            lineskip: None,
+            contributed: None,
+            line_penalty: Vec::new(),
+            depth_after: pagebuild::DepthAfter::default(),
         };
         (
             BuiltBlock {
@@ -2522,6 +3472,10 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             pre_space_after: None,
+            lineskip: None,
+            contributed: None,
+            line_penalty: Vec::new(),
+            depth_after: pagebuild::DepthAfter::default(),
         };
         BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
@@ -2579,6 +3533,10 @@ impl<'a> Context<'a> {
                 baselineskip: None,
                 vskip_after: Vec::new(),
                 pre_space_after: None,
+                lineskip: None,
+                contributed: None,
+                line_penalty: Vec::new(),
+                depth_after: pagebuild::DepthAfter::default(),
             },
             labels: Vec::new(),
             cache_key: None,
@@ -2699,6 +3657,10 @@ impl<'a> Context<'a> {
             baselineskip: Some(baselineskip_pt),
             vskip_after: vskips_of(&lines, &skips),
             pre_space_after: None,
+            lineskip: None,
+            contributed: None,
+            line_penalty: Vec::new(),
+            depth_after: pagebuild::DepthAfter::default(),
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
@@ -2735,6 +3697,24 @@ impl<'a> Context<'a> {
     /// `\tabcolsep` on both sides; rows abut (`\baselineskip\z@
     /// \lineskip\z@`). The author line breaks only between `tabular`s.
     fn title_blocks(&mut self, title: &[AItem], authors: &[Vec<Vec<AItem>>], date: Option<&[AItem]>, g: &flashtex_class_geometry::ResolvedDocument, form: TitleForm, columns: usize) -> Vec<BuiltBlock> {
+        // `\maketitle` sets `\@makefnmark` to `\rlap{\@textsuperscript
+        // {\normalfont\@thefnmark}}` and issues `\@thanks` (the
+        // `\footnotetext`s of `\thanks`) after `\@maketitle` in vertical
+        // mode: the notes' inserts follow the title's last line.
+        let before = self.note_anchors.len();
+        self.rlap_marks = true;
+        let out = self.title_blocks_set(title, authors, date, g, form, columns);
+        self.rlap_marks = false;
+        let last = out.iter().rev().find_map(|b| b.block.lines.lines.last().and_then(|l| b.recs.get(l.items.clone()).and_then(|r| r.iter().rev().find_map(|r| *r))));
+        if let Some(rec) = last {
+            for anchor in &mut self.note_anchors[before..] {
+                anchor.0 = rec;
+            }
+        }
+        out
+    }
+
+    fn title_blocks_set(&mut self, title: &[AItem], authors: &[Vec<Vec<AItem>>], date: Option<&[AItem]>, g: &flashtex_class_geometry::ResolvedDocument, form: TitleForm, columns: usize) -> Vec<BuiltBlock> {
         use crate::style::frame_pt;
         use flashtex_class_geometry::FontSize;
         let s = self.style;
@@ -3058,6 +4038,10 @@ impl<'a> Context<'a> {
                 baselineskip: None,
                 vskip_after: Vec::new(),
                 pre_space_after: None,
+                lineskip: None,
+                contributed: None,
+                line_penalty: Vec::new(),
+                depth_after: pagebuild::DepthAfter::default(),
             },
             labels: Vec::new(),
             cache_key: None,
@@ -3173,6 +4157,10 @@ impl<'a> Context<'a> {
                 baselineskip: None,
                 vskip_after: Vec::new(),
                 pre_space_after: None,
+                lineskip: None,
+                contributed: None,
+                line_penalty: Vec::new(),
+                depth_after: pagebuild::DepthAfter::default(),
             },
             labels: Vec::new(),
             cache_key: None,
@@ -3293,7 +4281,7 @@ impl<'a> Context<'a> {
             lines: vec![(height, 0.0)],
             penalty_before: None,
             space_before: None,
-            parskip: Some(skip_tuple(self.style.parskip)),
+            parskip: Some(skip_tuple(self.parskip_of(None))),
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalty: 0,
@@ -3304,6 +4292,10 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             pre_space_after: None,
+            lineskip: None,
+            contributed: None,
+            line_penalty: Vec::new(),
+            depth_after: pagebuild::DepthAfter::default(),
         };
         BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
@@ -3347,6 +4339,10 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             pre_space_after: None,
+            lineskip: None,
+            contributed: None,
+            line_penalty: Vec::new(),
+            depth_after: pagebuild::DepthAfter::default(),
         };
         BuiltBlock {
             block: pl::ParagraphBlock {
@@ -3428,7 +4424,7 @@ impl<'a> Context<'a> {
         style: ParaStyle,
         list_geom: Option<&ListGeom>,
     ) -> Option<BuiltBlock> {
-        let rec = self.math_box(list, span, true)?;
+        let rec = self.math_box(list, span, true, self.style.body_size_pt)?;
         let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
         let mi = *mi;
         let size = self.style.body_size_pt;
@@ -3673,6 +4669,10 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             pre_space_after: None,
+            lineskip: None,
+            contributed: None,
+            line_penalty: Vec::new(),
+            depth_after: pagebuild::DepthAfter::default(),
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock {
@@ -3734,7 +4734,7 @@ impl<'a> Context<'a> {
                     list.atoms.insert(0, empty);
                 }
                 let cspan = list.atoms.iter().map(|a| a.span).reduce(Span::merge).unwrap_or(row.span);
-                let run = self.math_box(&list, cspan, true).map(|rec| {
+                let run = self.math_box(&list, cspan, true, self.style.body_size_pt).map(|rec| {
                     let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
                     (math_run(&self.maths[*mi].root, size, cspan), rec)
                 });
@@ -3975,7 +4975,7 @@ impl<'a> Context<'a> {
                     Some(v) => *v += before,
                     None => lead += before,
                 }
-                if let Some(b) = self.paragraph_block(&text.items, false, true, false, ParaStyle::Plain, None) {
+                if let Some(b) = self.paragraph_block(&text.items, false, true, false, ParaStyle::Plain, None, None) {
                     let offset = items.len();
                     let n = b.block.lines.lines.len();
                     for (k, mut line) in b.block.lines.lines.into_iter().enumerate() {
@@ -4091,6 +5091,10 @@ impl<'a> Context<'a> {
             baselineskip: Some(normal + JOT),
             vskip_after: vskips,
             pre_space_after: None,
+            lineskip: None,
+            contributed: None,
+            line_penalty: Vec::new(),
+            depth_after: pagebuild::DepthAfter::default(),
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock {
@@ -4190,6 +5194,10 @@ fn table_cell_block(lines: pl::Lines, items: Vec<pl::Item>, recs: Vec<Option<usi
         baselineskip: None,
         vskip_after: Vec::new(),
         pre_space_after: None,
+        lineskip: None,
+        contributed: None,
+        line_penalty: Vec::new(),
+        depth_after: pagebuild::DepthAfter::default(),
     };
     BuiltBlock { block: pl::ParagraphBlock::body(lines), items, recs, vertical, labels, cache_key: None }
 }
@@ -5470,6 +6478,51 @@ fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
 /// Adds `\addvspace` glue (a list environment's `\topsep`) to the block's
 /// before-skip; `None` is a no-op.
 /// The page builder's parameters for the stylesheet's text area.
+/// A longtable on a page-building path that does not carry its region yet:
+/// the table is still set, but `\LT@head`/`\LT@foot` are not repeated and
+/// `\pagegoal` is not reduced, so a break inside it loses them.
+fn longtable_limitation(ctx: &mut Context, longtables: &[(usize, pagebuild::Region)], blocks: &[BuiltBlock], what: &str) {
+    for (bi, region) in longtables {
+        if region.head.is_none() && region.foot.is_none() {
+            continue;
+        }
+        let span = blocks.get(*bi).and_then(|b| b.recs.iter().flatten().next().copied()).and_then(|r| match &ctx.recs[r] {
+            BoxRec::Table(t) => Some(t.span),
+            _ => None,
+        });
+        let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
+        ctx.diagnostics.push(Diagnostic::warning(
+            "table_limitation",
+            format!("a longtable {what} does not repeat \\endhead/\\endfoot across a page break yet; the rows are set without them"),
+            src,
+        ));
+    }
+}
+
+/// The incremental cache key of one block: `None` whenever the block
+/// cannot be keyed on its own bytes (no cache, a footnote's per-build record
+/// indices, or no source origin at all).
+fn block_key(cache: Option<&RenderCache>, style_fp: u64, tag: u8, items: &[AItem], flags: &[u64]) -> (Option<u64>, Option<(DocumentId, usize)>) {
+    use std::hash::{Hash, Hasher};
+    if cache.is_none() {
+        return (None, None);
+    }
+    // A footnote's record indices and note table are per build.
+    if items.iter().any(|i| matches!(i, AItem::Footnote { .. })) {
+        return (None, None);
+    }
+    let Some((document, base)) = incremental::block_origin(items) else {
+        return (None, None);
+    };
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    tag.hash(&mut h);
+    style_fp.hash(&mut h);
+    document.0.hash(&mut h);
+    flags.hash(&mut h);
+    incremental::hash_items(items, base, &mut h);
+    (Some(h.finish()), Some((document, base)))
+}
+
 fn page_params(s: &Stylesheet) -> pagebuild::PageParams {
     pagebuild::PageParams {
         vsize: s.text_height_pt,
@@ -5499,6 +6552,10 @@ fn plain_vblock(lines: Vec<(f64, f64)>) -> VBlock {
         baselineskip: None,
         vskip_after: Vec::new(),
         pre_space_after: None,
+        lineskip: None,
+        contributed: None,
+        line_penalty: Vec::new(),
+        depth_after: pagebuild::DepthAfter::default(),
     }
 }
 
@@ -5620,31 +6677,14 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     let mut env_vmode = false;
     let quad = ctx.text_params(TextStyle::default(), ctx.style.body_size_pt).quad;
     let style_fp = if cache.is_some() { incremental::style_fingerprint(ctx.style) } else { 0 };
-    use std::hash::{Hash, Hasher};
-    let key_for = |tag: u8, items: &[AItem], flags: &[u64]| -> (Option<u64>, Option<(DocumentId, usize)>) {
-        if cache.is_none() {
-            return (None, None);
-        }
-        // A footnote's record indices and note table are per build.
-        if items.iter().any(|i| matches!(i, AItem::Footnote { .. })) {
-            return (None, None);
-        }
-        let Some((document, base)) = incremental::block_origin(items) else {
-            return (None, None);
-        };
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        tag.hash(&mut h);
-        style_fp.hash(&mut h);
-        document.0.hash(&mut h);
-        flags.hash(&mut h);
-        incremental::hash_items(items, base, &mut h);
-        (Some(h.finish()), Some((document, base)))
-    };
+    let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp, tag, items, flags);
     // Two-column documents: blocks that start a page (`\clearpage`,
     // `\chapter`, `\part`) rather than a column, and blocks set across the
     // text width (`\onecolumn` material), by built-block index.
     let mut page_start_blocks: Vec<usize> = Vec::new();
     let mut wide_blocks: Vec<usize> = Vec::new();
+    // longtable page-breaking regions, by built-block index.
+    let mut longtables: Vec<(usize, pagebuild::Region)> = Vec::new();
     for (doc_index, block) in doc.blocks.iter().enumerate() {
         if doc.page_starts.binary_search(&doc_index).is_ok() {
             page_start_blocks.push(blocks.len());
@@ -5854,216 +6894,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 }
                 events.push((blocks.len(), event.clone(), *span));
             }
-            Block::Paragraph {
-                parts,
-                indent,
-                style,
-                env_open,
-                env_close,
-                eject_before,
-                vspace_before,
-                addvspace_before,
-                endlist_adjust,
-                list,
-            } => {
-                let mut first = true;
-                let mut eject = *eject_before;
-                let mut vspace = *vspace_before;
-                // `\endtrivlist`: a positive trailing skip of the previous
-                // block is changed in place before `\@endparenv`'s
-                // `\addvspace` compares against it.
-                if *endlist_adjust != 0.0 {
-                    if let Some(prev) = blocks.last_mut() {
-                        if let Some(s) = prev.vertical.space_after.filter(|s| s.0 > 0.0) {
-                            prev.vertical.space_after = Some((s.0 + endlist_adjust, s.1, s.2));
-                        }
-                    }
-                }
-                // `\addvspace`: only the excess over the skip the previous
-                // block already left (`\@xaddvskip`).
-                if *addvspace_before != 0.0 {
-                    let prev_after = blocks.last().and_then(|b| b.vertical.space_after).map_or(0.0, |s| s.0);
-                    vspace += (addvspace_before - prev_after).max(0.0);
-                }
-                // `\begin{center}`/`\begin{quote}`: `\addvspace{\topsep}` (plus
-                // `\partopsep` from vertical mode) before the first paragraph;
-                // `\end{...}` adds the same after the last (`\@endparenv`).
-                let env_skip = |vmode: bool| {
-                    let t = ctx.style.topsep;
-                    let p = if vmode { ctx.style.partopsep } else { crate::style::Skip::default() };
-                    (t.natural + p.natural, t.stretch + p.stretch, t.shrink + p.shrink)
-                };
-                if let Some(e) = env_open {
-                    env_vmode = e.vmode;
-                }
-                let mut env_before = env_open.map(|e| env_skip(e.vmode));
-                let env_after = env_close.then(|| env_skip(env_vmode));
-                let first_block = blocks.len();
-                // TeX's pre_display_size: the width of the line before a
-                // display plus 2em; -infinity when nothing precedes it.
-                let mut pre_display: Option<f64> = None;
-                let geom = list.as_ref();
-                let list_fp = geom.map_or(0, |g| {
-                    let mut h = std::collections::hash_map::DefaultHasher::new();
-                    g.level.hash(&mut h);
-                    for m in &g.margins {
-                        match m {
-                            ListMargin::Fixed(pt) => pt.to_bits().hash(&mut h),
-                            ListMargin::Widest(text) => text.hash(&mut h),
-                        }
-                    }
-                    if let Some((text, span)) = &g.label {
-                        text.hash(&mut h);
-                        (span.end - span.start).hash(&mut h);
-                    }
-                    g.parsep.natural.to_bits().hash(&mut h);
-                    h.finish()
-                });
-                for part in parts {
-                    match part {
-                        ParaPart::Lines(items) => {
-                            // TeX discards the space token right after a
-                            // display's closing `$$` (§1200 resume_after_display).
-                            let items = if !first && matches!(items.first(), Some(AItem::Space { .. })) { &items[1..] } else { &items[..] };
-                            let (ind, starts, ah) = (*indent && first, first, after_heading && first);
-                            let (key, origin) = key_for(b'P', items, &[u64::from(ind), u64::from(starts), u64::from(ah), *style as u64, list_fp]);
-                            let st = *style;
-                            // `\label` whatsits and a space left in horizontal
-                            // mode after a display (the adapter's
-                            // `label_line` part): TeX's line_break still sets
-                            // them as an empty line, and `\predisplaysize` of a
-                            // display after it is -\maxdimen (§1145-§1146).
-                            let label_line = !items.is_empty()
-                                && matches!(items.last(), Some(AItem::Space { .. }))
-                                && items.iter().all(|i| matches!(i, AItem::Label { .. } | AItem::Space { .. }))
-                                && items.iter().any(|i| matches!(i, AItem::Label { .. }));
-                            if label_line && !first {
-                                blocks.push(ctx.empty_line_block());
-                                pre_display = None;
-                            } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom)) {
-                                pre_display = b.block.lines.lines.last().map(|l| l.natural_width + 2.0 * quad);
-                                if std::mem::take(&mut eject) {
-                                    b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
-                                }
-                                add_vspace(&mut b.vertical, std::mem::take(&mut vspace));
-                                add_skip_before(&mut b.vertical, env_before.take());
-                                blocks.push(b);
-                            }
-                        }
-                        ParaPart::Rows { env, rows, span, bracket } => {
-                            if first {
-                                let (mut opener, _) = ctx.display_opener_block(*bracket, geom);
-                                if std::mem::take(&mut eject) {
-                                    opener.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
-                                }
-                                add_vspace(&mut opener.vertical, std::mem::take(&mut vspace));
-                                add_skip_before(&mut opener.vertical, env_before.take());
-                                blocks.push(opener);
-                            }
-                            let (key, origin) = if cache.is_some() {
-                                let mut h = std::collections::hash_map::DefaultHasher::new();
-                                b'A'.hash(&mut h);
-                                style_fp.hash(&mut h);
-                                span.document.0.hash(&mut h);
-                                env.hash(&mut h);
-                                (span.end - span.start).hash(&mut h);
-                                for row in rows {
-                                    (row.span.start.wrapping_sub(span.start), row.span.end.wrapping_sub(span.start)).hash(&mut h);
-                                    row.number.as_ref().map(|(n, _)| n).hash(&mut h);
-                                    row.cells.len().hash(&mut h);
-                                    for cell in &row.cells {
-                                        incremental::hash_math(cell, &mut h);
-                                    }
-                                    row.intertext.len().hash(&mut h);
-                                    for text in &row.intertext {
-                                        (text.short, text.mathtools).hash(&mut h);
-                                        incremental::hash_items(&text.items, span.start, &mut h);
-                                    }
-                                }
-                                bracket.hash(&mut h);
-                                (Some(h.finish()), Some((span.document, span.start)))
-                            } else {
-                                (None, None)
-                            };
-                            if let Some(b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span)) {
-                                blocks.push(b);
-                            }
-                            pre_display = None;
-                        }
-                        ParaPart::Display {
-                            list,
-                            span,
-                            number,
-                            bracket,
-                        } => {
-                            // TeX §1145: a display that opens a paragraph whose
-                            // list is still empty sets no line — after a
-                            // heading, `\@afterheading`'s `\everypar` has
-                            // removed the indent box — so only `\parskip`
-                            // precedes it and `\predisplaysize` is -\maxdimen.
-                            let mut empty_start = None;
-                            if first && after_heading && geom.is_none_or(|g| g.label.is_none()) {
-                                empty_start = Some((std::mem::take(&mut eject), std::mem::take(&mut vspace), env_before.take()));
-                                pre_display = None;
-                            } else if first {
-                                let (mut opener, size) = ctx.display_opener_block(*bracket, geom);
-                                if std::mem::take(&mut eject) {
-                                    opener.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
-                                }
-                                add_vspace(&mut opener.vertical, std::mem::take(&mut vspace));
-                                add_skip_before(&mut opener.vertical, env_before.take());
-                                blocks.push(opener);
-                                pre_display = Some(size);
-                            }
-                            let (key, origin) = if cache.is_some() {
-                                let mut h = std::collections::hash_map::DefaultHasher::new();
-                                b'D'.hash(&mut h);
-                                style_fp.hash(&mut h);
-                                span.document.0.hash(&mut h);
-                                incremental::hash_math(list, &mut h);
-                                (span.end - span.start).hash(&mut h);
-                                pre_display.map(f64::to_bits).hash(&mut h);
-                                if let Some((n, ns)) = number {
-                                    n.hash(&mut h);
-                                    (ns.start.wrapping_sub(span.start), ns.end.wrapping_sub(span.start)).hash(&mut h);
-                                }
-                                bracket.hash(&mut h);
-                                (*style as u64).hash(&mut h);
-                                list_fp.hash(&mut h);
-                                (Some(h.finish()), Some((span.document, span.start)))
-                            } else {
-                                (None, None)
-                            };
-                            let pd = pre_display;
-                            let st = *style;
-                            if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.display_block(list, *span, pd, number.as_ref(), st, geom)) {
-                                if let Some((ej, vs, env)) = empty_start {
-                                    let parskip = geom.map_or(ctx.style.parskip, |g| g.parsep);
-                                    if ej {
-                                        b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
-                                    }
-                                    add_skip_before(&mut b.vertical, Some(skip_tuple(parskip)));
-                                    add_vspace(&mut b.vertical, vs);
-                                    add_skip_before(&mut b.vertical, env);
-                                }
-                                blocks.push(b);
-                            }
-                            pre_display = None;
-                        }
-                    }
-                    first = false;
-                }
-                if let Some(skip) = env_after {
-                    if blocks.len() > first_block {
-                        if let Some(last) = blocks.last_mut() {
-                            last.vertical.space_after = Some(match last.vertical.space_after {
-                                Some((n, s, k)) => (n + skip.0, s + skip.1, k + skip.2),
-                                None => skip,
-                            });
-                        }
-                    }
-                }
-                after_heading = false;
+            Block::Paragraph { .. } => {
+                let mut st = ParaState { after_heading, env_vmode };
+                ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp, quad);
+                (after_heading, env_vmode) = (st.after_heading, st.env_vmode);
             }
             Block::Rule {
                 span,
@@ -6077,6 +6911,24 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 add_vspace(&mut b.vertical, *vspace_before);
                 blocks.push(b);
                 after_heading = false;
+            }
+            Block::LongTable {
+                table,
+                eject_before,
+                vspace_before,
+                lengths,
+                labels,
+            } => {
+                let _ = labels;
+                if let Some((mut b, region)) = ctx.longtable_block(table, lengths) {
+                    if *eject_before {
+                        b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                    }
+                    add_vspace(&mut b.vertical, *vspace_before);
+                    longtables.push((blocks.len(), region));
+                    blocks.push(b);
+                    after_heading = false;
+                }
             }
             Block::Picture {
                 document,
@@ -6117,7 +6969,8 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     let vblocks: Vec<VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
     let list = pagebuild::vlist(&params, &vblocks);
     // Footnote blocks are appended after the body's (not in `vblocks`).
-    let insertions = footnotes::prepare(ctx, &mut blocks, &params, !floats.is_empty());
+    let body_blocks = blocks.len();
+    let insertions = footnotes::prepare(ctx, &mut blocks, &params);
     // Two-column documents: the page builder fills columns of `\textheight`
     // (`\@colht`); `\@outputdblcol` ships the first column and the second
     // side by side, the second `\columnwidth + \columnsep` to the right.
@@ -6128,11 +6981,15 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         let (short_pages, short) = top_title.as_ref().map_or((0, 0.0), |t| (columns, t.2));
         match &insertions {
             Some(ins) => {
-                let (mut pages, areas) = pagebuild::break_pages_inserts(&params, &list, short_pages, short, ins);
+                let regions = pagebuild::resolve_regions(&list, &longtables);
+                let (mut pages, areas) = pagebuild::break_pages_inserts_regions(&params, &list, short_pages, short, ins, &regions);
                 footnotes::place(ctx, &mut blocks, &mut pages, areas);
                 (pages, Vec::new(), Vec::new())
             }
-            None => (pagebuild::break_pages_shortened(&params, &list, short_pages, short), Vec::new(), Vec::new()),
+            None => {
+                let regions = pagebuild::resolve_regions(&list, &longtables);
+                (pagebuild::break_pages_regions(&params, &list, short_pages, short, &regions), Vec::new(), Vec::new())
+            }
         }
     } else {
         if let Some((first, ..)) = &top_title {
@@ -6147,7 +7004,12 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 src,
             ));
         }
-        floatpage::paginate(ctx, &mut blocks, &params, &list, floats)
+        let regions = pagebuild::resolve_regions(&list, &longtables);
+        let (mut pages, images, labels, areas) = floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref());
+        if insertions.is_some() {
+            footnotes::place(ctx, &mut blocks, &mut pages, areas);
+        }
+        (pages, images, labels)
     };
     // The `\twocolumn[...]` box sits at the top of the first page
     // (`\@combinedblfloats`), both columns `\dbltextfloatsep` below it.
@@ -6908,6 +7770,25 @@ fn assemble_block(
                 }
                 BoxRec::Picture(p) => picture_items(&local, p, source_of, &mut items, &mut used),
                 BoxRec::Table(t) => {
+                    // `device: None`: `crate::tablecolor` has already flattened the
+                    // colortbl colour to sRGB, so the operands pdfTeX would write
+                    // (`k`/`rg`/`g`) are gone by here. Filling this in needs the
+                    // colour resolved by `crate::color` in the compiler instead --
+                    // see `tablecolor`'s module comment.
+                    let paint_of = |r: &crate::table::PlacedRule| {
+                        r.rgb.map_or(Paint::BLACK, |[r, g, b]| Paint { r, g, b, a: 1.0, device: None })
+                    };
+                    // colortbl's leaders come before the entry in each cell.
+                    for r in &t.fills {
+                        items.push(display::Item::Rule(Rule {
+                            x: Tick::from_tex_pt(local.x + r.x),
+                            top: Tick::from_tex_pt(r.top),
+                            width: Tick::from_tex_pt(r.width).max(Tick(1)),
+                            height: Tick::from_tex_pt(r.height).max(Tick(1)),
+                            paint: paint_of(r),
+                            provenance: Provenance::Source(source_of(r.span)),
+                        }));
+                    }
                     // Each piece is assembled like a block of its own, then
                     // moved to its place; the rules follow the text.
                     for piece in &t.pieces {
@@ -6936,7 +7817,7 @@ fn assemble_block(
                             top: Tick::from_tex_pt(r.top),
                             width: Tick::from_tex_pt(r.width).max(Tick(1)),
                             height: Tick::from_tex_pt(r.height).max(Tick(1)),
-                            paint: Paint::BLACK,
+                            paint: paint_of(r),
                             provenance: Provenance::Source(source_of(r.span)),
                         }));
                     }

@@ -20,12 +20,13 @@ may paint one rule over the table; so on both sides rules that continue one
 another (same x and width within 0.01 bp, touching vertically, or same top
 and height touching horizontally) are merged before comparison.
 
-A fixture passes when both sides have one page, every word aligns and lies
-within 0.5 bp of its reference origin in x and y, math extension glyphs (cmex:
-big operators and delimiters, whose painted origin legitimately differs) have
-the same sorted distinct x origins within 0.5 bp, the merged rule counts are
-equal, and every reference rule is matched by a distinct candidate rule whose
-x, top, width and height are all within 0.1 bp.
+A fixture passes when both sides have the same number of pages (a longtable
+breaks across several), every word aligns and lies within 0.5 bp of its
+reference origin in x and y, math extension glyphs (cmex: big operators and
+delimiters, whose painted origin legitimately differs) have the same sorted
+distinct x origins within 0.5 bp, the merged rule counts are equal, and every
+reference rule is matched by a distinct candidate rule whose x, top, width
+and height are all within 0.1 bp.
 """
 import argparse, json, os, subprocess, sys, tempfile
 
@@ -41,7 +42,15 @@ FIXTURES = os.path.join(HERE, "fixtures")
 REFS = os.path.join(HERE, "refs")
 TOL = 0.5
 RULE_TOL = 0.1
+# Colour components (sRGB, 0-1) of rules and colortbl fills; pdfTeX writes
+# xcolor's decimals, so they must agree to this.
+COLOR_TOL = 0.001
 Q = float(2 ** 20)
+
+
+def colour(rule):
+    """A rule's colour; pinned references from before colours are black."""
+    return tuple(rule[4:7]) if len(rule) >= 7 else (0.0, 0.0, 0.0)
 
 
 def regroup(glyphs):
@@ -98,6 +107,8 @@ def merge_rules(rules):
                 if i == j:
                     continue
                 a, b = rules[i], rules[j]
+                if any(abs(p - q) > COLOR_TOL for p, q in zip(colour(a), colour(b))):
+                    continue
                 vertical = abs(a[0] - b[0]) < 0.01 and abs(a[2] - b[2]) < 0.01 and abs(a[1] + a[3] - b[1]) < 0.01
                 horizontal = abs(a[1] - b[1]) < 0.01 and abs(a[3] - b[3]) < 0.01 and abs(a[0] + a[2] - b[0]) < 0.01
                 if vertical:
@@ -126,6 +137,8 @@ def ref_rules(doc, page):
         data = doc.stream_of(contents)
     lx = pdftext._Lexer(data)
     stack, gs, ctm, path, out = [], [], (1, 0, 0, 1, 0, 0), [], []
+    # Fill and stroke colour as sRGB (colortbl fills, coloured rules).
+    fill, stroke = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
     segment, line_width = [], 1.0
     in_text = False
     while True:
@@ -143,11 +156,20 @@ def ref_rules(doc, page):
             elif op == b"ET":
                 in_text = False
             elif op == b"q":
-                gs.append(ctm)
+                gs.append((ctm, fill, stroke))
             elif op == b"Q":
-                ctm = gs.pop() if gs else ctm
+                ctm, fill, stroke = gs.pop() if gs else (ctm, fill, stroke)
             elif op == b"cm":
                 ctm = pdftext._mul(tuple(float(v) for v in stack[-6:]), ctm)
+            elif op in (b"g", b"G", b"rg", b"RG", b"k", b"K"):
+                n = {b"g": 1, b"rg": 3, b"k": 4}[op.lower()]
+                v = [float(x) for x in stack[-n:]]
+                rgb = (tuple(v * 3) if n == 1 else tuple(v) if n == 3
+                       else tuple(1.0 - min(1.0, c + v[3]) for c in v[:3]))
+                if op.islower():
+                    fill = rgb
+                else:
+                    stroke = rgb
             elif op == b"re" and not in_text:
                 x, y, w, h = (float(v) for v in stack[-4:])
                 a, _, _, d, e, f = ctm
@@ -155,7 +177,7 @@ def ref_rules(doc, page):
                 x1, y1 = a * (x + w) + e, d * (y + h) + f
                 path.append((min(x0, x1), height - max(y0, y1), abs(x1 - x0), abs(y1 - y0)))
             elif op in (b"f", b"F", b"f*", b"B", b"B*"):
-                out.extend(path)
+                out.extend(tuple(r) + fill for r in path)
                 path = []
                 segment = []
             elif op == b"w":
@@ -171,9 +193,9 @@ def ref_rules(doc, page):
                     (x0, y0), (x1, y1) = segment
                     w = line_width * abs(ctm[0])
                     if abs(y1 - y0) < 1e-6:
-                        out.append((min(x0, x1), height - (y0 + w / 2), abs(x1 - x0), w))
+                        out.append((min(x0, x1), height - (y0 + w / 2), abs(x1 - x0), w) + stroke)
                     elif abs(x1 - x0) < 1e-6:
-                        out.append((x0 - w / 2, height - max(y0, y1), w, abs(y1 - y0)))
+                        out.append((x0 - w / 2, height - max(y0, y1), w, abs(y1 - y0)) + stroke)
                 path, segment = [], []
             elif op in (b"n", b"s"):
                 path, segment = [], []
@@ -195,7 +217,9 @@ def cand_pages(v2path):
         glyphs, ext, rules = [], [], []
         for item in page.get("items", []):
             if item.get("kind") == "rule":
-                rules.append((item["x"] / Q, item["top"] / Q, item["width"] / Q, item["height"] / Q))
+                paint = item.get("paint") or {}
+                rules.append((item["x"] / Q, item["top"] / Q, item["width"] / Q, item["height"] / Q,
+                              paint.get("r", 0.0), paint.get("g", 0.0), paint.get("b", 0.0)))
                 continue
             if item.get("kind") != "glyph_run":
                 continue
@@ -229,7 +253,7 @@ def match_rules(ref, cand):
             continue
         used.add(bj)
         worst = max(worst, best)
-        ok += best <= RULE_TOL
+        ok += best <= RULE_TOL and all(abs(p - q) <= COLOR_TOL for p, q in zip(colour(r), colour(cand[bj])))
     return ok, worst
 
 
@@ -311,7 +335,9 @@ def cmd_check(args):
                 m_ok, m_worst = match_rules(rr, cr)
                 rn, rok, rworst = rn + len(rr), rok + m_ok, max(rworst, m_worst)
             ncand_rules = sum(len(r) for _, _, r in cand)
-            good = (len(ref) == len(cand) == 1 and n > 0 and ok == n and unaligned == 0 and cols_ok
+            # `>= 1`, not `== 1`: a longtable spans pages, so a fixture may
+            # legitimately have several. The page *counts* must still agree.
+            good = (len(ref) == len(cand) >= 1 and n > 0 and ok == n and unaligned == 0 and cols_ok
                     and rules_equal and rok == rn and not font_bad)
             if font_bad:
                 fontenv.report_font_failure(name, font_bad, env)

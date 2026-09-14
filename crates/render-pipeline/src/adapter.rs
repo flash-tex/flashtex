@@ -148,14 +148,20 @@ pub enum Item {
     /// `\/` after a `\textit`/`\emph`/`\textbf` argument (LaTeX's
     /// `\text@command` adds it unless `.` or `,` follows).
     ItalicCorrection,
+    /// A paragraph break inside a footnote's text (the compiler attributes
+    /// it to the `\footnote` command's span): `\par`, then the next
+    /// paragraph's `\indent` box (`\@makefntext`'s `\parindent` 1em).
+    NoteParBreak,
     /// `\hfill`/`\hfil` (compiler `Inline::HFill`): infinitely stretchable
     /// glue; a legal break point that is discarded at a line break. `fill`
     /// is the `\hfill` order (it beats `\parfillskip`'s `fil`); the
     /// compiler does not distinguish the two, so the order is re-read from
     /// the source bytes (`\hfill` when they are not `\hfil`).
     HFill { fill: bool },
-    /// `\hspace{<dimen>}` (compiler `Inline::HSpace`): fixed glue in points.
-    HSpace { pt: f64 },
+    /// Explicit horizontal glue in points: `\hspace{<dimen>}` (compiler
+    /// `Inline::HSpace`, rigid) or an amsthm theorem head's own separator
+    /// (`\hskip\thm@headsep`, `5pt plus 1pt minus 1pt`; `crate::amsthm`).
+    HSpace { pt: f64, stretch_pt: f64, shrink_pt: f64 },
     /// `tabular`/`tabular*` (compiler `Inline::Tabular`): one box in the
     /// paragraph, laid out by `table.rs`.
     Table(Box<crate::table::TableItem>),
@@ -335,6 +341,9 @@ pub enum Block {
         /// The paragraph is (part of) an `itemize`/`enumerate` `\item`
         /// (compiler `Block::ListItem`): LaTeX's `\list` geometry applies.
         list: Option<ListGeom>,
+        /// The paragraph is set at a size other than `\normalsize`
+        /// (`abstract`'s `\small`); see [`SizedPara`].
+        sized: Option<SizedPara>,
     },
     Heading {
         level: u8,
@@ -410,6 +419,46 @@ pub enum Block {
         eject_before: bool,
         vspace_before: f64,
     },
+    /// A `longtable` (`crate::longtable`). Unlike `tabular` this is not a
+    /// box inside a paragraph: `\LT@array` contributes every row straight
+    /// to the page's vertical list so the page builder can break between
+    /// them, repeating `\LT@head` and `\LT@foot`.
+    LongTable {
+        table: Box<crate::table::TableItem>,
+        eject_before: bool,
+        vspace_before: f64,
+        /// The package's own skips and dimensions, as `\setlength` left
+        /// them: `\LTpre`/`\LTpost` (`\bigskipamount` by default),
+        /// `\LTleft`/`\LTright` (`\fill`) and `\LTcapwidth` (4in).
+        lengths: LongtableLengths,
+        /// `\label` keys inside the table, so `\caption`'s number can be
+        /// referenced.
+        labels: Vec<String>,
+    },
+}
+
+/// longtable.sty 61-67: the lengths a document may `\setlength`. `None`
+/// keeps the package default.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct LongtableLengths {
+    pub pre: Option<f64>,
+    pub post: Option<f64>,
+    pub left: Option<f64>,
+    pub right: Option<f64>,
+    pub capwidth: Option<f64>,
+}
+
+impl LongtableLengths {
+    /// Reads each one through a `\setlength` lookup.
+    pub fn read(mut value: impl FnMut(&str) -> Option<f64>) -> LongtableLengths {
+        LongtableLengths {
+            pre: value("LTpre"),
+            post: value("LTpost"),
+            left: value("LTleft"),
+            right: value("LTright"),
+            capwidth: value("LTcapwidth"),
+        }
+    }
 }
 
 /// LaTeX `\list` geometry of one `\item` paragraph (see
@@ -466,6 +515,40 @@ pub enum ChromeEvent {
     SetPage(i64),
 }
 
+/// A paragraph set at a size other than `\normalsize`, with everything
+/// `\@setfontsize` changes for it: the size itself, *that size's own*
+/// `\baselineskip`, and any length the environment resolves in the new
+/// size's `em` (`\fontdimen6` of the face its own words are set in, which
+/// only the typesetter can measure).
+///
+/// The one producer today is `abstract` (article.cls 377-387): the centred
+/// `\small\bfseries` head and the `\small` `quotation` body.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SizedPara {
+    /// `\@setfontsize`'s first argument, in points.
+    pub size_pt: f64,
+    /// The `\baselineskip` that size selects (`size1x.clo`'s table), in
+    /// force for every line of this paragraph.
+    pub baselineskip_pt: f64,
+    /// `\parindent` in `em` of this size, replacing the class's
+    /// (`quotation`'s `\listparindent 1.5em`, which `\list` copies into
+    /// `\parindent` and `\@item` re-adds as `\itemindent` on the first
+    /// line). `None` keeps the class's `\parindent`.
+    pub parindent_em: Option<f64>,
+    /// `\vspace` after the paragraph, in `em` of the font its *last word*
+    /// is set in — the abstract head's `\vspace{-.5em}`, which sits inside
+    /// the `{\bfseries ...}` group, so it is half a `\bfseries` quad.
+    /// Added to whatever `\@endparenv` puts there (`\addvspace` cannot
+    /// absorb it: it is emitted through `\vadjust`, before the penalty and
+    /// the closing skip).
+    pub vspace_after_em: f64,
+    /// The closing `\@endparenv` skip of the environment this paragraph
+    /// ends, when the size redefined `\@list i` (`\small`'s own `\topsep`,
+    /// 4pt at a 10pt base rather than `\normalsize`'s 8pt). `None` keeps
+    /// the class's.
+    pub close_skip: Option<crate::style::Skip>,
+}
+
 /// How a paragraph-shape environment began (see [`Block::Paragraph`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnvOpen {
@@ -494,6 +577,10 @@ pub struct Doc {
     /// Indices of the blocks after a `\clearpage`/`\cleardoublepage` (see
     /// `clear_page_blocks`).
     pub page_starts: Vec<usize>,
+    /// `\begin` commands the compiler reported as unimplemented that the
+    /// pipeline sets itself (`abstract`): its diagnostic is dropped, the
+    /// way `toc::superseded_commands` drops the contents-list ones.
+    pub superseded: Vec<Span>,
 }
 
 /// Label values (`\ref`) and the pages they fell on in a previous layout
@@ -1274,6 +1361,23 @@ pub fn adapt_cached(
                 if parts.is_empty() {
                     continue;
                 }
+                // `\longtable` begins with `\par` and `\endlongtable`
+                // ends with one, so the compiler always gives it a
+                // paragraph of its own: it becomes a block the page
+                // builder can break inside rather than a box on a line.
+                if let Some(table) = lone_longtable(&mut parts) {
+                    let src = texts.get(table.span.document.0).copied().unwrap_or("");
+                    blocks.push(Block::LongTable {
+                        lengths: LongtableLengths::read(|name| setlength(src, name, size)),
+                        labels: Vec::new(),
+                        table,
+                        eject_before,
+                        vspace_before,
+                    });
+                    prev_para_end = inlines.iter().map(inline_span).last();
+                    after_heading = false;
+                    continue;
+                }
                 // A display environment inside a paragraph (no blank line or
                 // `\par` around it) continues that paragraph, as in LaTeX: the
                 // compiler flushes its paragraph at `\begin{equation}`/
@@ -1357,6 +1461,7 @@ pub fn adapt_cached(
                     addvspace_before: unit.addvspace_before,
                     endlist_adjust: unit.endlist_adjust,
                     list,
+                    sized: None,
                 });
                 after_heading = false;
             }
@@ -1367,6 +1472,11 @@ pub fn adapt_cached(
         let list = crate::toc::list_blocks(kind, span, eject, &toc_settings, &toc_records, labels, &chapter_starts);
         blocks.splice(at..at, list);
     }
+    // `abstract`: the compiler sets its body as plain text, so the class's
+    // own shape (the centred `\small\bfseries` head and the `\small`
+    // `quotation`) is read from the source bytes here, before the
+    // `env_close` pass below derives the closing skips from the styles.
+    let superseded = crate::abstractenv::apply(texts, &mut blocks, &style);
     // `\end{...}`: the last paragraph of a run of same-style paragraphs
     // closes the environment (two adjacent environments of one style are
     // read as one; the compiler does not mark the boundary).
@@ -1415,6 +1525,7 @@ pub fn adapt_cached(
         default_color: parsed.default_color,
         math_colors: math_colors(&parsed.blocks),
         page_starts,
+        superseded,
     }
 }
 
@@ -2301,6 +2412,24 @@ pub fn parskip(source: &str, size: u32) -> Option<f64> {
 }
 
 /// The last `\setlength{\<name>}{<dimen>}` of the source, in points.
+/// A paragraph that holds nothing but one `longtable` (and `\label`s):
+/// takes the table out, leaving the labels behind for the caller.
+fn lone_longtable(parts: &mut Vec<ParaPart>) -> Option<Box<crate::table::TableItem>> {
+    let [ParaPart::Lines(items)] = &parts[..] else { return None };
+    let mut table = None;
+    for item in items {
+        match item {
+            Item::Table(t) if t.longtable.is_some() && table.is_none() => table = Some(t.clone()),
+            Item::Label { .. } => {}
+            // A space either side of the box is the paragraph's own
+            // `\parskip`/`\par` material, which the block replaces.
+            Item::Space { .. } => {}
+            _ => return None,
+        }
+    }
+    table
+}
+
 fn setlength(source: &str, name: &str, size: u32) -> Option<f64> {
     setlength_in(source, name, size, None)
 }
@@ -2507,6 +2636,50 @@ fn list_end_adjust(source: &str, gap_start: usize, gap: &str, size: u32, style: 
 }
 
 /// The environment of the last `\end{itemize}`/`\end{enumerate}` in `gap`.
+/// The `\endtrivlist` glue (`\addvspace\@topsepadd`) of the list that
+/// `run` closes at its very end, in points; 0 when it closes none.
+///
+/// [`adapt`] gives this skip to the block that *follows* the list, which is
+/// how LaTeX contributes it. A float body's last content run has no block
+/// after it -- `\caption` is set by `\@makecaption` and the box then ends
+/// -- so `crate::floats` asks for it here rather than re-deriving the list
+/// parameters of a second copy.
+pub(crate) fn list_end_skip(source: &str, run: &std::ops::Range<usize>, body_size_pt: f64, style: &Stylesheet) -> f64 {
+    let text = &source[run.start..run.end];
+    let Some(at) = rfind_command(text, "end") else { return 0.0 };
+    let rest = text[at + "\\end".len()..].trim_start();
+    let Some(env) = ["itemize", "enumerate", "thebibliography"]
+        .into_iter()
+        .find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}"))))
+    else {
+        return 0.0;
+    };
+    // Only when the `\end` is the last thing in the run: material after it
+    // is a block of its own, and the adapter has already given it the skip.
+    if !rest["{}".len() + env.len()..].trim().is_empty() {
+        return 0.0;
+    }
+    // `\@topsepadd` is what `\@trivlist` computed when the list opened:
+    // `\topsep`, plus `\partopsep` when its own `\begin` was read in
+    // vertical mode (the run's start, or after a blank line or `\par`).
+    // An alignment declaration sets no material, so it does not leave
+    // vertical mode.
+    let opened = text[..at].rfind(&format!("\\begin{{{env}}}")).unwrap_or(0);
+    let before = text[..opened].replace("\\centering", "").replace("\\raggedright", "").replace("\\raggedleft", "");
+    let vmode = before.trim().is_empty() || has_blank_line(&before) || find_command(&before, "par").is_some();
+    let stack = list_stack_at(source, run.start + at);
+    let begin_keys = stack.last().map_or("", |(e, keys)| if *e == env && *e != "thebibliography" { keys } else { "" });
+    let size = if body_size_pt >= 11.5 {
+        12
+    } else if body_size_pt >= 10.5 {
+        11
+    } else {
+        10
+    };
+    let seps = list_seps_with(source, env, 1, size, style, begin_keys);
+    seps.topsep + if vmode { seps.partopsep } else { 0.0 }
+}
+
 fn gap_has_list_end(gap: &str) -> Option<&'static str> {
     let end = rfind_command(gap, "end")?;
     let rest = gap[end + "\\end".len()..].trim_start();
@@ -2687,7 +2860,7 @@ fn list_margins(source: &str, at: usize, size: u32) -> Vec<ListMargin> {
 }
 
 /// Byte offset of `\name` (as a whole control word, outside comments).
-fn find_command(source: &str, name: &str) -> Option<usize> {
+pub(crate) fn find_command(source: &str, name: &str) -> Option<usize> {
     let needle = format!("\\{name}");
     let bytes = source.as_bytes();
     let mut i = 0;
@@ -3828,7 +4001,7 @@ fn gap_has_space(gap: &str) -> bool {
 /// delimiters and quotes 0 (keep), uppercase 999. A code above 1000 does
 /// not take effect while the factor is below 1000 (after an uppercase
 /// letter "A." keeps 1000), which is why the update runs per character.
-pub(crate) fn space_factor(ch: char, previous: u32) -> u32 {
+pub fn space_factor(ch: char, previous: u32) -> u32 {
     let code = match ch {
         '.' | '?' | '!' => 3000,
         ':' => 2000,
@@ -4096,14 +4269,39 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
             Some(gap) => gap_has_space(&gap),
         }
     };
-    // Pushes the space `space_between` found.
+    // An amsthm theorem-like `\item`: the gap between its head and the body
+    // is `\hskip\thm@headsep` (or `proof`'s `\hskip\labelsep`), and the
+    // head's `\ignorespaces` eats the source whitespace that would otherwise
+    // be read as an interword space. See `crate::amsthm`.
+    let mut head_sep = inlines
+        .first()
+        .map(inline_span)
+        .and_then(|s| texts.get(s.document.0))
+        .and_then(|src| crate::amsthm::head_separator(src, inlines, size));
+    let pending_head_sep: std::cell::Cell<Option<(f64, f64, f64)>> = std::cell::Cell::new(None);
+    // Pushes the space `space_between` found, or the theorem head's own glue
+    // in its place. Every caller must reach this whenever a head separator is
+    // pending, not only when the source had a space to replace: amsthm's head
+    // ends with `\ignorespaces`, so `\begin{theorem}Body` has no source gap
+    // at all, and a caller that skips the call on `!has_space` drops the
+    // separator instead of substituting it.
     let push_gap = |items: &mut Vec<Item>, space: bool, style: TextStyle, factor: u32| {
+        if let Some((pt, stretch_pt, shrink_pt)) = pending_head_sep.take() {
+            items.push(Item::HSpace { pt, stretch_pt, shrink_pt });
+            return;
+        }
         if space {
             items.push(Item::Space { style, factor, no_break: false });
         }
     };
 
     for inline in resolved.iter() {
+        if let Some(sep) = head_sep {
+            if sep.opens_the_body(inline_span(inline)) {
+                pending_head_sep.set(Some((sep.pt, sep.stretch_pt, sep.shrink_pt)));
+                head_sep = None;
+            }
+        }
         match &**inline {
             Inline::Label { key, .. } => items.push(Item::Label { key: key.clone() }),
             Inline::Reference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
@@ -4118,7 +4316,16 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
-                let note = text.as_ref().map(|t| items_from_inlines_styled(texts, t, styles, labels, size, false, compiler_weight));
+                let note = text.as_ref().map(|t| {
+                    let mut note = Vec::new();
+                    for (k, part) in t.split(|i| matches!(i, Inline::LineBreak { span: at } if at == span)).enumerate() {
+                        if k > 0 {
+                            note.push(Item::NoteParBreak);
+                        }
+                        note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight));
+                    }
+                    note
+                });
                 items.push(Item::Footnote { number: number.clone(), mark: *mark, span: *span, text: note });
                 after_control_word = end == span.end;
                 prev_end = Some(end);
@@ -4210,7 +4417,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 // invocation's span, and the next token's gap must start
                 // after the word, not before it.
                 let (item, word) = match &**inline {
-                    Inline::HSpace { pt, .. } => (Item::HSpace { pt: *pt }, "\\hspace"),
+                    Inline::HSpace { pt, .. } => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
                     Inline::TextGlue { em, .. } => (Item::Quad { em: *em }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
                     _ => {
                         let fill = !is_control_word(text_of(span.document), span.start, "hfil");
@@ -4272,7 +4479,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     style.medium = !compiler_style.bold;
                     style.italic |= compiler_style.italic;
                 }
-                if has_space {
+                if has_space || pending_head_sep.get().is_some() {
                     let mut gap_style = space_style(texts, styles, prev_end, *span, style);
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
@@ -4290,7 +4497,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let has_space = space_between(prev_end, prev_span, *span, Some("\\rule"), after_control_word);
                 let mut style = style_at(styles_of(span.document), span.start);
                 style.size_cpt = declared_size(compiler_style.size, size);
-                if has_space {
+                if has_space || pending_head_sep.get().is_some() {
                     let mut gap_style = space_style(texts, styles, prev_end, *span, style);
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
@@ -4309,7 +4516,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let has_space = space_between(prev_end, prev_span, *span, word.as_deref(), after_control_word);
                 let mut style = style_at(styles_of(span.document), span.start);
                 style.size_cpt = declared_size(compiler_style.size, size);
-                if has_space {
+                if has_space || pending_head_sep.get().is_some() {
                     let mut gap_style = space_style(texts, styles, prev_end, *span, style);
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
@@ -4329,7 +4536,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let mut style = style_at(styles_of(span.document), span.start);
                 let Inline::Text { style: compiler_style, .. } = &**inline else { unreachable!() };
                 style.size_cpt = declared_size(compiler_style.size, size);
-                if has_space {
+                if has_space || pending_head_sep.get().is_some() {
                     let mut gap_style = space_style(texts, styles, prev_end, *span, style);
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
@@ -4380,7 +4587,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 }
                 let has_space = space_between(prev_end, prev_span, *span, Some(text), after_control_word);
                 after_control_word = false;
-                if has_space {
+                if has_space || pending_head_sep.get().is_some() {
                     // TeX sizes an interword space with the font current
                     // where the space token is read ("Plain, \textbf{bold}"
                     // gets a regular space, "\textbf{bold words}" a bold one,
@@ -4799,6 +5006,7 @@ mod tests {
                 Block::Title { .. } => "T".to_string(),
                 Block::ClearPage { .. } => "N".to_string(),
                 Block::TocEntry(..) => "E".to_string(),
+                Block::LongTable { .. } => "L".to_string(),
             })
             .collect();
         // `Problem 1 \hfill \normalfont[4 points]`: one fill, no space after it.
