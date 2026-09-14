@@ -466,6 +466,12 @@ fn alpah_source() -> &'static str {
     "\\documentclass{article}\n\\begin{document}\nHello $\\alpah$ world.\n\\end{document}\n"
 }
 
+/// #444: `\igl` is one edit from both `\Bigl` and `\bigl`; a unique closest
+/// match is required before `suggestion` becomes a mechanical `--fix`.
+fn igl_source() -> &'static str {
+    "\\documentclass{article}\n\\begin{document}\nHello $\\igl$ world.\n\\end{document}\n"
+}
+
 fn write_tex(dir: &Path, rel: &str, text: &str) {
     let p = dir.join(rel);
     if let Some(parent) = p.parent() {
@@ -571,4 +577,37 @@ fn check_help_mentions_fix_and_dry_run() {
     let help = stdout(&run(&["--help"]));
     assert!(help.contains("--fix"), "{help}");
     assert!(help.contains("--dry-run"), "{help}");
+}
+
+/// #444: an ambiguous typo whose closest matches tie (`\igl` → `\Bigl`/`\bigl`)
+/// carries no `suggestion` and `--fix` writes nothing; `\alpah` is unique and is
+/// still rewritten.
+#[test]
+fn check_fix_skips_an_ambiguous_typo_and_still_fixes_alpah() {
+    let ambiguous = tmp("igl-ambiguous");
+    write_tex(&ambiguous, "main.tex", igl_source());
+    let before = std::fs::read(ambiguous.join("main.tex")).unwrap();
+    let j = check(&ambiguous, &["--json"]);
+    assert_eq!(j.status.code(), Some(0), "{}", stderr(&j));
+    let r = json(&stdout(&j));
+    let diags = r.get("diagnostics").unwrap().as_arr().unwrap();
+    let igl = diags
+        .iter()
+        .find(|d| d.get("message").and_then(|m| m.as_str()).map_or(false, |m| m.contains("\\igl")))
+        .unwrap_or_else(|| panic!("igl diagnostic: {}", stdout(&j)));
+    assert!(igl.get("suggestion").is_none(), "ambiguous typo must not carry suggestion: {}", stdout(&j));
+    let fixed = check(&ambiguous, &["--fix"]);
+    assert_eq!(fixed.status.code(), Some(0), "{}", stderr(&fixed));
+    assert_eq!(std::fs::read(ambiguous.join("main.tex")).unwrap(), before, "--fix must not rewrite a tie");
+    let _ = std::fs::remove_dir_all(&ambiguous);
+
+    let unique = tmp("alpah-unique");
+    write_tex(&unique, "main.tex", alpah_source());
+    let o = check(&unique, &["--fix"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    let text = std::fs::read_to_string(unique.join("main.tex")).unwrap();
+    assert!(text.contains("Hello $\\alpha$ world."), "{text}");
+    assert!(!text.contains("\\alpah"), "{text}");
+    let _ = std::fs::remove_dir_all(&unique);
 }
