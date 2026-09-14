@@ -58,8 +58,9 @@ fn big_bracket(class_option: &str, amsmath: bool) -> (u16, String) {
 }
 
 /// The painted glyph-box heights of `\bigl[`/`\Bigl[`/`\biggl[`/`\Biggl[` in
-/// command order, in PDF points. These are the Latin Modern Math boxes used
-/// by the corresponding cmex variants in the pdfLaTeX oracle.
+/// command order, in PDF points. The test compares these painted glyph boxes
+/// with the corresponding glyph nodes in the pdfLaTeX `\showbox` oracle; the
+/// kernel's enclosing box can also include its invisible `\vbox`.
 fn big_bracket_heights(class_option: &str, amsmath: bool) -> Vec<f64> {
     use flashtex_render_pipeline::display::RunRole;
 
@@ -125,20 +126,44 @@ fn with_amsmath_big_tracks_the_body_size() {
 }
 
 #[test]
-fn twelve_point_big_delimiter_heights_match_pdflatex() {
+fn big_delimiter_heights_match_pdflatex_at_all_article_sizes() {
     if !lm_available() {
         eprintln!("skipping: Latin Modern not installed");
         return;
     }
     let expected = [
-        [12.0, 18.00017, 24.00022, 30.00029],
-        [14.40013, 21.60021, 28.80028, 36.00035],
+        // Each row is in command order and in TeX points. At 11pt without
+        // amsmath, `\big[` uses the 10.95pt text delimiter; its enclosing
+        // kernel box is 11.2375pt after the invisible `\vbox` is included.
+        (
+            "10pt",
+            [
+                [12.00011, 18.00017, 24.00022, 30.00029],
+                [12.00011, 18.00017, 24.00022, 30.00029],
+            ],
+        ),
+        (
+            "11pt",
+            [
+                [10.95, 18.00016, 24.00023, 30.00029],
+                [13.14012, 19.71019, 26.28026, 32.85031],
+            ],
+        ),
+        (
+            "12pt",
+            [
+                [12.0, 18.00017, 24.00022, 30.00029],
+                [14.40013, 21.60021, 28.80028, 36.00035],
+            ],
+        ),
     ];
-    for (amsmath, reference) in [false, true].into_iter().zip(expected) {
-        let got = big_bracket_heights("12pt", amsmath);
-        assert_eq!(got.len(), reference.len(), "12pt amsmath={amsmath}: {got:?}");
-        for (i, (got, want)) in got.into_iter().zip(reference).enumerate() {
-            assert!((got / flashtex_render_pipeline::display::BP_PER_TEX_PT - want).abs() < 0.02, "12pt amsmath={amsmath} delimiter {i}: got {got:.5}bp, want {want:.5}pt");
+    for (class_option, reference_by_package) in expected {
+        for (amsmath, reference) in [false, true].into_iter().zip(reference_by_package) {
+            let got = big_bracket_heights(class_option, amsmath);
+            assert_eq!(got.len(), reference.len(), "{class_option} amsmath={amsmath}: {got:?}");
+            for (i, (got, want)) in got.into_iter().zip(reference).enumerate() {
+                assert!((got / flashtex_render_pipeline::display::BP_PER_TEX_PT - want).abs() < 0.02, "{class_option} amsmath={amsmath} delimiter {i}: got {got:.5}bp, want {want:.5}pt");
+            }
         }
     }
 }
