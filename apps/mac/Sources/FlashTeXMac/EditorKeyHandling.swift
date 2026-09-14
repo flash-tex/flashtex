@@ -6,7 +6,8 @@ import AppKit
 /// `doCommandBy` dispatch (SourceEditorView.swift), and one closure property
 /// plus a single call site in Completion.swift's snippet insertion, so a
 /// completion's placeholder closer (`\section{}`) is tracked for overtype the
-/// same way a hand-typed `{` already is.
+/// same way a hand-typed `{` already is. LaTeX-aware Re-indent Lines / Document
+/// (⌃I) lives in EditorIndentation.swift so this file stays Tab/Shift-Tab only.
 enum EditorKeyHandling {
     /// One text-storage edit in the *original* text's coordinates.
     struct LineEdit: Equatable {

@@ -14,7 +14,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case undo
     case commandPalette, toggleProblems, toggleCaptures
     case zoomIn, zoomOut, actualSize, fitWidth, increaseEditorFontSize, decreaseEditorFontSize, resetEditorFontSize
-    case completion, completionList, toggleComment, signatureHelp, toggleVimKeybindings
+    case completion, completionList, toggleComment, reindentLines, reindentDocument, signatureHelp, toggleVimKeybindings
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
     case goToDefinition, goToSymbol, selectEnvironment, wrapInEnvironment, renameSymbol
     case selectPreviewItemSource
@@ -195,6 +195,14 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
         case .toggleComment:
             return Entry(command: self, title: "Toggle comment", shortcuts: ["⌘/"], menu: "Editor",
                          description: "Toggles a `% ` line comment on every line the selection touches: all commented lines are uncommented, otherwise the non-blank lines are commented; one undo step.")
+        case .reindentLines:
+            return Entry(command: self, title: "Re-indent Lines", shortcuts: ["⌃I"], menu: "Edit",
+                         description: "Reindents the selected lines, or the caret's line when nothing is selected, with LaTeX-aware rules (environments, braces, verbatim bodies, the document exception) as one undo step. ⌃I is Xcode's re-indent and is not Tab; Vim does not bind it. ⌘⇧I remains Toggle Captures.",
+                         menuItem: "Re-indent Lines")
+        case .reindentDocument:
+            return Entry(command: self, title: "Re-indent Document", shortcuts: ["Edit > Re-indent Document"], menu: "Edit",
+                         description: "Applies the same LaTeX-aware reindent rules as Re-indent Lines to the whole buffer as one undo step.",
+                         menuItem: "Re-indent Document")
         case .goToMatching:
             return Entry(command: self, title: "Go to matching", shortcuts: ["⌘⇧D"], menu: "Navigate",
                          description: "Selects the matching \\begin/\\end or \\label/\\ref for the command under the caret; misses are explained in the footer.",

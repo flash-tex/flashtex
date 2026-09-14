@@ -87,6 +87,8 @@ enum CommandPaletteModel {
         case .findPrevious: EditorFindAction.send(.previousMatch)
         case .useSelectionForFind: EditorFindAction.send(.setSearchString)
         case .jumpToSelection: EditorFindAction.centerSelection()
+        case .reindentLines: EditorIndentationAction.reindentLines()
+        case .reindentDocument: EditorIndentationAction.reindentDocument()
         case .completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch: return false
         case .goToMatching: model.goToMatching()
         case .goToDefinition: model.goToDefinition() // ShellModel+EditorNavigation.swift
