@@ -38,10 +38,12 @@
 //! that order. `\dblfigrule` is `\relax` in the kernel (21579), so nothing
 //! is drawn between them and the text.
 //!
-//! Not modelled: `[p]`-only full-width floats, which `\@startdblcolumn`'s
-//! `\@tryfcolumn` would set on a double float page of their own; here they
-//! fall through to `\end{document}`'s flush and get a single-column float
-//! page.
+//! Not modelled: a page whose `\@dbltoplist` is non-empty *and* whose first
+//! column `\@startcolumn` then fills with a single-column float page. LaTeX
+//! still combines the spanning boxes when that page ships; here the spanning
+//! area is attached to the next ordinary column instead. No fixture reaches
+//! it (it needs a deferred `[p]` float and a deferred `figure*` at the same
+//! page boundary), and guessing at it would be worse than saying so.
 
 use std::rc::Rc;
 
