@@ -6715,6 +6715,51 @@ mod tests {
     }
 
     #[test]
+    fn preamble_scan_skips_begin_document_in_macro_body() {
+        let src = "\\documentclass{article}\\newcommand{\\fake}{\\begin{document}}\\setlength{\\textwidth}{6in}\\begin{document}x\\end{document}";
+        let want = adapted(
+            "\\documentclass{article}\\setlength{\\textwidth}{6in}\\begin{document}x\\end{document}",
+        )
+        .style
+        .text_width_pt;
+        assert!(
+            (adapted(src).style.text_width_pt - want).abs() < 1e-6,
+            "setlength after a fake \\begin{{document}} in a macro body must apply, got {}",
+            adapted(src).style.text_width_pt
+        );
+    }
+
+    #[test]
+    fn preamble_scan_is_linear_in_source_length() {
+        let mut src = String::with_capacity(1_200_000);
+        src.push_str("\\documentclass{article}\n");
+        while src.len() < 1_000_000 {
+            src.push_str("\\setlength{\\textwidth}{6in}\n");
+        }
+        src.push_str("\\begin{document}x\\end{document}");
+        let setup = document_setup(&src, true, "");
+        let mut resolved = flashtex_class_geometry::resolve(&setup);
+        let t0 = std::time::Instant::now();
+        apply_preamble_lengths(
+            &src,
+            &mut resolved,
+            10,
+            crate::fonts::Family::ComputerModern,
+            false,
+        );
+        let elapsed = t0.elapsed();
+        assert_eq!(
+            resolved.params.textwidth,
+            flashtex_class_geometry::Sp::parse("6in").unwrap()
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(8),
+            "preamble length scan of {} bytes took {elapsed:?} (quadratic brace_depth?)",
+            src.len()
+        );
+    }
+
+    #[test]
     #[ignore = "known limit: \\input'd preambles are not in the adapter source string"]
     fn preamble_scan_does_not_see_input_files() {
         let src = "\\documentclass{article}\n\\input{layout}\n\\begin{document}x\\end{document}";
