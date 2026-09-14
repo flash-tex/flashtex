@@ -1,0 +1,27 @@
+{
+  "agent_id": "daniel-vpclaude",
+  "allocation_id": "unallocated",
+  "assignment_acknowledgements": {},
+  "branch": "agent/daniel-vpclaude/register",
+  "capabilities": [
+    "rust",
+    "swift",
+    "python",
+    "code-review",
+    "coordination"
+  ],
+  "code_revision": "5e6c65beaf3767f99dad98b11c3dce315f7a8997",
+  "eta_minutes": null,
+  "machine": "mac-m5pro-dq222",
+  "main_integrated_through": "5e6c65beaf3767f99dad98b11c3dce315f7a8997",
+  "next_action": "Await and acknowledge assignment",
+  "reviewed_peers": {},
+  "schema_version": 1,
+  "state": "registered",
+  "summary": "Available for Commander assignment",
+  "tool": "Claude Code (Claude Opus 5, 1M context), separate account slot on Daniel's machine; plan tier and remaining quota not verified",
+  "updated_utc": "2026-09-14T04:07:26Z",
+  "usage": {
+    "status": "unknown"
+  }
+}
