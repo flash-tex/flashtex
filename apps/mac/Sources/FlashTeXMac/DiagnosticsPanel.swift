@@ -271,9 +271,20 @@ struct DiagnosticsListView: View {
         let status = model.resultStatus ?? .ok
         VStack(alignment: .leading, spacing: 0) {
             if showsHeader {
-                Text("\(EditorDiagnostics.summary(diags)) — the preview above is still shown; errors are not hidden")
-                    .font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 4)
-                    .accessibilityLabel(EditorDiagnostics.summary(diags))
+                let counts = EditorDiagnostics.counts(diags)
+                HStack(spacing: 8) {
+                    Label("\(counts.errors)", systemImage: "xmark.octagon.fill")
+                        .foregroundStyle(counts.errors > 0 ? Color.red : Color.secondary)
+                    Label("\(counts.warnings)", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(counts.warnings > 0 ? Color.orange : Color.secondary)
+                    Label("\(counts.gaps) not implemented", systemImage: "puzzlepiece.extension")
+                        .foregroundStyle(.secondary)
+                        .help("Commands, packages or environments FlashTeX does not implement yet — not mistakes in the source")
+                    Text("— the preview above is still shown; errors are not hidden")
+                }
+                .font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 4)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(EditorDiagnostics.summary(diags))
             }
             if let carriedLine = model.chrome.carriedLine {
                 Text("Underlines \(carriedLine); the list below is the failed result's.")

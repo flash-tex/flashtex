@@ -15,7 +15,8 @@ struct ProblemsPanel: View {
     /// Split-pane bounds: the header plus two rows at least; the ideal shows
     /// ~3 grouped rows (180 pt). 260 pt was ~1/3 of a typical window (audit #76);
     /// the 40 % cap in ContentView still stops a large window from swallowing
-    /// the editor (daniel-fable-ui-qa #3).
+    /// the editor (daniel-fable-ui-qa #3). A stored AppStorage 260 cannot be
+    /// told from a user resize, so it is left as-is.
     static let minHeight: CGFloat = 120
     static let idealHeight: CGFloat = 180
 
@@ -26,16 +27,24 @@ struct ProblemsPanel: View {
         // reply replaces, and this panel's List re-laid out with each one.
         let diags = model.problemsList
         let summary = EditorDiagnostics.summary(diags)
+        let (errors, warnings, gaps) = EditorDiagnostics.counts(diags)
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Label("Problems", systemImage: "exclamationmark.triangle").font(.caption.bold())
-                if diags.isEmpty {
-                    Text("none").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text(summary).font(.caption)
-                        .help("Author errors, warnings, then FlashTeX gaps — not a single undifferentiated error count")
-                        .accessibilityHidden(true)
+                // Coloured chips stay on screen (including zeros, so an all-gap
+                // document still shows the error column). VoiceOver uses summary()
+                // once; the chips are not separate accessibility children.
+                HStack(spacing: 8) {
+                    Label("Problems", systemImage: "exclamationmark.triangle").font(.caption.bold())
+                    Label("\(errors)", systemImage: "xmark.octagon.fill")
+                        .foregroundStyle(errors > 0 ? Color.red : Color.secondary).font(.caption)
+                    Label("\(warnings)", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(warnings > 0 ? Color.orange : Color.secondary).font(.caption)
+                    Label("\(gaps) not implemented", systemImage: "puzzlepiece.extension")
+                        .foregroundStyle(.secondary).font(.caption)
+                        .help("Commands, packages or environments FlashTeX does not implement yet — not mistakes in the source")
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Problems, \(summary)")
                 if let status = model.resultStatus, status != .ok {
                     Text(status == .recovered ? "recovered: preview shown with provisional rendering" : "compile failed: the previous preview is kept")
                         .font(.caption).foregroundStyle(.orange).lineLimit(1)
