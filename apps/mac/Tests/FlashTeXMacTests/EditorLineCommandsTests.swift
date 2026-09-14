@@ -3,7 +3,8 @@ import XCTest
 @testable import FlashTeXMac
 
 /// Pure line-command plans plus the hosted CompletingTextView undo/selection
-/// path (lane editor-line-commands, EditorLineCommands.swift).
+/// path (lane editor-line-commands). Duplicate uses main's
+/// `EditorKeyHandling.duplicateLinesEdit` / `duplicateLines(below:)`.
 final class EditorLineCommandsTests: XCTestCase {
     typealias ELC = EditorLineCommands
 
@@ -24,58 +25,12 @@ final class EditorLineCommandsTests: XCTestCase {
 
     func testEmptyBufferIsANoOpForEveryCommand() {
         let sel = NSRange(location: 0, length: 0)
-        XCTAssertNil(ELC.duplicate(in: "", selection: sel))
         XCTAssertNil(ELC.move(in: "", selection: sel, down: true))
         XCTAssertNil(ELC.move(in: "", selection: sel, down: false))
         XCTAssertNil(ELC.deleteLines(in: "", selection: sel))
         XCTAssertNil(ELC.joinLines(in: "", selection: sel))
         XCTAssertNil(ELC.sortLines(in: "", selection: sel, descending: false))
         XCTAssertNil(ELC.trimTrailingWhitespace(in: "", selection: sel))
-    }
-
-    // MARK: duplicate
-
-    func testDuplicateLineInsertsACopyBelowAndSelectsTheCopy() {
-        let text = "aa\nbb\ncc\n"
-        let plan = ELC.duplicate(in: text, selection: caret(text, at: "bb"))!
-        let out = apply(plan, to: text)
-        XCTAssertEqual(out, "aa\nbb\nbb\ncc\n")
-        XCTAssertEqual((out as NSString).substring(with: NSRange(location: plan.selection.location, length: 2)), "bb")
-    }
-
-    func testDuplicateMultiLineSelectionDuplicatesEveryTouchedLine() {
-        let text = "aa\nbb\ncc\n"
-        let sel = span(text, of: "bb\ncc")
-        let plan = ELC.duplicate(in: text, selection: sel)!
-        let out = apply(plan, to: text)
-        XCTAssertEqual(out, "aa\nbb\ncc\nbb\ncc\n")
-        XCTAssertEqual(plan.selection, NSRange(location: 9, length: sel.length))
-        XCTAssertEqual((out as NSString).substring(with: plan.selection), "bb\ncc")
-    }
-
-    func testDuplicateLastLineWithoutTrailingNewlineInsertsASeparator() {
-        let text = "aa\nbb"
-        // Caret at the start of "bb" (offset 3) already mapped onto the copy.
-        // The defect is a caret at the end of the unterminated line, which is
-        // also original EOF (offset 5): relative mapping lands at the new EOF
-        // (8), past the copy. The old substring(loc, 2)=="bb" check never
-        // exercised that caret, and would also have accepted the original
-        // "bb" at offset 3.
-        let plan = ELC.duplicate(in: text, selection: NSRange(location: 5, length: 0))!
-        let out = apply(plan, to: text)
-        XCTAssertEqual(out, "aa\nbb\nbb")
-        XCTAssertEqual(plan.selection, NSRange(location: 6, length: 0))
-        XCTAssertEqual((out as NSString).substring(with: NSRange(location: 6, length: 2)), "bb")
-        XCTAssertNotEqual(plan.selection.location, (out as NSString).length)
-    }
-
-    func testDuplicatePreservesCRLF() {
-        let text = "aa\r\nbb\r\n"
-        let plan = ELC.duplicate(in: text, selection: caret(text, at: "aa"))!
-        let out = apply(plan, to: text)
-        XCTAssertEqual(out, "aa\r\naa\r\nbb\r\n")
-        XCTAssertTrue(out.contains("\r\n"))
-        XCTAssertFalse(out.contains("\n\n"))
     }
 
     // MARK: move
@@ -344,13 +299,6 @@ final class EditorLineCommandsTests: XCTestCase {
         XCTAssertEqual(trimmed.range, NSRange(location: 13, length: 1))
         XCTAssertEqual(trimmed.replacement, "Y")
     }
-
-    func testDuplicateReplacesOnlyTheChangedSpan() {
-        let text = "aa\nbb\ncc\n"
-        let plan = ELC.duplicate(in: text, selection: caret(text, at: "bb"))!
-        XCTAssertGreaterThan(plan.range.location, 0, "common prefix 'aa\\n' is not rewritten")
-        XCTAssertLessThan(NSMaxRange(plan.range), (text as NSString).length, "common suffix is not rewritten")
-    }
 }
 
 @MainActor
@@ -375,7 +323,7 @@ final class EditorLineCommandsHostTests: XCTestCase {
         let b = (tv.string as NSString).range(of: "bb")
         tv.setSelectedRange(NSRange(location: b.location, length: 0))
         tv.undoManager?.removeAllActions()
-        tv.duplicateLines(nil)
+        tv.duplicateLines(below: true)
         XCTAssertEqual(tv.string, "aa\nbb\nbb\ncc\n")
         XCTAssertEqual((tv.string as NSString).substring(with: NSRange(location: tv.selectedRange().location, length: 2)), "bb")
         XCTAssertEqual(tv.undoManager?.undoActionName, "Duplicate Line")
@@ -385,13 +333,45 @@ final class EditorLineCommandsHostTests: XCTestCase {
         XCTAssertEqual(tv.string, "aa\nbb\nbb\ncc\n")
     }
 
-    func testDuplicateLastUnterminatedLineSelectsTheCopyNotEOF() throws {
+    func testDuplicateLastUnterminatedLineSelectsTheCopy() throws {
         let (window, tv) = try host("aa\nbb")
         defer { window.orderOut(nil) }
         tv.setSelectedRange(NSRange(location: 5, length: 0))
-        tv.duplicateLines(nil)
+        tv.duplicateLines(below: true)
         XCTAssertEqual(tv.string, "aa\nbb\nbb")
-        XCTAssertEqual(tv.selectedRange(), NSRange(location: 6, length: 0))
+        let sel = tv.selectedRange()
+        let copy = NSRange(location: 6, length: 2)
+        XCTAssertGreaterThanOrEqual(sel.location, copy.location, "on the copy, not the original line")
+        XCTAssertLessThanOrEqual(NSMaxRange(sel), NSMaxRange(copy), "not past the copy")
+        let line = (tv.string as NSString).lineRange(for: NSRange(location: min(sel.location, (tv.string as NSString).length), length: 0))
+        XCTAssertEqual((tv.string as NSString).substring(with: line), "bb")
+    }
+
+    func testDuplicateMultiLineSelectionIsKeptOnTheCopy() throws {
+        let (window, tv) = try host("aa\nbb\ncc\n")
+        defer { window.orderOut(nil) }
+        let sel = (tv.string as NSString).range(of: "bb\ncc")
+        tv.setSelectedRange(sel)
+        tv.duplicateLines(below: true)
+        XCTAssertEqual(tv.string, "aa\nbb\ncc\nbb\ncc\n")
+        XCTAssertEqual((tv.string as NSString).substring(with: tv.selectedRange()), "bb\ncc")
+    }
+
+    /// One ⌥⇧↓ must not apply twice if both the menu key-equivalent path
+    /// (`performKeyEquivalent`) and `keyDown` see the event.
+    func testOptionShiftDownProducesExactlyOneCopy() throws {
+        let (window, tv) = try host("aa\n")
+        defer { window.orderOut(nil) }
+        tv.setSelectedRange(NSRange(location: 0, length: 0))
+        let event = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [.option, .shift],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil,
+            characters: "\u{F701}", charactersIgnoringModifiers: "\u{F701}",
+            isARepeat: false, keyCode: 125))
+        _ = tv.performKeyEquivalent(with: event)
+        tv.keyDown(with: event)
+        XCTAssertEqual(tv.string, "aa\naa\n", "one keystroke, one copy")
     }
 
     func testMoveJoinDeleteSortTrimAreEachOneUndoStep() throws {
@@ -443,7 +423,6 @@ final class EditorLineCommandsHostTests: XCTestCase {
         let (window, tv) = try host("")
         defer { window.orderOut(nil) }
         tv.undoManager?.removeAllActions()
-        tv.duplicateLines(nil)
         tv.moveLinesUp(nil)
         tv.deleteLines(nil)
         tv.joinSelectedLines(nil)
