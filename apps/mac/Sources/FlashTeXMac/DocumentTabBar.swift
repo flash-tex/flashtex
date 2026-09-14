@@ -41,21 +41,16 @@ struct DocumentTabBar: View {
             }
             ProjectMenu()
             DocumentKindIndicator() // DocumentKinds.swift: helper-reported bibliography kind, read-only
-            if let url = model.documentURL {
-                let dirty = model.project.isDirty(model.activePath)
-                Text(dirty ? "edited" : "saved")
-                    .font(DS.Fonts.secondary).foregroundStyle(dirty ? DS.Colors.statusModified : DS.Colors.textSecondary)
-                    .help(model.activePath == model.project.entryPath ? url.path : url.deletingLastPathComponent().appendingPathComponent(model.activePath).path)
+            if model.documentURL == nil {
+                // No file identity yet: the one state the modified dot cannot carry.
+                Text("unsaved buffer").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                    .padding(.trailing, DS.Space.m)
             } else {
-                Text("unsaved buffer").font(.caption).foregroundStyle(.secondary)
+                Spacer().frame(width: DS.Space.m)
             }
-            Text("\(model.chrome.activeTextBytes) B · \(model.chrome.activeTextUTF16) u16")
-                .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
-                .help("\(model.chrome.activeTextBytes) UTF-8 bytes · \(model.chrome.activeTextUTF16) UTF-16 units")
-                .padding(.trailing, DS.Space.m)
         }
         .frame(height: DS.Row.tab)
-        .background(.bar)
+        .background(DS.Colors.surfaceSecondary) // the recessed strip the active tab is raised against
     }
 }
 
@@ -67,14 +62,13 @@ private struct DocumentTab: View {
     @State private var hovering = false
 
     var body: some View {
+        let style = FileTypeStyle.of(path: doc.path, entry: doc.role == .entry, bibliography: kind == .bibliography)
         HStack(spacing: DS.Space.xs) {
-            Image(systemName: kind == .bibliography ? "books.vertical" : (doc.role == .entry ? "doc.text.fill" : "doc.text"))
-                .font(DS.Fonts.secondary).foregroundStyle(active ? DS.Colors.accentSelection : DS.Colors.textSecondary)
+            // Colour-coded file identity, same vocabulary as the tree (§6).
+            Image(systemName: style.systemImage)
+                .font(DS.Fonts.secondary).foregroundStyle(style.color)
             Text(doc.path).font(DS.Fonts.base).lineLimit(1)
                 .foregroundStyle(active ? DS.Colors.textPrimary : DS.Colors.textSecondary)
-            if let r = doc.durableRevision {
-                Text("r\(r)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
-            }
             if doc.isDirty {
                 Circle().fill(DS.Colors.statusModified).frame(width: DS.Size.modifiedDot, height: DS.Size.modifiedDot).accessibilityHidden(true)
             }
@@ -93,17 +87,27 @@ private struct DocumentTab: View {
                         .background(hovering ? DS.Colors.textPrimary.opacity(DS.State.pressedOpacity) : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.control))
                 }
                 .buttonStyle(.plain)
-                .opacity(hovering || active ? 1 : DS.State.restingControlOpacity)
+                // Close affordance on hover and on the active tab only (§5).
+                .opacity(hovering || active ? 1 : 0)
                 .help("Detach \(doc.path) for this session (" + ProjectDocuments.detachScopeNote + ")")
                 .accessibilityLabel("Detach \(doc.path)")
             }
         }
-        .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
-        .background(active ? DS.Colors.accentSelection.opacity(DS.State.selectionTintOpacity) : (hovering ? DS.Colors.textPrimary.opacity(DS.State.hoverOpacity) : .clear),
+        .padding(.horizontal, DS.Space.m)
+        .frame(height: DS.Row.tab - DS.Space.xs)
+        // Islands treatment (§5): the active tab is a filled, rounded card
+        // raised out of the recessed strip; inactive tabs carry no chrome.
+        .background(active ? AnyShapeStyle(DS.Colors.surfaceRaised)
+                           : hovering ? AnyShapeStyle(DS.Colors.textPrimary.opacity(DS.State.hoverOpacity)) : AnyShapeStyle(.clear),
                     in: RoundedRectangle(cornerRadius: DS.Radius.tab))
-        .overlay(alignment: .bottom) {
-            if active { Rectangle().fill(DS.Colors.accentSelection).frame(height: DS.Space.xxs).padding(.horizontal, DS.Space.xs) }
+        .overlay {
+            if active {
+                RoundedRectangle(cornerRadius: DS.Radius.tab)
+                    .strokeBorder(DS.Colors.separator, lineWidth: DS.Size.hairline)
+            }
         }
+        .shadow(color: active ? DS.Colors.textPrimary.opacity(DS.State.hoverOpacity) : .clear,
+                radius: DS.Space.xxs, y: DS.Size.hairline)
         .contentShape(Rectangle())
         .onTapGesture { model.switchOrNote(doc.path) }
         .onHover { hovering = $0 }

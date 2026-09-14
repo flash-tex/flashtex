@@ -30,6 +30,7 @@ struct WorkspaceSidebar: View {
                 }
                 .listStyle(.sidebar)
                 .scrollContentBackground(.hidden)
+                .environment(\.defaultMinListRowHeight, DS.Row.tree)
             }
             if projectVisible && outlineVisible { Divider() }
             if outlineVisible {
@@ -38,6 +39,7 @@ struct WorkspaceSidebar: View {
                 }
                 .listStyle(.sidebar)
                 .scrollContentBackground(.hidden)
+                .environment(\.defaultMinListRowHeight, DS.Row.outline)
             }
         }
         .background(DS.Colors.surfaceSecondary)
@@ -82,8 +84,10 @@ private struct ProjectSection: View {
                             if let r = doc.durableRevision { Text("r\(r)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary) }
                         }
                     } icon: {
-                        Image(systemName: Self.icon(for: doc, kind: kinds.kind(of: doc.path)))
-                            .foregroundStyle(doc.path == model.activePath ? DS.Colors.accentSelection : DS.Colors.textSecondary)
+                        let style = FileTypeStyle.of(path: doc.path, entry: doc.role == .entry,
+                                                     bibliography: kinds.kind(of: doc.path) == .bibliography)
+                        Image(systemName: style.systemImage)
+                            .foregroundStyle(style.color)
                     }
                 }
                 .help(Self.tooltip(for: doc, kind: kinds.kind(of: doc.path)))
@@ -140,12 +144,6 @@ private struct ProjectSection: View {
                     .accessibilityIdentifier("project.newfile")
             }
         }
-    }
-
-    static func icon(for doc: ProjectDocument, kind: DocumentKind?) -> String {
-        if kind == .bibliography { return "books.vertical" }
-        if doc.role == .entry { return "doc.text.fill" }
-        return "doc.text"
     }
 
     static func tooltip(for doc: ProjectDocument, kind: DocumentKind?) -> String {
@@ -291,6 +289,7 @@ struct SidebarRow<Label: View>: View {
     let selected: Bool
     let action: () -> Void
     @ViewBuilder let label: () -> Label
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
@@ -299,9 +298,14 @@ struct SidebarRow<Label: View>: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs)
-        .background(selected ? DS.Colors.accentSelection.opacity(DS.State.selectionTintOpacity) : Color.clear, in: RoundedRectangle(cornerRadius: DS.Radius.tab))
-        .listRowInsets(EdgeInsets(top: DS.Size.hairline, leading: DS.Space.xs, bottom: DS.Size.hairline, trailing: DS.Space.xs))
+        .padding(.horizontal, DS.Space.s)
+        .frame(height: DS.Row.tree)
+        // Full-row highlight, hover and selected (design-principles §6).
+        .background(selected ? DS.Colors.accentSelection.opacity(DS.State.selectionTintOpacity)
+                             : hovering ? DS.Colors.textPrimary.opacity(DS.State.hoverOpacity) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: DS.Radius.tab))
+        .onHover { hovering = $0 }
+        .listRowInsets(EdgeInsets(top: 0, leading: DS.Space.xs, bottom: 0, trailing: DS.Space.xs))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
