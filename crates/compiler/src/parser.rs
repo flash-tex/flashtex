@@ -783,6 +783,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "section",
     "subsection",
     "subsubsection",
+    "paragraph",
+    "subparagraph",
     "tableofcontents",
     "textbf",
     "textmd",
@@ -2051,6 +2053,30 @@ impl P<'_> {
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
             "chapter" if self.chapter_class => self.chapter(span, blocks, para),
+            // `\paragraph`/`\subparagraph` are `\@startsection` with a
+            // *negative* after-skip (article.cls 406-414), and `\@xsect`'s
+            // negative branch never sets the head as a block of its own: it
+            // arms `\everypar`, throws away the following paragraph's
+            // `\parindent` box and sets the head into that paragraph's first
+            // line instead. So the right thing for this layer is to take the
+            // star and the optional short title and then get out of the way:
+            // the braced title falls through to the main token loop as
+            // ordinary body text, which is exactly the material LaTeX runs
+            // into that paragraph, in the right place with the right spans.
+            //
+            // `flush_paragraph` is deliberately NOT called for the same
+            // reason — a run-in head does not start a new paragraph.
+            //
+            // The head's weight, indent, `\hskip 1em` and `\addvspace` come
+            // from the render pipeline, which reads the command back from the
+            // source at that position (`adapter::run_in_heading_at`). This
+            // arm only retires the `\paragraph is not supported by this
+            // compiler version` error, which has been stale since the
+            // pipeline started laying these heads out correctly.
+            "paragraph" | "subparagraph" => {
+                let _ = self.take_optional_star();
+                let _ = self.optional_bracket_argument();
+            }
             "section" | "subsection" | "subsubsection" => {
                 let level = match name {
                     "section" => 1,
@@ -7772,6 +7798,37 @@ mod tests {
                 > two_baseline.baseline_y_pt - one.baseline_y_pt,
             "\\vspace{{50pt}} should push the following text further down than an ordinary paragraph break"
         );
+    }
+
+    #[test]
+    fn run_in_headings_are_accepted_and_keep_their_title_as_body_text() {
+        // `\@xsect`'s negative-after-skip branch sets the head into the
+        // following paragraph's first line, so the title belongs in the body
+        // text stream exactly where it stands. The render pipeline reads the
+        // command back from the source there and gives it its weight, indent
+        // and `\hskip 1em`; this layer must only stop erroring, take the star
+        // and the optional short title, and leave the title alone.
+        // `\paragraph*[short]{...}` is not in the list: `\@startsection`'s
+        // starred form takes no optional argument, and pdflatex itself
+        // typesets the brackets there (`[Short]Solution.`), so there is no
+        // oracle behaviour to match.
+        for source in [
+            r"\paragraph{Solution.} Body text.",
+            r"\subparagraph{Solution.} Body text.",
+            r"\paragraph*{Solution.} Body text.",
+            r"\paragraph[Short]{Solution.} Body text.",
+            r"\subparagraph*{Solution.} Body text.",
+        ] {
+            let parsed = parse(source);
+            assert!(parsed.diagnostics.is_empty(), "{source}: {:?}", parsed.diagnostics);
+            let text: String = items(source).1.iter().map(|i| i.text.as_str()).collect::<Vec<_>>().join(" ");
+            assert!(text.contains("Solution."), "{source}: title kept as body text, got {text:?}");
+            assert!(text.contains("Body"), "{source}: body text kept, got {text:?}");
+            // The star and the short title are the command's parameters, not
+            // prose: neither may reach the page.
+            assert!(!text.contains('*'), "{source}: the star is not set, got {text:?}");
+            assert!(!text.contains("Short"), "{source}: the short title is not set, got {text:?}");
+        }
     }
 
     #[test]
