@@ -213,22 +213,7 @@ pub fn report_json(project: &Project, outcome: &Outcome, outputs: &[(&str, &Path
             outcome
                 .diagnostics
                 .iter()
-                .map(|d| {
-                    let mut v = Value::obj();
-                    v.set("path", json::str_(d.path.clone()));
-                    v.set("line", opt_num(d.line));
-                    v.set("column", opt_num(d.column));
-                    v.set("start_byte", opt_num(d.start_byte));
-                    v.set("end_byte", opt_num(d.end_byte));
-                    v.set("severity", json::str_(d.severity()));
-                    v.set("code", json::str_(d.code.clone()));
-                    v.set("message", json::str_(d.message.clone()));
-                    v.set("recovery", d.recovery.clone().map_or(Value::Null, json::str_));
-                    if let Some(s) = &d.suggestion {
-                        v.set("suggestion", json::str_(s.clone()));
-                    }
-                    v
-                })
+                .map(diagnostic_json)
                 .collect(),
         ),
     );
@@ -250,6 +235,23 @@ pub fn report_json(project: &Project, outcome: &Outcome, outputs: &[(&str, &Path
     json::write(&o)
 }
 
+fn diagnostic_json(d: &Diagnostic) -> Value {
+    let mut v = Value::obj();
+    v.set("path", json::str_(d.path.clone()));
+    v.set("line", opt_num(d.line));
+    v.set("column", opt_num(d.column));
+    v.set("start_byte", opt_num(d.start_byte));
+    v.set("end_byte", opt_num(d.end_byte));
+    v.set("severity", json::str_(d.severity()));
+    v.set("code", json::str_(d.code.clone()));
+    v.set("message", json::str_(d.message.clone()));
+    v.set("recovery", d.recovery.clone().map_or(Value::Null, json::str_));
+    if let Some(s) = &d.suggestion {
+        v.set("suggestion", json::str_(s.clone()));
+    }
+    v
+}
+
 fn opt_num(n: Option<usize>) -> Value {
     n.map_or(Value::Null, |n| json::num(n as f64))
 }
@@ -261,4 +263,32 @@ fn round2(x: f64) -> f64 {
 /// `-o` default: the entry's stem with `.pdf`, next to the entry file.
 pub fn default_pdf_path(main: &Path) -> PathBuf {
     main.with_extension("pdf")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn suggestion_less_diagnostic() -> Diagnostic {
+        Diagnostic {
+            path: "main.tex".into(),
+            line: Some(3),
+            column: Some(1),
+            start_byte: Some(40),
+            end_byte: Some(51),
+            error: true,
+            code: "unknown_command".into(),
+            message: "\\frobnicate is not supported".into(),
+            recovery: None,
+            suggestion: None,
+        }
+    }
+
+    #[test]
+    fn json_omits_the_suggestion_key_when_the_diagnostic_has_none() {
+        let v = diagnostic_json(&suggestion_less_diagnostic());
+        assert!(v.get("suggestion").is_none(), "{v:?}");
+        let text = json::write(&v);
+        assert!(!text.contains("suggestion"), "{text}");
+    }
 }

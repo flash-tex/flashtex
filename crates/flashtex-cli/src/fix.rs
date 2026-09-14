@@ -302,7 +302,7 @@ mod tests {
     use crate::project::{Document, Project};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn diag_at(path: &str, text: &str, needle: &str, replacement: &str) -> Diagnostic {
         let start = text.find(needle).expect("needle");
@@ -339,6 +339,15 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
     }
 
     #[test]
@@ -392,6 +401,117 @@ mod tests {
         let applied = apply(&project, plan, false);
         assert!(applied.skipped.iter().any(|s| matches!(s, Skip::Symlink { .. })), "{:?}", applied.skipped);
         assert_eq!(fs::read_to_string(dir.join("real.tex")).unwrap(), text);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_symlinked_parent_directory_is_refused() {
+        let text = "Hello \\alpah world.\n";
+        let d = diag_at("link/main.tex", text, "\\alpah", "\\alpha");
+        let dir = tmp("symlink-parent");
+        fs::create_dir(dir.join("src")).unwrap();
+        let target = dir.join("src").join("main.tex");
+        fs::write(&target, text).unwrap();
+        std::os::unix::fs::symlink(dir.join("src"), dir.join("link")).unwrap();
+        let project = project_at(dir.clone(), vec![("link/main.tex", text)]);
+        let plan = plan(collect_edits(&[d], &project), &project);
+        let applied = apply(&project, plan, false);
+        assert_eq!(applied.issues, 0, "{:?}", applied.skipped);
+        assert!(applied.skipped.iter().any(|s| matches!(s, Skip::Symlink { .. })), "{:?}", applied.skipped);
+        assert_eq!(fs::read(&target).unwrap(), text.as_bytes());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_parent_escape_and_an_absolute_path_are_refused() {
+        let text = "Hello \\alpah world.\n";
+        let dir = tmp("escape");
+        fs::write(dir.join("main.tex"), text).unwrap();
+        let outside = std::env::temp_dir().join(format!("flashtex-cli-fix-{}-outside.tex", std::process::id()));
+        fs::write(&outside, text).unwrap();
+        let rel = format!("../{}", outside.file_name().unwrap().to_str().unwrap());
+        let abs = outside.to_str().unwrap().to_string();
+        let d_rel = diag_at(&rel, text, "\\alpah", "\\alpha");
+        let d_abs = diag_at(&abs, text, "\\alpah", "\\alpha");
+        let project = project_at(dir.clone(), vec![("main.tex", text), (rel.as_str(), text), (abs.as_str(), text)]);
+        let plan = plan(collect_edits(&[d_rel, d_abs], &project), &project);
+        let applied = apply(&project, plan, false);
+        assert_eq!(applied.issues, 0);
+        assert_eq!(applied.skipped.len(), 2, "{:?}", applied.skipped);
+        assert!(applied.skipped.iter().all(|s| matches!(s, Skip::OutsideRoot { .. })), "{:?}", applied.skipped);
+        assert_eq!(fs::read(&outside).unwrap(), text.as_bytes());
+        assert_eq!(fs::read(dir.join("main.tex")).unwrap(), text.as_bytes());
+        let _ = fs::remove_file(&outside);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn crlf_bytes_are_preserved_outside_the_edited_span() {
+        let text = "Hello \\alpah world.\r\nNext line.\r\n";
+        let d = diag_at("main.tex", text, "\\alpah", "\\alpha");
+        let dir = tmp("crlf");
+        fs::write(dir.join("main.tex"), text.as_bytes()).unwrap();
+        let project = project_at(dir.clone(), vec![("main.tex", text)]);
+        let plan = plan(collect_edits(&[d], &project), &project);
+        let applied = apply(&project, plan, false);
+        assert_eq!(applied.issues, 1);
+        assert_eq!(fs::read(dir.join("main.tex")).unwrap(), b"Hello \\alpha world.\r\nNext line.\r\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_span_on_a_utf8_multibyte_boundary_is_refused() {
+        // Two U+00E9 (c3 a9). start=1,end=3 with an empty replacement splices
+        // out a9 c3 and leaves a coincidentally valid é; from_utf8 would accept
+        // the result, so the refusal has to be a char-boundary check.
+        let text = "éé \\alpah\n";
+        assert_eq!(text.as_bytes()[..4], [0xc3, 0xa9, 0xc3, 0xa9]);
+        let mut d = diag_at("main.tex", text, "\\alpah", "\\alpha");
+        d.start_byte = Some(1);
+        d.end_byte = Some(3);
+        d.suggestion = Some(String::new());
+        let dir = tmp("utf8-boundary");
+        fs::write(dir.join("main.tex"), text.as_bytes()).unwrap();
+        let project = project_at(dir.clone(), vec![("main.tex", text)]);
+        let plan = plan(collect_edits(&[d], &project), &project);
+        let applied = apply(&project, plan, false);
+        assert_eq!(applied.issues, 0, "{:?}", applied.skipped);
+        assert!(!applied.skipped.is_empty(), "{:?}", applied.skipped);
+        assert_eq!(fs::read(dir.join("main.tex")).unwrap(), text.as_bytes());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn non_overlapping_edits_apply_back_to_front() {
+        let text = "AA BB CC\n";
+        let d1 = diag_at("main.tex", text, "AA", "AAAA");
+        let d2 = diag_at("main.tex", text, "CC", "C");
+        let dir = tmp("back-to-front");
+        fs::write(dir.join("main.tex"), text).unwrap();
+        let project = project_at(dir.clone(), vec![("main.tex", text)]);
+        let plan = plan(collect_edits(&[d1, d2], &project), &project);
+        assert_eq!(plan.issue_count(), 2);
+        let applied = apply(&project, plan, false);
+        assert_eq!(applied.issues, 2);
+        assert_eq!(fs::read(dir.join("main.tex")).unwrap(), b"AAAA BB C\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dry_run_creates_no_temp_files() {
+        let text = "Hello \\alpah world.\n";
+        let d = diag_at("main.tex", text, "\\alpah", "\\alpha");
+        let dir = tmp("dry-list");
+        fs::write(dir.join("main.tex"), text).unwrap();
+        let before = names_in(&dir);
+        let project = project_at(dir.clone(), vec![("main.tex", text)]);
+        let plan = plan(collect_edits(&[d], &project), &project);
+        let applied = apply(&project, plan, true);
+        assert_eq!(applied.issues, 1);
+        let after = names_in(&dir);
+        assert_eq!(after, before);
+        assert!(!after.iter().any(|n| n.ends_with(".tmp") || n.contains(".tmp")));
+        assert_eq!(fs::read(dir.join("main.tex")).unwrap(), text.as_bytes());
         let _ = fs::remove_dir_all(&dir);
     }
 
