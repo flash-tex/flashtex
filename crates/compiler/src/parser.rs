@@ -192,6 +192,14 @@ pub enum Inline {
     Verbatim {
         text: String,
         span: Span,
+        /// The declaration in force where the `\verb` was read, carried the
+        /// same way and with the same group/environment scoping as
+        /// `Inline::Text::style`. `\verb` sets its own `\ttfamily`, so the
+        /// family here is the surrounding one and a consumer ignores it; the
+        /// size level is the part that matters (`{\small \verb|x|}` is
+        /// CMTT9, not CMTT10) and it is not derivable from the source by a
+        /// consumer that has stopped scanning size declarations.
+        style: TextStyle,
         /// See `Inline::Text::space_before`.
         space_before: bool,
     },
@@ -327,6 +335,13 @@ pub enum Block {
     Verbatim {
         lines: Vec<VerbatimLine>,
         span: Span,
+        /// The declaration in force where `\begin{verbatim}` was read, as on
+        /// [`Inline::Verbatim`]. Both LaTeX spellings reach it through the
+        /// same style stack: the declaration form `{\small\begin{verbatim}`
+        /// and the environment form `\begin{small}\begin{verbatim}`, which
+        /// is the kernel's `\begin{<declaration>}` (latex.ltx expands
+        /// `\begin{small}` to `\small` inside the environment's group).
+        style: TextStyle,
     },
     /// `\tableofcontents`: the article.cls contents list, built from the
     /// numbered headings of the previous layout pass (see
@@ -1482,6 +1497,7 @@ impl P<'_> {
                         para.push(Inline::Verbatim {
                             text: verbatim_display(&text, starred),
                             span: tok.span,
+                            style: self.style,
                             space_before,
                         });
                     }
@@ -2821,6 +2837,7 @@ impl P<'_> {
     ) {
         let (tokens, argument_span) = self.required_group(kind, span);
         let environment = token_text(&tokens).trim().to_string();
+        let declaration_environment = self.in_body && style_declaration(&environment);
         if kind == "begin" {
             if matches!(
                 environment.as_str(),
@@ -2935,6 +2952,9 @@ impl P<'_> {
                 // `\mult@@cols` starts with `\par`.
                 self.flush_paragraph(blocks, para);
                 self.multicols_arguments(span.merge(argument_span), &environment);
+            } else if declaration_environment {
+                // Handled just below, once `env_styles` has recorded the
+                // style to restore at the matching \end.
             } else if self.in_body {
                 self.diags.push(Diagnostic::environment_warning(
                     &environment,
@@ -2949,6 +2969,18 @@ impl P<'_> {
             self.env_stack
                 .push((environment.clone(), span.merge(argument_span)));
             self.env_styles.push(self.style);
+            // latex.ltx's \begin opens a group and runs the macro named by
+            // its argument; \end runs \end<name>, undefined for a font
+            // declaration and so \relax, then closes the group. A font or
+            // size declaration used as an environment is therefore exactly
+            // the declaration, scoped to the environment's group -- the
+            // idiom \begin{small} ... \end{small}. The name is not an
+            // environment of its own: it is the declaration already in the
+            // command inventory, reached through the kernel's generic rule,
+            // which is why it adds no environment entry.
+            if declaration_environment {
+                self.style = apply_style(self.style, &environment);
+            }
             if self.in_body {
                 if let Some(theorem) = self.theorems.get(&environment).cloned() {
                     self.begin_theorem(&theorem, span, para);
@@ -3397,6 +3429,7 @@ impl P<'_> {
         blocks.push(Block::Verbatim {
             lines,
             span: Span::in_document(document, open.start, tag_end),
+            style: self.style,
         });
         self.finish_block_dependencies();
     }
@@ -4535,6 +4568,7 @@ impl P<'_> {
                 TokenKind::Verb { text, starred, .. } => content.push(Inline::Verbatim {
                     text: verbatim_display(text, *starred),
                     span: input.token.span,
+                    style,
                     space_before,
                 }),
                 TokenKind::Command(name)
@@ -7844,6 +7878,131 @@ mod tests {
             inlines.iter().any(|i| matches!(i, Inline::Verbatim { text, .. } if text == "x")),
             "{inlines:?}"
         );
+    }
+
+    /// The size declaration in force reaches `\verb`. `Inline::Verbatim`
+    /// used to carry only `{ text, span, space_before }`, so a consumer that
+    /// reads `TextStyle::size` off the compiler's inlines (rather than
+    /// re-scanning the source for size declarations) had no way to know that
+    /// `{\small \verb|x|}` is CMTT9 and not CMTT10.
+    #[test]
+    fn verb_carries_the_size_declaration_in_force() {
+        for (source, want) in [
+            (r"{\small \verb|small inline|}", Some(FontSizeLevel::Small)),
+            (
+                r"{\footnotesize\verb|fn|}",
+                Some(FontSizeLevel::FootnoteSize),
+            ),
+            (r"\verb|plain|", None),
+            // The declaration ends with the group, exactly like bold/italic.
+            (r"{\small x}\verb|after|", None),
+            (r"{\small \normalsize\verb|reset|}", None),
+            // The environment spelling of the same declaration.
+            (
+                "\\begin{small}\\verb|env|\\end{small}",
+                Some(FontSizeLevel::Small),
+            ),
+        ] {
+            let parsed = parse(source);
+            let verbatim: Vec<Option<FontSizeLevel>> = parsed
+                .blocks
+                .iter()
+                .filter_map(|b| match b {
+                    Block::Paragraph(inlines) => Some(inlines),
+                    _ => None,
+                })
+                .flatten()
+                .filter_map(|i| match i {
+                    Inline::Verbatim { style, .. } => Some(style.size),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(verbatim, vec![want], "{source:?}");
+        }
+    }
+
+    /// A `verbatim`/`lstlisting` body takes the declaration in force where
+    /// its `\begin` was read, in both LaTeX spellings: the declaration inside
+    /// a group, and the kernel's `\begin{<declaration>}` form. They must
+    /// agree.
+    #[test]
+    fn verbatim_and_lstlisting_blocks_carry_the_size_declaration_in_force() {
+        let body = |env: &str, open: &str, close: &str| {
+            format!("{open}\\begin{{{env}}}\nsmall verbatim\n\\end{{{env}}}{close}")
+        };
+        for env in ["verbatim", "verbatim*", "lstlisting"] {
+            for (open, close, want) in [
+                ("", "", None),
+                ("{\\small ", "}", Some(FontSizeLevel::Small)),
+                (
+                    "\\begin{small}",
+                    "\\end{small}",
+                    Some(FontSizeLevel::Small),
+                ),
+                (
+                    "\\begin{footnotesize}",
+                    "\\end{footnotesize}",
+                    Some(FontSizeLevel::FootnoteSize),
+                ),
+            ] {
+                let source = body(env, open, close);
+                let parsed = parse(&source);
+                let sizes: Vec<Option<FontSizeLevel>> = parsed
+                    .blocks
+                    .iter()
+                    .filter_map(|b| match b {
+                        Block::Verbatim { style, .. } => Some(style.size),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(sizes, vec![want], "{source:?}");
+            }
+        }
+    }
+
+    /// `\begin{small}` is latex.ltx's generic `\begin{<declaration>}`: the
+    /// declaration, scoped to the environment's group. It must not be
+    /// reported as an unimplemented environment, and `\end{small}` must
+    /// restore the outer style.
+    #[test]
+    fn a_font_declaration_used_as_an_environment_is_that_declaration() {
+        let parsed = parse("\\begin{small}inside\\end{small}outside");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let sizes: Vec<(&str, Option<FontSizeLevel>)> = parsed
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|i| match i {
+                Inline::Text { text, style, .. } => Some((text.as_str(), style.size)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            sizes,
+            vec![("inside", Some(FontSizeLevel::Small)), ("outside", None)]
+        );
+
+        // A face declaration works the same way.
+        let parsed = parse("\\begin{bfseries}b\\end{bfseries}n");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let bold: Vec<(&str, bool)> = parsed
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|i| match i {
+                Inline::Text { text, style, .. } => Some((text.as_str(), style.bold)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(bold, vec![("b", true), ("n", false)]);
     }
 
     #[test]
