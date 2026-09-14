@@ -43,8 +43,10 @@ final class ShellSnapshotTests: XCTestCase {
 
     func testProblemsPanel() {
         let model = DesignFixtures.projectWithProblems()
+        // Longer settle: the AppKit-backed List needs a beat to lay rows out
+        // deterministically.
         assertSurfaceBothAppearances(ProblemsPanel().environment(model), named: "problems",
-                                     size: CGSize(width: 1000, height: 260))
+                                     size: CGSize(width: 1000, height: 260), settle: 0.6)
     }
 
     func testStatusBar() {

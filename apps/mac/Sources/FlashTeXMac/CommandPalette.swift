@@ -120,6 +120,7 @@ enum CommandPaletteModel {
         case .zoomOut: model.previewZoomOut()
         case .actualSize: model.previewActualSize()
         case .fitWidth: model.previewFitWidth()
+        case .fitPage: model.previewFitPage()
         case .increaseEditorFontSize: model.increaseEditorFontSize()
         case .decreaseEditorFontSize: model.decreaseEditorFontSize()
         case .resetEditorFontSize: model.resetEditorFontSize()

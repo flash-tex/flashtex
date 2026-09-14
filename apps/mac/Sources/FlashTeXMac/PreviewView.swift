@@ -21,6 +21,11 @@ struct PreviewView: View {
     var follow: CaretFollowController.Request? = nil
     /// Reported when the reader scrolls this pane by hand.
     var onUserScroll: (() -> Void)? = nil
+    /// The page under the viewport's top edge (the header's "N / M").
+    var onVisiblePage: ((Int) -> Void)? = nil
+    /// The zoom multiplier that would fit the tallest page's height to the
+    /// pane (View > Fit Page); reported whenever geometry changes.
+    var onFitPageZoom: ((CGFloat) -> Void)? = nil
     let onSelect: (RuntimeV1.SourceRange?, String?) -> Void
 
     var body: some View {
@@ -50,9 +55,17 @@ struct PreviewView: View {
                     }
                 }
                 .padding(DS.Preview.pageSpacing)
-                .background(PreviewAnchorKeeper(layout: layout, follow: follow, onUserScroll: onUserScroll))
+                .background(PreviewAnchorKeeper(layout: layout, follow: follow, onUserScroll: onUserScroll, onVisiblePage: onVisiblePage))
             }
             .onChange(of: fit, initial: true) { _, f in onFitScale?(f) }
+            .onChange(of: geo.size, initial: true) { _, size in
+                // Fit Page: the tallest page's height fills the pane (within
+                // the zoom bounds); recomputed as the pane or pages change.
+                let tallest = result.pages.map(\.heightPt).max() ?? 792
+                let fitNow = PreviewPageLayout.fitScale(paneWidth: size.width, widestPt: widest)
+                guard tallest > 0, fitNow > 0 else { return }
+                onFitPageZoom?((size.height - 2 * DS.Preview.pageSpacing) / (tallest * fitNow))
+            }
             // The page-level `scrollTo(caretPage)` this pane used to do is gone:
             // it jumped to the top of the page on every caret move, even when the
             // item was already on screen. `CaretFollow` (CaretFollow.swift) does

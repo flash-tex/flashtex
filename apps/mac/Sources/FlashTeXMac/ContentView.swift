@@ -389,10 +389,14 @@ private struct BridgeBar: View {
 
 struct PreviewPane: View {
     @Environment(ShellModel.self) var model
+    /// Page under the viewport's top edge (PreviewAnchorProbe reports it).
+    @State private var currentPage = 1
+    /// Pointer-over reveals the header's second control tier (§8).
+    @State private var hovering = false
 
     var body: some View {
         VStack(spacing: 0) {
-            PreviewHeader()
+            PreviewHeader(currentPage: currentPage, hovering: hovering)
             Divider()
             if model.previewV2 {
                 PreviewV2Pane() // experimental v2 path (PreviewV2View.swift); v1 below stays the default
@@ -402,7 +406,9 @@ struct PreviewPane: View {
                             zoom: model.previewZoom, onFitScale: { model.previewFitScale = $0 },
                             // "the pdf moves to where the changes are happening" (CaretFollow.swift)
                             follow: model.caretFollow.request,
-                            onUserScroll: { model.caretFollow.userDidScrollPreview() }) { source, text in
+                            onUserScroll: { model.caretFollow.userDidScrollPreview() },
+                            onVisiblePage: { currentPage = $0 },
+                            onFitPageZoom: { model.previewFitPageZoom = $0 }) { source, text in
                     guard let source else { model.navigationNote = "This item has no source mapping."; return }
                     model.navigate(to: source, expectedText: text)
                 }
@@ -436,14 +442,22 @@ struct PreviewPane: View {
                 .accessibilityElement(children: .contain).accessibilityLabel("Suggested fix preview")
             }
         }
+        .onHover { hovering = $0 }
     }
 }
 
-/// The preview column's header: source badge, compile status, freshness
-/// (historical / stale / compiling) and the layout capabilities — the former
-/// top banner, kept to one line with details in tooltips.
+/// The preview column's header, in the two control tiers of
+/// design-principles §8. Always visible and dimmed: the page indicator and
+/// zoom percentage, plus quiet *state* — a mini spinner while compiling, a
+/// FIXTURE/HISTORICAL badge when the pages are not the worker's current
+/// result, staleness text, and capability warnings. On pointer-over the
+/// second tier fades in without moving anything: zoom −/+, fit width, fit
+/// page, and the preview-scoped v2/dark switches. Producer and capability
+/// detail live in tooltips, not the header line.
 struct PreviewHeader: View {
     @Environment(ShellModel.self) var model
+    var currentPage = 1
+    var hovering = false
 
     var body: some View {
         @Bindable var model = model
@@ -458,76 +472,90 @@ struct PreviewHeader: View {
                     .help("Back to the editor (the window is too narrow for editor and preview side by side)")
                     .accessibilityLabel("Back to editor")
             }
-            sourceBadge(chrome)
-            if chrome.hasResult {
-                Text(sourceName(chrome)).font(.caption).lineLimit(1)
-                    .help(chrome.resultHelp)
-                if model.previewDebugStatus, let status = chrome.resultStatus {
-                    Text(status.rawValue).font(DS.Fonts.header).foregroundStyle(statusColor(status))
-                }
-                if chrome.resultStatus == .recovered && model.previewDebugStatus {
-                    Text("provisional rendering").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning).lineLimit(1).fixedSize()
-                        .help("recovered: preview shown with provisional rendering")
-                }
-                // Fixed-size slot: toggling the indicator never changes the header's layout.
-                Color.clear.frame(width: DS.Size.inlineStatusSlot, height: DS.Size.inlineStatusSlot)
-                    .overlay { if chrome.compiling { ProgressView().controlSize(.mini) } }
-                if let historical = chrome.historicalLabel {
-                    Text(historical).font(DS.Fonts.header).foregroundStyle(DS.Colors.statusHistorical).lineLimit(1)
-                        .help("A completed older snapshot is shown while the helper compiles the newer revision; navigation, caret sync, capture destinations and export return with the current preview.")
-                } else if let stale = chrome.staleText { // the reply exceeded a bound, or "editor at rN — compiling…" (ShellChrome)
-                    Text(stale)
-                        .font(DS.Fonts.secondary).foregroundStyle(chrome.staleHighlighted ? DS.Colors.severityWarning : DS.Colors.textSecondary).lineLimit(1) // routine "compiling…" is quiet; only bounds/no-producer are highlighted
-                }
-            } else if let err = chrome.loadError {
-                Text(err).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityError).lineLimit(1).help(err)
-            } else {
-                Text("Preview").font(DS.Fonts.header).foregroundStyle(DS.Colors.textSecondary)
+            // Fixed-size slot: the compile indicator never reflows the header.
+            Color.clear.frame(width: DS.Size.inlineStatusSlot, height: DS.Size.inlineStatusSlot)
+                .overlay { if chrome.compiling { ProgressView().controlSize(.mini).accessibilityLabel("Compiling") } }
+            stateBadge(chrome)
+            if model.previewDebugStatus, let status = chrome.resultStatus {
+                Text(status.rawValue).font(DS.Fonts.header).foregroundStyle(statusColor(status))
             }
-            Spacer()
-            // Preview-scoped switches (formerly toolbar chips): the v2 pane
-            // and dark page drawing belong to this column, not the title bar.
-            Toggle(isOn: $model.previewV2) { Image(systemName: "rectangle.on.rectangle") }
-                .toggleStyle(.button).buttonStyle(.accessoryBar).controlSize(.small)
-                .help("Experimental display-list-v2 preview (File > Open Display List (v2)…)")
-                .accessibilityLabel("v2 preview pane")
-            Toggle(isOn: $model.darkPreview) { Image(systemName: "moon") }
-                .toggleStyle(.button).buttonStyle(.accessoryBar).controlSize(.small)
-                .help("Draw the preview pages dark (page and text colors only)")
-                .accessibilityLabel("Dark preview")
-            PreviewZoomControl() // PreviewZoom.swift: percentage and −/+
+            if let historical = chrome.historicalLabel {
+                Text(historical).font(DS.Fonts.header).foregroundStyle(DS.Colors.statusHistorical).lineLimit(1)
+                    .help("A completed older snapshot is shown while the helper compiles the newer revision; navigation, caret sync, capture destinations and export return with the current preview.")
+            } else if let stale = chrome.staleText { // the reply exceeded a bound, or "editor at rN — compiling…" (ShellChrome)
+                Text(stale)
+                    .font(DS.Fonts.secondary).foregroundStyle(chrome.staleHighlighted ? DS.Colors.severityWarning : DS.Colors.textSecondary).lineLimit(1) // routine "compiling…" is quiet; only bounds/no-producer are highlighted
+            }
+            if let err = chrome.loadError {
+                Text(err).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityError).lineLimit(1).help(err)
+            }
             ForEach(chrome.capabilityNotes, id: \.self) { note in
                 Image(systemName: "exclamationmark.circle").foregroundStyle(DS.Colors.severityWarning).help(note)
                     .accessibilityLabel(note)
             }
-            Text(chrome.acceptedCapabilities.isEmpty ? "legacy layout" : chrome.acceptedCapabilities.joined(separator: ", "))
-                .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textTertiary).lineLimit(1)
-                .help(chrome.acceptedCapabilities.isEmpty
-                      ? "No layout capability accepted for this result: U+2500 fraction bars are an approximation."
-                      : "Capabilities the worker accepted for this result (typed rules / explicit font hints).")
+            Spacer()
+            // The hover tier: fades in place, never reflows (§14).
+            HStack(spacing: DS.Space.xs) {
+                Toggle(isOn: $model.previewV2) { Image(systemName: "rectangle.on.rectangle") }
+                    .toggleStyle(.button).buttonStyle(.accessoryBar).controlSize(.small)
+                    .help("Experimental display-list-v2 preview (File > Open Display List (v2)…)")
+                    .accessibilityLabel("v2 preview pane")
+                Toggle(isOn: $model.darkPreview) { Image(systemName: "moon") }
+                    .toggleStyle(.button).buttonStyle(.accessoryBar).controlSize(.small)
+                    .help("Draw the preview pages dark (page and text colors only)")
+                    .accessibilityLabel("Dark preview")
+                Button { model.previewFitWidth() } label: { Image(systemName: "arrow.left.and.right.square") }
+                    .buttonStyle(.accessoryBar).controlSize(.small)
+                    .help("Fit Width (⌘9)").accessibilityLabel("Fit width")
+                Button { model.previewFitPage() } label: { Image(systemName: "arrow.up.and.down.square") }
+                    .buttonStyle(.accessoryBar).controlSize(.small)
+                    .help("Fit Page (⌘⇧9)").accessibilityLabel("Fit page")
+                Button { model.previewZoomOut() } label: { Image(systemName: "minus.magnifyingglass") }
+                    .buttonStyle(.accessoryBar).controlSize(.small)
+                    .help("Zoom Out (⌘-)").accessibilityLabel("Zoom out preview")
+                Button { model.previewZoomIn() } label: { Image(systemName: "plus.magnifyingglass") }
+                    .buttonStyle(.accessoryBar).controlSize(.small)
+                    .help("Zoom In (⌘=)").accessibilityLabel("Zoom in preview")
+            }
+            .opacity(hovering ? 1 : 0)
+            .allowsHitTesting(hovering)
+            .animation(DS.Motion.quick, value: hovering)
+            .accessibilityHidden(!hovering)
+            // The rest tier: page and zoom, always visible, dimmed (§8).
+            Text("\(currentPage) / \(max(model.toolbarPageCount, 1))")
+                .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
+                .help("Page under the top of the view")
+                .accessibilityLabel("Page \(currentPage) of \(max(model.toolbarPageCount, 1))")
+            Text("\(PreviewZoom.percent(fit: model.previewFitScale, zoom: model.previewZoom)) %")
+                .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
+                .frame(minWidth: DS.Size.zoomReadoutMinWidth)
+                .help("Preview zoom; double-click for Fit Width (⌘9), ⌘0 actual size, or pinch on the preview")
+                .accessibilityLabel("Preview zoom \(PreviewZoom.percent(fit: model.previewFitScale, zoom: model.previewZoom)) percent")
+                .onTapGesture(count: 2) { model.previewFitWidth() }
         }
         .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
         .background(.bar)
+        .help(chrome.previewSource == .fixture
+              ? "Fixture\(chrome.fixtureName.map { ": " + $0 } ?? "") — not a real compile. Layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))"
+              : model.producerSummary + " — layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))")
     }
 
-    private func sourceBadge(_ chrome: ShellChrome) -> some View {
-        let (label, color): (String, Color) = switch chrome.previewSource {
-        case .none: ("NONE", DS.Colors.textTertiary)
+    /// Quiet state badge: shown only when the pages are *not* the worker's
+    /// current result — FIXTURE (not a real compile) or HISTORICAL (an older
+    /// snapshot while the newer revision compiles). A healthy live preview
+    /// shows nothing here.
+    @ViewBuilder
+    private func stateBadge(_ chrome: ShellChrome) -> some View {
+        let label: (text: String, color: Color)? = switch chrome.previewSource {
+        case .none: nil
         case .fixture: ("FIXTURE", DS.Colors.severityWarning)
-        case .worker: chrome.historicalLabel != nil ? ("HISTORICAL", DS.Colors.statusHistorical) : ("WORKER", DS.Colors.severitySuccess)
+        case .worker: chrome.historicalLabel != nil ? ("HISTORICAL", DS.Colors.statusHistorical) : nil
         }
-        return Text(label)
-            .font(DS.Fonts.header)
-            .padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs)
-            .background(color.opacity(DS.State.badgeFillOpacity), in: Capsule())
-            .help(chrome.previewSource == .fixture ? "Not a real compile." : model.producerSummary)
-    }
-
-    private func sourceName(_ chrome: ShellChrome) -> String {
-        switch chrome.previewSource {
-        case .none: "—"
-        case .fixture: chrome.fixtureName ?? "fixture"
-        case .worker(let name): name
+        if let label {
+            Text(label.text)
+                .font(DS.Fonts.header)
+                .padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs)
+                .background(label.color.opacity(DS.State.badgeFillOpacity), in: Capsule())
         }
     }
 

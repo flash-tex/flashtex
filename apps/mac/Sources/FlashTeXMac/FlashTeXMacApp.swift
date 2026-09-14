@@ -173,6 +173,8 @@ struct FlashTeXMacApp: App {
                     .keyboardShortcut("0")
                 Button("Fit Width") { model.previewFitWidth() }
                     .keyboardShortcut("9")
+                Button("Fit Page") { model.previewFitPage() }
+                    .keyboardShortcut("9", modifiers: [.command, .shift])
                 Divider()
                 // Editor text size: EditorPreferences.fontSize (8…36 pt).
                 Button("Increase Editor Font Size") { model.increaseEditorFontSize() }

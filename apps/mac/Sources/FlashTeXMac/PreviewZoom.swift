@@ -95,6 +95,7 @@ extension ShellModel {
     func previewZoomOut() { previewZoom = PreviewZoom.clamped(previewZoom / PreviewZoom.step) }
     func previewActualSize() { previewZoom = PreviewZoom.actualSizeZoom(fit: previewFitScale) }
     func previewFitWidth() { previewZoom = 1 }
+    func previewFitPage() { previewZoom = PreviewZoom.clamped(previewFitPageZoom) }
 
     static let editorFontStep: Double = 1
     func increaseEditorFontSize() { EditorPreferences.shared.fontSize += Self.editorFontStep }

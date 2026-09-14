@@ -13,7 +13,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case restoreDiscardedBuffer
     case undo
     case commandPalette, toggleProblems, toggleCaptures
-    case zoomIn, zoomOut, actualSize, fitWidth, increaseEditorFontSize, decreaseEditorFontSize, resetEditorFontSize
+    case zoomIn, zoomOut, actualSize, fitWidth, fitPage, increaseEditorFontSize, decreaseEditorFontSize, resetEditorFontSize
     case completion, completionList, toggleComment, duplicateLine, reindentLines, reindentDocument, signatureHelp, toggleVimKeybindings
     case fold, unfold, foldAll, unfoldAll
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
@@ -177,6 +177,10 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Fit width preview", shortcuts: ["⌘9"], menu: "View",
                          description: "Resets the preview zoom to 1x so the widest page fits the pane width (the default); double-clicking the header percentage does the same.",
                          menuItem: "Fit Width")
+        case .fitPage:
+            return Entry(command: self, title: "Fit page preview", shortcuts: ["⌘⇧9"], menu: "View",
+                         description: "Zooms so the tallest page's full height fits the pane (within the 0.25x…4x bounds); also in the preview header on hover.",
+                         menuItem: "Fit Page")
         case .increaseEditorFontSize:
             return Entry(command: self, title: "Increase editor font size", shortcuts: ["⌘⌥="], menu: "View",
                          description: "Grows the editor font by 1 pt (up to 36 pt); the gutter and highlighting follow. The size is the Settings font-size preference, so it persists. Pinching over the editor does the same.",
@@ -317,7 +321,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          requires: "a search with matches")
         case .renameCitation:
             return Entry(command: self, title: "Rename citation window", shortcuts: ["Edit > Rename Citation…"], menu: "Edit",
-                         description: "Opens the reviewed citation rename: the helper plans every \\cite occurrence across the project (plan_citation_rename), the plan is shown for review, and Apply sends one apply_group; also in the toolbar.",
+                         description: "Opens the reviewed citation rename: the helper plans every \\cite occurrence across the project (plan_citation_rename), the plan is shown for review, and Apply sends one apply_group.",
                          menuItem: "Rename Citation…")
         case .find:
             return Entry(command: self, title: "Find", shortcuts: ["⌘F"], menu: "Edit",
@@ -424,7 +428,7 @@ public enum FocusOrder {
     /// can say what VoiceOver reads when it walks the whole window.
     public static let statusLines: [String] = [
         "Toolbar: three chips — Compile (⌘B; its menu attaches the built compiler ⌘⇧K, the Latin Modern render pipeline ⌘⇧R, any executable ⌘K, toggles auto-compile, detaches), the Export menu (⌘⇧E, ⌘⌥E, exact v2) and Commands (the palette, ⌘⇧P) — plus the Captures inspector toggle. Everything else lives in its menu, its shortcut and the palette; the v2 pane and Dark preview switches are in the preview header. Every tooltip names the menu shortcut.",
-        "Preview header: preview source badge, compile status, whether the editor is ahead of the preview, and the accepted layout capabilities.",
+        "Preview header: the page indicator and zoom percentage (always visible, dimmed); a quiet compile spinner, a FIXTURE or HISTORICAL badge, staleness and capability warnings when they apply; on pointer-over, zoom −/+, Fit Width (⌘9), Fit Page (⌘⇧9) and the v2/dark switches. Producer and layout-capability detail are in the header tooltip.",
         "Status bar (bottom): editor revision, the active document's durable revision, compile latency, the route (fixture / worker / controller), error and warning counts (a button that shows the Problems panel), then the last navigation note, the stale-diagnostics note, or the preview-click hint; capture notes and the exact-export progress on the right.",
     ]
 

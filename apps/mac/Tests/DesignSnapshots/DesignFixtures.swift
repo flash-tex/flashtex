@@ -40,6 +40,7 @@ enum DesignFixtures {
             model.caretUTF16 = r.location
         }
         model.previewV2 = false // the fixture result is v1 pages; render them
+        model.previewZoom = 1 // fit width; never the machine's persisted zoom
         model.darkPreview = false // never inherit the machine's preference into a snapshot
         model.problemsVisible = false // rest state: the bottom panel earns its space only with content
         model.flushChrome()
