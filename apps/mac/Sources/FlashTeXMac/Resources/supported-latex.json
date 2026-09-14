@@ -55,6 +55,8 @@
     {"name": "fcolorbox", "mode": "text", "origin": "text_dispatch", "arguments": "[model]{frame}{fill}{text}", "description": "\\colorbox inside a \\fboxrule frame", "renders": true},
     {"name": "newcolumntype", "mode": "text", "origin": "text_dispatch", "arguments": "{X}[n]{spec}", "description": "array column type expanded in later tabular specifications", "renders": true},
     {"name": "arraybackslash", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "array no-op: \\\\ already ends the row inside p, m and b entries", "renders": true},
+    {"name": "arrayrulecolor", "mode": "text", "origin": "text_dispatch", "arguments": "[model]{colour}", "description": "colortbl: colour of later table rules", "renders": true},
+    {"name": "doublerulesepcolor", "mode": "text", "origin": "text_dispatch", "arguments": "[model]{colour}", "description": "colortbl: colour of the gap between double rules", "renders": true},
     {"name": "setlist", "mode": "text", "origin": "text_dispatch", "arguments": "[list]{options}", "description": "enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn", "renders": true},
     {"name": "newcommand", "mode": "text", "origin": "text_dispatch", "arguments": "{\\name}[n]{body}", "description": "defines a macro with 0-9 arguments; rejects an existing name", "renders": true},
     {"name": "renewcommand", "mode": "text", "origin": "text_dispatch", "arguments": "{\\name}[n]{body}", "description": "redefines an existing macro", "renders": true},
@@ -786,8 +788,7 @@
     {"name": "ker", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true},
     {"name": "arg", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true},
     {"name": "hom", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true},
-    {"name": "Pr", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true},
-    {"name": "sgn", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true}
+    {"name": "Pr", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true}
   ],
   "environments": [
     {"name": "document", "mode": "text", "description": "the typeset body; preamble content is not typeset"},
@@ -846,6 +847,10 @@
     {"name": "xcolor", "silent_options": "natural, rgb, cmy, cmyk, gray, dvipsnames, svgnames, x11names, table", "description": "xcolor 3.02 definitions, expressions and target models with pdfTeX's exact operator values; hsb models, colour series and table colours are diagnosed"},
     {"name": "amsthm", "silent_options": "", "description": "\\newtheorem, \\theoremstyle and the proof environment"},
     {"name": "array", "silent_options": "", "description": "tabular >{} <{} !{} m b w columns, \\newcolumntype and \\extrarowheight"},
+    {"name": "booktabs", "silent_options": "", "description": "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules"},
+    {"name": "longtable", "silent_options": "", "description": "the page-breaking longtable environment: \\endfirsthead, \\endhead, \\endfoot, \\endlastfoot, \\caption, \\kill, \\\\*"},
+    {"name": "multirow", "silent_options": "", "description": "\\multirow[vpos]{rows}[bigstruts]{width}[vmove]{text} in table entries"},
+    {"name": "colortbl", "silent_options": "", "description": "\\rowcolor, \\cellcolor, >{\\columncolor}, \\arrayrulecolor, \\doublerulesepcolor"},
     {"name": "enumitem", "silent_options": "shortlabels", "description": "list keys (label, start, resume, seps, margins) parsed as options; \\setlist"},
     {"name": "geometry", "silent_options": "letterpaper, margin=1in", "description": "matches the fixed US Letter page with 1in margins"},
     {"name": "siunitx", "silent_options": "any \\sisetup keys", "description": "v3 \\num, \\unit, \\qty, lists, ranges, \\ang, \\sisetup and \\DeclareSIUnit; unmodelled keys are diagnosed"},

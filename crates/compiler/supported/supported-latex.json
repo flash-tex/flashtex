@@ -788,8 +788,7 @@
     {"name": "ker", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true},
     {"name": "arg", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true},
     {"name": "hom", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true},
-    {"name": "Pr", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true},
-    {"name": "sgn", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true}
+    {"name": "Pr", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true}
   ],
   "environments": [
     {"name": "document", "mode": "text", "description": "the typeset body; preamble content is not typeset"},
