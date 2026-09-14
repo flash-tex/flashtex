@@ -1,5 +1,28 @@
 # Style guide — tokens
 
+> **How to read this document — the owner's ruling, which overrides the
+> wording below.**
+>
+> This guide was written by an agent with limited context on the project. Its
+> *numbers* are a considered starting point, not law. Take every "hard rule"
+> here with a grain of salt: the spacing scale is the owner's own example —
+> `2, 4, 6, 8, 12, 16, 24, 32` is a reasonable scale, not a sacred one, and the
+> same goes for the row heights, radii, type sizes and durations.
+>
+> **What is actually binding is the target**, surface by surface: the file tree
+> should read like IntelliJ's, the completion popup like IntelliJ's/Xcode's, and
+> so on. `references/` is the authority for that, and `design-principles.md`
+> carries the intent. Match the target using judgement; where a number here
+> fights what the reference or the real app actually needs, trust your eyes and
+> the reference, change the number, and say in your report what you changed and
+> why.
+>
+> **One thing here is not a matter of taste and does stand:** values belong in
+> `DesignSystem.swift` as named tokens rather than as literals scattered across
+> view files. That is maintainability, not aesthetics — it is what makes "make
+> the tree denser" one edit instead of forty that drift apart. Keep the
+> discipline; revise the values freely.
+
 Everything visual comes from `DesignSystem.swift`. **No raw numbers or colours
 at a call site, ever.** If you need a value that isn't here, add a named token
 rather than a literal.

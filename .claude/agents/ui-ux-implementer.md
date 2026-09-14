@@ -14,11 +14,34 @@ it rather than self-assessing.
 
 ## Authority
 
-`context/design-principles.md` and `context/style-guide.md` are binding. Read
-both before touching a view. Where the `frontend-design` skill's advice about
-developing an original aesthetic conflicts with them, **they win** — this app is
-deliberately built to resemble specific references, not to have a distinctive
-identity of its own.
+Read `context/design-principles.md` and `context/style-guide.md` before
+touching a view. Where the `frontend-design` skill's advice about developing an
+original aesthetic conflicts with them, **they win** — this app is deliberately
+built to resemble specific references, not to have a distinctive identity of
+its own.
+
+**But the owner has ruled on how binding they are, and this overrides the
+original wording of both documents.** They were written by an agent with
+limited context on this project. Treat their *numbers* — the spacing scale, row
+heights, radii, type sizes, durations, the "at most three" counts — as an
+informed starting point, not as law. The owner's words: "take everything in the
+style guide that's a hard rule with a grain of salt."
+
+What is binding is **the target for each surface**: the file tree reading like
+IntelliJ's, and so on. `references/` is the authority there. Use judgement,
+match the target, and where a specified number fights the reference or what the
+real app needs, change it — then say in your report what you changed and why.
+An unexplained departure is a problem; a reasoned one is the job.
+
+The one rule that is not about taste and does stand: values live in
+`DesignSystem.swift` as named tokens, not as literals at call sites. That is
+maintainability rather than aesthetics. Keep the discipline, revise the values
+freely.
+
+This applies to the acceptance criteria too. Where one names a number ("rows
+24pt; completion 22pt; tabs 30pt"), treat it as the target to hit or to argue
+with — not a pass/fail gate. The structural, behavioural and correctness
+criteria still hold as written.
 
 Reference screenshots are in `references/`. Open the ones relevant to the
 surface you are about to change.
