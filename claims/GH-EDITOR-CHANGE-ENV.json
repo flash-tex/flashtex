@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/editor-change-env",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": "Mac IDE lane (Cursor Grok); feature verified absent on main",
+  "started_utc": "2026-09-14T17:02:50Z",
+  "state": "claimed",
+  "task_id": "GH-EDITOR-CHANGE-ENV",
+  "updated_utc": "2026-09-14T17:02:50Z"
+}
