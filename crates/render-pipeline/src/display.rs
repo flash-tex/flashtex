@@ -450,14 +450,12 @@ impl Diagnostic {
 
     /// Converts a compiler diagnostic; `paths` is indexed by `DocumentId`.
     pub fn from_compiler(d: &flashtex_compiler::diagnostics::Diagnostic, paths: &[&str]) -> Diagnostic {
-        use flashtex_compiler::diagnostics::{default_code, Severity as S};
+        use flashtex_compiler::diagnostics::Severity as S;
         Diagnostic {
-            code: d
-                .code
-                .or_else(|| default_code(&d.message))
-                .map(|c| c.as_str())
-                .unwrap_or("compiler")
-                .into(),
+            // Exactly the compiler's own `code`: its constructors already apply
+            // `default_code`, and a `None` is deliberate (request validation), so
+            // re-deriving one here would disagree with the compiler's runtime-v1 reply.
+            code: d.code.map_or("compiler", |c| c.as_str()).into(),
             message: d.message.clone(),
             severity: match d.severity {
                 S::Error => Severity::Error,
@@ -1414,7 +1412,9 @@ mod tests {
             code: None,
             suggestion: None,
         };
-        assert_eq!(Diagnostic::from_compiler(&no_explicit, &[]).code, "unsupported_feature");
+        // No code on the compiler side stays uncoded, even when the wording would
+        // match `default_code`: the compiler omitted it on purpose.
+        assert_eq!(Diagnostic::from_compiler(&no_explicit, &[]).code, "compiler");
 
         let none = C {
             severity: CS::Error,
