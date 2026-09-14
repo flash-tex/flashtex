@@ -965,10 +965,16 @@ pub fn adapt_cached(
     style.cmex_designs = crate::style::cmex_designs(&parsed.packages, amsmath_cmex10);
     #[cfg(feature = "amsmath-inline")]
     let mathtools = parsed.packages.iter().any(|p| p == "mathtools");
-    // `\parskip` from apply_preamble_lengths (source order). Stretch is
-    // copied in the follow-up glue fix; a plain `\setlength` stays rigid.
+    // `\parskip` from apply_preamble_lengths: `\addtolength` keeps class
+    // stretch; a `\setlength` with plus/minus keeps those; a plain value
+    // is a fixed skip.
     if assigned.parskip {
-        style.parskip = crate::style::Skip::fixed(crate::style::frame_pt(resolved.params.parskip.natural));
+        let g = resolved.params.parskip;
+        style.parskip = crate::style::Skip::new(
+            crate::style::frame_pt(g.natural),
+            crate::style::frame_pt(g.stretch),
+            crate::style::frame_pt(g.shrink),
+        );
     }
     let secnumdepth = counter(source, "secnumdepth").unwrap_or(options.default_secnumdepth);
     style.nfss = crate::nfss::Scheme::for_document(&parsed.packages, t1_encoding(source));
@@ -2568,7 +2574,7 @@ fn apply_preamble_lengths(
                 if page && last_geometry.is_some_and(|g| at < g) {
                     continue;
                 }
-                if let Some(v) = parse_assignment_dimen(&raw, &params, size, em_ex) {
+                if let Some(v) = parse_assignment_glue(&raw, &params, size, em_ex) {
                     assign_param(&mut params, &target, v, name == "addtolength");
                     assigned.parindent |= target == "parindent";
                     assigned.parskip |= target == "parskip";
@@ -2587,7 +2593,7 @@ fn apply_preamble_lengths(
             continue;
         }
         if let Some(raw) = read_assignment_dimen(source, after_name) {
-            if let Some(v) = parse_assignment_dimen(&raw, &params, size, em_ex) {
+            if let Some(v) = parse_assignment_glue(&raw, &params, size, em_ex) {
                 assign_param(&mut params, name, v, false);
                 assigned.parindent |= name == "parindent";
                 assigned.parskip |= name == "parskip";
@@ -2742,6 +2748,20 @@ fn read_assignment_dimen(source: &str, mut i: usize) -> Option<String> {
         i += 1;
         i = skip_ws(source, i);
     }
+    i = read_one_dimen(source, i)?;
+    loop {
+        let j = skip_ws(source, i);
+        if let Some(rest) = keyword_at(source, j, "plus").or_else(|| keyword_at(source, j, "minus")) {
+            i = read_one_dimen(source, skip_ws(source, rest))?;
+        } else {
+            break;
+        }
+    }
+    Some(source[start..i].to_string())
+}
+
+fn read_one_dimen(source: &str, mut i: usize) -> Option<usize> {
+    let b = source.as_bytes();
     if i < b.len() && (b[i] == b'-' || b[i] == b'+') {
         i += 1;
     }
@@ -2750,7 +2770,7 @@ fn read_assignment_dimen(source: &str, mut i: usize) -> Option<String> {
         while i < b.len() && b[i].is_ascii_alphabetic() {
             i += 1;
         }
-        return Some(source[start..i].to_string());
+        return Some(i);
     }
     let num = i;
     while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'.') {
@@ -2764,7 +2784,7 @@ fn read_assignment_dimen(source: &str, mut i: usize) -> Option<String> {
         while i < b.len() && b[i].is_ascii_alphabetic() {
             i += 1;
         }
-        return Some(source[start..i].to_string());
+        return Some(i);
     }
     let unit = i;
     while i < b.len() && b[i].is_ascii_alphabetic() {
@@ -2773,7 +2793,71 @@ fn read_assignment_dimen(source: &str, mut i: usize) -> Option<String> {
     if i == unit {
         return None;
     }
-    Some(source[start..i].to_string())
+    Some(i)
+}
+
+fn keyword_at(source: &str, i: usize, kw: &str) -> Option<usize> {
+    if source[i..].starts_with(kw) {
+        let after = i + kw.len();
+        let b = source.as_bytes();
+        if after == b.len() || b[after].is_ascii_whitespace() || matches!(b[after], b'-' | b'+' | b'.' | b'\\') || b[after].is_ascii_digit()
+        {
+            return Some(after);
+        }
+    }
+    None
+}
+
+fn parse_assignment_glue(
+    raw: &str,
+    params: &PageParams,
+    size: u32,
+    em_ex: Option<(f64, f64)>,
+) -> Option<Glue> {
+    let s = raw.trim().trim_start_matches('=').trim();
+    let (natural_s, stretch_s, shrink_s) = split_skip_spec(s);
+    let natural = parse_assignment_dimen(natural_s, params, size, em_ex)?;
+    let mut g = Glue::fixed(natural);
+    if let Some(p) = stretch_s {
+        g.stretch = parse_assignment_dimen(p, params, size, em_ex)?;
+    }
+    if let Some(m) = shrink_s {
+        g.shrink = parse_assignment_dimen(m, params, size, em_ex)?;
+    }
+    Some(g)
+}
+
+fn split_skip_spec(s: &str) -> (&str, Option<&str>, Option<&str>) {
+    let plus = skip_keyword_index(s, "plus");
+    let minus = skip_keyword_index(s, "minus");
+    let (natural_end, stretch, shrink) = match (plus, minus) {
+        (Some(p), Some(m)) if p < m => (p, Some(s[p + 4..m].trim()), Some(s[m + 5..].trim())),
+        (Some(p), Some(m)) => (m, Some(s[p + 4..].trim()), Some(s[m + 5..p].trim())),
+        (Some(p), None) => (p, Some(s[p + 4..].trim()), None),
+        (None, Some(m)) => (m, None, Some(s[m + 5..].trim())),
+        (None, None) => return (s, None, None),
+    };
+    (s[..natural_end].trim(), stretch.filter(|t| !t.is_empty()), shrink.filter(|t| !t.is_empty()))
+}
+
+fn skip_keyword_index(s: &str, kw: &str) -> Option<usize> {
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i + kw.len() <= b.len() {
+        if s[i..].starts_with(kw) {
+            let before = i == 0 || b[i - 1].is_ascii_whitespace();
+            let after = i + kw.len();
+            let after_ok = after == b.len()
+                || b[after].is_ascii_whitespace()
+                || matches!(b[after], b'-' | b'+' | b'.' | b'\\')
+                || b[after].is_ascii_digit();
+            if before && after_ok {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
 }
 
 fn parse_assignment_dimen(
@@ -2828,7 +2912,17 @@ fn param_length(p: &PageParams, name: &str) -> Option<Sp> {
     })
 }
 
-fn assign_param(p: &mut PageParams, name: &str, v: Sp, add: bool) {
+fn assign_param(p: &mut PageParams, name: &str, v: Glue, add: bool) {
+    if name == "parskip" {
+        if add {
+            p.parskip.natural += v.natural;
+            p.parskip.stretch += v.stretch;
+            p.parskip.shrink += v.shrink;
+        } else {
+            p.parskip = v;
+        }
+        return;
+    }
     let slot = match name {
         "paperwidth" => &mut p.paperwidth,
         "paperheight" => &mut p.paperheight,
@@ -2845,20 +2939,12 @@ fn assign_param(p: &mut PageParams, name: &str, v: Sp, add: bool) {
         "columnsep" => &mut p.columnsep,
         "parindent" => &mut p.parindent,
         "columnseprule" => &mut p.columnseprule,
-        "parskip" => {
-            if add {
-                p.parskip.natural += v;
-            } else {
-                p.parskip = Glue::fixed(v);
-            }
-            return;
-        }
         _ => return,
     };
     if add {
-        *slot += v;
+        *slot += v.natural;
     } else {
-        *slot = v;
+        *slot = v.natural;
     }
 }
 
@@ -6093,6 +6179,21 @@ mod tests {
             "stretch {}, want class plus 1pt",
             skip.stretch
         );
+        let with_plus = adapted(
+            "\\documentclass{article}\\setlength{\\parskip}{6pt plus 2pt minus 1pt}\\begin{document}x\\end{document}",
+        )
+        .style
+        .parskip;
+        assert!((with_plus.natural - 6.0).abs() < 1e-6);
+        assert!((with_plus.stretch - 2.0).abs() < 1e-6);
+        assert!((with_plus.shrink - 1.0).abs() < 1e-6);
+        let plain = adapted(
+            "\\documentclass{article}\\setlength{\\parskip}{6pt}\\begin{document}x\\end{document}",
+        )
+        .style
+        .parskip;
+        assert!((plain.natural - 6.0).abs() < 1e-6);
+        assert!(plain.stretch.abs() < 1e-9, "plain setlength is a fixed skip");
     }
 
     /// Shorthand for an item list: `W` word, `S` space, `F` fill, `Q` quad.
