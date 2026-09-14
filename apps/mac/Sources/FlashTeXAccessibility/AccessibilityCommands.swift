@@ -155,11 +155,11 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          description: "Undoes the last edit, including an approved capture insertion.")
         case .commandPalette:
             return Entry(command: self, title: "Command palette", shortcuts: ["⌘⇧P"], menu: "View",
-                         description: "Opens a searchable list of every command in this table with its menu and shortcut; type to filter, ↑/↓ choose, Return runs it, Esc closes. Editor keys and the preview click are listed as hints only.",
+                         description: "Opens the palette: scope tabs for Files, Sections, Labels, Citations and every command in this table with its menu and shortcut; type to filter, Tab cycles scopes, ↑/↓ choose, Return opens or runs, Esc closes. Editor keys and the preview click are listed as hints only.",
                          menuItem: "Command Palette…")
         case .toggleProblems:
             return Entry(command: self, title: "Toggle Problems panel", shortcuts: ["⌘⇧M"], menu: "View",
-                         description: "Shows or hides the Problems panel under the editor and preview: the grouped diagnostics list with a severity filter, jump, explanation lines and Fix…; the sidebar's Problems rows and the status bar counts open it too.",
+                         description: "Shows or hides the Problems panel under the editor and preview: the grouped diagnostics list with a severity filter, jump, in-row detail and Fix…; the rail's Problems toggle and the status bar counts open it too.",
                          menuItem: "Toggle Problems")
         case .zoomIn:
             return Entry(command: self, title: "Zoom in preview", shortcuts: ["⌘="], menu: "View",
@@ -440,7 +440,7 @@ public enum FocusOrder {
              rationale: "Editing is the primary task; the caret drives caret sync, diagnostics at caret, and every Navigate command.",
              container: "EditorPane", sourceMarker: "SourceEditorView("),
         Pane(name: "Capture bar",
-             contents: "Pin insertion point, the pinned anchor, and the review button for queued proposals; one group whose value reads the anchor and proposal count.",
+             contents: "Pin insertion point, the pinned anchor, and the review button for queued proposals; one group whose value reads the anchor and proposal count. Present once the capture flow is in play (an anchor pinned, proposals queued, or the Captures inspector open); absent at rest.",
              rationale: "Directly under the editor because pinning starts from the caret; the bar's value is what a capture proposal will insert against.",
              container: "EditorPane", sourceMarker: "CaptureBar()"),
         Pane(name: "Bridge bar",
