@@ -240,6 +240,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("Huge", "", "size declaration from the class size table"),
     ("par", "", "ends the paragraph"),
     ("hfill", "", "infinite-stretch horizontal glue"),
+    ("hrulefill", "", "\\hfill filled with a 0.4pt baseline rule (latex.ltx \\leaders\\hrule\\hfill)"),
+    ("dotfill", "", "\\hfill filled with dots in 0.44em boxes, centred (latex.ltx \\cleaders)"),
     ("hfil", "", "infinite-stretch horizontal glue (same order as \\hfill)"),
     ("hspace", "{dimension}", "fixed horizontal space; starred form identical"),
     ("quad", "", "1em of horizontal space"),

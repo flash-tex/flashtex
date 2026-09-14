@@ -59,6 +59,19 @@ pub struct SourceDocument<'a> {
     pub text: &'a str,
 }
 
+/// The material a fill's glue is filled with. latex.ltx:
+/// `\def\hrulefill{\leavevmode\leaders\hrule\hfill\kern\z@}` and
+/// `\def\dotfill{\leavevmode\cleaders\hb@xt@.44em{\hss.\hss}\hfill\kern\z@}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FillLeader {
+    #[default]
+    None,
+    /// A 0.4pt rule on the baseline (`\hrule` in horizontal leaders).
+    Rule,
+    /// Periods centred in 0.44em boxes, the boxes centred in the glue (`\cleaders`).
+    Dots,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inline {
     Text {
@@ -130,6 +143,9 @@ pub enum Inline {
     /// simplification. See `layout::LayoutCursor::resolve_hfill`.
     HFill {
         span: Span,
+        /// What fills the glue: nothing (`\hfill`), a rule (`\hrulefill`)
+        /// or dots (`\dotfill`).
+        leader: FillLeader,
     },
     /// `\hspace{<dimen>}`/`\hspace*{<dimen>}`: a fixed, non-stretching space.
     /// `pt` is already converted (see `parse_dimen_pt`). Real TeX also lets
@@ -692,6 +708,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "href",
     "nolinkurl",
     "hfill",
+    "hrulefill",
+    "dotfill",
     "hfil",
     "hspace",
     "footnote",
@@ -1925,7 +1943,9 @@ impl P<'_> {
                 }
             }
             _ if style_declaration(name) => self.style = apply_style(self.style, name),
-            "hfill" | "hfil" => para.push(Inline::HFill { span }),
+            "hfill" | "hfil" => para.push(Inline::HFill { span, leader: FillLeader::None }),
+            "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule }),
+            "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots }),
             "footnote" | "footnotemark" | "footnotetext" => self.footnote(name, span, para),
             // `\linebreak[n]`/`\nolinebreak[n]`: real TeX's 0-4 priority only
             // ever hints a badness-based line-breaking algorithm this greedy
@@ -3049,7 +3069,7 @@ impl P<'_> {
         } else if environment == "figure" || self.theorems.contains_key(&environment) {
             self.flush_paragraph(blocks, para);
         } else if environment == "proof" {
-            para.push(Inline::HFill { span });
+            para.push(Inline::HFill { span, leader: FillLeader::None });
             para.push(Inline::Text {
                 text: "∎".to_string(),
                 span,
@@ -4523,6 +4543,13 @@ impl P<'_> {
                 TokenKind::Command(name) if name == "hfill" || name == "hfil" => {
                     content.push(Inline::HFill {
                         span: input.token.span,
+                        leader: FillLeader::None,
+                    })
+                }
+                TokenKind::Command(name) if name == "hrulefill" || name == "dotfill" => {
+                    content.push(Inline::HFill {
+                        span: input.token.span,
+                        leader: if name == "hrulefill" { FillLeader::Rule } else { FillLeader::Dots },
                     })
                 }
                 TokenKind::Verb { text, starred, .. } => content.push(Inline::Verbatim {

@@ -12,7 +12,7 @@ use crate::bib;
 use crate::diagnostics::Diagnostic;
 use crate::export::{self, ExportFont};
 use crate::math::{self, MathBox};
-use crate::parser::{
+use crate::parser::{FillLeader, 
     Block, FontSizeLevel, Inline, ListLeftMargin, MathRow, ParagraphStyle, TextFamily, TextStyle,
 };
 use crate::Span;
@@ -305,6 +305,61 @@ pub(crate) fn shaped_width(
     }
 }
 
+/// A pending `\hfill` on the current line (see `LayoutCursor::resolve_hfill`).
+#[derive(Debug, Clone, Copy)]
+struct LineFill {
+    /// Index of the first item after the fill.
+    boundary: usize,
+    /// Where the content before the fill ended.
+    x: f64,
+    leader: FillLeader,
+    size: f64,
+    font: Font,
+    span: Span,
+}
+
+/// `\hrule` thickness in horizontal leaders (TeX's default rule height).
+const LEADER_RULE_PT: f64 = 0.4;
+
+/// The items that draw `fill`'s leader across `width` points from `start`.
+fn leader_items(fill: &LineFill, start: f64, width: f64, baseline: f64) -> Vec<TextItem> {
+    match fill.leader {
+        FillLeader::None => Vec::new(),
+        FillLeader::Rule => vec![TextItem {
+            text: math::FRACTION_RULE_CHAR.to_string(),
+            x_pt: round2(start),
+            baseline_y_pt: round2(baseline),
+            font_size_pt: fill.size,
+            span: fill.span,
+            font: Font::TimesRoman,
+            rule: Some(RuleGeometry {
+                y_pt: round2(baseline - LEADER_RULE_PT),
+                width_pt: round2(width),
+                height_pt: LEADER_RULE_PT,
+            }),
+        }],
+        FillLeader::Dots => {
+            // `\cleaders\hb@xt@.44em{\hss.\hss}`: whole boxes only, the
+            // leftover split evenly before the first and after the last.
+            let box_width = 0.44 * fill.size;
+            let count = (width / box_width).floor().max(0.0) as usize;
+            let offset = (width - count as f64 * box_width) / 2.0;
+            let dot = text_width(".", fill.size, fill.font);
+            (0..count)
+                .map(|i| TextItem {
+                    text: ".".to_string(),
+                    x_pt: round2(start + offset + i as f64 * box_width + (box_width - dot) / 2.0),
+                    baseline_y_pt: round2(baseline),
+                    font_size_pt: fill.size,
+                    span: fill.span,
+                    font: fill.font,
+                    rule: None,
+                })
+                .collect()
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextItem {
     pub text: String,
@@ -452,7 +507,7 @@ pub struct LayoutCursor {
     content_end: f64,
     /// Page-item-index boundaries recorded by `mark_hfill` for the current
     /// line, resolved (and cleared) by `resolve_hfill` when the line closes.
-    line_fills: Vec<usize>,
+    line_fills: Vec<LineFill>,
     /// Inter-word spaces on the current line as (page-item index of the item
     /// after the space, natural width), consumed by `justify_line` when the
     /// line wraps and cleared whenever a line or block ends.
@@ -650,9 +705,9 @@ impl LayoutCursor {
     /// Records an `\hfill`/`\hfil` mark at the current position on the line
     /// being built. `resolve_hfill` turns this into an actual shift once the
     /// line's full width is known.
-    fn mark_hfill(&mut self) {
+    fn mark_hfill(&mut self, leader: FillLeader, size: f64, font: Font, span: Span) {
         let boundary = self.pages.last().expect("at least one page").items.len();
-        self.line_fills.push(boundary);
+        self.line_fills.push(LineFill { boundary, x: self.content_end, leader, size, font, span });
     }
 
     /// `\hspace{<dimen>}`/`\hspace*`: a fixed space with no visible glyph.
@@ -676,23 +731,33 @@ impl LayoutCursor {
         if self.line_fills.is_empty() {
             return;
         }
-        let boundaries = std::mem::take(&mut self.line_fills);
+        let fills = std::mem::take(&mut self.line_fills);
         let slack = (self.right_edge() - self.content_end).max(0.0);
         if slack <= 0.0 {
             return;
         }
-        let per_fill = slack / boundaries.len() as f64;
+        let per_fill = slack / fills.len() as f64;
         let Some(page) = self.pages.last_mut() else {
             return;
         };
         let mut shift = 0.0;
-        let mut boundaries = boundaries.into_iter().peekable();
+        let mut boundaries = fills.iter().map(|fill| fill.boundary).peekable();
         for (index, item) in page.items.iter_mut().enumerate().skip(self.line_start) {
             while boundaries.peek().is_some_and(|&boundary| boundary <= index) {
                 boundaries.next();
                 shift += per_fill;
             }
             item.x_pt = round2(item.x_pt + shift);
+        }
+        // Leaders fill each fill's share of the slack. The k-th fill starts
+        // where its content ended plus the k fills before it; insert from the
+        // last so earlier boundaries stay valid.
+        let baseline = self.y;
+        for (k, fill) in fills.iter().enumerate().rev() {
+            let start = fill.x + k as f64 * per_fill;
+            let drawn = leader_items(fill, start, per_fill, baseline);
+            let at = fill.boundary.min(page.items.len());
+            page.items.splice(at..at, drawn);
         }
     }
 
@@ -2211,7 +2276,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     *space_before,
                 ),
             },
-            Inline::HFill { .. } => c.mark_hfill(),
+            Inline::HFill { leader, span } => c.mark_hfill(*leader, size, font, *span),
             Inline::HSpace { pt, .. } => c.hspace(*pt),
             Inline::Footnote {
                 number,
