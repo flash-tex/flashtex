@@ -1603,18 +1603,34 @@ impl LayoutCursor {
                 // A rule has no depth: end its line without adding a text line.
                 self.newline(0.0);
             }
-            Block::Verbatim { lines, .. } => {
+            Block::Verbatim { lines, style, .. } => {
                 self.x = self.left_edge();
                 self.content_end = self.x;
+                // The size declaration in force at `\begin{verbatim}`, as for
+                // `Inline::Verbatim`; `body_size` without one. It sets the
+                // body's own baseline-to-baseline distance too, which is what
+                // `\small\begin{verbatim}` does in real LaTeX. The vertical
+                // gap *before* the block (`VERBATIM_TOPSEP_PT`, resolved in
+                // the pass above) still uses the document body size; scaling
+                // `\topsep` with the declaration is a separate change.
+                let verbatim_size = style.size.map_or(body_size, |level| {
+                    size_declaration_pt(level, self.constraints.font_size_pt)
+                });
                 for (index, line) in lines.iter().enumerate() {
                     // One `TextItem` per source line, never split across a
                     // `place` call, so the measure-overflow check in `place`
                     // (only triggered once something already sits on the
                     // line) never wraps it — long lines simply overflow the
                     // margin, exactly like real LaTeX's own verbatim.
-                    self.place(line.text.clone(), body_size, line.span, Font::Courier, true);
+                    self.place(
+                        line.text.clone(),
+                        verbatim_size,
+                        line.span,
+                        Font::Courier,
+                        true,
+                    );
                     if index + 1 < lines.len() {
-                        self.newline(body_size);
+                        self.newline(verbatim_size);
                     }
                 }
             }
@@ -2227,11 +2243,26 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 let b = crate::tabular::layout(c, table, table_size);
                 c.place_math(b, size, table.space_before);
             }
+            // `\verb` sets its own `\ttfamily`, so only the size declaration
+            // in force is read off the style — resolved against the body size
+            // exactly as `Inline::Text` above does.
             Inline::Verbatim {
                 text,
                 span,
+                style,
                 space_before,
-            } => c.place(text.clone(), size, *span, Font::Courier, *space_before),
+            } => {
+                let verbatim_size = style.size.map_or(size, |level| {
+                    size_declaration_pt(level, c.constraints.font_size_pt)
+                });
+                c.place(
+                    text.clone(),
+                    verbatim_size,
+                    *span,
+                    Font::Courier,
+                    *space_before,
+                )
+            }
             // The Core 14 layout has no box model: the content is set inline.
             Inline::ColorBox(b) => emit(c, &b.content, size, font),
             // This Core 14 layout reads no image files and has no transformed

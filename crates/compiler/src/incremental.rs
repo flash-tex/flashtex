@@ -495,7 +495,11 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
         Block::VSpace { pt: _ } => Some(()),
         Block::Rule { span } => map_span(span, changes, deltas),
         Block::PageBreak => Some(()),
-        Block::Verbatim { lines, span } => {
+        Block::Verbatim {
+            lines,
+            span,
+            style: _,
+        } => {
             for VerbatimLine { text: _, span } in lines.iter_mut() {
                 map_span(span, changes, deltas)?;
             }
@@ -616,6 +620,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::Verbatim {
                 text: _,
                 span,
+                style: _,
                 space_before: _,
             } => map_span(span, changes, deltas)?,
             Inline::ColorBox(b) => {

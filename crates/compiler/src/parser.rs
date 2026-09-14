@@ -192,6 +192,14 @@ pub enum Inline {
     Verbatim {
         text: String,
         span: Span,
+        /// The declaration in force where the `\verb` was read, carried the
+        /// same way and with the same group/environment scoping as
+        /// `Inline::Text::style`. `\verb` sets its own `\ttfamily`, so the
+        /// family here is the surrounding one and a consumer ignores it; the
+        /// size level is the part that matters (`{\small \verb|x|}` is
+        /// CMTT9, not CMTT10) and it is not derivable from the source by a
+        /// consumer that has stopped scanning size declarations.
+        style: TextStyle,
         /// See `Inline::Text::space_before`.
         space_before: bool,
     },
@@ -327,6 +335,13 @@ pub enum Block {
     Verbatim {
         lines: Vec<VerbatimLine>,
         span: Span,
+        /// The declaration in force where `\begin{verbatim}` was read, as on
+        /// [`Inline::Verbatim`]. Both LaTeX spellings reach it through the
+        /// same style stack: the declaration form `{\small\begin{verbatim}`
+        /// and the environment form `\begin{small}\begin{verbatim}`, which
+        /// is the kernel's `\begin{<declaration>}` (latex.ltx expands
+        /// `\begin{small}` to `\small` inside the environment's group).
+        style: TextStyle,
     },
     /// `\tableofcontents`: the article.cls contents list, built from the
     /// numbered headings of the previous layout pass (see
@@ -686,6 +701,12 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "rotatebox",
     "reflectbox",
     "graphicspath",
+    "lstset",
+    "lstdefinestyle",
+    "lstdefinelanguage",
+    "lstinputlisting",
+    "lstMakeShortInline",
+    "lstDeleteShortInline",
     "url",
     "href",
     "nolinkurl",
@@ -1482,6 +1503,7 @@ impl P<'_> {
                         para.push(Inline::Verbatim {
                             text: verbatim_display(&text, starred),
                             span: tok.span,
+                            style: self.style,
                             space_before,
                         });
                     }
@@ -1621,6 +1643,62 @@ impl P<'_> {
             // consumer that loads image files (see `crate::graphics`).
             "graphicspath" => {
                 let _ = self.required_group(name, span);
+            }
+            // listings' configuration commands. None of them contributes a
+            // single character to the page, so leaving them to
+            // `unsupported`'s recovery was wrong twice over: the brace group
+            // fell through to the paragraph, so `\lstset{basicstyle=\ttfamily}`
+            // printed "basicstyle=" *and* switched the body font for the rest
+            // of the group. They are consumed here in the same shape as
+            // `\graphicspath` above — the key/value lists are re-read from the
+            // source by the listings renderer (the same arrangement the lexer
+            // already documents for `\lstinline[<keys>]`), so occupying the
+            // source span and emitting nothing loses nothing.
+            //
+            // `\lstset{<key=value list>}` (listings.sty).
+            "lstset" => {
+                let _ = self.required_group(name, span);
+            }
+            "lstdefinestyle" | "lstdefinelanguage" => self.listings_driver_definition(name, span),
+            // `\lstinputlisting[<keys>]{<file>}` typesets a file's lines as a
+            // listing. There is no listing renderer, so the lines are not set
+            // — but the file name is a parameter, never prose, and must not
+            // reach the page. Both arguments are consumed and the missing
+            // content is reported instead of leaked.
+            "lstinputlisting" => {
+                let _ = self.bracket_argument();
+                let (_, argument_span) = self.required_group(name, span);
+                self.diags.push(Diagnostic::warning(
+                    "\\lstinputlisting is recognised but the listing is not typeset; the listings rendering engine is not implemented",
+                    Some(span.merge(argument_span)),
+                    Some("consumed the command and its file argument; no listing was set".into()),
+                ));
+            }
+            // `\lstMakeShortInline[<keys>]{<char>}` makes <char> an active
+            // character delimiting an inline listing. This compiler tokenizes
+            // the whole document once, with no mid-document catcode change
+            // (see `required_url_argument`), so the shorthand is not
+            // installed and text between two such characters stays ordinary
+            // prose. The declaration itself sets nothing: consume it and
+            // report the gap once, where it starts.
+            "lstMakeShortInline" => {
+                let _ = self.bracket_argument();
+                let _ = self.command_or_group(name, span);
+                self.diags.push(Diagnostic::warning(
+                    "\\lstMakeShortInline is recognised but short inline listings are not implemented",
+                    Some(span),
+                    Some(
+                        "consumed the declaration; text between the shorthand characters is typeset as ordinary text"
+                            .into(),
+                    ),
+                ));
+            }
+            // `\lstDeleteShortInline{<char>}` undoes `\lstMakeShortInline`.
+            // The shorthand was never installed, so restoring the ordinary
+            // meaning of <char> is exactly the state this compiler is already
+            // in: a real no-op, with nothing left to report.
+            "lstDeleteShortInline" => {
+                let _ = self.command_or_group(name, span);
             }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
@@ -2767,6 +2845,7 @@ impl P<'_> {
     ) {
         let (tokens, argument_span) = self.required_group(kind, span);
         let environment = token_text(&tokens).trim().to_string();
+        let declaration_environment = self.in_body && style_declaration(&environment);
         if kind == "begin" {
             if matches!(
                 environment.as_str(),
@@ -2881,6 +2960,9 @@ impl P<'_> {
                 // `\mult@@cols` starts with `\par`.
                 self.flush_paragraph(blocks, para);
                 self.multicols_arguments(span.merge(argument_span), &environment);
+            } else if declaration_environment {
+                // Handled just below, once `env_styles` has recorded the
+                // style to restore at the matching \end.
             } else if self.in_body {
                 self.diags.push(Diagnostic::environment_warning(
                     &environment,
@@ -2895,6 +2977,18 @@ impl P<'_> {
             self.env_stack
                 .push((environment.clone(), span.merge(argument_span)));
             self.env_styles.push(self.style);
+            // latex.ltx's \begin opens a group and runs the macro named by
+            // its argument; \end runs \end<name>, undefined for a font
+            // declaration and so \relax, then closes the group. A font or
+            // size declaration used as an environment is therefore exactly
+            // the declaration, scoped to the environment's group -- the
+            // idiom \begin{small} ... \end{small}. The name is not an
+            // environment of its own: it is the declaration already in the
+            // command inventory, reached through the kernel's generic rule,
+            // which is why it adds no environment entry.
+            if declaration_environment {
+                self.style = apply_style(self.style, &environment);
+            }
             if self.in_body {
                 if let Some(theorem) = self.theorems.get(&environment).cloned() {
                     self.begin_theorem(&theorem, span, para);
@@ -3343,6 +3437,7 @@ impl P<'_> {
         blocks.push(Block::Verbatim {
             lines,
             span: Span::in_document(document, open.start, tag_end),
+            style: self.style,
         });
         self.finish_block_dependencies();
     }
@@ -4492,6 +4587,7 @@ impl P<'_> {
                 TokenKind::Verb { text, starred, .. } => content.push(Inline::Verbatim {
                     text: verbatim_display(text, *starred),
                     span: input.token.span,
+                    style,
                     space_before,
                 }),
                 TokenKind::Command(name)
@@ -4624,6 +4720,33 @@ impl P<'_> {
         let (raw, span, next) = siunitx_bracket_at(&self.t, self.i)?;
         self.i = next;
         Some((raw, span))
+    }
+
+    /// `\lstdefinestyle` and `\lstdefinelanguage`, which share one argument
+    /// grammar: lstmisc.sty defines both as `\lst@DefDriver ... \lstset`
+    /// (`\lst@DefStyle`, `\lst@DefLang`), and `\lst@DefDriver` (listings.sty
+    /// 294-319) reads
+    ///
+    /// ```text
+    /// [<dialect>]{<name>}([<base dialect>]{<base>})?{<key=value list>}[<aspects>]
+    /// ```
+    ///
+    /// Each optional part is an `\@ifnextchar[` lookahead in the package and
+    /// is a lookahead here too, so a bracket that really does follow the
+    /// definition is read the way listings reads it. `required_group` counts
+    /// brace depth, so `{\ttfamily\small}` and `literate={x}{y}1` inside the
+    /// key list are matched as one argument rather than ending it early.
+    ///
+    /// Nothing is typeset: the definition names a style or language for the
+    /// listings renderer, which re-reads the keys from the source.
+    fn listings_driver_definition(&mut self, name: &str, span: Span) {
+        let _ = self.bracket_argument();
+        let _ = self.required_group(name, span);
+        if self.bracket_argument().is_some() {
+            let _ = self.required_group(name, span);
+        }
+        let _ = self.required_group(name, span);
+        let _ = self.bracket_argument();
     }
 
     /// `\DeclareSIUnit\name` or `\DeclareSIUnit{\name}`: the unit's name.
@@ -7548,6 +7671,226 @@ mod tests {
         assert_eq!(lines[0].text, "print(1)");
     }
 
+    /// Body text a parse produced, in order, with each run's style.
+    fn body_runs(parsed: &Parsed) -> Vec<(String, TextStyle)> {
+        let mut out = Vec::new();
+        for block in &parsed.blocks {
+            let inlines: &[Inline] = match block {
+                Block::Paragraph(inlines) => inlines,
+                Block::Heading { content, .. } => content,
+                _ => continue,
+            };
+            for inline in inlines {
+                match inline {
+                    Inline::Text { text, style, .. } => out.push((text.clone(), *style)),
+                    Inline::Verbatim { text, .. } => {
+                        out.push((text.clone(), TextStyle::default()))
+                    }
+                    _ => {}
+                }
+            }
+        }
+        out
+    }
+
+    /// listings' configuration commands consume their arguments and set no
+    /// material, exactly as listings.sty does. Before this, `\lstset` reached
+    /// `unsupported`, whose recovery left the brace group to the paragraph:
+    /// `basicstyle=` was typeset as body text and the `\ttfamily` inside the
+    /// argument switched the body font for the rest of the group.
+    #[test]
+    fn listings_configuration_commands_consume_their_arguments_and_set_nothing() {
+        for source in [
+            r"\lstset{basicstyle=\ttfamily}Body.",
+            // Braces nest inside a value, so a naive scan to the first `}`
+            // would stop early and leak the rest.
+            r"\lstset{basicstyle={\ttfamily\small},columns=fixed}Body.",
+            // A comma inside braces is not a key separator, and `literate`
+            // takes a run of adjacent groups.
+            r"\lstset{literate={x}{y}1,morekeywords={a,b,c}}Body.",
+            r"\lstdefinestyle{mine}{basicstyle={\ttfamily\small}}Body.",
+            r"\lstdefinestyle[dialect]{mine}{numbers=left}Body.",
+            // `[base dialect]{base}` before the key list (listings.sty's
+            // `\lst@XDefDriver`), and the trailing aspect list.
+            r"\lstdefinelanguage{Mine}{keywords={a,b}}Body.",
+            r"\lstdefinelanguage[R]{Mine}[ANSI]{C}{morekeywords={a}}Body.",
+            r"\lstdefinelanguage{Mine}{keywords={a}}[keywords,comments]Body.",
+            r"\lstDeleteShortInline{|}Body.",
+        ] {
+            let parsed = parse(source);
+            assert!(
+                parsed.diagnostics.is_empty(),
+                "{source:?}: {:?}",
+                parsed.diagnostics
+            );
+            assert_eq!(
+                body_runs(&parsed),
+                vec![("Body.".to_string(), TextStyle::default())],
+                "{source:?}"
+            );
+        }
+    }
+
+    /// The same commands are preamble material too, so they must run before
+    /// the preamble catch-all rather than be reported as "not supported in
+    /// the document preamble".
+    #[test]
+    fn listings_configuration_is_accepted_in_the_preamble_and_in_the_body() {
+        let preamble = concat!(
+            "\\documentclass{article}\n\\usepackage{listings}\n",
+            "\\lstset{basicstyle={\\ttfamily\\small}}\n",
+            "\\lstdefinestyle{mine}{numbers=left}\n",
+            "\\begin{document}\nBody.\n\\end{document}\n"
+        );
+        let parsed = parse(preamble);
+        let listings: Vec<&Diagnostic> = parsed
+            .diagnostics
+            .iter()
+            .filter(|d| d.message.contains("lstset") || d.message.contains("lstdefinestyle"))
+            .collect();
+        assert!(listings.is_empty(), "{listings:?}");
+        assert_eq!(
+            body_runs(&parsed),
+            vec![("Body.".to_string(), TextStyle::default())]
+        );
+
+        let body = concat!(
+            "\\documentclass{article}\n\\begin{document}\n",
+            "\\lstset{basicstyle=\\ttfamily}\nBody.\n\\end{document}\n"
+        );
+        let parsed = parse(body);
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .all(|d| !d.message.contains("lstset")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        assert_eq!(
+            body_runs(&parsed),
+            vec![("Body.".to_string(), TextStyle::default())]
+        );
+    }
+
+    /// The fixture that measured the defect: the `\lstset` line sets nothing
+    /// and the three `\lstinline`s are unchanged.
+    #[test]
+    fn lstset_before_lstinline_sets_no_text_and_leaves_the_inline_listings_alone() {
+        let source = concat!(
+            "\\documentclass{article}\n\\usepackage{listings}\n\\begin{document}\n",
+            "\\lstset{basicstyle=\\ttfamily}\n",
+            "Inline code \\lstinline|x = a + b;| and \\lstinline{int y;} and \\lstinline!s -- t! in a paragraph\n",
+            "of ordinary text that wraps onto a second line so that line breaking is exercised too.\n",
+            "\\end{document}\n",
+        );
+        let parsed = parse(source);
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .all(|d| !d.message.contains("lstset")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks[0]);
+        };
+        let verbatim: Vec<&str> = inlines
+            .iter()
+            .filter_map(|i| match i {
+                Inline::Verbatim { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(verbatim, vec!["x = a + b;", "int y;", "s -- t"]);
+        let words: Vec<&str> = inlines
+            .iter()
+            .filter_map(|i| match i {
+                Inline::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(!words.iter().any(|w| w.contains("basicstyle")), "{words:?}");
+        assert_eq!(words.first(), Some(&"Inline"));
+        // Nothing in the argument escapes as a style either.
+        assert!(
+            inlines.iter().all(|i| !matches!(
+                i,
+                Inline::Text { style, .. } if style.family == TextFamily::Mono
+            )),
+            "{inlines:?}"
+        );
+    }
+
+    /// `\lstinputlisting` sets the file's lines in real listings. There is no
+    /// listing renderer here, so it sets nothing — but its file name is a
+    /// parameter and must never become prose, and the missing content is
+    /// reported rather than dropped silently.
+    #[test]
+    fn lstinputlisting_consumes_its_file_argument_and_reports_the_missing_listing() {
+        for source in [
+            r"\lstinputlisting{code/sample.py}Body.",
+            r"\lstinputlisting[language=Python,firstline=3]{code/sample.py}Body.",
+        ] {
+            let parsed = parse(source);
+            assert!(
+                parsed
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.message.contains("\\lstinputlisting is recognised")
+                        && d.severity == crate::diagnostics::Severity::Warning),
+                "{source:?}: {:?}",
+                parsed.diagnostics
+            );
+            assert_eq!(
+                body_runs(&parsed),
+                vec![("Body.".to_string(), TextStyle::default())],
+                "{source:?}"
+            );
+        }
+    }
+
+    /// `\lstMakeShortInline` installs a catcode shorthand this compiler does
+    /// not model; the declaration itself is consumed and the gap reported.
+    /// `\lstDeleteShortInline` restores the state this compiler is already
+    /// in, so it is a silent no-op (covered above).
+    #[test]
+    fn lst_make_short_inline_is_consumed_and_reported_once() {
+        for source in [
+            r"\lstMakeShortInline{|}Body.",
+            r"\lstMakeShortInline[basicstyle=\ttfamily]{|}Body.",
+        ] {
+            let parsed = parse(source);
+            assert!(
+                parsed
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.message.contains("short inline listings are not implemented")),
+                "{source:?}: {:?}",
+                parsed.diagnostics
+            );
+            assert_eq!(
+                body_runs(&parsed),
+                vec![("Body.".to_string(), TextStyle::default())],
+                "{source:?}"
+            );
+        }
+    }
+
+    /// `\lstnewenvironment` is deliberately NOT consumed: see the note beside
+    /// it in `vocabulary.rs`. It must still be classified as real LaTeX this
+    /// compiler does not implement, not as a typo.
+    #[test]
+    fn lstnewenvironment_is_a_known_unimplemented_command() {
+        assert!(crate::vocabulary::is_known_command("lstnewenvironment"));
+        let parsed = parse(r"\lstnewenvironment{code}{}{}");
+        assert!(parsed.diagnostics.iter().any(|d| {
+            d.message.contains("\\lstnewenvironment")
+                && d.code == Some(crate::diagnostics::DiagnosticCode::UnsupportedFeature)
+        }));
+    }
+
     #[test]
     fn lstlisting_without_options_has_no_diagnostic() {
         let source = "\\begin{lstlisting}\nplain\n\\end{lstlisting}";
@@ -7612,6 +7955,131 @@ mod tests {
             inlines.iter().any(|i| matches!(i, Inline::Verbatim { text, .. } if text == "x")),
             "{inlines:?}"
         );
+    }
+
+    /// The size declaration in force reaches `\verb`. `Inline::Verbatim`
+    /// used to carry only `{ text, span, space_before }`, so a consumer that
+    /// reads `TextStyle::size` off the compiler's inlines (rather than
+    /// re-scanning the source for size declarations) had no way to know that
+    /// `{\small \verb|x|}` is CMTT9 and not CMTT10.
+    #[test]
+    fn verb_carries_the_size_declaration_in_force() {
+        for (source, want) in [
+            (r"{\small \verb|small inline|}", Some(FontSizeLevel::Small)),
+            (
+                r"{\footnotesize\verb|fn|}",
+                Some(FontSizeLevel::FootnoteSize),
+            ),
+            (r"\verb|plain|", None),
+            // The declaration ends with the group, exactly like bold/italic.
+            (r"{\small x}\verb|after|", None),
+            (r"{\small \normalsize\verb|reset|}", None),
+            // The environment spelling of the same declaration.
+            (
+                "\\begin{small}\\verb|env|\\end{small}",
+                Some(FontSizeLevel::Small),
+            ),
+        ] {
+            let parsed = parse(source);
+            let verbatim: Vec<Option<FontSizeLevel>> = parsed
+                .blocks
+                .iter()
+                .filter_map(|b| match b {
+                    Block::Paragraph(inlines) => Some(inlines),
+                    _ => None,
+                })
+                .flatten()
+                .filter_map(|i| match i {
+                    Inline::Verbatim { style, .. } => Some(style.size),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(verbatim, vec![want], "{source:?}");
+        }
+    }
+
+    /// A `verbatim`/`lstlisting` body takes the declaration in force where
+    /// its `\begin` was read, in both LaTeX spellings: the declaration inside
+    /// a group, and the kernel's `\begin{<declaration>}` form. They must
+    /// agree.
+    #[test]
+    fn verbatim_and_lstlisting_blocks_carry_the_size_declaration_in_force() {
+        let body = |env: &str, open: &str, close: &str| {
+            format!("{open}\\begin{{{env}}}\nsmall verbatim\n\\end{{{env}}}{close}")
+        };
+        for env in ["verbatim", "verbatim*", "lstlisting"] {
+            for (open, close, want) in [
+                ("", "", None),
+                ("{\\small ", "}", Some(FontSizeLevel::Small)),
+                (
+                    "\\begin{small}",
+                    "\\end{small}",
+                    Some(FontSizeLevel::Small),
+                ),
+                (
+                    "\\begin{footnotesize}",
+                    "\\end{footnotesize}",
+                    Some(FontSizeLevel::FootnoteSize),
+                ),
+            ] {
+                let source = body(env, open, close);
+                let parsed = parse(&source);
+                let sizes: Vec<Option<FontSizeLevel>> = parsed
+                    .blocks
+                    .iter()
+                    .filter_map(|b| match b {
+                        Block::Verbatim { style, .. } => Some(style.size),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(sizes, vec![want], "{source:?}");
+            }
+        }
+    }
+
+    /// `\begin{small}` is latex.ltx's generic `\begin{<declaration>}`: the
+    /// declaration, scoped to the environment's group. It must not be
+    /// reported as an unimplemented environment, and `\end{small}` must
+    /// restore the outer style.
+    #[test]
+    fn a_font_declaration_used_as_an_environment_is_that_declaration() {
+        let parsed = parse("\\begin{small}inside\\end{small}outside");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let sizes: Vec<(&str, Option<FontSizeLevel>)> = parsed
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|i| match i {
+                Inline::Text { text, style, .. } => Some((text.as_str(), style.size)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            sizes,
+            vec![("inside", Some(FontSizeLevel::Small)), ("outside", None)]
+        );
+
+        // A face declaration works the same way.
+        let parsed = parse("\\begin{bfseries}b\\end{bfseries}n");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let bold: Vec<(&str, bool)> = parsed
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|i| match i {
+                Inline::Text { text, style, .. } => Some((text.as_str(), style.bold)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(bold, vec![("b", true), ("n", false)]);
     }
 
     #[test]
