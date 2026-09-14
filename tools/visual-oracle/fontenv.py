@@ -225,3 +225,23 @@ def add_font_arguments(parser, repo):
         help="metrics directories, colon separated; an exported "
              "FLASHTEX_TFM_DIRS takes precedence. Default: every directory "
              "under <fonts>/texmf that contains .tfm files")
+
+
+def resolve_dirs(fonts=None, tfm=None, default_fonts=None, base=None):
+    """Settle the two directory lists a harness will hand the renderer.
+
+    Precedence, highest first: an explicit command-line value, an exported
+    environment variable, then a derivation. For metrics the derivation is
+    `tfm_dirs_for` over the outline roots -- **never** a single hardcoded
+    directory. A hardcoded `texmf/fonts/tfm/public/lm` was the default in both
+    corpus harnesses; it dropped the bundled `jknappen/ec` metrics, so every
+    T1/`\\texttt` fixture was measured against substituted roman widths while
+    the run still reported success.
+
+    Returns `(font_dirs, tfm_dirs)` as colon-separated strings (either may be
+    empty when nothing could be found).
+    """
+    env = os.environ if base is None else base
+    font_dirs = split(fonts) or split(env.get("FLASHTEX_FONT_DIRS")) or split(default_fonts)
+    tfm_dirs = split(tfm) or split(env.get("FLASHTEX_TFM_DIRS")) or tfm_dirs_for(font_dirs)
+    return os.pathsep.join(font_dirs), os.pathsep.join(tfm_dirs)

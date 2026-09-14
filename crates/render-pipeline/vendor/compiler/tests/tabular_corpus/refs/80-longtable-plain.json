@@ -1,0 +1,101 @@
+{
+ "fixture": "80-longtable-plain.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/nixos.org)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "r1",
+    "x": 291.568,
+    "y_top": 106.022
+   },
+   {
+    "text": "a",
+    "x": 314.2518,
+    "y_top": 106.022
+   },
+   {
+    "text": "r2",
+    "x": 291.568,
+    "y_top": 120.468
+   },
+   {
+    "text": "b",
+    "x": 313.929,
+    "y_top": 120.468
+   },
+   {
+    "text": "r3",
+    "x": 291.568,
+    "y_top": 134.914
+   },
+   {
+    "text": "c",
+    "x": 314.5746,
+    "y_top": 134.914
+   },
+   {
+    "text": "r4",
+    "x": 291.568,
+    "y_top": 149.36
+   },
+   {
+    "text": "d",
+    "x": 313.929,
+    "y_top": 149.36
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 180.095
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 180.095
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 180.095
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 180.095
+   },
+   {
+    "text": "1",
+    "x": 303.073,
+    "y_top": 749.888
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  []
+ ]
+}
