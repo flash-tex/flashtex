@@ -1140,12 +1140,27 @@ mod project_root_tests {
         );
         let plain: Vec<String> = vec!["display-list-v2".into()];
         assert!(validate_reply_value(reply(serde_json::json!(both)), &r, &plain).is_err());
-        assert!(validate_reply_value(
-            reply(serde_json::json!(["display-list-v2-diagnostics"])),
-            &r,
-            &both
-        )
-        .is_err());
+        // Alone: pairing error, not the unknown-cap error.
+        assert_eq!(
+            validate_reply_value(
+                reply(serde_json::json!(["display-list-v2-diagnostics"])),
+                &r,
+                &both
+            )
+            .unwrap_err(),
+            "compiler accepted display-list-v2-diagnostics without display-list-v2"
+        );
+        // Unknown: still refused even when requested.
+        let unknown: Vec<String> = vec!["display-list-v2".into(), "not-a-capability".into()];
+        assert_eq!(
+            validate_reply_value(
+                reply(serde_json::json!(unknown)),
+                &r,
+                &unknown
+            )
+            .unwrap_err(),
+            "compiler accepted unknown or unrequested capability"
+        );
     }
 }
 

@@ -385,6 +385,44 @@ final class RenderingV2Tests: XCTestCase {
         XCTAssertEqual(fast.payload.diagnostics[1].help, d.help)
     }
 
+    /// The fast diagnostic reader used to skip unknown keys by ignoring the rest
+    /// of the object; a future key must not drop `suggestion` / `help`.
+    func testFastDiagnosticDecoderKeepsStructuredFieldsWhenUnknownKeysArePresent() throws {
+        var obj = try JSONSerialization.jsonObject(with: try Self.fixture("display-list-v2-diagnostics.json")) as! [String: Any]
+        var payload = obj["payload"] as! [String: Any]
+        var diags = payload["diagnostics"] as! [[String: Any]]
+        diags[1]["future_extra"] = ["nested": true]
+        payload["diagnostics"] = diags
+        obj["payload"] = payload
+        let data = Self.data(obj)
+        let fast = try RenderingV2Fast.envelope(data)
+        XCTAssertEqual(fast, try JSONDecoder().decode(RenderingV2.Envelope.self, from: data))
+        XCTAssertEqual(fast.payload.diagnostics[1].suggestion, "\\alpha")
+        XCTAssertEqual(fast.payload.diagnostics[1].help?.message, "did you mean \\alpha?")
+    }
+
+    /// `delta.rs` hashes `suggestion` only when it is `Some`; labels/notes/help
+    /// stay out of the header digest. Shared golden bytes are a follow-up.
+    func testHeaderDigestHashesSuggestionOnlyWhenPresent() throws {
+        let list = try RenderingV2.decode(try Self.fixture("display-list-v2-diagnostics.json")).payload
+        XCTAssertNotNil(list.diagnostics[1].suggestion)
+        var without = list
+        without.diagnostics = without.diagnostics.map { d in
+            var d = d; d.suggestion = nil; return d
+        }
+        XCTAssertNotEqual(DisplayListDelta.headerDigest(list), DisplayListDelta.headerDigest(without),
+                          "a present suggestion must change the header digest")
+        var extra = list
+        extra.diagnostics = extra.diagnostics.map { d in
+            var d = d
+            d.notes = ["ignored in the digest"]
+            d.help = .init(message: "ignored in the digest")
+            return d
+        }
+        XCTAssertEqual(DisplayListDelta.headerDigest(list), DisplayListDelta.headerDigest(extra),
+                       "notes/help are not part of the header digest")
+    }
+
     func testValidationErrorCarriesADiagnostic() {
         var o = Self.minimal()
         Self.setCluster(&o) { $0["sources"] = [["path": "missing.tex", "start_byte": 4, "end_byte": 9]] }
