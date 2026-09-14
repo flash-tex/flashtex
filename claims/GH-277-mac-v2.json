@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/mac-v2-diagnostics",
+  "gh_ref": "#277",
+  "machine": "mac-m5pro-dq222",
+  "note": "apps/mac consumer of display-list-v2-diagnostics (request cap, decode suggestion, Fix in Problems panel) + controller allowlist; stacked on #345+#358",
+  "started_utc": "2026-09-14T08:28:33Z",
+  "state": "claimed",
+  "task_id": "GH-277-mac-v2",
+  "updated_utc": "2026-09-14T08:28:33Z"
+}
