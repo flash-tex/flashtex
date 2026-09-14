@@ -474,7 +474,16 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
                     "compile_result would be {} bytes for {pages} pages, over the {limit}-byte reply limit; split the project or compile fewer pages",
                     line.len(),
                 ),
-                accepted.map(|a| a.into_iter().filter(|c| c != crate::v1::CAP_DISPLAY_LIST).collect()),
+                // Nothing was sent, so nothing sibling-shaped was accepted:
+                // `-only` and `-window` are echoed only on a reply that
+                // actually carries a sibling, and this reply carries none.
+                accepted.map(|a| {
+                    a.into_iter()
+                        .filter(|c| {
+                            c != crate::v1::CAP_DISPLAY_LIST && c != crate::v1::CAP_V2_ONLY && c != crate::v1::CAP_WINDOW
+                        })
+                        .collect()
+                }),
             )),
             extra_lines: Vec::new(),
             rendered: Some(rendered),
