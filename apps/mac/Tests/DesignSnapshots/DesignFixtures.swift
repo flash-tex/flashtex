@@ -52,7 +52,15 @@ enum DesignFixtures {
     static func projectWithProblems() -> ShellModel {
         let model = project()
         model.result?.diagnostics = sampleDiagnostics
+        // A new result id: the editor-marks memo keys on it (a real reply
+        // always brings one), so the synthetic diagnostics reach the gutter.
+        model.resultID = (model.resultID ?? "fixture") + "+diagnostics"
         model.problemsVisible = true
+        // Select the grouped error so the snapshot shows the in-row
+        // disclosure (notes, help, recovery under the selected problem).
+        let groups = EditorDiagnostics.groups(of: model.displayedDiagnostics,
+                                              documentOrder: model.documents.map(\.path))
+        model.problemsPanel.selection = groups.first?.id // the fixable error, so the disclosure shows
         model.flushChrome()
         return model
     }
@@ -64,25 +72,26 @@ enum DesignFixtures {
         [
             .init(severity: .error,
                   message: "Undefined control sequence \\includegraphcs",
-                  source: .init(path: "demo.tex", startByte: 120, endByte: 136),
+                  source: .init(path: "main.tex", startByte: 120, endByte: 136),
                   recovery: "the paragraph continues without it",
                   notes: ["the command is not defined by any loaded package"],
-                  help: .init(message: "did you mean \\includegraphics?")),
+                  help: .init(message: "did you mean \\includegraphics?",
+                              replacement: .init(startByte: 120, endByte: 136, text: "\\includegraphics"))),
             .init(severity: .error,
                   message: "Undefined reference `fig:resuls'",
-                  source: .init(path: "demo.tex", startByte: 260, endByte: 270),
+                  source: .init(path: "main.tex", startByte: 260, endByte: 270),
                   recovery: nil),
             .init(severity: .error,
                   message: "Undefined reference `fig:resuls'",
-                  source: .init(path: "demo.tex", startByte: 402, endByte: 412),
+                  source: .init(path: "main.tex", startByte: 402, endByte: 412),
                   recovery: nil),
             .init(severity: .warning,
                   message: "Overfull \\hbox (12.4pt too wide) in paragraph",
-                  source: .init(path: "demo.tex", startByte: 480, endByte: 520),
+                  source: .init(path: "main.tex", startByte: 480, endByte: 520),
                   recovery: nil),
             .init(severity: .warning,
                   message: "not implemented: \\marginpar",
-                  source: .init(path: "demo.tex", startByte: 560, endByte: 570),
+                  source: .init(path: "main.tex", startByte: 560, endByte: 570),
                   recovery: nil),
         ]
     }

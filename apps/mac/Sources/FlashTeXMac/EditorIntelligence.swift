@@ -581,6 +581,10 @@ final class LineNumberGutter: NSRulerView {
     /// Lines whose only marks are FlashTeX gaps (`EditorDiagnostics.isGap`):
     /// a faint grey tick, never a red or orange dot.
     private(set) var gapLines: Set<Int> = []
+    /// Lines with a diagnostic that carries a mechanical fix (Tab at the
+    /// caret applies it): ringed in the accent so the affordance is visible
+    /// from the gutter, not colour-alone (the ring is a second shape).
+    private(set) var fixLines: Set<Int> = []
     /// Current line (caret), highlighted in the gutter.
     var currentLine: Int? { didSet { if currentLine != oldValue { setNeedsRedraw() } } }
     /// Hybrid relative numbering for Vim users (`EditorPreferences.relativeLineNumbers`,
@@ -625,13 +629,17 @@ final class LineNumberGutter: NSRulerView {
         guard let table = lineTable?() else { return }
         var result: [Int: RuntimeV1.Severity] = [:]
         var gaps: Set<Int> = []
+        var fixes: Set<Int> = []
         for mark in marks {
             guard mark.nsRange.location >= 0, mark.nsRange.location <= table.length else { continue }
             let line = table.line(at: mark.nsRange.location)
+            if mark.hasFix { fixes.insert(line) }
             if EditorDiagnostics.isGap(mark.message) { gaps.insert(line); continue }
             if result[line] != .error { result[line] = mark.severity }
         }
-        if result != severities || gaps != gapLines { severities = result; gapLines = gaps; setNeedsRedraw() }
+        if result != severities || gaps != gapLines || fixes != fixLines {
+            severities = result; gapLines = gaps; fixLines = fixes; setNeedsRedraw()
+        }
     }
 
     /// Adjusts the width to the line count and the editor font.
@@ -715,6 +723,14 @@ final class LineNumberGutter: NSRulerView {
                 let dot = NSRect(x: 6, y: inRuler.midY - d / 2, width: d, height: d)
                 (severity == .error ? DS.NSColors.severityError : DS.NSColors.severityWarning).setFill()
                 NSBezierPath(ovalIn: dot).fill()
+                if fixLines.contains(line) {
+                    // Fix available: an accent ring around the dot (shape, not
+                    // colour alone). Tab with the caret on the line applies it.
+                    DS.NSColors.fixRing.setStroke()
+                    let ring = NSBezierPath(ovalIn: dot.insetBy(dx: -2.5, dy: -2.5))
+                    ring.lineWidth = 1.5
+                    ring.stroke()
+                }
             } else if gapLines.contains(line) {
                 DS.NSColors.gapDot.setFill()
                 NSBezierPath(ovalIn: NSRect(x: 7.5, y: inRuler.midY - 2, width: 4, height: 4)).fill()

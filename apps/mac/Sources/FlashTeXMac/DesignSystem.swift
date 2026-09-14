@@ -115,6 +115,8 @@ enum DS {
         static let gapDot = NSColor.tertiaryLabelColor
         static let gutterGlyph = NSColor.secondaryLabelColor
         static let gutterHairline = NSColor.separatorColor.withAlphaComponent(0.5)
+        /// Ring around a severity dot whose line carries a Tab-applicable fix.
+        static let fixRing = NSColor.controlAccentColor
     }
 
     // MARK: interaction states
