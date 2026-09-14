@@ -45,7 +45,10 @@ enum DS {
         static let tree: CGFloat = 24
         static let outline: CGFloat = 24
         static let problem: CGFloat = 24
-        static let completion: CGFloat = 22
+        /// 24, not the guide's 22: candidate rows carry 16pt kind icons, and
+        /// 22 crowds them against the row edges (owner: match the surface,
+        /// not the number).
+        static let completion: CGFloat = 24
         static let paletteResult: CGFloat = 28
         static let tab: CGFloat = 30
         static let statusBar: CGFloat = 24
@@ -105,6 +108,23 @@ enum DS {
         static let statusHistorical = Color(nsColor: .systemPurple)
         /// Gutter marker on lines with an available fix.
         static let gutterMarker = Color(nsColor: .controlAccentColor)
+
+        /// Outline item-type identity (typed icons, IntelliJ-fashion):
+        /// colour tells the kind apart together with the glyph.
+        static let typeTable = Color(nsColor: .systemBlue)
+        static let typeFloat = Color(nsColor: .systemGreen)
+        static let typeMath = Color(nsColor: .systemPurple)
+        static let typeLabel = Color(nsColor: .systemOrange)
+    }
+
+    /// AppKit type for panels the SwiftUI `Fonts` cannot reach (the
+    /// completion popup is an NSPanel + NSTableView on purpose).
+    enum NSFonts {
+        static let base = NSFont.systemFont(ofSize: 13)
+        static let secondary = NSFont.systemFont(ofSize: 11)
+        static let header = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        /// Completion candidates: the editor's vocabulary, one step smaller.
+        static let monoCandidate = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
     }
 
     /// AppKit paint paths (gutter marks, rulers) use `NSColor` directly;
@@ -204,6 +224,10 @@ enum DS {
         /// The hover quick-info popover.
         static let quickInfoMinWidth: CGFloat = 180
         static let quickInfoMaxWidth: CGFloat = 380
+        /// The completion popup: fixed width, and a fixed-height
+        /// documentation pane that package docs can never inflate.
+        static let completionWidth: CGFloat = 480
+        static let completionDocHeight: CGFloat = 58
         /// The Settings window's fixed content width.
         static let settingsWidth: CGFloat = 460
         /// Find in Project window.

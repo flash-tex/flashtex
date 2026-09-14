@@ -18,7 +18,10 @@ struct WorkspaceSidebar: View {
     /// a keystroke never pays for a scan on its own frame (TypingBench).
     @State private var outline: [DocumentOutline.Item] = []
     @State private var outlineFor: (path: String, revision: Int) = ("", -1)
-    @State private var expanded: Set<DocumentOutline.Kind> = [.section, .environment, .label]
+    /// The header's filter (D1's in-header "Show" menu): which item kinds the
+    /// outline lists. Document order is never regrouped — for prose the order
+    /// is the meaning (design-principles §7).
+    @State private var shownKinds: Set<DocumentOutline.Kind> = Set(DocumentOutline.Kind.allCases)
 
     static let identifier = "workspace.sidebar"
 
@@ -35,7 +38,7 @@ struct WorkspaceSidebar: View {
             if projectVisible && outlineVisible { Divider() }
             if outlineVisible {
                 List {
-                    OutlineSection(outline: outline, expanded: $expanded, stale: outlineFor.revision != model.chrome.editorRevision) // throttled (ShellChrome): not per keystroke
+                    OutlineSection(outline: outline, shownKinds: $shownKinds, stale: outlineFor.revision != model.chrome.editorRevision) // throttled (ShellChrome): not per keystroke
                 }
                 .listStyle(.sidebar)
                 .scrollContentBackground(.hidden)
@@ -179,7 +182,7 @@ private struct ProjectSection: View {
 private struct OutlineSection: View {
     @Environment(ShellModel.self) var model
     let outline: [DocumentOutline.Item]
-    @Binding var expanded: Set<DocumentOutline.Kind>
+    @Binding var shownKinds: Set<DocumentOutline.Kind>
     let stale: Bool
     /// Follow-caret: the id of the section (else environment) the caret is in
     /// (`DocumentOutline.current`), refreshed by the leaf `CaretFollower` so a
@@ -187,62 +190,80 @@ private struct OutlineSection: View {
     @State private var currentID: String?
 
     var body: some View {
-        let counts = DocumentOutline.counts(outline)
-        // Structure depth relative to the document's top level: an article's
-        // \section rows sit at depth 0, a report's \chapter rows do.
-        let topLevel = outline.filter { $0.kind == .section }.map(\.level).min() ?? 0
+        // One flat list in document order (never grouped by type — for prose
+        // the order is the meaning, §7), indented by nesting: sections by
+        // their sectioning level, environments and labels one step under the
+        // section they follow. Item kinds are told apart by their typed icon.
+        let rows = Self.rows(outline: outline, shownKinds: shownKinds)
         Section {
             CaretFollower(outline: outline, currentID: $currentID)
             if outline.isEmpty {
                 Text(stale ? "Scanning…" : "No sections, environments or labels in \(model.activePath)")
                     .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
             }
-            ForEach(DocumentOutline.Kind.allCases, id: \.self) { kind in
-                let items = DocumentOutline.items(kind, in: outline)
-                if !items.isEmpty {
-                    DisclosureGroup(isExpanded: Binding(get: { expanded.contains(kind) },
-                                                        set: { if $0 { expanded.insert(kind) } else { expanded.remove(kind) } })) {
-                        ForEach(items) { item in
-                            SidebarRow(selected: item.id == currentID) {
-                                model.reveal(outlineItem: item)
-                            } label: {
-                                HStack(spacing: DS.Space.xs) {
-                                    Image(systemName: Self.icon(item)).foregroundStyle(DS.Colors.textSecondary).font(DS.Fonts.secondary)
-                                    Text(item.displayTitle.isEmpty ? "(untitled)" : item.displayTitle).lineLimit(1)
-                                    Spacer(minLength: 0)
-                                    Text("\(item.line)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
-                                }
-                                .padding(.leading, CGFloat(min(max(0, item.kind == .section ? item.level - topLevel : item.level), 4)) * DS.Space.m)
-                            }
-                            .help(Self.tooltip(item))
-                            .accessibilityLabel(Self.spoken(item))
-                        }
-                    } label: {
-                        HStack {
-                            Text(kind.title)
-                            Spacer()
-                            Text("\(counts[kind] ?? 0)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
-                        }
+            ForEach(rows, id: \.item.id) { row in
+                SidebarRow(selected: row.item.id == currentID) {
+                    model.reveal(outlineItem: row.item)
+                } label: {
+                    HStack(spacing: DS.Space.xs) {
+                        Image(systemName: OutlineItemStyle.icon(row.item))
+                            .foregroundStyle(OutlineItemStyle.color(row.item))
+                            .font(DS.Fonts.secondary)
+                            .frame(width: DS.Size.fileIcon)
+                        Text(row.item.displayTitle.isEmpty ? "(untitled)" : row.item.displayTitle).lineLimit(1)
+                        Spacer(minLength: 0)
+                        Text("\(row.item.line)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
                     }
+                    .padding(.leading, CGFloat(row.indent) * DS.Space.m)
                 }
+                .help(Self.tooltip(row.item))
+                .accessibilityLabel(Self.spoken(row.item))
             }
         } header: {
             HStack {
                 Label("Outline", systemImage: "list.bullet.indent")
                 Spacer()
                 if stale { ProgressView().controlSize(.mini) }
+                // D1's in-header filter: which kinds are shown; order is
+                // always the document's own.
+                Menu {
+                    ForEach(DocumentOutline.Kind.allCases, id: \.self) { kind in
+                        Toggle(kind.title, isOn: Binding(
+                            get: { shownKinds.contains(kind) },
+                            set: { if $0 { shownKinds.insert(kind) } else { shownKinds.remove(kind) } }))
+                    }
+                } label: {
+                    Image(systemName: shownKinds.count == DocumentOutline.Kind.allCases.count ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                }
+                .menuStyle(.borderlessButton).fixedSize()
+                .help("Show or hide sections, environments and labels; the list always keeps document order")
+                .accessibilityLabel("Filter outline")
             }
         }
     }
 
-    static func icon(_ item: DocumentOutline.Item) -> String {
-        switch item.kind {
-        case .section: return item.command == "part" ? "book.closed" : item.level <= 1 ? "number" : "number.square"
-        case .environment:
-            if DocumentOutline.floatEnvironments.contains(item.title) { return item.title.hasPrefix("table") ? "tablecells" : "photo" }
-            return item.caption != nil ? "text.book.closed" : "curlybraces"
-        case .label: return "tag"
+    struct Row: Equatable { var item: DocumentOutline.Item; var indent: Int }
+
+    /// Rows in document order with their indent: a section sits at its level
+    /// relative to the document's top sectioning level; an environment or
+    /// label sits one step under the section it follows (plus its own
+    /// nesting), so the tree reads like the document.
+    static func rows(outline: [DocumentOutline.Item], shownKinds: Set<DocumentOutline.Kind>) -> [Row] {
+        let topLevel = outline.filter { $0.kind == .section }.map(\.level).min() ?? 0
+        var sectionDepth = 0
+        var out: [Row] = []
+        for item in outline {
+            switch item.kind {
+            case .section:
+                sectionDepth = min(max(0, item.level - topLevel), 4)
+                if shownKinds.contains(.section) { out.append(Row(item: item, indent: sectionDepth)) }
+            case .environment, .label:
+                if shownKinds.contains(item.kind) {
+                    out.append(Row(item: item, indent: min(sectionDepth + 1 + max(0, item.level), 5)))
+                }
+            }
         }
+        return out
     }
 
     static func tooltip(_ item: DocumentOutline.Item) -> String {
@@ -260,6 +281,38 @@ private struct OutlineSection: View {
         case .label: return "label \(item.title), line \(item.line)"
         }
     }
+}
+
+/// Typed-icon vocabulary for outline items, shared by the Outline tool
+/// window and the palette's Sections/Labels scopes: the glyph tells the
+/// kind, the colour its *type identity* (floats green/blue, math purple,
+/// labels orange, structure neutral) — never decoration.
+enum OutlineItemStyle {
+    static func icon(_ item: DocumentOutline.Item) -> String {
+        switch item.kind {
+        case .section: return item.command == "part" ? "book.closed" : item.level <= 1 ? "number" : "number.square"
+        case .environment:
+            if DocumentOutline.floatEnvironments.contains(item.title) { return item.title.hasPrefix("table") ? "tablecells" : "photo" }
+            if DocumentOutline.theoremEnvironments.contains(item.title) { return "text.book.closed" }
+            if mathEnvironments.contains(item.title) { return "function" }
+            return "curlybraces"
+        case .label: return "tag"
+        }
+    }
+
+    static func color(_ item: DocumentOutline.Item) -> Color {
+        switch item.kind {
+        case .section: return DS.Colors.textSecondary
+        case .environment:
+            if item.title.hasPrefix("table") { return DS.Colors.typeTable }
+            if DocumentOutline.floatEnvironments.contains(item.title) { return DS.Colors.typeFloat }
+            if mathEnvironments.contains(item.title) || DocumentOutline.theoremEnvironments.contains(item.title) { return DS.Colors.typeMath }
+            return DS.Colors.textSecondary
+        case .label: return DS.Colors.typeLabel
+        }
+    }
+
+    private static let mathEnvironments: Set<String> = ["equation", "equation*", "align", "align*", "gather", "gather*", "multline", "multline*"]
 }
 
 /// Leaf view that tracks the caret (a debounced `.task(id:)` on
