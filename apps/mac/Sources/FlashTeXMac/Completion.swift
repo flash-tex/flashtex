@@ -2137,6 +2137,8 @@ final class CompletingTextView: NSTextView {
     /// line's lexing. Unwired — a bare text view in a test — it says no, and
     /// the list keeps the plain text-mode order.
     var mathModeAtCaret: (Int) -> Bool = { _ in false }
+    /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
+    let folds = EditorFoldStore()
 
     // MARK: snippet tab stops (Snippets: Tab / ⇧Tab between placeholders, Esc leaves)
 
@@ -2439,6 +2441,7 @@ final class CompletingTextView: NSTextView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         foregroundDecorator?(dirtyRect)
+        folds.drawPlaceholders(in: dirtyRect, textView: self)
     }
 
     /// Scroll view + text view pair, like `NSTextView.scrollableTextView()`

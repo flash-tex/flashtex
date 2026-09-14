@@ -138,7 +138,7 @@ struct FlashTeXMacApp: App {
         // while typing (FT-071 sample) because `result`/`displayListV2` were
         // read here per reply. Commands read the change-only mirrors instead.
         .commands {
-            NavigationCommands(model: model) // Navigation.swift
+            NavigationCommands(model: model) // Navigation.swift (includes Editor ▸ Fold)
             DiagnosticsCommands(model: model) // DiagnosticsPanel.swift: Edit > Copy Diagnostics as Text (⌘⌥C)
             FindCommands() // EditorFind.swift: Edit > Find submenu (⌘F, ⌥⌘F, ⌘G, ⇧⌘G, ⌘E, ⌘J)
             ProjectSearchCommands(openWindow: openWindow) // ProjectSearchPanel.swift: ⌘⇧F Find in Project…

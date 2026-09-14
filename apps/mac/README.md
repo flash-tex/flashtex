@@ -976,6 +976,10 @@ explain that nothing is loaded.
 | ↑ / ↓ / Tab / ⇧Tab / Return | Completion list keys, while the list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Return/Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list, any other caret move closes it |
 | ⌘⇧Space | Signature help for the command whose argument the caret is in (also opens on `{`/`[` typed after a command name; `}`, Esc or leaving the argument closes it) |
 | ⌘/ | Toggle `% ` line comment on the selection's lines |
+| ⌘⌥← | Fold the innermost environment or section at the caret (first line stays visible with an inline …; hidden characters stay in the buffer) |
+| ⌘⌥→ | Unfold the innermost folded region at the caret |
+| ⌘⌥⇧← | Fold All environments and sectioning blocks |
+| ⌘⌥⇧→ | Unfold All folded regions |
 | ⌘⇧D | Go to matching `\begin`/`\end` or `\label`/`\ref` |
 | ⌃⌘J | Go to definition of the command/environment under the caret (`\newcommand`, `\def`, `\DeclareMathOperator`, `\newenvironment`; ⌘-click does the same, hover peeks the body) |
 | ⌘⇧T | Go to symbol: fuzzy picker over every heading, environment and label of the open documents |
