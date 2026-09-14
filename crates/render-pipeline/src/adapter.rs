@@ -4870,7 +4870,13 @@ fn gap_has_space(gap: &str) -> bool {
 /// letter "A." keeps 1000), which is why the update runs per character.
 pub fn space_factor(ch: char, previous: u32) -> u32 {
     let code = match ch {
-        '.' | '?' | '!' => 3000,
+        // `…` is `\textellipsis`, whose last character is a period
+        // (`.\kern\fontdimen3\font` three times), so it leaves the period's
+        // space factor behind exactly as a typed `.` does: pdflatex sets
+        // `ellipsis… here` with a 5.213 bp space at 12 pt
+        // (`\fontdimen2 + \fontdimen7`), not the 3.902 bp of `\fontdimen2`
+        // alone.
+        '.' | '?' | '!' | '\u{2026}' => 3000,
         ':' => 2000,
         ';' => 1500,
         ',' => 1250,
