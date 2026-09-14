@@ -17,7 +17,10 @@ use flashtex_compiler::parser::{Block as CBlock, Inline, Parsed};
 use flashtex_compiler::text_builtins::{TextDimen, TextLogo, TextRule};
 use flashtex_compiler::{DocumentId, Span};
 
-use flashtex_class_geometry::{ClassKind, DocumentSetup, GeometryInput, PageStyle};
+use flashtex_class_geometry::{
+    ClassKind, DocumentSetup, GeometryInput, Glue, PageFrame, PageParams, PageStyle, ResolvedDocument,
+    Sp,
+};
 
 use crate::display::Diagnostic;
 use flashtex_compiler::color::DeviceColor;
@@ -920,14 +923,19 @@ pub fn adapt_cached(
     let size = class_size(&class_options);
     // LaTeX's own \parindent (size1x.clo) applies when the document declares a
     // class; body-only input keeps the compiler's implicit 0pt.
-    let mut style = Stylesheet::from_resolved(
-        &flashtex_class_geometry::resolve(&document_setup(source, explicit_class.is_some(), &class_options)),
-        Stylesheet::family_for(&parsed.packages, t1_encoding(source)),
-    );
+    let family = Stylesheet::family_for(&parsed.packages, t1_encoding(source));
+    let mut resolved = flashtex_class_geometry::resolve(&document_setup(
+        source,
+        explicit_class.is_some(),
+        &class_options,
+    ));
+    let assigned = apply_preamble_lengths(source, &mut resolved, size, family);
+    let mut style = Stylesheet::from_resolved(&resolved, family);
     // The class's `\parindent` (`size1x.clo`: 15pt / 17pt / 1.5em; `1em` in
-    // two-column mode) comes with the resolved frame.
+    // two-column mode) comes with the resolved frame; a later `\setlength`
+    // still wins (body assignments included).
     let em_ex = ec_em_ex(size, style.family);
-    style.parindent_pt = setlength_in(source, "parindent", size, em_ex).unwrap_or(if explicit_class.is_some() {
+    style.parindent_pt = setlength_in(source, "parindent", size, em_ex).unwrap_or(if explicit_class.is_some() || assigned.parindent {
         style.parindent_pt
     } else {
         options.default_parindent_pt
@@ -959,10 +967,12 @@ pub fn adapt_cached(
     style.cmex_designs = crate::style::cmex_designs(&parsed.packages, amsmath_cmex10);
     #[cfg(feature = "amsmath-inline")]
     let mathtools = parsed.packages.iter().any(|p| p == "mathtools");
-    // `\setlength{\parskip}{...}`: a fixed skip (no stretch) replaces
-    // article's `0pt plus 1pt`.
+    // `\setlength{\parskip}{...}` / `\parskip=...`: a fixed skip (no stretch)
+    // replaces article's `0pt plus 1pt`.
     if let Some(pt) = setlength_in(source, "parskip", size, em_ex) {
         style.parskip = crate::style::Skip::fixed(pt);
+    } else if assigned.parskip {
+        style.parskip = crate::style::Skip::fixed(crate::style::frame_pt(resolved.params.parskip.natural));
     }
     let secnumdepth = counter(source, "secnumdepth").unwrap_or(options.default_secnumdepth);
     style.nfss = crate::nfss::Scheme::for_document(&parsed.packages, t1_encoding(source));
@@ -2492,6 +2502,368 @@ pub fn document_setup(source: &str, has_class: bool, class_options: &str) -> Doc
         None => None,
     };
     setup
+}
+
+/// Lengths the geometry package overwrites. An earlier `\setlength` of one
+/// of these is ignored when `geometry` runs later, matching LaTeX.
+const GEOMETRY_LENGTHS: &[&str] = &[
+    "paperwidth",
+    "paperheight",
+    "textwidth",
+    "textheight",
+    "oddsidemargin",
+    "evensidemargin",
+    "topmargin",
+    "headheight",
+    "headsep",
+    "footskip",
+    "marginparwidth",
+    "marginparsep",
+    "columnsep",
+];
+
+const PREAMBLE_LENGTHS: &[&str] = &[
+    "paperwidth",
+    "paperheight",
+    "textwidth",
+    "textheight",
+    "oddsidemargin",
+    "evensidemargin",
+    "topmargin",
+    "headheight",
+    "headsep",
+    "footskip",
+    "marginparwidth",
+    "marginparsep",
+    "columnsep",
+    "parindent",
+    "parskip",
+    "columnseprule",
+];
+
+struct LengthAssigns {
+    parindent: bool,
+    parskip: bool,
+}
+
+/// Apply preamble `\setlength` / `\addtolength` / `\len=<dimen>` after the
+/// class defaults and the geometry package, in source order.
+fn apply_preamble_lengths(
+    source: &str,
+    doc: &mut ResolvedDocument,
+    size: u32,
+    family: crate::fonts::Family,
+) -> LengthAssigns {
+    let preamble_end = source.find("\\begin{document}").unwrap_or(source.len());
+    let last_geometry = last_geometry_offset(source, preamble_end);
+    let em_ex = ec_em_ex(size, family);
+    let mut assigned = LengthAssigns { parindent: false, parskip: false };
+    let mut params = doc.params;
+    let mut from = 0;
+    while let Some((at, name)) = next_command(source, from) {
+        from = at + 1;
+        let after_name = at + 1 + name.len();
+        if name == "setlength" || name == "addtolength" {
+            if let Some((target, raw)) = setlength_args(source, after_name) {
+                let page = GEOMETRY_LENGTHS.contains(&target.as_str());
+                if page && at >= preamble_end {
+                    continue;
+                }
+                if page && last_geometry.is_some_and(|g| at < g) {
+                    continue;
+                }
+                if let Some(v) = parse_assignment_dimen(&raw, &params, size, em_ex) {
+                    assign_param(&mut params, &target, v, name == "addtolength");
+                    assigned.parindent |= target == "parindent";
+                    assigned.parskip |= target == "parskip";
+                }
+            }
+            continue;
+        }
+        if !PREAMBLE_LENGTHS.contains(&name) {
+            continue;
+        }
+        let page = GEOMETRY_LENGTHS.contains(&name);
+        if page && at >= preamble_end {
+            continue;
+        }
+        if page && last_geometry.is_some_and(|g| at < g) {
+            continue;
+        }
+        if let Some(raw) = read_assignment_dimen(source, after_name) {
+            if let Some(v) = parse_assignment_dimen(&raw, &params, size, em_ex) {
+                assign_param(&mut params, name, v, false);
+                assigned.parindent |= name == "parindent";
+                assigned.parskip |= name == "parskip";
+            }
+        }
+    }
+    let media = (doc.frame.pdf_page_width, doc.frame.pdf_page_height);
+    doc.params = params;
+    doc.frame = PageFrame::new(&params, doc.flags, media);
+    assigned
+}
+
+fn last_geometry_offset(source: &str, preamble_end: usize) -> Option<usize> {
+    let mut last = None;
+    let mut from = 0;
+    while let Some((at, name)) = next_command(&source[..preamble_end], from) {
+        from = at + 1;
+        match name {
+            "geometry" => last = Some(at),
+            "usepackage" | "RequirePackage" => {
+                if let Some((_, arg)) = usepackage_arg(&source[..preamble_end], at + 1 + name.len()) {
+                    if arg.split(',').any(|p| p.trim() == "geometry") {
+                        last = Some(at);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    last
+}
+
+fn next_command(source: &str, from: usize) -> Option<(usize, &str)> {
+    let bytes = source.as_bytes();
+    let mut i = from;
+    let mut in_comment = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_comment {
+            if c == b'\n' {
+                in_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == b'%' {
+            in_comment = true;
+            i += 1;
+            continue;
+        }
+        if c == b'\\' {
+            let start = i + 1;
+            let mut j = start;
+            while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+                j += 1;
+            }
+            if j > start {
+                return Some((i, &source[start..j]));
+            }
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    None
+}
+
+fn skip_ws(source: &str, mut i: usize) -> usize {
+    let b = source.as_bytes();
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    i
+}
+
+fn read_group(source: &str, i: &mut usize) -> Option<String> {
+    *i = skip_ws(source, *i);
+    let b = source.as_bytes();
+    if b.get(*i) != Some(&b'{') {
+        return None;
+    }
+    *i += 1;
+    let start = *i;
+    let mut depth = 1i32;
+    while *i < b.len() {
+        match b[*i] {
+            b'\\' => *i += 1,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let inner = source[start..*i].to_string();
+                    *i += 1;
+                    return Some(inner);
+                }
+            }
+            _ => {}
+        }
+        *i += 1;
+    }
+    None
+}
+
+fn setlength_args(source: &str, mut i: usize) -> Option<(String, String)> {
+    i = skip_ws(source, i);
+    let b = source.as_bytes();
+    let target = if b.get(i) == Some(&b'{') {
+        read_group(source, &mut i)?
+            .trim()
+            .trim_start_matches('\\')
+            .to_string()
+    } else if b.get(i) == Some(&b'\\') {
+        i += 1;
+        let start = i;
+        while i < b.len() && b[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+        source[start..i].to_string()
+    } else {
+        return None;
+    };
+    let value = read_group(source, &mut i)?;
+    Some((target, value))
+}
+
+fn usepackage_arg(source: &str, mut i: usize) -> Option<(String, String)> {
+    i = skip_ws(source, i);
+    let b = source.as_bytes();
+    let opts = if b.get(i) == Some(&b'[') {
+        i += 1;
+        let start = i;
+        while i < b.len() && b[i] != b']' {
+            i += 1;
+        }
+        let o = source[start..i].to_string();
+        if i < b.len() {
+            i += 1;
+        }
+        o
+    } else {
+        String::new()
+    };
+    let arg = read_group(source, &mut i)?;
+    Some((opts, arg))
+}
+
+fn read_assignment_dimen(source: &str, mut i: usize) -> Option<String> {
+    i = skip_ws(source, i);
+    let b = source.as_bytes();
+    let start = i;
+    if b.get(i) == Some(&b'=') {
+        i += 1;
+        i = skip_ws(source, i);
+    }
+    if i < b.len() && (b[i] == b'-' || b[i] == b'+') {
+        i += 1;
+    }
+    if b.get(i) == Some(&b'\\') {
+        i += 1;
+        while i < b.len() && b[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+        return Some(source[start..i].to_string());
+    }
+    let num = i;
+    while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'.') {
+        i += 1;
+    }
+    if i == num {
+        return None;
+    }
+    if b.get(i) == Some(&b'\\') {
+        i += 1;
+        while i < b.len() && b[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+        return Some(source[start..i].to_string());
+    }
+    let unit = i;
+    while i < b.len() && b[i].is_ascii_alphabetic() {
+        i += 1;
+    }
+    if i == unit {
+        return None;
+    }
+    Some(source[start..i].to_string())
+}
+
+fn parse_assignment_dimen(
+    raw: &str,
+    params: &PageParams,
+    size: u32,
+    em_ex: Option<(f64, f64)>,
+) -> Option<Sp> {
+    let s = raw.trim().trim_start_matches('=').trim();
+    if let Some(bs) = s.find('\\') {
+        let (factor, rest) = s.split_at(bs);
+        let name = rest[1..].trim();
+        let base = param_length(params, name)?;
+        let f = factor.trim();
+        if f.is_empty() || f == "+" {
+            return Some(base);
+        }
+        if f == "-" {
+            return Some(-base);
+        }
+        return base.scaled(f);
+    }
+    if let Some(v) = param_length(params, s.trim_start_matches('\\')) {
+        return Some(v);
+    }
+    if s.ends_with("em") || s.ends_with("ex") {
+        let pt = parse_dimen_in(s, size, em_ex)?;
+        return Some(Sp((pt * 65536.0).round() as i64));
+    }
+    Sp::parse(s)
+}
+
+fn param_length(p: &PageParams, name: &str) -> Option<Sp> {
+    Some(match name {
+        "paperwidth" => p.paperwidth,
+        "paperheight" => p.paperheight,
+        "textwidth" | "linewidth" | "columnwidth" | "hsize" => p.textwidth,
+        "textheight" => p.textheight,
+        "oddsidemargin" => p.oddsidemargin,
+        "evensidemargin" => p.evensidemargin,
+        "topmargin" => p.topmargin,
+        "headheight" => p.headheight,
+        "headsep" => p.headsep,
+        "footskip" => p.footskip,
+        "marginparwidth" => p.marginparwidth,
+        "marginparsep" => p.marginparsep,
+        "columnsep" => p.columnsep,
+        "parindent" => p.parindent,
+        "parskip" => p.parskip.natural,
+        "columnseprule" => p.columnseprule,
+        _ => return None,
+    })
+}
+
+fn assign_param(p: &mut PageParams, name: &str, v: Sp, add: bool) {
+    let slot = match name {
+        "paperwidth" => &mut p.paperwidth,
+        "paperheight" => &mut p.paperheight,
+        "textwidth" => &mut p.textwidth,
+        "textheight" => &mut p.textheight,
+        "oddsidemargin" => &mut p.oddsidemargin,
+        "evensidemargin" => &mut p.evensidemargin,
+        "topmargin" => &mut p.topmargin,
+        "headheight" => &mut p.headheight,
+        "headsep" => &mut p.headsep,
+        "footskip" => &mut p.footskip,
+        "marginparwidth" => &mut p.marginparwidth,
+        "marginparsep" => &mut p.marginparsep,
+        "columnsep" => &mut p.columnsep,
+        "parindent" => &mut p.parindent,
+        "columnseprule" => &mut p.columnseprule,
+        "parskip" => {
+            if add {
+                p.parskip.natural += v;
+            } else {
+                p.parskip = Glue::fixed(v);
+            }
+            return;
+        }
+        _ => return,
+    };
+    if add {
+        *slot += v;
+    } else {
+        *slot = v;
+    }
 }
 
 /// `\documentclass[opts]{...}` options, if the source has a class line.
