@@ -924,12 +924,13 @@ pub fn adapt_cached(
     // LaTeX's own \parindent (size1x.clo) applies when the document declares a
     // class; body-only input keeps the compiler's implicit 0pt.
     let family = Stylesheet::family_for(&parsed.packages, t1_encoding(source));
-    let mut resolved = flashtex_class_geometry::resolve(&document_setup(
+    let setup = document_setup(
         source,
         explicit_class.is_some(),
         &class_options,
-    ));
-    let assigned = apply_preamble_lengths(source, &mut resolved, size, family);
+    );
+    let mut resolved = flashtex_class_geometry::resolve(&setup);
+    let assigned = apply_preamble_lengths(source, &mut resolved, size, family, setup.geometry.is_some());
     let mut style = Stylesheet::from_resolved(&resolved, family);
     // apply_preamble_lengths is the source of truth for `\parindent` /
     // `\parskip` (source order, including `\addtolength` and body
@@ -2555,6 +2556,7 @@ fn apply_preamble_lengths(
     doc: &mut ResolvedDocument,
     size: u32,
     family: crate::fonts::Family,
+    geometry: bool,
 ) -> LengthAssigns {
     let preamble_end = source.find("\\begin{document}").unwrap_or(source.len());
     let last_geometry = last_geometry_offset(source, preamble_end);
@@ -2600,7 +2602,14 @@ fn apply_preamble_lengths(
             }
         }
     }
-    let media = (doc.frame.pdf_page_width, doc.frame.pdf_page_height);
+    // geometry's pdftex driver copies \paperwidth/\paperheight into the
+    // MediaBox at \begin{document}. Without geometry, pdfTeX keeps the
+    // engine default even after a later \setlength of those registers.
+    let media = if geometry {
+        (params.paperwidth, params.paperheight)
+    } else {
+        (doc.frame.pdf_page_width, doc.frame.pdf_page_height)
+    };
     doc.params = params;
     doc.frame = PageFrame::new(&params, doc.flags, media);
     assigned
