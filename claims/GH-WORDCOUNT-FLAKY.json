@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/wordcount-deterministic-tests",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/374",
   "machine": "Overpriced-Hardware",
   "note": "Deterministic WordCountModelTests via injectable scheduler, delegated by daniel-parent, reported on #2",
   "started_utc": "2026-09-14T09:48:47Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-WORDCOUNT-FLAKY",
-  "updated_utc": "2026-09-14T09:48:47Z"
+  "updated_utc": "2026-09-14T09:59:02Z"
 }
