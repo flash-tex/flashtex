@@ -47,6 +47,16 @@ struct SourceEditorView: NSViewRepresentable {
     /// A pending edit the view could not apply (the buffer moved on since it
     /// was prepared, or its range no longer fits); never reported as applied.
     var onEditRefused: (ShellModel.PendingEdit, String) -> Void = { _, _ in }
+    /// The mechanical fix offered at the caret (`ShellModel.caretFix`).
+    /// Non-nil draws the inline hint *and* arms Tab, from the one value, so
+    /// the key can never accept something the author was not shown. Nil leaves
+    /// Tab exactly as it was: indent the selection, or insert an indent unit.
+    var caretFix: EditorDiagnostics.CaretFix?
+    /// Tab on a visible caret fix (`ShellModel.acceptCaretFix`).
+    var onAcceptCaretFix: () -> Void = {}
+    /// Esc while the hint is up (`ShellModel.dismissCaretFix`): the hint goes
+    /// down and Tab indents again until the caret moves onto another fix.
+    var onDismissCaretFix: () -> Void = {}
     /// Openers typed at the caret that get their closer inserted after it
     /// (`{`, `[`, `$`). Default: braces only; the owner passes its setting.
     /// Auto-close, type-over and empty-pair backspace never run while marked
@@ -170,6 +180,7 @@ struct SourceEditorView: NSViewRepresentable {
         co.marks.update(marks, in: tv, reset: textReset)
         co.gutter?.update(marks: marks)
         co.errorLens.update(marks: marks)
+        co.errorLens.update(caretFix: caretFix) // the hint Tab acts on, drawn whatever the lens preference is
         if textReset { co.refreshBraceHighlight(tv) }
         if let selection, selection.token != co.appliedToken {
             co.appliedToken = selection.token
@@ -814,6 +825,11 @@ struct SourceEditorView: NSViewRepresentable {
                 // supplies its own closer eats the one already sitting there
                 // instead of stranding it (`\begin{proof}` … `\end{proof}}`).
                 completing.isPendingCloser = { [weak self] offset in self?.pendingClosers.contains(offset) ?? false }
+                // Esc while the caret-fix hint is up takes it down, ahead of
+                // Esc's other meaning (open the completion list). Tab's side of
+                // the same state lives in `handleTab`.
+                completing.caretFixVisible = { [weak self] in self?.parent.caretFix != nil }
+                completing.dismissCaretFix = { [weak self] in self?.parent.onDismissCaretFix() }
             }
             errorLens.lineTable = { [weak self] in self?.syntax.highlighter ?? SyntaxHighlighter() }
             errorLens.attach(tv)
