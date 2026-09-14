@@ -78,10 +78,14 @@
     {"name": "rotatebox", "mode": "text", "origin": "text_dispatch", "arguments": "[keys]{angle}{...}", "description": "graphicx rotated box; the box is the rotated bounding box", "renders": true},
     {"name": "reflectbox", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "graphics.sty box mirrored left to right", "renders": true},
     {"name": "graphicspath", "mode": "text", "origin": "text_dispatch", "arguments": "{{dir/}...}", "description": "image search directories; no material", "renders": true},
-    {"name": "url", "mode": "text", "origin": "text_dispatch", "arguments": "{url}", "description": "monospaced URL text; links are not clickable", "renders": true},
+    {"name": "hypersetup", "mode": "text", "origin": "text_dispatch", "arguments": "{key=value,...}", "description": "hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them", "renders": true},
+    {"name": "allowdisplaybreaks", "mode": "text", "origin": "text_dispatch", "arguments": "[0-4]", "description": "amsmath page-break permission inside displays; no material", "renders": true},
+    {"name": "url", "mode": "text", "origin": "text_dispatch", "arguments": "{url}", "description": "monospaced URL text, breaking as url.sty does; links are not clickable", "renders": true},
     {"name": "href", "mode": "text", "origin": "text_dispatch", "arguments": "{url}{text}", "description": "link text; links are not clickable", "renders": true},
-    {"name": "nolinkurl", "mode": "text", "origin": "text_dispatch", "arguments": "{url}", "description": "monospaced URL text without a link", "renders": true},
+    {"name": "nolinkurl", "mode": "text", "origin": "text_dispatch", "arguments": "{url}", "description": "monospaced URL text without a link, breaking as url.sty does", "renders": true},
     {"name": "hfill", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "infinite-stretch horizontal glue", "renders": true},
+    {"name": "hrulefill", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "\\hfill filled with a 0.4pt baseline rule (latex.ltx \\leaders\\hrule\\hfill)", "renders": true},
+    {"name": "dotfill", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "\\hfill filled with dots in 0.44em boxes, centred (latex.ltx \\cleaders)", "renders": true},
     {"name": "hfil", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "infinite-stretch horizontal glue (same order as \\hfill)", "renders": true},
     {"name": "hspace", "mode": "text", "origin": "text_dispatch", "arguments": "{dimension}", "description": "fixed horizontal space; starred form identical", "renders": true},
     {"name": "footnote", "mode": "text", "origin": "text_dispatch", "arguments": "[n]{...}", "description": "numbered mark and page-bottom footnote text", "renders": true},
@@ -231,6 +235,17 @@
     {"name": "textgreater", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textgreater: OT1 >, T1 > (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "textbraceleft", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textbraceleft: OT1 {, T1 { (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "textbraceright", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textbraceright: OT1 }, T1 } (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
+    {"name": "c", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "cedilla text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
+    {"name": "v", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "caron text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
+    {"name": "u", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "breve text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
+    {"name": "H", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "double acute text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
+    {"name": "r", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "ring text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
+    {"name": "k", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "ogonek text accent (T1 only; OT1 reports it unavailable): the precomposed character the dfu tables declare; without one the bare letter and a warning", "renders": true},
+    {"name": "d", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "dot-below text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
+    {"name": "b", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "bar-below text accent: no dfu declarations, so the bare letter and a warning", "renders": true},
+    {"name": "uline", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)", "renders": true},
+    {"name": "underline", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox", "renders": true},
+    {"name": "sout", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)", "renders": true},
     {"name": "newtheorem", "mode": "text", "origin": "text_dispatch", "arguments": "{env}[counter]{name}", "description": "defines a numbered theorem-like environment (amsthm)", "renders": true},
     {"name": "theoremstyle", "mode": "text", "origin": "text_dispatch", "arguments": "{style}", "description": "selects the amsthm style for following \\newtheorem", "renders": true},
     {"name": "long", "mode": "text", "origin": "expansion", "arguments": "", "description": "prefix: the following definition accepts \\par in arguments", "renders": true},
@@ -863,6 +878,7 @@
   "packages": [
     {"name": "inputenc", "silent_options": "utf8", "description": "source text is already decoded as UTF-8"},
     {"name": "fontenc", "silent_options": "T1", "description": "text glyphs are mapped from Unicode"},
+    {"name": "hyperref", "silent_options": "colorlinks, hidelinks, bookmarks, bookmarksopen, bookmarksnumbered, linktoc, breaklinks, unicode, pageanchor, hyperfootnotes, pdfstartview, pdfpagemode", "description": "loading hyperref moves no glyph (measured against pdflatex, TeX Live 2025: the same document with and without it is 1062 words on 4 pages, 0 moved), and the link-colour, border, outline, viewer and pdf* metadata keys are accepted with it; \\url, \\href and \\nolinkurl are typeset, while the PDF links, bookmarks and link colours still missing are reported once by their own diagnostic; backref and pagebackref add bibliography text and keep warning"},
     {"name": "color", "silent_options": "dvipsnames, usenames", "description": "color.sty colours with pdfTeX's exact operator values"},
     {"name": "xcolor", "silent_options": "natural, rgb, cmy, cmyk, gray, dvipsnames, svgnames, x11names, table", "description": "xcolor 3.02 definitions, expressions and target models with pdfTeX's exact operator values; hsb models, colour series and table colours are diagnosed"},
     {"name": "amsthm", "silent_options": "", "description": "\\newtheorem, \\theoremstyle and the proof environment"},
@@ -875,7 +891,8 @@
     {"name": "geometry", "silent_options": "letterpaper, margin=1in", "description": "matches the fixed US Letter page with 1in margins"},
     {"name": "siunitx", "silent_options": "any \\sisetup keys", "description": "v3 \\num, \\unit, \\qty, lists, ranges, \\ang, \\sisetup and \\DeclareSIUnit; unmodelled keys are diagnosed"},
     {"name": "multicol", "silent_options": "", "description": "multicols and multicols* with preface, \\columnbreak, \\raggedcolumns (columns set by the render pipeline)"},
-    {"name": "natbib", "silent_options": "numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak", "description": "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; sort, compress, super and openbib are diagnosed"}
+    {"name": "natbib", "silent_options": "numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak", "description": "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; sort, compress, super and openbib are diagnosed"},
+    {"name": "ulem", "silent_options": "normalem", "description": "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined"}
   ],
   "coverage": {
     "sources": [
@@ -892,21 +909,21 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 164, "percent": 40},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 174, "percent": 42.4},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 17, "percent": 56.7},
-      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 40, "percent": 39.2},
+      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 41, "percent": 40.2},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
       {"set": "amssymb", "kind": "command", "canonical": 229, "supported": 225, "percent": 98.3},
       {"set": "enumitem", "kind": "command", "canonical": 17, "supported": 1, "percent": 5.9},
       {"set": "geometry", "kind": "command", "canonical": 7, "supported": 0, "percent": 0},
       {"set": "graphicx", "kind": "command", "canonical": 8, "supported": 6, "percent": 75},
-      {"set": "hyperref", "kind": "command", "canonical": 132, "supported": 2, "percent": 1.5},
+      {"set": "hyperref", "kind": "command", "canonical": 132, "supported": 3, "percent": 2.3},
       {"set": "hyperref", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "tikz", "kind": "command", "canonical": 43, "supported": 0, "percent": 0},
       {"set": "tikz", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 17, "percent": 7.1}
     ],
-    "total": {"canonical": 1314, "supported": 503, "percent": 38.3}
+    "total": {"canonical": 1314, "supported": 515, "percent": 39.2}
   }
 }
