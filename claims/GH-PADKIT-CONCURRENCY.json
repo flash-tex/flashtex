@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/padkit-strict-concurrency",
+  "gh_ref": "#372",
+  "machine": "mac-m5pro-dq222",
+  "note": "FlashTeXPadKit strict-concurrency audit: enable complete checking in the package, fix races in FlashTeXPadKit sources only; stacked on #372; NearbyClient (Mac-shared symlink) report-only",
+  "started_utc": "2026-09-14T09:59:18Z",
+  "state": "claimed",
+  "task_id": "GH-PADKIT-CONCURRENCY",
+  "updated_utc": "2026-09-14T09:59:18Z"
+}
