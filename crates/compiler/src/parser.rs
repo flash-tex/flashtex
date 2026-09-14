@@ -780,6 +780,11 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "end",
     "par",
     "documentclass",
+    "NeedsTeXFormat",
+    "ProvidesClass",
+    "ProvidesPackage",
+    "ProvidesFile",
+    "DocumentMetadata",
     "setlength",
     "usepackage",
     "definecolor",
@@ -1896,6 +1901,20 @@ impl P<'_> {
             // real documents put it, and in the body, where LaTeX also
             // allows it.
             "hypersetup" => self.hypersetup(span),
+            // `\NeedsTeXFormat{format}[date]`, `\ProvidesClass{name}[info]`,
+            // `\ProvidesPackage{name}[info]` and `\ProvidesFile{name}[info]`
+            // are `.cls`/`.sty` declarations (or inert metadata) with no
+            // visible output, so they are accepted silently. Real LaTeX
+            // carries the optional `[date]`/`[info]` after the required
+            // group, so the group is consumed first and the bracket (when
+            // present) with it; nothing is typeset either way.
+            "NeedsTeXFormat" | "ProvidesClass" | "ProvidesPackage" | "ProvidesFile" => {
+                let _ = self.required_group(name, span);
+                let _ = self.optional_bracket_argument();
+            }
+            // `\DocumentMetadata{key=value,...}` (LaTeX2e 2022+) must precede
+            // `\documentclass`; see `document_metadata` below.
+            "DocumentMetadata" => self.document_metadata(span),
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
@@ -2558,6 +2577,48 @@ impl P<'_> {
             }
             self.document_class = Some(class);
         }
+    }
+
+    /// `\DocumentMetadata{key=value,...}` (LaTeX2e 2022+): real LaTeX
+    /// requires it before `\documentclass` and raises an error after it.
+    /// Its keys (PDF tagging, PDF/A conformance, the document language)
+    /// feed PDF-generation machinery this compiler does not implement, so
+    /// before `\documentclass` they are accepted with a warning naming
+    /// them. `document_class` records whether `\documentclass` has already
+    /// been seen, so no new preamble tracking is needed.
+    fn document_metadata(&mut self, span: Span) {
+        let (tokens, argument_span) = self.required_group("DocumentMetadata", span);
+        let full_span = span.merge(argument_span);
+        if self.document_class.is_some() {
+            self.diags.push(Diagnostic::error(
+                "\\DocumentMetadata must come before \\documentclass",
+                Some(full_span),
+                Some("ignored the metadata and continued".into()),
+            ));
+            return;
+        }
+        let raw = token_text(&tokens);
+        let mut keys: Vec<String> = raw
+            .split(',')
+            .map(|part| {
+                let part = part.trim();
+                part.split_once('=')
+                    .map_or(part, |(key, _)| key.trim())
+                    .to_string()
+            })
+            .filter(|key| !key.is_empty())
+            .collect();
+        if keys.is_empty() {
+            keys.push("(none)".to_string());
+        }
+        self.diags.push(Diagnostic::warning(
+            format!(
+                "\\DocumentMetadata keys have no effect in this compiler: {}",
+                keys.join(", ")
+            ),
+            Some(full_span),
+            Some("ignored the keys and continued".into()),
+        ));
     }
 
     /// `\setlength{\parskip}{..}` and `\setlength{\parindent}{..}` in the
