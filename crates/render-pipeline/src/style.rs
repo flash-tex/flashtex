@@ -102,6 +102,10 @@ pub struct Stylesheet {
     /// amsmath `fleqn`: displays are set flush left, `\@mathmargin`
     /// (`\leftmargini`) in from the display's left edge.
     pub fleqn: bool,
+    /// Whether family 3 (the `cmex` extension family, `largesymbols`)
+    /// follows the sizes amsmath/amsfonts declare instead of the kernel's
+    /// `sfixed*cmex10`; see [`cmex_designs`].
+    pub cmex_designs: bool,
     pub script_size_pt: f64,
     pub scriptscript_size_pt: f64,
     pub tolerance: f64,
@@ -218,6 +222,7 @@ impl Stylesheet {
             belowdisplayshortskip: below_short,
             leqno: false,
             fleqn: false,
+            cmex_designs: false,
             script_size_pt: script,
             scriptscript_size_pt: scriptscript,
             tolerance: 200.0,
@@ -315,6 +320,42 @@ impl Stylesheet {
     }
 }
 
+/// Packages that redeclare `OMX/cmex/m/n` with amsfonts' size ranges, so
+/// family 3 is loaded at the math size instead of `sfixed` at 10pt:
+/// `amsfonts.sty` 36-41 (`<-7.5>cmex7<7.5-8.5>cmex8<8.5-9.5>cmex9<9.5->cmex10`)
+/// and `amsmath.sty` 109-114, which amsmath, amssymb and every package
+/// loading them inherit.
+const CMEX_DESIGN_PACKAGES: [&str; 5] = ["amsmath", "amsfonts", "amssymb", "mathtools", "physics"];
+
+/// Whether family 3 (`largesymbols`) follows the sizes amsmath/amsfonts
+/// declare instead of the LaTeX kernel's `omxcmex.fd` `<->sfixed*cmex10`.
+///
+/// `lmodern` wins over amsmath in either load order, because it rebinds the
+/// symbol font itself (`\DeclareSymbolFont{largesymbols}{OMX}{lmex}{m}{n}`)
+/// rather than the `cmex` shape amsmath redeclares, and `omxlmex.fd` keeps
+/// `sfixed*lmex10`. amsmath's `cmex10` option restores the kernel's
+/// declaration.
+///
+/// Measured with `\fontname\textfont3` under pdfTeX 3.141592653-2.6-1.40.27
+/// (TeX Live 2025), `article`:
+///
+/// | packages | 10pt | 11pt | 12pt |
+/// |---|---|---|---|
+/// | (none), `amsthm`, `siunitx` | `cmex10` | `cmex10` | `cmex10` |
+/// | `amsmath` / `amsfonts` / `amssymb` / `mathtools` / `physics` | `cmex10` | `cmex10 at 10.95pt` | `cmex10 at 12.0pt` |
+/// | any of those **+ `lmodern`** (either order) | `lmex10` | `lmex10` | `lmex10` |
+/// | `[cmex10]{amsmath}` | `cmex10` | `cmex10` | `cmex10` |
+///
+/// `\scriptfont3`/`\scriptscriptfont3` follow the same declaration:
+/// `cmex7`/`cmex7 at 5.0pt` at 10pt and `cmex8`/`cmex7 at 6.0pt` at 11 and
+/// 12pt, which is why the 10pt case still differs from `sfixed` inside
+/// scripts even though its text size agrees.
+pub fn cmex_designs(packages: &[String], cmex10_option: bool) -> bool {
+    !cmex10_option
+        && !packages.iter().any(|p| p == "lmodern")
+        && packages.iter().any(|p| CMEX_DESIGN_PACKAGES.contains(&p.as_str()))
+}
+
 /// A frame length in TeX points for the f64 layout. `len` is exact (sp);
 /// when a 0.001 pt decimal lies within [`FRAME_SNAP_SP`] of it, that
 /// decimal is used (`1in` = 4736286 sp is laid out as 72.27 pt, a letter
@@ -409,6 +450,30 @@ mod tests {
         assert!(crate::adapter::t1_encoding("\\usepackage[OT1, T1]{fontenc}"));
         assert!(!crate::adapter::t1_encoding("\\usepackage[T1,OT1]{fontenc}"));
         assert!(!crate::adapter::t1_encoding("\\usepackage{lmodern}"));
+    }
+
+    /// Every row is the `\fontname\textfont3` pdfTeX (TeX Live 2025)
+    /// reports for that package set; see [`cmex_designs`].
+    #[test]
+    fn amsfonts_sizes_family_three_unless_lmodern_or_the_cmex10_option() {
+        let p = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // cmex10, sfixed: the kernel's own declaration.
+        assert!(!cmex_designs(&p(&[]), false));
+        assert!(!cmex_designs(&p(&["amsthm"]), false));
+        assert!(!cmex_designs(&p(&["siunitx"]), false));
+        // cmex10 at the math size, in amsfonts' designs.
+        assert!(cmex_designs(&p(&["amsmath"]), false));
+        assert!(cmex_designs(&p(&["amsfonts"]), false));
+        assert!(cmex_designs(&p(&["amssymb"]), false));
+        assert!(cmex_designs(&p(&["mathtools"]), false));
+        assert!(cmex_designs(&p(&["physics"]), false));
+        assert!(cmex_designs(&p(&["amsmath", "amssymb", "amsthm"]), false));
+        // lmodern rebinds `largesymbols` to `lmex`, which stays sfixed,
+        // and wins in either load order.
+        assert!(!cmex_designs(&p(&["lmodern", "amssymb"]), false));
+        assert!(!cmex_designs(&p(&["amsfonts", "lmodern"]), false));
+        // `\usepackage[cmex10]{amsmath}` restores the kernel's declaration.
+        assert!(!cmex_designs(&p(&["amsmath"]), true));
     }
 
     #[test]

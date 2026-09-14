@@ -9,6 +9,8 @@
 //! TeX engine is invoked at any point. See README.md for scope, sibling
 //! pins and limitations.
 
+pub mod date;
+pub use date::TodayDate;
 pub mod adapter;
 pub mod cff;
 pub mod delta;
@@ -79,6 +81,23 @@ pub struct RenderOptions {
     /// (through project-files' rooted reads). `None`: images are reported
     /// unavailable.
     pub project_root: Option<std::path::PathBuf>,
+    /// The date `\today` renders, supplied by the caller in the compile
+    /// request (`payload.date`) rather than read from the clock here: this
+    /// pipeline must stay a pure function of its inputs
+    /// (`protocol/proposals/runtime-v1-request-date.md`).
+    ///
+    /// The default is [`TodayDate::EPOCH`], byte-for-byte what the pipeline
+    /// rendered before the field existed, so every old client and every
+    /// committed fixture is unchanged.
+    ///
+    /// **Not yet reaching the parser.** `vendor/compiler` is a read-only pin
+    /// that predates `parser::parse_project_with`, so the value is threaded and
+    /// cache-keyed here but only handed to the compiler behind the
+    /// `request-date` feature. Flip that feature on when the vendor pin carries
+    /// it; until then a request's date is validated and carried but `\today`
+    /// still renders the epoch. Same convention as `amsmath-inline` and
+    /// `compiler-text-nucleus` before their re-pins.
+    pub today: TodayDate,
 }
 
 impl Default for RenderOptions {
@@ -88,6 +107,7 @@ impl Default for RenderOptions {
             default_parindent_pt: 0.0,
             default_secnumdepth: 2,
             project_root: None,
+            today: TodayDate::EPOCH,
         }
     }
 }
@@ -131,6 +151,25 @@ pub fn render_cached(
     let multicol_masked: Vec<Option<String>> = texts.iter().zip(&multicol_scans).map(|(t, s)| s.masked(t)).collect();
     let texts: Vec<&str> = texts.iter().zip(&multicol_masked).map(|(t, m)| m.as_deref().unwrap_or(t)).collect();
     let parse_docs: Vec<SourceDocument<'_>> = documents.iter().zip(&texts).map(|(d, t)| SourceDocument { path: d.path, text: t }).collect();
+    // The request's date reaches `\today` here. `vendor/compiler` is a
+    // read-only pin (vendor/VENDORING.md) that predates
+    // `parser::parse_project_with`, so the call that actually carries the date
+    // sits behind the `request-date` feature; without it the vendored parser
+    // renders the epoch exactly as it always has. See `RenderOptions::today`.
+    #[cfg(feature = "request-date")]
+    let parsed = flashtex_compiler::parser::parse_project_with(
+        &parse_docs,
+        entry_path,
+        &flashtex_compiler::parser::ParseOptions {
+            today: flashtex_compiler::date::TodayDate::new(
+                options.today.year(),
+                options.today.month(),
+                options.today.day(),
+            )
+            .expect("RenderOptions::today is already a validated civil date"),
+        },
+    );
+    #[cfg(not(feature = "request-date"))]
     let parsed = flashtex_compiler::parser::parse_project(&parse_docs, entry_path);
     let (float_numbers, float_label_values) = floats::number(&float_envs);
     let mut image_cache = floats::ImageCache::default();

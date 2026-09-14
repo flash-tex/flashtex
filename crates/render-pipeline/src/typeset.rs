@@ -686,7 +686,8 @@ impl<'a> Context<'a> {
                     .copied()
                     .filter(|a| self.texts.iter().any(|t| t.contains(a.command())))
                     .collect();
-                let tex = TexMathMetrics::new(base, m.clone(), self.fonts).with_alphabets(self.fonts, &used);
+                let tex = TexMathMetrics::new(base, self.style.cmex_designs, m.clone(), self.fonts)
+                    .with_alphabets(self.fonts, &used);
                 let provider = if tex.roman_available() {
                     MathProvider::Tex(Rc::new(tex))
                 } else {
@@ -1008,7 +1009,19 @@ impl<'a> Context<'a> {
         sink.amsfonts = self.ams_symbol_fonts;
         let texts = self.texts;
         let fence = |sp: &Span| fence_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
-        let class = |sp: &Span| class_override_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        // The atom's own class when the pinned compiler exposes it, and the
+        // source-text re-derivation otherwise. `\colon` is why the field is
+        // needed: the kernel's is Punct and amsmath's is Ord, produced from
+        // the same five characters of source, so no amount of reading the
+        // control word back can tell them apart.
+        let class = |a: &flashtex_compiler::math::MathAtom| {
+            #[cfg(feature = "math-class-override")]
+            if let Some(forced) = a.class_override {
+                return Some(ml_class(forced));
+            }
+            let sp = &a.span;
+            class_override_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start)
+        };
         // `\quad`/`\qquad`/`\,`/`\:`/`\;`/`\!` (compiler `Space { em }`) at
         // the top level of the formula (outside `\left...\right`): math-layout
         // has no kern atom, so the formula is split there into runs laid out
@@ -4392,11 +4405,32 @@ pub fn convert_math_fenced(list: &flashtex_compiler::math::MathList, sink: &mut 
     convert_math_classed(list, sink, fence, &|_| None)
 }
 
+/// Maps the compiler's own atom class onto math-layout's.
+#[cfg(feature = "math-class-override")]
+pub fn ml_class(class: flashtex_compiler::math::AtomClass) -> ml::AtomClass {
+    use flashtex_compiler::math::AtomClass as C;
+    match class {
+        C::Ord => ml::AtomClass::Ord,
+        C::Op => ml::AtomClass::Op,
+        C::Bin => ml::AtomClass::Bin,
+        C::Rel => ml::AtomClass::Rel,
+        C::Open => ml::AtomClass::Open,
+        C::Close => ml::AtomClass::Close,
+        C::Punct => ml::AtomClass::Punct,
+        C::Inner => ml::AtomClass::Inner,
+    }
+}
+
 /// The atom class a `\mathbin`/`\mathrel`/`\mathord`/`\mathop`/`\mathopen`/
 /// `\mathclose`/`\mathpunct` command, or `\bot`/`\bigtriangleup`, forces on
-/// the atom whose span starts at `at` (pin `d416472a` carries it as the
-/// compiler's crate-private `MathAtom::class_override`, so it is re-read
-/// from the control word at the span, like [`fence_of`]).
+/// the atom whose span starts at `at`, re-read from the control word at the
+/// span like [`fence_of`].
+///
+/// This is the fallback for a pinned compiler that keeps
+/// `MathAtom::class_override` crate-private (pin `d416472a` does). It is
+/// lossy by construction -- one control word can carry two classes, as
+/// `\colon` does between its kernel and amsmath definitions -- so with the
+/// `math-class-override` feature the atom's own field is used instead.
 pub fn class_override_of(text: &str, at: usize) -> Option<ml::AtomClass> {
     let rest = text.get(at..)?.strip_prefix('\\')?;
     let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
@@ -4410,6 +4444,14 @@ pub fn class_override_of(text: &str, at: usize) -> Option<ml::AtomClass> {
         "mathpunct" => ml::AtomClass::Punct,
         "bot" => ml::AtomClass::Ord,
         "bigtriangleup" => ml::AtomClass::Bin,
+        // The *kernel's* `\colon` (`fontmath.ltx` 400,
+        // `\DeclareMathSymbol{\colon}{\mathpunct}{operators}{"3A}`), which
+        // sets a bare `:` -- a relation -- as punctuation. amsmath's `\colon`
+        // is Ord and reaches this same control word, so this row is right
+        // only for a document that has not loaded amsmath; the
+        // `math-class-override` feature reads the atom instead and is right
+        // for both.
+        "colon" => ml::AtomClass::Punct,
         // amsfonts' dashed arrows: a `\mathrel` group of msam pieces.
         "dashrightarrow" | "dasharrow" | "dashleftarrow" => ml::AtomClass::Rel,
         _ => return None,
@@ -4422,7 +4464,7 @@ pub fn convert_math_classed(
     list: &flashtex_compiler::math::MathList,
     sink: &mut crate::mathtext::TextSink,
     fence: &dyn Fn(&Span) -> Option<Fence>,
-    class: &dyn Fn(&Span) -> Option<ml::AtomClass>,
+    class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
 ) -> ml::MathList {
     use flashtex_compiler::math::{DelimiterRole, Nucleus as N};
     // Open fences: (left delimiter, atoms converted since it, its span).
@@ -4536,7 +4578,7 @@ pub fn convert_math_classed(
             // atom's span (`class_override_of`); without a source the group
             // is ordinary.
             N::Group(body) => {
-                let class = class(&a.span).unwrap_or(ml::AtomClass::Ord);
+                let class = class(a).unwrap_or(ml::AtomClass::Ord);
                 vec![ml::Atom::new(class, ml::Nucleus::List(sub(body, sink)))]
             }
             // amssymb/amsfonts symbols (compiler `MathAtom.ams_symbol`): one
@@ -4618,7 +4660,7 @@ pub fn convert_math_classed(
                         vec![fenced(left, delim, body, left_span, a.span)]
                     }
                     _ => match single {
-                        Some(Some(c)) => match class(&a.span) {
+                        Some(Some(c)) => match class(a) {
                             // `\bot` (Ord, same glyph as `\perp`) and
                             // `\bigtriangleup` (Bin, same glyph as `\triangle`).
                             Some(forced) => vec![ml::Atom::new(forced, ml::Nucleus::Symbol(c))],
@@ -4985,7 +5027,7 @@ fn grid_pieces(
     segments: &[(Vec<flashtex_compiler::math::MathAtom>, Option<f64>)],
     sink: &mut crate::mathtext::TextSink,
     fence: &dyn Fn(&Span) -> Option<Fence>,
-    class: &dyn Fn(&Span) -> Option<ml::AtomClass>,
+    class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
     texts: &[&str],
 ) -> Vec<GridPiece> {
     use flashtex_compiler::math::{MathAtom, MathList as CList, Nucleus as N};

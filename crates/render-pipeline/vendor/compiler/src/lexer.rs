@@ -47,6 +47,10 @@ pub enum TokenKind {
         text: String,
         starred: bool,
         terminated: bool,
+        /// Which command produced it: `\\verb` (`false`) or listings'
+        /// `\\lstinline` (`true`). Only a diagnostic needs to tell them
+        /// apart — both set literal typewriter text.
+        listing: bool,
     },
 }
 
@@ -197,25 +201,53 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                             end = j + ch.len_utf8();
                             it.next();
                         }
-                        if name == "verb" {
+                        if name == "verb" || name == "lstinline" {
                             // `\verb`/`\verb*` reads its own raw argument
                             // directly off the character stream: no blank-
                             // skipping (the very next character, even a
                             // space, is the delimiter) and no reinterpreting
                             // `%`, `\`, `$`, `{`, `}` while scanning for the
                             // matching close.
-                            let starred = matches!(it.peek(), Some(&(_, '*')));
+                            //
+                            // listings' `\lstinline` (listings.sty
+                            // `\lst@Init`/`\lsthk@PreSet`) is the same raw
+                            // scan with two differences: an optional
+                            // `[<key=value list>]` comes first, and it does
+                            // skip the blanks after the command before
+                            // taking the delimiter (`\@ifnextchar`). The
+                            // brace form `\lstinline{...}` closes on `}`.
+                            // The keys are not read here: they set no text,
+                            // and the renderer scans them from the source.
+                            let listing = name == "lstinline";
+                            let starred = !listing && matches!(it.peek(), Some(&(_, '*')));
                             if starred {
                                 it.next();
+                            }
+                            if listing {
+                                // `[<keys>]`, only when it closes on this line.
+                                if let Some(&(open, '[')) = it.peek() {
+                                    let rest = &text[open + 1..];
+                                    let line = rest.find('\n').unwrap_or(rest.len());
+                                    if let Some(k) = rest[..line].find(']') {
+                                        let after = open + 1 + k + 1;
+                                        while it.peek().is_some_and(|&(j, _)| j < after) {
+                                            it.next();
+                                        }
+                                    }
+                                }
+                                while matches!(it.peek(), Some(&(_, ' ' | '\t'))) {
+                                    it.next();
+                                }
                             }
                             let (verb_text, verb_end, terminated) = match it.peek().copied() {
                                 Some((delim_pos, delim)) if delim != '\n' => {
                                     it.next();
+                                    let close = if listing && delim == '{' { '}' } else { delim };
                                     let content_start = delim_pos + delim.len_utf8();
                                     let mut content_end = content_start;
                                     let mut closed = false;
                                     while let Some(&(j, ch)) = it.peek() {
-                                        if ch == delim {
+                                        if ch == close {
                                             it.next();
                                             closed = true;
                                             content_end = j;
@@ -229,7 +261,7 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                                     }
                                     let verb_text = text[content_start..content_end].to_string();
                                     let verb_end = if closed {
-                                        content_end + delim.len_utf8()
+                                        content_end + close.len_utf8()
                                     } else {
                                         content_end
                                     };
@@ -242,6 +274,7 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                                     text: verb_text,
                                     starred,
                                     terminated,
+                                    listing,
                                 },
                                 span: Span::in_document(document, start, verb_end),
                             });
@@ -442,6 +475,7 @@ mod tests {
                 text: r"100% \foo${}".into(),
                 starred: false,
                 terminated: true,
+                listing: false,
             }
         );
         // The delimiter itself is excluded from the span but the rest of the
@@ -460,6 +494,7 @@ mod tests {
                 text: "a".into(),
                 starred: true,
                 terminated: true,
+                listing: false,
             }
         );
     }
@@ -473,6 +508,7 @@ mod tests {
                 text: "no closing delimiter".into(),
                 starred: false,
                 terminated: false,
+                listing: false,
             }
         );
         // The newline is untouched and still tokenizes normally afterward.

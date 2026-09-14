@@ -111,11 +111,19 @@ pub struct Inventory {
 }
 
 /// Text commands that have a dispatch arm but only ever emit a diagnostic.
-pub const TEXT_DIAGNOSTIC_ONLY: &[&str] = &["frac", "sqrt"];
-
-/// `parser::BUILT_INS` names read only inside another command's argument
-/// (`\maketitle`'s title/author block); on their own they are diagnosed.
-pub const TEXT_CONTEXT_ONLY: &[&str] = &["thanks", "and", "today"];
+///
+/// `thanks` and `and` are meaningful only inside a `\title`/`\author`/`\date`
+/// argument, where `strip_thanks` and the `\and` author split consume them.
+/// They used to sit in a separate `TEXT_CONTEXT_ONLY` list documented as
+/// "on their own they are diagnosed", which was not true: neither had an arm,
+/// so both reached `parser::P::unsupported`, whose `debug_assert` on
+/// `BUILT_INS` panicked the debug build instead. They now have arms that
+/// really do diagnose, which is what this list means.
+///
+/// `today` was in that list too, and was wrong for a further reason: it
+/// renders in ordinary body text like any other kernel macro, so it is an
+/// inventory entry rather than a diagnostic.
+pub const TEXT_DIAGNOSTIC_ONLY: &[&str] = &["frac", "sqrt", "thanks", "and"];
 
 /// Dispatch arms that are not `parser::BUILT_INS` entries.
 const TEXT_EXTRA_ARMS: &[&str] = &["newtheorem", "theoremstyle"];
@@ -301,6 +309,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("author", "{...}", "author block for \\maketitle; \\and and \\thanks inside it"),
     ("date", "{...}", "date for \\maketitle; \\today inside it"),
     ("maketitle", "", "article.cls title block"),
+    ("today", "", "the date carried by the compile request; this compiler never reads the clock"),
     ("newtheorem", "{env}[counter]{name}", "defines a numbered theorem-like environment (amsthm)"),
     ("theoremstyle", "{style}", "selects the amsthm style for following \\newtheorem"),
     ("num", "[options]{number}", "siunitx number: digit groups, decimal marker, exponent, uncertainty, as an upright formula"),
@@ -828,7 +837,7 @@ fn text_arguments(name: &str) -> &'static str {
 pub fn inventory() -> Inventory {
     let mut commands = Vec::new();
     for &name in parser::BUILT_INS.iter().chain(TEXT_EXTRA_ARMS) {
-        if TEXT_DIAGNOSTIC_ONLY.contains(&name) || TEXT_CONTEXT_ONLY.contains(&name) {
+        if TEXT_DIAGNOSTIC_ONLY.contains(&name) {
             continue;
         }
         let origin = if SIZE_DECLARATIONS.contains(&name) {

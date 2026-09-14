@@ -818,6 +818,7 @@ struct SourceEditorView: NSViewRepresentable {
                 g.layoutIfNeeded(lineCount: syntax.highlighter.lineCount)
                 g.update(marks: parent.marks)
                 g.currentLine = currentLine
+                g.relativeLineNumbers = LineNumberGutter.relativeOverride ?? EditorPreferences.shared.relativeLineNumbers
             } else if !on, gutter != nil {
                 scroll.rulersVisible = false
                 scroll.hasVerticalRuler = false

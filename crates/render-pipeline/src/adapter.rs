@@ -786,12 +786,16 @@ pub fn adapt_cached(
     // amsmath's `leqno`/`fleqn` options (global class options reach it too).
     // Without amsmath, `leqno.clo`/`fleqn.clo` build displays differently
     // (a zero-width `\eqno`, a `trivlist`), which is not modelled.
+    let mut amsmath_cmex10 = false;
     if amsmath {
         let package = package_options(source, "amsmath").unwrap_or_default();
         let has = |name: &str| class_options.split(',').chain(package.split(',')).any(|o| o.trim() == name);
         style.leqno = has("leqno");
         style.fleqn = has("fleqn");
+        // `\usepackage[cmex10]{amsmath}` keeps the kernel's `sfixed*cmex10`.
+        amsmath_cmex10 = package.split(',').any(|o| o.trim() == "cmex10");
     }
+    style.cmex_designs = crate::style::cmex_designs(&parsed.packages, amsmath_cmex10);
     #[cfg(feature = "amsmath-inline")]
     let mathtools = parsed.packages.iter().any(|p| p == "mathtools");
     // `\setlength{\parskip}{...}`: a fixed skip (no stretch) replaces
@@ -815,7 +819,8 @@ pub fn adapt_cached(
         }
         h.finish()
     };
-    let items_for = |inlines: &[Inline], heading: bool| -> Vec<Item> { items_cached(texts, inlines, &styles, labels, labels_fp, size, heading, cache) };
+    let items_for = |inlines: &[Inline], heading: bool| -> Vec<Item> { items_cached(texts, inlines, &styles, labels, labels_fp, size, heading, false, cache) };
+    let items_for_weighted = |inlines: &[Inline], compiler_weight: bool| -> Vec<Item> { items_cached(texts, inlines, &styles, labels, labels_fp, size, false, compiler_weight, cache) };
     let mut blocks = Vec::new();
     // Page-style, mark, `\chapter` and `\noindent` commands in the entry
     // document's body, read from the source: the compiler accepts the first
@@ -1178,12 +1183,19 @@ pub fn adapt_cached(
                 styled,
                 env_open,
                 after_env,
+                theorem_item,
+                in_theorem,
                 list,
             } => {
                 for inline in inlines {
                     unsupported_inlines(inline, &mut limitations);
                 }
-                let mut items = items_for(inlines, false);
+                // amsthm sets the head bold (italic for `remark`/`proof`)
+                // and, for the `plain` style, the body italic. None of that
+                // is in the source bytes at the head's span (which is the
+                // `\begin` command), so the weights come from the compiler's
+                // own scoping inside a theorem-like environment.
+                let mut items = items_for_weighted(inlines, in_theorem);
                 items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
                 let mut parts = Vec::new();
                 let mut current = Vec::new();
@@ -1336,7 +1348,7 @@ pub fn adapt_cached(
                 // ones after it, `quote` likewise.
                 blocks.push(Block::Paragraph {
                     parts,
-                    indent: !after_heading && !caption && styled.is_none() && !after_env && list.is_none() && !noindent,
+                    indent: !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent,
                     style: styled.unwrap_or_default(),
                     env_open,
                     env_close: false,
@@ -1615,6 +1627,13 @@ enum UnitKind<'p> {
         /// LaTeX's `\@endpe`: text that follows `\end{center}`/... without
         /// a blank line continues in the same paragraph, unindented.
         after_env: bool,
+        /// The unit is the `\item` of an amsthm theorem-like environment
+        /// (`\trivlist`, `\itemindent\z@`), so its first line is not
+        /// indented; see [`opens_theorem_item`].
+        theorem_item: bool,
+        /// The unit's words are inside a theorem-like environment, so their
+        /// weight comes from the compiler; see [`in_theorem_environment`].
+        in_theorem: bool,
         /// A compiler `ListItem` paragraph: its `\list` geometry.
         list: Option<ListGeom>,
     },
@@ -1641,6 +1660,7 @@ fn gap_has_page_break(texts: &[&str], prev: Span, next: Span) -> bool {
 }
 
 fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, style: &Stylesheet) -> Vec<Unit<'p>> {
+    let theorem_envs = theorem_environments(texts);
     let mut units = Vec::new();
     let mut prev_end: Option<Span> = None;
     // Carried from the compiler's own `PageBreak`/`VSpace`/`Rule` blocks
@@ -1855,6 +1875,24 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                         })
                     })
             });
+        // The `\item` of an amsthm theorem-like environment: the gap before
+        // this block holds its `\begin{...}` (only the environment's first
+        // paragraph, so later ones keep the ambient `\parindent`).
+        let theorem_item = list.is_none()
+            && styled.is_none()
+            && first.is_some_and(|f| {
+                let gap_start = match prev_end {
+                    Some(p) if p.document == f.document && p.end <= f.start => Some(p.end),
+                    Some(_) => None,
+                    None => Some(0),
+                };
+                match (texts.get(f.document.0), gap_start) {
+                    (Some(t), Some(g)) => opens_theorem_item(t, g, f.start, &theorem_envs),
+                    _ => false,
+                }
+            });
+        let in_theorem = theorem_item
+            || first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| in_theorem_environment(t, f.start, &theorem_envs)));
         prev_styled = styled.is_some();
         prev_vmode = matches!(block, CBlock::Heading { .. });
         match block {
@@ -1881,6 +1919,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
             CBlock::Paragraph(inlines) | CBlock::ListItem { content: inlines, .. } | CBlock::FigureCaption { content: inlines } | CBlock::Styled { content: inlines, .. } => {
                 let caption = matches!(block, CBlock::FigureCaption { .. });
                 let mut env_open = env_open;
+                // Only the environment's first unit carries the `\item`.
+                let mut theorem_item = theorem_item;
                 let mut vspace_before = vspace_before;
                 let mut limitations = limitations;
                 let centered = matches!(block, CBlock::Styled { style: flashtex_compiler::parser::ParagraphStyle::Center, .. });
@@ -1931,6 +1971,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                                     styled,
                                     env_open: env_open.take(),
                                     after_env,
+                                    theorem_item: std::mem::take(&mut theorem_item),
+                                    in_theorem,
                                     list: list.clone(),
                                 },
                                 eject_before: eject,
@@ -1950,6 +1992,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                             styled,
                             env_open: env_open.take(),
                             after_env,
+                            theorem_item: std::mem::take(&mut theorem_item),
+                            in_theorem,
                             list: list.clone(),
                         },
                         eject_before: eject,
@@ -2709,6 +2753,104 @@ fn brace_depth(prefix: &str) -> i64 {
         i += 1;
     }
     depth
+}
+
+/// The environments amsthm sets as a `\trivlist` holding a single `\item`:
+/// every `\newtheorem`/`\newtheorem*` declaration in the sources plus the
+/// fixed `proof`. See [`opens_theorem_item`] for what that costs the first
+/// line.
+fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    out.insert("proof".to_string());
+    for text in texts {
+        let mut from = 0;
+        while let Some(at) = find_command(&text[from..], "newtheorem") {
+            let at = from + at;
+            let rest = &text[at + "\\newtheorem".len()..];
+            let rest = rest.strip_prefix('*').unwrap_or(rest).trim_start();
+            if let Some(name) = rest.strip_prefix('{').and_then(|r| r.split_once('}')).map(|(n, _)| n.trim()) {
+                if !name.is_empty() {
+                    out.insert(name.to_string());
+                }
+            }
+            from = at + 1;
+        }
+    }
+    out
+}
+
+/// Whether the last `\begin{...}` in `gap` opens a theorem-like environment,
+/// so the paragraph after it is that environment's `\item`.
+///
+/// amsthm sets theorem-like environments as `\trivlist` + `\item[<head>]`.
+/// `\trivlist` leaves `\itemindent` at `\z@`, and `\@item`'s `\everypar`
+/// takes the `\parindent` box back off the first line (`\setbox\z@\lastbox`)
+/// before unboxing `\@labels` — whose leading `\hskip\itemindent \hskip
+/// -\labelwidth \hskip -\labelsep` is `-\labelsep` here, exactly cancelling
+/// the `\hskip\labelsep` the head box starts with. So the head sits flush on
+/// the left margin and the first line is *not* indented; only the following
+/// paragraphs of the same environment take the ambient `\parindent`.
+fn opens_theorem_item(text: &str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+    if gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
+        return false;
+    }
+    // The compiler gives the theorem head inline the `\begin` command's own
+    // span, so the opener is usually *at* the paragraph's first span rather
+    // than in the gap before it; accept either.
+    let begin = if text[at..].starts_with("\\begin") {
+        Some(at)
+    } else {
+        rfind_command(&text[gap_start..at], "begin").map(|r| gap_start + r)
+    };
+    let Some(begin) = begin else {
+        return false;
+    };
+    text[begin..]
+        .split_once('{')
+        .and_then(|(_, rest)| rest.split_once('}'))
+        .is_some_and(|(name, _)| envs.contains(name.trim()))
+}
+
+/// Whether byte `at` lies inside a theorem-like environment: the `\begin`/
+/// `\end` pairs before it are matched off and a theorem-like name is left
+/// open. amsthm's head font (`\bfseries`, or `\itshape` for `remark` and
+/// `proof`) and the `plain` style's italic body are declared by the package,
+/// not written in the source at the head's span, so the weights of a
+/// theorem's words come from the compiler's scoping instead of the source's
+/// own brace groups.
+fn in_theorem_environment(text: &str, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+    if at > text.len() || !text.is_char_boundary(at) {
+        return false;
+    }
+    let head = &text[..at];
+    let mut open: Vec<&str> = Vec::new();
+    let mut from = 0usize;
+    loop {
+        let b = find_command(&head[from..], "begin").map(|r| (from + r, true));
+        let e = find_command(&head[from..], "end").map(|r| (from + r, false));
+        let (pos, is_begin) = match (b, e) {
+            (Some(x), Some(y)) => {
+                if x.0 <= y.0 {
+                    x
+                } else {
+                    y
+                }
+            }
+            (Some(x), None) => x,
+            (None, Some(y)) => y,
+            (None, None) => break,
+        };
+        let name = head[pos..].split_once('{').and_then(|(_, r)| r.split_once('}')).map(|(n, _)| n.trim());
+        if let Some(name) = name {
+            if is_begin {
+                open.push(name);
+            } else if open.last() == Some(&name) {
+                open.pop();
+            }
+        }
+        from = pos + 1;
+    }
+    open.iter().any(|n| envs.contains(*n))
 }
 
 /// Byte offset of the last `\<name>` in `source` outside comments.
@@ -3722,17 +3864,18 @@ fn items_cached(
     labels_fp: u64,
     size: u32,
     heading: bool,
+    compiler_weight: bool,
     cache: Option<&crate::incremental::RenderCache>,
 ) -> Vec<Item> {
     let Some(cache) = cache else {
-        return items_from_inlines(texts, inlines, styles, labels, size, heading);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
     };
     // Table items nest item lists the relocation does not walk.
     if inlines.iter().any(|i| matches!(i, Inline::Tabular(_))) {
-        return items_from_inlines(texts, inlines, styles, labels, size, heading);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
     }
     let Some(first) = inlines.first().map(inline_span) else {
-        return items_from_inlines(texts, inlines, styles, labels, size, heading);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
     };
     let document = first.document;
     let mut start = first.start;
@@ -3740,25 +3883,25 @@ fn items_cached(
     for i in inlines {
         let s = inline_span(i);
         if s.document != document {
-            return items_from_inlines(texts, inlines, styles, labels, size, heading);
+            return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
         }
         start = start.min(s.start);
         end = end.max(s.end);
     }
     let Some(src) = texts.get(document.0) else {
-        return items_from_inlines(texts, inlines, styles, labels, size, heading);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
     };
     // Macro replacement text carries the invocation's span: the spacing
     // and weight of its words come from the definition (`macro_body`), so
     // a block holding one cannot be keyed by its own bytes alone.
     if inlines.iter().any(|i| is_invocation_span(src, inline_span(i))) {
-        return items_from_inlines(texts, inlines, styles, labels, size, heading);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
     }
     // `\\[<dimen>]` reads past the block's last span: the key covers the
     // rest of that line.
     let slice_end = src[end.min(src.len())..].find('\n').map_or(src.len(), |n| end + n + 1).max((end + 2).min(src.len()));
     let Some(slice) = src.get(start..slice_end) else {
-        return items_from_inlines(texts, inlines, styles, labels, size, heading);
+        return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
     };
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -3768,6 +3911,7 @@ fn items_cached(
     labels_fp.hash(&mut h);
     size.hash(&mut h);
     heading.hash(&mut h);
+    compiler_weight.hash(&mut h);
     let no_styles = Styles::default();
     let st = styles.get(document.0).unwrap_or(&no_styles);
     let at = st.at(start);
@@ -3874,7 +4018,7 @@ fn items_cached(
     if let Some(a) = cache.adapted(key) {
         return crate::incremental::relocate_items(&a.items, start as isize - a.base as isize);
     }
-    let items = items_from_inlines(texts, inlines, styles, labels, size, heading);
+    let items = items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight);
     cache.insert_adapted(key, crate::incremental::AdaptedBlock { items: items.clone(), base: start });
     items
 }
@@ -3885,13 +4029,12 @@ fn items_cached(
 /// content, whose compiler styles start bold (`\normalfont` in it is read
 /// from the compiler's own style, since the macro-expanded bytes are not in
 /// the source at the invocation).
-fn items_from_inlines(texts: &[&str], inlines: &[Inline], styles: &[Styles], labels: &Labels, size: u32, heading: bool) -> Vec<Item> {
-    items_from_inlines_styled(texts, inlines, styles, labels, size, heading, false)
-}
-
+///
 /// `compiler_weight`: bold and italic come from the compiler's own scoping
-/// rather than the source's brace groups (a table entry whose array `>{}`
-/// declarations were inserted from the column specification).
+/// rather than the source's brace groups — a table entry whose array `>{}`
+/// declarations were inserted from the column specification, or an amsthm
+/// theorem-like environment, whose head and body fonts the package declares
+/// and the source never spells at the head's span.
 fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Styles], labels: &Labels, size: u32, heading: bool, compiler_weight: bool) -> Vec<Item> {
     // `\ref`/`\pageref` become ordinary text attributed to the command's
     // bytes; `\label` becomes a zero-width marker.
@@ -4293,6 +4436,17 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     run.clear();
                 };
                 for (ch, src) in chars {
+                    // A blank inside replacement text (`!exact`: a theorem
+                    // head, `\today`, any macro body) stands for a space
+                    // *token*, so it is interword glue in the font in force,
+                    // not a character. Only `exact` text -- the source's own
+                    // bytes, verbatim included -- keeps a literal blank.
+                    if ch == ' ' && !exact {
+                        flush(&mut run, &mut items, &mut factor);
+                        items.push(Item::Space { style, factor, no_break: false });
+                        factor = 1000;
+                        continue;
+                    }
                     // Only a typed `~` is the active tie; `\textasciitilde`
                     // (the compiler's symbol text) is the character itself.
                     if ch == '~' && source.get(src.start..src.end) == Some("~") {

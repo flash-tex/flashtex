@@ -1,0 +1,127 @@
+\\documentclass{article}
+\\title{Hello FlashTeX}
+\\author{FlashTeX Team}
+\\date{September 2026}
+
+\\begin{document}
+
+\\maketitle
+
+\\section{Introduction}
+
+Welcome to FlashTeX! This is a minimal example demonstrating the core features
+of the FlashTeX compiler. FlashTeX compiles LaTeX documents up to 77\\times
+faster than traditional TeX engines by implementing a pure-Rust compilation
+pipeline with zero external dependencies.
+
+\\section{Basic Formatting}
+
+FlashTeX supports all standard text formatting commands:
+
+\\begin{itemize}
+  \\item \\textbf{Bold text} for emphasis
+  \\item \\textit{Italic text} for titles and foreign words
+  \\item \\underline{Underlined text} for special notation
+  \\item \\texttt{Monospace text} for code and identifiers
+  \\item \\textsc{Small Caps} for headers and abbreviations
+\\end{itemize}
+
+You can also \\emph{nest formatting} within other commands, and FlashTeX
+will handle the font stack correctly.
+
+\\section{Document Structure}
+
+FlashTeX supports the standard LaTeX sectioning commands:
+
+\\subsection{Subsections}
+
+Content under a subsection is properly indented and formatted according to
+the document class settings.
+
+\\subsubsection{Sub-subsections}
+
+Even deeply nested sections maintain correct numbering and formatting.
+
+\\paragraph{Paragraphs} are also supported as a sectioning level, though
+they typically appear inline with the following text.
+
+\\section{Lists}
+
+\\subsection{Ordered Lists}
+
+\\begin{enumerate}
+  \\item First compile pass: lexing and tokenization (0.8ms average)
+  \\item Second compile pass: parsing and AST construction (1.2ms average)
+  \\item Third compile pass: layout and page breaking (1.5ms average)
+  \\item Fourth compile pass: PDF generation and output (1.0ms average)
+\\end{enumerate}
+
+\\subsection{Nested Lists}
+
+\\begin{itemize}
+  \\item Compiler features
+    \\begin{itemize}
+      \\item Incremental compilation with content-addressed caching
+      \\item Source span tracking for precise error reporting
+      \\item Graceful error recovery (continues past first error)
+      \\item FNV-1a hashing for O(1) cache lookups
+    \\end{itemize}
+  \\item Output formats
+    \\begin{itemize}
+      \\item PDF with Helvetica base-14 fonts
+      \\item JSON AST for programmatic access
+      \\item Diagnostic JSON for editor integration
+    \\end{itemize}
+\\end{itemize}
+
+\\section{Special Characters}
+
+FlashTeX handles LaTeX special characters correctly:
+
+\\begin{itemize}
+  \\item Ampersand: \\&
+  \\item Percent: \\%
+  \\item Dollar: \\$
+  \\item Hash: \\#
+  \\item Underscore: \\_
+  \\item Braces: \\{ \\}
+  \\item Tilde: \\textasciitilde
+  \\item Caret: \\textasciicircum
+  \\item Backslash: \\textbackslash
+\\end{itemize}
+
+\\section{Verbatim Text}
+
+For code blocks, use the verbatim environment:
+
+\\begin{verbatim}
+$ cargo build --release
+$ ./target/release/flashtex compile hello.tex
+Compiled hello.tex in 4.5ms (incremental)
+Output: hello.pdf (42.3 KB)
+\\end{verbatim}
+
+\\section{Performance Notes}
+
+FlashTeX achieves its speed through several key optimizations:
+
+\\begin{enumerate}
+  \\item \\textbf{Zero-copy parsing}: The lexer operates on byte slices
+    without allocating intermediate string copies.
+  \\item \\textbf{Arena allocation}: AST nodes are allocated in a bump
+    arena, reducing allocation overhead by 94\\%.
+  \\item \\textbf{Incremental compilation}: Only changed sections are
+    recompiled, with FNV-1a content hashing for cache invalidation.
+  \\item \\textbf{SIMD-accelerated scanning}: Token boundaries are
+    detected using SIMD intrinsics on supported architectures.
+  \\item \\textbf{Parallel layout}: Independent page regions are laid
+    out concurrently using Rayon's work-stealing thread pool.
+\\end{enumerate}
+
+\\section{Conclusion}
+
+This document demonstrates the core LaTeX subset supported by FlashTeX v0.1.0.
+For the full list of supported commands, see the documentation at
+\\texttt{docs/ARCHITECTURE.md}.
+
+\\end{document}

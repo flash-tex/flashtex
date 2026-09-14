@@ -210,6 +210,10 @@ def generate_reference(fx, texbin, out_name, log):
 # ----------------------------------------------------------------------------
 # producers
 
+# 1970-01-01 UTC -- the civil date of SOURCE_DATE_EPOCH=0, which is what this
+# harness already gives pdflatex for the committed references.
+EPOCH_DATE = "1970-01-01"
+
 
 def make_request(fx, rid):
     docs = []
@@ -225,6 +229,15 @@ def make_request(fx, rid):
             "revision": 1,
             "entry_path": fx["entry"],
             "documents": docs,
+            # Pinned, never the wall clock: the committed reference.pdf/.json in
+            # every fixture were produced by pdflatex under SOURCE_DATE_EPOCH=0
+            # FORCE_SOURCE_DATE=1, so the producer must be given the same civil
+            # date or a fixture using \today would drift the moment the date
+            # changed. This is an explicit pin rather than a reliance on the
+            # compiler's absent-date default, so the reference data survives any
+            # later change to what "no date supplied" means.
+            # protocol/proposals/runtime-v1-request-date.md
+            "date": EPOCH_DATE,
         },
     }
 

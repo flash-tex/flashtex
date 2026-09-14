@@ -34,6 +34,7 @@ REPO = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "tools", "visual-oracle"))
 sys.path.insert(0, os.path.join(REPO, "tools", "real-world-corpus"))
 sys.path.insert(0, os.path.join(REPO, "crates", "compiler", "tests", "amsmath_corpus"))
+import fontenv  # noqa: E402
 import pdftext  # noqa: E402
 import rank  # noqa: E402
 import oracle as ams_oracle  # noqa: E402  (the amsmath corpus oracle)
@@ -170,6 +171,8 @@ def cmd_refs(args):
 
 def cmd_check(args):
     passed, rows = 0, []
+    env = fontenv.render_env(args.fonts, args.tfm_dirs)
+    print(fontenv.describe(env))
     with tempfile.TemporaryDirectory() as work:
         for name in fixtures(args.only):
             pinned = json.load(open(os.path.join(REFS, name + ".json"), encoding="utf-8"))
@@ -178,20 +181,21 @@ def cmd_check(args):
             ref_braces = pinned["brace_extents"]
             text = open(os.path.join(FIXTURES, name + ".tex"), encoding="utf-8").read()
             req = {"protocol_version": 1, "id": name, "type": "compile",
-                   "payload": {"project_id": "amssymb-corpus", "revision": 1, "entry_path": "main.tex",
+                   "payload": {"project_id": "amssymb-corpus", "revision": 1, "entry_path": "main.tex", "date": "1970-01-01",
                                "documents": [{"path": "main.tex", "text": text}]}}
             v2 = os.path.join(work, name + ".v2.json")
-            env = dict(os.environ, FLASHTEX_FONT_DIRS=args.fonts, FLASHTEX_TFM_DIRS=args.fonts)
             p = subprocess.run([args.render, "--v2", v2], input=(json.dumps(req) + "\n").encode(), env=env,
                                capture_output=True, timeout=120)
-            diags = []
+            diags, font_bad = [], []
             for line in p.stdout.decode("utf-8", "replace").splitlines():
                 try:
                     m = json.loads(line)
                 except json.JSONDecodeError:
                     continue
                 if m.get("type") == "compile_result":
-                    diags = [d for d in m["payload"].get("diagnostics", [])
+                    all_diags = m["payload"].get("diagnostics", [])
+                    font_bad = fontenv.font_diagnostics(all_diags)
+                    diags = [d for d in all_diags
                              if d.get("severity") == "error" or d.get("code") in ("math_limitation", "math_glyph_unmapped")]
             cand = cand_pages(v2) if os.path.isfile(v2) else []
             n = ok = unaligned = 0
@@ -212,14 +216,18 @@ def cmd_check(args):
                     d = max(abs(rl - cl), abs(rr - cr))
                     worst = max(worst, d)
                     cols_ok = cols_ok and d <= TOL
-            good = len(ref) == len(cand) == 1 and n > 0 and ok == n and unaligned == 0 and cols_ok
+            good = (len(ref) == len(cand) == 1 and n > 0 and ok == n
+                    and unaligned == 0 and cols_ok and not font_bad)
+            if font_bad:
+                fontenv.report_font_failure(name, font_bad, env)
             passed += good
             row = {"fixture": name, "pass": good, "pages": [len(ref), len(cand)], "aligned": n, "within_tol": ok,
                    "unaligned": unaligned,
                    "extension_columns": [sum(len(c) for c in ref_cols), sum(len(c) for _, c, _ in cand)],
                    "braces": [sum(len(b) for b in ref_braces), sum(len(b) for _, _, b in cand)],
                    "worst_bp": round(worst, 3),
-                   "diagnostics": [(d.get("code"), (d.get("message") or "")[:120]) for d in diags]}
+                   "diagnostics": [(d.get("code"), (d.get("message") or "")[:120]) for d in diags],
+                   "font_diagnostics": [(d.get("code"), (d.get("message") or "")[:120]) for d in font_bad]}
             rows.append(row)
             print(f"{'PASS' if good else 'FAIL'} {name:28} words {n:3} ok {ok:3} unaligned {unaligned:3} "
                   f"ext {row['extension_columns'][0]:2}/{row['extension_columns'][1]:2} "
@@ -227,7 +235,9 @@ def cmd_check(args):
     print(f"TOTAL {passed}/{len(rows)} within {TOL} bp")
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
-            json.dump({"passed": passed, "total": len(rows), "tolerance_bp": TOL, "fixtures": rows}, f, indent=1,
+            json.dump({"passed": passed, "total": len(rows), "tolerance_bp": TOL,
+                       "font_dirs": env.get("FLASHTEX_FONT_DIRS"), "tfm_dirs": env.get("FLASHTEX_TFM_DIRS"),
+                       "fixtures": rows}, f, indent=1,
                       ensure_ascii=False)
             f.write("\n")
     return 0 if passed == len(rows) else 1
@@ -241,7 +251,7 @@ def main():
     r.add_argument("only", nargs="*")
     c = sub.add_parser("check")
     c.add_argument("--render", required=True)
-    c.add_argument("--fonts", default=os.path.join(REPO, "apps", "mac", "Fonts"))
+    fontenv.add_font_arguments(c, REPO)
     c.add_argument("--json")
     c.add_argument("only", nargs="*")
     args = ap.parse_args()

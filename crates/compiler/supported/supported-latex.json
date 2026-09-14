@@ -153,6 +153,7 @@
     {"name": "author", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "author block for \\maketitle; \\and and \\thanks inside it", "renders": true},
     {"name": "date", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "date for \\maketitle; \\today inside it", "renders": true},
     {"name": "maketitle", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "article.cls title block", "renders": true},
+    {"name": "today", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "the date carried by the compile request; this compiler never reads the clock", "renders": true},
     {"name": "TeX", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "latex.ltx logo: T, kern -.1667em, E lowered .5ex, kern -.125em, X", "renders": true},
     {"name": "LaTeX", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \\TeX", "renders": true},
     {"name": "LaTeXe", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "\\LaTeX, kern .15em, 2 and a text-style subscript varepsilon", "renders": true},
@@ -864,7 +865,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 162, "percent": 39.5},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 163, "percent": 39.8},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 17, "percent": 56.7},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 40, "percent": 39.2},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -879,6 +880,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 17, "percent": 7.1}
     ],
-    "total": {"canonical": 1314, "supported": 501, "percent": 38.1}
+    "total": {"canonical": 1314, "supported": 502, "percent": 38.2}
   }
 }

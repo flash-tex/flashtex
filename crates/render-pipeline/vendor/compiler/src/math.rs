@@ -2466,10 +2466,23 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("prime", "′"),
     ("cup", "∪"),
     ("cap", "∩"),
+    // The cmsy square relations are base LaTeX2e kernel symbols, not amssymb:
+    // `fontmath.ltx` 279/278 declare `\sqcup`/`\sqcap` `\mathbin` at symbols
+    // "74/"75 and 301/302 `\sqsubseteq`/`\sqsupseteq` `\mathrel` at "76/"77.
+    // (amsfonts adds only the strict `\sqsubset`/`\sqsupset`, from msam.)
+    // Verified with pdfTeX 3.141592653 (TeX Live 2025): `\show` gives
+    // \mathchar"2274/"2275/"3276/"3277 both with and without amssymb, and at
+    // 10pt against the 9.57755pt `$ab$` control, `$a\sqcup b$` is 20.68857pt
+    // (glyph 6.66669pt + 8mu, so Bin) and `$a\sqsubseteq b$` 22.91077pt
+    // (glyph 7.7778pt + 10mu, so Rel).
+    ("sqcup", "⊔"),
+    ("sqcap", "⊓"),
     ("subset", "⊂"),
     ("subseteq", "⊆"),
+    ("sqsubseteq", "⊑"),
     ("supset", "⊃"),
     ("supseteq", "⊇"),
+    ("sqsupseteq", "⊒"),
     ("notin", "∉"),
     ("ni", "∋"),
     ("emptyset", "∅"),
@@ -2740,9 +2753,14 @@ fn symbol_class(glyph: &str) -> AtomClass {
         // HW2 follow-up: the remaining long arrows (issue #62), also from the
         // pinned Latin Modern Math resource. `⊥` above is `\perp`'s glyph;
         // `\bot` shares it but overrides the class to Ord (see `command_atom`).
-        | "⟺" | "⟶" | "⟵" | "⟸" | "⟷" => Rel,
+        | "⟺" | "⟶" | "⟵" | "⟸" | "⟷"
+        // fontmath.ltx 301-302: `\sqsubseteq`/`\sqsupseteq`, `\mathrel` at
+        // cmsy "76/"77 (kernel, not amssymb).
+        | "⊑" | "⊒" => Rel,
         "+" | "-" | "−" | "*" | "±" | "×" | "÷" | "⋅" | "·" | "∗" | "∪" | "∩" | "∨" | "∧" | "⊕"
         | "⊗" | "∖" | "∓" | "∘"
+        // fontmath.ltx 278-279: `\sqcap`/`\sqcup`, `\mathbin` at cmsy "75/"74.
+        | "⊓" | "⊔"
         // `\bigtriangledown`; `\bigtriangleup` shares `\triangle`'s glyph
         // (Ord by default here) and overrides its class to Bin instead.
         | "▽" => Bin,
@@ -5060,6 +5078,28 @@ mod spacing_tests {
             let b = laid_out(&format!(r"a\{command} b"), SIZE);
             close(x(&b, glyph), width("a", SIZE) + 4.0);
             close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE) + 4.0);
+        }
+    }
+
+    /// The kernel cmsy square relations, whose classes come from
+    /// `fontmath.ltx` 278-279 (`\sqcap`/`\sqcup`, `\mathbin`) and 301-302
+    /// (`\sqsubseteq`/`\sqsupseteq`, `\mathrel`). Measured with pdfTeX
+    /// 3.141592653 (TeX Live 2025) at 10pt against the 9.57755pt `$ab$`
+    /// control: `$a\sqcup b$` and `$a\sqcap b$` are 20.68857pt (glyph
+    /// 6.66669pt plus 8mu, so 4mu a side), `$a\sqsubseteq b$` and
+    /// `$a\sqsupseteq b$` 22.91077pt (glyph 7.7778pt plus 10mu, so 5mu).
+    #[test]
+    fn square_relations_take_their_kernel_classes() {
+        for (command, space) in [
+            ("sqcup", 4.0),
+            ("sqcap", 4.0),
+            ("sqsubseteq", 5.0),
+            ("sqsupseteq", 5.0),
+        ] {
+            let glyph = command_glyph(command).unwrap();
+            let b = laid_out(&format!(r"a\{command} b"), SIZE);
+            close(x(&b, glyph), width("a", SIZE) + space);
+            close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE) + space);
         }
     }
 

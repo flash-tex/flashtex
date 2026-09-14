@@ -22,6 +22,7 @@
 
 mod compile;
 mod project;
+mod requestdate;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -156,6 +157,7 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
         render: RenderOptions::default(),
     };
     let mut main: Option<PathBuf> = None;
+    let mut explicit_date: Option<String> = None;
     let mut i = 0;
     let value = |i: &mut usize, flag: &str| -> Result<String, String> {
         *i += 1;
@@ -168,6 +170,13 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
             "--project-root" => c.project_root = Some(PathBuf::from(value(&mut i, a)?)),
             "--font-dir" => c.font_dirs.push(PathBuf::from(value(&mut i, a)?)),
             "--v2" => c.v2 = Some(PathBuf::from(value(&mut i, a)?)),
+            // What `\today` renders. The CLI is the caller, so it is the one
+            // component allowed to read the clock; the engine never does.
+            // protocol/proposals/runtime-v1-request-date.md
+            "--date" => {
+                let raw = value(&mut i, a)?;
+                explicit_date = Some(raw);
+            }
             "--timing" => c.timing = true,
             "-v" | "--verbose" => c.verbose = true,
             "--strict" => c.strict = true,
@@ -199,6 +208,14 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
     if mode == Mode::Check && (c.output.is_some() || c.v2.is_some()) {
         return Err("`check` writes no output files; use `build` for -o/--v2".into());
     }
+    // `--date`, else SOURCE_DATE_EPOCH, else the clock. Resolved here, once per
+    // invocation, so the engine receives a date and never reads a clock itself.
+    c.render.today = requestdate::resolve(
+        explicit_date.as_deref(),
+        requestdate::source_date_epoch_from_env().as_deref(),
+        requestdate::now_unix_seconds(),
+    )
+    .map_err(|e| e.0)?;
     Ok(c)
 }
 
