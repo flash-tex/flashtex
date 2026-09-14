@@ -5429,10 +5429,24 @@ impl<'a> Context<'a> {
             no_interline_first: false,
             no_interline_after: false,
             baselineskip: Some(normal + JOT),
+            // `\openup\jot` (amsmath `\displ@y@`) advances `\lineskip` as
+            // well as `\baselineskip` — `\openup` is `\advance` on all three
+            // of `\lineskip`, `\baselineskip` and `\lineskiplimit`. Leaving
+            // this `None` used the page's 1pt `\lineskip`, so every row gap
+            // that fell into lineskip mode was one `\jot` = 3pt short, and
+            // it only falls into lineskip mode when a row is tall enough
+            // that `\baselineskip - prevdepth - height < \lineskiplimit`.
+            // Short-row alignments (`a &= b \\ c &= d`) stay in baselineskip
+            // mode and were always right, which is why every pinned
+            // display-placement align fixture passed while the tall
+            // integral/fraction rows of a real problem set drifted 3pt per
+            // row. pdfLaTeX's own `\showoutput` for
+            // `fixtures/real-world/ps-calculus` prints `\glue(\lineskip) 4.0`
+            // between the rows of both of its alignments.
+            lineskip: Some(self.style.lineskip_pt + JOT),
             vskip_after: vskips,
             broken_penalty: Vec::new(),
             pre_space_after: None,
-            lineskip: None,
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
