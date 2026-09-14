@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/delta-digest-cross-language",
-  "gh_ref": "#363",
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/373",
   "machine": "Overpriced-Hardware",
   "note": "Cross-language digest fixture, delegated by daniel-parent, based on agent/daniel-parent/mac-v2-diagnostics",
   "started_utc": "2026-09-14T09:27:58Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-363",
-  "updated_utc": "2026-09-14T09:27:58Z"
+  "updated_utc": "2026-09-14T09:43:54Z"
 }
