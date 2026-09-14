@@ -111,7 +111,7 @@ final class VimMode {
         var linewise: Bool
     }
 
-    /// What the status bar shows (`VimModeStatusItem`, ContentView.swift).
+    /// What the editor pane's Vim status line shows (`VimStatusLine`, ContentView.swift).
     @Observable
     final class Status {
         static let shared = Status()

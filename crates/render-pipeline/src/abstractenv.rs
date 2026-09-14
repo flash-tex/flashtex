@@ -304,6 +304,9 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
             // `\topsep`/`\partopsep` hold, which `\small` has not touched.
             close_skip: None,
         }),
+        // The head's leading travels on its `SizedPara`, which resizes the
+        // whole paragraph; nothing here is a compiler-observed `\par`.
+        leading_pt: None,
     }
 }
 

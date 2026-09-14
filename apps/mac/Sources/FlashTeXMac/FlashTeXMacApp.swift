@@ -187,6 +187,10 @@ struct FlashTeXMacApp: App {
             }
             CommandGroup(after: .pasteboard) {
                 Divider()
+                Button("Re-indent Lines") { EditorIndentationAction.reindentLines() }
+                    .keyboardShortcut("i", modifiers: [.control])
+                Button("Re-indent Document") { EditorIndentationAction.reindentDocument() }
+                Divider()
                 Button("Pin Insertion Point") { model.pinAnchorAtCaret() }
                     .keyboardShortcut("p", modifiers: [.command, .option]) // ⌘⇧P is the command palette (View)
                 Button("Open Capture Proposal…") { model.openProposalPanel() } // ⌘⇧I moved to View > Toggle Captures (mac-capture-fluid)
