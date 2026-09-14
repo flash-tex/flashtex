@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Wire types of the nearby transport (apps/mac/docs/nearby-v1-proposal.md §4).
@@ -205,8 +206,56 @@ public enum NearbyWire {
         /// A state after which polling can stop.
         public var isFinal: Bool { ["inserted", "rejected", "failed"].contains(state) }
         public var hasProposal: Bool { latex != nil }
+        /// Normally decoded from the wire; constructed directly only to
+        /// converge a row on a `capture_insert_ack` without waiting for the
+        /// next poll (the synthesized memberwise init is internal to this
+        /// package, so a companion could not).
+        public init(captureId: String, state: String, durable: Bool, latex: String? = nil,
+                    note: String? = nil, newRevision: Int? = nil) {
+            self.captureId = captureId; self.state = state; self.durable = durable
+            self.latex = latex; self.note = note; self.newRevision = newRevision
+        }
     }
 
+    /// Additive `capture_insert` request: the companion approves the proposal
+    /// `capture_status_ack.latex` showed it and asks the Mac to apply it.
+    ///
+    /// `approvedLatexSha256` is `NearbyWire.proposalDigest` of exactly the text
+    /// that was displayed. It is the approval token, not a checksum: a Mac
+    /// whose proposal has changed since answers `proposal_changed` rather than
+    /// inserting something the person never read.
+    public struct CaptureInsertRequest: Codable, Equatable {
+        public var captureId: String
+        public var approvedLatexSha256: String
+        enum CodingKeys: String, CodingKey {
+            case captureId = "capture_id", approvedLatexSha256 = "approved_latex_sha256"
+        }
+        public init(captureId: String, approvedLatexSha256: String) {
+            self.captureId = captureId; self.approvedLatexSha256 = approvedLatexSha256
+        }
+    }
+
+    /// `capture_insert_ack`. `state` is a `CaptureStatus` state string —
+    /// `inserted` on success, otherwise what the capture actually is now.
+    public struct CaptureInsertAck: Codable, Equatable {
+        public var captureId: String
+        public var state: String
+        public var newRevision: Int?
+        public var note: String?
+        enum CodingKeys: String, CodingKey {
+            case captureId = "capture_id", state, newRevision = "new_revision", note
+        }
+        public init(captureId: String, state: String, newRevision: Int? = nil, note: String? = nil) {
+            self.captureId = captureId; self.state = state; self.newRevision = newRevision; self.note = note
+        }
+    }
+
+    /// Lowercase hex SHA-256 of a proposal's UTF-8 bytes. Mirrors
+    /// `NearbyV1.proposalDigest` on the Mac; both ends must agree exactly, so
+    /// `NearbyReferenceClientTests` pins them against each other.
+    public static func proposalDigest(_ latex: String) -> String {
+        SHA256.hash(data: Data(latex.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
 
     /// `error` envelope; `id` is `null` when the request could not be identified.
     public struct ErrorLine: Decodable {

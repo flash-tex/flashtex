@@ -71,6 +71,10 @@
 			isa = PBXBuildFile;
 			fileRef = 61E5796C7F96C2C8B3E99B01;
 		};
+		7612E28066AAB7164D53F329 /* CompanionInsertTests.swift in Sources */ = {
+			isa = PBXBuildFile;
+			fileRef = A2694342B852B776BF9749BF;
+		};
 		72B8562FE1F50D30C56A9348 /* FakeMac.swift in Sources */ = {
 			isa = PBXBuildFile;
 			fileRef = 8EA2299F037B17191402BB8E;
@@ -226,6 +230,12 @@
 			path = "CaptureQueueTests.swift";
 			sourceTree = "<group>";
 		};
+		A2694342B852B776BF9749BF /* CompanionInsertTests.swift */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "CompanionInsertTests.swift";
+			sourceTree = "<group>";
+		};
 		8EA2299F037B17191402BB8E /* FakeMac.swift */ = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -346,6 +356,7 @@
 				9350128EF36336405FA0A78F,
 				B6E3658344378A345F18703C,
 				61E5796C7F96C2C8B3E99B01,
+				A2694342B852B776BF9749BF,
 				8EA2299F037B17191402BB8E,
 				03C01BAAABAAA9818C6D82F5,
 				B73028366B5779619C60CA89,
@@ -543,6 +554,7 @@
 				8852E4C9E3130B7E00B73EA9,
 				01628618D47C292D7DEAB7D8,
 				5D3BA29BB7D8E223A38ED5BC,
+				7612E28066AAB7164D53F329,
 				72B8562FE1F50D30C56A9348,
 				914F0A91E37F25D4F61A6EE2,
 				993E22C146E6587BA4B1EF02,

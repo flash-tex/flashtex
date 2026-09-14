@@ -12,7 +12,8 @@ import SwiftUI
 /// and sent as a transfer-v1 `capture_submit`; the list below follows the
 /// Mac's states (received → converting → proposal ready → inserted) and shows
 /// the returned LaTeX/TikZ read-only. The Mac converts and the Mac user
-/// approves insertion; the iPad only ever receives receipts and status.
+/// approves insertion — from here (Insert) or on the Mac; the iPad
+/// receives receipts, status and the proposal text it approves.
 struct CaptureView: View {
     @EnvironmentObject var model: PadModel
     @State private var drawing = PKDrawing()
@@ -305,12 +306,39 @@ struct CapturesList: View {
                                         .accessibilityIdentifier("capture.outcome.\(c.id)")
                                 }
                                 if let latex = c.outcome?.latex {
-                                    Text("Returned LaTeX/TikZ (read-only; approve or reject on the Mac):").font(.caption2).foregroundStyle(.secondary)
+                                    Text(c.reviewableLatex == nil
+                                         ? "Returned LaTeX/TikZ (read-only):"
+                                         : "Returned LaTeX/TikZ — read it, then Insert:")
+                                        .font(.caption2).foregroundStyle(.secondary)
                                     Text(latex).font(.caption.monospaced()).padding(6)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .background(Color.gray.opacity(0.12)).cornerRadius(4)
                                         .accessibilityIdentifier("capture.latex.\(c.id)")
                                         .accessibilityLabel("returned latex \(latex)")
+                                }
+                                // The Insert button: approving the proposal
+                                // shown right above, from here, instead of
+                                // walking to the Mac to click Insert again.
+                                // It appears only once there *is* a proposal
+                                // to read — nothing is ever inserted without
+                                // this tap (transfer-v1).
+                                if c.reviewableLatex != nil {
+                                    if let wrap = model.destination?.caretContext?.label {
+                                        Text("Will land in: \(wrap)").font(.caption2).foregroundStyle(.secondary)
+                                            .accessibilityIdentifier("capture.wrap.\(c.id)")
+                                    }
+                                    Button {
+                                        Task { await model.insertCapture(c.id) }
+                                    } label: {
+                                        Label(c.inserting ? "Inserting…" : "Insert on Mac", systemImage: "text.insert")
+                                    }
+                                    .buttonStyle(.borderedProminent).font(.caption)
+                                    .disabled(c.inserting || !model.link.isConnected)
+                                    .accessibilityIdentifier("capture.insert.\(c.id)")
+                                }
+                                if let problem = c.insertProblem {
+                                    Text(problem).font(.caption2).foregroundStyle(.red)
+                                        .accessibilityIdentifier("capture.insertproblem.\(c.id)")
                                 }
                                 if !c.outcomeIsFinal {
                                     Button("Refresh status") { Task { await model.refreshOutcome(c.id) } }.buttonStyle(.bordered).font(.caption)
@@ -335,7 +363,7 @@ struct CapturesList: View {
                 }
             }
             Section {
-                Text("Status is what nearby-v1 returns to a companion: the capture_received receipt (durable / has_proposal / applied at receipt time) or an error code, then the Mac-side outcome from capture_status (journaled → converting → proposal ready → inserted / rejected / failed) polled every 2 s until final. The LaTeX/TikZ is shown read-only: approval and insertion stay on the Mac. Retry after a disconnect re-sends the same capture_id; the Mac de-duplicates. Drafts, receipts and outcomes are kept on this iPad across relaunches.")
+                Text("Status is what nearby-v1 returns to a companion: the capture_received receipt (durable / has_proposal / applied at receipt time) or an error code, then the Mac-side outcome from capture_status (journaled → converting → proposal ready → inserted / rejected / failed) polled every 2 s until final. The LaTeX/TikZ is shown so it can be read before it is approved: Insert sends capture_insert, which names the exact text shown here by its SHA-256, so a Mac whose proposal has moved on refuses rather than inserting something unread. The Mac still applies the one undoable edit, wrapped for wherever its caret is. Approving on the Mac instead still works. Retry after a disconnect re-sends the same capture_id; the Mac de-duplicates. Drafts, receipts and outcomes are kept on this iPad across relaunches.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

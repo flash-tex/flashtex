@@ -210,6 +210,74 @@ extension ShellModel: CaptureSink, DestinationProvider {
         }
         return .init(captureId: captureId, state: .journaled, durable: true, note: local?.note ?? "journaled by the bridge; not converted yet (Edit > Convert Capture on the Mac)")
     }
+
+    // MARK: nearby-v1 `capture_insert` (additive)
+
+    nonisolated func captureInsert(_ envelope: RuntimeV1.Envelope<NearbyV1.CaptureInsertRequest>, reply: @escaping (Data) -> Void) {
+        Task { @MainActor in
+            switch await self.nearbyCaptureInsert(captureId: envelope.payload.captureId,
+                                                  approvedDigest: envelope.payload.approvedLatexSha256) {
+            case .success(let ack): reply(NearbyV1.line(id: envelope.id, type: "capture_insert_ack", ack))
+            case .failure(let err): reply(NearbyV1.errorLine(id: envelope.id, code: err.code, message: err.message))
+            }
+        }
+    }
+
+    /// The companion's Insert tap. This is the *same* approval the Captures
+    /// panel's Insert button performs — `insertCaptureFromInbox`, which is
+    /// `approveBridgeProposal` / `approveProposal` — reached from the iPad
+    /// instead of from the Mac. No new insertion semantics: the bridge still
+    /// prepares the edit, the Mac still applies exactly one undoable edit
+    /// against a matching revision and hash, and the ledger still refuses a
+    /// second edit for the same capture.
+    ///
+    /// What makes this an approval rather than an automatic insertion is
+    /// `approvedDigest`: the SHA-256 of the proposal text the companion
+    /// actually displayed (`capture_status_ack.latex`). A proposal that has
+    /// changed since — re-converted after a stale context, say — no longer
+    /// hashes the same, so the tap is refused with `proposal_changed` and the
+    /// companion must read the new text before approving it. transfer-v1's
+    /// "require explicit review approval for the currently displayed proposal"
+    /// therefore still holds; only the display moved to the iPad.
+    func nearbyCaptureInsert(captureId: String, approvedDigest: String) async
+        -> Result<NearbyV1.CaptureInsertAck, NearbyV1.ErrorPayload> {
+        guard let item = captureInbox.items.first(where: { $0.id == captureId }) else {
+            return .failure(.init(code: "unknown_capture", message: "capture \(captureId) is not in this Mac's Captures inspector"))
+        }
+        if appliedCaptureIDs.contains(captureId) {
+            // Terminal and idempotent: a retried tap after a dropped reply
+            // reports the existing insertion; it never produces a second edit.
+            return .success(.init(captureId: captureId, state: .inserted,
+                                  note: "already inserted on the Mac; no second edit was made"))
+        }
+        if item.rejected {
+            return .success(.init(captureId: captureId, state: .rejected, note: "rejected on the Mac; start a new capture"))
+        }
+        guard let proposal = captureInboxProposal(item) else {
+            return .failure(.init(code: "no_proposal", message: "capture \(captureId) has no proposal awaiting review on the Mac"))
+        }
+        guard NearbyV1.proposalDigest(proposal.latex) == approvedDigest else {
+            return .failure(.init(code: "proposal_changed",
+                                  message: "the Mac's proposal for \(captureId) is not the text this companion approved; read it again (capture_status) before inserting"))
+        }
+        let outcome = await insertCaptureFromInbox(item, latex: proposal.latex)
+        switch outcome {
+        case .inserted(let byteOffset):
+            return .success(.init(captureId: captureId, state: .inserted, newRevision: editorRevision,
+                                  note: "inserted on the Mac at byte \(byteOffset)"))
+        case .duplicate:
+            return .success(.init(captureId: captureId, state: .inserted,
+                                  note: "already inserted on the Mac; no second edit was made"))
+        case .needsReselection(let why):
+            return .success(.init(captureId: captureId, state: .failed,
+                                  note: "the insertion point changed (\(why)); pin again on the Mac and resend"))
+        case .noAnchor:
+            return .success(.init(captureId: captureId, state: .failed,
+                                  note: "the Mac has no insertion point; pin one (⌘⌥P) and resend"))
+        case .refused(let why):
+            return .failure(.init(code: "insert_refused", message: "the Mac refused the insertion: \(why)"))
+        }
+    }
 }
 
 /// Switches for the fluid capture path (lane mac-capture-fluid); each defaults on.

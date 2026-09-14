@@ -58,10 +58,17 @@ public struct CaptureRecord: Identifiable, Equatable {
     public var outcome: NearbyWire.CaptureStatus?
     /// Why the outcome cannot be shown (older Mac: `unknown_type`; `unknown_capture`; transport).
     public var outcomeProblem: String?
+    /// A `capture_insert` is in flight for this capture (the Insert button is
+    /// busy). Transient: never persisted, so a relaunch re-reads the real
+    /// state from the Mac rather than trusting a half-finished tap.
+    public var inserting = false
+    /// Why the last Insert tap did not insert (`proposal_changed`, no link, …).
+    public var insertProblem: String?
 
     public static func == (a: CaptureRecord, b: CaptureRecord) -> Bool {
         a.id == b.id && a.status == b.status && a.instructions == b.instructions && a.png == b.png
             && a.outcome == b.outcome && a.outcomeProblem == b.outcomeProblem
+            && a.inserting == b.inserting && a.insertProblem == b.insertProblem
     }
 
     public init(id: String = "cap-" + UUID().uuidString.lowercased(), source: Source, png: Data, instructions: String,
@@ -77,7 +84,7 @@ public struct CaptureRecord: Identifiable, Equatable {
         case "received": return "on the Mac (inbox, no bridge attached) — not converted yet"
         case "journaled": return "journaled by the Mac's bridge — waiting for Convert Capture on the Mac"
         case "converting": return "converting on the Mac…"
-        case "proposal_ready": return "proposal ready — review and approve it on the Mac"
+        case "proposal_ready": return "proposal ready — read it below and tap Insert (or approve it on the Mac)"
         case "inserted": return "inserted on the Mac" + (o.newRevision.map { " (revision \($0))" } ?? "")
         case "rejected": return "rejected on the Mac"
         case "failed": return "conversion failed on the Mac"
@@ -87,6 +94,14 @@ public struct CaptureRecord: Identifiable, Equatable {
     }
     /// Polling stops here.
     public var outcomeIsFinal: Bool { outcome?.isFinal ?? false }
+
+    /// The proposal this iPad is currently showing, when there is one to
+    /// approve. `Insert` sends exactly this text's digest, so the Mac can
+    /// prove the approval names the proposal that was read.
+    public var reviewableLatex: String? {
+        guard case .received = status, let o = outcome, o.state == "proposal_ready" else { return nil }
+        return o.latex
+    }
 }
 
 /// Sends captures through `MacLink` (transfer-v1 `capture_submit` over the
@@ -245,6 +260,65 @@ public final class CaptureQueue: @unchecked Sendable {
             return nil
         } catch {
             update(id) { $0.outcomeProblem = "\(error)" }
+            return nil
+        }
+    }
+
+    /// The Insert tap (nearby-v1 `capture_insert`, additive): approve the
+    /// proposal this iPad is *showing* and ask the Mac to apply it, instead of
+    /// walking to the Mac to click Insert in the review sheet.
+    ///
+    /// This is a review, not an automatic insertion. The text approved is
+    /// `reviewableLatex` — what the person just read on this screen — and only
+    /// its digest travels, so the Mac inserts its own journaled proposal and
+    /// refuses (`proposal_changed`) when that is no longer the text that was
+    /// read. Wrapping is the Mac's and the bridge's: a formula approved for a
+    /// caret in running text arrives wrapped by the destination's
+    /// `caret_context`, not by anything guessed here.
+    @discardableResult
+    public func insertCapture(_ id: String) async -> NearbyWire.CaptureInsertAck? {
+        guard let r = record(id), let latex = r.reviewableLatex, !r.inserting else { return nil }
+        guard let session = link.session, let pair = link.pair else {
+            update(id) { $0.insertProblem = "not connected to the Mac" }
+            return nil
+        }
+        guard r.pairId == pair.pairId else {
+            update(id) { $0.insertProblem = "sent to another Mac (pair \(r.pairId ?? "?")); the current link is \(pair.macName) — nothing was inserted" }
+            return nil
+        }
+        update(id) { $0.inserting = true; $0.insertProblem = nil }
+        defer { update(id) { $0.inserting = false } }
+        do {
+            let ack = try await session.captureInsert(captureId: id, approvedLatex: latex)
+            // Converge the row on what the Mac just said, so the list is right
+            // without waiting for the next poll. The proposal text is kept: an
+            // inserted row still shows what went into the document.
+            update(id) {
+                $0.outcome = NearbyWire.CaptureStatus(captureId: id, state: ack.state, durable: $0.outcome?.durable ?? true,
+                                                      latex: latex, note: ack.note, newRevision: ack.newRevision)
+                // An ack that is not `inserted` is still an answer, not an
+                // error — the Mac could not insert (the pin moved, say). Say so
+                // where the tap happened, so a button that did nothing visible
+                // never looks merely broken.
+                $0.insertProblem = ack.state == "inserted" ? nil : (ack.note ?? "the Mac reports “\(ack.state)”")
+            }
+            return ack
+        } catch let e as NearbyError {
+            let why: String
+            if case .remote(let code, let message) = e {
+                switch code {
+                case "unknown_type":
+                    why = "this Mac's FlashTeX predates capture_insert (unknown_type) — approve it on the Mac"
+                case "proposal_changed":
+                    why = "the Mac's proposal changed since this was shown — tap Refresh status, read it again, then Insert"
+                default:
+                    why = "\(code): \(message)"
+                }
+            } else { why = e.description }
+            update(id) { $0.insertProblem = why }
+            return nil
+        } catch {
+            update(id) { $0.insertProblem = "\(error)" }
             return nil
         }
     }

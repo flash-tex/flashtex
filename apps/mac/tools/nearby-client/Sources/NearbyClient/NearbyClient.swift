@@ -50,6 +50,12 @@ public final class NearbySession: @unchecked Sendable {
         try await connection.captureStatus(captureId: captureId, requestID: requestID)
     }
 
+    /// Approve the proposal this companion was shown and ask the Mac to insert
+    /// it (nearby-v1 `capture_insert`, additive).
+    public func captureInsert(captureId: String, approvedLatex: String, requestID: String? = nil) async throws -> NearbyWire.CaptureInsertAck {
+        try await connection.captureInsert(captureId: captureId, approvedLatex: approvedLatex, requestID: requestID)
+    }
+
     /// Builds a `capture_submit` for the given destination (or the hello_ack
     /// one) with the image bytes base64-encoded.
     public func makeCapture(captureId: String = "cap-" + UUID().uuidString.lowercased(), image: Data, mimeType: String,

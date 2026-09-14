@@ -293,6 +293,27 @@ final class PadModel: ObservableObject {
         captures = queue.records
     }
 
+    /// The Insert tap: approve the proposal shown on this screen and ask the
+    /// Mac to apply it (`capture_insert`).
+    @discardableResult
+    func insertCapture(_ id: String) async -> NearbyWire.CaptureInsertAck? {
+        let work = Task { await queue.insertCapture(id) }
+        // The queue flips `inserting` before its first suspension; one yield
+        // lets that reach the list, so the button reads "Inserting…" while the
+        // request is out rather than looking dead.
+        await Task.yield()
+        captures = queue.records
+        let ack = await work.value
+        captures = queue.records
+        // An insertion is terminal, so this row's poller can stop. A refusal
+        // leaves it polling exactly as before.
+        if ack?.state == "inserted" {
+            pollers[id]?.cancel()
+            pollers[id] = nil
+        }
+        return ack
+    }
+
     /// After (re)connecting: resume polling for captures still awaiting an outcome.
     func resumeOutcomePolling() {
         for r in queue.records where queue.shouldPoll(r.id) && pollers[r.id] == nil { pollOutcome(r.id) }
