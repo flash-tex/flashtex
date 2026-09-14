@@ -87,6 +87,14 @@ enum CommandPaletteModel {
         case .findPrevious: EditorFindAction.send(.previousMatch)
         case .useSelectionForFind: EditorFindAction.send(.setSearchString)
         case .jumpToSelection: EditorFindAction.centerSelection()
+        case .duplicateLine: EditorLineCommandAction.duplicate()
+        case .moveLineUp: EditorLineCommandAction.moveUp()
+        case .moveLineDown: EditorLineCommandAction.moveDown()
+        case .deleteLine: EditorLineCommandAction.deleteLines()
+        case .joinLines: EditorLineCommandAction.joinLines()
+        case .sortLinesAscending: EditorLineCommandAction.sortAscending()
+        case .sortLinesDescending: EditorLineCommandAction.sortDescending()
+        case .trimTrailingWhitespace: EditorLineCommandAction.trimTrailingWhitespace()
         case .completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch: return false
         case .goToMatching: model.goToMatching()
         case .goToDefinition: model.goToDefinition() // ShellModel+EditorNavigation.swift
