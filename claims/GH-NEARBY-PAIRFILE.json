@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/nearby-pairfile-lock",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/410",
   "machine": "Overpriced-Hardware",
   "note": "PairFile lock + Sendable conformances, from #375 audit",
   "started_utc": "2026-09-14T16:12:52Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-NEARBY-PAIRFILE",
-  "updated_utc": "2026-09-14T16:12:52Z"
+  "updated_utc": "2026-09-14T16:24:18Z"
 }
