@@ -576,7 +576,8 @@ pub fn parse_tokens(
             "math group is missing its closing brace",
             Some(open),
             Some("closed the group at the math delimiter".into()),
-        ));
+        )
+        .with_help("add a closing '}'"));
     }
     list
 }
@@ -950,7 +951,8 @@ impl MathParser<'_> {
             format!("\\{name} requires \\usepackage{{{package}}}"),
             Some(span),
             Some("typeset the command literally and continued".into()),
-        ));
+        )
+        .with_help(format!("add \\usepackage{{{package}}} in the preamble")));
         symbol(format!("\\{name}"), span)
     }
 
@@ -1680,7 +1682,9 @@ impl MathParser<'_> {
                         format!("\\{} is not supported in math mode", name),
                         Some(span),
                         Some("typeset the command literally and continued".into()),
-                    ));
+                    )
+                    .with_optional_help(crate::vocabulary::math_mode_help(&name))
+                    .with_label(span, "this command", true));
                     symbol(format!("\\{}", name), span)
                 }
             },
@@ -1895,7 +1899,8 @@ impl MathParser<'_> {
             format!("\\{command} argument is missing its closing brace"),
             Some(open.merge(end)),
             Some("used the text up to the end of the formula".into()),
-        ));
+        )
+        .with_help("add a closing '}'"));
         (text, open.merge(end))
     }
 
@@ -1950,7 +1955,8 @@ impl MathParser<'_> {
                 "math group is missing its closing brace",
                 Some(open),
                 Some("closed the group at the math delimiter".into()),
-            ));
+            )
+            .with_help("add a closing '}'"));
         }
         list
     }
@@ -2207,7 +2213,8 @@ impl MathParser<'_> {
             format!("argument to \\{command} is missing its closing brace"),
             Some(open.span),
             Some("closed the text argument at the math delimiter".into()),
-        ));
+        )
+        .with_help("add a closing '}'"));
         (text, open.span.merge(end))
     }
 
@@ -2502,7 +2509,8 @@ impl MathParser<'_> {
                 format!("\\{command} argument is missing its closing brace"),
                 Some(span),
                 Some("closed the argument at the end of the formula".into()),
-            ));
+            )
+            .with_help("add a closing '}'"));
         }
         self.i = (end + 1).min(self.tokens.len());
         let mut rows = Vec::new();

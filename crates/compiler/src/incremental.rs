@@ -755,10 +755,21 @@ fn shift_diagnostics(
         recovery: _,
         code: _,
         suggestion: _,
+        labels,
+        notes: _,
+        help,
     } in diagnostics
     {
         if let Some(span) = span {
             map_span(span, changes, deltas)?;
+        }
+        for label in labels {
+            map_span(&mut label.span, changes, deltas)?;
+        }
+        if let Some(help) = help {
+            if let Some(repl) = &mut help.replacement {
+                map_span(&mut repl.span, changes, deltas)?;
+            }
         }
     }
     Some(())
@@ -1040,5 +1051,113 @@ mod tests {
             &format!("First changed words.\n\n{table}\n\nTail."),
         );
         assert!(result.stats.blocks_reused >= 2);
+    }
+
+    fn alpah_diagnostic(output: &CompileOutput) -> &crate::diagnostics::Diagnostic {
+        output
+            .diagnostics
+            .iter()
+            .find(|d| d.message.contains("\\alpah") || d.message.contains("\\alpax"))
+            .expect("unknown-command diagnostic")
+    }
+
+    #[test]
+    fn shift_diagnostics_maps_label_and_replacement_spans() {
+        use crate::diagnostics::Diagnostic;
+        let span = Span::new(20, 26);
+        let mut diagnostics = vec![Diagnostic::error("\\alpah is not supported", Some(span), None)
+            .with_label(span, "this command", true)
+            .with_help("did you mean \\alpha?")
+            .with_replacement(span, "\\alpha")];
+        let before = [ChangedBytes { old: 0..5, new: 0..10 }];
+        assert!(shift_diagnostics(&mut diagnostics, &before, &[5]).is_some());
+        let shifted = Span::new(25, 31);
+        assert_eq!(diagnostics[0].span, Some(shifted));
+        assert_eq!(diagnostics[0].labels[0].span, shifted);
+        assert_eq!(
+            diagnostics[0]
+                .help
+                .as_ref()
+                .unwrap()
+                .replacement
+                .as_ref()
+                .unwrap()
+                .span,
+            shifted
+        );
+
+        let inside = [ChangedBytes { old: 25..31, new: 25..32 }];
+        assert!(shift_diagnostics(&mut diagnostics, &inside, &[1]).is_none());
+    }
+
+    #[test]
+    fn edit_before_a_labelled_help_replacement_shifts_both_spans() {
+        let old = "First paragraph.\n\nLater \\alpah here.";
+        let new = "First changed paragraph.\n\nLater \\alpah here.";
+        let result = compile_edit(old, new);
+        // Parser diagnostics force a full recompile today; output spans must
+        // still match a clean build (compile_edit checks that) and move by the
+        // same delta shift_diagnostics would apply.
+        assert!(result.stats.full_recompile, "{:?}", result.stats);
+        let diag = alpah_diagnostic(&result.output);
+        let span = diag.span.expect("command span");
+        assert_eq!(&new[span.start..span.end], "\\alpah");
+        assert_eq!(diag.labels.len(), 1);
+        assert_eq!(
+            &new[diag.labels[0].span.start..diag.labels[0].span.end],
+            "\\alpah"
+        );
+        let repl = diag
+            .help
+            .as_ref()
+            .and_then(|h| h.replacement.as_ref())
+            .expect("help.replacement");
+        assert_eq!(&new[repl.span.start..repl.span.end], "\\alpah");
+        assert_eq!(repl.text, "\\alpha");
+        let delta = new.len() as isize - old.len() as isize;
+        let old_output = compile_full(old, LayoutConstraints::default());
+        let old_diag = alpah_diagnostic(&old_output);
+        let old_span = old_diag.span.expect("old span");
+        assert_eq!(span.start, (old_span.start as isize + delta) as usize);
+        assert_eq!(
+            diag.labels[0].span.start,
+            (old_diag.labels[0].span.start as isize + delta) as usize
+        );
+        assert_eq!(
+            repl.span.start,
+            (old_diag
+                .help
+                .as_ref()
+                .unwrap()
+                .replacement
+                .as_ref()
+                .unwrap()
+                .span
+                .start as isize
+                + delta) as usize
+        );
+    }
+
+    #[test]
+    fn edit_inside_a_labelled_help_replacement_recomputes() {
+        let old = "First paragraph.\n\nLater \\alpah here.";
+        let new = "First paragraph.\n\nLater \\alpax here.";
+        let result = compile_edit(old, new);
+        assert!(result.stats.full_recompile, "{:?}", result.stats);
+        assert!(result.stats.blocks_recomputed >= 1, "{:?}", result.stats);
+        let diag = alpah_diagnostic(&result.output);
+        let span = diag.span.expect("command span");
+        assert_eq!(&new[span.start..span.end], "\\alpax");
+        assert_eq!(
+            &new[diag.labels[0].span.start..diag.labels[0].span.end],
+            "\\alpax"
+        );
+        let repl = diag
+            .help
+            .as_ref()
+            .and_then(|h| h.replacement.as_ref())
+            .expect("help.replacement");
+        assert_eq!(&new[repl.span.start..repl.span.end], "\\alpax");
+        assert_eq!(repl.text, "\\alpha");
     }
 }

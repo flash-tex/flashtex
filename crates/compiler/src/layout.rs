@@ -2038,7 +2038,14 @@ pub fn layout_converged(
                 format!("Reference `{key}'{page} undefined"),
                 Some(span),
                 Some("rendered ?? for the unresolved reference".into()),
-            ));
+            )
+            .with_help(match crate::vocabulary::nearest_name(
+                key,
+                state.0.keys().map(String::as_str),
+            ) {
+                    Some(near) => format!("a label `{near}` exists; did you mean \\ref{{{near}}}?"),
+                None => "add a matching \\label{...} or fix the key; undefined references render as ??".into(),
+            }));
         }
     });
     if oscillating {
