@@ -1,20 +1,23 @@
-//! `\verb` and `verbatim` against pdfLaTeX, glyph origin by glyph origin.
+//! `\verb`, `verbatim` and `lstlisting` against pdfLaTeX, glyph origin by
+//! glyph origin.
 //!
 //! The `.tex` sources and the `reference/*.json` origins come from draft
 //! PR #145, which measured them with **MacTeX 2026**
 //! (`pdfTeX 3.141592653-2.6-1.40.29`, two passes, `SOURCE_DATE_EPOCH=0
-//! FORCE_SOURCE_DATE=1`). They are committed oracle data and are never
-//! regenerated here. Only the test material was taken from #145 -- the
-//! rendering is written against main's NFSS font selection, not #145's
-//! rival `Role::Mono`/`MonoMetrics` model.
+//! FORCE_SOURCE_DATE=1`), and from PR #248, which measured the sixteen
+//! `listings` fixtures with this host's TeX Live 2025. They are committed
+//! oracle data and are never regenerated here. Only the test material was
+//! taken from #145 -- the rendering is written against main's NFSS font
+//! selection, not #145's rival `Role::Mono`/`MonoMetrics` model.
 //!
 //! The two distributions were checked against each other rather than
 //! assumed to agree: this host's **TeX Live 2025** (`pdfTeX
-//! 3.141592653-2.6-1.40.27`) was run over all seventeen fixtures with
+//! 3.141592653-2.6-1.40.27`) was run over all seventeen #145 fixtures with
 //! `fixtures/verbatim/oracle.py` and reproduced every committed reference
 //! to **0.001 bp or better**, with identical rule sets and page counts. A
 //! number measured here can therefore be compared with these files
-//! directly.
+//! directly. `33-lst-columns-lr` and `34-lst-roman-ligatures` were added
+//! by the listings lane and carry their own TeX Live 2025 references.
 //!
 //! Units are bp; `y` runs down from the page top. A reference glyph must
 //! find a candidate within [`TOL`] in both x and y (Chebyshev), glyph counts
@@ -41,7 +44,7 @@ const SUBSTITUTION_CODES: [&str; 4] = [
 ];
 
 /// The fixtures this lane sets exactly as pdfLaTeX does.
-const GATED: [&str; 15] = [
+const GATED: [&str; 32] = [
     "01-verbatim-basic",
     "02-verbatim-ligatures",
     "03-verbatim-tabs",
@@ -57,70 +60,30 @@ const GATED: [&str; 15] = [
     "13-verbatim-long-line",
     "14-verbatim-pagebreak",
     "32-verbatim-microtype",
-];
-
-/// The listings fixtures PR #248 committed with TL2025 references. The
-/// listings rendering engine is a separate body of work (PR #145's
-/// `listings.rs` was 1623 lines against a font model main has replaced); it
-/// is being rebuilt on the current model in its own lane. Each entry names
-/// the part of listings' geometry it needs, from the measured
-/// specification, so nothing here is a placeholder.
-const LISTINGS_NOT_YET: [(&str, &str); 15] = [
-    ("16-lst-default",
-     "`[c]fixed` columns in the surrounding roman face: a token of N characters is set in an hbox \
-      N cells wide with N+1 `\\hss`, so the first glyph sits N(W-w)/(N+1) in. Also needs TS1 for \
-      `*` and CMSY for the braces."),
-    ("17-lst-tt-fixed",
-     "`[c]fixed` with `basicstyle=\\ttfamily`: cell width W = 0.6em of the basicstyle font, fixed \
-      once at `InitVars` (`fontadjust=false`)."),
-    ("18-lst-tt-flexible",
-     "`columns=flexible`: natural token boxes, and leading whitespace worth `\\lst@width` = 0.45em \
-      each rather than a space glyph."),
-    ("19-lst-fullflexible",
-     "`columns=fullflexible`. Note this fixture's reference is byte-identical to 18's: this code \
-      never produces positive lost space mid-line, so it does not actually discriminate the two \
-      modes. A fixture that does is still wanted."),
-    ("20-lst-numbers",
-     "`numbers=left`: `\\lst@PlaceNumber` is an `\\llap`, so the code x is untouched and the \
-      number's *right* edge sits at `leftmargin - numbersep`."),
-    ("21-lst-frame-single",
-     "`frame=single`: four rules at `framerule` .4pt, `x = leftmargin - framesep - framerule`, \
-      `w = \\textwidth + 2(framesep + framerule)`, and `\\lst@frameInit`'s negative correction \
-      cancelling the interline glue."),
-    ("22-lst-frame-lines-numbers",
-     "`frame=lines` + `numbers=left` under `\\small`: a t/b-only frame's rules are *not* widened by \
-      `framesep`, and `numberstyle` empty means the number is `\\normalfont` at the current size."),
-    ("23-lst-c-keywords",
-     "`language=C`: `commentstyle=\\itshape` (CMITT10) changes glyph positions inside a token, and \
-      `keywordstyle=\\bfseries` is substituted away in OT1 cmtt (`OT1/cmtt/bx/n` does not exist)."),
-    ("24-lst-python-keywords",
-     "`language=Python` at `\\small`: code in CMTT9, comments in CMITT10 *scaled to 9pt* -- there \
-      is no cmitt9, so the NFSS path must scale."),
-    ("25-lst-java-roman",
-     "`language=Java` with a roman basicstyle and CMBX10 keywords. Worth noting: this fixture \
-      contains no ligature-forming pair at all, so it does not test what #145 thought it did. \
-      Measured separately: listings suppresses ligatures *unconditionally*, roman basicstyle \
-      included, matching `verbatim` glyph for glyph -- so a listing needs per-character shaping, \
-      not `Shaper::shape_with`'s `\\@noligs` split."),
-    ("26-lst-breaklines",
-     "`breaklines=true`: ragged right, `breakindent` 20pt continuation, and no break mark \
-      (`prebreak`/`postbreak` are empty and the `\\llap` is zero-width)."),
-    ("27-lst-showstringspaces",
-     "`showstringspaces`: `false` suppresses the visible-space glyph but the space keeps its \
-      column -- x0 and xN are identical either way. Also pins that two adjacent listings *add* \
-      both skips (24.0 pt between them), because `\\vspace` is not `\\addvspace`."),
-    ("29-lst-tabs-gobble",
-     "`tabsize=4, gobble=2`: unlike `\\@verbatim`, listings implements real absolute tab stops -- \
-      `\\lst@ProcessTabulator` moves to the next multiple of `tabsize` in `\\lst@width` units, so a \
-      tab costs 3 columns from column 1 and 4 from column 0."),
-    ("30-lst-lstset-margin",
-     "`xleftmargin=2em` under `\\footnotesize`: the margin is expanded *inside* the listing, after \
-      `basicstyle`, so `2em` is 2 x cmtt8's quad = 17.00024 pt -- and cmtt8's em is 8.5 pt, not \
-      8.4."),
-    ("31-lst-t1-lmodern-bold",
-     "T1 + lmodern: keywords resolve `T1/lmtt/bx/n` -> `T1/lmtt/b/n` -> `ec-lmtk10` \
-      (LMMonoLt10-Bold), comments to `ec-lmtti10`. Here the keywords really do come out bold, \
-      unlike fixture 23."),
+    // `listings` (PR #248's material): the column algorithm, the skips,
+    // the gutter, the frames, `tabsize`/`gobble`, `xleftmargin`,
+    // `breaklines` and the language styles.
+    "16-lst-default",
+    "17-lst-tt-fixed",
+    "18-lst-tt-flexible",
+    "19-lst-fullflexible",
+    "20-lst-numbers",
+    "21-lst-frame-single",
+    "22-lst-frame-lines-numbers",
+    "23-lst-c-keywords",
+    "24-lst-python-keywords",
+    "26-lst-breaklines",
+    "27-lst-showstringspaces",
+    "28-lstinline",
+    "29-lst-tabs-gobble",
+    "30-lst-lstset-margin",
+    "31-lst-t1-lmodern-bold",
+    // Added by this lane, with their own TeX Live 2025 references, for two
+    // things #248's material left uncovered: the `[l]`/`[r]` alignments of
+    // `columns`, and the claim that listings suppresses ligatures even in a
+    // roman `basicstyle` (`office`/`affix`/`waffle` set as separate `f`s).
+    "33-lst-columns-lr",
+    "34-lst-roman-ligatures",
 ];
 
 /// Committed with their references but not gated yet, each for a reason
@@ -137,13 +100,16 @@ const NOT_YET: [(&str, &str); 2] = [
       depth 1.94444 and the line's height 5.49998. The pipeline sets the block at the body's 12 pt \
       baselineskip, which is the entire remaining pound. Needs the re-pin, the pipeline's \
       conversion arms for the new `style` field, and the block's baselineskip to follow its size."),
-    ("28-lstinline",
-     "The compiler typesets `\\lstset`'s argument as prose: 126 glyphs against pdfTeX's 115, the \
-      extra 11 being the characters `basicstyle=` at the head of the first line. `\\lstinline` \
-      itself is lexed correctly (PR #188, already in the vendored mirror). Fixed compiler-side in \
-      PR #261: verified by swapping that compiler into `vendor/compiler` (uncommitted, restored \
-      after), where this fixture matches at 115 glyphs, worst 0.005 bp. Needs the re-pin plus the \
-      four pipeline arms for the new `style` field."),
+    ("25-lst-java-roman",
+     "Two OT1 slot lookups a listing makes that the pipeline's T1/EC font model cannot address. \
+      listings sets `\"` as `\\char34` (listings.sty `\\lst@CCPutMacro`, `upquote` false) and the \
+      `showstringspaces` space as `\\verbvisiblespace`, which under pdfTeX is `\\asciispace` = \
+      `\\char32` of the *current* font. In this roman `basicstyle` those are cmr10's own slots: \
+      measured with `tftopl`, slot 34 is 0.500002 em (`quotedblright`) and slot 32 is 0.277779 em \
+      (`suppress`). The pipeline addresses characters through T1, where slot 34 is `quotedbl` and \
+      slot 32 is `visiblespace` (0.5 em in ec-lmr10), so those three glyphs land 0.62, 1.10 and \
+      0.62 bp out; the other 228 are exact. Everything listings-specific in this fixture (the \
+      Java keyword list, the `[c]fixed` grid, the skips) is already right."),
 ];
 
 fn fixtures_dir() -> PathBuf {
@@ -296,7 +262,6 @@ fn every_committed_fixture_is_accounted_for() {
         .iter()
         .map(|s| s.to_string())
         .chain(NOT_YET.iter().map(|(n, _)| n.to_string()))
-        .chain(LISTINGS_NOT_YET.iter().map(|(n, _)| n.to_string()))
         .collect();
     known.sort();
     assert_eq!(on_disk, known, "every fixture must be gated or listed in NOT_YET with a reason");
@@ -306,7 +271,7 @@ fn every_committed_fixture_is_accounted_for() {
             "{name} has no committed pdfLaTeX reference"
         );
     }
-    for (_, why) in NOT_YET.iter().chain(LISTINGS_NOT_YET.iter()) {
+    for (_, why) in NOT_YET.iter() {
         assert!(why.len() > 40, "a NOT_YET entry needs a real reason");
     }
 }

@@ -439,6 +439,25 @@ pub enum Block {
         eject_before: bool,
         vspace_before: f64,
     },
+    /// A `lstlisting` environment, read from the source bytes by
+    /// [`crate::listings`] (the compiler lowers it to a plain
+    /// `Block::Verbatim` and reports its option list as unimplemented, so
+    /// the body it produced is dropped here the way a `tikzpicture`'s is).
+    Listing(Box<ListingBlock>),
+}
+
+/// One `lstlisting`: the options in force and the output boxes every code
+/// line plans. [`crate::typeset::Context::listing_blocks`] gives them
+/// glyphs and vertical glue.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListingBlock {
+    pub document: DocumentId,
+    pub opts: crate::listings::Options,
+    pub lines: Vec<crate::listings::CodeLine>,
+    /// `\begin{lstlisting}` through the end of `\end{lstlisting}`.
+    pub span: Span,
+    pub eject_before: bool,
+    pub vspace_before: f64,
 }
 
 /// LaTeX `\list` geometry of one `\item` paragraph (see
@@ -583,6 +602,31 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
     let mut limitations: Vec<(&'static str, Span, String)> = Vec::new();
     let mut titles: Vec<StashedTitle> = Vec::new();
     let mut pending_vfill = 0usize;
+    // `\lstset{...}`/`\lstdefinestyle{...}`: the compiler has neither, so
+    // it sets the key list as prose (11 stray glyphs in `28-lstinline`).
+    // The pipeline reads those options itself (`listings::options_at`), so
+    // the inlines the compiler made of them are dropped here — the same
+    // treatment `Block::Picture` gives a `tikzpicture`'s body text.
+    let lstset: Vec<Vec<std::ops::Range<usize>>> =
+        texts.iter().map(|t| crate::listings::find_lstset(t).into_iter().map(|(r, _)| r).collect()).collect();
+    let in_lstset = |i: &Inline| -> bool {
+        let s = inline_span(i);
+        lstset.get(s.document.0).is_some_and(|rs| rs.iter().any(|r| s.start >= r.start && s.start < r.end))
+    };
+    let without_lstset = |block: &CBlock| -> Option<CBlock> {
+        let inlines = inlines_of(block);
+        if !inlines.iter().any(&in_lstset) {
+            return None;
+        }
+        let mut out = block.clone();
+        let content = match &mut out {
+            CBlock::Paragraph(i) => i,
+            CBlock::ListItem { content, .. } | CBlock::Heading { content, .. } | CBlock::FigureCaption { content } | CBlock::Styled { content, .. } => content,
+            _ => return None,
+        };
+        content.retain(|i| !in_lstset(i));
+        Some(out)
+    };
     let sized = |inlines: &[Inline], size: FontSizeLevel| -> Vec<Inline> {
         inlines
             .iter()
@@ -601,6 +645,8 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
             .collect()
     };
     for block in blocks {
+        let stripped = without_lstset(block);
+        let block = stripped.as_ref().unwrap_or(block);
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
             CBlock::Verbatim { span, .. } | CBlock::TableOfContents { span } | CBlock::Rule { span } => Some(*span),
@@ -931,6 +977,7 @@ pub fn adapt_cached(
             UnitKind::Paragraph { inlines, .. } => inlines.iter().map(inline_span).next(),
             UnitKind::Rule { span } => Some(*span),
             UnitKind::Picture { document, picture, .. } => Some(Span::in_document(*document, picture.start, picture.end)),
+            UnitKind::Listing { document, env } => Some(Span::in_document(*document, env.span.start, env.span.end)),
         };
         // Entry-document commands are laid out before the first unit that
         // follows them in the entry source. A unit of an `\input`/`\include`d
@@ -1217,6 +1264,29 @@ pub fn adapt_cached(
                     vspace_before,
                 });
                 after_heading = false;
+            }
+            UnitKind::Listing { document, env } => {
+                let text = texts.get(document.0).copied().unwrap_or("");
+                let opts = crate::listings::options_at(text, env.span.start, &env.options);
+                let body = text.get(env.body.clone()).unwrap_or("");
+                let lines = crate::listings::plan(body, env.body.start, &opts);
+                if !opts.unsupported.is_empty() {
+                    limitations.push((
+                        "unsupported_block",
+                        Span::in_document(document, env.span.start, env.span.end),
+                        format!("listings option(s) not applied: {}", opts.unsupported.join(", ")),
+                    ));
+                }
+                blocks.push(Block::Listing(Box::new(ListingBlock {
+                    document,
+                    opts,
+                    lines,
+                    span: Span::in_document(document, env.span.start, env.span.end),
+                    eject_before,
+                    vspace_before,
+                })));
+                after_heading = false;
+                prev_para_end = None;
             }
             UnitKind::Paragraph {
                 inlines,
@@ -1709,6 +1779,11 @@ enum UnitKind<'p> {
         picture: flashtex_vector_graphics::tikz::PictureSource,
         centered: bool,
     },
+    /// A `lstlisting` environment (see [`Block::Listing`]).
+    Listing {
+        document: flashtex_compiler::DocumentId,
+        env: crate::listings::Environment,
+    },
 }
 
 const PAGE_BREAKS: [&str; 3] = ["newpage", "clearpage", "pagebreak"];
@@ -1743,6 +1818,13 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
     // `tikzpicture` environments per document, and those already emitted.
     let pictures: Vec<Vec<flashtex_vector_graphics::tikz::PictureSource>> = texts.iter().map(|t| flashtex_vector_graphics::tikz::find_pictures(t)).collect();
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
+    // `lstlisting` environments per document. The compiler lowered each to
+    // a flush-left paragraph of `Inline::Verbatim` lines; those inlines are
+    // replaced here by one `UnitKind::Listing` the way a `tikzpicture`'s
+    // body text is, because listings' own geometry (the column algorithm,
+    // the frame, the gutter) needs the option list the compiler drops.
+    let listings: Vec<Vec<crate::listings::Environment>> = texts.iter().map(|t| crate::listings::find_environments(t)).collect();
+    let mut emitted_listings: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
     for block in blocks {
         match block {
             CBlock::PageBreak => {
@@ -2017,14 +2099,24 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                 let mut vspace_before = vspace_before;
                 let mut limitations = limitations;
                 let centered = matches!(block, CBlock::Styled { style: flashtex_compiler::parser::ParagraphStyle::Center, .. });
-                // Runs of inlines outside / inside one `tikzpicture`.
-                let picture_of = |i: &Inline| -> Option<usize> {
+                // Runs of inlines outside / inside one `tikzpicture` or
+                // `lstlisting`. `Some(Err(k))` is a listing, `Some(Ok(k))`
+                // a picture; both replace their inlines with one unit.
+                #[allow(clippy::type_complexity)]
+                let region_of = |i: &Inline| -> Option<Result<usize, usize>> {
                     let s = inline_span(i);
-                    pictures.get(s.document.0)?.iter().position(|p| s.start >= p.start && s.start < p.end)
+                    if let Some(k) = pictures.get(s.document.0).and_then(|p| p.iter().position(|p| s.start >= p.start && s.start < p.end)) {
+                        return Some(Ok(k));
+                    }
+                    listings
+                        .get(s.document.0)?
+                        .iter()
+                        .position(|l| s.start >= l.span.start && s.start < l.span.end)
+                        .map(Err)
                 };
-                let mut segments: Vec<(usize, usize, Option<usize>)> = Vec::new();
+                let mut segments: Vec<(usize, usize, Option<Result<usize, usize>>)> = Vec::new();
                 for (i, inline) in inlines.iter().enumerate() {
-                    let pic = picture_of(inline);
+                    let pic = region_of(inline);
                     match segments.last_mut() {
                         Some(last) if last.2 == pic => last.1 = i + 1,
                         _ => segments.push((i, i + 1, pic)),
@@ -2034,7 +2126,25 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                     segments.push((0, 0, None));
                 }
                 for (seg_start, seg_end, pic) in segments {
-                    if let Some(k) = pic {
+                    if let Some(Err(k)) = pic {
+                        let document = inline_span(&inlines[seg_start]).document;
+                        if emitted_listings.insert((document.0, k)) {
+                            units.push(Unit {
+                                kind: UnitKind::Listing {
+                                    document,
+                                    env: listings[document.0][k].clone(),
+                                },
+                                eject_before: eject,
+                                vspace_before: std::mem::take(&mut vspace_before),
+                                addvspace_before: std::mem::take(&mut addvspace_before),
+                                endlist_adjust: std::mem::take(&mut endlist_adjust),
+                                limitations: std::mem::take(&mut limitations),
+                            });
+                            eject = false;
+                        }
+                        continue;
+                    }
+                    if let Some(Ok(k)) = pic {
                         let document = inline_span(&inlines[seg_start]).document;
                         if emitted_pictures.insert((document.0, k)) {
                             units.push(Unit {
@@ -3059,7 +3169,7 @@ fn font_declaration(name: &str) -> Option<(&'static [crate::nfss::Command], bool
 /// so a size is never applied twice. The compiler's own table is the same
 /// one, but it resolves against its integer class size where the pipeline
 /// sets `\normalsize` at the class's real `\normalsize` (10.95pt at 11pt).
-fn declared_size(level: Option<flashtex_compiler::parser::FontSizeLevel>, base: u32) -> u16 {
+pub(crate) fn declared_size(level: Option<flashtex_compiler::parser::FontSizeLevel>, base: u32) -> u16 {
     use flashtex_compiler::parser::FontSizeLevel as L;
     let Some(level) = level else { return 0 };
     // tiny, scriptsize, footnotesize, small, large, Large, LARGE, huge, Huge
@@ -5106,6 +5216,7 @@ mod tests {
                     .collect(),
                 Block::Rule { .. } => "R".to_string(),
                 Block::Picture { .. } => "P".to_string(),
+                Block::Listing(_) => "L".to_string(),
                 Block::Chapter { .. } => "C".to_string(),
                 Block::Part { .. } => "P".to_string(),
                 Block::Chrome { .. } => "M".to_string(),
