@@ -463,11 +463,13 @@ fn watch_rebuilds_when_an_included_file_changes() {
 }
 
 /// `--color never` keeps the full excerpt-and-carets shape but strips every
-/// ANSI escape; an explicit `always` wins over `NO_COLOR`. (`auto` is not
-/// covered here: piped stderr is never a tty, so `auto` is uncoloured in
-/// this harness whether or not `NO_COLOR` is set — that assertion could
-/// never fail and was dropped rather than pinning a false claim about
-/// `NO_COLOR` specifically.)
+/// ANSI escape — even after an explicit `always` (the last `--color` wins:
+/// each occurrence overwrites the previous one in `parse_common`) — while
+/// an explicit `always` wins over `NO_COLOR`. (`auto` is not covered here:
+/// piped stderr is never a tty, so `auto` is uncoloured in this harness
+/// whether or not `NO_COLOR` is set — that assertion could never fail and
+/// was dropped rather than pinning a false claim about `NO_COLOR`
+/// specifically.)
 #[test]
 fn color_never_strips_ansi_and_always_overrides_no_color() {
     let dir = tmp("color");
@@ -495,6 +497,23 @@ fn color_never_strips_ansi_and_always_overrides_no_color() {
         assert!(err.contains('^'), "{err}");
         assert!(!err.contains('\x1b'), "{err}");
     }
+    // Control: piped stderr is uncoloured by default, so `never` alone
+    // proves nothing — only an explicit `always` turns colour on in a pipe
+    // (no CLICOLOR_FORCE/FORCE_COLOR override exists in main.rs).
+    let always = stderr(&check(&["--color=always"], false));
+    assert!(always.contains("\x1b[1;31merror[missing_file]\x1b[0m"), "{always}");
+    // Precedence is positional: `never` after `always` strips every escape,
+    // and `always` after `never` keeps them. With `never`'s effect disabled,
+    // the first loop below would keep `always`'s escapes and fail.
+    for flags in [&["--color=always", "--color=never"][..], &["--color", "always", "--color", "never"][..]] {
+        let o = check(flags, false);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{flags:?}\n{err}");
+        assert!(err.contains(" --> main.tex:4:1\n"), "{flags:?}\n{err}");
+        assert!(!err.contains('\x1b'), "{flags:?}\n{err}");
+    }
+    let flipped = stderr(&check(&["--color=never", "--color=always"], false));
+    assert!(flipped.contains("\x1b[1;31merror[missing_file]\x1b[0m"), "{flipped}");
     // An explicit `always` overrides `NO_COLOR`.
     let forced = stderr(&check(&["--color=always"], true));
     assert!(forced.contains("\x1b[1;31merror[missing_file]\x1b[0m"), "{forced}");
@@ -523,14 +542,23 @@ fn diagnostics_short_is_one_line_per_diagnostic() {
         assert!(!err.contains("-->"), "{err}");
         assert!(!err.contains(" | "), "{err}");
     }
-    // Piped stderr already defaults to this same short shape, so the two
+    // Piped stderr already defaults to this same short shape, so the
     // assertions above would pass even if `--diagnostics short` were parsed
-    // and ignored. Prove the flag actually does something by diffing against
-    // `--diagnostics full` on the identical input: full must show what short
-    // just proved absent.
-    let full_err = stderr(&check(&["--diagnostics=full"]));
-    assert!(full_err.contains("-->"), "{full_err}");
-    assert!(full_err.contains(" | "), "{full_err}");
+    // and ignored (no config or env re-defaults to full: the default is
+    // terminal-only in `build_once`). Pin the two forms against each other
+    // on the identical input instead: full must show the `-->` header, the
+    // source excerpt and the caret line that short just proved absent —
+    // the same assertion shape as
+    // `diagnostics_full_shows_the_source_line_and_carets` — and the two
+    // outputs must differ byte for byte.
+    let full = check(&["--diagnostics=full"]);
+    let full_err = stderr(&full);
+    assert_eq!(full.status.code(), Some(0), "{full_err}");
+    assert!(full_err.contains("error[missing_file]: "), "{full_err}");
+    assert!(full_err.contains(" --> main.tex:4:1\n"), "{full_err}");
+    assert!(full_err.contains("\n4 | \\input{nothere}\n  | ^"), "{full_err}");
+    let short_err = stderr(&check(&["--diagnostics=short"]));
+    assert_ne!(short_err, full_err, "short and full must differ:\n{short_err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
