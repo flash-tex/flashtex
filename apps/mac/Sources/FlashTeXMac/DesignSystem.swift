@@ -278,6 +278,26 @@ enum DS {
     }
 }
 
+// MARK: - Interaction
+
+/// Button style for custom rows, tabs and rail icons: a pressed wash over
+/// whatever background the label draws, so every interactive element has a
+/// visible pressed state (design-principles §14) without each call site
+/// reinventing it.
+struct PressableStyle: ButtonStyle {
+    var cornerRadius: CGFloat = DS.Radius.tab
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .overlay {
+                if configuration.isPressed {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(DS.Colors.textPrimary.opacity(DS.State.pressedOpacity))
+                }
+            }
+    }
+}
+
 // MARK: - File-type identity
 
 /// Colour-coded file identity in the IntelliJ manner (`design-principles.md`

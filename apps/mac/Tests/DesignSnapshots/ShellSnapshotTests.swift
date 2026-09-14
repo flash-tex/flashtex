@@ -29,6 +29,14 @@ final class ShellSnapshotTests: XCTestCase {
                                            size: CGSize(width: 900, height: 600))
     }
 
+    /// Empty states: no compile result yet — the preview column explains the
+    /// path forward and nothing shouts.
+    func testMainWindowEmpty() {
+        let model = DesignFixtures.emptyProject()
+        assertWindowSurfaceBothAppearances(ContentView().environment(model).environmentObject(DesignFixtures.nearby()), named: "shell-empty",
+                                           size: CGSize(width: 1440, height: 900))
+    }
+
     func testTabBar() {
         let model = DesignFixtures.project()
         assertSurfaceBothAppearances(DocumentTabBar().environment(model), named: "tabbar",

@@ -65,6 +65,24 @@ enum DesignFixtures {
         return model
     }
 
+    /// A fresh project with no compile result: the empty states — the
+    /// preview's "No preview yet" guidance and a quiet Problems story.
+    static func emptyProject() -> ShellModel {
+        let model = ShellModel()
+        model.documents = [.init(path: "main.tex", text: "\\begin{document}\nA fresh start.\n\\end{document}\n")]
+        model.activePath = "main.tex"
+        model.result = nil
+        model.resultID = nil
+        model.previewSource = .none
+        model.loadError = nil
+        model.previewV2 = false
+        model.darkPreview = false
+        model.previewZoom = 1
+        model.problemsVisible = false
+        model.flushChrome()
+        return model
+    }
+
     /// A believable TeX diagnostic mix: an undefined command with a fix, an
     /// undefined reference in two places, an overfull-box warning, and a
     /// not-implemented gap.

@@ -350,7 +350,7 @@ struct DiagnosticsListView: View {
                     .help("Jump to one occurrence of this diagnostic (⌘⌥] / ⌘⌥[ step through them)")
                 }
                 Text(location(of: g, occurrence: k, diagnostic: d, group: group))
-                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textTertiary).lineLimit(1)
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).lineLimit(1)
             }
             if selected {
                 // The disclosure inside the selected problem: notes, help,

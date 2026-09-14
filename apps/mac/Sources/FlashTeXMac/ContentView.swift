@@ -43,11 +43,14 @@ struct ContentView: View {
                     let narrow = geo.size.width < DS.Layout.editorMinWidth + DS.Layout.previewMinWidth + DS.Layout.resizeHandleHeight
                     VStack(spacing: 0) {
                         HSplitView {
+                            // maxHeight fills: with no compile result both
+                            // children are height-flexible and HSplitView
+                            // would otherwise collapse and centre them.
                             if !(narrow && model.narrowPreviewShown) {
-                                EditorPane().frame(minWidth: DS.Layout.editorMinWidth, maxWidth: .infinity)
+                                EditorPane().frame(minWidth: DS.Layout.editorMinWidth, maxWidth: .infinity, maxHeight: .infinity)
                             }
                             if !narrow || model.narrowPreviewShown {
-                                PreviewPane().frame(minWidth: DS.Layout.previewMinWidth, maxWidth: .infinity)
+                                PreviewPane().frame(minWidth: DS.Layout.previewMinWidth, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -125,7 +128,7 @@ private struct RailButton: View {
                          : hovering ? DS.Colors.textPrimary.opacity(DS.State.hoverOpacity) : .clear,
                     in: RoundedRectangle(cornerRadius: DS.Radius.tab))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableStyle())
         .onHover { hovering = $0 }
         .help(help)
         .accessibilityLabel(label)
@@ -417,8 +420,10 @@ struct PreviewPane: View {
                 ContentUnavailableView {
                     Label("No preview yet", systemImage: "doc.richtext")
                 } description: {
-                    Text("Attach a producer from the toolbar (⌘⇧K builds, ⌘⇧R Latin Modern) and compile (⌘B), or File > Open Compile Result Fixture… (⌘⇧O).")
+                    Text("Attach a producer from the Compile chip's menu (⌘⇧K builds, ⌘⇧R Latin Modern) and compile (⌘B), or File > Open Compile Result Fixture… (⌘⇧O).")
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(DS.Colors.surfaceGround)
             }
         }
         .sheet(isPresented: Binding(get: { model.quickFix != nil }, set: { if !$0 { model.quickFix = nil } })) {
@@ -521,7 +526,9 @@ struct PreviewHeader: View {
             .allowsHitTesting(hovering)
             .animation(DS.Motion.quick, value: hovering)
             .accessibilityHidden(!hovering)
-            // The rest tier: page and zoom, always visible, dimmed (§8).
+            // The rest tier: page and zoom, always visible, dimmed (§8) —
+            // meaningful only once there is a result at all.
+            if chrome.hasResult {
             Text("\(currentPage) / \(max(model.toolbarPageCount, 1))")
                 .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
                 .help("Page under the top of the view")
@@ -532,6 +539,7 @@ struct PreviewHeader: View {
                 .help("Preview zoom; double-click for Fit Width (⌘9), ⌘0 actual size, or pinch on the preview")
                 .accessibilityLabel("Preview zoom \(PreviewZoom.percent(fit: model.previewFitScale, zoom: model.previewZoom)) percent")
                 .onTapGesture(count: 2) { model.previewFitWidth() }
+            }
         }
         .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
         .background(.bar)

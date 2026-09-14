@@ -212,7 +212,7 @@ private struct OutlineSection: View {
                             .frame(width: DS.Size.fileIcon)
                         Text(row.item.displayTitle.isEmpty ? "(untitled)" : row.item.displayTitle).lineLimit(1)
                         Spacer(minLength: 0)
-                        Text("\(row.item.line)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
+                        Text("\(row.item.line)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
                     }
                     .padding(.leading, CGFloat(row.indent) * DS.Space.m)
                 }
@@ -343,6 +343,9 @@ struct SidebarRow<Label: View>: View {
     let action: () -> Void
     @ViewBuilder let label: () -> Label
     @State private var hovering = false
+    /// Key-window state: an unfocused window's selection must read visibly
+    /// weaker than a focused one's (§14, the macOS convention).
+    @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
         Button(action: action) {
@@ -350,16 +353,22 @@ struct SidebarRow<Label: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableStyle())
         .padding(.horizontal, DS.Space.s)
         .frame(height: DS.Row.tree)
         // Full-row highlight, hover and selected (design-principles §6).
-        .background(selected ? DS.Colors.accentSelection.opacity(DS.State.selectionTintOpacity)
-                             : hovering ? DS.Colors.textPrimary.opacity(DS.State.hoverOpacity) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: DS.Radius.tab))
+        .background(selectionBackground, in: RoundedRectangle(cornerRadius: DS.Radius.tab))
         .onHover { hovering = $0 }
         .listRowInsets(EdgeInsets(top: 0, leading: DS.Space.xs, bottom: 0, trailing: DS.Space.xs))
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var selectionBackground: Color {
+        if selected {
+            return activeState == .inactive ? DS.Colors.selectionUnfocused
+                                            : DS.Colors.accentSelection.opacity(DS.State.selectionTintOpacity)
+        }
+        return hovering ? DS.Colors.textPrimary.opacity(DS.State.hoverOpacity) : .clear
     }
 }
 
