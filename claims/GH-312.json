@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/uline-gh312",
+  "gh_ref": "https://github.com/flash-tex/flashtex/issues/312",
+  "machine": "mac-m5pro-dq222",
+  "note": "daniel-parent (Max, not daniel-vpclaude) lane; implementation delegated to cursor-agent cursor-grok-4.6-high-fast; daniel-parent reviews/publishes",
+  "started_utc": "2026-09-14T05:22:57Z",
+  "state": "claimed",
+  "task_id": "GH-312",
+  "updated_utc": "2026-09-14T05:22:57Z"
+}
