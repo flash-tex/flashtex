@@ -34,6 +34,11 @@ enum DesignFixtures {
                                      text: "\\section{Results}\n\nAs shown in Figure~\\ref{fig:results}.\n"))
         model.documents.append(.init(path: "refs.bib",
                                      text: "@article{knuth84,\n  author = {Knuth, Donald},\n  year = {1984}\n}\n"))
+        // Park the caret inside §"At the café" so caret-derived chrome (the
+        // status-bar breadcrumb) has something honest to show.
+        if let r = (model.activeText as NSString?)?.range(of: "two readers"), r.location != NSNotFound {
+            model.caretUTF16 = r.location
+        }
         model.previewV2 = false // the fixture result is v1 pages; render them
         model.darkPreview = false // never inherit the machine's preference into a snapshot
         model.problemsVisible = false // rest state: the bottom panel earns its space only with content

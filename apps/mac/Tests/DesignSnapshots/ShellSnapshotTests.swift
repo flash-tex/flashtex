@@ -49,8 +49,9 @@ final class ShellSnapshotTests: XCTestCase {
 
     func testStatusBar() {
         let model = DesignFixtures.projectWithProblems()
+        // Longer settle: the word count and breadcrumb are debounced.
         assertSurfaceBothAppearances(StatusBar().environment(model), named: "statusbar",
-                                     size: CGSize(width: 1440, height: 24))
+                                     size: CGSize(width: 1440, height: 24), settle: 0.8)
     }
 
     func testCommandPalette() {

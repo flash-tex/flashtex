@@ -549,19 +549,28 @@ struct StatusBar: View {
         // keystroke / reply, and this bar re-evaluated with each of them.
         let chrome = model.chrome
         HStack(spacing: DS.Space.l) {
-            Label("r\(chrome.editorRevision)", systemImage: "pencil.line")
-                .help("Editor revision (increments on every edit)")
-            if let durable = chrome.durableRevision {
-                Label("durable r\(durable)", systemImage: "internaldrive")
-                    .help("Durable revision of \(model.activePath) in the helper's edit ledger")
-            }
+            // The LaTeX-semantic breadcrumb leads (design-principles §5):
+            // where the caret is, in the document's own vocabulary. The
+            // palette and outline are the real navigation; segments still
+            // click through to their section.
+            StatusBreadcrumb()
+            Divider().frame(height: DS.Size.inlineDividerHeight)
+            Text(chrome.note ?? "Click text in the preview to select its source range.")
+                .foregroundStyle(.secondary).lineLimit(1)
+            Spacer()
+            WordCountStatusItem() // GH68: live word count + breakdown popover (WordCountStatusView.swift)
             if let ms = chrome.lastLatencyMs {
                 Label(String(format: "%.0f ms", ms), systemImage: "timer")
                     .help(chrome.latencyHelp)
             }
             Label(route(chrome), systemImage: routeIcon(chrome))
                 .help(chrome.routeHelp)
-            WordCountStatusItem() // GH68: live word count + breakdown popover (WordCountStatusView.swift)
+            Label("r\(chrome.editorRevision)", systemImage: "pencil.line")
+                .help("Editor revision (increments on every edit)")
+            if let durable = chrome.durableRevision {
+                Label("durable r\(durable)", systemImage: "internaldrive")
+                    .help("Durable revision of \(model.activePath) in the helper's edit ledger")
+            }
             // The Vim mode indicator is NOT here: it is `VimStatusLine`, at the
             // bottom of the editor pane where vim puts a window's status line.
             let problems = chrome.problems
@@ -578,10 +587,6 @@ struct StatusBar: View {
                 .buttonStyle(.plain)
                 .help("Errors, warnings and not-implemented gaps of the last result — click to show or hide the Problems panel (⌘⇧M)")
             }
-            Divider().frame(height: DS.Size.inlineDividerHeight)
-            Text(chrome.note ?? "Click text in the preview to select its source range.")
-                .foregroundStyle(.secondary).lineLimit(1)
-            Spacer()
             if case .running(let pid, _) = model.exportSession.state { // ShellModel+ExportSession.swift
                 ProgressView().controlSize(.small)
                 Text("Exporting exact PDF (flashtex-pdf-exact pid \(pid))…")
@@ -618,6 +623,48 @@ struct StatusBar: View {
         case .controller, .worker: "bolt.horizontal.circle.fill"
         case .none: "bolt.horizontal.circle"
         }
+    }
+}
+
+/// The status bar's leading breadcrumb: `main.tex › Chapter 2 › 2.3 Setup`.
+/// The outline is rescanned only when the buffer settles (like the sidebar);
+/// caret moves just re-pick the chain from the cached items, debounced so a
+/// keystroke never pays for it on its own frame.
+private struct StatusBreadcrumb: View {
+    @Environment(ShellModel.self) var model
+    @State private var items: [DocumentOutline.Item] = []
+    @State private var chain: [DocumentOutline.Item] = []
+
+    var body: some View {
+        HStack(spacing: DS.Space.xs) {
+            Text(model.activePath).lineLimit(1)
+                .foregroundStyle(DS.Colors.textSecondary)
+            ForEach(chain) { item in
+                Text("›").foregroundStyle(DS.Colors.textTertiary).accessibilityHidden(true)
+                Button { model.reveal(outlineItem: item) } label: {
+                    Text(item.displayTitle.isEmpty ? "(untitled)" : item.displayTitle)
+                        .lineLimit(1).truncationMode(.tail)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("\\\(item.command){\(item.title)} — line \(item.line); click to select it")
+                .accessibilityLabel("\(item.command) \(item.title), line \(item.line)")
+            }
+        }
+        .task(id: "\(model.activePath)@\(model.chrome.editorRevision)") {
+            if !items.isEmpty { try? await Task.sleep(for: .milliseconds(150)) }
+            guard !Task.isCancelled else { return }
+            items = model.outline
+            chain = DocumentOutline.breadcrumb(at: model.caretUTF16, in: items)
+        }
+        .task(id: model.caretUTF16) {
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled else { return }
+            let new = DocumentOutline.breadcrumb(at: model.caretUTF16, in: items)
+            if new != chain { chain = new }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Breadcrumb")
     }
 }
 
