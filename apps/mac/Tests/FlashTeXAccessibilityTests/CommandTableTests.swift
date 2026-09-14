@@ -127,7 +127,7 @@ final class CommandTableTests: XCTestCase {
     }
 
     /// `.keyboardShortcut("k", modifiers: [.command, .shift])` → "⌘⇧K"; `.keyboardShortcut("o")` → "⌘O";
-    /// `.keyboardShortcut(.upArrow, modifiers: [.command, .option])` → "⌘⌥↑".
+    /// `.keyboardShortcut(.upArrow, modifiers: [.command, .option])` → "⌘⌥↑"; `.leftArrow` → "⌘⌥←".
     static func spell(keyboardShortcutLine line: String) -> String? {
         let key: String
         let rest: Substring
@@ -141,6 +141,12 @@ final class CommandTableTests: XCTestCase {
             rest = line[...]
         } else if line.contains(".keyboardShortcut(.downArrow") {
             key = "↓"
+            rest = line[...]
+        } else if line.contains(".keyboardShortcut(.leftArrow") {
+            key = "←"
+            rest = line[...]
+        } else if line.contains(".keyboardShortcut(.rightArrow") {
+            key = "→"
             rest = line[...]
         } else {
             return nil

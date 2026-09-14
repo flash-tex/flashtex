@@ -15,6 +15,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case commandPalette, toggleProblems, toggleCaptures
     case zoomIn, zoomOut, actualSize, fitWidth, increaseEditorFontSize, decreaseEditorFontSize, resetEditorFontSize
     case completion, completionList, toggleComment, duplicateLine, duplicateLineUp, moveLineUp, moveLineDown, deleteLine, joinLines, sortLinesAscending, sortLinesDescending, trimTrailingWhitespace, reindentLines, reindentDocument, signatureHelp, toggleVimKeybindings
+    case fold, unfold, foldAll, unfoldAll
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
     case goToDefinition, goToSymbol, selectEnvironment, wrapInEnvironment, renameSymbol
     case selectPreviewItemSource
@@ -249,6 +250,22 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Re-indent Document", shortcuts: ["Edit > Re-indent Document"], menu: "Edit",
                          description: "Applies the same LaTeX-aware reindent rules as Re-indent Lines to the whole buffer as one undo step.",
                          menuItem: "Re-indent Document")
+        case .fold:
+            return Entry(command: self, title: "Fold", shortcuts: ["⌘⌥←"], menu: "Editor",
+                         description: "Folds the innermost \\begin{…}…\\end{…} environment or sectioning block at the caret: the first line stays visible with an inline … placeholder; the hidden characters stay in the buffer.",
+                         menuItem: "Fold")
+        case .unfold:
+            return Entry(command: self, title: "Unfold", shortcuts: ["⌘⌥→"], menu: "Editor",
+                         description: "Unfolds the innermost folded region at the caret.",
+                         menuItem: "Unfold")
+        case .foldAll:
+            return Entry(command: self, title: "Fold All", shortcuts: ["⌘⌥⇧←"], menu: "Editor",
+                         description: "Folds every foldable environment and sectioning block in the buffer.",
+                         menuItem: "Fold All")
+        case .unfoldAll:
+            return Entry(command: self, title: "Unfold All", shortcuts: ["⌘⌥⇧→"], menu: "Editor",
+                         description: "Unfolds every folded region in the buffer.",
+                         menuItem: "Unfold All")
         case .goToMatching:
             return Entry(command: self, title: "Go to matching", shortcuts: ["⌘⇧D"], menu: "Navigate",
                          description: "Selects the matching \\begin/\\end or \\label/\\ref for the command under the caret; misses are explained in the footer.",
