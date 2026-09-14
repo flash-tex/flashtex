@@ -311,7 +311,10 @@ struct EditorPane: View {
             // which the Problems panel pushes two panes away from the caret
             // (owner report). Takes no space at all while Vim is off.
             VimStatusLine()
-            CaptureBar()
+            // Like the bridge line below: shown once the capture flow is in
+            // play (an anchor pinned, proposals queued, or the inspector
+            // open), never as a permanent strip under the editor at rest.
+            if model.anchor != nil || !model.proposals.isEmpty || model.captureInboxVisible { CaptureBar() }
             // The bridge line is lifecycle telemetry: shown once a bridge is
             // attached or a capture exists, not as a permanent orange
             // "no bridge attached" strip under the editor (daniel-fable-ui-qa #5).

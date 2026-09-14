@@ -407,7 +407,7 @@ public enum FocusOrder {
              rationale: "Editing is the primary task; the caret drives caret sync, diagnostics at caret, and every Navigate command.",
              container: "EditorPane", sourceMarker: "SourceEditorView("),
         Pane(name: "Capture bar",
-             contents: "Pin insertion point, the pinned anchor, and the review button for queued proposals; one group whose value reads the anchor and proposal count.",
+             contents: "Pin insertion point, the pinned anchor, and the review button for queued proposals; one group whose value reads the anchor and proposal count. Present once the capture flow is in play (an anchor pinned, proposals queued, or the Captures inspector open); absent at rest.",
              rationale: "Directly under the editor because pinning starts from the caret; the bar's value is what a capture proposal will insert against.",
              container: "EditorPane", sourceMarker: "CaptureBar()"),
         Pane(name: "Bridge bar",
