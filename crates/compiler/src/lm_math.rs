@@ -102,7 +102,6 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{2273}', 776),  // \gtrsim
     ('\u{225C}', 778),  // \triangleq
     ('\u{2254}', 906),  // \coloneqq
-    ('\u{2255}', 906),  // \eqqcolon
     ('\u{2204}', 556),  // \nexists
     ('\u{2201}', 556),  // \complement
     ('\u{21DD}', 997),  // \rightsquigarrow
@@ -202,7 +201,7 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 85);
+        assert_eq!(ADVANCES.len(), 84);
     }
 
     #[test]

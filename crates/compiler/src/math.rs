@@ -2767,11 +2767,30 @@ fn symbol(text: String, span: Span) -> MathAtom {
 
 /// mathtools' `\vcentcolon`: the plain `":"` with `\mathrel` spacing. Shared
 /// by the `"vcentcolon"` arm and `"dblcolon"`, which is two of these atoms.
+///
+/// mathtools defines it as `\mathrel{\mathop\ordinarycolon}`: the `\mathop`
+/// centres the colon's ink on the math axis. The actual raise happens in
+/// `layout_nucleus` (see `vcentcolon_raise`), which recognises exactly these
+/// atoms: this is the only `":"` carrying a forced `Rel` class (kernel
+/// `\colon` is `Punct`, amsmath's is `Ord`, a literal `:` has none).
 fn vcentcolon_atom(span: Span) -> MathAtom {
     MathAtom {
         class_override: Some(AtomClass::Rel),
         ..symbol(":".into(), span)
     }
+}
+
+/// How far a `\vcentcolon` colon rises above the math baseline, in points.
+///
+/// The colon's dots span the text face's x-height (the bottom dot sits on
+/// the baseline), so the ink centre is half the real x-height above the
+/// item baseline and the raise is what is left to reach
+/// `MATH_AXIS_EM * size` — the same axis-minus-visual-centre pattern the
+/// fence baseline in `layout_matrix` uses, not a guessed offset. The
+/// x-height comes from the same real font metric `layout_accent` uses
+/// (`crate::layout::x_height_pt`) rather than a constant from nowhere.
+fn vcentcolon_raise(size: f64) -> f64 {
+    MATH_AXIS_EM * size - crate::layout::x_height_pt(crate::layout::Font::TimesRoman, size) / 2.0
 }
 
 /// An explicit `\mkern<mu>mu` as mathtools.sty writes it between two colon
@@ -3635,43 +3654,63 @@ fn layout_nucleus(
             level,
             diagnostics,
         ),
-        Nucleus::Symbol(text) | Nucleus::Text(text) => MathBox {
-            items: vec![MathItem {
-                font: matches!(atom.nucleus, Nucleus::Text(_))
-                    .then_some(crate::layout::Font::TimesRoman),
-                text: text.clone(),
-                x: 0.0,
-                baseline: 0.0,
-                size,
-                span: atom.span,
-                rule: None,
-            }],
-            width: match (
-                &atom.nucleus,
-                atom.width_em.map(|em| em * size).or_else(|| {
-                    crate::lm_math::width_pt(text, size)
-                        .or_else(|| crate::newcm_math::width_pt(text, size))
-                }),
-            ) {
-                (Nucleus::Symbol(_), Some(width)) => width,
-                _ => {
-                    crate::layout::shaped_width(
-                        text,
-                        size,
-                        if matches!(atom.nucleus, Nucleus::Text(_)) {
-                            crate::layout::Font::TimesRoman
-                        } else {
-                            crate::layout::math_font(text)
-                        },
-                        atom.span,
-                        diagnostics,
-                    )
-                    .0
-                }
-            },
-            ascent: size,
-            descent: 0.2 * size,
-        },
+        Nucleus::Symbol(text) | Nucleus::Text(text) => {
+            let mut laid = MathBox {
+                items: vec![MathItem {
+                    font: matches!(atom.nucleus, Nucleus::Text(_))
+                        .then_some(crate::layout::Font::TimesRoman),
+                    text: text.clone(),
+                    x: 0.0,
+                    baseline: 0.0,
+                    size,
+                    span: atom.span,
+                    rule: None,
+                }],
+                width: match (
+                    &atom.nucleus,
+                    atom.width_em.map(|em| em * size).or_else(|| {
+                        crate::lm_math::width_pt(text, size)
+                            .or_else(|| crate::newcm_math::width_pt(text, size))
+                    }),
+                ) {
+                    (Nucleus::Symbol(_), Some(width)) => width,
+                    _ => {
+                        crate::layout::shaped_width(
+                            text,
+                            size,
+                            if matches!(atom.nucleus, Nucleus::Text(_)) {
+                                crate::layout::Font::TimesRoman
+                            } else {
+                                crate::layout::math_font(text)
+                            },
+                            atom.span,
+                            diagnostics,
+                        )
+                        .0
+                    }
+                },
+                ascent: size,
+                descent: 0.2 * size,
+            };
+            // `\vcentcolon` is `\mathrel{\mathop\ordinarycolon}`: the colon's
+            // ink centre belongs on the math axis, not on the baseline. Only
+            // `vcentcolon_atom` makes a `":"` with a forced `Rel` class, so
+            // this raises exactly the mathtools family (and everything built
+            // from it: `\dblcolon`, `\Coloneqq`, `\Eqqcolon`, `\eqqcolon`
+            // nest those same atoms in groups laid out here) while kernel
+            // `\colon`, amsmath `\colon` and a literal `:` stay put. The box
+            // follows the item rigidly, so widths and spacing are untouched.
+            if matches!(atom.nucleus, Nucleus::Symbol(_))
+                && text.as_str() == ":"
+                && atom.class_override == Some(AtomClass::Rel)
+            {
+                let raise = vcentcolon_raise(size);
+                offset_items(&mut laid.items, 0.0, -raise);
+                laid.ascent += raise;
+                laid.descent -= raise;
+            }
+            laid
+        }
         Nucleus::SizedDelimiter { glyph, scale, .. } => {
             let glyph_size = size * scale;
             let width = match crate::lm_math::width_pt(glyph, glyph_size) {
@@ -5752,6 +5791,68 @@ mod spacing_tests {
             expected.extend(glyphs);
             expected.push("b");
             assert_eq!(texts, expected, "\\{command}");
+        }
+    }
+
+    /// `\vcentcolon` is `\mathrel{\mathop\ordinarycolon}`
+    /// (`mathtools.sty`): the `\mathop` puts the colon's ink centre on the
+    /// math axis, so every member of the family sits higher than a baseline
+    /// colon. The raise is `MATH_AXIS_EM * size` minus half the text face's
+    /// real x-height — the dots span baseline..x-height — via the same
+    /// helper `layout_accent` uses, so this test recomputes the expected
+    /// centre from those same real metrics: the ink centre sits half the
+    /// ink height above the glyph's own baseline, which the item places
+    /// `baseline` (positive downward) from the math baseline, so centre
+    /// `ink/2 - baseline` above the math baseline must equal the axis.
+    /// The tolerance is a fraction of the
+    /// ink height itself, so it scales with size instead of naming an
+    /// absolute number — and it is tighter than the miss an unshifted colon
+    /// leaves, so the test fails with the raise removed (asserted below,
+    /// and checked by the mutation run in the check-in).
+    #[test]
+    fn vcentcolon_centres_the_colon_ink_on_the_math_axis() {
+        let size = SIZE;
+        let axis = MATH_AXIS_EM * size;
+        let ink_height = crate::layout::x_height_pt(crate::layout::Font::TimesRoman, size);
+        let ink_depth = 0.0;
+        let tolerance = (ink_height + ink_depth) / 20.0;
+        // Self-validating: an unshifted colon misses the axis by
+        // `axis - ink_height / 2`, which must exceed the tolerance, or this
+        // test could pass without the fix.
+        assert!(
+            tolerance < axis - ink_height / 2.0,
+            "tolerance {tolerance} must be tighter than the unshifted miss {}",
+            axis - ink_height / 2.0
+        );
+        // The fix lives in `vcentcolon_atom`'s atoms, so every family member
+        // built from them carries raised colons — each `":"` item, not just
+        // the first.
+        for command in ["vcentcolon", "eqqcolon", "Coloneqq", "Eqqcolon", "dblcolon"] {
+            let b = laid_out_with(&format!(r"\{command}"), size, MATHTOOLS);
+            let colons: Vec<_> = b.items.iter().filter(|i| i.text == ":").collect();
+            assert!(!colons.is_empty(), "\\{command} lays out no colon");
+            for colon in colons {
+                let centre = (ink_height - ink_depth) / 2.0 - colon.baseline;
+                assert!(
+                    (centre - axis).abs() <= tolerance,
+                    "\\{command}: ink centre {centre} != axis {axis}"
+                );
+            }
+        }
+        // Negative controls: every other colon stays on the baseline.
+        for (source, packages) in [
+            (r"\colon", MATHTOOLS),
+            (r"\colon", MathPackages::KERNEL),
+            (":", MathPackages::KERNEL),
+        ] {
+            let b = laid_out_with(source, size, packages);
+            for item in b.items.iter().filter(|i| i.text == ":") {
+                assert!(
+                    item.baseline.abs() < 1e-9,
+                    "{source}: baseline colon moved to {}",
+                    item.baseline
+                );
+            }
         }
     }
 
