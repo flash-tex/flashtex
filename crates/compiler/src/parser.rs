@@ -828,6 +828,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textgreater",
     "textbraceleft",
     "textbraceright",
+    "nobreakspace",
 ];
 
 /// Parses a LaTeX dimension (`12pt`, `1.5em`, `0.5in`, `2cm`, `10mm`, `2ex`,
@@ -1347,6 +1348,7 @@ impl P<'_> {
     fn parse_stream(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         while self.i < self.t.len() {
             let input = self.t[self.i].clone();
+            let escape = input.escape_span();
             let tok = input.token;
             let render = self.in_body && !self.document_ended;
             match tok.kind {
@@ -1357,10 +1359,10 @@ impl P<'_> {
                     }
                 }
                 TokenKind::Space | TokenKind::Comment => self.i += 1,
-                TokenKind::Word(word) if control_symbol_kern(&word, tok.span, self.math_packages.amsmath).is_some() => {
+                TokenKind::Word(word) if control_symbol_kern(&word, escape, self.math_packages.amsmath).is_some() => {
                     self.i += 1;
                     if render {
-                        if let Some(amount) = control_symbol_kern(&word, tok.span, self.math_packages.amsmath) {
+                        if let Some(amount) = control_symbol_kern(&word, escape, self.math_packages.amsmath) {
                             para.push(Inline::Kern {
                                 amount,
                                 span: tok.span,
@@ -2124,6 +2126,10 @@ impl P<'_> {
             | "textgreater" | "textbraceleft" | "textbraceright" => {
                 self.text_symbol(name, span, para)
             }
+            // The kernel tie, which is encoding-independent
+            // (`text_builtins::kernel_tie`) and so is not one of the arms
+            // above.
+            "nobreakspace" => self.text_symbol(name, span, para),
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
             "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
             | "negthickspace" | "enspace" => {
@@ -4478,8 +4484,8 @@ impl P<'_> {
                         style = previous;
                     }
                 }
-                TokenKind::Word(text) if control_symbol_kern(text, input.token.span, self.math_packages.amsmath).is_some() => {
-                    if let Some(amount) = control_symbol_kern(text, input.token.span, self.math_packages.amsmath) {
+                TokenKind::Word(text) if control_symbol_kern(text, input.escape_span(), self.math_packages.amsmath).is_some() => {
+                    if let Some(amount) = control_symbol_kern(text, input.escape_span(), self.math_packages.amsmath) {
                         content.push(Inline::Kern {
                             amount,
                             span: input.token.span,
@@ -4572,6 +4578,14 @@ impl P<'_> {
         style: TextStyle,
         space_before: bool,
     ) -> Option<Inline> {
+        if let Some(tie) = text_builtins::kernel_tie(name) {
+            return Some(Inline::Text {
+                text: tie.to_string(),
+                span,
+                style,
+                space_before,
+            });
+        }
         let text = match text_builtins::text_symbol(name, self.font_encoding)? {
             SymbolOutcome::Char(ch) => ch.to_string(),
             SymbolOutcome::Text(text) => text,
@@ -5700,6 +5714,12 @@ fn preamble_source(text: &str, has_document: bool, tokens: &[InputToken]) -> Str
 
 /// The kern a control-symbol token (`\,` lexed as the word `,` with a
 /// two-byte span, the same test `math.rs` uses) stands for in text mode.
+///
+/// `span` must be the token's own source bytes —
+/// [`ExpandedToken::escape_span`], not `token.span`. Replacement text
+/// carries the invocation's span, whose width is unrelated to how the token
+/// was written, so reading it here printed a literal `,` for every `\,` in
+/// a `\newcommand` body.
 fn control_symbol_kern(word: &str, span: Span, amsmath: bool) -> Option<TextDimen> {
     let mut chars = word.chars();
     match (chars.next(), chars.next()) {

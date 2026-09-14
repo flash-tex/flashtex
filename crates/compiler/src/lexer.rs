@@ -87,10 +87,33 @@ fn is_special(c: char) -> bool {
 /// through an entirely separate path that never calls this function, so every
 /// other [`TokenKind::Word`] reachable from ordinary paragraph text or a
 /// supported command's text argument is fair game.
+///
+/// The same pass resolves the tie. `~` is not an ordinary character in
+/// LaTeX: `latex.ltx` makes it catcode 13 and defines it as
+/// `\nobreakspace{}`, i.e. `\leavevmode\nobreak\ ` — an interword space of
+/// the current font with no legal breakpoint at it. Carrying the source
+/// byte `~` through the text stream and asking a later stage to recognise
+/// it by looking back at the source is what broke inside macro replacement
+/// text, where a token carries the *invocation's* span rather than its own
+/// bytes: `\newcommand{\fig}{Figure~7}` printed a literal tilde. So the tie
+/// becomes U+00A0 NO-BREAK SPACE here, at the one place that already turns
+/// source characters into the characters TeX actually sets, and the text
+/// stream is self-describing from then on. `\textasciitilde` — the only way
+/// to ask for the character — is a [`TokenKind::Command`] resolved through
+/// `text_builtins`, never a word, so it keeps U+007E; `\verb` and
+/// `verbatim` do not reach this function at all, which is exactly where
+/// pdflatex also stops treating `~` as active.
+/// The character the tie (`~`, `\nobreakspace`, and a non-breaking space
+/// typed straight into a UTF-8 source, which `inputenc` maps to
+/// `\nobreakspace`) occupies in the text stream: an interword space of the
+/// current font that is not a legal breakpoint. Consumers recognise it by
+/// the character, never by looking back at the source bytes.
+pub const NO_BREAK_SPACE: char = '\u{00A0}';
+
 pub fn apply_text_ligatures(word: &str) -> String {
     if !word
         .bytes()
-        .any(|b| matches!(b, b'`' | b'\'' | b'-' | b'!' | b'?'))
+        .any(|b| matches!(b, b'`' | b'\'' | b'-' | b'!' | b'?' | b'~'))
     {
         return word.to_string();
     }
@@ -130,6 +153,10 @@ pub fn apply_text_ligatures(word: &str) -> String {
             }
             ('\'', _) => {
                 out.push('\u{2019}'); // ' -> right single quote (apostrophe)
+                i += 1;
+            }
+            ('~', _) => {
+                out.push(NO_BREAK_SPACE); // ~ -> the active tie (\nobreakspace)
                 i += 1;
             }
             (c, _) => {

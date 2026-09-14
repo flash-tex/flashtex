@@ -77,6 +77,25 @@ pub const TEXT_SYMBOLS: &[(&str, &str)] = &[
     ("textbraceright", "\\textbraceright"),
 ];
 
+/// The character `\nobreakspace` sets, or `None` for any other command.
+///
+/// latex.ltx 9411 is `\DeclareRobustCommand{\nobreakspace}{\leavevmode
+/// \nobreak\ }` — a *kernel* command, not a `\DeclareTextCommand`, so it
+/// exists in every encoding and must not be resolved through
+/// [`text_symbol`]. Doing that reported `LaTeX Error: Command
+/// \nobreakspace unavailable in encoding OT1.` for the commonest space in
+/// LaTeX. The `*.dfu` row naming U+00A0 describes only the other
+/// direction: `inputenc` mapping a typed non-breaking space onto this
+/// command.
+///
+/// All three spellings of the tie — `~` (latex.ltx 9413 makes it active and
+/// expands it to exactly this command), `\nobreakspace`, and a typed
+/// U+00A0 — therefore reach the text stream as the same character,
+/// [`crate::lexer::NO_BREAK_SPACE`].
+pub fn kernel_tie(name: &str) -> Option<char> {
+    (name == "nobreakspace").then_some(crate::lexer::NO_BREAK_SPACE)
+}
+
 /// Text symbols for printable ASCII characters. The `*.dfu` tables declare
 /// only non-ASCII input, so the character is the ASCII one the command names
 /// (T1 slots `"5C` `"7E` `"5E` `"5F` `"7C` `"3C` `"3E` `"7B` `"7D`). In OT1
