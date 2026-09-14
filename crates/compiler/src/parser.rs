@@ -664,6 +664,30 @@ pub enum ParagraphStyle {
     Quote,
 }
 
+/// The size declaration in force when a paragraph's `\par` ran — the
+/// `\baselineskip` every one of its lines is set under.
+///
+/// TeX reads `\baselineskip` in `append_to_vlist` (§679), which
+/// `post_line_break` (§877) calls once per line *at `\par` time*. One value
+/// therefore governs the whole paragraph, and it is the register's value when
+/// the paragraph **ended**, not the one where the words were typed. Hence
+///
+/// - `{\small ... }` followed by a blank line keeps the body's leading: the
+///   `}` restores `\baselineskip` before the blank line's `\par`;
+/// - `{\small ... \par}` takes `\small`'s 12 pt (11 pt class), because the
+///   `\par` is inside the group;
+/// - `\begin{quote}\small ...\end{quote}` and `\begin{itemize}\small ...`
+///   likewise, because `\endtrivlist` runs `\ifhmode\unskip\par\fi` *before*
+///   `\end` closes the group;
+/// - a mid-paragraph switch (`words {\small more} words`) never changes the
+///   leading at all.
+///
+/// `None` is `\normalsize`'s. The class's own table
+/// (`flashtex_document_style::font_size`, from `size1x.clo`) turns the level
+/// into points; this crate deliberately carries the level, not the length, so
+/// the 10/11/12 pt tables stay in one place.
+pub type ParLeading = Option<FontSizeLevel>;
+
 /// A macro definition actually consulted while producing one block.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MacroDependency {
@@ -686,6 +710,11 @@ pub struct Parsed {
     pub packages: Vec<String>,
     /// One dependency list per block, in `blocks` order.
     pub block_dependencies: Vec<Vec<MacroDependency>>,
+    /// One [`ParLeading`] per block, in `blocks` order: the leading the
+    /// block's `\par` selected. `None` for every block that is not a
+    /// paragraph (a heading sets its own leading) and for paragraphs whose
+    /// `\par` ran at `\normalsize`.
+    pub block_par_leading: Vec<ParLeading>,
     /// Exact preamble bytes. A change invalidates every cached block.
     pub preamble_source: String,
     /// False for recovery/unsupported cases whose state effects are not proven.
@@ -1162,6 +1191,8 @@ pub fn parse_project_with(
         math_packages: MathPackages::KERNEL,
         font_encoding: Encoding::OT1,
         block_dependencies: Vec::new(),
+        block_par_leading: Vec::new(),
+        next_block_par_leading: None,
         current_dependencies: BTreeMap::new(),
         documents,
         document_by_path: documents
@@ -1253,6 +1284,7 @@ pub fn parse_project_with(
         parskip_pt: p.parskip_pt,
         packages: p.packages,
         block_dependencies: p.block_dependencies,
+        block_par_leading: p.block_par_leading,
         preamble_source,
         incremental_safe,
         document_global_state: p.document_global_state,
@@ -1312,6 +1344,13 @@ struct P<'a> {
     /// (`text_builtins::fontenc_encoding`).
     font_encoding: Encoding,
     block_dependencies: Vec<Vec<MacroDependency>>,
+    /// One [`ParLeading`] per pushed block, kept in step with
+    /// `block_dependencies` by [`P::finish_block_dependencies`].
+    block_par_leading: Vec<ParLeading>,
+    /// The [`ParLeading`] of the block about to be pushed, set by
+    /// [`P::flush_list_item`] and consumed by the same
+    /// `finish_block_dependencies` call that closes the block.
+    next_block_par_leading: ParLeading,
     current_dependencies: BTreeMap<String, (usize, Vec<TokenKind>)>,
     documents: &'a [SourceDocument<'a>],
     document_by_path: HashMap<&'a str, usize>,
@@ -3457,11 +3496,6 @@ impl P<'_> {
 
         let popped = self.env_stack.pop();
         let had_open_environment = popped.is_some();
-        if popped.is_some() {
-            if let Some(style) = self.env_styles.pop() {
-                self.style = style;
-            }
-        }
         match popped {
             Some((open, _)) if open == environment => {}
             Some((open, _)) => self.diags.push(Diagnostic::error(
@@ -3591,9 +3625,17 @@ impl P<'_> {
         }
         // Restored only after the flushes above: environments that end their
         // paragraph do so while their own declarations are still in force.
+        // The text style goes back with it, for the same reason and with the
+        // same consequence: `\endtrivlist`'s `\ifhmode\unskip\par\fi` runs
+        // before `\end`'s `\endgroup`, so the `\par` that closes
+        // `\begin{quote}\small ...\end{quote}` reads `\small`'s
+        // `\baselineskip`, not the body's (see [`ParLeading`]).
         if had_open_environment {
             if let Some(alignment) = self.env_alignments.pop() {
                 self.declared_alignment = alignment;
+            }
+            if let Some(style) = self.env_styles.pop() {
+                self.style = style;
             }
         }
     }
@@ -5597,11 +5639,13 @@ impl P<'_> {
         let outer_label = self.pending_item_label.take();
         let outer_item = self.pending_item.take();
         let outer_dependency_blocks = self.block_dependencies.len();
+        let outer_par_leading_blocks = self.block_par_leading.len();
         let mut blocks = Vec::new();
         let mut para = Vec::new();
         self.parse_stream(&mut blocks, &mut para);
         self.flush_paragraph(&mut blocks, &mut para);
         self.block_dependencies.truncate(outer_dependency_blocks);
+        self.block_par_leading.truncate(outer_par_leading_blocks);
         self.t = outer_tokens;
         self.i = outer_index;
         self.style = outer_style;
@@ -5629,6 +5673,11 @@ impl P<'_> {
     }
 
     fn finish_block_dependencies(&mut self) {
+        // Exactly one entry per pushed block, like `block_dependencies`:
+        // every block push is followed by this call, and only
+        // `flush_list_item` leaves a non-`None` value here.
+        self.block_par_leading
+            .push(std::mem::take(&mut self.next_block_par_leading));
         self.block_dependencies.push(
             std::mem::take(&mut self.current_dependencies)
                 .into_iter()
@@ -5643,6 +5692,19 @@ impl P<'_> {
 
     fn flush_paragraph(&mut self, blocks: &mut Vec<Block>, paragraph: &mut Vec<Inline>) {
         self.flush_list_item(blocks, paragraph, 0.0, 0.0);
+    }
+
+    /// The [`ParLeading`] of the paragraph being flushed: the size declaration
+    /// in force *now*, which is what TeX's `\par` reads.
+    ///
+    /// Nothing looks at the sizes of the runs inside the paragraph:
+    /// `\baselineskip` is a vertical parameter, and TeX never consults the
+    /// boxes it stacks, only the register's value when it stacks them. `}`
+    /// has already restored a group that closed before the paragraph did, and
+    /// `\end` restores only after this flush, so `self.style` is exactly the
+    /// state `\par` would see.
+    fn par_leading(&self) -> ParLeading {
+        self.style.size
     }
 
     /// Flushes the accumulated paragraph. Inside a list, this attaches the
@@ -5717,6 +5779,7 @@ impl P<'_> {
                 .flatten()
         });
         let lists = self.list_frames.clone();
+        self.next_block_par_leading = self.par_leading();
         blocks.push(match list_level {
             Some(level) => Block::ListItem {
                 level,
