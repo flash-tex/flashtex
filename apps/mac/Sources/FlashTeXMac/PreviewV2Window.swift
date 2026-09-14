@@ -76,7 +76,14 @@ enum PreviewV2Window {
                      requested: RuntimeV1.CompileRequest.DisplayListWindow?,
                      span: Int = defaultSpan,
                      margin: Int = margin) -> RuntimeV1.CompileRequest.DisplayListWindow? {
+        // A document that fits in one window is never windowed at all: it gets
+        // today's complete reply, so `-delta` keeps working on it (§7 makes the
+        // two exclusive) and nothing about the common case changes. Only a
+        // document with more pages than a window can hold is worth bounding.
+        guard documentPageCount > span || served != nil else { return nil }
         guard let want = desired(around: visible, documentPageCount: documentPageCount, span: span) else { return nil }
+        // …and once the producer has served the whole thing, stop asking.
+        if let served, served.pageCount >= served.documentPageCount, served.documentPageCount <= span { return nil }
         // Nothing resident yet: ask.
         guard let served, served.pageCount > 0 else {
             return requested == want ? nil : want
@@ -97,5 +104,25 @@ enum PreviewV2Window {
         if want.firstPage == residentFirst, want.pageCount == served.pageCount { return nil }
         if let requested, requested == want, want.firstPage == residentFirst { return nil }
         return want
+    }
+
+    /// The window to ask for after a reply the producer could not make at all.
+    ///
+    /// This is §1.0 itself, from the consumer's side: a 385-page document
+    /// serialises to 152 MB against a 16 MiB reply limit, so the request comes
+    /// back `status: failed` with no pages, no sibling and therefore **no page
+    /// count** — the shell cannot learn how big the document is from a reply
+    /// that does not exist. So the recovery does not try to: it asks for a
+    /// window at wherever the reader is (page 1 until the pane has reported a
+    /// viewport), and the echoed `window` then tells it everything it needs.
+    ///
+    /// Returns nil when a window was already asked for, so a document that
+    /// fails for some other reason is retried once, not forever.
+    static func afterFailure(visible: ClosedRange<Int>?,
+                             alreadyRequested: RuntimeV1.CompileRequest.DisplayListWindow?,
+                             span: Int = defaultSpan) -> RuntimeV1.CompileRequest.DisplayListWindow? {
+        guard alreadyRequested == nil else { return nil }
+        let first = visible.map { max(1, $0.lowerBound - span / 4) } ?? 1
+        return .init(firstPage: first, pageCount: span)
     }
 }

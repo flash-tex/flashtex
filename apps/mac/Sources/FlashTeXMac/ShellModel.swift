@@ -742,6 +742,28 @@ final class ShellModel {
         return "Caret sync is limited to the loaded page window (pages \(window.firstPage)–\(window.firstPage + window.pageCount - 1) of \(window.documentPageCount)); the caret maps to no page in it. Scroll to the page you want and it is requested."
     }
 
+    /// Retries a failed compile once with a page window. True when a retry was
+    /// sent, so the caller stops applying this reply's follow-up work.
+    ///
+    /// The producer's §1.0 case is not slow, it is *absent*: 385 pages over the
+    /// reply limit end `status: failed`, and no amount of waiting produces a
+    /// preview. The only thing that does is building fewer pages. This fires at
+    /// most once per document state, because `afterFailure` returns nil as soon
+    /// as a window has been asked for.
+    @discardableResult
+    func v2WindowRetryAfterFailure(_ incoming: RuntimeV1.CompileResult) -> Bool {
+        guard incoming.status == .failed, previewV2, v2WindowEnabled, autoCompile, workerAttached,
+              requestedLayoutCapabilities.contains(V2Live.capability),
+              let retry = PreviewV2Window.afterFailure(visible: v2VisiblePages, alreadyRequested: v2WindowRequest)
+        else { return false }
+        v2WindowRequest = retry
+        log("preview-v2: revision \(incoming.revision) failed with no pages; retrying with a \(retry.pageCount)-page window from page \(retry.firstPage)")
+        workerStatus = "revision \(incoming.revision) was too large to send; retrying pages \(retry.firstPage)–\(retry.firstPage + retry.pageCount - 1)…"
+        compileQueued = false
+        compile()
+        return true
+    }
+
     /// Forgets where the viewport was: a new document (or leaving the v2 pane)
     /// must not carry another document's page numbers into its first request.
     func v2WindowReset() {
@@ -1058,6 +1080,11 @@ final class ShellModel {
             let latencyText = String(format: " in %.0f ms", ms)
             workerStatus = "revision \(incoming.revision): \(incoming.status.rawValue), \(incoming.diagnostics.count) diagnostics\(latencyText)"
             if selection != nil { selection = nil } // the editor observes `selection`; a nil-to-nil write still invalidates it
+            // display-list-v2-window §1.0: a document too large to serialise
+            // comes back `status: failed` with no pages and no sibling, so the
+            // shell cannot learn its size from the reply. Ask for a window at
+            // the reader and let the echo say how big the document is.
+            if v2WindowRetryAfterFailure(incoming) { return }
             if compileQueued {
                 compileQueued = false
                 compile() // no-op when buffers and capability set are unchanged

@@ -301,6 +301,27 @@ final class V2PageWindowTests: XCTestCase {
                      "the echo is the authority: a narrowed window that still covers the viewport is left alone")
     }
 
+    /// A document that fits in one window is never windowed at all: the common
+    /// case keeps today's complete reply, and `-delta` keeps its base (§7).
+    func testADocumentThatFitsInOneWindowIsNeverWindowed() {
+        XCTAssertNil(PreviewV2Window.next(visible: 1...2, documentPageCount: 16, served: nil, requested: nil, span: 16))
+        XCTAssertNil(PreviewV2Window.next(visible: 1...2, documentPageCount: 3, served: nil, requested: nil, span: 16))
+        XCTAssertNotNil(PreviewV2Window.next(visible: 1...2, documentPageCount: 17, served: nil, requested: nil, span: 16),
+                        "one page more than a window holds is worth bounding")
+    }
+
+    /// §1.0 from the consumer's side: the document that fails outright carries
+    /// no page count, so the recovery does not wait to learn one.
+    func testAFailedReplyIsRetriedOnceWithAWindowAtTheReader() {
+        let first = try? XCTUnwrap(PreviewV2Window.afterFailure(visible: nil, alreadyRequested: nil, span: 16))
+        XCTAssertEqual(first?.firstPage, 1, "with no viewport yet, the reader is at the top")
+        XCTAssertEqual(first?.pageCount, 16)
+        let atReader = PreviewV2Window.afterFailure(visible: 200...201, alreadyRequested: nil, span: 16)
+        XCTAssertEqual(atReader?.firstPage, 196)
+        XCTAssertNil(PreviewV2Window.afterFailure(visible: nil, alreadyRequested: .init(firstPage: 1, pageCount: 16), span: 16),
+                     "once, not forever: a document failing for another reason is not retried in a loop")
+    }
+
     func testAFullyResidentDocumentNeverRequestsAWindow() {
         let served = RenderingV2.PageWindow(firstPage: 1, pageCount: 4, documentPageCount: 4)
         XCTAssertNil(PreviewV2Window.next(visible: 1...2, documentPageCount: 4, served: served, requested: nil))
@@ -341,7 +362,9 @@ final class V2PageWindowTests: XCTestCase {
         var reported: [ClosedRange<Int>] = []
         let pages = (1...40).map { PreviewPageLayout.Page(number: $0, widthPt: 612, heightPt: 792) }
         let hosted = PreviewAnchoringTests.Hosted(WindowColumn(pages: pages) { reported.append($0) }, width: 500, height: 400)
-        try await Task.sleep(nanoseconds: 400_000_000)
+        // The first report arrives whenever SwiftUI first lays the column out;
+        // wait for it rather than for a fixed interval (this runs on shared CI).
+        for _ in 0..<40 where reported.isEmpty { try await Task.sleep(nanoseconds: 50_000_000) }
         let scroll = try XCTUnwrap(PreviewAnchoringTests.find(NSScrollView.self, in: hosted.hosting))
         let probe = try XCTUnwrap(PreviewAnchoringTests.find(PreviewAnchorProbe.self, in: hosted.hosting))
         let layout = try XCTUnwrap(probe.layout)
@@ -353,13 +376,13 @@ final class V2PageWindowTests: XCTestCase {
         let before = reported.count
         let pageHeight = try XCTUnwrap(layout.frame(of: 1)).height
         PreviewAnchoringTests.scroll(scroll, toTop: pageHeight * 0.15)
-        try await Task.sleep(nanoseconds: 200_000_000)
+        try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertEqual(reported.count, before, "a scroll inside one page reports nothing new (reported: \(reported))")
 
         // Scroll to page 20 and the report follows.
         let target = try XCTUnwrap(layout.frame(of: 20)).minY
         PreviewAnchoringTests.scroll(scroll, toTop: target + 4)
-        try await Task.sleep(nanoseconds: 300_000_000)
+        for _ in 0..<40 where reported.count == before { try await Task.sleep(nanoseconds: 50_000_000) }
         let last = try XCTUnwrap(reported.last)
         XCTAssertTrue(last.contains(20), "the viewport is on page 20; reported \(last)")
         XCTAssertGreaterThan(reported.count, before)

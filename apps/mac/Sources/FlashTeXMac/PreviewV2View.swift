@@ -267,10 +267,25 @@ extension ShellModel {
     func setLiveV2(_ on: Bool) {
         // `display-list-v2-images` rides along (proposal §1: accepted only
         // with `display-list-v2`); one assignment so a switch re-requests once.
+        //
+        // `display-list-v2-window` rides along too, now that the pane paints an
+        // elided page as a placeholder rather than as nothing — the condition
+        // the producer's co-signer row puts on sending the name at all. The
+        // name on its own changes no reply: a windowed reply needs the request
+        // to *also* carry `display_list_window`, which only happens for a
+        // document with more pages than one window holds, or after a compile
+        // that failed because the whole document would not fit (§1.0, §4).
+        // `FLASHTEX_DISPLAY_LIST_WINDOW=0` keeps it off for a session.
         var caps = requestedLayoutCapabilities
-        caps.removeAll { $0 == V2Live.capability || $0 == RenderingV2.imagesCapability }
-        if on { caps += [V2Live.capability, RenderingV2.imagesCapability] }
-        if caps != requestedLayoutCapabilities { requestedLayoutCapabilities = caps }
+        caps.removeAll { $0 == V2Live.capability || $0 == RenderingV2.imagesCapability || $0 == RenderingV2.windowCapability }
+        if on {
+            caps += [V2Live.capability, RenderingV2.imagesCapability]
+            if ProcessInfo.processInfo.environment["FLASHTEX_DISPLAY_LIST_WINDOW"] != "0" { caps.append(RenderingV2.windowCapability) }
+        }
+        if caps != requestedLayoutCapabilities {
+            requestedLayoutCapabilities = caps
+            if !on { v2WindowReset() }
+        }
     }
 
     /// Whether the applied result negotiated the live route.
