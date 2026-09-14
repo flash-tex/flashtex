@@ -1,0 +1,55 @@
+{
+ "fixture": "08-formats.tex",
+ "reference_engine": "TeX Live 2025",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/nixos.org)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 106.704,
+   "top": 72.0,
+   "width": 29.888,
+   "height": 14.943,
+   "depth": 0.0,
+   "baseline": 86.943
+  },
+  {
+   "page": 1,
+   "x": 106.584,
+   "top": 104.71,
+   "width": 23.245,
+   "height": 13.948,
+   "depth": 0.0,
+   "baseline": 118.657
+  },
+  {
+   "page": 1,
+   "x": 113.072,
+   "top": 136.424,
+   "width": 144.0,
+   "height": 72.0,
+   "depth": 0.0,
+   "baseline": 208.424
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 86.943,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 118.657,
+   "source_byte": 414
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 208.424,
+   "source_byte": 632
+  }
+ ]
+}

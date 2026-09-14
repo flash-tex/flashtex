@@ -116,6 +116,11 @@ pub enum BoxRec {
     Table(Rc<TableRec>),
     /// `\colorbox`/`\fcolorbox` (`Context::color_box`).
     ColorBox(Rc<ColorBoxRec>),
+    /// `\includegraphics` in running text (`Context::graphic_box`): the box
+    /// graphicx sized, and the file to paint in it. `resource` is `None` when
+    /// the file could not be read but the keys still fixed a size, which is
+    /// what pdfTeX's `draft` box does: the space is reserved and left empty.
+    Graphic { gbox: crate::graphics::GraphicBox, resource: Option<Rc<crate::display::ImageResource>>, span: Span },
 }
 
 /// A laid-out `\colorbox`/`\fcolorbox`: the content as one line whose
@@ -447,6 +452,12 @@ pub struct Context<'a> {
     note_anchors: Vec<(usize, usize)>,
     /// `multicols` environments of the project (`multicol::attach`).
     multicol: multicol::State,
+    /// Where `\includegraphics` files are read from, and the per-request
+    /// cache of the files already read (`floats::ImageCache`, shared with the
+    /// float path so one file is read once per request). `None` when the
+    /// caller built a `Context` without them: every image is then reported
+    /// unavailable, exactly as a request with no project root is.
+    images: Option<(&'a crate::RenderOptions, &'a std::cell::RefCell<crate::floats::ImageCache>)>,
 }
 
 impl<'a> Context<'a> {
@@ -488,7 +499,15 @@ impl<'a> Context<'a> {
             notes: Vec::new(),
             note_anchors: Vec::new(),
             multicol: multicol::State::default(),
+            images: None,
         }
+    }
+
+    /// Lets `\includegraphics` in running text read its files: the request's
+    /// project root and the cache the float path uses, so a file referenced
+    /// from both a float and body text is read once.
+    pub fn set_images(&mut self, options: &'a crate::RenderOptions, cache: &'a std::cell::RefCell<crate::floats::ImageCache>) {
+        self.images = Some((options, cache));
     }
 
     /// Emits a diagnostic; with a key, only the first one per key is kept.
@@ -836,6 +855,89 @@ impl<'a> Context<'a> {
             source: span.start..span.end,
         };
         (run, self.recs.len() - 1)
+    }
+
+    /// `\includegraphics` in running text (`adapter::Item::Graphic`): the
+    /// file is read through the project root, its natural size probed from the
+    /// header, and graphicx's keys sized against it (`crate::graphics`) — the
+    /// same code the float path runs, so an image sets the same box whether it
+    /// stands in a `figure` or in a sentence.
+    ///
+    /// The box joins the horizontal list as an ordinary box of that width,
+    /// height and depth, so the line breaker measures it, `\baselineskip`
+    /// gives way to `\lineskip` under a tall one, and the page builder sees
+    /// the line it grew, exactly as pdfTeX's `\hbox` does.
+    ///
+    /// A file that cannot be read is an error, not silence. When the keys
+    /// still fix a width and a height the box is reserved and left empty
+    /// (what the float path does); otherwise no box is contributed.
+    fn graphic_box(&mut self, g: &adapter::GraphicItem, style: TextStyle, size: f64) -> Option<(pl::GlyphRun, usize)> {
+        use crate::graphics::{self, GKey, LengthEnv};
+        let span = g.span;
+        let params = self.text_params(style, size);
+        let env = LengthEnv {
+            text_width: self.style.text_width_pt,
+            text_height: self.style.text_height_pt,
+            paper_width: self.style.page_width_pt,
+            paper_height: self.style.page_height_pt,
+            em: params.quad,
+            ex: params.x_height,
+        };
+        let (keys, problems) = graphics::parse_keys(&g.options, &env);
+        for p in problems {
+            let src = self.source(span);
+            self.emit(None, Diagnostic::warning("graphics_option", p, vec![src]));
+        }
+        for k in &keys {
+            if let GKey::Unsupported(name) = k {
+                let src = self.source(span);
+                self.report_once(
+                    format!("graphics_option:{name}"),
+                    Diagnostic::warning("graphics_option", format!("\\includegraphics key '{name}' is not honoured yet"), vec![src]),
+                );
+            }
+        }
+        let page = keys.iter().find_map(|k| if let GKey::Page(p) = k { Some(*p) } else { None }).unwrap_or(1);
+        let loaded = match self.images {
+            Some((options, cache)) => cache.borrow_mut().load(options, &g.path, page),
+            None => Err("no project root was supplied with the request, so image files cannot be read".to_string()),
+        };
+        let (gbox, resource) = match loaded {
+            Ok((resource, info)) => {
+                let (nat_w, nat_h) = (info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT);
+                if let Some(msg) = graphics::clip_limitation(&keys, g.starred, nat_w, nat_h) {
+                    let src = self.source(span);
+                    self.report_once("graphics_clip".to_string(), Diagnostic::warning("graphics_clip", msg, vec![src]));
+                }
+                (graphics::size_box(nat_w, nat_h, &keys), Some(resource))
+            }
+            Err(msg) => {
+                let w = keys.iter().rev().find_map(|k| if let GKey::Width(v) = k { Some(*v) } else { None });
+                let h = keys.iter().rev().find_map(|k| if let GKey::Height(v) | GKey::TotalHeight(v) = k { Some(*v) } else { None });
+                let src = self.source(span);
+                match (w, h) {
+                    (Some(w), Some(h)) => {
+                        self.emit(None, Diagnostic::error("image_unavailable", format!("{msg} (its requested size is kept empty)"), vec![src]));
+                        (graphics::GraphicBox { width: w, height: h, depth: 0.0, matrix: [w, 0.0, 0.0, h, 0.0, 0.0] }, None)
+                    }
+                    _ => {
+                        self.emit(None, Diagnostic::error("image_unavailable", msg, vec![src]));
+                        return None;
+                    }
+                }
+            }
+        };
+        self.recs.push(BoxRec::Graphic { gbox, resource, span });
+        let run = pl::GlyphRun {
+            font: MATH_SENTINEL,
+            size,
+            glyphs: Vec::new(),
+            width: gbox.width,
+            height: gbox.height,
+            depth: gbox.depth,
+            source: span.start..span.end,
+        };
+        Some((run, self.recs.len() - 1))
     }
 
     /// `\TeX`/`\LaTeX`/`\LaTeXe` (compiler `Inline::Logo`): one box per glyph
@@ -1895,6 +1997,12 @@ impl<'a> Context<'a> {
                 AItem::ColorBox(cb) => {
                     let (run, rec) = self.color_box(cb, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                }
+                AItem::Graphic(g) => {
+                    let style = merge_base(TextStyle::default(), base);
+                    if let Some((run, rec)) = self.graphic_box(g, style, style.size_or(size)) {
+                        push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                    }
                 }
                 AItem::Kern { amount, style } => {
                     let style = merge_base(*style, base);
@@ -4138,6 +4246,7 @@ impl<'a> Context<'a> {
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Graphic { span, .. } => Some(*span),
                 })
                 .next();
             let _ = list;
@@ -6288,8 +6397,9 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 BoxRec::Math(m) => Some(ctx.maths[*m].span),
                 BoxRec::Rule { span, .. } => Some(*span),
                 BoxRec::Picture(p) => Some(p.span),
-                    BoxRec::Table(t) => Some(t.span),
-                    BoxRec::ColorBox(c) => Some(c.span),
+                BoxRec::Table(t) => Some(t.span),
+                BoxRec::ColorBox(c) => Some(c.span),
+                BoxRec::Graphic { span, .. } => Some(*span),
             });
         let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
         ctx.diagnostics.push(Diagnostic::warning(
@@ -6778,6 +6888,7 @@ pub fn assemble(
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Graphic { span, .. } => Some(*span),
                     BoxRec::Text { .. } => None,
                 });
                 diagnostics.push(Diagnostic::warning(
@@ -6973,6 +7084,35 @@ fn assemble_block(
                         items.push(block_rule(x0 + cb.width - r, r / 2.0 - cb.height, r, total - r, frame));
                         items.push(block_rule(x0, cb.depth - r, cb.width, r, frame));
                     }
+                }
+                // `\includegraphics` in running text. The wire item is
+                // line-local here, exactly as the Rule below is: `assemble`
+                // adds the line's page offset with `incremental::place_item`
+                // (which moves `top` and `transform[5]`) and the column
+                // offset with `display::shift_x` (which moves `x` and
+                // `transform[4]`).
+                //
+                // `gbox.matrix` maps the image's unit square to box
+                // coordinates in TeX points with y measured UP from the
+                // baseline; the wire transform wants page points with y
+                // measured DOWN, so the two y coefficients change sign and
+                // the translation is rebuilt from the box origin. This is the
+                // same arithmetic `floatpage::FloatBuilder::emit` does, with
+                // the line's baseline (0, line-local) for its `base`.
+                BoxRec::Graphic { gbox, resource, span } => {
+                    let Some(resource) = resource else { continue };
+                    let m = gbox.matrix;
+                    let k = crate::graphics::BP_PER_PT;
+                    let left = local.x;
+                    items.push(display::Item::Image(display::Image {
+                        x: Tick::from_tex_pt(left),
+                        top: Tick::from_tex_pt(-gbox.height),
+                        width: Tick::from_tex_pt(gbox.width),
+                        height: Tick::from_tex_pt(gbox.height + gbox.depth),
+                        transform: [m[0] * k, -m[1] * k, m[2] * k, -m[3] * k, (left + m[4]) * k, -m[5] * k],
+                        resource: resource.clone(),
+                        provenance: Provenance::Source(source_of(*span)),
+                    }));
                 }
                 BoxRec::Rule { width, height, bottom, span } => {
                     // Line-local like text: the rule's bottom is `bottom`

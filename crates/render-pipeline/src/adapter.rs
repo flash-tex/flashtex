@@ -176,6 +176,26 @@ pub enum Item {
     Footnote { number: String, mark: bool, span: Span, text: Option<Vec<Item>> },
     /// `\colorbox`/`\fcolorbox` (compiler `Inline::ColorBox`).
     ColorBox(Box<ColorBoxItem>),
+    /// `\includegraphics` in running text (compiler `Inline::Graphic`): one
+    /// box in the paragraph. Only what the source says is carried here, so
+    /// that the block cache can key this item on its source bytes like every
+    /// other one; the file is read and the box measured by
+    /// `typeset::Context::graphic_box`, which has the project root.
+    Graphic(Box<GraphicItem>),
+}
+
+/// An `\includegraphics` as written (compiler `graphics::Graphic`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraphicItem {
+    /// `\includegraphics*`: graphics.sty's clip form.
+    pub starred: bool,
+    /// The graphicx key list as written. The compiler already records the
+    /// two-bracket `[<llx>,<lly>][<urx>,<ury>]` form as
+    /// `viewport=<llx> <lly> <urx> <ury>`, as `pdftex.def` does.
+    pub options: String,
+    /// The file argument as written (no extension search applied).
+    pub path: String,
+    pub span: Span,
 }
 
 /// A `\colorbox`/`\fcolorbox`: `items` set as an `\hbox` on a `fill`
@@ -1540,6 +1560,26 @@ fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, Strin
         Inline::Verbatim { text, span, .. } => {
             out.push(("unsupported_block", *span, format!("\\verb {text:?} set in the body face: the pipeline has no monospaced face")));
         }
+        // `\scalebox`, `\resizebox`, `\rotatebox`, `\reflectbox`: the content
+        // is set, untransformed. The display list places text by a baseline
+        // and per-glyph advances and carries no transform of its own (only
+        // `Item::Image` has a matrix, and these boxes take arbitrary
+        // horizontal material), so the transform cannot be painted. Say so
+        // rather than pass the untransformed box off as the real thing.
+        Inline::Transform(t) => {
+            out.push((
+                "graphics_transform_unapplied",
+                t.span,
+                format!(
+                    "{}: the content is set untransformed. This display list places text by a baseline and per-glyph advances and carries no transform, so a {} box of running material cannot be painted yet",
+                    transform_command(&t.kind),
+                    transform_effect(&t.kind),
+                ),
+            ));
+            for i in &t.content {
+                unsupported_inlines(i, out);
+            }
+        }
         #[cfg(feature = "amsmath-inline")]
         Inline::MathRows { rows, .. } => {
             for i in rows.iter().flat_map(|r| &r.intertext).flat_map(|t| &t.content) {
@@ -1547,6 +1587,28 @@ fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, Strin
             }
         }
         _ => {}
+    }
+}
+
+/// The command a `graphics::TransformKind` was written as.
+fn transform_command(kind: &flashtex_compiler::graphics::TransformKind) -> &'static str {
+    use flashtex_compiler::graphics::TransformKind;
+    match kind {
+        TransformKind::Scale { .. } => "\\scalebox",
+        TransformKind::Resize { .. } => "\\resizebox",
+        TransformKind::Rotate { .. } => "\\rotatebox",
+        TransformKind::Reflect => "\\reflectbox",
+    }
+}
+
+/// What that command would have done to the box.
+fn transform_effect(kind: &flashtex_compiler::graphics::TransformKind) -> &'static str {
+    use flashtex_compiler::graphics::TransformKind;
+    match kind {
+        TransformKind::Scale { .. } => "scaled",
+        TransformKind::Resize { .. } => "resized",
+        TransformKind::Rotate { .. } => "rotated",
+        TransformKind::Reflect => "mirrored",
     }
 }
 
@@ -4172,21 +4234,32 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 factor = 1000;
                 after_control_word = false;
             }
-            // #169's Inline::Graphic/Transform have no pipeline conversion
-            // arm yet (#170 is not in this integration: its own diff
-            // depends on a wire-protocol capability refactor -- a new
-            // Wire { transforms } field threaded through display.rs's JSON
-            // writers -- that collides with #158's already-merged
-            // Wire { device_color } and needs real reconciliation, not a
-            // mechanical merge). Degrade like the compiler's own Core 14
-            // layout does: an image leaves no space for now, and a
-            // transform box keeps its content set untransformed, so
-            // nothing is silently dropped.
             Inline::Graphic(g) => {
-                prev_end = Some(g.span.end);
-                prev_span = Some(g.span);
+                let span = g.span;
+                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
                 after_control_word = false;
+                items.push(Item::Graphic(Box::new(GraphicItem {
+                    starred: g.starred,
+                    options: g.options.clone(),
+                    path: g.path.clone(),
+                    span,
+                })));
+                prev_end = Some(span.end);
+                prev_span = Some(span);
+                factor = 1000;
             }
+            // `\scalebox`, `\resizebox`, `\rotatebox` and `\reflectbox` are
+            // parsed but not applied: the display list places *text* by a
+            // baseline and a per-glyph advance and carries no transform, so
+            // a rotated or scaled box of running material has nothing to be
+            // written into (only `Item::Image` has a matrix, and these boxes
+            // take arbitrary horizontal material). The content is set
+            // untransformed, as the compiler's own Core 14 layout does, and
+            // the limitation is reported rather than passed off as a scaled
+            // box: see `unsupported_inlines`.
             Inline::Transform(t) => {
                 let span = t.span;
                 let gap = space_between(prev_end, prev_span, span, None, after_control_word);

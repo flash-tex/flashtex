@@ -358,9 +358,36 @@ pub enum GKey {
     Angle(f64),
     KeepAspectRatio(bool),
     Page(u32),
-    /// Recognised but not honoured (`trim`, `clip`, `viewport`, ...):
+    /// `viewport=<llx> <lly> <urx> <ury>` in TeX points, relative to the
+    /// image's natural bounding-box origin. The compiler records graphics.sty's
+    /// two-bracket `\includegraphics[llx,lly][urx,ury]{..}` in this form, as
+    /// `pdftex.def`'s `\Gin@iii@vp` does.
+    Viewport([f64; 4]),
+    /// `trim=<left> <bottom> <right> <top>` in TeX points: insets from the
+    /// four edges of the natural bounding box.
+    Trim([f64; 4]),
+    /// `clip` (and graphics.sty's `\includegraphics*`).
+    Clip(bool),
+    /// Recognised but not honoured (`bb`, `natwidth`, `origin`, ...):
     /// reported as a limitation.
     Unsupported(String),
+}
+
+/// Four graphicx dimensions separated by spaces or commas, defaulting to big
+/// points when a number carries no unit (`\Gin@defaultbp`), in TeX points.
+fn parse_bp_quad(raw: &str, env: &LengthEnv) -> Option<[f64; 4]> {
+    let mut out = [0.0; 4];
+    let mut n = 0;
+    for field in raw.split(|c: char| c.is_whitespace() || c == ',').filter(|f| !f.is_empty()) {
+        if n == 4 {
+            return None;
+        }
+        let bare = field.bytes().all(|b| b.is_ascii_digit() || b == b'.' || b == b'-' || b == b'+');
+        let value = if bare { parse_dimen(&format!("{field}bp"), env) } else { parse_dimen(field, env) };
+        out[n] = value?;
+        n += 1;
+    }
+    (n == 4).then_some(out)
 }
 
 /// Parses the optional argument. Errors name the offending entry.
@@ -386,7 +413,10 @@ pub fn parse_keys(options: &str, env: &LengthEnv) -> (Vec<GKey>, Vec<String>) {
             "angle" => number(v).map(GKey::Angle),
             "keepaspectratio" => Some(GKey::KeepAspectRatio(v.is_none_or(|v| v != "false"))),
             "page" => v.and_then(|v| v.parse().ok()).map(GKey::Page),
-            "trim" | "viewport" | "clip" | "bb" | "natwidth" | "natheight" | "origin" | "draft" | "pagebox" | "decodearray" | "interpolate" => Some(GKey::Unsupported(k.to_string())),
+            "viewport" => v.and_then(|v| parse_bp_quad(v, env)).map(GKey::Viewport),
+            "trim" => v.and_then(|v| parse_bp_quad(v, env)).map(GKey::Trim),
+            "clip" => Some(GKey::Clip(v.is_none_or(|v| v != "false"))),
+            "bb" | "natwidth" | "natheight" | "origin" | "draft" | "pagebox" | "decodearray" | "interpolate" => Some(GKey::Unsupported(k.to_string())),
             "alt" | "actualtext" | "artifact" | "quiet" => None,
             _ => {
                 problems.push(format!("unknown \\includegraphics key '{k}'"));
@@ -436,61 +466,65 @@ pub struct GraphicBox {
 
 /// graphicx sizing of an image whose natural size is `nat_w` x `nat_h`
 /// TeX points.
+///
+/// Two affine maps are carried side by side, in the same box coordinates:
+/// `m` places the *image*'s unit square and `r` places the *box*'s. They are
+/// equal unless a `viewport`/`trim` moves the box off the image, which is
+/// exactly what those keys do (`pdftex.def` `\Gin@viewport`): the box becomes
+/// the requested rectangle and the image keeps its natural size, shifted so
+/// that the rectangle's lower-left corner sits at the box origin. Every later
+/// operation — `\Gin@esetsize`'s scaling and `\Grot@box`'s rotation — acts on
+/// both, so the box is always the *requested* rectangle's image and never the
+/// picture's.
 pub fn size_box(nat_w: f64, nat_h: f64, keys: &[GKey]) -> GraphicBox {
-    // Box so far: [a b c d e f] of the unit square, and its extents.
+    // Image placement and box placement: [a b c d e f] of a unit square.
     let mut m = [nat_w, 0.0, 0.0, nat_h, 0.0, 0.0];
-    let mut rotated = false;
+    let mut r = m;
+    // `viewport` and `trim` both set the box rectangle (last one wins, as in
+    // `\Gin@ii`'s key loop); `trim` states insets from the four edges.
+    if let Some(vp) = keys.iter().rev().find_map(|k| match *k {
+        GKey::Viewport(v) => Some(v),
+        GKey::Trim([l, b, right, t]) => Some([l, b, nat_w - right, nat_h - t]),
+        _ => None,
+    }) {
+        m[4] = -vp[0];
+        m[5] = -vp[1];
+        r = [vp[2] - vp[0], 0.0, 0.0, vp[3] - vp[1], 0.0, 0.0];
+    }
     let (mut w, mut h, mut th, mut scale, mut iso) = (None, None, None, None, false);
-    // `\Gin@esetsize` before the first angle: request the unrotated size.
-    let apply_request = |m: &mut [f64; 6], w: Option<f64>, h: Option<f64>, th: Option<f64>, scale: Option<f64>, iso: bool, rotated: bool| {
+    // `\Gin@esetsize`: the request is against the box as it stands — the
+    // natural (or viewport) rectangle before the first `angle`, the rotated
+    // bounding box after it.
+    let apply_request = |m: &mut [f64; 6], r: &mut [f64; 6], w: Option<f64>, h: Option<f64>, th: Option<f64>, scale: Option<f64>, iso: bool| {
         let h = h.or(th);
-        if !rotated {
-            let (sx, sy) = match (w, h) {
-                (None, None) => {
-                    let s = scale.unwrap_or(1.0);
+        let (bw, bh, bd) = extents(r);
+        let (sx, sy) = match (w, h) {
+            (None, None) => match scale {
+                Some(s) => (s, s),
+                None => return,
+            },
+            (Some(w), None) => (w / bw, w / bw),
+            (None, Some(hh)) => {
+                let total = if th.is_some() { bh + bd } else { bh };
+                (hh / total, hh / total)
+            }
+            (Some(w), Some(hh)) => {
+                let total = if th.is_some() { bh + bd } else { bh };
+                let (sx, sy) = (w / bw, hh / total);
+                if iso {
+                    let s = sx.min(sy);
                     (s, s)
+                } else {
+                    (sx, sy)
                 }
-                (Some(w), None) => (w / nat_w, w / nat_w),
-                (None, Some(h)) => (h / nat_h, h / nat_h),
-                (Some(w), Some(h)) => {
-                    let (sx, sy) = (w / nat_w, h / nat_h);
-                    if iso {
-                        let s = sx.min(sy);
-                        (s, s)
-                    } else {
-                        (sx, sy)
-                    }
-                }
-            };
-            *m = [nat_w * sx, 0.0, 0.0, nat_h * sy, 0.0, 0.0];
-        } else {
-            let (bw, bh, bd) = extents(m);
-            let (sx, sy) = match (w, h) {
-                (None, None) => match scale {
-                    Some(s) => (s, s),
-                    None => return,
-                },
-                (Some(w), None) => (w / bw, w / bw),
-                (None, Some(hh)) => {
-                    let total = if th.is_some() { bh + bd } else { bh };
-                    (hh / total, hh / total)
-                }
-                (Some(w), Some(hh)) => {
-                    let total = if th.is_some() { bh + bd } else { bh };
-                    let (sx, sy) = (w / bw, hh / total);
-                    if iso {
-                        let s = sx.min(sy);
-                        (s, s)
-                    } else {
-                        (sx, sy)
-                    }
-                }
-            };
+            }
+        };
+        for t in [&mut *m, r] {
             for i in [0, 2, 4] {
-                m[i] *= sx;
+                t[i] *= sx;
             }
             for i in [1, 3, 5] {
-                m[i] *= sy;
+                t[i] *= sy;
             }
         }
     };
@@ -502,23 +536,46 @@ pub fn size_box(nat_w: f64, nat_h: f64, keys: &[GKey]) -> GraphicBox {
             GKey::Scale(v) => scale = Some(v),
             GKey::KeepAspectRatio(v) => iso = v,
             GKey::Angle(deg) => {
-                apply_request(&mut m, w, h, th, scale, iso, rotated);
+                apply_request(&mut m, &mut r, w, h, th, scale, iso);
                 (w, h, th, scale) = (None, None, None, None);
-                rotated = true;
                 let (s, c) = deg.to_radians().sin_cos();
                 // Exact quarter turns.
                 let (s, c) = if (deg / 90.0).fract() == 0.0 { (s.round(), c.round()) } else { (s, c) };
-                m = [c * m[0] - s * m[1], s * m[0] + c * m[1], c * m[2] - s * m[3], s * m[2] + c * m[3], c * m[4] - s * m[5], s * m[4] + c * m[5]];
+                let rot = |t: &[f64; 6]| [c * t[0] - s * t[1], s * t[0] + c * t[1], c * t[2] - s * t[3], s * t[2] + c * t[3], c * t[4] - s * t[5], s * t[4] + c * t[5]];
+                m = rot(&m);
+                r = rot(&r);
                 // \Grot@box: the new box's left edge is the bounding box's.
-                let min_x = [0.0, m[0], m[2], m[0] + m[2]].into_iter().fold(f64::INFINITY, f64::min) + m[4];
+                // The image rides along, so the same shift applies to both.
+                let min_x = [0.0, r[0], r[2], r[0] + r[2]].into_iter().fold(f64::INFINITY, f64::min) + r[4];
                 m[4] -= min_x;
+                r[4] -= min_x;
             }
-            GKey::Page(_) | GKey::Unsupported(_) => {}
+            GKey::Page(_) | GKey::Clip(_) | GKey::Viewport(_) | GKey::Trim(_) | GKey::Unsupported(_) => {}
         }
     }
-    apply_request(&mut m, w, h, th, scale, iso, rotated);
-    let (width, height, depth) = extents(&m);
+    apply_request(&mut m, &mut r, w, h, th, scale, iso);
+    let (width, height, depth) = extents(&r);
     GraphicBox { width, height, depth, matrix: m }
+}
+
+/// Whether `keys` (with graphics.sty's `\includegraphics*`, which is `clip`)
+/// ask for a crop this pipeline cannot paint: the display list places an
+/// image by an affine transform and carries no clip path, so a cropped image
+/// gets the right *box* and is drawn whole. `None` when nothing is cropped —
+/// `\includegraphics*` on its own clips to the natural bounding box, which
+/// removes nothing.
+pub fn clip_limitation(keys: &[GKey], starred: bool, nat_w: f64, nat_h: f64) -> Option<String> {
+    let clip = starred || keys.iter().rev().find_map(|k| if let GKey::Clip(v) = k { Some(*v) } else { None }).unwrap_or(false);
+    if !clip {
+        return None;
+    }
+    let vp = keys.iter().rev().find_map(|k| match *k {
+        GKey::Viewport(v) => Some(v),
+        GKey::Trim([l, b, r, t]) => Some([l, b, nat_w - r, nat_h - t]),
+        _ => None,
+    })?;
+    let crops = vp[0] > 1e-9 || vp[1] > 1e-9 || vp[2] < nat_w - 1e-9 || vp[3] < nat_h - 1e-9;
+    crops.then(|| "the image is drawn whole: this display list places an image by an affine transform and has no clip path, so `clip` (and `\\includegraphics*`) set the box but do not cut the picture".to_string())
 }
 
 /// (width, height above the baseline, depth below it) of the unit square's
@@ -536,6 +593,71 @@ fn extents(m: &[f64; 6]) -> (f64, f64, f64) {
 /// graphicx's extension search for a file named without one (pdfTeX
 /// `\Gin@extensions` order, restricted to the formats read here).
 pub const EXTENSIONS: [&str; 7] = [".pdf", ".png", ".jpg", ".jpeg", ".PDF", ".PNG", ".JPG"];
+
+/// The directory list of the project's last `\graphicspath{{a/}{b/}}`, in
+/// order.
+///
+/// The compiler consumes `\graphicspath` without leaving a node (its own
+/// module says so: the list "is re-read from the source by a consumer that
+/// loads files"), so it is read from the bytes here — which is also what the
+/// float path needs, since a `figure` is blanked before the compiler ever
+/// sees it. A later `\graphicspath` replaces an earlier one, as the macro's
+/// own `\def` does; a commented-out one is ignored.
+pub fn search_dirs(texts: &[&str]) -> Vec<String> {
+    let mut found = Vec::new();
+    for text in texts {
+        let b = text.as_bytes();
+        let mut i = 0usize;
+        while i < b.len() {
+            match b[i] {
+                b'%' => i = text[i..].find('\n').map_or(b.len(), |n| i + n + 1),
+                b'\\' => {
+                    // A control word, or an escaped character (`\%`): either
+                    // way the next byte is never the start of a comment.
+                    let rest = &text[i + 1..];
+                    let name_end = rest.find(|c: char| !c.is_ascii_alphabetic()).map_or(text.len(), |n| i + 1 + n);
+                    if &text[i + 1..name_end] == "graphicspath" {
+                        let mut j = name_end;
+                        while j < b.len() && (b[j] as char).is_ascii_whitespace() {
+                            j += 1;
+                        }
+                        if let Some((start, end)) = brace_group(text, j) {
+                            found.clear();
+                            found.extend(flashtex_compiler::graphics::graphics_path_entries(&text[start..end]).into_iter().map(|d| d.trim().to_string()).filter(|d| !d.is_empty()));
+                            i = end + 1;
+                            continue;
+                        }
+                    }
+                    i = name_end.max(i + 2).min(b.len());
+                }
+                _ => i += 1,
+            }
+        }
+    }
+    found
+}
+
+/// The interior of the balanced `{...}` starting at `at`, if one does.
+fn brace_group(text: &str, at: usize) -> Option<(usize, usize)> {
+    let b = text.as_bytes();
+    if b.get(at) != Some(&b'{') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (k, c) in text[at..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((at + 1, at + k));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
 
 #[cfg(test)]
 mod tests {
@@ -584,5 +706,67 @@ mod tests {
         assert!((b.height - 72.27).abs() < 1e-6 && (b.width - 36.135).abs() < 1e-6 && b.depth.abs() < 1e-9, "{b:?}");
         let (k, _) = parse_keys("width=0.5\\textwidth", &e);
         assert!((size_box(100.0, 50.0, &k).width - 234.877495).abs() < 1e-6);
+    }
+
+    /// `viewport`/`trim` make the box the requested rectangle while the image
+    /// keeps its natural size, shifted so the rectangle's lower-left corner
+    /// sits at the box origin. Measured against pdfTeX 1.40.27 (TeX Live
+    /// 2025) through `fixtures/graphics/oracle.py`:
+    /// `\includegraphics[10,10][40,50]{box-crop.pdf}` sets a 30bp x 40bp box
+    /// (`\wd` 30.1125pt, `\ht` 40.15pt, `\dp` 0pt).
+    #[test]
+    fn a_viewport_sets_the_box_and_moves_the_image() {
+        let e = env();
+        let bp = |v: f64| v / BP_PER_PT;
+        let (k, p) = parse_keys("viewport=10 10 40 50", &e);
+        assert!(p.is_empty(), "{p:?}");
+        assert_eq!(k, vec![GKey::Viewport([bp(10.0), bp(10.0), bp(40.0), bp(50.0)])]);
+        // A 200bp x 120bp natural size, as `box-crop.pdf` has.
+        let b = size_box(bp(200.0), bp(120.0), &k);
+        assert!((b.width - bp(30.0)).abs() < 1e-9 && (b.height - bp(40.0)).abs() < 1e-9 && b.depth.abs() < 1e-9, "{b:?}");
+        // The image is still 200bp x 120bp, moved down and left by the
+        // viewport's lower-left corner.
+        assert!((b.matrix[0] - bp(200.0)).abs() < 1e-9 && (b.matrix[3] - bp(120.0)).abs() < 1e-9, "{b:?}");
+        assert!((b.matrix[4] + bp(10.0)).abs() < 1e-9 && (b.matrix[5] + bp(10.0)).abs() < 1e-9, "{b:?}");
+        // `trim` states insets from the four edges, so it is the same box
+        // (the two routes reach it by different subtractions, so the last
+        // bits of the mantissa differ).
+        let (t, _) = parse_keys("trim=10 10 160 70", &e);
+        let tb = size_box(bp(200.0), bp(120.0), &t);
+        assert!((tb.width - b.width).abs() < 1e-9 && (tb.height - b.height).abs() < 1e-9, "{tb:?} vs {b:?}");
+        assert_eq!(tb.matrix, b.matrix);
+        // A later request scales the *box*, not the picture: half the width
+        // of the 30bp viewport, so the image halves too.
+        let (k, _) = parse_keys("viewport=10 10 40 50,width=15bp", &e);
+        let h = size_box(bp(200.0), bp(120.0), &k);
+        assert!((h.width - bp(15.0)).abs() < 1e-9 && (h.height - bp(20.0)).abs() < 1e-9, "{h:?}");
+        assert!((h.matrix[0] - bp(100.0)).abs() < 1e-9, "{h:?}");
+    }
+
+    /// `clip` (and `\includegraphics*`) cannot be painted: this display list
+    /// has no clip path. Saying nothing would be worse than saying so, but a
+    /// star that crops nothing must not cry wolf.
+    #[test]
+    fn only_a_crop_that_removes_something_is_reported() {
+        let e = env();
+        let (none, _) = parse_keys("width=2in", &e);
+        assert_eq!(clip_limitation(&none, true, 100.0, 50.0), None, "a bare star clips to the natural box");
+        let (vp, _) = parse_keys("viewport=0 0 100 50", &e);
+        assert_eq!(clip_limitation(&vp, true, 100.0 / BP_PER_PT, 50.0 / BP_PER_PT), None, "a viewport equal to the natural box removes nothing");
+        let (vp, _) = parse_keys("viewport=10 0 100 50", &e);
+        assert!(clip_limitation(&vp, true, 100.0 / BP_PER_PT, 50.0 / BP_PER_PT).is_some());
+        let (vp, _) = parse_keys("viewport=10 0 90 50", &e);
+        assert_eq!(clip_limitation(&vp, false, 100.0 / BP_PER_PT, 50.0 / BP_PER_PT), None, "without clip, graphicx draws the whole image");
+    }
+
+    #[test]
+    fn graphicspath_is_read_from_the_source() {
+        assert_eq!(search_dirs(&["\\graphicspath{{figs/}{images/png/}}\n"]), vec!["figs/", "images/png/"]);
+        // A later one replaces an earlier one, and a commented-out one is not
+        // one at all.
+        assert_eq!(search_dirs(&["\\graphicspath{{a/}}\n% \\graphicspath{{b/}}\n\\graphicspath{{c/}}\n"]), vec!["c/"]);
+        assert!(search_dirs(&["no graphics path here\n"]).is_empty());
+        // `\%` is an escaped character, not the start of a comment.
+        assert_eq!(search_dirs(&["100\\% \\graphicspath{{d/}}\n"]), vec!["d/"]);
     }
 }

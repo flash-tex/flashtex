@@ -38,8 +38,12 @@ impl FloatKind {
 pub enum Piece {
     /// `\centering`.
     Centering,
-    /// `\includegraphics[options]{path}`; `span` covers the whole command.
-    Graphic { span: Span, options: String, path: String },
+    /// `\includegraphics*[options][options]{path}`; `span` covers the whole
+    /// command. The two-bracket bounding-box form is recorded as
+    /// `viewport=<llx> <lly> <urx> <ury>`, which is what the compiler's own
+    /// parser makes of it (`pdftex.def`'s `\Gin@iii@vp`), so a float and a
+    /// sentence describe the same image the same way.
+    Graphic { span: Span, starred: bool, options: String, path: String },
     /// `\caption[...]{...}`: `span` covers the command, `arg` the argument's
     /// inner bytes, `short` those of the optional argument (latex.ltx
     /// `\@caption#1[#2]#3` writes `#2` to the list of figures/tables).
@@ -243,17 +247,34 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                         i = name_end;
                     }
                     "includegraphics" => {
+                        // The full graphicx shape: `*`, then one or two
+                        // optional arguments, then the file. Reading only the
+                        // command name and one bracket (as this scanner used
+                        // to) made `\includegraphics*` and the two-bracket
+                        // form fall through to `Piece::Other`, so a starred or
+                        // bounding-box image in a float was reported as
+                        // "material is omitted" and never drawn.
                         let mut j = skip_ws(text, name_end, end);
-                        let mut options = String::new();
-                        if b.get(j) == Some(&b'[') {
-                            if let Some(c) = text[j..end].find(']') {
-                                options = text[j + 1..j + c].to_string();
-                                j = skip_ws(text, j + c + 1, end);
-                            }
+                        let starred = b.get(j) == Some(&b'*');
+                        if starred {
+                            j = skip_ws(text, j + 1, end);
                         }
+                        let mut brackets: Vec<String> = Vec::new();
+                        while brackets.len() < 2 && b.get(j) == Some(&b'[') {
+                            let Some(close) = optional_end(text, j, end) else { break };
+                            brackets.push(text[j + 1..close].to_string());
+                            j = skip_ws(text, close + 1, end);
+                        }
+                        let corner = |s: &str| s.replace(',', " ").split_whitespace().collect::<Vec<_>>().join(" ");
+                        let options = match brackets.as_slice() {
+                            [] => String::new(),
+                            [keys] => keys.clone(),
+                            [lower, upper] => format!("viewport={} {}", corner(lower), corner(upper)),
+                            _ => unreachable!("at most two optional arguments are read"),
+                        };
                         match group(text, j).filter(|(_, e)| *e < end) {
                             Some((s, e)) => {
-                                out.push(Piece::Graphic { span: span(i, e + 1), options, path: text[s..e].trim().to_string() });
+                                out.push(Piece::Graphic { span: span(i, e + 1), starred, options, path: text[s..e].trim().to_string() });
                                 i = e + 1;
                             }
                             None => {
@@ -394,13 +415,29 @@ type Loaded = Result<(Rc<ImageResource>, ImageInfo), String>;
 pub struct ImageCache {
     root: Option<Result<ProjectRoot, String>>,
     entries: HashMap<(String, u32), Loaded>,
+    /// The project's `\graphicspath` directories (`graphics::search_dirs`),
+    /// searched after the name as written.
+    dirs: Vec<String>,
 }
 
 impl ImageCache {
-    fn load(&mut self, options: &RenderOptions, raw: &str, page: u32) -> Loaded {
+    /// The project's `\graphicspath` list, read from the source once per
+    /// request. Clears the memo, so a changed list is not answered from it.
+    pub fn set_search_dirs(&mut self, dirs: Vec<String>) {
+        if dirs != self.dirs {
+            self.entries.clear();
+            self.dirs = dirs;
+        }
+    }
+
+    /// Reads and probes one file, once per (path, page). Shared with the
+    /// running-text path (`typeset::Context::graphic_box`), so a file used by
+    /// both a float and a sentence is read once per request.
+    pub(crate) fn load(&mut self, options: &RenderOptions, raw: &str, page: u32) -> Loaded {
         if let Some(hit) = self.entries.get(&(raw.to_string(), page)) {
             return hit.clone();
         }
+        let dirs = std::mem::take(&mut self.dirs);
         let root = self.root.get_or_insert_with(|| match &options.project_root {
             Some(dir) => ProjectRoot::open(dir).map_err(|e| format!("project root {} cannot be opened: {e:?}", dir.display())),
             None => Err("no project root was supplied with the request, so image files cannot be read".into()),
@@ -409,11 +446,21 @@ impl ImageCache {
             Err(e) => Err(e.clone()),
             Ok(root) => {
                 let has_ext = raw.rsplit('/').next().is_some_and(|name| name.contains('.'));
-                let mut candidates = Vec::new();
+                // graphicx searches extension-major (`\Gin@extensions`), and
+                // each name through `\IfFileExists`: as written first, then
+                // each `\graphicspath` directory in order.
+                let mut names = Vec::new();
                 if has_ext {
-                    candidates.push(raw.to_string());
+                    names.push(raw.to_string());
                 }
-                candidates.extend(graphics::EXTENSIONS.iter().map(|e| format!("{raw}{e}")));
+                names.extend(graphics::EXTENSIONS.iter().map(|e| format!("{raw}{e}")));
+                let mut candidates = Vec::new();
+                for name in &names {
+                    candidates.push(name.clone());
+                    for dir in &dirs {
+                        candidates.push(format!("{dir}{name}"));
+                    }
+                }
                 let mut found: Loaded = Err(format!("image file '{raw}' not found (tried {})", candidates.join(", ")));
                 for c in candidates {
                     let Ok(path) = ProjectPath::normalize(&c) else {
@@ -449,6 +496,7 @@ impl ImageCache {
                 found
             }
         };
+        self.dirs = dirs;
         self.entries.insert((raw.to_string(), page), result.clone());
         result
     }
@@ -514,7 +562,7 @@ pub fn prepare(
                             ));
                         }
                     }
-                    Piece::Graphic { span, options: opts, path: file } => {
+                    Piece::Graphic { span, starred, options: opts, path: file } => {
                         let (keys, problems) = graphics::parse_keys(opts, &env);
                         for p in problems {
                             diags.push(Diagnostic::warning("graphics_option", p, vec![src(*span)]));
@@ -527,7 +575,11 @@ pub fn prepare(
                         let page = keys.iter().find_map(|k| if let GKey::Page(p) = k { Some(*p) } else { None }).unwrap_or(1);
                         match images.load(options, file, page) {
                             Ok((resource, info)) => {
-                                let gbox = graphics::size_box(info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT, &keys);
+                                let (nat_w, nat_h) = (info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT);
+                                if let Some(message) = graphics::clip_limitation(&keys, *starred, nat_w, nat_h) {
+                                    diags.push(Diagnostic::warning("graphics_clip", message, vec![src(*span)]));
+                                }
+                                let gbox = graphics::size_box(nat_w, nat_h, &keys);
                                 parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: Some(resource), span: *span }));
                             }
                             Err(msg) => {
@@ -626,6 +678,30 @@ mod tests {
         // `\@fpsadddefault`: a bare `!` becomes `!tbp`, and `!` clears 16.
         assert_eq!(placement_bits(Some("!")), Ok(2 | 4 | 8));
         assert_eq!(placement_bits(Some("!h")), Ok(1));
+    }
+
+    /// The scanner used to match the command name and read one bracket, so
+    /// `\includegraphics*` and graphics.sty's `[llx,lly][urx,ury]` form fell
+    /// through to `Piece::Other` and the image was reported as omitted
+    /// material instead of being drawn.
+    #[test]
+    fn the_star_and_both_bracket_arguments_are_scanned() {
+        let graphic = |body: &str| {
+            let src = format!("\\begin{{figure}}\n{body}\n\\end{{figure}}\n");
+            let f = scan(&src, DocumentId(0));
+            match &f[0].pieces[0] {
+                Piece::Graphic { starred, options, path, .. } => (*starred, options.clone(), path.clone()),
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(graphic("\\includegraphics*{a.png}"), (true, String::new(), "a.png".into()));
+        assert_eq!(graphic("\\includegraphics*[width=2in]{a.png}"), (true, "width=2in".into(), "a.png".into()));
+        // The two-bracket form is recorded exactly as the compiler's own
+        // parser records it, so both routes size the box the same way.
+        assert_eq!(graphic("\\includegraphics[10,10][40,50]{a.pdf}"), (false, "viewport=10 10 40 50".into(), "a.pdf".into()));
+        assert_eq!(graphic("\\includegraphics*[0,0][36,24]{a.pdf}"), (true, "viewport=0 0 36 24".into(), "a.pdf".into()));
+        // A `]` inside a brace group does not end the optional argument.
+        assert_eq!(graphic("\\includegraphics[alt={a]b},width=1in]{a.png}"), (false, "alt={a]b},width=1in".into(), "a.png".into()));
     }
 
     #[test]

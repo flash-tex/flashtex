@@ -1,0 +1,55 @@
+{
+ "fixture": "04-two-bracket.tex",
+ "reference_engine": "TeX Live 2025",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/nixos.org)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 106.696,
+   "top": 72.0,
+   "width": 30.0,
+   "height": 40.0,
+   "depth": 0.0,
+   "baseline": 112.0
+  },
+  {
+   "page": 1,
+   "x": 112.793,
+   "top": 129.767,
+   "width": 36.0,
+   "height": 24.0,
+   "depth": 0.0,
+   "baseline": 153.767
+  },
+  {
+   "page": 1,
+   "x": 101.251,
+   "top": 171.533,
+   "width": 60.0,
+   "height": 60.0,
+   "depth": 0.0,
+   "baseline": 231.533
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 112.0,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 153.767,
+   "source_byte": 414
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 231.533,
+   "source_byte": 628
+  }
+ ]
+}
