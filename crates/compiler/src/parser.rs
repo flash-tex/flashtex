@@ -822,6 +822,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "reflectbox",
     "graphicspath",
     "hypersetup",
+    "lstset",
     "allowdisplaybreaks",
     "url",
     "href",
@@ -1239,6 +1240,7 @@ pub fn parse_project_with(
         theorem_counters: HashMap::new(),
         noted_unclickable_link: false,
         noted_hypersetup_keys: false,
+        noted_lstset_keys: false,
         bibliography,
         bib_cursor: 0,
         natbib_limitations: std::collections::BTreeSet::new(),
@@ -1454,6 +1456,9 @@ struct P<'a> {
     /// layout-neutral set (see `hypersetup`), so a document that calls it
     /// several times gets a single notice.
     noted_hypersetup_keys: bool,
+    /// Set once `\lstset` has reported a name that is not a listings key,
+    /// so a document that calls it in a loop reports it once.
+    noted_lstset_keys: bool,
     /// Raw (unexpanded) tokens most recently given to `\title`/`\author`,
     /// with the command's own span for diagnostics. `\maketitle` reads
     /// whichever is active at its call site, mirroring how real
@@ -1903,6 +1908,21 @@ impl P<'_> {
             // real documents put it, and in the body, where LaTeX also
             // allows it.
             "hypersetup" => self.hypersetup(span),
+            // `\lstset{key=value,...}` (listings): the package's own
+            // defaults, settable anywhere and global from that point on.
+            // The command typesets nothing itself -- `\lst@Init` reads the
+            // values when a listing is set -- so the argument is read, the
+            // key names are checked, and no material is contributed. It is
+            // accepted in the preamble, where every real document puts it,
+            // and in the body, where listings also allows it.
+            //
+            // Before this, `\lstset` was an unknown preamble command *and*
+            // its argument was then read as preamble material, so
+            // `fixtures/real-world/listings-manual`'s one `\lstset` produced
+            // six errors: the command, then `\ttfamily`, `\small`,
+            // `\bfseries`, `\itshape` and `\tiny` out of `basicstyle=`,
+            // `keywordstyle=`, `commentstyle=` and `numberstyle=`.
+            "lstset" => self.lstset(span),
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
@@ -4736,6 +4756,35 @@ impl P<'_> {
         ));
     }
 
+    /// `\lstset{key=value,...}` (listings v1.10c): reads the key list and
+    /// typesets nothing. A name outside [`listings_key_is_known`] is
+    /// reported once — that list is listings' own documented keys, and a
+    /// name this compiler has never heard of is far more likely a typo than
+    /// a key it silently honours.
+    ///
+    /// The values are deliberately not interpreted here. This compiler's own
+    /// layout sets an `lstlisting` as plain verbatim lines and applies none
+    /// of them, and saying otherwise in a diagnostic would be a claim it has
+    /// not earned; `crates/render-pipeline`'s `listings` module reads the
+    /// same keys from the source bytes and applies the geometric ones.
+    fn lstset(&mut self, span: Span) {
+        let (tokens, argument_span) = self.required_group("lstset", span);
+        let keys = token_text(&tokens);
+        let unknown: Vec<String> = listings_key_names(&keys)
+            .into_iter()
+            .filter(|key| !listings_key_is_known(key))
+            .collect();
+        if unknown.is_empty() || self.noted_lstset_keys {
+            return;
+        }
+        self.noted_lstset_keys = true;
+        self.diags.push(Diagnostic::warning(
+            format!("\\lstset keys {} are not listings keys", unknown.join(", ")),
+            Some(span.merge(argument_span)),
+            Some("read the key list and typeset nothing for it".into()),
+        ));
+    }
+
     /// Emits the one honest "links are not clickable yet" diagnostic the
     /// first time `\url`/`\href` is used in this document (see
     /// `noted_unclickable_link`): `docs/contracts/runtime-v1.md` has no link
@@ -6467,7 +6516,75 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
     }
 }
 
-/// Whether one `hyperref` package option or `\hypersetup` key leaves the
+/// The key *names* of a `listings` key list: entries split at top-level
+/// commas, each truncated at its first top-level `=`. Braces and brackets
+/// nest, so `caption={a, b}` and `basewidth={0.6em,0.45em}` are one key
+/// each, and a backslash skips the character after it so `\\{` inside a
+/// style value does not open a group.
+fn listings_key_names(list: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = list.as_bytes();
+    let (mut start, mut depth, mut i) = (0usize, 0i32, 0usize);
+    while i <= bytes.len() {
+        let end = i == bytes.len();
+        match if end { b',' } else { bytes[i] } {
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => depth -= 1,
+            b'\\' if !end => i += 1,
+            b',' if depth <= 0 => {
+                let entry = &list[start..i];
+                let name = entry.split_once('=').map_or(entry, |(name, _)| name).trim();
+                if !name.is_empty() {
+                    out.push(name.to_string());
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Whether `key` is a `listings` key at all (listings.sty / lstmisc.sty
+/// v1.10c, TeX Live 2025: every `\\lst@Key` the package defines, plus the
+/// `\\lst@Key`-less switches `\\lstset` accepts). Being on this list is not a
+/// claim that anything is done with it — `\\lstset` typesets nothing either
+/// way — only that the name is spelled like a key of the package.
+fn listings_key_is_known(key: &str) -> bool {
+    const KEYS: &[&str] = &[
+        // Styles and the character grid.
+        "basicstyle", "identifierstyle", "commentstyle", "stringstyle", "keywordstyle",
+        "ndkeywordstyle", "classoffset", "texcsstyle", "directivestyle", "emph", "moreemph",
+        "deleteemph", "emphstyle", "delim", "moredelim", "deletedelim", "columns", "flexiblecolumns",
+        "basewidth", "fontadjust", "keepspaces", "showspaces", "showtabs", "showstringspaces",
+        "formatstyle", "literate", "alsoletter", "alsodigit", "alsoother", "sensitive",
+        // Line numbers and labels.
+        "numbers", "numberstyle", "numbersep", "stepnumber", "numberfirstline", "firstnumber",
+        "numberblanklines", "name", "numberbychapter",
+        // Frames, margins and background.
+        "frame", "frameshape", "frameround", "framerule", "framesep", "framexleftmargin",
+        "framexrightmargin", "framextopmargin", "framexbottommargin", "backgroundcolor",
+        "fillcolor", "rulecolor", "rulesepcolor", "rulesep", "xleftmargin", "xrightmargin",
+        "resetmargins", "linewidth", "lineskip", "boxpos",
+        // Captions, floats and the list of listings.
+        "caption", "title", "label", "captionpos", "abovecaptionskip", "belowcaptionskip",
+        "aboveskip", "belowskip", "float", "floatplacement", "nolol", "multicols",
+        // Language and what is typeset.
+        "language", "alsolanguage", "defaultdialect", "print", "firstline", "lastline",
+        "linerange", "consecutivenumbers", "showlines", "extendedchars", "inputencoding",
+        "escapechar", "escapeinside", "escapebegin", "escapeend", "mathescape", "texcl",
+        "gobble", "tabsize", "index", "moreindex", "deleteindex", "indexstyle",
+        // Line breaking.
+        "breaklines", "breakatwhitespace", "breakindent", "breakautoindent", "prebreak",
+        "postbreak", "breakbefore", "breakafter", "style", "morecomment", "morestring",
+        "morekeywords", "deletekeywords", "morendkeywords", "keywordsprefix", "procnamekeys",
+        "procnamestyle", "indexprocnames", "tag",
+    ];
+    KEYS.contains(&key)
+}
+
+/// Whether one `hyperref` package option or `\\hypersetup` key leaves the
 /// typeset material alone.
 ///
 /// Measured, not assumed: the same document (`\maketitle`, `abstract`,
@@ -8591,6 +8708,107 @@ mod tests {
             "\\nolinkurl was never a link, so it needs no 'not clickable' notice: {:?}",
             parsed.diagnostics
         );
+    }
+
+    /// `\lstset` is where every listings document puts its defaults, and it
+    /// used to be a hard *error* — and a compounding one. The command's
+    /// argument was then read as preamble material, so
+    /// `fixtures/real-world/listings-manual`'s single `\lstset` produced six
+    /// errors: `\lstset` itself, then `\ttfamily`, `\small`, `\bfseries`,
+    /// `\itshape` and `\tiny` out of the style values inside it. Built from
+    /// a `git archive` of `origin/main:crates` at 9d50d312 with this test
+    /// dropped in, main reports
+    ///
+    /// ```text
+    /// only the package notice may remain:
+    /// ["\\lstset is not supported in the document preamble",
+    ///  "\\ttfamily is not supported in the document preamble",
+    ///  "\\small is not supported in the document preamble",
+    ///  "\\bfseries is not supported in the document preamble",
+    ///  "\\itshape is not supported in the document preamble",
+    ///  "\\tiny is not supported in the document preamble"]
+    /// ```
+    #[test]
+    fn lstset_is_accepted_in_the_preamble_and_typesets_nothing() {
+        let source = concat!(
+            r"\documentclass[11pt]{article}",
+            "\n",
+            r"\usepackage{listings}",
+            "\n",
+            "\\lstset{\n  basicstyle=\\ttfamily\\small,\n  keywordstyle=\\bfseries,\n",
+            "  commentstyle=\\itshape,\n  numbers=left,\n  numberstyle=\\tiny,\n",
+            "  frame=single,\n  breaklines=true,\n  showstringspaces=false,\n  tabsize=2\n}",
+            "\n",
+            r"\begin{document}",
+            "\nBody text.\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        // `\usepackage{listings}` still says honestly that this compiler
+        // does not implement the package; nothing else may be reported.
+        let other: Vec<&str> = parsed
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .filter(|m| !m.starts_with("packages listings"))
+            .collect();
+        assert!(other.is_empty(), "only the package notice may remain: {other:?}");
+        assert_eq!(
+            items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            ["Body", "text."],
+            "\\lstset contributes no material"
+        );
+    }
+
+    /// `\lstset` is global from its point of use, so listings allows it in
+    /// the body too; a name that is not a listings key at all is reported
+    /// once rather than silently swallowed.
+    #[test]
+    fn a_name_that_is_not_a_listings_key_is_reported_once() {
+        let source = concat!(
+            r"\documentclass{article}\usepackage{listings}",
+            "\n",
+            r"\begin{document}",
+            "\n",
+            r"\lstset{bacicstyle=\ttfamily}A",
+            "\n\n",
+            r"\lstset{bacicstyle=\ttfamily}B",
+            "\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        let notes: Vec<&str> = parsed
+            .diagnostics
+            .iter()
+            .filter(|d| d.message.contains("\\lstset keys"))
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(notes.len(), 1, "reported once, not per call: {notes:?}");
+        assert!(notes[0].contains("bacicstyle"), "{notes:?}");
+        assert_eq!(items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(), ["A", "B"]);
+    }
+
+    /// The key list nests: a braced value may hold commas and `=`, and a
+    /// style value's backslashes never open a group.
+    #[test]
+    fn listings_key_names_split_at_top_level_commas_only() {
+        assert_eq!(
+            listings_key_names(r"basicstyle=\ttfamily\small,caption={A caption, part 2},breaklines"),
+            vec!["basicstyle".to_string(), "caption".to_string(), "breaklines".to_string()]
+        );
+        assert_eq!(
+            listings_key_names("basewidth={0.6em,0.45em}"),
+            vec!["basewidth".to_string()]
+        );
+        assert!(listings_key_names("  ,  ,  ").is_empty());
+        // Every key of the corpus fixture is a listings key.
+        for key in listings_key_names(
+            r"basicstyle=\ttfamily\small,backgroundcolor=\color{codebg},keywordstyle=\color{codekw}\bfseries,commentstyle=\color{codecomment}\itshape,numbers=left,numberstyle=\tiny,frame=single,breaklines=true,showstringspaces=false,tabsize=2",
+        ) {
+            assert!(listings_key_is_known(&key), "{key} is a listings key");
+        }
     }
 
     /// `\hypersetup` is where real documents put hyperref's options, and it
