@@ -1,0 +1,114 @@
+{
+ "fixture": "72-cellcolor.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "A",
+    "x": 77.978,
+    "y_top": 95.063
+   },
+   {
+    "text": "B",
+    "x": 98.708,
+    "y_top": 95.063
+   },
+   {
+    "text": "C",
+    "x": 118.9529,
+    "y_top": 95.063
+   },
+   {
+    "text": "d",
+    "x": 77.978,
+    "y_top": 109.509
+   },
+   {
+    "text": "e",
+    "x": 98.7083,
+    "y_top": 109.509
+   },
+   {
+    "text": "f",
+    "x": 118.953,
+    "y_top": 109.509
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 123.075
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 123.075
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 123.075
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 123.075
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    92.73,
+    84.951,
+    20.245,
+    14.446,
+    1.0,
+    1.0,
+    0.0
+   ],
+   [
+    72.0,
+    99.397,
+    20.73,
+    14.446,
+    0.8,
+    0.9,
+    1.0
+   ],
+   [
+    112.975,
+    99.397,
+    20.409,
+    14.446,
+    1.0,
+    0.75,
+    0.75
+   ]
+  ]
+ ]
+}

@@ -665,6 +665,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "fcolorbox",
     "newcolumntype",
     "arraybackslash",
+    "arrayrulecolor",
+    "doublerulesepcolor",
     "setlist",
     "newcommand",
     "renewcommand",
@@ -1035,7 +1037,11 @@ pub fn parse_project_with(
         include_stack: vec![entry],
         counters: crate::xref::Counters::article(),
         subequations: Vec::new(),
+        table_rule_color: None,
+        table_double_rule_sep_color: None,
         footnote_counter: 0,
+        mpfootnote_counter: 0,
+        chapter_class: false,
         current_counter: None,
         seen_labels: HashMap::new(),
         list_stack: Vec::new(),
@@ -1175,8 +1181,18 @@ struct P<'a> {
     /// The `\theequation` in force outside each open `subequations`
     /// environment, restored at its `\end` (amsmath's group).
     subequations: Vec<Vec<crate::xref::Piece>>,
-    /// LaTeX's `footnote` counter; article never resets it.
+    /// colortbl `\arrayrulecolor`/`\doublerulesepcolor` (global assignments).
+    table_rule_color: Option<crate::tabular::ColorSpec>,
+    table_double_rule_sep_color: Option<crate::tabular::ColorSpec>,
+    /// LaTeX's `footnote` counter; article never resets it, report and
+    /// book reset it at every numbered `\chapter` (`\@addtoreset`).
     footnote_counter: u32,
+    /// `mpfootnote`: `\footnote` inside a `minipage` (zeroed by every
+    /// `\begin{minipage}`, printed `\alph`).
+    mpfootnote_counter: u32,
+    /// The class is report or book: `\chapter` exists and numbers
+    /// sections, figures and equations within it.
+    chapter_class: bool,
     current_counter: Option<String>,
     seen_labels: HashMap<String, Span>,
     /// Environment name, item count, an enumitem label template if given,
@@ -1511,6 +1527,22 @@ impl P<'_> {
             // array.sty 247: `\let\\\tabularnewline`; this parser already
             // ends table rows at `\\` inside `p`-column entries.
             "arraybackslash" => {}
+            // colortbl.sty 156-165: global colour of later rules and
+            // `\doublerulesep` gaps (inside a table the row scanner takes them).
+            "arrayrulecolor" | "doublerulesepcolor" => {
+                let color = self.table_color_argument(name, span);
+                if !self.colortbl() {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\{name} needs the colortbl package (or xcolor with the table option)"),
+                        Some(span),
+                        Some("ignored the colour".into()),
+                    ));
+                } else if name == "arrayrulecolor" {
+                    self.table_rule_color = Some(color);
+                } else {
+                    self.table_double_rule_sep_color = Some(color);
+                }
+            }
             "setlist" => self.set_list(span),
             // Definitions run in the expansion pass (`crate::expansion`); the
             // parser only sees their expansions, never these names.
@@ -1625,6 +1657,7 @@ impl P<'_> {
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
+            "chapter" if self.chapter_class => self.chapter(span, blocks, para),
             "section" | "subsection" | "subsubsection" => {
                 let level = match name {
                     "section" => 1,
@@ -2250,6 +2283,10 @@ impl P<'_> {
             ));
         } else if self.document_class.is_none() {
             self.math_packages.load_class(&class);
+            if matches!(class.as_str(), "report" | "book") {
+                self.chapter_class = true;
+                self.counters = crate::xref::Counters::report();
+            }
             self.document_class = Some(class);
         }
     }
@@ -2283,6 +2320,9 @@ impl P<'_> {
             // Read by `\colorbox`/`\fcolorbox` (not group-scoped here).
             "fboxsep" => self.fboxsep_pt = pt,
             "fboxrule" => self.fboxrule_pt = pt,
+            // longtable's lengths are read from the source by the render
+            // pipeline's longtable layout.
+            "LTleft" | "LTright" | "LTpre" | "LTpost" | "LTcapwidth" => {}
             "parskip" if in_preamble => self.parskip_pt = Some(pt),
             "parindent" if in_preamble && pt == 0.0 => {}
             "parindent" if in_preamble => self.diags.push(Diagnostic::warning(
@@ -2429,6 +2469,12 @@ impl P<'_> {
         for package in &packages {
             self.math_packages.load_package(package);
             self.load_color_package(package, &options);
+        }
+        // xcolor.sty's `table` option loads colortbl (and so array).
+        if packages.iter().any(|package| package == "xcolor")
+            && options.split(',').any(|option| option.trim() == "table")
+        {
+            self.packages.push("colortbl".into());
         }
         // multicol.sty lines 111-113: the global `twocolumn` class option
         // reaches the package's option handler.
@@ -2623,8 +2669,9 @@ impl P<'_> {
             return;
         };
 
-        let stripped_title = self.strip_thanks(title_tokens);
-        let title_content = self.inlines_from_tokens(stripped_title, TextStyle::default());
+        // `\@maketitle` sets `\@title`, `\@author`, `\@date` in that
+        // order; each `\thanks` steps `footnote` there.
+        let title_content = self.thanks_inlines(title_tokens, TextStyle::default());
         if title_content.is_empty() {
             self.diags.push(Diagnostic::error(
                 "\\title was given an empty title",
@@ -2639,8 +2686,7 @@ impl P<'_> {
         let mut author_content: Vec<Inline> = Vec::new();
         let mut wrote_author = false;
         for group in author_groups {
-            let stripped = self.strip_thanks(group);
-            let inlines = self.inlines_from_tokens(stripped, TextStyle::default());
+            let inlines = self.thanks_inlines(group, TextStyle::default());
             if inlines.is_empty() {
                 // A blank `\and`-separated slot (`\author{A \and }`)
                 // contributes nothing, like an empty tabular column.
@@ -2681,8 +2727,7 @@ impl P<'_> {
                 }])
             }
             Some((date_tokens, _)) => {
-                let stripped = self.strip_thanks(date_tokens);
-                let inlines = self.inlines_from_tokens(stripped, TextStyle::default());
+                let inlines = self.thanks_inlines(date_tokens, TextStyle::default());
                 if inlines.is_empty() {
                     None // `\date{}`: suppressed, matching `DateField::Suppressed`.
                 } else {
@@ -2704,18 +2749,22 @@ impl P<'_> {
             authors: author_content,
             date: date_content,
         });
+        // `\maketitle` ends with `\setcounter{footnote}{0}`.
+        self.footnote_counter = 0;
         self.finish_block_dependencies();
     }
 
-    /// Strips `\thanks{...}` out of a captured `\title`/`\author`/`\date`
-    /// argument. Real `article.cls` turns `\thanks` into a footnote mark in
-    /// the title block plus footnote text at the page foot; this compiler
-    /// has no footnote implementation, so the honest recovery is to omit the
-    /// mark and its text — never leak the footnote prose into the centred
-    /// title/author/date line — and say so once per occurrence, per the
-    /// recovery policy documented on `unsupported` above.
-    fn strip_thanks(&mut self, tokens: Vec<InputToken>) -> Vec<InputToken> {
-        let mut out = Vec::with_capacity(tokens.len());
+    /// A captured `\title`/`\author`/`\date` argument as inline content
+    /// with every `\thanks{...}` turned into a footnote. article/report/
+    /// book's `\maketitle` sets `\thefootnote` to `\@fnsymbol\c@footnote`
+    /// and `\thanks` is `\footnotemark` plus a `\footnotetext[n]{...}`
+    /// queued in `\@thanks` (set after `\@maketitle`, in vertical mode):
+    /// the inline carries the symbol mark and the note text at the mark's
+    /// position; the layout decides where the text goes. The span is the
+    /// `\thanks` token.
+    fn thanks_inlines(&mut self, tokens: Vec<InputToken>, style: TextStyle) -> Vec<Inline> {
+        let mut out: Vec<Inline> = Vec::new();
+        let mut segment: Vec<InputToken> = Vec::new();
         let mut i = 0;
         while i < tokens.len() {
             let is_thanks = matches!(
@@ -2723,7 +2772,7 @@ impl P<'_> {
                 TokenKind::Command(name) if name == "thanks"
             );
             if !is_thanks {
-                out.push(tokens[i].clone());
+                segment.push(tokens[i].clone());
                 i += 1;
                 continue;
             }
@@ -2734,28 +2783,92 @@ impl P<'_> {
             {
                 j += 1;
             }
-            if j < tokens.len() && tokens[j].token.kind == TokenKind::LBrace {
-                let mut depth = 0usize;
-                while j < tokens.len() {
-                    match tokens[j].token.kind {
-                        TokenKind::LBrace => depth += 1,
-                        TokenKind::RBrace => depth -= 1,
-                        _ => {}
-                    }
-                    j += 1;
-                    if depth == 0 {
-                        break;
-                    }
+            if j >= tokens.len() || tokens[j].token.kind != TokenKind::LBrace {
+                self.diags.push(Diagnostic::warning(
+                    "\\thanks without a braced argument",
+                    Some(thanks_span),
+                    Some("omitted the footnote mark".into()),
+                ));
+                i += 1;
+                continue;
+            }
+            let open = j;
+            let mut depth = 0usize;
+            while j < tokens.len() {
+                match tokens[j].token.kind {
+                    TokenKind::LBrace => depth += 1,
+                    TokenKind::RBrace => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+                if depth == 0 {
+                    break;
                 }
             }
-            self.diags.push(Diagnostic::warning(
-                "\\thanks is recognised but footnotes are not implemented; the footnote mark and text were omitted",
-                Some(thanks_span),
-                Some("omitted the footnote mark and its text".into()),
-            ));
+            let close = if depth == 0 { j - 1 } else { j };
+            let argument = tokens[open + 1..close].to_vec();
+            let before = std::mem::take(&mut segment);
+            out.extend(self.inlines_from_tokens(before, style));
+            self.document_global_state = true;
+            self.footnote_counter += 1;
+            let number = match fnsymbol(self.footnote_counter) {
+                Some(symbol) => symbol.to_string(),
+                None => {
+                    self.diags.push(Diagnostic::error(
+                        format!(
+                            "\\thanks number {} is outside \\@fnsymbol's nine symbols",
+                            self.footnote_counter
+                        ),
+                        Some(thanks_span),
+                        Some("printed the number in arabic instead".into()),
+                    ));
+                    self.footnote_counter.to_string()
+                }
+            };
+            let text = self.footnote_inlines(argument, thanks_span);
+            out.push(Inline::Footnote {
+                number,
+                span: thanks_span,
+                mark: true,
+                text: Some(text),
+                space_before: false,
+            });
             i = j;
         }
+        out.extend(self.inlines_from_tokens(segment, style));
         out
+    }
+
+    /// `\chapter[*][<short>]{<title>}` in report/book:
+    /// `\refstepcounter{chapter}` for the numbered form, which resets
+    /// `section` (and below), `figure`, `table` and `equation` through the
+    /// counter table (report.cls/book.cls `\@addtoreset`), and `footnote`,
+    /// which this parser still counts in a field of its own. The head itself
+    /// (`\@makechapterhead`, the page break, the running marks) is layout:
+    /// the title is kept as a bold paragraph.
+    fn chapter(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let starred = self.take_optional_star();
+        if !starred {
+            let _short = self.optional_bracket_argument();
+        }
+        let (tokens, _) = self.required_group("chapter", span);
+        self.flush_paragraph(blocks, para);
+        self.document_global_state = true;
+        if !starred {
+            // Stepping `chapter` resets every counter registered within it
+            // (`Counters::report`), so `figure`/`table`/`equation` need no
+            // zeroing here; `footnote` is not in the counter table yet.
+            let number = self.counters.step("chapter").unwrap_or_default();
+            self.footnote_counter = 0;
+            self.current_counter = Some(number);
+        }
+        let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
+        if content.is_empty() {
+            self.current_dependencies.clear();
+        } else {
+            blocks.push(Block::Paragraph(content));
+            self.finish_block_dependencies();
+        }
     }
 
     fn environment(
@@ -2795,6 +2908,10 @@ impl P<'_> {
             }
             if matches!(environment.as_str(), "tabular" | "tabular*") && self.in_body {
                 self.tabular_environment(span, &environment, para);
+                return;
+            }
+            // Package environments (inventoried with their package).
+            if self.in_body && self.package_table_environment(span, &environment, blocks, para) {
                 return;
             }
             if matches!(
@@ -2891,6 +3008,10 @@ impl P<'_> {
                     Some(span),
                     Some("typeset the body without the environment's formatting".into()),
                 ));
+            }
+            if is_minipage(&environment) {
+                // `\@iiiminipage`: `\c@mpfootnote\z@`.
+                self.mpfootnote_counter = 0;
             }
             self.env_stack
                 .push((environment.clone(), span.merge(argument_span)));
@@ -3839,6 +3960,11 @@ impl P<'_> {
         self.required_group_bounded(command, command_span, false)
     }
 
+    /// `long`: a `\long` argument (`\@footnotetext`), where a blank line is
+    /// an ordinary paragraph break inside the argument rather than its end.
+    /// An argument that is never closed at all is still closed at the end of
+    /// its first paragraph, so a missing brace cannot swallow the document.
+
     fn required_group_bounded(
         &mut self,
         command: &str,
@@ -4715,22 +4841,49 @@ impl P<'_> {
                 }
                 parsed
             });
-        let number = match explicit {
+        // Inside a `minipage`, `\footnote` and `\footnotetext` use
+        // `\@mpfn` = `mpfootnote` (`\thempfootnote`: `\alph`);
+        // `\footnotemark` always uses `footnote`.
+        let minipage =
+            name != "footnotemark" && self.env_stack.iter().any(|(env, _)| is_minipage(env));
+        let counter = if minipage {
+            &mut self.mpfootnote_counter
+        } else {
+            &mut self.footnote_counter
+        };
+        let value = match explicit {
             Some(number) => number,
-            None if name == "footnotetext" => self.footnote_counter,
+            None if name == "footnotetext" => *counter,
             None => {
-                self.footnote_counter += 1;
-                self.footnote_counter
+                *counter += 1;
+                *counter
             }
+        };
+        let number = if minipage {
+            match alph(value) {
+                Some(letter) => letter,
+                None => {
+                    self.diags.push(Diagnostic::error(
+                        format!("minipage footnote number {value} is outside \\alph's a-z"),
+                        Some(span),
+                        Some("printed the number in arabic instead".into()),
+                    ));
+                    value.to_string()
+                }
+            }
+        } else {
+            value.to_string()
         };
         let text = if name == "footnotemark" {
             None
         } else {
-            let (tokens, _) = self.required_group(name, span);
+            // `\@footnotetext` is `\long` (latex.ltx): a blank line inside
+            // the argument is a paragraph break in the note, not its end.
+            let (tokens, _) = self.required_group_bounded(name, span, true);
             Some(self.footnote_inlines(tokens, span))
         };
         para.push(Inline::Footnote {
-            number: number.to_string(),
+            number,
             span,
             mark: name != "footnotetext",
             text,
@@ -5511,6 +5664,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         "multicol" => options
             .iter()
             .all(|option| matches!(*option, "errorshow" | "infoshow" | "balancingshow" | "markshow" | "debugshow")),
+        // Table packages (parser/tabular.rs, crate::tabular): booktabs rules
+        // and spacing, longtable page-breaking tables, multirow entries and
+        // colortbl row/column/cell colours and rule colours.
+        "booktabs" | "longtable" | "multirow" | "colortbl" => options.is_empty(),
         // amsmath/amssymb (math typesetting: \mathbb, \forall, gather,
         // align, ...) and microtype (character protrusion/expansion kerning)
         // are genuinely unimplemented and change real output; they must keep
@@ -6018,6 +6175,37 @@ fn document_begin_end(tokens: &[InputToken]) -> Option<usize> {
             _ => None,
         }
     })
+}
+
+/// `\@fnsymbol` (latex.ltx): `\textasteriskcentered`, `\textdagger`,
+/// `\textdaggerdbl`, `\textsection`, `\textparagraph`, `\textbardbl` and
+/// the doubled first three; `None` past nine (`\@ctrerr`).
+pub(crate) fn fnsymbol(n: u32) -> Option<&'static str> {
+    const SYMBOLS: [&str; 9] = [
+        "\u{2217}",
+        "\u{2020}",
+        "\u{2021}",
+        "\u{a7}",
+        "\u{b6}",
+        "\u{2016}",
+        "\u{2217}\u{2217}",
+        "\u{2020}\u{2020}",
+        "\u{2021}\u{2021}",
+    ];
+    SYMBOLS.get(n.checked_sub(1)? as usize).copied()
+}
+
+/// `minipage`, whose footnotes number `mpfootnote` (the environment itself
+/// is not implemented: its body is set as running text).
+fn is_minipage(environment: &str) -> bool {
+    environment == "minipage"
+}
+
+/// `\@alph`: 1-26 as a-z; `None` otherwise (`\@ctrerr`).
+pub(crate) fn alph(n: u32) -> Option<String> {
+    (1..=26)
+        .contains(&n)
+        .then(|| char::from(b'a' + (n - 1) as u8).to_string())
 }
 
 #[cfg(test)]

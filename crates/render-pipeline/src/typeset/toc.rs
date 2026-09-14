@@ -133,6 +133,10 @@ impl Context<'_> {
             baselineskip: Some(self.style.baselineskip_pt),
             vskip_after: Vec::new(),
             pre_space_after: None,
+            lineskip: None,
+            contributed: None,
+            line_penalty: Vec::new(),
+            depth_after: pagebuild::DepthAfter::default(),
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
