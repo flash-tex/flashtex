@@ -300,27 +300,208 @@ This follows directly.
     let runs = text_runs(source);
     assert_eq!(runs[0].0, "Proof.");
     assert_eq!(runs[0].1, ITALIC);
-    for (text, style) in &runs[1..runs.len() - 1] {
-        if text != "∎" {
-            assert_eq!(*style, TextStyle::default(), "proof body must be upright");
-        }
+    for (_, style) in &runs[1..] {
+        assert_eq!(*style, TextStyle::default(), "proof body must be upright");
     }
-    let (last_text, last_style) = runs.last().unwrap();
-    assert_eq!(last_text, "∎");
-    assert_eq!(*last_style, TextStyle::default());
 
     let blocks = parser::parse(source).blocks;
     let has_hfill_before_qed = blocks.iter().any(|block| {
         if let Block::Paragraph(inlines) = block {
             inlines.windows(2).any(|pair| {
                 matches!(pair[0], Inline::HFill { .. })
-                    && matches!(&pair[1], Inline::Text { text, .. } if text == "∎")
+                    && matches!(pair[1], Inline::ProofEnd { .. })
             })
         } else {
             false
         }
     });
     assert!(has_hfill_before_qed, "{blocks:?}");
+}
+
+fn proof_end_count(blocks: &[Block]) -> usize {
+    blocks
+        .iter()
+        .flat_map(|block| match block {
+            Block::Paragraph(inlines)
+            | Block::Styled { content: inlines, .. }
+            | Block::ListItem { content: inlines, .. }
+            | Block::Heading { content: inlines, .. }
+            | Block::FigureCaption { content: inlines } => inlines.iter().collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .filter(|inline| matches!(inline, Inline::ProofEnd { .. }))
+        .count()
+}
+
+fn proof_display(blocks: &[Block]) -> &[Inline] {
+    for block in blocks {
+        let Block::Paragraph(inlines) = block else {
+            continue;
+        };
+        for inline in inlines {
+            if let Inline::Math {
+                display: true,
+                ..
+            } = inline
+            {
+                return inlines;
+            }
+        }
+    }
+    panic!("proof display missing from {blocks:?}");
+}
+
+#[test]
+fn proof_end_marker_in_text_is_source_located_and_right_flushed() {
+    let source = r"\begin{proof}
+This follows directly.
+\end{proof}";
+    let parsed = parser::parse(source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let inlines = parsed
+        .blocks
+        .iter()
+        .find_map(|block| match block {
+            Block::Paragraph(inlines)
+                if inlines.iter().any(|inline| matches!(inline, Inline::ProofEnd { .. })) =>
+            {
+                Some(inlines)
+            }
+            _ => None,
+        })
+        .expect("proof paragraph");
+    let marker = inlines
+        .iter()
+        .find_map(|inline| match inline {
+            Inline::ProofEnd { span } => Some(*span),
+            _ => None,
+        })
+        .expect("proof-end marker");
+    assert_eq!(&source[marker.start..marker.end], r"\end{proof}");
+    assert!(inlines.windows(2).any(|pair| {
+        matches!(pair[0], Inline::HFill { .. }) && matches!(pair[1], Inline::ProofEnd { .. })
+    }));
+}
+
+#[test]
+fn proof_ending_in_a_display_gets_a_marker_after_the_display() {
+    let source = r"\begin{proof}
+\[
+x = y
+\]
+\end{proof}";
+    let parsed = parser::parse(source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let inlines = proof_display(&parsed.blocks);
+    let display_index = inlines
+        .iter()
+        .position(|inline| matches!(inline, Inline::Math { display: true, .. }))
+        .unwrap();
+    assert!(matches!(
+        inlines.get(display_index + 1),
+        Some(Inline::HFill { .. })
+    ));
+    assert!(matches!(
+        inlines.get(display_index + 2),
+        Some(Inline::ProofEnd { .. })
+    ));
+    assert!(matches!(
+        &inlines[display_index],
+        Inline::Math {
+            proof_end: None,
+            ..
+        }
+    ));
+    assert_eq!(proof_end_count(&parsed.blocks), 1);
+}
+
+#[test]
+fn qedhere_in_a_display_attaches_to_the_display_and_suppresses_auto_qed() {
+    let source = r"\begin{proof}
+\[
+x = y \qedhere
+\]
+\end{proof}";
+    let parsed = parser::parse(source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let inlines = proof_display(&parsed.blocks);
+    let marker = inlines.iter().find_map(|inline| match inline {
+        Inline::Math {
+            proof_end: Some(marker),
+            ..
+        } => Some(marker),
+        _ => None,
+    });
+    let marker = marker.expect("display proof-end marker");
+    assert_eq!(&source[marker.span.start..marker.span.end], r"\qedhere");
+    assert_eq!(proof_end_count(&parsed.blocks), 0);
+}
+
+#[test]
+fn qedhere_in_the_last_text_paragraph_is_right_flushed() {
+    let source = r"\begin{proof}
+This follows directly.\qedhere
+\end{proof}";
+    let parsed = parser::parse(source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let marker = parsed.blocks.iter().find_map(|block| match block {
+        Block::Paragraph(inlines) => inlines.iter().find_map(|inline| match inline {
+            Inline::ProofEnd { span } => Some((inlines, *span)),
+            _ => None,
+        }),
+        _ => None,
+    });
+    let (inlines, span) = marker.expect("text proof-end marker");
+    assert_eq!(&source[span.start..span.end], r"\qedhere");
+    assert!(inlines.windows(2).any(|pair| {
+        matches!(pair[0], Inline::HFill { .. }) && matches!(pair[1], Inline::ProofEnd { .. })
+    }));
+    assert_eq!(proof_end_count(&parsed.blocks), 1);
+}
+
+#[test]
+fn qedhere_on_the_last_align_row_attaches_to_that_row() {
+    let source = r"\begin{proof}
+\begin{align}
+a &= b \\
+c &= d \qedhere
+\end{align}
+\end{proof}";
+    let parsed = parser::parse(source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let rows = parsed.blocks.iter().find_map(|block| match block {
+        Block::Paragraph(inlines) => inlines.iter().find_map(|inline| match inline {
+            Inline::MathRows { rows, .. } => Some(rows),
+            _ => None,
+        }),
+        _ => None,
+    });
+    let rows = rows.expect("align rows");
+    let marker = rows.last().and_then(|row| row.proof_end.as_ref());
+    let marker = marker.expect("last-row proof-end marker");
+    assert_eq!(&source[marker.span.start..marker.span.end], r"\qedhere");
+    assert!(rows[..rows.len() - 1]
+        .iter()
+        .all(|row| row.proof_end.is_none()));
+    assert_eq!(proof_end_count(&parsed.blocks), 0);
+}
+
+#[test]
+fn qedsymbol_and_qed_in_text_use_the_proof_end_marker() {
+    let source = r"Text \qedsymbol\qed";
+    let parsed = parser::parse(source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let inlines = match &parsed.blocks[0] {
+        Block::Paragraph(inlines) => inlines,
+        other => panic!("expected paragraph, got {other:?}"),
+    };
+    assert_eq!(
+        inlines
+            .iter()
+            .filter(|inline| matches!(inline, Inline::ProofEnd { .. }))
+            .count(),
+        2
+    );
 }
 
 #[test]
