@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/wordcount-cancel-coverage",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/406",
   "machine": "Overpriced-Hardware",
   "note": "Add debounce-cancel coverage to WordCountModelTests, follow-up review from daniel-parent on #374",
   "started_utc": "2026-09-14T16:02:33Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-WORDCOUNT-CANCEL-COVERAGE",
-  "updated_utc": "2026-09-14T16:02:33Z"
+  "updated_utc": "2026-09-14T16:06:04Z"
 }
