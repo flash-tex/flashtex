@@ -29,6 +29,26 @@ final class DiagnosticsPanelTests: XCTestCase {
                 .init(severity: .warning, message: "Overfull line", source: nil, recovery: nil)]
     }
 
+    /// Source order: main.tex gap, main.tex warning, main.tex typo, chapter.tex
+    /// typo, chapter.tex gap, chapter.tex warning. Codes so `isGap` does not
+    /// depend on message phrasing.
+    func mixedBucketDiagnostics() -> [RuntimeV1.Diagnostic] {
+        [
+            .init(severity: .error, message: "packages tikz are recognised but not implemented",
+                  source: .init(path: "main.tex", startByte: 0, endByte: 4), recovery: nil, code: "unsupported_feature"),
+            .init(severity: .warning, message: "Overfull line",
+                  source: .init(path: "main.tex", startByte: 10, endByte: 14), recovery: nil),
+            .init(severity: .error, message: "unknown command \\alpah",
+                  source: .init(path: "main.tex", startByte: 20, endByte: 26), recovery: nil, code: "unknown_command"),
+            .init(severity: .error, message: "unknown command \\textbff",
+                  source: .init(path: "chapter.tex", startByte: 5, endByte: 13), recovery: nil, code: "unknown_command"),
+            .init(severity: .error, message: "environment 'tabbing' is not implemented",
+                  source: .init(path: "chapter.tex", startByte: 0, endByte: 3), recovery: nil, code: "unsupported_feature"),
+            .init(severity: .warning, message: "Underfull line",
+                  source: .init(path: "chapter.tex", startByte: 40, endByte: 44), recovery: nil),
+        ]
+    }
+
     func model() -> ShellModel {
         let m = ShellModel()
         m.replaceProject(entryText: Self.text)
@@ -163,6 +183,73 @@ final class DiagnosticsPanelTests: XCTestCase {
         XCTAssertEqual(EditorDiagnostics.copyText(groups: groups, selection: "error:not a group", in: diags, texts: texts), all,
                        "a stale selection copies everything rather than nothing")
         XCTAssertEqual(EditorDiagnostics.copyText(groups: [], selection: nil, in: [], texts: texts), "")
+    }
+
+    // MARK: #76 remainder — errors, then warnings, then FlashTeX gaps
+
+    /// Gap at the start of main.tex, warnings in the middle, real typos later
+    /// and in chapter.tex. Groups list author errors first, then warnings,
+    /// then `isGap` rows; within a bucket, `documentOrder` then start byte.
+    /// Occurrence lists stay document order. The diagnostics array itself is
+    /// not reordered (its indices are identity keys for marks / explanations).
+    func testGroupsListErrorsThenWarningsThenGapsAcrossTwoDocuments() {
+        let diags = mixedBucketDiagnostics()
+        let original = diags.map(\.message)
+        let groups = EditorDiagnostics.groups(of: diags, documentOrder: ["main.tex", "chapter.tex"])
+        XCTAssertEqual(diags.map(\.message), original, "groups() must not reorder result.diagnostics")
+        XCTAssertEqual(groups.map(\.message), [
+            "unknown command \\alpah",
+            "unknown command \\textbff",
+            "Overfull line",
+            "Underfull line",
+            "packages tikz are recognised but not implemented",
+            "environment 'tabbing' is not implemented",
+        ])
+        XCTAssertEqual(groups.map(\.first), [2, 3, 1, 5, 0, 4], "first occurrence index in document order within each bucket")
+        XCTAssertEqual(groups.map(\.occurrences), [[2], [3], [1], [5], [0], [4]])
+    }
+
+    /// Copy Diagnostics (no selection) walks groups in the same bucket order
+    /// as the panel, then each group's occurrences in document order.
+    func testCopyTextFollowsBucketThenDocumentOrder() {
+        let diags = mixedBucketDiagnostics()
+        let groups = EditorDiagnostics.groups(of: diags, documentOrder: ["main.tex", "chapter.tex"])
+        let all = EditorDiagnostics.copyText(groups: groups, selection: nil, in: diags)
+        XCTAssertEqual(all, """
+            main.tex:byte20: error: unknown command \\alpah
+            chapter.tex:byte5: error: unknown command \\textbff
+            main.tex:byte10: warning: Overfull line
+            chapter.tex:byte40: warning: Underfull line
+            main.tex:byte0: error: packages tikz are recognised but not implemented
+            chapter.tex:byte0: error: environment 'tabbing' is not implemented
+            """)
+        XCTAssertEqual(EditorDiagnostics.copyText(groups: groups, selection: groups[0].id, in: diags),
+                       "main.tex:byte20: error: unknown command \\alpah")
+    }
+
+    /// ⌘⌥] with nothing selected starts on the first group of the list — the
+    /// first author error, not the earlier gap — so "3 of 12" and stepping
+    /// agree with what the panel shows.
+    func testStepOccurrenceStartsOnFirstErrorGroupNotEarlierGap() {
+        let m = ShellModel()
+        m.replaceProject(entryText: "abcdefghijKLMNOPqr\\alpah")
+        let diags: [RuntimeV1.Diagnostic] = [
+            .init(severity: .error, message: "packages tikz are recognised but not implemented",
+                  source: .init(path: "main.tex", startByte: 0, endByte: 4), recovery: nil, code: "unsupported_feature"),
+            .init(severity: .warning, message: "Overfull line",
+                  source: .init(path: "main.tex", startByte: 10, endByte: 14), recovery: nil),
+            .init(severity: .error, message: "unknown command \\alpah",
+                  source: .init(path: "main.tex", startByte: 18, endByte: 24), recovery: nil, code: "unknown_command"),
+        ]
+        m.result = RuntimeV1.CompileResult(projectId: "p", revision: m.editorRevision, status: .recovered,
+                                           pages: [], diagnostics: diags, pdfPath: nil)
+        m.resultID = "r-order"
+        m.setCompiledDocuments(["main.tex": m.activeText])
+        let panel = DiagnosticsPanelState()
+        m.stepOccurrence(forward: true, panel: panel)
+        XCTAssertEqual(panel.selection, EditorDiagnostics.groups(of: diags, documentOrder: ["main.tex"])[0].id)
+        XCTAssertEqual(m.selection?.nsRange, NSRange(location: 18, length: 6), "lands on \\alpah, not the gap at byte 0")
+        XCTAssertEqual(m.currentDiagnosticID, "r-order#2@main.tex:18..<24")
     }
 
     func testCopyDiagnosticsAsTextWritesThePasteboardAndNotesTheCount() {
