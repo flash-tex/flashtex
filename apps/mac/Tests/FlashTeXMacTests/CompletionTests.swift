@@ -1308,8 +1308,16 @@ final class CompletionTests: XCTestCase {
             tv.setSelectedRange(NSRange(location: (seed as NSString).length, length: 0))
             undo.removeAllActions()
             for ch in typing { key(tv, String(ch), code: 0) } // typed, so the typing undo group is open
+            // GH#256: typing arms the automatic open (#215). Fire it now rather
+            // than racing its timer against ⌃Space and Return, then wait until
+            // every scan either lifecycle scheduled has resolved, so Return
+            // meets the settled session.
+            tv.flushAutomaticCompletion()
             key(tv, " ", code: 49, flags: .control)
-            try await waitUntil("popup for \(typing)") { tv.session != nil }
+            try await waitUntil("popup for \(typing)") {
+                let s = tv.scheduler.statistics
+                return tv.session != nil && s.delivered + s.refusedStale + s.cancelled >= s.scheduled
+            }
             key(tv, "\r", code: 36)
             XCTAssertNil(tv.session)
             XCTAssertEqual(tv.lastCloseReason, .accepted)

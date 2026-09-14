@@ -2885,8 +2885,8 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("Re", "ℜ"),
     ("Im", "ℑ"),
     ("wp", "℘"),
-    ("langle", "〈"),
-    ("rangle", "〉"),
+    ("langle", "⟨"),
+    ("rangle", "⟩"),
     ("lvert", "∣"),
     ("rvert", "∣"),
     // `\|`/`\Vert`/`\lVert`/`\rVert` are U+2016 DOUBLE VERTICAL LINE, a
@@ -4262,6 +4262,13 @@ mod parse_tests {
         assert!(list.atoms[0].superscript.is_some());
         // cmmi "0F is `\epsilon` (lunate), "22 `\varepsilon`.
         assert_eq!(symbols(&parse(r"\epsilon\varepsilon")), ["\u{03F5}", "\u{03B5}"]);
+        // fontmath.ltx `\langle`/`\rangle` are `\mathopen`/`\mathclose` cmsy
+        // "68/"69: the mathematical angle brackets U+27E8/U+27E9, as `\left`
+        // uses, never the CJK U+3008 or the deprecated U+2329.
+        let list = parse(r"\langle x \rangle");
+        assert_eq!(symbols(&list), ["\u{27E8}", "x", "\u{27E9}"]);
+        assert_eq!(atom_class(&list.atoms[0]), Some(AtomClass::Open));
+        assert_eq!(atom_class(&list.atoms[2]), Some(AtomClass::Close));
     }
 
     #[test]

@@ -308,6 +308,9 @@ pub fn diagnostic_json(d: &display::Diagnostic) -> Value {
     v.set("source", d.sources.first().map(source_json).unwrap_or(Value::Null));
     v.set("recovery", d.recovery.clone().map(json::str_).unwrap_or(Value::Null));
     v.set("code", json::str_(d.code.clone()));
+    if let Some(s) = &d.suggestion {
+        v.set("suggestion", json::str_(s.clone()));
+    }
     v
 }
 
@@ -522,6 +525,10 @@ fn jdiag(out: &mut String, d: &display::Diagnostic) {
         Some(s) => jsource(out, s),
         None => out.push_str("null"),
     }
+    if let Some(s) = &d.suggestion {
+        out.push_str(",\"suggestion\":");
+        js(out, s);
+    }
     out.push('}');
 }
 
@@ -719,6 +726,15 @@ mod tests {
         none.diagnostics.clear();
         env.set("payload", none.to_json());
         assert_eq!(none.write_envelope("r-1"), json::write(&env));
+        let mut with_suggestion = display::Diagnostic::error("unknown_command", r"\alpah", vec![src("main.tex", 5, 11)]);
+        with_suggestion.suggestion = Some(r"\alpha".into());
+        let mut suggested = payload.clone();
+        suggested.diagnostics = vec![with_suggestion, display::Diagnostic::error("unsupported_feature", r"\tikz", Vec::new())];
+        env.set("payload", suggested.to_json());
+        let line = suggested.write_envelope("r-1");
+        assert_eq!(line, json::write(&env));
+        assert!(line.contains(r#""suggestion":"\\alpha""#), "{line}");
+        assert!(!line.contains(r#""suggestion":null"#), "{line}");
     }
 
     /// `jpt`/`js` fast paths print exactly what `fmt` printed before.
