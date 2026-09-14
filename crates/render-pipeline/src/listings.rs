@@ -513,6 +513,33 @@ pub fn lstset_spans(texts: &[&str]) -> Vec<Span> {
     out
 }
 
+/// The whole `\lstset{...}`, command and argument, of every document.
+///
+/// The compiler has no `\lstset`, so a call in the *body* has its argument
+/// set as ordinary text: a probe with `\lstset{basicstyle=\ttfamily
+/// \footnotesize,frame=single}` between two paragraphs typeset the line
+/// `basicstyle=,frame=single` and pushed everything after it a line down.
+/// `\lstset` contributes no material at all, so that text is removed here.
+fn lstset_ranges(texts: &[&str]) -> Vec<(usize, usize, usize)> {
+    let mut out = Vec::new();
+    for (document, text) in texts.iter().enumerate() {
+        let mut at = 0usize;
+        while let Some(s) = find_command(text, at, "\\lstset") {
+            at = s + "\\lstset".len();
+            let arg = text[at..].trim_start();
+            let arg_at = text.len() - arg.len();
+            match balanced(arg) {
+                Some(end) => {
+                    out.push((document, s, arg_at + end));
+                    at = arg_at + end;
+                }
+                None => out.push((document, s, at)),
+            }
+        }
+    }
+    out
+}
+
 /// Every `lstlisting` of every document (see [`scan`]).
 pub fn listings(texts: &[&str]) -> Vec<Listing> {
     scan(texts).0
@@ -617,6 +644,35 @@ pub fn apply(
                 }
             }
         }
+    }
+    // A body `\lstset` had its argument set as text by the compiler (see
+    // `lstset_ranges`); the command typesets nothing, so that material goes.
+    let ranges = lstset_ranges(texts);
+    if !ranges.is_empty() {
+        let inside = |c: &CharSrc| {
+            ranges
+                .iter()
+                .any(|(d, a, b)| c.document.0 == *d && c.start >= *a && c.start < *b)
+        };
+        for block in blocks.iter_mut() {
+            let Block::Paragraph { parts, .. } = block else { continue };
+            for part in parts.iter_mut() {
+                let ParaPart::Lines(items) = part else { continue };
+                items.retain(|item| match item {
+                    Item::Word(word) => !word.segments.iter().flat_map(|s| s.chars.iter()).any(&inside),
+                    _ => true,
+                });
+            }
+        }
+        // A paragraph that was nothing but the `\lstset` line is gone; one
+        // left with only glue would set an empty line otherwise.
+        blocks.retain(|block| match block {
+            Block::Paragraph { parts, .. } => parts.iter().any(|part| match part {
+                ParaPart::Lines(items) => items.iter().any(|i| matches!(i, Item::Word(_))),
+                _ => true,
+            }),
+            _ => true,
+        });
     }
     // Last first, so an inserted caption never moves a range not yet done.
     for listing in found.iter().rev() {
@@ -757,8 +813,21 @@ fn limitation(keys: &Keys, lines: usize, columns: bool, body: &str) -> String {
     if keys.numbers == Numbers::Right {
         missing.push("`numbers=right` is not set (only `left` is)".into());
     }
-    if !columns && keys.basicstyle.family.is_some_and(|f| f != FamilyKind::Tt) {
-        missing.push("`columns=[c]fixed` needs a monospaced `basicstyle`, so the characters keep their natural advances".into());
+    if !columns {
+        // listings sets the grid whatever the face is; only a monospaced one
+        // has a single character width, which is what makes the fill one
+        // number. The default (empty) `basicstyle` is the body font, and the
+        // reference spreads even `plain listing` across its cells — this
+        // must say so rather than go quiet on the commonest case of all.
+        missing.push(format!(
+            "`columns=[c]fixed` is not set: the {} `basicstyle` has no single character width, so the characters keep their natural advances",
+            match keys.basicstyle.family {
+                Some(FamilyKind::Rm) => "roman",
+                Some(FamilyKind::Sf) => "sans",
+                Some(FamilyKind::Tt) => "typewriter",
+                None => "default (body font)",
+            }
+        ));
     }
     if let Some(language) = &keys.language {
         missing.push(format!("`language={language}` is read but no keyword, string or comment style is applied"));

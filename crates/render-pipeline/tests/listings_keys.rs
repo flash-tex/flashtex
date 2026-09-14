@@ -24,6 +24,10 @@
 //!   `index out of bounds: the len is 0 but the index is 0`;
 //! - `a_listing_label_resolves_to_the_listing_number`:
 //!   ``\ref{lst:demo}` is unresolved: [... "Listing", "??", ...]`;
+//! - `a_body_lstset_typesets_nothing_and_still_applies`: `the key list is
+//!   not material: [... "basicstyle=", ",frame=single", ...]`;
+//! - `a_listing_with_no_basicstyle_says_its_grid_is_not_set`: the same
+//!   blanket limitation quoted below;
 //! - `the_limitation_names_every_key_that_was_not_applied`:
 //!   ``` "`frame` rules are not drawn" missing from "lstlisting (3 line(s))
 //!   set as a flush-left typewriter paragraph with forced line breaks: the
@@ -283,6 +287,73 @@ fn a_listing_label_resolves_to_the_listing_number() {
         !runs.iter().any(|r| r.text.contains("??")),
         "`\\ref{{lst:demo}}` is unresolved: {:?}",
         runs.iter().map(|r| &r.text).collect::<Vec<_>>()
+    );
+}
+
+/// `\lstset` is legal in the body, and it typesets nothing there either.
+/// The compiler has no `\lstset`, so its argument arrived as ordinary text:
+/// a probe with `\lstset{basicstyle=\ttfamily\footnotesize,frame=single}`
+/// between two paragraphs set the line `basicstyle=,frame=single` and pushed
+/// every baseline after it 13.55 bp down — pdflatex sets the paragraph after
+/// it at 187.370 bp and we set it at 200.920.
+#[test]
+fn a_body_lstset_typesets_nothing_and_still_applies() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let source = concat!(
+        "\\documentclass[11pt]{article}\n\\usepackage[T1]{fontenc}\n",
+        "\\usepackage[margin=1in]{geometry}\n\\usepackage{listings}\n",
+        "\\begin{document}\nAlpha beta gamma delta epsilon zeta eta theta.\n\n",
+        "\\lstset{basicstyle=\\ttfamily\\footnotesize,frame=single}\n\n",
+        "\\begin{lstlisting}\nframed at footnotesize\n\\end{lstlisting}\n\n",
+        "Omicron pi rho sigma tau upsilon phi chi psi omega.\n\\end{document}\n",
+    );
+    let (_, runs) = runs(source);
+    let texts: Vec<&str> = runs.iter().map(|r| r.text.as_str()).collect();
+    assert!(
+        !texts.iter().any(|t| t.contains("basicstyle") || t.contains("frame=")),
+        "the key list is not material: {texts:?}"
+    );
+    // `\footnotesize` in an 11pt article is 9pt on a 11pt `\baselineskip`.
+    let code = runs
+        .iter()
+        .find(|r| r.text.starts_with("framed") || r.text == "f")
+        .unwrap_or_else(|| panic!("no code run in {texts:?}"));
+    assert!(
+        (code.size - bp(9.0)).abs() < 0.02,
+        "the body `\\lstset` reached the listing: {} bp",
+        code.size
+    );
+}
+
+/// The default `basicstyle` is the body font, and listings still sets its
+/// fixed grid there — the reference spreads `plain listing` across cells of
+/// `0.6em` of `cmr10.95`, opening at 73.506 bp where we open at 72.000. Only
+/// a monospaced face has one character width, so this module sets no grid
+/// there, and the limitation must say so rather than go quiet on the
+/// commonest case of all: a listing with no keys.
+#[test]
+fn a_listing_with_no_basicstyle_says_its_grid_is_not_set() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let source = concat!(
+        "\\documentclass[11pt]{article}\n\\usepackage[T1]{fontenc}\n",
+        "\\usepackage{listings}\n\\begin{document}\n",
+        "\\begin{lstlisting}\nplain listing, no keys at all\n\\end{lstlisting}\n",
+        "\\end{document}\n",
+    );
+    let (messages, _) = runs(source);
+    let listing = messages
+        .iter()
+        .find(|m| m.starts_with("lstlisting ("))
+        .unwrap_or_else(|| panic!("no lstlisting limitation in {messages:?}"));
+    assert!(
+        listing.contains("`columns=[c]fixed` is not set") && listing.contains("default (body font)"),
+        "{listing:?}"
     );
 }
 
