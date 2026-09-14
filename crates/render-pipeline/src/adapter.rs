@@ -3061,6 +3061,57 @@ fn has_blank_line(source: &str) -> bool {
 /// its end (see [`Styles::closes_at`]).
 type StyleInterval = (usize, usize, crate::nfss::Command, bool);
 
+/// `\url{...}` and `\nolinkurl{...}` (`url.sty`, which `hyperref` loads):
+/// their argument is read as *raw source bytes*, and the URL is set in the
+/// typewriter family.
+///
+/// Two things follow for [`style_intervals`], and both are why these are not
+/// ordinary [`text_font_command`] entries:
+///
+/// 1. The argument is **opaque**. url.sty makes every character of a URL
+///    "other" before it is read, so `%`, `#`, `_`, `&` and `\` inside it are
+///    literal (the compiler does the same in `parser::url_argument`). The
+///    style scan must not treat a `%` in `\url{.../a%20b}` as a comment, or
+///    everything to the end of that line — including a following `\textbf{}`
+///    — silently loses its style.
+/// 2. The interval covers the **whole command**, from the backslash through
+///    the closing brace, not just the braced argument. The compiler gives
+///    every run it splits a URL into the span of the entire `\url{...}`
+///    (`parser::push_url_text`), and the style is looked up at `span.start`,
+///    which is the backslash.
+fn url_command(name: &str) -> bool {
+    matches!(name, "url" | "nolinkurl")
+}
+
+/// The end of a `\url`/`\nolinkurl` argument that starts at the `{` at
+/// `open`: the matching `}`, counting nested braces and reading `\{` / `\}`
+/// as literal characters rather than grouping. This mirrors
+/// `compiler::parser::url_argument` byte for byte, so the interval this
+/// produces covers exactly the bytes that compiler put in the URL's span.
+/// `None` when the argument is never closed.
+fn url_argument_end(bytes: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut i = open + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if matches!(bytes.get(i + 1), Some(b'{' | b'}')) => i += 2,
+            b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    None
+}
+
 /// The NFSS commands of a text font command with a braced argument
 /// (latex.ltx 14213-14222 `\DeclareTextFontCommand`, and `\emph`).
 fn text_font_command(name: &str) -> Option<&'static [crate::nfss::Command]> {
@@ -3195,6 +3246,25 @@ fn style_intervals(source: &str) -> Vec<StyleInterval> {
                 // The control word's letters.
                 let word_end = i + 1 + rest[1..].bytes().take_while(u8::is_ascii_alphabetic).count();
                 let name = &source[i + 1..word_end];
+                if url_command(name) {
+                    // `\url{...}`: typewriter over the whole command, and the
+                    // argument's bytes are skipped rather than scanned (see
+                    // `url_command`).
+                    let mut j = word_end;
+                    while j < bytes.len() && (bytes[j] as char).is_whitespace() {
+                        j += 1;
+                    }
+                    if j < bytes.len() && bytes[j] == b'{' {
+                        if let Some(close) = url_argument_end(bytes, j) {
+                            use crate::nfss::{Command as C, FamilyKind as F};
+                            out.push((i, close + 1, C::Family(F::Tt), false));
+                            i = close + 1;
+                            continue;
+                        }
+                    }
+                    i = word_end;
+                    continue;
+                }
                 if let Some(commands) = text_font_command(name) {
                     let mut j = word_end;
                     while j < bytes.len() && (bytes[j] as char).is_whitespace() {
@@ -5028,5 +5098,77 @@ mod tests {
         // "A." and "B;" stay 1000 (§1034: a code above 1000 after an uppercase
         // letter), ")" keeps the factor of the "." before it.
         assert_eq!(factors, vec![3000, 1250, 2000, 1000, 1000, 3000]);
+    }
+
+    /// The family every character of an item carries, as one string of
+    /// `r`/`t`/`s` per word (`\rmfamily`/`\ttfamily`/`\sffamily`).
+    fn families(items: &[Item]) -> String {
+        use crate::nfss::FamilyKind;
+        items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Word(w) => Some(w.segments.iter().map(|s| match s.style.family {
+                    FamilyKind::Rm => 'r',
+                    FamilyKind::Tt => 't',
+                    FamilyKind::Sf => 's',
+                })),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    /// url.sty sets a URL in `\UrlFont`, whose default is `\ttfamily`
+    /// (url.sty 4.3 `\def\Url@FormatString`), and hyperref keeps that font.
+    /// Measured against pdflatex (TeX Live 2025, 11pt `article`, T1): the
+    /// `\hbox` of `\url{https://example.org/flashtex/glossary}` is
+    /// 209.35973pt, the same as `\texttt` of the same string, where the
+    /// roman setting this used to produce is 32pt narrower.
+    #[test]
+    fn url_and_nolinkurl_are_set_in_the_typewriter_family() {
+        let it = items("A \\url{https://example.org/x} B");
+        assert_eq!(families(&it), "rtr", "{it:?}");
+        let it = items("A \\nolinkurl{https://example.org/x} B");
+        assert_eq!(families(&it), "rtr", "{it:?}");
+        // `\href` typesets only its second argument, in the ambient family.
+        let it = items("A \\href{https://example.org/x}{link text} B");
+        assert_eq!(families(&it), "rrrr", "{it:?}");
+    }
+
+    /// A URL's argument is read as raw source bytes (url.sty makes every
+    /// character "other"; the compiler does the same in
+    /// `parser::url_argument`), so the style scan must not interpret what is
+    /// inside it. A `%` used to start a comment and swallow the rest of the
+    /// line, losing the style of everything after the URL.
+    #[test]
+    fn a_percent_or_brace_inside_a_url_does_not_disturb_a_later_font_command() {
+        let it = items("A \\url{https://e.org/a%20b} \\textbf{bold} C");
+        assert_eq!(families(&it), "rtrr", "{it:?}");
+        let Item::Word(bold) = it.iter().filter(|i| matches!(i, Item::Word(_))).nth(2).unwrap() else {
+            panic!()
+        };
+        assert_eq!(bold.text(), "bold");
+        assert!(bold.segments[0].style.bold, "the \\textbf after the URL is still bold: {bold:?}");
+        // A brace pair inside the URL is balanced, not a group.
+        let it = items("A \\url{https://e.org/{x}} \\textbf{bold} C");
+        assert_eq!(families(&it), "rtrr", "{it:?}");
+    }
+
+    /// The typewriter family covers the whole `\url{...}`, not just its
+    /// braced argument: the compiler gives every run it splits the URL into
+    /// the span of the entire command (`parser::push_url_text`), and the
+    /// style is read at that span's first byte, the backslash.
+    #[test]
+    fn the_url_style_interval_starts_at_the_backslash_and_ends_at_the_brace() {
+        let src = "x \\url{ab} y";
+        let intervals = style_intervals(src);
+        let url = intervals
+            .iter()
+            .find(|(_, _, c, _)| matches!(c, crate::nfss::Command::Family(crate::nfss::FamilyKind::Tt)))
+            .expect("the URL contributes a typewriter interval");
+        assert_eq!(&src[url.0..url.1], "\\url{ab}", "{intervals:?}");
+        // The text after the URL is outside it.
+        assert_eq!(Styles::new(intervals, crate::nfss::Scheme::LmT1).at(src.find('y').unwrap()).family,
+                   crate::nfss::FamilyKind::Rm);
     }
 }
