@@ -1,0 +1,26 @@
+{
+  "agent_id": "daniel-muse-lead",
+  "allocation_id": "daniel-meta-model-api-key",
+  "assignment_acknowledgements": {},
+  "branch": "agent/daniel-muse-lead/register",
+  "capabilities": [
+    "compiler",
+    "render-pipeline",
+    "tex-boxes",
+    "page-builder"
+  ],
+  "code_revision": "06007472087b0fca97d74ef779eb374b67fb8231",
+  "eta_minutes": null,
+  "machine": "Overpriced-Hardware.local",
+  "main_integrated_through": "06007472087b0fca97d74ef779eb374b67fb8231",
+  "next_action": "Await and acknowledge assignment",
+  "reviewed_peers": {},
+  "schema_version": 1,
+  "state": "registered",
+  "summary": "Available for Commander assignment",
+  "tool": "Claude Sonnet 5 supervising Muse Code (muse-spark-1.3-contributor)",
+  "updated_utc": "2026-09-14T07:27:31Z",
+  "usage": {
+    "status": "unknown"
+  }
+}
