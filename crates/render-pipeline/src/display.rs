@@ -406,6 +406,22 @@ pub enum Severity {
     Error,
 }
 
+/// Which layer produced a diagnostic.
+///
+/// Not on the wire: `code` carries the machine-readable category, and the
+/// compiler's codes (`unknown_command`, `unsupported_feature`, ...) are a
+/// vocabulary the pipeline may one day want to reuse for its own findings.
+/// Tests that need "did anything reach me from the compiler at all?" must ask
+/// this rather than pattern-matching `code`, which cannot stay a reliable
+/// origin marker once real codes flow through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// Raised by this crate (font resolution, math resources, TikZ, ...).
+    Pipeline,
+    /// Converted from a `flashtex_compiler` diagnostic by [`Diagnostic::from_compiler`].
+    Compiler,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diagnostic {
     pub code: String,
@@ -414,6 +430,8 @@ pub struct Diagnostic {
     pub sources: Vec<SourceRange>,
     /// The compiler's recovery note, when it produced this diagnostic.
     pub recovery: Option<String>,
+    /// Which layer raised this. Not serialised; see [`Origin`].
+    pub origin: Origin,
 }
 
 impl Diagnostic {
@@ -424,6 +442,7 @@ impl Diagnostic {
             severity: Severity::Error,
             sources,
             recovery: None,
+            origin: Origin::Pipeline,
         }
     }
     pub fn warning(code: &str, message: impl Into<String>, sources: Vec<SourceRange>) -> Diagnostic {
@@ -433,18 +452,32 @@ impl Diagnostic {
             severity: Severity::Warning,
             sources,
             recovery: None,
+            origin: Origin::Pipeline,
         }
     }
 
     /// Converts a compiler diagnostic; `paths` is indexed by `DocumentId`.
+    ///
+    /// The compiler's own `code` is preserved verbatim, so the runtime-v1
+    /// vocabulary (`unknown_command`, `unsupported_feature`, `syntax_error`,
+    /// `export_limitation`, `fidelity_note`, `recovered_input` --
+    /// `docs/contracts/runtime-v1.md`) survives to the wire and consumers can
+    /// "classify by `code`, not by `message` wording" as that contract
+    /// requires. This used to flatten every compiler diagnostic to the literal
+    /// `"compiler"`, a value outside the contract's enumeration, which made
+    /// every code-keyed assertion downstream structurally unable to match a
+    /// compiler diagnostic. `"compiler"` remains only as the fallback for a
+    /// diagnostic the compiler itself left uncoded (`code: None`), so the
+    /// field stays non-empty.
     pub fn from_compiler(d: &flashtex_compiler::diagnostics::Diagnostic, paths: &[&str]) -> Diagnostic {
         use flashtex_compiler::diagnostics::Severity as S;
         Diagnostic {
-            code: "compiler".into(),
+            code: d.code.map(|c| c.as_str().to_string()).unwrap_or_else(|| "compiler".to_string()),
+            origin: Origin::Compiler,
             message: d.message.clone(),
             severity: match d.severity {
                 S::Error => Severity::Error,
-                _ => Severity::Warning,
+                S::Warning => Severity::Warning,
             },
             sources: d
                 .span

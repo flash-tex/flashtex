@@ -2,19 +2,22 @@
 //! glyph runs for its node text; the compiler's "unknown environment" text
 //! and diagnostics for the picture body are gone, the surrounding text stays.
 
+mod common;
+
 use flashtex_compiler::parser::SourceDocument;
-use flashtex_render_pipeline::display::{Item, PathCmd, PathPaintOp, TICKS_PER_BP};
+use flashtex_render_pipeline::display::{Item, Origin, PathCmd, PathPaintOp, TICKS_PER_BP};
 use flashtex_render_pipeline::{render, FontSet, RenderOptions};
 
 const SRC: &str = "Before text.\n\n\\begin{tikzpicture}\n\\draw[->] (0,0) -- (2,1) node[midway,above] {hi};\n\\node[draw] at (0,0) {box};\n\\clip (0,0) circle (1);\n\\fill[red] (0,0) rectangle (1,1);\n\\end{tikzpicture}\n\nAfter text.\n";
 
 #[test]
 fn tikzpicture_becomes_paths_and_glyph_runs() {
-    let fonts = FontSet::with_default_dirs(&[]);
-    if !fonts.latin_modern_available() {
-        eprintln!("SKIP: Latin Modern fonts are not installed");
+    // Via `common::lm_available`, not the raw probe: this was the last test in
+    // the suite that still skipped silently on a fontless run.
+    if !common::lm_available() {
         return;
     }
+    let fonts = FontSet::with_default_dirs(&[]);
     let docs = [SourceDocument { path: "main.tex", text: SRC }];
     let out = render(&docs, "main.tex", 1, "tikz", &fonts, &RenderOptions::default());
     let page = &out.v2.pages[0];
@@ -66,9 +69,17 @@ fn tikzpicture_becomes_paths_and_glyph_runs() {
         .unwrap();
     assert!(min_x >= 72 * TICKS_PER_BP as i64 - 1, "{min_x}");
 
-    // No compiler complaints about \draw or the unknown environment.
+    // No compiler complaints about \draw or the unknown environment: the
+    // pipeline's own TikZ reader supersedes them, so `lib.rs`'s `in_picture`
+    // filter must drop every compiler diagnostic spanned by the picture.
+    //
+    // Asks `origin`, not `code`. This used to read `d.code != "compiler"`,
+    // which worked only because `from_compiler` stamped that literal on
+    // everything; now that real codes are preserved, a leaked `\draw` would
+    // arrive as `unsupported_feature` and the old form would pass silently --
+    // going dark on exactly the regression it exists to catch.
     for d in &out.v2.diagnostics {
-        assert!(d.code != "compiler", "{d:?}");
+        assert_eq!(d.origin, Origin::Pipeline, "compiler diagnostic leaked out of the picture: {d:?}");
     }
     let features = out.v2.required_features();
     assert!(features.contains(&"path_stroke") && features.contains(&"path_fill") && features.contains(&"clip"), "{features:?}");
