@@ -7090,6 +7090,7 @@ fn picture_items(
         let n = g.glyphs.len();
         let mut glyphs = Vec::with_capacity(n);
         let mut clusters = Vec::with_capacity(n);
+        let mut end_caret = None;
         for (ci, sg) in g.glyphs.iter().enumerate() {
             let ox = tx(bx + sg.x_pt / PT_PER_BP);
             let adv = Tick::from_tex_pt(sg.advance_pt);
@@ -7104,12 +7105,9 @@ fn picture_items(
             // Clusters partition the text: spaces belong to the glyph before.
             let start = if ci == 0 { 0 } else { sg.text_range.start };
             let end = g.glyphs.get(ci + 1).map_or(t.text.len(), |next| next.text_range.start).max(start);
-            let last = (ci + 1 == n).then(|| display::Caret {
-                text_byte: t.text.len(),
-                x: Tick(ox.0 + adv.0),
-                top,
-                height: box_h,
-            });
+            if ci + 1 == n {
+                end_caret = Some(display::EndCaret { x: Tick(ox.0 + adv.0), text_byte: t.text.len() });
+            }
             clusters.push(display::Cluster {
                 text_start_byte: start,
                 text_end_byte: end,
@@ -7118,15 +7116,6 @@ fn picture_items(
                     top,
                     width: adv.max(Tick(1)),
                     height: box_h,
-                },
-                carets: display::Carets {
-                    first: display::Caret {
-                        text_byte: start,
-                        x: ox,
-                        top,
-                        height: box_h,
-                    },
-                    last,
                 },
                 provenance: Provenance::Source(node_source.clone()),
             });
@@ -7139,6 +7128,7 @@ fn picture_items(
             clusters,
             paint: paint(&t.paint),
             role: display::RunRole::Text,
+            end_caret,
         }));
     };
     let mut ti = 0;
@@ -7163,24 +7153,25 @@ fn picture_items(
 fn join_runs(prev: &mut GlyphRun, next: GlyphRun) {
     let offset = prev.text.len();
     let base = prev.clusters.len() as u32;
-    if let Some(last) = prev.clusters.last_mut() {
-        last.carets.last = None;
-    }
+    // The joined run ends where `next` ends. Holding the end caret on the
+    // run rather than on a cluster makes "only the last cluster carries the
+    // trailing caret" true by construction instead of by maintenance.
+    prev.end_caret = next.end_caret.map(|mut e| {
+        e.text_byte += offset;
+        e
+    });
     prev.text.push_str(&next.text);
     prev.glyphs.extend(next.glyphs.into_iter().map(|mut g| {
         g.cluster += base;
         g
     }));
     prev.clusters.extend(next.clusters.into_iter().map(|mut c| {
+        // Cluster text bytes index the joined run text; the carets derive
+        // from these, so re-basing them re-bases the carets too. (A caret
+        // outside its cluster is refused by rendering-core and the Mac
+        // consumer, which then shows no frame at all.)
         c.text_start_byte += offset;
         c.text_end_byte += offset;
-        // Carets are byte offsets into the same run text: re-base them too
-        // (a caret outside its cluster is refused by rendering-core and the
-        // Mac consumer, which then shows no frame at all).
-        c.carets.first.text_byte += offset;
-        if let Some(last) = c.carets.last.as_mut() {
-            last.text_byte += offset;
-        }
         c
     }));
 }
@@ -7234,6 +7225,7 @@ fn text_item(
         return None;
     }
     let last_index = clusters.len().saturating_sub(1);
+    let mut end_caret = None;
     let out_clusters = clusters
         .iter()
         .enumerate()
@@ -7242,20 +7234,9 @@ fn text_item(
                 (Some(a), Some(b)) => (a.0, b.0 + b.1),
                 _ => (run.x, run.x),
             };
-            let carets = display::Carets {
-                first: Caret {
-                    text_byte: c.text_range.start,
-                    x: Tick::from_tex_pt(x0),
-                    top,
-                    height: box_height,
-                },
-                last: (ci == last_index).then(|| Caret {
-                    text_byte: c.text_range.end,
-                    x: Tick::from_tex_pt(x1),
-                    top,
-                    height: box_height,
-                }),
-            };
+            if ci == last_index {
+                end_caret = Some(display::EndCaret { x: Tick::from_tex_pt(x1), text_byte: c.text_range.end });
+            }
             Cluster {
                 text_start_byte: c.text_range.start,
                 text_end_byte: c.text_range.end,
@@ -7265,7 +7246,6 @@ fn text_item(
                     width: Tick::from_tex_pt(x1 - x0),
                     height: box_height,
                 },
-                carets,
                 provenance: Provenance::Source(source_of(c.span)),
             }
         })
@@ -7278,6 +7258,7 @@ fn text_item(
         clusters: out_clusters,
         paint,
         role: display::RunRole::Text,
+        end_caret,
     }))
 }
 
@@ -7354,6 +7335,7 @@ fn math_items(
             clusters: Vec::new(),
             paint,
             role: display::RunRole::Math,
+            end_caret: None,
         });
         let b = face.bounds(crate::ids::GlyphId(gid), Some(g.ch));
         // The advance TeX used: the laid-out glyph box's width (the TFM
@@ -7442,15 +7424,6 @@ fn math_items(
                 top,
                 width: Tick::from_tex_pt(adv),
                 height: hh,
-            },
-            carets: display::Carets {
-                first: Caret {
-                    text_byte: start,
-                    x: Tick::from_tex_pt(g.x),
-                    top,
-                    height: hh,
-                },
-                last: None,
             },
             provenance: Provenance::Source(glyph_src),
         });
