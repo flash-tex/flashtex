@@ -138,7 +138,7 @@ struct FlashTeXMacApp: App {
         // while typing (FT-071 sample) because `result`/`displayListV2` were
         // read here per reply. Commands read the change-only mirrors instead.
         .commands {
-            NavigationCommands(model: model) // Navigation.swift
+            NavigationCommands(model: model) // Navigation.swift (includes Editor ▸ Fold)
             DiagnosticsCommands(model: model) // DiagnosticsPanel.swift: Edit > Copy Diagnostics as Text (⌘⌥C)
             FindCommands() // EditorFind.swift: Edit > Find submenu (⌘F, ⌥⌘F, ⌘G, ⇧⌘G, ⌘E, ⌘J)
             ProjectSearchCommands(openWindow: openWindow) // ProjectSearchPanel.swift: ⌘⇧F Find in Project…
@@ -186,6 +186,10 @@ struct FlashTeXMacApp: App {
                 Button("FlashTeX Accessibility Help") { openWindow(id: AccessibilityHelpView.windowID) }
             }
             CommandGroup(after: .pasteboard) {
+                Divider()
+                Button("Re-indent Lines") { EditorIndentationAction.reindentLines() }
+                    .keyboardShortcut("i", modifiers: [.control])
+                Button("Re-indent Document") { EditorIndentationAction.reindentDocument() }
                 Divider()
                 Button("Pin Insertion Point") { model.pinAnchorAtCaret() }
                     .keyboardShortcut("p", modifiers: [.command, .option]) // ⌘⇧P is the command palette (View)
@@ -257,6 +261,20 @@ struct FlashTeXMacApp: App {
                     .disabled(!model.workerAttached)
                 Button("Detach Worker") { model.detachWorker() }
                     .disabled(!model.workerAttached)
+            }
+        }
+        .commands {
+            // Separate `.commands` so this is not an 11th child of the builder
+            // above (SwiftUI's CommandsBuilder limit). Replaces the system Print
+            // that would otherwise print the editor view.
+            CommandGroup(replacing: .printItem) {
+                Button("Print…") { model.printDocument() }
+                    .keyboardShortcut("p")
+                    .disabled(!PrintController.documentEnabled(model)) // change-only mirrors (see PrintController)
+                    .help(PrintController.documentHelp(model))
+                Button("Print Source…") { model.printSource() }
+                    .disabled(!PrintController.sourceEnabled(model))
+                    .help(PrintController.sourceHelp(model))
             }
         }
         Window("Nearby Companion", id: "nearby") {

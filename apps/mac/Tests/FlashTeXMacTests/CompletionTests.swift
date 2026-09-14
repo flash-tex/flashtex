@@ -2,6 +2,7 @@ import CryptoKit
 import SwiftUI
 import XCTest
 import FlashTeXAccessibility
+import HostedWindows
 @testable import FlashTeXProtocol
 @testable import FlashTeXMac
 
@@ -953,7 +954,7 @@ final class CompletionTests: XCTestCase {
     @MainActor
     func testTextViewCancelsOnCaretMoveTextChangeAndResign() throws {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -1059,7 +1060,7 @@ final class CompletionTests: XCTestCase {
     @MainActor
     func testKeyboardChoosesInsertsAndClosesThroughTheRealTextView() async throws {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -1218,7 +1219,7 @@ final class CompletionTests: XCTestCase {
     @MainActor
     func testTabAndShiftTabTraverseTheListWithVoiceOverLabels() async throws {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -1296,7 +1297,7 @@ final class CompletionTests: XCTestCase {
     @MainActor
     func testSnippetsInsertThroughTheRealTextViewAsOneUndoStep() async throws {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -1437,7 +1438,7 @@ final class CompletionTests: XCTestCase {
     @MainActor
     func testKeystrokeThroughOpenListOnDemoTexDoesNotScanOnMain() async throws {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -1623,7 +1624,7 @@ final class CompletionLiveHelperTests: XCTestCase {
         model.autoCompile = true
         XCTAssertEqual(model.openTex(at: tex), .opened)
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model))
         window.orderFrontRegardless() // never makeKey
         defer { window.orderOut(nil); model.detachController() }
@@ -1765,7 +1766,7 @@ final class CompletionLiveHelperTests: XCTestCase {
         model.autoCompile = true
         XCTAssertEqual(model.openTex(at: tex), .opened)
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model))
         window.orderFrontRegardless() // never makeKey
         defer { window.orderOut(nil); model.detachController() }
