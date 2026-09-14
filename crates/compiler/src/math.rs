@@ -628,8 +628,13 @@ pub fn is_math_environment(name: &str) -> bool {
 /// Exceeding the bound is an explicit diagnostic, not a crash.
 // Keep ample headroom for the command parser's stack frame on the macOS Swift
 // app's worker thread as the supported command set grows. The previous 256
-// limit could exhaust that thread before the guard was reached.
-pub const MAX_MATH_DEPTH: usize = 128;
+// limit could exhaust that thread before the guard was reached. The previous
+// 128 limit still overflowed debug builds: `\frac`/`\sqrt` nesting recurses
+// through several large frames per level (`list`/`list_inner`/`atom`/
+// `command_atom`/`required_group`) and aborts around 60 levels deep in debug,
+// before the guard is ever reached. This limit sits at half that measured
+// depth, so the guard fires first on every profile.
+pub const MAX_MATH_DEPTH: usize = 32;
 
 struct MathParser<'a> {
     tokens: &'a [Token],
@@ -651,7 +656,11 @@ struct MathParser<'a> {
 
 impl MathParser<'_> {
     fn list(&mut self, stop_at_brace: bool) -> MathList {
-        if self.depth >= MAX_MATH_DEPTH {
+        // `>` (not `>=`): the outermost list occupies one depth unit, so
+        // nesting of exactly `MAX_MATH_DEPTH` still parses cleanly and the
+        // diagnostic fires first at one level past the limit — matching
+        // `required_text_group`'s `depth > MAX_MATH_DEPTH` check below.
+        if self.depth > MAX_MATH_DEPTH {
             // Consume the rest so the caller cannot loop on the same tokens.
             let span = self.tokens.get(self.i).map(|t| t.span);
             self.diagnostics.push(Diagnostic::error(
