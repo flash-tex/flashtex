@@ -2645,10 +2645,10 @@ impl P<'_> {
     /// `\maketitle`: builds `Block::TitleBlock` from whatever `\title`/
     /// `\author`/`\date` are currently set to, mirroring how real
     /// `article.cls` reads `\@title`/`\@author`/`\@date`. Requires `\title`
-    /// and a non-empty `\author` (real LaTeX degrades to an invisible empty
-    /// box; this compiler never fabricates one — see the crate's `README.md`
-    /// boundary) and otherwise produces no block, with a diagnostic naming
-    /// what is missing.
+    /// (LaTeX's `No \title given` is an error) and otherwise produces no
+    /// block. A missing `\author` is LaTeX's `No \author given` warning and an
+    /// empty `\author{}` is silent; both set the block with no author line,
+    /// which is LaTeX's empty author box, not a fabricated placeholder.
     fn maketitle(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         self.flush_paragraph(blocks, para);
 
@@ -2660,14 +2660,16 @@ impl P<'_> {
             ));
             return;
         };
-        let Some((author_tokens, author_span)) = self.author.clone() else {
-            self.diags.push(Diagnostic::error(
-                "\\maketitle requires \\author to be set first",
+        // latex.ltx: `\def\@author{\@latex@warning@no@line{No \noexpand\author
+        // given}}`. The title block is set regardless, with an empty author box.
+        let (author_tokens, author_span) = self.author.clone().unwrap_or_else(|| {
+            self.diags.push(Diagnostic::warning(
+                "No \\author given",
                 Some(span),
-                Some("no title block was produced".into()),
+                Some("set the title block without an author line, as LaTeX does".into()),
             ));
-            return;
-        };
+            (Vec::new(), span)
+        });
 
         // `\@maketitle` sets `\@title`, `\@author`, `\@date` in that
         // order; each `\thanks` steps `footnote` there.
@@ -2698,15 +2700,9 @@ impl P<'_> {
             author_content.extend(inlines);
             wrote_author = true;
         }
-        if !wrote_author {
-            self.diags.push(Diagnostic::error(
-                "\\maketitle requires \\author to name at least one author",
-                Some(author_span),
-                Some("no title block was produced".into()),
-            ));
-            return;
-        }
-        if and_count > 0 {
+        // `\author{}` (or only blank `\and` slots) is an author that is given
+        // but empty: pdfLaTeX sets an empty author box without a warning.
+        if and_count > 0 && wrote_author {
             self.diags.push(Diagnostic::warning(
                 "multiple \\and-separated authors are typeset one per line; this compiler does not yet place them side by side in columns",
                 Some(author_span),
@@ -5531,10 +5527,9 @@ impl P<'_> {
         let skipped = self.skip_recoverable_argument(name);
         self.diags.push(Diagnostic::command_error(
             name,
-            format!(
-                "\\{} is not supported by this compiler version; unrestricted TeX math mode is not implemented",
-                name
-            ),
+            // A text-mode command: math has its own reader and diagnostics,
+            // so this message says nothing about math mode.
+            format!("\\{} is not supported by this compiler version", name),
             Some(span),
             Some(if skipped {
                 "skipped the command and its argument, which looked like a parameter rather than text".into()
