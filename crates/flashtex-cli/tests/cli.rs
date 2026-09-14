@@ -194,6 +194,10 @@ fn a_missing_include_is_reported_and_the_build_still_writes() {
     assert_eq!(o.status.code(), Some(0), "{err}");
     assert!(dir.join("main.pdf").exists(), "default -o is <main>.pdf");
     assert!(err.contains("main.tex:4:1: error[missing_file]"), "{err}");
+    assert_eq!(err.lines().filter(|line| line.contains("main.tex:4:1: error[")).count(), 1, "{err}");
+    assert!(err.contains("skipped the missing include"), "{err}");
+    let report = json(&stdout(&o));
+    assert_eq!(report.get("summary").unwrap().get("errors").and_then(|v| v.as_i64()), Some(1), "{}", stdout(&o));
     let strict = run(&["build", src.to_str().unwrap(), "--strict", "--font-dir", fonts.to_str().unwrap()]);
     assert_eq!(strict.status.code(), Some(1), "{}", stderr(&strict));
     let _ = std::fs::remove_dir_all(&dir);
