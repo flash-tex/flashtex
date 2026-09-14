@@ -145,14 +145,14 @@ fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, 
             FloatPart::Caption { items } => {
                 flush(&mut pending, centered, &mut y, &mut prev_depth, &mut elems, ctx);
                 y += fp.abovecaptionskip;
-                let Some(mut block) = ctx.paragraph_block(items, false, true, false, ParaStyle::Plain, None) else { continue };
+                let Some(mut block) = ctx.paragraph_block(items, false, true, false, ParaStyle::Plain, None, None) else { continue };
                 let lines = &block.block.lines.lines;
                 // `\@caption` runs `\@parboxrestore` before `\@makecaption`, so
                 // `\centering` does not reach a caption set as a paragraph:
                 // only the one-line `\hbox to\hsize{\hfil...\hfil}` is centred.
                 let fits = lines.len() == 1 && lines[0].natural_width <= tw + 1e-6;
                 if fits {
-                    if let Some(b) = ctx.paragraph_block(items, false, true, false, ParaStyle::Center, None) {
+                    if let Some(b) = ctx.paragraph_block(items, false, true, false, ParaStyle::Center, None, None) {
                         block = b;
                     }
                 }
