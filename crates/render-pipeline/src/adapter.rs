@@ -4707,7 +4707,16 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     let text: String = run.iter().map(|(c, _)| *c).collect();
                     let srcs: Vec<CharSrc> = run.iter().map(|(_, s)| *s).collect();
                     for (c, _) in run.iter() {
-                        *factor = space_factor(*c, *factor);
+                        // `\@verb` is `\@vobeyspaces \frenchspacing \@sverb`
+                        // and `\verbatim` is `\@verbatim \frenchspacing ...`
+                        // (latex.ltx 15514, 15459), so `\sfcode`.' is 1000
+                        // inside both and no character there raises the space
+                        // factor -- including for the space *after* the
+                        // construct, since the factor itself is not restored
+                        // by the closing group. Measured: `A \verb|xy.| B`
+                        // and `A \verb|xyz| B` set `B` at the same 163.5761,
+                        // while `A \texttt{xy.} B` sets it at 164.6819.
+                        *factor = if literal { 1000 } else { space_factor(*c, *factor) };
                     }
                     push_segment(items, text, srcs, style);
                     run.clear();

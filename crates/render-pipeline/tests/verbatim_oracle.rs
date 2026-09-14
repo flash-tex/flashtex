@@ -41,7 +41,7 @@ const SUBSTITUTION_CODES: [&str; 4] = [
 ];
 
 /// The fixtures this lane sets exactly as pdfLaTeX does.
-const GATED: [&str; 14] = [
+const GATED: [&str; 15] = [
     "01-verbatim-basic",
     "02-verbatim-ligatures",
     "03-verbatim-tabs",
@@ -56,26 +56,24 @@ const GATED: [&str; 14] = [
     "12-verbatim-12pt",
     "13-verbatim-long-line",
     "14-verbatim-pagebreak",
+    "32-verbatim-microtype",
 ];
 
 /// Committed with their references but not gated yet, each for a reason
 /// that names what is still missing. Listed here so the material is in the
 /// tree and the follow-up is visible rather than forgotten.
-const NOT_YET: [(&str, &str); 3] = [
+const NOT_YET: [(&str, &str); 2] = [
     ("15-verbatim-small",
      "The size declaration in force. pdfTeX sets the body in CMTT9 (per-character advance 4.7073 bp \
       against CMTT10's 5.2303); the pipeline sets CMTT10. The compiler's `Inline::Verbatim` and \
       `Block::Verbatim` carry no `style`, so the declaration never reaches the pipeline, and \
       `declared_size` is explicit that the pipeline must not re-derive sizes from the source \
-      (pin `b38e1884`). It is a compiler change plus a vendor re-pin."),
+      (pin `b38e1884`). Fixed compiler-side in PR #261; needs that plus a vendor re-pin."),
     ("28-lstinline",
      "The compiler typesets `\\lstset`'s argument as prose: 126 glyphs against pdfTeX's 115, the \
       extra 11 being the characters `basicstyle=` at the head of the first line. `\\lstinline` \
-      itself is lexed correctly (PR #188, already in the vendored mirror). Needs the compiler to \
-      consume listings' setup commands, plus a vendor re-pin."),
-    ("32-verbatim-microtype",
-     "microtype's protrusion on the surrounding roman text; the verbatim lines themselves are \
-      already excluded (the default sets are `rm*`/`sf*`)."),
+      itself is lexed correctly (PR #188, already in the vendored mirror). Fixed compiler-side in \
+      PR #261; needs that plus a vendor re-pin."),
 ];
 
 fn fixtures_dir() -> PathBuf {
