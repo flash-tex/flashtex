@@ -437,10 +437,24 @@ impl Diagnostic {
     }
 
     /// Converts a compiler diagnostic; `paths` is indexed by `DocumentId`.
+    ///
+    /// The compiler's own runtime-v1 classification is carried through —
+    /// `syntax_error`, `unsupported_feature`, `unknown_command`, … — because
+    /// that is the field `docs/contracts/runtime-v1.md` tells consumers to
+    /// classify by ("Classify by `code`, not by `message` wording"). This
+    /// used to flatten every one of them to the literal string `"compiler"`,
+    /// which left wording as the only thing a consumer could branch on, and
+    /// made a compiler diagnostic the one entry in this namespace named after
+    /// its producer rather than its kind — every code the pipeline raises
+    /// itself (`overfull_hbox`, `missing_glyph`, `tikz_error`, …) is a kind.
+    ///
+    /// `"compiler"` remains the fallback for a diagnostic that carries no
+    /// code at all, which the compiler does deliberately for a few cases such
+    /// as request validation.
     pub fn from_compiler(d: &flashtex_compiler::diagnostics::Diagnostic, paths: &[&str]) -> Diagnostic {
         use flashtex_compiler::diagnostics::Severity as S;
         Diagnostic {
-            code: "compiler".into(),
+            code: d.code.map_or("compiler", |c| c.as_str()).into(),
             message: d.message.clone(),
             severity: match d.severity {
                 S::Error => Severity::Error,
