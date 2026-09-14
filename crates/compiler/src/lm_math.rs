@@ -99,6 +99,7 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{2201}', 556),  // \complement
     ('\u{21DD}', 997),  // \rightsquigarrow
     ('\u{21AA}', 997),  // \hookrightarrow
+    ('\u{21A9}', 997),  // \hookleftarrow
     ('\u{21C6}', 1018), // \leftrightarrows
     ('\u{22A8}', 612),  // \models
     ('\u{22A2}', 611),  // \vdash
@@ -113,6 +114,7 @@ pub const ADVANCES: &[(char, u16)] = &[
     // and the amsthm QED mark, all drawn from the same pinned resource.
     ('\u{27FA}', 1534), // \Longleftrightarrow, and \iff (\;\Longleftrightarrow\;)
     ('\u{27F6}', 1463), // \longrightarrow
+    ('\u{27FC}', 1443), // \longmapsto
     ('\u{27F5}', 1463), // \longleftarrow
     ('\u{27F8}', 1457), // \Longleftarrow, and \impliedby (\;\Longleftarrow\;)
     ('\u{27F7}', 1442), // \longleftrightarrow
@@ -194,7 +196,7 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 79);
+        assert_eq!(ADVANCES.len(), 81);
     }
 
     #[test]

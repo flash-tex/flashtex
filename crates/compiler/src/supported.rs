@@ -584,6 +584,23 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         "amsfonts dashed arrow: two msam \\dabar@ pieces and a head in one relation",
         true,
     ),
+    (
+        &["Join"],
+        "",
+        "latexsym \\Join as amsfonts builds it: msbm \\rtimes and \\ltimes overlapped \
+         by \\mkern-13.8mu in one relation; needs amsfonts or latexsym",
+        true,
+    ),
+    (
+        &[
+            "lhook", "rhook", "mapstochar", "braceld", "bracerd", "bracelu", "braceru",
+        ],
+        "",
+        "kernel font piece of \\hookrightarrow, \\hookleftarrow, \\mapsto or \\overbrace: \
+         no bundled face sets it at pdflatex's advance, so it is diagnosed and the \
+         composed command drawn instead",
+        false,
+    ),
     (&["Bbb"], "{A-Z}", "obsolete amsfonts alias of \\mathbb", true),
     (&["bold"], "{text}", "obsolete amsfonts alias of \\mathbf", true),
     (
@@ -934,9 +951,16 @@ pub fn inventory() -> Inventory {
         // Which `\usepackage` the document has to load: base LaTeX2e defines
         // none of these names, and `math::command_atom` diagnoses the command
         // when its package is absent, so the inventory has to say so.
-        let package = match ams.provider {
-            crate::amssymb::Provider::Amsfonts => "amsfonts",
-            crate::amssymb::Provider::Amssymb => "amssymb",
+        // The nine latexsym names have a second, independent provider:
+        // `latexsym.sty` declares them from lasy10 and `amsfonts.sty` 101 and
+        // 150-162 from msam/msbm, so either `\usepackage` makes them exist.
+        let package = if math::LATEXSYM_SYMBOLS.contains(&name) {
+            "amsfonts or latexsym"
+        } else {
+            match ams.provider {
+                crate::amssymb::Provider::Amsfonts => "amsfonts",
+                crate::amssymb::Provider::Amssymb => "amssymb",
+            }
         };
         commands.push(Command {
             name,

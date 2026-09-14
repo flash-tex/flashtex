@@ -277,6 +277,11 @@ pub const SYMBOLS: &[AmsSymbol] = &[
     AmsSymbol { name: "urcorner", text: "\u{231D}", class: SymbolClass::Close, font: SymbolFont::Msam, slot: 0x71, width_em: 0.500002, face: Face::LatinModernMath, provider: Provider::Amsfonts, source: "amsfonts.sty:75" },
     AmsSymbol { name: "llcorner", text: "\u{231E}", class: SymbolClass::Open, font: SymbolFont::Msam, slot: 0x78, width_em: 0.500002, face: Face::LatinModernMath, provider: Provider::Amsfonts, source: "amsfonts.sty:76" },
     AmsSymbol { name: "lrcorner", text: "\u{231F}", class: SymbolClass::Close, font: SymbolFont::Msam, slot: 0x79, width_em: 0.500002, face: Face::LatinModernMath, provider: Provider::Amsfonts, source: "amsfonts.sty:77" },
+    AmsSymbol { name: "mho", text: "\u{2127}", class: SymbolClass::Ord, font: SymbolFont::Msbm, slot: 0x66, width_em: 0.722224, face: Face::LatinModernMath, provider: Provider::Amsfonts, source: "amsfonts.sty:101" },
+    AmsSymbol { name: "lhd", text: "\u{22B2}", class: SymbolClass::Bin, font: SymbolFont::Msam, slot: 0x43, width_em: 0.777781, face: Face::LatinModernMath, provider: Provider::Amsfonts, source: "amsfonts.sty:157" },
+    AmsSymbol { name: "unlhd", text: "\u{22B4}", class: SymbolClass::Bin, font: SymbolFont::Msam, slot: 0x45, width_em: 0.777781, face: Face::LatinModernMath, provider: Provider::Amsfonts, source: "amsfonts.sty:158" },
+    AmsSymbol { name: "rhd", text: "\u{22B3}", class: SymbolClass::Bin, font: SymbolFont::Msam, slot: 0x42, width_em: 0.777781, face: Face::LatinModernMath, provider: Provider::Amsfonts, source: "amsfonts.sty:159" },
+    AmsSymbol { name: "unrhd", text: "\u{22B5}", class: SymbolClass::Bin, font: SymbolFont::Msam, slot: 0x44, width_em: 0.777781, face: Face::LatinModernMath, provider: Provider::Amsfonts, source: "amsfonts.sty:160" },
     AmsSymbol { name: "yen", text: "\u{00A5}", class: SymbolClass::Ord, font: SymbolFont::Msam, slot: 0x55, width_em: 0.750002, face: Face::LatinModernMath, provider: Provider::Amsfonts, source: "amsfonts.sty:64" },
     AmsSymbol { name: "checkmark", text: "\u{2713}", class: SymbolClass::Ord, font: SymbolFont::Msam, slot: 0x58, width_em: 0.833336, face: Face::LatinModernMath, provider: Provider::Amsfonts, source: "amsfonts.sty:67" },
     AmsSymbol { name: "circledR", text: "\u{00AE}", class: SymbolClass::Ord, font: SymbolFont::Msam, slot: 0x72, width_em: 0.946663, face: Face::LatinModernMath, provider: Provider::Amsfonts, source: "amsfonts.sty:70" },
@@ -298,6 +303,9 @@ pub const ALIASES: &[(&str, &str)] = &[
     ("doublecap", "Cap"),
     ("llless", "lll"),
     ("gggtr", "ggg"),
+    ("Box", "square"),
+    ("Diamond", "lozenge"),
+    ("leadsto", "rightsquigarrow"),
 ];
 
 /// Advances (font units of 1000) of the Latin Modern Math characters above.
@@ -311,6 +319,7 @@ pub const LM_ADVANCES: &[(char, u16)] = &[
     ('\u{03F0}', 624),
     ('\u{2035}', 311),
     ('\u{210F}', 576),
+    ('\u{2127}', 722),
     ('\u{2136}', 604),
     ('\u{2137}', 528),
     ('\u{2138}', 574),
@@ -557,11 +566,25 @@ pub fn newcm_advance(c: char) -> Option<u16> {
 mod tests {
     use super::*;
 
+    /// The four latexsym names `amsfonts.sty` 157-160 re-declares on slots
+    /// `amssymb.sty` 113-116 already uses, paired with the relation that holds
+    /// the slot. Same font, same slot, same character — a different
+    /// `\math<class>`, which is the whole point of the re-declaration.
+    const LATEXSYM_REDECLARED: &[(&str, &str)] = &[
+        ("lhd", "vartriangleleft"),
+        ("unlhd", "trianglelefteq"),
+        ("rhd", "vartriangleright"),
+        ("unrhd", "trianglerighteq"),
+    ];
+
     #[test]
     fn slots_are_unique_and_every_text_has_a_bound_face() {
         for (i, s) in SYMBOLS.iter().enumerate() {
+            let redeclares = LATEXSYM_REDECLARED
+                .iter()
+                .any(|(latexsym, _)| *latexsym == s.name);
             assert!(
-                SYMBOLS[..i].iter().all(|t| (t.font, t.slot) != (s.font, s.slot)),
+                redeclares || SYMBOLS[..i].iter().all(|t| (t.font, t.slot) != (s.font, s.slot)),
                 "\\{} repeats a slot",
                 s.name
             );
@@ -595,5 +618,49 @@ mod tests {
         assert_eq!(by_slot(SymbolFont::Msbm, 0x02).map(|s| s.name), Some("nleq"));
         let ul = by_name("ulcorner").expect("amsfonts.sty:74");
         assert_eq!(ul.class, SymbolClass::Open);
+    }
+
+    /// The nine latexsym symbols `amsfonts.sty` provides itself when latexsym
+    /// is not loaded (lines 101 and 150-162), measured against TeX Live 2025
+    /// pdflatex at 10pt. `\Join` is a composite and has no row; the other
+    /// eight resolve here, five as declarations and three as `\global\let`
+    /// aliases.
+    #[test]
+    fn the_latexsym_symbols_keep_their_kernel_classes() {
+        // amsfonts re-declares the four triangles as `\mathbin` on the AMSa
+        // slots rather than letting them to the `\vartriangle*` relations,
+        // which is what keeps latexsym's Bin class. Aliasing to the relation
+        // name would be the same glyph one class out: measured at 10pt,
+        // `$a\lhd b$` is 4.44433pt of glue wider than `$ab$` (Bin) against
+        // `$a\vartriangleleft b$`'s 5.55542 (Rel).
+        for (latexsym, relation) in LATEXSYM_REDECLARED {
+            let bin = by_name(latexsym).expect("amsfonts.sty 157-160");
+            let rel = by_name(relation).expect("amssymb.sty 113-116");
+            assert_eq!((bin.font, bin.slot), (rel.font, rel.slot), "\\{latexsym}");
+            assert_eq!(bin.text, rel.text, "\\{latexsym}");
+            assert_eq!(bin.class, SymbolClass::Bin, "\\{latexsym}");
+            assert_eq!(rel.class, SymbolClass::Rel, "\\{relation}");
+            assert_eq!(bin.provider, Provider::Amsfonts, "\\{latexsym}");
+        }
+        // `amsfonts.sty` 101 declares `\mho` outside the latexsym guard and
+        // `amssymb.sty` 239 has it commented out, so amsfonts alone provides
+        // it — measured: `\usepackage{amsfonts}` gives 7.22223pt Ord, the
+        // same advance as lasy10's.
+        let mho = by_name("mho").expect("amsfonts.sty:101");
+        assert_eq!(
+            (mho.font, mho.slot, mho.class, mho.provider),
+            (SymbolFont::Msbm, 0x66, SymbolClass::Ord, Provider::Amsfonts)
+        );
+        // amsfonts.sty 150-152 `\global\let`s the remaining three.
+        for (alias, target, class) in [
+            ("Box", "square", SymbolClass::Ord),
+            ("Diamond", "lozenge", SymbolClass::Ord),
+            ("leadsto", "rightsquigarrow", SymbolClass::Rel),
+        ] {
+            let s = by_name(alias).expect("amsfonts.sty 150-152");
+            assert_eq!(s.name, target, "\\{alias}");
+            assert_eq!(s.class, class, "\\{alias}");
+            assert_eq!(s.provider, Provider::Amsfonts, "\\{alias}");
+        }
     }
 }
