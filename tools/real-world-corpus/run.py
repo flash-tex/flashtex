@@ -238,6 +238,10 @@ def make_request(fx, rid):
             # later change to what "no date supplied" means.
             # protocol/proposals/runtime-v1-request-date.md
             "date": EPOCH_DATE,
+            # The fixture directory, so \includegraphics resolves against the
+            # same files pdflatex saw instead of failing with "no project root"
+            # (protocol/proposals/display-list-v2-image.md §2).
+            "project_root": os.path.abspath(fx["dir"]),
         },
     }
 

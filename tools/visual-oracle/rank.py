@@ -299,7 +299,9 @@ def run_render(fx, render, pdf_exact, font_dirs, tfm_dirs, work, log):
     os.makedirs(fdir, exist_ok=True)
     req = {"protocol_version": 1, "id": "vo2-" + fx["id"], "type": "compile",
            "payload": {"project_id": "visual-oracle-" + fx["id"], "revision": 1, "entry_path": fx["entry"],
-                       "documents": fx["documents"]}}
+                       "documents": fx["documents"],
+                       # \includegraphics resolves against the fixture directory, as pdflatex's did.
+                       "project_root": os.path.abspath(fx["dir"])}}
     v2 = os.path.join(fdir, "render.v2.json")
     env = dict(os.environ, FLASHTEX_FONT_DIRS=font_dirs, FLASHTEX_TFM_DIRS=tfm_dirs)
     line = (json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8")
