@@ -786,4 +786,51 @@ mod tests {
         b.f(0.0);
         assert_eq!(a.0, b.0);
     }
+
+    fn diag_list(suggestion: Option<&str>) -> DisplayList {
+        let mut d = display::Diagnostic::error("unknown_command", r"\alpah", vec![SourceRange {
+            path: std::rc::Rc::from("notes.tex"),
+            start_byte: 0,
+            end_byte: 6,
+        }]);
+        d.suggestion = suggestion.map(str::to_string);
+        DisplayList {
+            project_id: "p".into(),
+            revision: 1,
+            documents: vec![display::DocumentResource {
+                path: "notes.tex".into(),
+                revision: 1,
+                sha256: "aa".repeat(32),
+                byte_length: 6,
+            }],
+            fonts: Vec::new(),
+            pages: vec![Page {
+                number: 1,
+                width: display::Tick(1),
+                height: display::Tick(1),
+                items: Vec::new(),
+            }],
+            diagnostics: vec![d],
+        }
+    }
+
+    #[test]
+    fn suggestion_change_is_hashed_and_deltaed_only_when_serialised() {
+        let off = Wire::default();
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        let none = diag_list(None);
+        let some = diag_list(Some(r"\alpha"));
+        assert_eq!(header_digest(&none, off), header_digest(&some, off));
+        assert_ne!(header_digest(&none, on), header_digest(&some, on));
+
+        let docs = vec![("notes.tex".into(), r"\alpah".into())];
+        let state = DeltaState::new();
+        let mut page_bytes = Vec::new();
+        let full = none.write_json_wire_measured("a", on, &mut page_bytes);
+        note_full(&state, "a", &none, on, page_bytes, full.len(), &docs);
+        let base = state.acknowledgement().unwrap();
+        let line = try_delta(&state, "b", &some, on, &base, &docs, usize::MAX).expect("delta for suggestion-only change");
+        assert!(line.contains(r#""suggestion":"\\alpha""#), "{line}");
+        assert!(line.contains("\"type\":\"display_list_delta\""), "{line}");
+    }
 }

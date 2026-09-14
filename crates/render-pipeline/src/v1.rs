@@ -30,6 +30,11 @@ pub const CAP_IMAGES: &str = "display-list-v2-images";
 /// carry `device_color` (pdfTeX's exact colour operands). Accepted only
 /// together with `display-list-v2`.
 pub const CAP_DEVICE_COLOR: &str = "display-list-v2-device-color";
+/// PROPOSAL (`protocol/proposals/display-list-v2-diagnostics.md`): v2
+/// diagnostics may carry `suggestion` (and later `labels`/`notes`/`help`).
+/// Accepted only together with `display-list-v2`; without it the diagnostic
+/// objects stay the frozen four keys.
+pub const CAP_DIAGNOSTICS: &str = "display-list-v2-diagnostics";
 /// PROPOSAL (`docs/proposals/display-list-v2-delta.md` r5): the sibling
 /// line may be one `display_list_delta` against the consumer's acknowledged
 /// installed base. Negotiated only next to `display-list-v2`; echoed only
@@ -50,6 +55,7 @@ pub struct Capabilities {
     pub display_list: bool,
     pub images: bool,
     pub device_color: bool,
+    pub diagnostics: bool,
     pub delta: bool,
     pub v2_only: bool,
 }
@@ -81,6 +87,10 @@ impl Capabilities {
                 }
                 CAP_IMAGES if !caps.images && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
                     caps.images = true;
+                    accepted.push(r.clone());
+                }
+                CAP_DIAGNOSTICS if !caps.diagnostics && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
+                    caps.diagnostics = true;
                     accepted.push(r.clone());
                 }
                 CAP_DELTA if !caps.delta && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
@@ -662,6 +672,11 @@ mod tests {
         let (c, acc) = Capabilities::negotiate(&["unknown".into()]);
         assert_eq!(c, Capabilities::default());
         assert!(acc.is_empty());
+        let (c, acc) = Capabilities::negotiate(&["display-list-v2-diagnostics".into()]);
+        assert!(!c.diagnostics && acc.is_empty());
+        let (c, acc) = Capabilities::negotiate(&["display-list-v2".into(), "display-list-v2-diagnostics".into(), "display-list-v2-diagnostics".into()]);
+        assert!(c.display_list && c.diagnostics);
+        assert_eq!(acc, vec!["display-list-v2".to_string(), "display-list-v2-diagnostics".to_string()]);
     }
 
     #[test]

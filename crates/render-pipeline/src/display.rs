@@ -82,12 +82,17 @@ impl Paint {
     }
 }
 
-/// Negotiated display-list proposals: image items (FT-063) and device
-/// colours (`display-list-v2-device-color`).
+/// Negotiated display-list proposals: image items (FT-063), device
+/// colours (`display-list-v2-device-color`), and structured diagnostics
+/// (`display-list-v2-diagnostics`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Wire {
     pub images: bool,
     pub device_color: bool,
+    /// Serialise `suggestion` on each diagnostic (proposal
+    /// `display-list-v2-diagnostics`). Labels/notes/help wait for a
+    /// vendor/compiler re-pin past #346.
+    pub diagnostics: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -415,7 +420,9 @@ pub struct Diagnostic {
     /// The compiler's recovery note, when it produced this diagnostic.
     pub recovery: Option<String>,
     /// Replacement text for the source range (runtime-v1 `suggestion`).
-    /// Never serialised on display-list-v2 (`additionalProperties: false`).
+    /// Serialised on display-list-v2 only when `Wire.diagnostics` is set
+    /// (`protocol/proposals/display-list-v2-diagnostics.md`); omitted from
+    /// the frozen four-key object otherwise.
     pub suggestion: Option<String>,
 }
 
@@ -512,7 +519,7 @@ impl DisplayList {
 
     /// `images`: whether image items are serialised (adds `image`).
     pub fn required_features_with(&self, images: bool) -> Vec<&'static str> {
-        self.required_features_wire(Wire { images, device_color: false })
+        self.required_features_wire(Wire { images, device_color: false, diagnostics: false })
     }
 
     /// `device-color` is listed when negotiated and some paint carries one.
@@ -564,7 +571,7 @@ impl DisplayList {
     /// [`to_json`](Self::to_json); `images` also serialises image items
     /// and lists the `image` feature (negotiated `display-list-v2-images`).
     pub fn to_json_with(&self, id: &str, images: bool) -> Value {
-        self.to_json_wire(id, Wire { images, device_color: false })
+        self.to_json_wire(id, Wire { images, device_color: false, diagnostics: false })
     }
 
     /// [`to_json_with`](Self::to_json_with) with every negotiated proposal.
@@ -641,7 +648,7 @@ impl DisplayList {
     /// `json::write(&self.to_json_with(id, images))` written directly:
     /// `images` also serialises image items and lists the `image` feature.
     pub fn write_json_with(&self, id: &str, images: bool) -> String {
-        self.write_json_wire(id, Wire { images, device_color: false })
+        self.write_json_wire(id, Wire { images, device_color: false, diagnostics: false })
     }
 
     /// [`write_json_with`](Self::write_json_with) with every negotiated proposal.
@@ -1605,5 +1612,45 @@ mod tests {
         };
         assert_eq!(empty.write_json(""), json::write(&empty.to_json("")));
         assert_eq!(empty.write_json_with("", true), json::write(&empty.to_json_with("", true)));
+    }
+
+    fn diag_list(suggestion: Option<&str>) -> DisplayList {
+        let mut d = Diagnostic::error("unknown_command", r"\alpah", vec![SourceRange {
+            path: std::rc::Rc::from("notes.tex"),
+            start_byte: 0,
+            end_byte: 6,
+        }]);
+        d.suggestion = suggestion.map(str::to_string);
+        DisplayList {
+            project_id: "p".into(),
+            revision: 1,
+            documents: Vec::new(),
+            fonts: Vec::new(),
+            pages: Vec::new(),
+            diagnostics: vec![d],
+        }
+    }
+
+    #[test]
+    fn diagnostics_capability_gates_suggestion_on_the_wire() {
+        let off = Wire::default();
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        let with = diag_list(Some(r"\alpha"));
+        let without = diag_list(None);
+        let off_with = with.write_json_wire("r1", off);
+        let off_without = without.write_json_wire("r1", off);
+        assert_eq!(off_with, off_without, "without the cap, suggestion must not appear");
+        assert!(!off_with.contains("suggestion"), "{off_with}");
+        assert_eq!(off_with, json::write(&with.to_json_wire("r1", off)));
+
+        let on_with = with.write_json_wire("r1", on);
+        let on_without = without.write_json_wire("r1", on);
+        assert_ne!(on_with, on_without);
+        assert!(on_with.contains(r#""suggestion":"\\alpha""#), "{on_with}");
+        assert!(!on_with.contains(r#""suggestion":null"#), "{on_with}");
+        assert!(!on_without.contains("suggestion"), "{on_without}");
+        assert_eq!(on_with, json::write(&with.to_json_wire("r1", on)));
+        assert_eq!(on_without, json::write(&without.to_json_wire("r1", on)));
+        assert_eq!(on_without, off_without);
     }
 }
