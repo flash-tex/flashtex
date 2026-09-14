@@ -301,6 +301,7 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "item" => "\\begin{itemize}\\item x\\end{itemize}".into(),
         "caption" => "\\begin{figure}\\caption{x}\\end{figure}".into(),
         "uline" => "\\usepackage{ulem}\\uline{x}".into(),
+        "sout" => "\\usepackage{ulem}\\sout{x}".into(),
         _ => with_arguments(name, arguments, "1pt"),
     }
 }

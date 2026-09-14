@@ -9,7 +9,10 @@
 //! `\uline` geometry is unchanged (see `uline.rs`).
 use flashtex_compiler::incremental::compile_full_project;
 use flashtex_compiler::layout::LayoutConstraints;
-use flashtex_compiler::parser::{parse, Block, Inline, SourceDocument};
+use flashtex_compiler::parser::{
+    parse, Block, Inline, SourceDocument, CMR_EX_PER_EM, MATH_RULE_THETA_PT, SOUT_RAISE_EX,
+    UL_THICKNESS_PT,
+};
 
 fn compiled(source: &str) -> flashtex_compiler::incremental::CompileOutput {
     compile_full_project(
@@ -123,7 +126,12 @@ fn sout_with_ulem_does_not_drop_its_argument() {
     );
 }
 
-fn assert_argument_has_a_rule(source: &str, needle: &str) {
+fn assert_rule(
+    source: &str,
+    needle: &str,
+    want_height: f64,
+    want_top_from_baseline: f64,
+) {
     let out = compiled(source);
     let items = &out.pages[0].items;
     let words: Vec<_> = items
@@ -136,16 +144,34 @@ fn assert_argument_has_a_rule(source: &str, needle: &str) {
         !rules.is_empty(),
         "expected a rule on {needle}: {items:?}"
     );
+    let rule = rules[0].rule.expect("filtered");
+    let baseline = words[0].baseline_y_pt;
+    assert!(
+        (rule.height_pt - want_height).abs() < 0.01,
+        "rule height {want_height}pt, got {}",
+        rule.height_pt
+    );
+    assert!(
+        (rule.y_pt - baseline - want_top_from_baseline).abs() < 0.01,
+        "rule top should sit {want_top_from_baseline}pt from baseline {baseline}, got y={}",
+        rule.y_pt
+    );
 }
 
+/// pdflatex 10pt/12pt: kern 1.19994, rule(0.39998+0.0); outer dp 1.9999.
+/// Rule top is 3θ below the hbox depth (0 for "under").
 #[test]
 fn text_mode_underline_lays_out_a_rule() {
-    assert_argument_has_a_rule(&underline_doc("[10pt]"), "under");
-    assert_argument_has_a_rule(&underline_doc("[12pt]"), "under");
+    let top = 3.0 * MATH_RULE_THETA_PT;
+    assert_rule(&underline_doc("[10pt]"), "under", MATH_RULE_THETA_PT, top);
+    assert_rule(&underline_doc("[12pt]"), "under", MATH_RULE_THETA_PT, top);
 }
 
+/// pdflatex 10pt rule(2.76805+-2.36806); 12pt rule(3.24167+-2.84167).
+/// Rule top is 0.55ex+0.4pt above the baseline (negative y from baseline).
 #[test]
 fn sout_lays_out_a_rule() {
-    assert_argument_has_a_rule(&sout_doc("[10pt]"), "struck");
-    assert_argument_has_a_rule(&sout_doc("[12pt]"), "struck");
+    let top_at = |size: f64| -(SOUT_RAISE_EX * CMR_EX_PER_EM * size + UL_THICKNESS_PT);
+    assert_rule(&sout_doc("[10pt]"), "struck", UL_THICKNESS_PT, top_at(10.0));
+    assert_rule(&sout_doc("[12pt]"), "struck", UL_THICKNESS_PT, top_at(12.0));
 }
