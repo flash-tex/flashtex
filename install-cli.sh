@@ -23,7 +23,7 @@
 #   curl -fsSL https://flash-tex.github.io/flashtex/install.sh | sh
 set -eu
 
-VERSION="v0.1.2"
+VERSION="v0.1.3"
 PREFIX="$HOME/.local"
 UNINSTALL=0
 REPO="flash-tex/flashtex"
