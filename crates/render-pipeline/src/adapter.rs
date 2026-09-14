@@ -6079,6 +6079,22 @@ mod tests {
         assert!((adapted(body).style.parindent_pt).abs() < 1e-9);
     }
 
+    #[test]
+    fn addtolength_parskip_keeps_class_stretch() {
+        let src = "\\documentclass{article}\n\\addtolength{\\parskip}{6pt}\n\\begin{document}\nOne\n\nTwo\n\\end{document}";
+        let skip = adapted(src).style.parskip;
+        assert!(
+            (skip.natural - 6.0).abs() < 1e-6,
+            "natural {}, want 6pt",
+            skip.natural
+        );
+        assert!(
+            (skip.stretch - 1.0).abs() < 1e-6,
+            "stretch {}, want class plus 1pt",
+            skip.stretch
+        );
+    }
+
     /// Shorthand for an item list: `W` word, `S` space, `F` fill, `Q` quad.
     fn shape(items: &[Item]) -> String {
         items
