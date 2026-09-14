@@ -72,22 +72,6 @@ enum EditorChangeEnvironment {
         return [(t.beginName, trimmed), (t.endName, trimmed)]
     }
 
-    /// Covering replacement for `edits` (document order): one undoable span.
-    static func groupedReplacement(edits: [(range: NSRange, replacement: String)], in text: NSString) -> (range: NSRange, text: String)? {
-        let ordered = edits.sorted { $0.range.location < $1.range.location }
-        guard let first = ordered.first, let last = ordered.last, NSMaxRange(last.range) <= text.length else { return nil }
-        let span = NSRange(location: first.range.location, length: NSMaxRange(last.range) - first.range.location)
-        var out = ""
-        var cursor = first.range.location
-        for e in ordered {
-            guard e.range.location >= cursor, NSMaxRange(e.range) <= text.length else { return nil }
-            out += text.substring(with: NSRange(location: cursor, length: e.range.location - cursor))
-            out += e.replacement
-            cursor = NSMaxRange(e.range)
-        }
-        return (span, out)
-    }
-
     /// Inventory names then names already used in `document`, unique, filtered
     /// by a fuzzy subsequence of `query` (empty query lists all).
     static func suggestions(query: String, in document: String) -> [String] {
@@ -244,7 +228,7 @@ extension ShellModel {
         editorNavigation.changeShown = true
     }
 
-    /// Enter in the field: rewrite both name spans as one pending edit.
+    /// Enter in the field: rewrite both name spans as one pending grouped edit.
     func applyChangeEnvironment() {
         let name = editorNavigation.changeName.trimmingCharacters(in: .whitespaces)
         if EditorChangeEnvironment.nameProblem(name) != nil {
@@ -263,11 +247,9 @@ extension ShellModel {
             editorNavigation.changeShown = false
             return
         }
-        guard let grouped = EditorChangeEnvironment.groupedReplacement(edits: edits, in: text) else {
-            editorNavigation.changeShown = false
-            return
-        }
-        pendingEdit = .init(path: activePath, nsRange: grouped.range, text: grouped.text, token: nextEditToken(), revision: editorRevision)
+        let lineEdits = edits.map { EditorKeyHandling.LineEdit(range: $0.range, replacement: $0.replacement) }
+        pendingEdit = .init(path: activePath, nsRange: edits[0].range, text: name, token: nextEditToken(),
+                            revision: editorRevision, groupedEdits: lineEdits)
         let begin = NSRange(location: edits[0].range.location, length: (name as NSString).length)
         selection = .init(path: activePath, nsRange: begin, token: (selection?.token ?? 0) + 1)
         caretUTF16 = begin.location
@@ -339,12 +321,20 @@ extension SourceEditorView.Coordinator {
     /// After a user edit inside a `\begin{name}` / `\end{name}` name, rewrite
     /// the partner. Recovers the pre-edit buffer (from `lastKnownText` or by
     /// inverting an insert) because once the names diverge a fresh pair scan
-    /// would refuse to link. The partner write is not its own undo item: it
-    /// mirrors the typed name, so ⌘Z of the typing restores both via the
-    /// same linked path. Nested `insertText`/`didChangeText` at a non-caret
-    /// range from inside `textDidChange` either no-ops or splits the undo group.
+    /// would refuse to link. The partner goes through the registered
+    /// `shouldChangeText` / `replaceCharacters` / `didChangeText` path in the
+    /// undo group opened in `shouldChangeTextIn`, so one ⌘Z reverts both
+    /// edits with ranges AppKit has already adjusted. Nested `didChangeText`
+    /// is suppressed by `programmaticChanges`.
     func syncLinkedEnvironmentPartner(in tv: NSTextView, edit: (range: NSRange, replacement: String)?) {
+        defer {
+            if openLinkedUndo {
+                tv.undoManager?.endUndoGrouping()
+                openLinkedUndo = false
+            }
+        }
         guard programmaticChanges == 0, !tv.hasMarkedText(), let edit else { return }
+        if tv.undoManager?.isUndoing == true || tv.undoManager?.isRedoing == true { return }
         if let completing = tv as? CompletingTextView, completing.isCompletionActive { return }
         // O(line) on the live storage: typing on the `\end{document}` line
         // (large-document bench) is not inside the name, so skip the O(n)
@@ -356,9 +346,10 @@ extension SourceEditorView.Coordinator {
               let partnerEdit = EditorChangeEnvironment.linkedPartnerEdit(old: old, edit: edit) else { return }
         let saved = tv.selectedRange()
         programmaticChanges += 1
-        tv.undoManager?.disableUndoRegistration()
-        tv.textStorage?.replaceCharacters(in: partnerEdit.range, with: partnerEdit.replacement)
-        tv.undoManager?.enableUndoRegistration()
+        if tv.shouldChangeText(in: partnerEdit.range, replacementString: partnerEdit.replacement) {
+            tv.textStorage?.replaceCharacters(in: partnerEdit.range, with: partnerEdit.replacement)
+            tv.didChangeText()
+        }
         var restored = saved
         if partnerEdit.range.location < saved.location {
             restored.location += (partnerEdit.replacement as NSString).length - partnerEdit.range.length

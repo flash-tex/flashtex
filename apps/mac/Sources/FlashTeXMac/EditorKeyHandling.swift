@@ -192,7 +192,7 @@ extension SourceEditorView.Coordinator {
     /// per-keystroke path (autoClose, announcements) exactly as the single-edit
     /// paths (`applyPendingEdit`, capture insertion) already do; the buffer and
     /// selection are then pushed through once, like a committed user edit.
-    func applyLineEdits(_ edits: [EditorKeyHandling.LineEdit], to tv: NSTextView, actionName: String, selection: NSRange) {
+    func applyLineEdits(_ edits: [EditorKeyHandling.LineEdit], to tv: NSTextView, actionName: String, selection: NSRange, pushBinding: Bool = true) {
         guard !edits.isEmpty else { return }
         tv.breakUndoCoalescing()
         tv.undoManager?.beginUndoGrouping()
@@ -209,7 +209,7 @@ extension SourceEditorView.Coordinator {
         tv.setSelectedRange(selection)
         let s = SourceEditorView.nativeText(of: tv)
         lastKnownText = s
-        parent.text = s
+        if pushBinding { parent.text = s }
         refreshBraceHighlight(tv)
     }
 }

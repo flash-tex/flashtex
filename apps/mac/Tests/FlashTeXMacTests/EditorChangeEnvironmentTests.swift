@@ -20,8 +20,12 @@ final class EditorChangeEnvironmentTests: XCTestCase {
     private func applied(_ text: String, caret: Int, to newName: String) -> String? {
         let ns = text as NSString
         let edits = CE.replacements(in: ns, caret: caret, newName: newName)
-        guard let g = CE.groupedReplacement(edits: edits, in: ns) else { return nil }
-        return ns.replacingCharacters(in: g.range, with: g.text)
+        guard !edits.isEmpty else { return nil }
+        var cur = ns
+        for e in edits.sorted(by: { $0.range.location > $1.range.location }) {
+            cur = cur.replacingCharacters(in: e.range, with: e.replacement) as NSString
+        }
+        return cur as String
     }
 
     func testNestedSameNamePicksInnermost() {
@@ -152,8 +156,13 @@ final class EditorChangeEnvironmentTests: XCTestCase {
         model.applyChangeEnvironment()
         XCTAssertFalse(model.editorNavigation.changeShown)
         let edit = try! XCTUnwrap(model.pendingEdit)
-        XCTAssertEqual((model.activeText as NSString).replacingCharacters(in: edit.nsRange, with: edit.text),
-                       "\\begin{enumerate}\n\\item a\n\\end{enumerate}")
+        XCTAssertEqual(edit.text, "enumerate")
+        XCTAssertEqual(edit.groupedEdits.count, 2)
+        var ns = model.activeText as NSString
+        for e in edit.groupedEdits.sorted(by: { $0.range.location > $1.range.location }) {
+            ns = ns.replacingCharacters(in: e.range, with: e.replacement) as NSString
+        }
+        XCTAssertEqual(ns as String, "\\begin{enumerate}\n\\item a\n\\end{enumerate}")
         XCTAssertEqual(model.navigationNote, "Changed environment to \\begin{enumerate}…\\end{enumerate} (undo with ⌘Z).")
     }
 
