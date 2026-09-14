@@ -766,12 +766,12 @@ pub struct InsertArea {
 /// An `\insert` on the current page: what is left of the note's list (all
 /// of it, or the remainder after a split) and its height plus depth.
 #[derive(Debug, Clone)]
-struct PageIns {
-    list: Vec<VItem>,
-    height_plus_depth: f64,
+pub(crate) struct PageIns {
+    pub(crate) list: Vec<VItem>,
+    pub(crate) height_plus_depth: f64,
     /// Index in the main list of the line box it follows (`None`: held
     /// over from the previous page, ahead of the page's material).
-    at: Option<usize>,
+    pub(crate) at: Option<usize>,
 }
 
 /// `vert_break(p, h, d)` (§970–§976) on a note's list: the index of the best
@@ -854,7 +854,7 @@ fn prune_page_top(list: &[VItem], split_top_skip: f64) -> Vec<VItem> {
 }
 
 /// Height plus depth of a list packed at its natural size (`vpack`).
-fn natural_height_plus_depth(list: &[VItem]) -> f64 {
+pub(crate) fn natural_height_plus_depth(list: &[VItem]) -> f64 {
     let (mut x, mut d) = (0.0, 0.0);
     for v in list {
         match v {
@@ -874,23 +874,23 @@ fn natural_height_plus_depth(list: &[VItem]) -> f64 {
 
 /// The insertion part of TeX's page builder for one class (§1008–§1010)
 /// and the state `fire_up` reads (§1018–§1021).
-struct InsertState<'a> {
+pub(crate) struct InsertState<'a> {
     ins: &'a Insertions,
     /// `page_goal`.
-    goal: f64,
+    pub(crate) goal: f64,
     /// The class has a page-insertion record (its `\skip` is charged).
-    started: bool,
+    pub(crate) started: bool,
     /// The record's `height`, `split_up`, `broken_ins`/`broken_ptr`.
-    height: f64,
+    pub(crate) height: f64,
     split_up: bool,
     broken: Option<(usize, Option<usize>)>,
-    last_ins: Option<usize>,
-    penalties: i64,
-    page: Vec<PageIns>,
+    pub(crate) last_ins: Option<usize>,
+    pub(crate) penalties: i64,
+    pub(crate) page: Vec<PageIns>,
 }
 
 impl<'a> InsertState<'a> {
-    fn new(ins: &'a Insertions, vsize: f64) -> InsertState<'a> {
+    pub(crate) fn new(ins: &'a Insertions, vsize: f64) -> InsertState<'a> {
         InsertState { ins, goal: vsize, started: false, height: 0.0, split_up: false, broken: None, last_ins: None, penalties: 0, page: Vec::new() }
     }
 
@@ -899,7 +899,8 @@ impl<'a> InsertState<'a> {
     /// `\skip\footins` when the class first appears on the page.
     /// `reserve` is what a longtable region has already taken off
     /// `\pagegoal` (`\ht\LT@foot`), which the note must fit above.
-    fn append(&mut self, list: Vec<VItem>, height_plus_depth: f64, at: Option<usize>, total: f64, depth: f64, reserve: f64, stretch: &mut f64, shrink: &mut f64) {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn append(&mut self, list: Vec<VItem>, height_plus_depth: f64, at: Option<usize>, total: f64, depth: f64, reserve: f64, stretch: &mut f64, shrink: &mut f64) {
         let index = self.page.len();
         if !self.started {
             // §1009: `\box\footins` is void at the start of a page.
@@ -931,6 +932,36 @@ impl<'a> InsertState<'a> {
         self.penalties += i64::from(pi);
         self.page.push(PageIns { list, height_plus_depth, at });
     }
+}
+
+/// §1018–§1021 at a page break at `end` (an index in the list the
+/// insertions' `at` refer to): the note lists that go on the page, in
+/// order; a split note's remainder (`prune_page_top` with `\splittopskip`)
+/// and the notes after `best_ins` are pushed to `held`; notes contributed
+/// after the break are dropped (their lines are not on the page).
+pub(crate) fn settle_inserts(is: InsertState, end: usize, best_ins: Option<usize>, split_top_skip: f64, held: &mut Vec<PageIns>) -> Vec<Vec<VItem>> {
+    let mut placed_notes: Vec<Vec<VItem>> = Vec::new();
+    for (k, pi) in is.page.into_iter().enumerate() {
+        if pi.at.is_some_and(|a| a >= end) {
+            continue;
+        }
+        match best_ins {
+            Some(b) if k < b => placed_notes.push(pi.list),
+            Some(b) if k == b => match is.broken {
+                Some((bk, Some(bp))) if is.split_up && bk == k => {
+                    placed_notes.push(pi.list[..bp].to_vec());
+                    let rest = prune_page_top(&pi.list[bp..], split_top_skip);
+                    if !rest.is_empty() {
+                        let hd = natural_height_plus_depth(&rest);
+                        held.push(PageIns { list: rest, height_plus_depth: hd, at: None });
+                    }
+                }
+                _ => placed_notes.push(pi.list),
+            },
+            _ => held.push(PageIns { at: None, ..pi }),
+        }
+    }
+    placed_notes
 }
 
 /// [`break_pages_shortened`] with footnote insertions: TeX's page builder
@@ -1113,31 +1144,7 @@ pub fn break_pages_inserts_regions(
             None => list.len(),
         };
         let ejected = matches!(list.get(end), Some(VItem::Penalty(pen)) if *pen <= EJECT_PENALTY);
-        // §1018–§1021: which insertions go on the page, which are split and
-        // which wait.
-        let mut placed_notes: Vec<Vec<VItem>> = Vec::new();
-        for (k, pi) in is.page.into_iter().enumerate() {
-            if pi.at.is_some_and(|a| a >= end) {
-                // Contributed after the break: back on the contribution list
-                // with its line.
-                continue;
-            }
-            match best_ins {
-                Some(b) if k < b => placed_notes.push(pi.list),
-                Some(b) if k == b => match is.broken {
-                    Some((bk, Some(bp))) if is.split_up && bk == k => {
-                        placed_notes.push(pi.list[..bp].to_vec());
-                        let rest = prune_page_top(&pi.list[bp..], ins.split_top_skip);
-                        if !rest.is_empty() {
-                            let hd = natural_height_plus_depth(&rest);
-                            held.push(PageIns { list: rest, height_plus_depth: hd, at: None });
-                        }
-                    }
-                    _ => placed_notes.push(pi.list),
-                },
-                _ => held.push(PageIns { at: None, ..pi }),
-            }
-        }
+        let placed_notes = settle_inserts(is, end, best_ins, ins.split_top_skip, &mut held);
         let has_notes = placed_notes.iter().any(|l| !l.is_empty());
         // `\LT@output`: the continuation head opens the page and the foot
         // closes it, both inside `\box\@cclv`, so `\@makecol` packs them
@@ -1206,7 +1213,7 @@ pub fn break_pages_inserts_regions(
                 areas.push(None);
             }
         } else {
-            let (page, area) = make_column(p, body, body_less, region_break || ejected || fired.is_none(), &placed_notes, ins);
+            let (page, area, _) = make_column(p, body, body_less, region_break || ejected || fired.is_none(), &placed_notes, ins, &ColumnFloats::default());
             pages.push(page);
             areas.push(Some(area));
         }
@@ -1224,24 +1231,75 @@ pub fn break_pages_inserts_regions(
     (pages, areas)
 }
 
+/// The floats `\@combinefloats` wraps around a column, in `\@makecol`'s
+/// order (latex.ltx, TeX Live 2025).
+///
+/// `\@cflt` puts the top floats above the body with `\floatsep` between
+/// them (`\@comflelt` appends one after each and `\vskip-\floatsep`
+/// cancels the last) and `\textfloatsep` before the body; `\@cflb` puts
+/// `\textfloatsep` after the column's footnotes and then the bottom floats
+/// the same way. Both are plain `\vbox`es: only `\@make@normalcolbox`
+/// packs `\vbox to\@colht`, so these skips are set by the same glue set
+/// ratio as the body's own glue and `\skip\footins`.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ColumnFloats {
+    /// Height of each top and each bottom float box, in order.
+    pub(crate) tops: Vec<f64>,
+    pub(crate) bots: Vec<f64>,
+    /// `\floatsep` and `\textfloatsep` (natural, stretch, shrink).
+    pub(crate) floatsep: (f64, f64, f64),
+    pub(crate) textfloatsep: (f64, f64, f64),
+}
+
+/// Where [`make_column`] put a column's float boxes: the top edge of each,
+/// in the column's coordinates.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct FloatPlacement {
+    pub(crate) tops: Vec<f64>,
+    pub(crate) bots: Vec<f64>,
+    /// Distance from the column's top to the body's own origin (the top
+    /// floats and `\textfloatsep` above it), which is what a caller adds to
+    /// positions it computed in the body's coordinates.
+    pub(crate) text_off: f64,
+}
+
 /// `\@makecol` for a column with footnotes: the body list, `\vfil` when
 /// the page was ended by `\newpage`/`\clearpage`, `\skip\footins`, the
 /// `\footnoterule` and the notes, then `\vskip-\dp` and `\@textbottom`
 /// (`\vskip 0pt plus.0001fil` under `\raggedbottom`), packed `\vbox
-/// to\@colht`.
-fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil: bool, notes: &[Vec<VItem>], ins: &Insertions) -> (BuiltPage, InsertArea) {
-    // Pass 1: natural size and glue totals.
+/// to\@colht`. With `keep_depth` the last note's depth stays inside
+/// `p.vsize` (bottom floats follow the notes, `\@cflb`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil: bool, notes: &[Vec<VItem>], ins: &Insertions, floats: &ColumnFloats) -> (BuiltPage, InsertArea, FloatPlacement) {
+    // Pass 1: natural size and glue totals. `p.vsize` is `\@colht`: the
+    // whole column, floats included, is one `\vbox to\@colht`.
     let (mut x, mut d, mut has_box) = (0.0f64, 0.0f64, false);
     let (mut stretch, mut shrink) = (0.0f64, 0.0f64);
     let mut fil_in_body = false;
+    // `\@cflt`.
+    for (k, h) in floats.tops.iter().enumerate() {
+        if k > 0 {
+            x += floats.floatsep.0;
+            stretch += floats.floatsep.1;
+            shrink += floats.floatsep.2;
+        }
+        x += h;
+    }
+    if !floats.tops.is_empty() {
+        x += floats.textfloatsep.0;
+        stretch += floats.textfloatsep.1;
+        shrink += floats.textfloatsep.2;
+    }
+    // `\box\@cclv` starts here; `\topskip` is inside it.
+    let text_off = x;
     if body_less {
-        x = p.topskip;
+        x += p.topskip;
         has_box = true;
     }
     for v in body {
         match v {
             VItem::Box { height, depth, .. } => {
-                x = if has_box { x + d + height } else { (p.topskip - height).max(0.0) + height };
+                x = if has_box { x + d + height } else { text_off + (p.topskip - height).max(0.0) + height };
                 d = *depth;
                 has_box = true;
             }
@@ -1280,7 +1338,23 @@ fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil: bool, note
             VItem::Penalty(_) => {}
         }
     }
-    // `\vskip-\dp`: the box's height ends at the last baseline.
+    // `\@cflb`: `\textfloatsep` after the notes (so the notes' last depth
+    // counts), the bottom floats, `\floatsep` between them.
+    if !floats.bots.is_empty() {
+        x += d + floats.textfloatsep.0;
+        stretch += floats.textfloatsep.1;
+        shrink += floats.textfloatsep.2;
+        for (k, h) in floats.bots.iter().enumerate() {
+            if k > 0 {
+                x += floats.floatsep.0;
+                stretch += floats.floatsep.1;
+                shrink += floats.floatsep.2;
+            }
+            x += h;
+        }
+    }
+    // `\vskip-\@outputbox@depth`: the box's height ends at the last
+    // baseline.
     let natural = x;
     let excess = p.vsize - natural;
     let fil_total = f64::from(u8::from(vfil)) + if p.flushbottom { 0.0 } else { 0.0001 } + f64::from(u8::from(fil_in_body));
@@ -1301,15 +1375,28 @@ fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil: bool, note
     let set_glue = |w: f64, st: f64, sh: f64| w + if ratio > 0.0 { ratio * st } else { ratio * sh };
     // Pass 2: positions.
     let mut page = BuiltPage::default();
+    let mut placement = FloatPlacement::default();
     let (mut y, mut d, mut has_box) = (0.0f64, 0.0f64, false);
+    for (k, h) in floats.tops.iter().enumerate() {
+        if k > 0 {
+            y += set_glue(floats.floatsep.0, floats.floatsep.1, floats.floatsep.2);
+        }
+        placement.tops.push(y);
+        y += h;
+    }
+    if !floats.tops.is_empty() {
+        y += set_glue(floats.textfloatsep.0, floats.textfloatsep.1, floats.textfloatsep.2);
+    }
+    placement.text_off = y;
+    let text_off = y;
     if body_less {
-        y = p.topskip;
+        y += p.topskip;
         has_box = true;
     }
     for v in body {
         match v {
             VItem::Box { height, depth, payload } => {
-                y = if has_box { y + d + height } else { (p.topskip - height).max(0.0) + height };
+                y = if has_box { y + d + height } else { text_off + (p.topskip - height).max(0.0) + height };
                 d = *depth;
                 has_box = true;
                 page.lines.push(Placed { payload: *payload, baseline: y, height: *height, depth: *depth });
@@ -1342,13 +1429,23 @@ fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil: bool, note
             VItem::Penalty(_) => {}
         }
     }
+    if !floats.bots.is_empty() {
+        y += d + set_glue(floats.textfloatsep.0, floats.textfloatsep.1, floats.textfloatsep.2);
+        for (k, h) in floats.bots.iter().enumerate() {
+            if k > 0 {
+                y += set_glue(floats.floatsep.0, floats.floatsep.1, floats.floatsep.2);
+            }
+            placement.bots.push(y);
+            y += h;
+        }
+    }
     if let Some(last) = page.lines.last() {
         let bottom = last.baseline + (last.depth - p.maxdepth).max(0.0);
         if natural > p.vsize + 1e-6 && shrink <= 0.0 {
             page.overfull_by = (natural - p.vsize).max(bottom - p.vsize).max(0.0);
         }
     }
-    (page, area)
+    (page, area, placement)
 }
 
 /// Glue set ratio of a page box `\vbox to\vsize` holding `items` (from the
