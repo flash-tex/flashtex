@@ -6254,6 +6254,103 @@ mod tests {
         assert_eq!(indent, flashtex_class_geometry::Sp::ZERO);
     }
 
+    fn article_tw() -> f64 {
+        adapted("\\documentclass{article}\\begin{document}x\\end{document}").style.text_width_pt
+    }
+
+    #[test]
+    fn preamble_scan_skips_commented_begin_document() {
+        let src = "\\documentclass{article}\n% \\begin{document}\n\\setlength{\\textwidth}{6in}\n\\begin{document}x\\end{document}";
+        assert!(
+            (adapted(src).style.text_width_pt - adapted(
+                "\\documentclass{article}\\setlength{\\textwidth}{6in}\\begin{document}x\\end{document}"
+            )
+            .style
+            .text_width_pt)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn preamble_scan_strips_comments_inside_dimension_groups() {
+        let src = "\\documentclass{article}\\setlength{\\textwidth}{6in%\n}\\begin{document}x\\end{document}";
+        assert!(
+            (adapted(src).style.text_width_pt
+                - adapted(
+                    "\\documentclass{article}\\setlength{\\textwidth}{6in}\\begin{document}x\\end{document}"
+                )
+                .style
+                .text_width_pt)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn preamble_scan_ignores_setlength_in_newcommand_body() {
+        let src = "\\documentclass{article}\n\\setlength{\\textwidth}{5in}\n\\newcommand{\\unused}{\\setlength{\\textwidth}{6in}}\n\\begin{document}x\\end{document}";
+        assert!(
+            (adapted(src).style.text_width_pt
+                - adapted(
+                    "\\documentclass{article}\\setlength{\\textwidth}{5in}\\begin{document}x\\end{document}"
+                )
+                .style
+                .text_width_pt)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn preamble_scan_does_not_leak_grouped_setlength() {
+        let src = "\\documentclass{article}\n{\\setlength{\\textwidth}{6in}}\n\\begin{document}x\\end{document}";
+        assert!(
+            (adapted(src).style.text_width_pt - article_tw()).abs() < 1e-6,
+            "grouped assignment must restore, got {}",
+            adapted(src).style.text_width_pt
+        );
+    }
+
+    #[test]
+    fn preamble_scan_finds_begin_document_with_whitespace() {
+        let pre = "\\documentclass{article}\\setlength{\\textwidth}{6in}\\begin {document}x\\end{document}";
+        let body = "\\documentclass{article}\\begin {document}\\setlength{\\textwidth}{6in}x\\end{document}";
+        assert!(
+            (adapted(pre).style.text_width_pt
+                - adapted(
+                    "\\documentclass{article}\\setlength{\\textwidth}{6in}\\begin{document}x\\end{document}"
+                )
+                .style
+                .text_width_pt)
+                .abs()
+                < 1e-6
+        );
+        assert!(
+            (adapted(body).style.text_width_pt - article_tw()).abs() < 1e-6,
+            "body page geometry after \\begin {{document}} must not apply, got {}",
+            adapted(body).style.text_width_pt
+        );
+    }
+
+    #[test]
+    #[ignore = "known limit: \\input'd preambles are not in the adapter source string"]
+    fn preamble_scan_does_not_see_input_files() {
+        let src = "\\documentclass{article}\n\\input{layout}\n\\begin{document}x\\end{document}";
+        let _ = adapted(src);
+        panic!("not implemented: scan \\input'd preambles");
+    }
+
+    #[test]
+    #[ignore = "known limit: next_command is alphabetic, so \\@setlength is missed"]
+    fn preamble_scan_does_not_see_at_setlength() {
+        let src = "\\documentclass{article}\n\\makeatletter\n\\@setlength{\\textwidth}{6in}\n\\makeatother\n\\begin{document}x\\end{document}";
+        assert!(
+            (adapted(src).style.text_width_pt - article_tw()).abs() < 1e-6,
+            "\\@setlength is not implemented"
+        );
+    }
+
     /// Shorthand for an item list: `W` word, `S` space, `F` fill, `Q` quad.
     fn shape(items: &[Item]) -> String {
         items
