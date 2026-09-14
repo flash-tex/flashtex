@@ -129,6 +129,21 @@ pick one: `-only` removes the ~53 KB-a-page v1 payload that fails on its own at
 385 pages, and the window bounds the v2 sibling that fails on its own at 164 MB.
 Neither is sufficient. §7.
 
+**Measured through the worker, r2** (`flashtex-render` over JSON Lines, the
+`synthetic-500kb` corpus case, the real 16 MiB limit, zero font-failure
+diagnostics in every run):
+
+| request | reply |
+|---|---|
+| `["display-list-v2"]` — today's consumer | **`status: failed`**, one line, no pages: *"compile_result would be 20 339 674 bytes for 385 pages, over the 16 777 216-byte reply limit"* |
+| `+ -only + -window`, `{1, 16}` | `status: recovered`, two lines, sibling **5 937 794 B**, 385 pages / 16 resident / 369 elided |
+| `+ -only + -window`, `{300, 16}` | as above, sibling **6 369 270 B**, window at page 300 |
+| `+ -only + -window`, `{1, 64}` | narrowed to `{13, 40}` and served, **15 211 146 B** (§8) |
+| `+ -only + -window`, no `display_list_window` | `status: failed` — the capability without a position is an unwindowed reply (§4) |
+
+The unwindowed render of the same document, written to a file rather than a
+reply line because no reply can carry it, is **152 106 263 bytes**.
+
 The rest of this section is the memory argument the proposal started from. Both
 lead to the same mechanism, which is why it is one proposal.
 
@@ -542,18 +557,55 @@ the committed baseline, which predates current main and differs independently
 on 50 of 90 digests — reported on #206); `cargo test -p
 flashtex-render-pipeline` no worse than the control's failing set.
 
+**r2 adds two gates to `tests/`, both of which fail without their fix:**
+
+* `cli_e2e::a_document_over_the_reply_limit_has_a_reply_when_a_window_is_negotiated`
+  is §1.0 itself, end to end through the worker: the same three refusals, put
+  into the same ratio through `FLASHTEX_MAX_REPLY_BYTES` so it costs seconds
+  rather than minutes of debug-build layout. Nothing in it is hard-coded to a
+  page size — the limit comes from a measured window and the whole-document
+  size is read back out of the producer's own refusal — so it keeps testing the
+  relation it is about when page sizes drift.
+* `page_window::a_window_announces_a_feature_that_only_an_elided_page_uses`
+  is the closure gate for `required_features`: a document whose only rule sits
+  on a late page, windowed on page 1, must still announce `rule`, and the test
+  asserts the resident page carries no rule of its own so the feature can only
+  have come from the whole-document harvest. With the harvest reverted it
+  reports `["glyph_run", "rgba-srgb", "cluster-actualtext"]` against
+  `["glyph_run", "rule", "rgba-srgb", "cluster-actualtext"]`.
+
+The §9 equality gate was also run against the **real 500 KB case** rather than
+a 20-page stand-in: for windows at pages 1, 185, 300 and 378, every resident
+page object is byte-identical to that page in the unwindowed 152 MB render, all
+385 page frames match, and `documents`, `fonts`, `diagnostics` and
+`required_features` are byte-identical.
+
 ### Co-signers
 
-| who | what they are co-signing |
-|---|---|
-| **Mac shell / `apps/mac`** (consumer) | that the v2 pane can hold a partial frame: elided pages render as placeholders at their known size, caret sync and click-to-source are disabled on them rather than wrong, and leaving the window re-requests. Also that `File > Export PDF` refuses an elided result, as it already does for `-only`. |
-| **`crates/rendering-core`** (renderer) | that `V2Frame.prepare` and the font binding accept a frame whose font closure covers pages it was not given, and that an elided page is a painted placeholder, never a blank page of the right size (which is indistinguishable from a genuinely empty page). |
-| **`crates/preview-controller`** / **`crates/document-runtime`** (forwarding) | that the new sibling field passes through unaltered and that the window is not re-derived anywhere in the middle of the route. |
-| **`crates/render-pipeline`** (producer, this lane) | §5's type change, and the §9 equality gate in `tests/`. |
-| **Commander** | that `-window` and `-delta` are exclusive in r1 (§7), and the `docs/contracts/runtime-v1*` amendment that follows once a consumer exists. |
+| who | what they are co-signing | r2 |
+|---|---|---|
+| **`crates/render-pipeline`** (producer, this lane) | §5's type change, the §9 equality gate in `tests/`, and the negotiation | **signed** — implemented and gated |
+| **Mac shell / `apps/mac`** (consumer) | that the v2 pane can hold a partial frame: elided pages render as placeholders at their known size, caret sync and click-to-source are disabled on them rather than wrong, and leaving the window re-requests. Also that `File > Export PDF` refuses an elided result, as it already does for `-only`. | **required before the shell sends the name** |
+| **`crates/rendering-core`** (renderer) | that `V2Frame.prepare` and the font binding accept a frame whose font closure covers pages it was not given, and that an elided page is a painted placeholder, never a blank page of the right size (which is indistinguishable from a genuinely empty page). | **required before the shell sends the name** |
+| **`crates/preview-controller`** / **`crates/document-runtime`** (forwarding) | that the new sibling field passes through unaltered and that the window is not re-derived anywhere in the middle of the route. | **required before the shell sends the name** |
+| **Commander** | that `-window` and `-delta` are exclusive in r1/r2 (§7), and the `docs/contracts/runtime-v1*` amendment that follows once a consumer exists. | **required before the contract is amended** |
 
-Nothing on the wire changes until every row above has signed. The r1
-implementation is producer-internal for exactly that reason.
+**What the producer being negotiated does and does not commit anyone to.** A
+reply is windowed only when a request names the capability *and* carries
+`display_list_window`; no in-tree consumer does either (`apps/mac` sends
+`display-list-v2` and `display-list-v2-images`, `preview-controller` adds and
+removes only `display-list-v2`). So accepting the name changes no reply on any
+route today, exactly as accepting `-only` and `-delta` — both still proposals —
+changed none. What it does change is that the fix is *reachable*: a consumer
+that signs its row can turn it on for itself, one request at a time, without a
+producer release.
+
+The consumer rows above are therefore gating the **consumer**, not this
+producer. Concretely: `apps/mac` must not add the name to `setLiveV2`'s
+capability list until the pane paints an elided page as a placeholder, because
+today it would paint nothing there and a blank page is indistinguishable from a
+page that is genuinely empty — the confusion `PageContent::Elided` exists to
+prevent on the producer side and which the consumer must not reintroduce.
 
 ## 10. What this buys, and what it does not
 
@@ -574,12 +626,14 @@ shared rather than copied (#232 follow-up 1), and the compiler's own parse tree
 and the expander's thread-local caches bounded — none of which are display-list
 structures and none of which this proposal touches.
 
-### Measured, r1 prototype
+### Measured
 
 A 16-page window, `crates/perf-bench`'s `memprofile`, against an unwindowed
 control taking the same code path (`--render-only`, so the comparison does not
 credit the window with the v1 payload and JSON line that the protocol warm path
-also builds):
+also builds). Re-run at r2, after the rebase onto current main and the
+negotiation, and it reproduces r1 to within 0.1 MiB — which is the point of
+re-running it:
 
 | | 500 KB / 385 pp | | 2 MB / 1507 pp | |
 |---|---:|---:|---:|---:|
@@ -602,3 +656,23 @@ This confirms §10's projection, including the part that says **the target is
 still not reached**: 2036 MiB is 20x the 100 MB target, and closing that needs
 the block cache, the adapter items and the compiler/expander caches, none of
 which a page window touches.
+
+r2 can also measure the **protocol** path windowed, because the capability is
+negotiated — the product path, v1 payload and JSON line included:
+
+| case, protocol path | unwindowed | window 16 |
+|---|---:|---:|
+| 2 MB / 1507 pp, VmRSS | 2889.0 | **2048.5** |
+| 2 MB / 1507 pp, live | 1440.8 | **920.1** |
+| 500 KB / 385 pp, VmRSS | 751.3 | **540.3** |
+| 500 KB / 385 pp, live | 363.3 | **238.2** |
+
+A note on that row existing at all: `memprofile`'s own request builder emitted
+a JSON-RPC 2.0 envelope, which `protocol::handle_line` answers
+`missing_protocol_version`, so its default-mode warm keystrokes had been
+rendering nothing. The window's numbers were never affected — they were
+measured `--render-only` on both sides, which builds no request — and
+`crates/perf-bench` proper builds a correct request, so the digests and timing
+gates were never affected either. Fixed in r2, and recorded here rather than
+quietly, because a harness that measures an empty cache is the kind of thing
+this document's §7 note exists to warn about.
