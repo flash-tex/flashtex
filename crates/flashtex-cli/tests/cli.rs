@@ -137,9 +137,32 @@ fn multi_file_project_resolves_inputs_from_the_project_root() {
     assert_eq!(envelope.get("type").and_then(|v| v.as_str()), Some("display_list"));
     let listed = envelope.get("payload").unwrap().get("documents").unwrap().as_arr().unwrap();
     assert_eq!(listed.len(), 3, "{}", stdout(&o));
-    // Diagnostics inside an included file name that file.
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A diagnostic raised inside an included file names that file and its own
+/// line. Built on a project written here, not the fixture: the fixture's
+/// sections stopped producing any diagnostic once the compiler supported
+/// everything in them, which made the old assertion fail on a better engine.
+#[test]
+fn a_diagnostic_in_an_included_file_names_that_file() {
+    let dir = tmp("included-diag");
+    std::fs::create_dir_all(dir.join("sections")).unwrap();
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\n\\input{sections/a}\n\\end{document}\n").unwrap();
+    std::fs::write(dir.join("sections/a.tex"), "First line.\nHello \\undefinedmacro{x}.\n").unwrap();
+    let fonts = fonts_dir();
+    let o = run(&["check", src.to_str().unwrap(), "--json", "--font-dir", fonts.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
     let diags = report.get("diagnostics").unwrap().as_arr().unwrap();
-    assert!(diags.iter().any(|d| d.get("path").and_then(|p| p.as_str()).map_or(false, |p| p.starts_with("sections/"))), "{}", stdout(&o));
+    let inner = diags
+        .iter()
+        .find(|d| d.get("message").and_then(|m| m.as_str()).map_or(false, |m| m.contains("undefinedmacro")))
+        .unwrap_or_else(|| panic!("the unsupported command is reported: {}", stdout(&o)));
+    assert_eq!(inner.get("path").and_then(|p| p.as_str()), Some("sections/a.tex"), "{}", stdout(&o));
+    assert_eq!(inner.get("line").and_then(|l| l.as_i64()), Some(2), "{}", stdout(&o));
+    assert!(stderr(&o).lines().any(|l| l.starts_with("sections/a.tex:2:7: error[")), "{}", stderr(&o));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
