@@ -84,8 +84,29 @@ def is_math_font(font):
 
 
 def v2_words(display_list):
-    """Per page: list of words from `glyph_run` items (each run is one word
-    in the pinned producer; a run containing spaces is split on them)."""
+    """Per page: the candidate's words, grouped by **the same rule the
+    reference side uses** (`pdftext.words_from_glyphs`).
+
+    The display list's unit of output is the `glyph_run`, which is a
+    typesetting artefact, not a word: the pipeline starts a new run whenever
+    the face changes, so one siunitx `S` cell arrives as three runs
+    (`1`, `.`, `234`). This function used to emit one word per run and split
+    only *within* a run, never joining across them — while `pdftext` joined
+    freely across `Tf` switches, because a font change does not end a word.
+    pdfTeX sets the same cell as three `Tf`-switched runs in one text object
+    and the reference therefore read `1.234`, one word, against our three.
+
+    That is a disagreement between the two halves of one measurement, and it
+    is what made PR #331 (siunitx `S`/`s` columns) read as a regression: on
+    `lab-report` page 2 the candidate word count went 78 -> 118 and aligned
+    70 -> 50 with the ink unchanged and correctly placed. Feeding the
+    candidate's glyphs through the reference's own grouper removes the
+    disagreement by construction — there is now one definition of a word in
+    this tool, in one function.
+
+    `math` and the source span are per-glyph facts that the grouper does not
+    know about, so they are carried across it through `glyph_index`.
+    """
     pl = display_list["payload"]
     unit = pl.get("coordinate_unit")
     if unit != "bp_2pow20":
@@ -93,42 +114,44 @@ def v2_words(display_list):
     fonts = {f["font_id"]: f for f in pl.get("fonts", [])}
     pages = []
     for page in pl["pages"]:
-        words = []
+        glyphs, meta = [], []
         for item in page.get("items", []):
             if item.get("kind") != "glyph_run" or not item.get("glyphs"):
                 continue
             text = item.get("text") or ""
             font = fonts.get(item.get("font_id"))
+            name = (font or {}).get("postscript_name", item.get("font_id", "")[:12])
+            math = is_math_font(font)
+            size = item.get("font_size", 0) / Q
             clusters = item.get("clusters") or []
-            # split into words on spaces of the run text (cluster-aligned)
-            groups = [[]]
             for gi, g in enumerate(item["glyphs"]):
                 ci = g.get("cluster", gi)
-                ctext = text[clusters[ci]["text_start_byte"]:clusters[ci]["text_end_byte"]] if ci < len(clusters) else ""
-                if ctext == " ":
-                    groups.append([])
-                    continue
-                groups[-1].append((g, ctext, clusters[ci] if ci < len(clusters) else None))
-            for grp in groups:
-                if not grp:
-                    continue
-                g0 = grp[0][0]
-                srcs = [c["sources"][0] for _, _, c in grp if c and c.get("sources")]
-                span = None
-                if srcs:
-                    span = {"path": srcs[0]["path"], "start_byte": min(s["start_byte"] for s in srcs),
-                            "end_byte": max(s["end_byte"] for s in srcs)}
-                words.append({
-                    "text": "".join(t for _, t, _ in grp),
-                    "x": g0["origin_x"] / Q,
-                    "y_top": g0["baseline_y"] / Q,
-                    "size": item.get("font_size", 0) / Q,
-                    "font": (font or {}).get("postscript_name", item.get("font_id", "")[:12]),
-                    "math": is_math_font(font),
-                    "width": (grp[-1][0]["origin_x"] + grp[-1][0]["advance_x"] - g0["origin_x"]) / Q,
-                    "glyphs": len(grp),
-                    "source": span,
+                cluster = clusters[ci] if ci < len(clusters) else None
+                ctext = text[cluster["text_start_byte"]:cluster["text_end_byte"]] if cluster else ""
+                glyphs.append({
+                    "text": ctext,
+                    "x": g["origin_x"] / Q,
+                    "y_top": g["baseline_y"] / Q,
+                    "advance": g["advance_x"] / Q,
+                    "size": size,
+                    "font": name,
+                    # One text object per page: the candidate has no `BT`
+                    # structure to respect, so only the baseline and the gap
+                    # decide, which is what this rule is really about.
+                    "bt": 0,
                 })
+                meta.append((math, (cluster or {}).get("sources") or []))
+        words = pdftext.words_from_glyphs(glyphs)
+        for w in words:
+            i, n = w.pop("glyph_index"), w["glyphs"]
+            run = meta[i:i + n]
+            w["math"] = any(m for m, _ in run)
+            srcs = [s[0] for _, s in run if s]
+            w["source"] = None
+            if srcs:
+                w["source"] = {"path": srcs[0]["path"],
+                               "start_byte": min(s["start_byte"] for s in srcs),
+                               "end_byte": max(s["end_byte"] for s in srcs)}
         pages.append({"page": page.get("number"), "words": words,
                       "width": page.get("width", 0) / Q, "height": page.get("height", 0) / Q})
     return pages
