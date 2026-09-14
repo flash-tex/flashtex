@@ -429,7 +429,18 @@ pub struct PageWindow {
 }
 
 /// A window wider than this is clamped (and the clamp is reported).
-pub const MAX_WINDOW_PAGES: u32 = 512;
+///
+/// The binding constraint is not memory, it is the reply limit. PR #273
+/// measured the 500 KB corpus case: 385 pages serialise to a **164 MB**
+/// `display_list` line against a 16 MiB limit — ~426 KB a page — and the
+/// runtime's framed default is 8 MiB. So a repliable window is on the order of
+/// 19 pages at 8 MiB and 39 at 16 MiB for that document, and fewer for a denser
+/// one. 64 is a ceiling with margin over what a viewer actually shows; the
+/// exact fit is decided per reply by the existing size check, which a windowed
+/// list answers for its resident pages only
+/// (`DisplayList::estimated_json_bytes`), so an over-limit window can be
+/// narrowed and re-served instead of declined.
+pub const MAX_WINDOW_PAGES: u32 = 64;
 
 impl PageWindow {
     /// The effective window over a document of `pages` pages, or `None` when
@@ -447,6 +458,32 @@ impl PageWindow {
 
     pub fn contains(&self, page_number: u32) -> bool {
         page_number >= self.first_page && page_number < self.first_page + self.page_count
+    }
+
+    /// The widest window around `centre` that a reply of `limit` bytes can
+    /// carry, given a measured `bytes_per_page`.
+    ///
+    /// This is the arithmetic that turns FT-070's memory work into a product
+    /// fix. Today a 385-page document has no reply at all: its display list is
+    /// 164 MB against a 16 MiB limit, so the sibling is declined, the v1
+    /// `compile_result` is itself 20 339 909 bytes for those pages, and the
+    /// request ends `status: failed` (PR #273). A producer that can serve a
+    /// *window* has a reply it can actually send, so the question stops being
+    /// "decline or fail" and becomes "how many pages fit".
+    ///
+    /// Caller supplies `bytes_per_page` from a real measurement — the previous
+    /// reply's `page_bytes`, or `estimated_json_bytes` over what it has built —
+    /// because page size varies by an order of magnitude between a title page
+    /// and a dense one, and a constant here would be a guess presented as a
+    /// bound.
+    pub fn fitting(centre_page: u32, pages: u32, bytes_per_page: u64, limit: u64) -> Option<PageWindow> {
+        if bytes_per_page == 0 {
+            return PageWindow { first_page: 1, page_count: pages }.clamped(pages);
+        }
+        let fits = (limit / bytes_per_page).min(u64::from(u32::MAX)) as u32;
+        let count = fits.min(MAX_WINDOW_PAGES).max(1);
+        let first = centre_page.saturating_sub(count / 2).max(1);
+        PageWindow { first_page: first, page_count: count }.clamped(pages)
     }
 }
 
@@ -642,7 +679,7 @@ impl DisplayList {
     /// therefore the window's, and `display-list-v2-window` §3 requires the
     /// document's. Reconciling the two is r2 work, and is why the window is
     /// producer-internal until a consumer co-signs.
-    pub fn resident_items(&self) -> impl Iterator<Item = &Item> {
+    pub fn resident_page_items(&self) -> impl Iterator<Item = &Item> {
         self.pages.iter().flat_map(|p| p.items().into_iter().flatten())
     }
 
@@ -659,10 +696,10 @@ impl DisplayList {
     pub fn required_features_wire(&self, wire: Wire) -> Vec<&'static str> {
         let images = wire.images;
         let mut f = vec!["glyph_run", "rgba-srgb", "cluster-actualtext"];
-        if self.resident_items().any(|i| matches!(i, Item::Rule(_))) {
+        if self.resident_page_items().any(|i| matches!(i, Item::Rule(_))) {
             f.insert(1, "rule");
         }
-        let paths = || self.resident_items().filter_map(|i| if let Item::Path(p) = i { Some(p) } else { None });
+        let paths = || self.resident_page_items().filter_map(|i| if let Item::Path(p) = i { Some(p) } else { None });
         if paths().any(|p| matches!(p.op, PathPaintOp::Fill { .. })) {
             f.push("path_fill");
         }
@@ -675,7 +712,7 @@ impl DisplayList {
         if self.fonts.iter().any(|r| r.format == "static-truetype") {
             f.push("static-truetype");
         }
-        if images && self.resident_items().any(|i| matches!(i, Item::Image(_))) {
+        if images && self.resident_page_items().any(|i| matches!(i, Item::Image(_))) {
             f.push("image");
         }
         let device = |it: &Item| match it {
@@ -684,7 +721,7 @@ impl DisplayList {
             Item::Path(p) => p.paint.device.is_some(),
             Item::Image(_) => false,
         };
-        if wire.device_color && self.resident_items().any(device) {
+        if wire.device_color && self.resident_page_items().any(device) {
             f.push("device-color");
         }
         f
@@ -692,7 +729,7 @@ impl DisplayList {
 
     /// Whether any page carries an image item.
     pub fn has_images(&self) -> bool {
-        self.resident_items().any(|i| matches!(i, Item::Image(_)))
+        self.resident_page_items().any(|i| matches!(i, Item::Image(_)))
     }
 
     /// The `display_list` envelope of rendering-v2 as a JSON value, exactly

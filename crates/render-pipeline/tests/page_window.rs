@@ -163,10 +163,16 @@ fn windows_are_clamped_and_reported() {
     // Wider than the document: every page is resident, and that is a complete
     // set of pages — but still reported as a window.
     let wide = render_win(&text, Some(PageWindow { first_page: 1, page_count: n + 100 }), None);
-    assert_eq!(wide.window.expect("window").page_count, n);
-    assert!(wide.pages.iter().all(display::Page::is_resident));
+    // Clamped to the document, and never above MAX_WINDOW_PAGES -- which is a
+    // reply-limit bound, not a memory one (see display.rs).
+    assert_eq!(wide.window.expect("window").page_count, n.min(display::MAX_WINDOW_PAGES));
+    if n <= display::MAX_WINDOW_PAGES {
+        assert!(wide.pages.iter().all(display::Page::is_resident));
+    }
     for (a, b) in wide.pages.iter().zip(&full.pages) {
-        assert_eq!(page_bytes(a), page_bytes(b));
+        if a.is_resident() {
+            assert_eq!(page_bytes(a), page_bytes(b));
+        }
     }
 
     // Degenerate requests are not windows at all.
@@ -216,4 +222,38 @@ fn an_elided_page_carries_no_items_key() {
     let resident = windowed.pages.iter().find(|p| p.is_resident()).expect("some page is resident");
     // A resident page gains no marker: an unwindowed line is unchanged.
     assert!(!page_bytes(resident).contains("\"resident\""));
+}
+
+/// `PageWindow::fitting` is the arithmetic that turns this from a memory
+/// optimisation into the fix for a document that has no reply at all
+/// (`display-list-v2-window.md` §1.0): at the 500 KB corpus case's measured
+/// ~426 KB a page, a 16 MiB line carries tens of pages, not 385.
+#[test]
+fn a_window_is_sized_by_the_reply_limit() {
+    const MIB16: u64 = 16 * 1024 * 1024;
+    const MIB8: u64 = 8 * 1024 * 1024;
+    // PR #273: 164 MB of display list over 385 pages.
+    let bytes_per_page = 164_000_000u64 / 385;
+
+    let w = PageWindow::fitting(200, 385, bytes_per_page, MIB16).expect("a window fits");
+    assert!(u64::from(w.page_count) * bytes_per_page <= MIB16, "{w:?} does not fit 16 MiB");
+    assert!(w.page_count >= 8, "a 16 MiB line should carry more than a handful: {w:?}");
+
+    // The runtime's framed default is half that, so the window is smaller.
+    let w8 = PageWindow::fitting(200, 385, bytes_per_page, MIB8).expect("a window fits");
+    assert!(u64::from(w8.page_count) * bytes_per_page <= MIB8, "{w8:?} does not fit 8 MiB");
+    assert!(w8.page_count <= w.page_count);
+
+    // The whole document never fits, which is exactly today's failure.
+    assert!(385 * bytes_per_page > MIB16);
+    assert!(w.page_count < 385);
+
+    // A page so large that not even one fits still yields a one-page window
+    // rather than nothing: refusing is the protocol's job, not the window's.
+    let huge = PageWindow::fitting(3, 10, MIB16 * 4, MIB16).expect("still a window");
+    assert_eq!(huge.page_count, 1);
+
+    // Never wider than the cap, however generous the limit.
+    let generous = PageWindow::fitting(500, 1507, 1, MIB16).expect("a window");
+    assert_eq!(generous.page_count, display::MAX_WINDOW_PAGES);
 }

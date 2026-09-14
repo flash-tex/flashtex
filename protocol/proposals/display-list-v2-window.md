@@ -20,6 +20,7 @@ a description of working code:
 | §5.4 `assembled` scoped to the window, `blocks`/`adapted` whole-document | **implemented** (retain-by-window; the byte budget is not) |
 | §5.6 pdf / v1 / delta refusals | **implemented** |
 | §4 wire shape | **serialised, not negotiated** — `write_page` emits it, `v1.rs` does not accept the capability |
+| §1.0 `PageWindow::fitting` (widest window a reply limit can carry) | **implemented** as a producer helper; nothing calls it until the capability is negotiated |
 | §5.5 `PageRecipe` retained across requests | **not implemented**: each windowed render re-runs layout and rebuilds the recipe from a fresh `Laid`. Serving a scroll without re-layout is the point of retaining it, and is r2 |
 | §6 scroll served from a retained recipe | **not implemented**, follows §5.5 |
 
@@ -29,10 +30,17 @@ Sibling proposals, both unchanged by this one:
 
 ## 0. Ten-line summary
 
-1. FT-070's 100 MB target is not reachable while the whole document's display
-   list is resident. 100 MB over the 2 MB corpus case's 1507 pages is ~68 KB a
-   page — less than one page of glyph data at any representation that keeps
-   per-glyph carets and source ranges (PR #232, §5).
+0. **A 500 KB document cannot be previewed at all today.** Its display list is
+   164 MB against a 16 MiB reply limit, the v1 fallback is 20.3 MB for the same
+   385 pages, and the request ends `status: failed` (PR #273). Neither `-delta`
+   (which needs the full list first) nor `-only` (which needs a sibling to
+   elide v1 in favour of) fixes that. A window does, because it is the only one
+   that makes the producer build less. §1.0.
+1. FT-070's 100 MB target is separately not reachable while the whole
+   document's display list is resident. 100 MB over the 2 MB corpus case's 1507
+   pages is ~68 KB a page — less than one page of glyph data at any
+   representation that keeps per-glyph carets and source ranges (PR #232, §5).
+   Both roads end at the same mechanism, which is why this is one proposal.
 2. So the document stops being resident and a **window** of pages does: the
    pages the viewer is showing, plus a bounded margin.
 3. **The window is a production bound inside the pipeline, declared at the
@@ -68,7 +76,47 @@ Sibling proposals, both unchanged by this one:
     the page materialised through a window must be byte-identical to that page
     in the unwindowed render. §9.
 
-## 1. Why (measured, not promised)
+## 1. Why — and it is not only memory
+
+### 1.0 A 500 KB document has no reply at all today
+
+The lane that profiled the warm keystroke (PR #273, issue #2 comment
+5658075424) measured the 500 KB corpus case, 385 pages:
+
+- the `display_list` sibling would be **164 MB** against a **16 MiB** line
+  limit, so `handle_line` declines it *without serialising it*;
+- the runtime-v1 `compile_result` that would carry the pages instead is
+  **20 339 909 bytes** for those 385 pages — also over the limit;
+- so the request ends **`status: failed`**. Not slow. Failed.
+
+This is a product bug, and it is arguably more urgent than the 100 MB target
+this proposal was written for. It also cannot be fixed by either existing
+sibling capability:
+
+- **`-delta` does not help.** `try_delta` needs the full `DisplayList` from
+  `render_cached` before it can diff anything, so it shrinks the wire *after*
+  the producer has already built and failed to fit the whole document.
+- **`-only` alone does not help.** It empties the v1 `pages` only when a sibling
+  line is present, and at 385 pages the sibling is the 164 MB line that was
+  declined. Emptying v1 leaves nothing to paint.
+
+A window is the shape the limit requires, because it is the only one of the
+three that makes the producer build less. At the measured ~426 KB a page a
+16 MiB line carries ~39 pages of that document and the runtime's 8 MiB framed
+default ~19 — both comfortably more than a viewer shows, and both finite where
+1507 pages is not. `MAX_WINDOW_PAGES` is set from this arithmetic (64, with
+margin), not from a memory budget.
+
+**And `-window` and `-only` together are what make a long document repliable at
+all**, which is the first hard reason to compose two capabilities rather than
+pick one: `-only` removes the ~53 KB-a-page v1 payload that fails on its own at
+385 pages, and the window bounds the v2 sibling that fails on its own at 164 MB.
+Neither is sufficient. §7.
+
+The rest of this section is the memory argument the proposal started from. Both
+lead to the same mechanism, which is why it is one proposal.
+
+### 1.1 The memory arithmetic (measured, not promised)
 
 PR #232 measured the 2 MB corpus case (`synthetic-2mb`, 1507 pages, 1.48 M
 glyphs) per structure after its own win. Resident 2570 MiB, live 1458 MiB:
@@ -386,9 +434,13 @@ scroll at a stale revision is a fresh render, not a patched one.
 
 ## 7. Composition
 
-**With `display-list-v2-only`: composes, and they want each other.** `-only`
-elides the runtime-v1 `pages` when a v2 sibling is present; `-window` shrinks
-the sibling. Neither reads the other's field. A request may list both.
+**With `display-list-v2-only`: composes, and at scale each is useless without
+the other.** `-only` elides the runtime-v1 `pages` when a v2 sibling is present;
+`-window` bounds that sibling. Neither reads the other's field, and a request
+may list both — but §1.0's measurement is the reason it *should*: at 385 pages
+the v1 payload alone is 20.3 MB and the v2 sibling alone is 164 MB, so a reply
+that fits needs both levers. A consumer that wants large documents to work sends
+`display-list-v2`, `display-list-v2-only` and `display-list-v2-window` together.
 
 **With `display-list-v2-delta`: mutually exclusive in r1.** The delta's
 identity (`-delta` §2) binds `page_count`, a digest for **every** page, and a
