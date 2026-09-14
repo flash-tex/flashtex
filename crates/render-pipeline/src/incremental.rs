@@ -292,6 +292,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
             Item::Lap { items } => {
                 202u8.hash(h);
                 hash_items(items, base, h);
+            }
             Item::Underline(u) => {
                 12u8.hash(h);
                 format!("{u:?}").hash(h);
