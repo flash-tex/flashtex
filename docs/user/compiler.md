@@ -612,39 +612,39 @@ Canonical sources:
 | `\sisetup` | `{options}` | siunitx settings changed inside a formula |
 | `\rule` | `[raise]{dimension}{dimension}` | latex.ltx \rule box in a formula, em/ex of the text font |
 | `\frac` | `{num}{den}` | fraction; \cfrac lays out as \frac |
-| `\cfrac` | `{num}{den}` | fraction; \cfrac lays out as \frac |
-| `\dfrac` | `{num}{den}` | amsmath \genfrac fraction in display or text style |
-| `\tfrac` | `{num}{den}` | amsmath \genfrac fraction in display or text style |
-| `\genfrac` | `{left}{right}{thickness}{style}{num}{den}` | amsmath generalized fraction: delimiters, pt rule thickness and a 0-3 style |
+| `\cfrac` | `{num}{den}` | fraction; \cfrac lays out as \frac (needs amsmath) |
+| `\dfrac` | `{num}{den}` | amsmath \genfrac fraction in display or text style (needs amsmath) |
+| `\tfrac` | `{num}{den}` | amsmath \genfrac fraction in display or text style (needs amsmath) |
+| `\genfrac` | `{left}{right}{thickness}{style}{num}{den}` | amsmath generalized fraction: delimiters, pt rule thickness and a 0-3 style (needs amsmath) |
 | `\phantom` | `{x}` | empty box with the width and/or height and depth of the argument |
 | `\hphantom` | `{x}` | empty box with the width and/or height and depth of the argument |
 | `\vphantom` | `{x}` | empty box with the width and/or height and depth of the argument |
-| `\xrightarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
-| `\xleftarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
+| `\xrightarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) (needs amsmath) |
+| `\xleftarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) (needs amsmath) |
 | `\xleftrightarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
-| `\substack` | `{a \\ b}` | amsmath centred script-style rows for limits |
+| `\substack` | `{a \\ b}` | amsmath centred script-style rows for limits (needs amsmath) |
 | `\sqrt` | `[index]{x}` | radical with optional raised index |
-| `\binom` | `{n}{k}` | amsmath binomial: zero-thickness \genfrac in parentheses; d/t forms force the style |
-| `\dbinom` | `{n}{k}` | amsmath binomial: zero-thickness \genfrac in parentheses; d/t forms force the style |
-| `\tbinom` | `{n}{k}` | amsmath binomial: zero-thickness \genfrac in parentheses; d/t forms force the style |
+| `\binom` | `{n}{k}` | amsmath binomial: zero-thickness \genfrac in parentheses; d/t forms force the style (needs amsmath) |
+| `\dbinom` | `{n}{k}` | amsmath binomial: zero-thickness \genfrac in parentheses; d/t forms force the style (needs amsmath) |
+| `\tbinom` | `{n}{k}` | amsmath binomial: zero-thickness \genfrac in parentheses; d/t forms force the style (needs amsmath) |
 | `\choose` |  | TeX infix binomial and fraction inside a group |
 | `\over` |  | TeX infix binomial and fraction inside a group |
-| `\overset` | `{script}{base}` | script-size list centred above or below a base |
+| `\overset` | `{script}{base}` | script-size list centred above or below a base (needs amsmath) |
 | `\stackrel` | `{script}{base}` | script-size list centred above or below a base |
-| `\underset` | `{script}{base}` | script-size list centred above or below a base |
-| `\operatorname` | `{name}` | upright named operator (\mathop); starred and withlimits forms take limits |
-| `\operatornamewithlimits` | `{name}` | upright named operator (\mathop); starred and withlimits forms take limits |
+| `\underset` | `{script}{base}` | script-size list centred above or below a base (needs amsmath) |
+| `\operatorname` | `{name}` | upright named operator (\mathop); starred and withlimits forms take limits (needs amsopn) |
+| `\operatornamewithlimits` | `{name}` | upright named operator (\mathop); starred and withlimits forms take limits (needs amsopn) |
 | `\colon` |  | function-arrow colon: punctuation (0mu/3mu) as the kernel declares it, amsmath's 2mu/6mu when amsmath is loaded |
-| `\bmod` |  | upright mod |
-| `\mod` |  | upright mod |
+| `\bmod` |  | upright mod as a \mathbin, with the kernel's 5mu in place of \medmuskip |
+| `\mod` | `{n}` | amsmath upright mod: 12mu, an ordinary mod, 6mu, then the argument (needs amsmath) |
 | `\pmod` | `{n}` | parenthesised (mod n) |
 | `\mathbb` | `{A-Z}` | double-struck capitals from Latin Modern Math; other arguments are diagnosed |
 | `\mathfrak` | `{letters}` | Euler Fraktur letters as Unicode mathematical fraktur; digits and other characters unchanged |
 | `\mathcal` | `{A-Z}` | script capitals from New Computer Modern Math at cmsy10 metrics; other arguments are diagnosed |
 | `\varnothing` |  | empty set at msbm10's 0.7778em advance (\emptyset's glyph) |
 | `\iff` |  | long double arrow between thick (5mu) spaces |
-| `\implies` |  | long double arrow between thick (5mu) spaces |
-| `\impliedby` |  | long double arrow between thick (5mu) spaces |
+| `\implies` |  | long double arrow between thick (5mu) spaces (needs amsmath) |
+| `\impliedby` |  | long double arrow between thick (5mu) spaces (needs amsmath) |
 | `\bot` |  | shared symbol glyph with its own atom class (Ord / Bin) |
 | `\bigtriangleup` |  | shared symbol glyph with its own atom class (Ord / Bin) |
 | `\mathbin` | `{math}` | argument boxed as one atom of the forced class |
@@ -661,25 +661,25 @@ Canonical sources:
 | `\mathtt` | `{...}` | letters and digits of a plain argument as Unicode mathematical italic, sans-serif or monospace; any other argument stays in the current math face |
 | `\mathrm` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\mathnormal` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
-| `\boldsymbol` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
+| `\boldsymbol` | `{...}` | keeps its argument in the current math face (no distinct face yet) (needs amsbsy) |
 | `\bm` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\mbox` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\hbox` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\textrm` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\textit` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\textnormal` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
-| `\text` | `{text}` | literal text in math |
-| `\boxed` | `{...}` | real rule around, over or under the body |
+| `\text` | `{text}` | literal text in math (needs amstext) |
+| `\boxed` | `{...}` | real rule around, over or under the body (needs amsmath) |
 | `\overline` | `{...}` | real rule around, over or under the body |
 | `\underline` | `{...}` | real rule around, over or under the body |
 | `\overbrace` | `{body}` | cmex brace pieces with rule fills over or under a display-style body; scripts are limits |
 | `\underbrace` | `{body}` | cmex brace pieces with rule fills over or under a display-style body; scripts are limits |
 | `\overrightarrow` | `{body}` | amsmath \arrowfill@ as wide as the body, over or under it |
 | `\overleftarrow` | `{body}` | amsmath \arrowfill@ as wide as the body, over or under it |
-| `\overleftrightarrow` | `{body}` | amsmath \arrowfill@ as wide as the body, over or under it |
-| `\underrightarrow` | `{body}` | amsmath \arrowfill@ as wide as the body, over or under it |
-| `\underleftarrow` | `{body}` | amsmath \arrowfill@ as wide as the body, over or under it |
-| `\underleftrightarrow` | `{body}` | amsmath \arrowfill@ as wide as the body, over or under it |
+| `\overleftrightarrow` | `{body}` | amsmath \arrowfill@ as wide as the body, over or under it (needs amsmath) |
+| `\underrightarrow` | `{body}` | amsmath \arrowfill@ as wide as the body, over or under it (needs amsmath) |
+| `\underleftarrow` | `{body}` | amsmath \arrowfill@ as wide as the body, over or under it (needs amsmath) |
+| `\underleftrightarrow` | `{body}` | amsmath \arrowfill@ as wide as the body, over or under it (needs amsmath) |
 | `\dashrightarrow` |  | amsfonts dashed arrow: two msam \dabar@ pieces and a head in one relation |
 | `\dasharrow` |  | amsfonts dashed arrow: two msam \dabar@ pieces and a head in one relation |
 | `\dashleftarrow` |  | amsfonts dashed arrow: two msam \dabar@ pieces and a head in one relation |
@@ -717,14 +717,14 @@ Canonical sources:
 | `\Biggm` |  | consumes the following delimiter, kept at ordinary size |
 | `\dots` |  | three periods |
 | `\ldots` |  | three periods |
-| `\dotsc` |  | three periods |
-| `\dotso` |  | three periods |
+| `\dotsc` |  | three periods (needs amsmath) |
+| `\dotso` |  | three periods (needs amsmath) |
 | `\cdots` |  | three math-axis dots |
-| `\dotsb` |  | three math-axis dots |
-| `\dotsm` |  | three math-axis dots |
-| `\dotsi` |  | three math-axis dots |
-| `\iint` |  | repeated integral glyph |
-| `\iiint` |  | repeated integral glyph |
+| `\dotsb` |  | three math-axis dots (needs amsmath) |
+| `\dotsm` |  | three math-axis dots (needs amsmath) |
+| `\dotsi` |  | three math-axis dots (needs amsmath) |
+| `\iint` |  | repeated integral glyph (needs amsmath) |
+| `\iiint` |  | repeated integral glyph (needs amsmath) |
 | `\lbrace` |  | brace glyph |
 | `\rbrace` |  | brace glyph |
 | `\quad` |  | 1em/2em math space |
@@ -736,9 +736,9 @@ Canonical sources:
 | `\limits` |  | accepted without changing script placement |
 | `\nolimits` |  | accepted without changing script placement |
 | `\nonumber` |  | accepted without effect |
-| `\notag` |  | accepted without effect |
+| `\notag` |  | accepted without effect (needs amsmath) |
 | `\middle` |  | accepted without effect |
-| `\tag` | `{label}` | (label) two quads after the display; starred form without parentheses |
+| `\tag` | `{label}` | (label) two quads after the display; starred form without parentheses (needs amsmath) |
 | `\begin` | `{env}` | opens a math grid environment |
 
 ### Math symbols

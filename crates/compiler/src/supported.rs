@@ -472,7 +472,18 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         "function-arrow colon: punctuation (0mu/3mu) as the kernel declares it, amsmath's 2mu/6mu when amsmath is loaded",
         true,
     ),
-    (&["bmod", "mod"], "", "upright mod", true),
+    (
+        &["bmod"],
+        "",
+        "upright mod as a \\mathbin, with the kernel's 5mu in place of \\medmuskip",
+        true,
+    ),
+    (
+        &["mod"],
+        "{n}",
+        "amsmath upright mod: 12mu, an ordinary mod, 6mu, then the argument",
+        true,
+    ),
     (&["pmod"], "{n}", "parenthesised (mod n)", true),
     (
         &["mathbb"],
@@ -987,6 +998,21 @@ pub fn inventory() -> Inventory {
             mode: Mode::Math,
             description: format!("math grid, {align} cells{fences}"),
         });
+    }
+
+    // Which `\usepackage` a math construct of the amsmath bundle needs. Base
+    // LaTeX2e defines none of `math::MATH_CONSTRUCTS`, and `command_atom`
+    // diagnoses each one when its file is absent, so the inventory has to say
+    // so — the same "needs {package}" the amssymb/amsfonts symbols carry.
+    // Applied as a pass over the finished list rather than at each push site,
+    // because these 37 names arrive through three different loops.
+    for command in &mut commands {
+        if command.mode != Mode::Math {
+            continue;
+        }
+        if let Some(provider) = math::construct_provider(command.name) {
+            command.description = format!("{} (needs {})", command.description, provider.package());
+        }
     }
 
     let packages = PACKAGES
