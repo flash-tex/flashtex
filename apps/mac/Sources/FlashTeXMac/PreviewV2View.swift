@@ -262,11 +262,12 @@ extension ShellModel {
     /// whose change re-requests the current revision under auto-compile. The
     /// v1 pages of every result keep painting the product preview.
     func setLiveV2(_ on: Bool) {
-        // `display-list-v2-images` rides along (proposal §1: accepted only
-        // with `display-list-v2`); one assignment so a switch re-requests once.
+        // `display-list-v2-images` and `display-list-v2-diagnostics` ride
+        // along (accepted only with `display-list-v2`); one assignment so a
+        // switch re-requests once. Unaccepted caps are logged, never an error.
         var caps = requestedLayoutCapabilities
-        caps.removeAll { $0 == V2Live.capability || $0 == RenderingV2.imagesCapability }
-        if on { caps += [V2Live.capability, RenderingV2.imagesCapability] }
+        caps.removeAll { $0 == V2Live.capability || $0 == RenderingV2.imagesCapability || $0 == RenderingV2.diagnosticsCapability }
+        if on { caps += [V2Live.capability, RenderingV2.imagesCapability, RenderingV2.diagnosticsCapability] }
         if caps != requestedLayoutCapabilities { requestedLayoutCapabilities = caps }
     }
 

@@ -908,6 +908,7 @@ fn validate_reply_value(v: Value, r: &Request, requested: &[String]) -> Result<V
             || !matches!(
                 cap.as_str(),
                 "rules-v1" | "font-hints-v1" | "display-list-v2" | "display-list-v2-images"
+                    | "display-list-v2-diagnostics"
             )
     }) {
         return Err("compiler accepted unknown or unrequested capability".into());
@@ -918,6 +919,12 @@ fn validate_reply_value(v: Value, r: &Request, requested: &[String]) -> Result<V
         && !accepted.iter().any(|cap| cap == "display-list-v2")
     {
         return Err("compiler accepted display-list-v2-images without display-list-v2".into());
+    }
+    // PROPOSAL display-list-v2-diagnostics: same pairing rule as images.
+    if accepted.iter().any(|cap| cap == "display-list-v2-diagnostics")
+        && !accepted.iter().any(|cap| cap == "display-list-v2")
+    {
+        return Err("compiler accepted display-list-v2-diagnostics without display-list-v2".into());
     }
 
     if !matches!(p["status"].as_str(), Some("ok" | "recovered" | "failed"))

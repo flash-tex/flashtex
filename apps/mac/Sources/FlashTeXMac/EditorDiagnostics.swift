@@ -1027,17 +1027,17 @@ extension EditorDiagnostics {
         return nil
     }
 
-    /// True when `help.replacement` is in-bounds for `currentText`, targets
-    /// `path`, and the compile revision still matches the editor — the Fix…
-    /// affordance is hidden otherwise. Advice-only help and a stale buffer
-    /// never show it.
+    /// True when a mechanical Fix… (`help.replacement`, else `suggestion` over
+    /// the diagnostic source) is in-bounds for `currentText`, targets `path`,
+    /// and the compile revision still matches the editor. Advice-only help
+    /// and a stale buffer never show it.
     static func canApplyHelpReplacement(_ d: RuntimeV1.Diagnostic, path: String, currentText: String,
                                         compiledRevision: Int?, editorRevision: Int) -> Bool {
         guard compiledRevision == editorRevision else { return false }
-        guard let r = d.help?.replacement else { return false }
-        guard d.path(of: r) == path else { return false }
-        guard r.startByte >= 0, r.startByte <= r.endByte else { return false }
-        return currentText.rangeOfUTF8(start: r.startByte, end: r.endByte) != nil
+        guard let edit = mechanicalEdit(for: d) else { return false }
+        guard edit.path == path else { return false }
+        guard edit.startByte >= 0, edit.startByte <= edit.endByte else { return false }
+        return currentText.rangeOfUTF8(start: edit.startByte, end: edit.endByte) != nil
     }
 
     /// `QuickFix.prepare` for the diagnostic's mechanical edit (same refusal

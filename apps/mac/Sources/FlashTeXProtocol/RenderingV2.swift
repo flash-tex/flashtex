@@ -842,6 +842,32 @@ public enum RenderingV2 {
             }
             guard Bounds.diagnosticSources.contains(d.sources.count) else { throw fail("invalid_display_list", "diagnostic '\(d.code)' lists \(d.sources.count) sources (limit \(Bounds.diagnosticSources.upperBound))") }
             for s in d.sources { try validateSource(s, documents: documents, "diagnostic '\(d.code)'") }
+            if let suggestion = d.suggestion {
+                guard Bounds.diagnosticMessageBytes.contains(suggestion.utf8.count) else {
+                    throw fail("invalid_display_list", "diagnostic '\(d.code)' suggestion must be 1...\(Bounds.diagnosticMessageBytes.upperBound) bytes")
+                }
+            }
+            if let labels = d.labels {
+                guard Bounds.diagnosticSources.contains(labels.count) else {
+                    throw fail("invalid_display_list", "diagnostic '\(d.code)' lists \(labels.count) labels (limit \(Bounds.diagnosticSources.upperBound))")
+                }
+                for lab in labels { try validateSource(lab.source, documents: documents, "diagnostic '\(d.code)' label") }
+            }
+            if let notes = d.notes {
+                for n in notes {
+                    guard Bounds.diagnosticMessageBytes.contains(n.utf8.count) else {
+                        throw fail("invalid_display_list", "diagnostic '\(d.code)' note must be 1...\(Bounds.diagnosticMessageBytes.upperBound) bytes")
+                    }
+                }
+            }
+            if let help = d.help {
+                guard Bounds.diagnosticMessageBytes.contains(help.message.utf8.count) else {
+                    throw fail("invalid_display_list", "diagnostic '\(d.code)' help message must be 1...\(Bounds.diagnosticMessageBytes.upperBound) bytes")
+                }
+                if let r = help.replacement {
+                    try validateSource(r.source, documents: documents, "diagnostic '\(d.code)' help replacement")
+                }
+            }
         }
         let declared = Set(list.requiredFeatures)
         let undeclared = usedFeatures.subtracting(declared).sorted()

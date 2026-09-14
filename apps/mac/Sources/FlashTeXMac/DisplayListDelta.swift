@@ -128,7 +128,10 @@ enum DisplayListDelta {
         c.u(l.documents.count); for d in l.documents { c.s(d.path); c.u(d.revision); c.s(d.sha256); c.i(d.byteLength) }
         c.u(l.fonts.count)
         for f in l.fonts { c.s(f.fontId); c.s(f.sha256); c.i(f.byteLength); c.s(f.format); c.u(f.faceIndex); c.u(f.unitsPerEm); c.u(f.glyphCount); c.s(f.postscriptName) }
-        c.u(l.diagnostics.count); for d in l.diagnostics { c.s(d.code); c.s(d.message); c.s(d.severity.rawValue); c.ranges(d.sources) }
+        c.u(l.diagnostics.count); for d in l.diagnostics {
+            c.s(d.code); c.s(d.message); c.s(d.severity.rawValue); c.ranges(d.sources)
+            if let s = d.suggestion { c.s(s) }
+        }
         return c.bytes
     }
 
