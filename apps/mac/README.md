@@ -248,8 +248,10 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   not a TeX-engine PDF: no fonts beyond Latin Modern/Times, no images, no links
   or metadata. The dark toggle only changes page/text colors. Disabled when no
   result is loaded. `File > Print…` (⌘P) prints those same bytes through
-  PDFKit's system print panel (`PrintController.swift`); `File > Print Source…`
-  prints the editor buffer with line numbers from a copy.
+  PDFKit's system print panel (`PrintController.swift`); it is also disabled
+  when the compile failed or produced no pages (a blank PDF is not printed).
+  `File > Print Source…` prints the editor buffer with line numbers from a copy
+  and is disabled when no document is open.
 
 ## Capture bridge (transfer-v1)
 

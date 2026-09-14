@@ -65,25 +65,61 @@ final class PrintControllerTests: XCTestCase {
     }
 
     func testDisabledWithoutPDFAndWithoutDocument() {
-        XCTAssertFalse(PrintController.documentEnabled(hasResult: false))
-        XCTAssertEqual(PrintController.documentHelp(hasResult: false),
-                       "Nothing to print: no compiled PDF (compile the document first).")
-        XCTAssertTrue(PrintController.documentEnabled(hasResult: true))
-        XCTAssertTrue(PrintController.documentHelp(hasResult: true).contains("⌘P"))
-
-        XCTAssertFalse(PrintController.sourceEnabled(hasDocument: false))
-        XCTAssertEqual(PrintController.sourceHelp(hasDocument: false),
-                       "Nothing to print: no document is open.")
-        XCTAssertTrue(PrintController.sourceEnabled(hasDocument: true))
-
         let model = ShellModel()
         model.result = nil
         XCTAssertFalse(model.toolbarHasResult)
-        XCTAssertFalse(PrintController.documentEnabled(hasResult: model.toolbarHasResult))
+        XCTAssertFalse(PrintController.documentEnabled(model))
+        XCTAssertEqual(PrintController.documentHelp(model),
+                       "Nothing to print: no compiled PDF (compile the document first).")
         guard case .refused(let why) = PrintController.makeDocumentPrint(from: model) else {
             return XCTFail("no PDF must refuse, not build an operation")
         }
         XCTAssertTrue(why.contains("no compile result"), why)
+    }
+
+    func testFailedResultIsNotPrintable() {
+        let model = ShellModel()
+        XCTAssertTrue(PrintController.documentEnabled(model), "fixture result is printable")
+        model.result = RuntimeV1.CompileResult(projectId: "demo", revision: 1, status: .failed,
+                                               pages: [], diagnostics: [], pdfPath: nil)
+        XCTAssertEqual(model.resultStatus, .failed)
+        XCTAssertEqual(model.toolbarPageCount, 0)
+        XCTAssertFalse(PrintController.documentEnabled(model))
+        XCTAssertEqual(PrintController.documentHelp(model), "Compile failed — nothing to print")
+        guard case .refused(let why) = PrintController.makeDocumentPrint(from: model) else {
+            return XCTFail("a failed result must not build a print operation")
+        }
+        XCTAssertEqual(why, "Compile failed — nothing to print")
+        XCTAssertTrue(PrintController.exportWouldProceed(model),
+                      "Export PDF… still uses the current result; Print is the stricter command")
+    }
+
+    func testEmptyPagesAreNotPrintable() {
+        let model = ShellModel()
+        model.result = RuntimeV1.CompileResult(projectId: "demo", revision: 1, status: .ok,
+                                               pages: [], diagnostics: [], pdfPath: nil)
+        XCTAssertEqual(model.resultStatus, .ok)
+        XCTAssertEqual(model.toolbarPageCount, 0)
+        XCTAssertFalse(PrintController.documentEnabled(model))
+        XCTAssertEqual(PrintController.documentHelp(model), "Compile failed — nothing to print")
+        guard case .refused(let why) = PrintController.makeDocumentPrint(from: model) else {
+            return XCTFail("empty pages must not print a blank PDF")
+        }
+        XCTAssertEqual(why, "Compile failed — nothing to print")
+    }
+
+    func testFileMenuEnablementUsesDocumentEnabledAndSourceEnabled() throws {
+        // The File menu must call these functions (not a parallel helper or a
+        // hard-coded hasDocument: true). CommandTableTests already checks
+        // .disabled() vs requires; this pins the callee.
+        let url = Self.repoRoot.appendingPathComponent("apps/mac/Sources/FlashTeXMac/FlashTeXMacApp.swift")
+        let text = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(text.contains("PrintController.documentEnabled(model)"))
+        XCTAssertTrue(text.contains("PrintController.documentHelp(model)"))
+        XCTAssertTrue(text.contains("PrintController.sourceEnabled(model)"))
+        XCTAssertTrue(text.contains("PrintController.sourceHelp(model)"))
+        XCTAssertFalse(text.contains("sourceHelp(hasDocument: true)"))
+        XCTAssertTrue(text.contains("CommandGroup(replacing: .printItem)"), "Print… and Print Source stay in the File menu")
     }
 
     func testStaleCompilePrintsLastResultLikeExportPDF() throws {
@@ -97,7 +133,8 @@ final class PrintControllerTests: XCTestCase {
         XCTAssertTrue(model.previewIsStale, "editor is ahead of the last compile")
         XCTAssertTrue(model.toolbarHasResult, "Export PDF… stays enabled on a stale preview")
         XCTAssertTrue(PrintController.exportWouldProceed(model), "Export PDF… still uses the last result")
-        XCTAssertTrue(PrintController.documentEnabled(hasResult: model.toolbarHasResult))
+        XCTAssertTrue(PrintController.documentEnabled(model))
+        XCTAssertTrue(PrintController.documentHelp(model).contains("⌘P"))
 
         guard case .ready(let prepared) = PrintController.makeDocumentPrint(from: model) else {
             return XCTFail("stale editor must print the last compiled PDF, not refuse")
@@ -132,7 +169,8 @@ final class PrintControllerTests: XCTestCase {
         let model = ShellModel()
         model.replaceProject(entryText: buffer)
         XCTAssertEqual(model.activeText, buffer)
-        XCTAssertTrue(PrintController.sourceEnabled(hasDocument: !model.documents.isEmpty))
+        XCTAssertTrue(PrintController.sourceEnabled(model))
+        XCTAssertTrue(PrintController.sourceHelp(model).contains("line numbers"))
 
         guard case .ready(let prepared) = PrintController.makeSourcePrint(from: model) else {
             return XCTFail("an open buffer must build a Print Source operation")
@@ -145,7 +183,10 @@ final class PrintControllerTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(prepared.pageCount, 1)
 
         model.documents = []
-        XCTAssertFalse(PrintController.sourceEnabled(hasDocument: !model.documents.isEmpty))
+        XCTAssertFalse(model.toolbarHasDocument)
+        XCTAssertFalse(PrintController.sourceEnabled(model))
+        XCTAssertEqual(PrintController.sourceHelp(model),
+                       "Nothing to print: no document is open.")
         guard case .refused(let why) = PrintController.makeSourcePrint(from: model) else {
             return XCTFail("no document must refuse Print Source")
         }

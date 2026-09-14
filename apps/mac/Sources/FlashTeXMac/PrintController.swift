@@ -35,30 +35,52 @@ enum PrintController {
         return URL(fileURLWithPath: model.activePath).lastPathComponent
     }
 
-    /// Menu enablement for File > Print…: a compile result (the PDF). Mirrors
-    /// Export PDF… (`toolbarHasResult`); do not read `result` from the App scene.
-    static func documentEnabled(hasResult: Bool) -> Bool { hasResult }
-
-    /// Tooltip for File > Print…; names why the item is disabled.
-    static func documentHelp(hasResult: Bool) -> String {
-        hasResult
-            ? "Print the compiled document PDF (⌘P); same bytes as Export PDF…"
-            : "Nothing to print: no compiled PDF (compile the document first)."
+    /// Menu enablement for File > Print… (the function the File menu calls).
+    /// Reads only change-only mirrors — do not read `result` from the App scene.
+    /// A `.failed` result or an empty `pages` array is not printable:
+    /// `PDFExport.render` would emit a blank letter page. Export PDF… still
+    /// uses `toolbarHasResult`; Print is stricter. `retainedMarks` is the
+    /// diagnostics last-good snapshot and is not a print source (Export does
+    /// not fall back to it either).
+    static func documentEnabled(_ model: ShellModel) -> Bool {
+        documentEnabled(hasResult: model.toolbarHasResult, status: model.resultStatus, pageCount: model.toolbarPageCount)
     }
 
+    /// Shared by the File-menu function and `printableResult` (same file).
+    fileprivate static func documentEnabled(hasResult: Bool, status: RuntimeV1.Status?, pageCount: Int) -> Bool {
+        hasResult && status != .failed && pageCount > 0
+    }
+
+    /// Tooltip for File > Print…; names why the item is disabled.
+    static func documentHelp(_ model: ShellModel) -> String {
+        documentHelp(hasResult: model.toolbarHasResult, status: model.resultStatus, pageCount: model.toolbarPageCount)
+    }
+
+    fileprivate static func documentHelp(hasResult: Bool, status: RuntimeV1.Status?, pageCount: Int) -> String {
+        if !hasResult {
+            return "Nothing to print: no compiled PDF (compile the document first)."
+        }
+        if status == .failed || pageCount == 0 {
+            return "Compile failed — nothing to print"
+        }
+        return "Print the compiled document PDF (⌘P); same bytes as Export PDF…"
+    }
+
+    /// Menu enablement for File > Print Source… (the function the File menu calls).
+    static func sourceEnabled(_ model: ShellModel) -> Bool { model.toolbarHasDocument }
+
     /// Tooltip for File > Print Source….
-    static func sourceHelp(hasDocument: Bool) -> String {
-        hasDocument
+    static func sourceHelp(_ model: ShellModel) -> String {
+        sourceEnabled(model)
             ? "Print the editor text with line numbers (monospaced); the live editor is not used"
             : "Nothing to print: no document is open."
     }
-
-    static func sourceEnabled(hasDocument: Bool) -> Bool { hasDocument }
 
     /// The same refusal Export PDF… would store in `captureNote`, or the result
     /// it would render. Print uses this so a stale editor still prints the last
     /// applied compile (never an in-flight partial) and a historical preview
     /// refuses instead of silently printing the older snapshot as current.
+    /// Failed / empty-page results are refused here too (not only in the menu).
     static func printableResult(from model: ShellModel) -> Outcome {
         if let why = model.historicalRefusal(of: "print") { return .refused(why) }
         guard let result = model.result else {
@@ -67,18 +89,18 @@ enum PrintController {
         if result.pages.isEmpty, model.v1PagesElided {
             return .refused("The v1 layout pages were elided for the v2 pane (display-list-v2-only); use Export Exact PDF, or switch the v2 pane off and recompile.")
         }
+        if !documentEnabled(hasResult: true, status: result.status, pageCount: result.pages.count) {
+            return .refused("Compile failed — nothing to print")
+        }
         guard let prepared = prepareDocument(result: result, jobTitle: documentName(from: model)) else {
             return .refused("PDF print failed: the compiled result did not produce a printable document.")
         }
         return .ready(prepared)
     }
 
-    /// True when Export PDF… would open the save panel (same guards, export wording).
+    /// True when Export PDF… would open the save panel (shared `exportPDFRefusal`).
     static func exportWouldProceed(_ model: ShellModel) -> Bool {
-        if model.historicalRefusal(of: "export") != nil { return false }
-        guard let result = model.result else { return false }
-        if result.pages.isEmpty, model.v1PagesElided { return false }
-        return true
+        model.exportPDFRefusal() == nil
     }
 
     static func makeDocumentPrint(from model: ShellModel, showsPrintPanel: Bool = false) -> Outcome {

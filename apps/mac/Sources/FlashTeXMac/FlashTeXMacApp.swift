@@ -266,10 +266,11 @@ struct FlashTeXMacApp: App {
             CommandGroup(replacing: .printItem) {
                 Button("Print…") { model.printDocument() }
                     .keyboardShortcut("p")
-                    .disabled(!model.toolbarHasResult) // change-only mirror (see .commands)
-                    .help(PrintController.documentHelp(hasResult: model.toolbarHasResult))
+                    .disabled(!PrintController.documentEnabled(model)) // change-only mirrors (see PrintController)
+                    .help(PrintController.documentHelp(model))
                 Button("Print Source…") { model.printSource() }
-                    .help(PrintController.sourceHelp(hasDocument: true))
+                    .disabled(!PrintController.sourceEnabled(model))
+                    .help(PrintController.sourceHelp(model))
             }
         }
         Window("Nearby Companion", id: "nearby") {

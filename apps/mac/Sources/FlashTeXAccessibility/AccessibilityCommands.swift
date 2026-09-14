@@ -121,6 +121,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
         case .printSource:
             return Entry(command: self, title: "Print Source", shortcuts: ["File > Print Source…"], menu: "File",
                          description: "Prints the editor text with line numbers in a monospaced font from a copy of the buffer, so the live editor layout is untouched.",
+                         requires: "an open document",
                          menuItem: "Print Source…")
         case .pinInsertionPoint:
             return Entry(command: self, title: "Pin insertion point", shortcuts: ["⌘⌥P"], menu: "Edit",
