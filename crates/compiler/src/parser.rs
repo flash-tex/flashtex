@@ -7263,6 +7263,19 @@ mod tests {
         assert_eq!(parse_dimen_pt("0.5\\textwidth"), Some(0.0));
         assert!(parse_dimen_pt("banana").is_none());
         assert!(parse_dimen_pt("").is_none());
+        // TeXbook Appendix B / scan_dimen §458 ratios, in TeX points.
+        assert_eq!(parse_dimen_pt("1bp"), Some(72.27 / 72.0));
+        assert_eq!(parse_dimen_pt("1dd"), Some(1238.0 / 1157.0));
+        assert_eq!(parse_dimen_pt("1cc"), Some(14856.0 / 1157.0));
+        assert_eq!(parse_dimen_pt("1sp"), Some(1.0 / 65536.0));
+        assert_eq!(parse_dimen_pt("1mm"), Some(72.27 / 25.4));
+        assert_eq!(parse_dimen_pt("1cm"), Some(72.27 / 2.54));
+        // `ex` uses cmr's x-height/em (same constant as ulem); the compiler
+        // has no TFM metrics, unlike the pipeline's `ec_em_ex`.
+        assert_eq!(
+            parse_dimen_pt("1ex"),
+            Some(crate::layout::BODY_SIZE_PT * CMR_EX_PER_EM)
+        );
     }
 
     #[test]

@@ -137,6 +137,14 @@ fn unimplemented_lengths_are_reported_not_silently_ignored() {
 }
 
 #[test]
+fn preamble_parskip_one_bp_is_tex_big_point_not_pt() {
+    let parsed = parse(
+        "\\documentclass{article}\n\\setlength{\\parskip}{1bp}\n\\begin{document}x\\end{document}",
+    );
+    assert_eq!(parsed.parskip_pt, Some(72.27 / 72.0));
+}
+
+#[test]
 fn hw1_keeps_its_three_reference_pages_with_parskip_applied() {
     let hw1 = include_str!("../../../fixtures/real-world/hw1/HW1.tex");
     let parsed = parse(hw1);
