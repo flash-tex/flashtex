@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-vpclaude",
+  "branch": "agent/daniel-vpclaude/editor-first-focus",
+  "gh_ref": "https://github.com/flash-tex/flashtex/issues/280",
+  "machine": "mac-m5pro-dq222",
+  "note": "IDE: highlighting/completion absent on first focus (Commander allocation 04:53Z; Claude Pro session)",
+  "started_utc": "2026-09-14T04:53:48Z",
+  "state": "claimed",
+  "task_id": "GH-280",
+  "updated_utc": "2026-09-14T04:53:48Z"
+}
