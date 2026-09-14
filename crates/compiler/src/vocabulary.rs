@@ -68,6 +68,16 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "tikz",
     "usetikzlibrary", "draw", "node", "fill", "path", "scalebox", "resizebox", "rotatebox",
     "subcaption", "captionof", "listoflistings", "lstinline", "mintinline",
+    // listings' `\lstnewenvironment{name}[n][default]{begin}{end}` defines an
+    // environment whose body listings reads under verbatim catcodes. The
+    // definition sets no material and could be consumed like `\lstset`, but
+    // consuming it would leave the environment it names unknown to the lexer,
+    // so the body would be tokenized as ordinary LaTeX (macros expanded, `%`
+    // starting a comment, braces grouping) with no diagnostic at all. Until
+    // the lexer can be told about a new verbatim environment, the honest
+    // outcome is the diagnostic that names the gap, so this stays a known
+    // unimplemented command rather than a dispatch arm.
+    "lstnewenvironment",
     // amsmath and amssymb.
     "intertext", "shortintertext", "substack", "sideset", "xrightarrow", "xleftarrow", "overbrace",
     "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",

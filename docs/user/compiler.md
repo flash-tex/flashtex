@@ -296,7 +296,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 242 text-mode and 541 math-mode command entries, 48 environments and 10 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 248 text-mode and 541 math-mode command entries, 48 environments and 10 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -408,6 +408,12 @@ Canonical sources:
 | `\rotatebox` | `[keys]{angle}{...}` | graphicx rotated box; the box is the rotated bounding box |
 | `\reflectbox` | `{...}` | graphics.sty box mirrored left to right |
 | `\graphicspath` | `{{dir/}...}` | image search directories; no material |
+| `\lstset` | `{options}` | listings key/value settings; no material (the listings renderer re-reads the keys from the source) |
+| `\lstdefinestyle` | `[dialect]{name}{options}` | listings style definition; no material (a [base dialect]{base} pair may precede the key list) |
+| `\lstdefinelanguage` | `[dialect]{name}{options}` | listings language definition; no material (a [base dialect]{base} pair may precede the key list) |
+| `\lstinputlisting` | `[options]{file}` | diagnosed: the file's lines are not typeset; the command and its arguments set nothing |
+| `\lstMakeShortInline` | `[options]{char}` | diagnosed: the shorthand delimiter is not installed; the declaration sets nothing |
+| `\lstDeleteShortInline` | `{char}` | accepted no-op: the shorthand delimiter was never installed |
 | `\url` | `{url}` | monospaced URL text; links are not clickable |
 | `\href` | `{url}{text}` | link text; links are not clickable |
 | `\nolinkurl` | `{url}` | monospaced URL text without a link |

@@ -686,6 +686,12 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "rotatebox",
     "reflectbox",
     "graphicspath",
+    "lstset",
+    "lstdefinestyle",
+    "lstdefinelanguage",
+    "lstinputlisting",
+    "lstMakeShortInline",
+    "lstDeleteShortInline",
     "url",
     "href",
     "nolinkurl",
@@ -1615,6 +1621,62 @@ impl P<'_> {
             // consumer that loads image files (see `crate::graphics`).
             "graphicspath" => {
                 let _ = self.required_group(name, span);
+            }
+            // listings' configuration commands. None of them contributes a
+            // single character to the page, so leaving them to
+            // `unsupported`'s recovery was wrong twice over: the brace group
+            // fell through to the paragraph, so `\lstset{basicstyle=\ttfamily}`
+            // printed "basicstyle=" *and* switched the body font for the rest
+            // of the group. They are consumed here in the same shape as
+            // `\graphicspath` above — the key/value lists are re-read from the
+            // source by the listings renderer (the same arrangement the lexer
+            // already documents for `\lstinline[<keys>]`), so occupying the
+            // source span and emitting nothing loses nothing.
+            //
+            // `\lstset{<key=value list>}` (listings.sty).
+            "lstset" => {
+                let _ = self.required_group(name, span);
+            }
+            "lstdefinestyle" | "lstdefinelanguage" => self.listings_driver_definition(name, span),
+            // `\lstinputlisting[<keys>]{<file>}` typesets a file's lines as a
+            // listing. There is no listing renderer, so the lines are not set
+            // — but the file name is a parameter, never prose, and must not
+            // reach the page. Both arguments are consumed and the missing
+            // content is reported instead of leaked.
+            "lstinputlisting" => {
+                let _ = self.bracket_argument();
+                let (_, argument_span) = self.required_group(name, span);
+                self.diags.push(Diagnostic::warning(
+                    "\\lstinputlisting is recognised but the listing is not typeset; the listings rendering engine is not implemented",
+                    Some(span.merge(argument_span)),
+                    Some("consumed the command and its file argument; no listing was set".into()),
+                ));
+            }
+            // `\lstMakeShortInline[<keys>]{<char>}` makes <char> an active
+            // character delimiting an inline listing. This compiler tokenizes
+            // the whole document once, with no mid-document catcode change
+            // (see `required_url_argument`), so the shorthand is not
+            // installed and text between two such characters stays ordinary
+            // prose. The declaration itself sets nothing: consume it and
+            // report the gap once, where it starts.
+            "lstMakeShortInline" => {
+                let _ = self.bracket_argument();
+                let _ = self.command_or_group(name, span);
+                self.diags.push(Diagnostic::warning(
+                    "\\lstMakeShortInline is recognised but short inline listings are not implemented",
+                    Some(span),
+                    Some(
+                        "consumed the declaration; text between the shorthand characters is typeset as ordinary text"
+                            .into(),
+                    ),
+                ));
+            }
+            // `\lstDeleteShortInline{<char>}` undoes `\lstMakeShortInline`.
+            // The shorthand was never installed, so restoring the ordinary
+            // meaning of <char> is exactly the state this compiler is already
+            // in: a real no-op, with nothing left to report.
+            "lstDeleteShortInline" => {
+                let _ = self.command_or_group(name, span);
             }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
@@ -4606,6 +4668,33 @@ impl P<'_> {
         Some((raw, span))
     }
 
+    /// `\lstdefinestyle` and `\lstdefinelanguage`, which share one argument
+    /// grammar: lstmisc.sty defines both as `\lst@DefDriver ... \lstset`
+    /// (`\lst@DefStyle`, `\lst@DefLang`), and `\lst@DefDriver` (listings.sty
+    /// 294-319) reads
+    ///
+    /// ```text
+    /// [<dialect>]{<name>}([<base dialect>]{<base>})?{<key=value list>}[<aspects>]
+    /// ```
+    ///
+    /// Each optional part is an `\@ifnextchar[` lookahead in the package and
+    /// is a lookahead here too, so a bracket that really does follow the
+    /// definition is read the way listings reads it. `required_group` counts
+    /// brace depth, so `{\ttfamily\small}` and `literate={x}{y}1` inside the
+    /// key list are matched as one argument rather than ending it early.
+    ///
+    /// Nothing is typeset: the definition names a style or language for the
+    /// listings renderer, which re-reads the keys from the source.
+    fn listings_driver_definition(&mut self, name: &str, span: Span) {
+        let _ = self.bracket_argument();
+        let _ = self.required_group(name, span);
+        if self.bracket_argument().is_some() {
+            let _ = self.required_group(name, span);
+        }
+        let _ = self.required_group(name, span);
+        let _ = self.bracket_argument();
+    }
+
     /// `\DeclareSIUnit\name` or `\DeclareSIUnit{\name}`: the unit's name.
     fn command_or_group(&mut self, name: &str, span: Span) -> String {
         self.skip_spaces();
@@ -7469,6 +7558,226 @@ mod tests {
             panic!("expected a Block::Verbatim, got {:?}", parsed.blocks[0]);
         };
         assert_eq!(lines[0].text, "print(1)");
+    }
+
+    /// Body text a parse produced, in order, with each run's style.
+    fn body_runs(parsed: &Parsed) -> Vec<(String, TextStyle)> {
+        let mut out = Vec::new();
+        for block in &parsed.blocks {
+            let inlines: &[Inline] = match block {
+                Block::Paragraph(inlines) => inlines,
+                Block::Heading { content, .. } => content,
+                _ => continue,
+            };
+            for inline in inlines {
+                match inline {
+                    Inline::Text { text, style, .. } => out.push((text.clone(), *style)),
+                    Inline::Verbatim { text, .. } => {
+                        out.push((text.clone(), TextStyle::default()))
+                    }
+                    _ => {}
+                }
+            }
+        }
+        out
+    }
+
+    /// listings' configuration commands consume their arguments and set no
+    /// material, exactly as listings.sty does. Before this, `\lstset` reached
+    /// `unsupported`, whose recovery left the brace group to the paragraph:
+    /// `basicstyle=` was typeset as body text and the `\ttfamily` inside the
+    /// argument switched the body font for the rest of the group.
+    #[test]
+    fn listings_configuration_commands_consume_their_arguments_and_set_nothing() {
+        for source in [
+            r"\lstset{basicstyle=\ttfamily}Body.",
+            // Braces nest inside a value, so a naive scan to the first `}`
+            // would stop early and leak the rest.
+            r"\lstset{basicstyle={\ttfamily\small},columns=fixed}Body.",
+            // A comma inside braces is not a key separator, and `literate`
+            // takes a run of adjacent groups.
+            r"\lstset{literate={x}{y}1,morekeywords={a,b,c}}Body.",
+            r"\lstdefinestyle{mine}{basicstyle={\ttfamily\small}}Body.",
+            r"\lstdefinestyle[dialect]{mine}{numbers=left}Body.",
+            // `[base dialect]{base}` before the key list (listings.sty's
+            // `\lst@XDefDriver`), and the trailing aspect list.
+            r"\lstdefinelanguage{Mine}{keywords={a,b}}Body.",
+            r"\lstdefinelanguage[R]{Mine}[ANSI]{C}{morekeywords={a}}Body.",
+            r"\lstdefinelanguage{Mine}{keywords={a}}[keywords,comments]Body.",
+            r"\lstDeleteShortInline{|}Body.",
+        ] {
+            let parsed = parse(source);
+            assert!(
+                parsed.diagnostics.is_empty(),
+                "{source:?}: {:?}",
+                parsed.diagnostics
+            );
+            assert_eq!(
+                body_runs(&parsed),
+                vec![("Body.".to_string(), TextStyle::default())],
+                "{source:?}"
+            );
+        }
+    }
+
+    /// The same commands are preamble material too, so they must run before
+    /// the preamble catch-all rather than be reported as "not supported in
+    /// the document preamble".
+    #[test]
+    fn listings_configuration_is_accepted_in_the_preamble_and_in_the_body() {
+        let preamble = concat!(
+            "\\documentclass{article}\n\\usepackage{listings}\n",
+            "\\lstset{basicstyle={\\ttfamily\\small}}\n",
+            "\\lstdefinestyle{mine}{numbers=left}\n",
+            "\\begin{document}\nBody.\n\\end{document}\n"
+        );
+        let parsed = parse(preamble);
+        let listings: Vec<&Diagnostic> = parsed
+            .diagnostics
+            .iter()
+            .filter(|d| d.message.contains("lstset") || d.message.contains("lstdefinestyle"))
+            .collect();
+        assert!(listings.is_empty(), "{listings:?}");
+        assert_eq!(
+            body_runs(&parsed),
+            vec![("Body.".to_string(), TextStyle::default())]
+        );
+
+        let body = concat!(
+            "\\documentclass{article}\n\\begin{document}\n",
+            "\\lstset{basicstyle=\\ttfamily}\nBody.\n\\end{document}\n"
+        );
+        let parsed = parse(body);
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .all(|d| !d.message.contains("lstset")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        assert_eq!(
+            body_runs(&parsed),
+            vec![("Body.".to_string(), TextStyle::default())]
+        );
+    }
+
+    /// The fixture that measured the defect: the `\lstset` line sets nothing
+    /// and the three `\lstinline`s are unchanged.
+    #[test]
+    fn lstset_before_lstinline_sets_no_text_and_leaves_the_inline_listings_alone() {
+        let source = concat!(
+            "\\documentclass{article}\n\\usepackage{listings}\n\\begin{document}\n",
+            "\\lstset{basicstyle=\\ttfamily}\n",
+            "Inline code \\lstinline|x = a + b;| and \\lstinline{int y;} and \\lstinline!s -- t! in a paragraph\n",
+            "of ordinary text that wraps onto a second line so that line breaking is exercised too.\n",
+            "\\end{document}\n",
+        );
+        let parsed = parse(source);
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .all(|d| !d.message.contains("lstset")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks[0]);
+        };
+        let verbatim: Vec<&str> = inlines
+            .iter()
+            .filter_map(|i| match i {
+                Inline::Verbatim { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(verbatim, vec!["x = a + b;", "int y;", "s -- t"]);
+        let words: Vec<&str> = inlines
+            .iter()
+            .filter_map(|i| match i {
+                Inline::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(!words.iter().any(|w| w.contains("basicstyle")), "{words:?}");
+        assert_eq!(words.first(), Some(&"Inline"));
+        // Nothing in the argument escapes as a style either.
+        assert!(
+            inlines.iter().all(|i| !matches!(
+                i,
+                Inline::Text { style, .. } if style.family == TextFamily::Mono
+            )),
+            "{inlines:?}"
+        );
+    }
+
+    /// `\lstinputlisting` sets the file's lines in real listings. There is no
+    /// listing renderer here, so it sets nothing — but its file name is a
+    /// parameter and must never become prose, and the missing content is
+    /// reported rather than dropped silently.
+    #[test]
+    fn lstinputlisting_consumes_its_file_argument_and_reports_the_missing_listing() {
+        for source in [
+            r"\lstinputlisting{code/sample.py}Body.",
+            r"\lstinputlisting[language=Python,firstline=3]{code/sample.py}Body.",
+        ] {
+            let parsed = parse(source);
+            assert!(
+                parsed
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.message.contains("\\lstinputlisting is recognised")
+                        && d.severity == crate::diagnostics::Severity::Warning),
+                "{source:?}: {:?}",
+                parsed.diagnostics
+            );
+            assert_eq!(
+                body_runs(&parsed),
+                vec![("Body.".to_string(), TextStyle::default())],
+                "{source:?}"
+            );
+        }
+    }
+
+    /// `\lstMakeShortInline` installs a catcode shorthand this compiler does
+    /// not model; the declaration itself is consumed and the gap reported.
+    /// `\lstDeleteShortInline` restores the state this compiler is already
+    /// in, so it is a silent no-op (covered above).
+    #[test]
+    fn lst_make_short_inline_is_consumed_and_reported_once() {
+        for source in [
+            r"\lstMakeShortInline{|}Body.",
+            r"\lstMakeShortInline[basicstyle=\ttfamily]{|}Body.",
+        ] {
+            let parsed = parse(source);
+            assert!(
+                parsed
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.message.contains("short inline listings are not implemented")),
+                "{source:?}: {:?}",
+                parsed.diagnostics
+            );
+            assert_eq!(
+                body_runs(&parsed),
+                vec![("Body.".to_string(), TextStyle::default())],
+                "{source:?}"
+            );
+        }
+    }
+
+    /// `\lstnewenvironment` is deliberately NOT consumed: see the note beside
+    /// it in `vocabulary.rs`. It must still be classified as real LaTeX this
+    /// compiler does not implement, not as a typo.
+    #[test]
+    fn lstnewenvironment_is_a_known_unimplemented_command() {
+        assert!(crate::vocabulary::is_known_command("lstnewenvironment"));
+        let parsed = parse(r"\lstnewenvironment{code}{}{}");
+        assert!(parsed.diagnostics.iter().any(|d| {
+            d.message.contains("\\lstnewenvironment")
+                && d.code == Some(crate::diagnostics::DiagnosticCode::UnsupportedFeature)
+        }));
     }
 
     #[test]
