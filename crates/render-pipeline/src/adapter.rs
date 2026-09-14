@@ -1649,6 +1649,13 @@ enum UnitKind<'p> {
 
 const PAGE_BREAKS: [&str; 3] = ["newpage", "clearpage", "pagebreak"];
 
+/// The character the tie occupies in a compiler text run.
+///
+/// Declared here rather than imported from `flashtex_compiler::lexer`
+/// because `vendor/compiler` predates that constant; the two are the same
+/// code point and a re-pin can replace this with the import.
+const NO_BREAK_SPACE: char = '\u{00A0}';
+
 /// Whether the source between `prev` and `next` (same document, in order)
 /// holds a page-break command.
 fn gap_has_page_break(texts: &[&str], prev: Span, next: Span) -> bool {
@@ -4469,9 +4476,25 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                         factor = 1000;
                         continue;
                     }
-                    // Only a typed `~` is the active tie; `\textasciitilde`
-                    // (the compiler's symbol text) is the character itself.
-                    if ch == '~' && source.get(src.start..src.end) == Some("~") {
+                    // The tie: an interword space of the font in force with
+                    // no legal breakpoint at it (`~` is catcode 13 and
+                    // expands to `\nobreakspace` = `\leavevmode\nobreak\ `,
+                    // latex.ltx 9411-9418; `inputenc` maps a typed U+00A0
+                    // onto the same command).
+                    //
+                    // U+00A0 in the text is self-describing and needs no
+                    // lookback, which is the point: the `~` arm below can
+                    // only recognise a tie whose span covers its own byte,
+                    // and replacement text carries the *invocation's* span,
+                    // so `\newcommand{\fig}{Figure~7}` read `\fig` there and
+                    // set a literal tilde. It cannot be fixed by dropping
+                    // the span test either -- `\textasciitilde` produces the
+                    // same character and must stay a tilde. A compiler that
+                    // resolves the tie itself (`lexer::NO_BREAK_SPACE`)
+                    // removes the ambiguity; until `vendor/compiler` is
+                    // re-pinned past that change, the `~` arm still carries
+                    // every tie written directly in a source.
+                    if ch == NO_BREAK_SPACE || (ch == '~' && source.get(src.start..src.end) == Some("~")) {
                         flush(&mut run, &mut items, &mut factor);
                         items.push(Item::Space {
                             style,
