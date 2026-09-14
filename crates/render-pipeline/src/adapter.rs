@@ -148,14 +148,20 @@ pub enum Item {
     /// `\/` after a `\textit`/`\emph`/`\textbf` argument (LaTeX's
     /// `\text@command` adds it unless `.` or `,` follows).
     ItalicCorrection,
+    /// A paragraph break inside a footnote's text (the compiler attributes
+    /// it to the `\footnote` command's span): `\par`, then the next
+    /// paragraph's `\indent` box (`\@makefntext`'s `\parindent` 1em).
+    NoteParBreak,
     /// `\hfill`/`\hfil` (compiler `Inline::HFill`): infinitely stretchable
     /// glue; a legal break point that is discarded at a line break. `fill`
     /// is the `\hfill` order (it beats `\parfillskip`'s `fil`); the
     /// compiler does not distinguish the two, so the order is re-read from
     /// the source bytes (`\hfill` when they are not `\hfil`).
     HFill { fill: bool },
-    /// `\hspace{<dimen>}` (compiler `Inline::HSpace`): fixed glue in points.
-    HSpace { pt: f64 },
+    /// Explicit horizontal glue in points: `\hspace{<dimen>}` (compiler
+    /// `Inline::HSpace`, rigid) or an amsthm theorem head's own separator
+    /// (`\hskip\thm@headsep`, `5pt plus 1pt minus 1pt`; `crate::amsthm`).
+    HSpace { pt: f64, stretch_pt: f64, shrink_pt: f64 },
     /// `tabular`/`tabular*` (compiler `Inline::Tabular`): one box in the
     /// paragraph, laid out by `table.rs`.
     Table(Box<crate::table::TableItem>),
@@ -410,6 +416,46 @@ pub enum Block {
         eject_before: bool,
         vspace_before: f64,
     },
+    /// A `longtable` (`crate::longtable`). Unlike `tabular` this is not a
+    /// box inside a paragraph: `\LT@array` contributes every row straight
+    /// to the page's vertical list so the page builder can break between
+    /// them, repeating `\LT@head` and `\LT@foot`.
+    LongTable {
+        table: Box<crate::table::TableItem>,
+        eject_before: bool,
+        vspace_before: f64,
+        /// The package's own skips and dimensions, as `\setlength` left
+        /// them: `\LTpre`/`\LTpost` (`\bigskipamount` by default),
+        /// `\LTleft`/`\LTright` (`\fill`) and `\LTcapwidth` (4in).
+        lengths: LongtableLengths,
+        /// `\label` keys inside the table, so `\caption`'s number can be
+        /// referenced.
+        labels: Vec<String>,
+    },
+}
+
+/// longtable.sty 61-67: the lengths a document may `\setlength`. `None`
+/// keeps the package default.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct LongtableLengths {
+    pub pre: Option<f64>,
+    pub post: Option<f64>,
+    pub left: Option<f64>,
+    pub right: Option<f64>,
+    pub capwidth: Option<f64>,
+}
+
+impl LongtableLengths {
+    /// Reads each one through a `\setlength` lookup.
+    pub fn read(mut value: impl FnMut(&str) -> Option<f64>) -> LongtableLengths {
+        LongtableLengths {
+            pre: value("LTpre"),
+            post: value("LTpost"),
+            left: value("LTleft"),
+            right: value("LTright"),
+            capwidth: value("LTcapwidth"),
+        }
+    }
 }
 
 /// LaTeX `\list` geometry of one `\item` paragraph (see
@@ -1272,6 +1318,23 @@ pub fn adapt_cached(
                     .iter()
                     .all(|p| matches!(p, ParaPart::Lines(items) if items.iter().all(|i| matches!(i, Item::Label { .. }))));
                 if parts.is_empty() {
+                    continue;
+                }
+                // `\longtable` begins with `\par` and `\endlongtable`
+                // ends with one, so the compiler always gives it a
+                // paragraph of its own: it becomes a block the page
+                // builder can break inside rather than a box on a line.
+                if let Some(table) = lone_longtable(&mut parts) {
+                    let src = texts.get(table.span.document.0).copied().unwrap_or("");
+                    blocks.push(Block::LongTable {
+                        lengths: LongtableLengths::read(|name| setlength(src, name, size)),
+                        labels: Vec::new(),
+                        table,
+                        eject_before,
+                        vspace_before,
+                    });
+                    prev_para_end = inlines.iter().map(inline_span).last();
+                    after_heading = false;
                     continue;
                 }
                 // A display environment inside a paragraph (no blank line or
@@ -2301,6 +2364,24 @@ pub fn parskip(source: &str, size: u32) -> Option<f64> {
 }
 
 /// The last `\setlength{\<name>}{<dimen>}` of the source, in points.
+/// A paragraph that holds nothing but one `longtable` (and `\label`s):
+/// takes the table out, leaving the labels behind for the caller.
+fn lone_longtable(parts: &mut Vec<ParaPart>) -> Option<Box<crate::table::TableItem>> {
+    let [ParaPart::Lines(items)] = &parts[..] else { return None };
+    let mut table = None;
+    for item in items {
+        match item {
+            Item::Table(t) if t.longtable.is_some() && table.is_none() => table = Some(t.clone()),
+            Item::Label { .. } => {}
+            // A space either side of the box is the paragraph's own
+            // `\parskip`/`\par` material, which the block replaces.
+            Item::Space { .. } => {}
+            _ => return None,
+        }
+    }
+    table
+}
+
 fn setlength(source: &str, name: &str, size: u32) -> Option<f64> {
     setlength_in(source, name, size, None)
 }
@@ -3828,7 +3909,7 @@ fn gap_has_space(gap: &str) -> bool {
 /// delimiters and quotes 0 (keep), uppercase 999. A code above 1000 does
 /// not take effect while the factor is below 1000 (after an uppercase
 /// letter "A." keeps 1000), which is why the update runs per character.
-pub(crate) fn space_factor(ch: char, previous: u32) -> u32 {
+pub fn space_factor(ch: char, previous: u32) -> u32 {
     let code = match ch {
         '.' | '?' | '!' => 3000,
         ':' => 2000,
@@ -4096,14 +4177,39 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
             Some(gap) => gap_has_space(&gap),
         }
     };
-    // Pushes the space `space_between` found.
+    // An amsthm theorem-like `\item`: the gap between its head and the body
+    // is `\hskip\thm@headsep` (or `proof`'s `\hskip\labelsep`), and the
+    // head's `\ignorespaces` eats the source whitespace that would otherwise
+    // be read as an interword space. See `crate::amsthm`.
+    let mut head_sep = inlines
+        .first()
+        .map(inline_span)
+        .and_then(|s| texts.get(s.document.0))
+        .and_then(|src| crate::amsthm::head_separator(src, inlines, size));
+    let pending_head_sep: std::cell::Cell<Option<(f64, f64, f64)>> = std::cell::Cell::new(None);
+    // Pushes the space `space_between` found, or the theorem head's own glue
+    // in its place. Every caller must reach this whenever a head separator is
+    // pending, not only when the source had a space to replace: amsthm's head
+    // ends with `\ignorespaces`, so `\begin{theorem}Body` has no source gap
+    // at all, and a caller that skips the call on `!has_space` drops the
+    // separator instead of substituting it.
     let push_gap = |items: &mut Vec<Item>, space: bool, style: TextStyle, factor: u32| {
+        if let Some((pt, stretch_pt, shrink_pt)) = pending_head_sep.take() {
+            items.push(Item::HSpace { pt, stretch_pt, shrink_pt });
+            return;
+        }
         if space {
             items.push(Item::Space { style, factor, no_break: false });
         }
     };
 
     for inline in resolved.iter() {
+        if let Some(sep) = head_sep {
+            if sep.opens_the_body(inline_span(inline)) {
+                pending_head_sep.set(Some((sep.pt, sep.stretch_pt, sep.shrink_pt)));
+                head_sep = None;
+            }
+        }
         match &**inline {
             Inline::Label { key, .. } => items.push(Item::Label { key: key.clone() }),
             Inline::Reference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
@@ -4118,7 +4224,16 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
-                let note = text.as_ref().map(|t| items_from_inlines_styled(texts, t, styles, labels, size, false, compiler_weight));
+                let note = text.as_ref().map(|t| {
+                    let mut note = Vec::new();
+                    for (k, part) in t.split(|i| matches!(i, Inline::LineBreak { span: at } if at == span)).enumerate() {
+                        if k > 0 {
+                            note.push(Item::NoteParBreak);
+                        }
+                        note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight));
+                    }
+                    note
+                });
                 items.push(Item::Footnote { number: number.clone(), mark: *mark, span: *span, text: note });
                 after_control_word = end == span.end;
                 prev_end = Some(end);
@@ -4210,7 +4325,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 // invocation's span, and the next token's gap must start
                 // after the word, not before it.
                 let (item, word) = match &**inline {
-                    Inline::HSpace { pt, .. } => (Item::HSpace { pt: *pt }, "\\hspace"),
+                    Inline::HSpace { pt, .. } => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
                     Inline::TextGlue { em, .. } => (Item::Quad { em: *em }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
                     _ => {
                         let fill = !is_control_word(text_of(span.document), span.start, "hfil");
@@ -4272,7 +4387,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     style.medium = !compiler_style.bold;
                     style.italic |= compiler_style.italic;
                 }
-                if has_space {
+                if has_space || pending_head_sep.get().is_some() {
                     let mut gap_style = space_style(texts, styles, prev_end, *span, style);
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
@@ -4290,7 +4405,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let has_space = space_between(prev_end, prev_span, *span, Some("\\rule"), after_control_word);
                 let mut style = style_at(styles_of(span.document), span.start);
                 style.size_cpt = declared_size(compiler_style.size, size);
-                if has_space {
+                if has_space || pending_head_sep.get().is_some() {
                     let mut gap_style = space_style(texts, styles, prev_end, *span, style);
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
@@ -4309,7 +4424,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let has_space = space_between(prev_end, prev_span, *span, word.as_deref(), after_control_word);
                 let mut style = style_at(styles_of(span.document), span.start);
                 style.size_cpt = declared_size(compiler_style.size, size);
-                if has_space {
+                if has_space || pending_head_sep.get().is_some() {
                     let mut gap_style = space_style(texts, styles, prev_end, *span, style);
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
@@ -4329,7 +4444,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let mut style = style_at(styles_of(span.document), span.start);
                 let Inline::Text { style: compiler_style, .. } = &**inline else { unreachable!() };
                 style.size_cpt = declared_size(compiler_style.size, size);
-                if has_space {
+                if has_space || pending_head_sep.get().is_some() {
                     let mut gap_style = space_style(texts, styles, prev_end, *span, style);
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
@@ -4380,7 +4495,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 }
                 let has_space = space_between(prev_end, prev_span, *span, Some(text), after_control_word);
                 after_control_word = false;
-                if has_space {
+                if has_space || pending_head_sep.get().is_some() {
                     // TeX sizes an interword space with the font current
                     // where the space token is read ("Plain, \textbf{bold}"
                     // gets a regular space, "\textbf{bold words}" a bold one,
@@ -4799,6 +4914,7 @@ mod tests {
                 Block::Title { .. } => "T".to_string(),
                 Block::ClearPage { .. } => "N".to_string(),
                 Block::TocEntry(..) => "E".to_string(),
+                Block::LongTable { .. } => "L".to_string(),
             })
             .collect();
         // `Problem 1 \hfill \normalfont[4 points]`: one fill, no space after it.
