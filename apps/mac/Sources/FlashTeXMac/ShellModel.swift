@@ -41,6 +41,12 @@ final class ShellModel {
     // The panel state is shared with the palette so Next/Previous
     // Occurrence work from there too (DiagnosticsPanel.swift).
     var problemsVisible = true
+    /// Below the width where editor and preview both fit, the preview
+    /// collapses to a toggle instead of being crushed (design-principles §4).
+    /// `narrowLayout` mirrors the split's available width; the toggle picks
+    /// which column the narrow window shows.
+    var narrowLayout = false
+    var narrowPreviewShown = false
     var problemsSeverityFilter: RuntimeV1.Severity?
     var commandPaletteShown = false
     /// Rename Symbol / Wrap in Environment / Go to Symbol sheets (ShellModel+EditorNavigation.swift).
@@ -72,6 +78,9 @@ final class ShellModel {
     }
     /// Fit-to-width scale the preview pane last laid out with (written by the pane; drives Actual Size and the percentage).
     var previewFitScale: CGFloat = 1
+    /// Zoom multiplier that fits the tallest page's height to the pane
+    /// (PreviewView reports it with the pane geometry; View > Fit Page).
+    var previewFitPageZoom: CGFloat = 1
     var displayListV2: V2PreviewState? {
         didSet {
             refreshToolbarMirrors()

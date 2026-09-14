@@ -545,7 +545,7 @@ struct EditorPreferencesView: View {
                         .accessibilityLabel("Editor font size")
                         .accessibilityValue("\(Int(prefs.fontSize)) points")
                     Stepper(value: $prefs.fontSize, in: EditorPreferences.fontSizeRange, step: 1) {
-                        Text("\(Int(prefs.fontSize)) pt").monospacedDigit().frame(minWidth: 40, alignment: .trailing)
+                        Text("\(Int(prefs.fontSize)) pt").monospacedDigit().frame(minWidth: DS.Size.zoomReadoutMinWidth, alignment: .trailing)
                     }
                     .accessibilityLabel("Editor font size stepper")
                     .accessibilityValue("\(Int(prefs.fontSize)) points")
@@ -600,7 +600,7 @@ struct EditorPreferencesView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460)
+        .frame(width: DS.Layout.settingsWidth)
         .onAppear { if families.isEmpty { families = EditorPreferences.installedMonospacedFamilies() } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Editor preferences")

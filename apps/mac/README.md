@@ -203,7 +203,7 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   item. Display math (`$$…$$`, `\[…\]`) and math environments are not covered.
   Debounced like other hover (the same 0.45 s timer; nothing while typing).
   Tests: `MathHoverTests`.
-- Dark preview toggle in the toolbar (page and text colors only).
+- Dark preview toggle in the preview header (page and text colors only).
 - Stale offsets are never applied. Each `compile_result` remembers the exact
   document text it was produced for; after edits, a span is rebased through the
   common prefix/suffix of old vs new text (`SourceMapping`), verified against the
@@ -964,12 +964,13 @@ explain that nothing is loaded.
 | ⌘⇧U | Submit sample capture… (PNG/JPEG → `capture_submit` through the attached bridge) |
 | ⌘⇧G | Convert capture (`capture_convert` for the latest received capture) |
 | ⌘⇧N | Nearby Companion… (advertise, pairing code, paired devices, received captures; Return shows or resumes a pairing code, Esc cancels it or dismisses a banner, Tab walks Advertise → pairing controls → Forget → Clear; the step indicator, status row and every transition are VoiceOver text) |
-| Edit > Rename Citation… | Rename citation window (reviewed `plan_citation_rename` across the project → one `apply_group`; also in the toolbar) |
+| Edit > Rename Citation… | Rename citation window (reviewed `plan_citation_rename` across the project → one `apply_group`) |
 | ⌘⇧P | Command palette (View; also the toolbar's Commands button): every command in this table with its menu and shortcut; type to filter, ↑/↓ choose, Return runs, Esc closes |
 | ⌘= | Zoom in preview (View; also the preview header's + button or a pinch): multiply the fit-width zoom by 1.25, up to 4x; wide pages scroll horizontally |
 | ⌘- | Zoom out preview (View; also the header's − button): divide by 1.25, down to 0.25x fit width |
 | ⌘0 | Actual size preview (View): 1 PDF point per screen point when the 0.25x…4x zoom bounds permit it |
 | ⌘9 | Fit width preview (View): reset zoom to 1x so the widest page fits the pane; double-click the header percentage does the same |
+| ⌘⇧9 | Fit page preview (View): zooms so the tallest page's full height fits the pane (within the 0.25x…4x bounds); also in the preview header on hover |
 | ⌘⌥= | Increase editor font size (View; also a pinch over the editor): +1 pt up to 36 pt, persisted as the Settings font-size preference; gutter and highlighting follow |
 | ⌘⌥- | Decrease editor font size (View): -1 pt down to 8 pt |
 | ⌘⌥0 | Reset editor font size (View): back to the default 13 pt |
@@ -1233,8 +1234,8 @@ not replace, negotiate, or change the v1 path.
   decode, prepare and paint red at the disc centre).
 - Input, file: a `display_list` JSON envelope written by `flashtex-render --v2 out.json`.
   Open it with `File > Open Display List (v2)…`, or launch with `FLASHTEX_V2_FILE=<json>`
-  (`FLASHTEX_PREVIEW_V2=1` starts with the toolbar toggle on). The toolbar's
-  "v2 preview" switch flips between the v1 and v2 panes.
+  (`FLASHTEX_PREVIEW_V2=1` starts with the switch on). The preview header's
+  "v2 pane" switch flips between the v1 and v2 panes.
 - Keeping up with typing (`docs/evidence/mac-preview-v2-live-2026-09-12.md`): one
   preparation in flight, the newest arrival waits and lists in between are dropped
   undecoded (coalescing; strict supersession alone starved visible progress: only the last
