@@ -29,7 +29,7 @@ fn layout(text: &str) -> Vec<Word> {
     assert!(!r.v2.pages.is_empty(), "{:?}", r.v2.diagnostics);
     let mut words = Vec::new();
     for page in &r.v2.pages {
-        for it in &page.items {
+        for it in &page.to_items() {
             if let Item::GlyphRun(run) = it {
                 let Some(first) = run.glyphs.first() else { continue };
                 let last = run.glyphs.last().expect("non-empty");

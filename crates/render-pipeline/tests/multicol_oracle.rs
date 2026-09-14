@@ -132,7 +132,7 @@ fn our_words(r: &flashtex_render_pipeline::Rendered) -> Vec<W> {
 fn our_rules(r: &flashtex_render_pipeline::Rendered) -> Vec<(u32, f64, f64, f64, f64)> {
     let mut out = Vec::new();
     for p in &r.v2.pages {
-        for it in &p.items {
+        for it in &p.to_items() {
             if let flashtex_render_pipeline::display::Item::Rule(rule) = it {
                 out.push((p.number, rule.x.to_bp(), rule.top.to_bp(), rule.width.to_bp(), rule.height.to_bp()));
             }

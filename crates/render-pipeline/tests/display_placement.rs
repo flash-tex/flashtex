@@ -90,7 +90,7 @@ fn display_placement_matches_pdflatex() {
         for (page, words) in r.v2.pages.iter().zip(pages) {
             // (first char, x bp, baseline y bp) of every glyph on the page.
             let mut glyphs = Vec::new();
-            for item in &page.items {
+            for item in &page.to_items() {
                 if let Item::GlyphRun(run) = item {
                     let mut chars = run.clusters.iter().map(|c| run.text[c.text_start_byte as usize..c.text_end_byte as usize].chars().next());
                     for g in &run.glyphs {

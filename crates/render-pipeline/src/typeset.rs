@@ -6673,7 +6673,7 @@ pub fn assemble(
         let hit = block
             .cache_key
             .and_then(|(k, _, _)| cache.and_then(|c| c.assembled(k)))
-            .filter(|a| block.cache_key.is_some_and(|(_, d, _)| *a.path == *paths.get(d.0).map_or("", |p| &**p)));
+            .filter(|a| block.cache_key.is_some_and(|(_, d, _)| *a.items.path == *paths.get(d.0).map_or("", |p| &**p)));
         let a = match hit {
             Some(a) => a,
             None => {
@@ -6691,55 +6691,59 @@ pub fn assemble(
     }
     let mut pages = Vec::new();
     for (pi, page) in laid.pages.pages.iter().enumerate() {
-        let mut items: Vec<display::Item> = Vec::new();
+        // The page records which assembled item each slot is, plus the exact
+        // integer placement (`dy`, `dx`, `delta`) that used to be baked into
+        // a clone of it. `display::Page::items` applies the same
+        // `place_item`/`shift_x` on read, so the bytes are unchanged and the
+        // glyphs, clusters and source ranges exist once instead of twice.
+        let mut items: Vec<display::PageItem> = Vec::new();
         for (li, placed) in page.lines.iter().enumerate() {
             let block = &laid.blocks[placed.paragraph];
             let Some(a) = assembled[placed.paragraph].as_ref() else { continue };
-            let Some(line_items) = a.lines.get(placed.line) else { continue };
+            let Some(line_items) = a.items.lines.get(placed.line) else { continue };
             let dy = Tick::from_tex_pt(placed.baseline_y);
             let dx = laid.line_dx.get(pi).and_then(|d| d.get(li)).map_or(Tick(0), |d| Tick::from_tex_pt(*d));
-            let delta = block.cache_key.map_or(0, |(_, _, b)| b as isize - a.base as isize);
-            for it in line_items {
-                let mut item = incremental::place_item(it, dy, &a.path, delta);
-                if dx.0 != 0 {
-                    display::shift_x(&mut item, dx);
-                }
-                items.push(item);
+            let delta = block.cache_key.map_or(0, |(_, _, b)| b as isize - a.items.base as isize);
+            for index in 0..line_items.len() {
+                items.push(display::PageItem::Placed(display::Placed {
+                    block: Rc::clone(&a.items),
+                    line: placed.line as u32,
+                    index: index as u32,
+                    dy,
+                    dx,
+                    delta,
+                }));
             }
         }
-        items.extend(laid.images.iter().filter(|(n, _)| *n == page.number).map(|(_, it)| it.clone()));
-        if let Some(color) = default_color {
-            // Under a target model the default colour is written too.
-            for item in &mut items {
-                let paint = match item {
-                    display::Item::GlyphRun(r) => &mut r.paint,
-                    display::Item::Rule(r) => &mut r.paint,
-                    _ => continue,
-                };
-                if paint.device.is_none() {
-                    *paint = Paint::of(Some(color));
-                }
-            }
-        }
+        items.extend(
+            laid.images
+                .iter()
+                .filter(|(n, _)| *n == page.number)
+                .map(|(_, it)| display::PageItem::Owned(Box::new(it.clone()))),
+        );
         if let Some(color) = page_color {
             // pdfTeX paints `\pagecolor` before the page: `q 0 0 W H re f Q`.
+            // It carries its own device colour, so the document default
+            // colour (applied on read) never reaches it.
             items.insert(
                 0,
-                display::Item::Rule(Rule {
+                display::PageItem::Owned(Box::new(display::Item::Rule(Rule {
                     x: Tick(0),
                     top: Tick(0),
                     width: Tick::from_tex_pt(page.width),
                     height: Tick::from_tex_pt(page.height),
                     paint: Paint::of(Some(color)),
                     provenance: Provenance::Synthetic("\\pagecolor".into()),
-                }),
+                }))),
             );
         }
         pages.push(display::Page {
             number: page.number,
             width: Tick::from_tex_pt(page.width),
             height: Tick::from_tex_pt(page.height),
-            items,
+            placed: items,
+            // Under a target model the default colour is written too.
+            default_color,
         });
     }
     // Resource selection provenance: which outline resource drew each TFM
@@ -6907,7 +6911,7 @@ fn assemble_block(
                         let piece_lines = &piece.block.block.lines.lines;
                         let first = piece_lines.first().map_or(0.0, |l| l.baseline_y);
                         let dx = Tick::from_tex_pt(local.x + piece.x);
-                        for (li, line_items) in a.lines.iter().enumerate() {
+                        for (li, line_items) in a.items.lines.iter().enumerate() {
                             let dy = piece.baseline + piece_lines.get(li).map_or(0.0, |l| l.baseline_y - first);
                             let dy = Tick::from_tex_pt(dy);
                             for it in line_items {
@@ -6954,7 +6958,7 @@ fn assemble_block(
                     items.push(block_rule(x0 + r, r - cb.height, cb.width - 2.0 * r, cb.height + cb.depth - 2.0 * r, cb.fill));
                     let a = assemble_block(&cb.block, recs, maths, 0.0, source_of, paths, empty);
                     let dx = Tick::from_tex_pt(x0);
-                    for line_items in &a.lines {
+                    for line_items in &a.items.lines {
                         for it in line_items {
                             let mut item = incremental::place_item(it, Tick(0), "", 0);
                             display::shift_x(&mut item, dx);
@@ -6996,10 +7000,12 @@ fn assemble_block(
     }
     let (document, base) = block.cache_key.map_or((DocumentId(0), 0), |(_, d, b)| (d, b));
     incremental::AssembledBlock {
-        lines,
+        items: Rc::new(display::LineItems {
+            lines,
+            base,
+            path: paths.get(document.0).cloned().unwrap_or_else(|| empty.clone()),
+        }),
         faces: used.into_values().collect(),
-        base,
-        path: paths.get(document.0).cloned().unwrap_or_else(|| empty.clone()),
         resources,
         unmapped,
     }
@@ -7144,6 +7150,7 @@ fn picture_items(
         let n = g.glyphs.len();
         let mut glyphs = Vec::with_capacity(n);
         let mut clusters = Vec::with_capacity(n);
+        let mut end_caret = None;
         for (ci, sg) in g.glyphs.iter().enumerate() {
             let ox = tx(bx + sg.x_pt / PT_PER_BP);
             let adv = Tick::from_tex_pt(sg.advance_pt);
@@ -7158,12 +7165,9 @@ fn picture_items(
             // Clusters partition the text: spaces belong to the glyph before.
             let start = if ci == 0 { 0 } else { sg.text_range.start };
             let end = g.glyphs.get(ci + 1).map_or(t.text.len(), |next| next.text_range.start).max(start);
-            let last = (ci + 1 == n).then(|| display::Caret {
-                text_byte: t.text.len(),
-                x: Tick(ox.0 + adv.0),
-                top,
-                height: box_h,
-            });
+            if ci + 1 == n {
+                end_caret = Some(display::EndCaret { x: Tick(ox.0 + adv.0), text_byte: t.text.len() });
+            }
             clusters.push(display::Cluster {
                 text_start_byte: start,
                 text_end_byte: end,
@@ -7172,15 +7176,6 @@ fn picture_items(
                     top,
                     width: adv.max(Tick(1)),
                     height: box_h,
-                },
-                carets: display::Carets {
-                    first: display::Caret {
-                        text_byte: start,
-                        x: ox,
-                        top,
-                        height: box_h,
-                    },
-                    last,
                 },
                 provenance: Provenance::Source(node_source.clone()),
             });
@@ -7193,6 +7188,7 @@ fn picture_items(
             clusters,
             paint: paint(&t.paint),
             role: display::RunRole::Text,
+            end_caret,
         }));
     };
     let mut ti = 0;
@@ -7217,24 +7213,25 @@ fn picture_items(
 fn join_runs(prev: &mut GlyphRun, next: GlyphRun) {
     let offset = prev.text.len();
     let base = prev.clusters.len() as u32;
-    if let Some(last) = prev.clusters.last_mut() {
-        last.carets.last = None;
-    }
+    // The joined run ends where `next` ends. Holding the end caret on the
+    // run rather than on a cluster makes "only the last cluster carries the
+    // trailing caret" true by construction instead of by maintenance.
+    prev.end_caret = next.end_caret.map(|mut e| {
+        e.text_byte += offset;
+        e
+    });
     prev.text.push_str(&next.text);
     prev.glyphs.extend(next.glyphs.into_iter().map(|mut g| {
         g.cluster += base;
         g
     }));
     prev.clusters.extend(next.clusters.into_iter().map(|mut c| {
+        // Cluster text bytes index the joined run text; the carets derive
+        // from these, so re-basing them re-bases the carets too. (A caret
+        // outside its cluster is refused by rendering-core and the Mac
+        // consumer, which then shows no frame at all.)
         c.text_start_byte += offset;
         c.text_end_byte += offset;
-        // Carets are byte offsets into the same run text: re-base them too
-        // (a caret outside its cluster is refused by rendering-core and the
-        // Mac consumer, which then shows no frame at all).
-        c.carets.first.text_byte += offset;
-        if let Some(last) = c.carets.last.as_mut() {
-            last.text_byte += offset;
-        }
         c
     }));
 }
@@ -7288,6 +7285,7 @@ fn text_item(
         return None;
     }
     let last_index = clusters.len().saturating_sub(1);
+    let mut end_caret = None;
     let out_clusters = clusters
         .iter()
         .enumerate()
@@ -7296,20 +7294,9 @@ fn text_item(
                 (Some(a), Some(b)) => (a.0, b.0 + b.1),
                 _ => (run.x, run.x),
             };
-            let carets = display::Carets {
-                first: Caret {
-                    text_byte: c.text_range.start,
-                    x: Tick::from_tex_pt(x0),
-                    top,
-                    height: box_height,
-                },
-                last: (ci == last_index).then(|| Caret {
-                    text_byte: c.text_range.end,
-                    x: Tick::from_tex_pt(x1),
-                    top,
-                    height: box_height,
-                }),
-            };
+            if ci == last_index {
+                end_caret = Some(display::EndCaret { x: Tick::from_tex_pt(x1), text_byte: c.text_range.end });
+            }
             Cluster {
                 text_start_byte: c.text_range.start,
                 text_end_byte: c.text_range.end,
@@ -7319,7 +7306,6 @@ fn text_item(
                     width: Tick::from_tex_pt(x1 - x0),
                     height: box_height,
                 },
-                carets,
                 provenance: Provenance::Source(source_of(c.span)),
             }
         })
@@ -7332,6 +7318,7 @@ fn text_item(
         clusters: out_clusters,
         paint,
         role: display::RunRole::Text,
+        end_caret,
     }))
 }
 
@@ -7471,6 +7458,7 @@ fn math_items(
             clusters: Vec::new(),
             paint,
             role: display::RunRole::Math,
+            end_caret: None,
         });
         // A stacked extensible delimiter: one cluster holding the whole
         // Latin Modern Math assembly. Each part draws from its own origin up
@@ -7604,15 +7592,6 @@ fn math_items(
                 width: Tick::from_tex_pt(adv),
                 height: hh,
             },
-            carets: display::Carets {
-                first: Caret {
-                    text_byte: start,
-                    x: Tick::from_tex_pt(g.x),
-                    top,
-                    height: hh,
-                },
-                last: None,
-            },
             provenance: Provenance::Source(glyph_src),
         });
     }
@@ -7652,7 +7631,9 @@ impl Tick {
 pub fn documents_referenced(list: &DisplayList) -> BTreeSet<DocumentId> {
     let mut out = BTreeSet::new();
     for p in &list.pages {
-        for it in &p.items {
+        // Provenance paths are placement-invariant (a placement moves the
+        // byte offsets inside a path, never which path it is).
+        for it in p.unplaced() {
             if let display::Item::GlyphRun(r) = it {
                 for c in &r.clusters {
                     for s in c.provenance.sources() {

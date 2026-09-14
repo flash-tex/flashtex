@@ -66,7 +66,7 @@ fn float_fixtures_match_pdflatex_within_one_point() {
         let mut ours: Vec<(u32, f64, f64, f64, f64)> = v2
             .pages
             .iter()
-            .flat_map(|p| p.items.iter().filter_map(move |it| match it {
+            .flat_map(|p| p.to_items().into_iter().filter_map(move |it| match it {
                 Item::Image(i) => Some((p.number, i.x.to_bp(), i.top.to_bp(), i.width.to_bp(), i.height.to_bp())),
                 _ => None,
             }))
@@ -95,7 +95,7 @@ fn float_fixtures_match_pdflatex_within_one_point() {
         // starts at a source byte.
         let find = |byte: usize| -> Option<Found> {
             for p in &v2.pages {
-                for it in &p.items {
+                for it in &p.to_items() {
                     if let Item::GlyphRun(run) = it {
                         if run.role != RunRole::Text {
                             continue;

@@ -125,7 +125,7 @@ fn ours(r: &flashtex_render_pipeline::Rendered) -> Vec<Seg> {
     let mut last_end = f64::NAN;
     let mut last_size = 0.0f64;
     for page in &v2.pages {
-        for it in &page.items {
+        for it in &page.to_items() {
             let Item::GlyphRun(run) = it else { continue };
             if !matches!(run.role, RunRole::Text | RunRole::Math) || run.glyphs.is_empty() {
                 continue;

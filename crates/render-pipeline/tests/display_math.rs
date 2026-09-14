@@ -18,7 +18,7 @@ type G = (String, u16, f64, f64, f64);
 fn math_glyphs(body: &str) -> Vec<G> {
     let r = render_one(&doc(body));
     let mut out = Vec::new();
-    for item in &r.v2.pages[0].items {
+    for item in &r.v2.pages[0].to_items() {
         if let Item::GlyphRun(run) = item {
             if run.role != RunRole::Math {
                 continue;
