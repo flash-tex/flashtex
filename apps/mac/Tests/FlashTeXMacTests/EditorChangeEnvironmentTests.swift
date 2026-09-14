@@ -1,4 +1,5 @@
 import AppKit
+import HostedWindows
 import SwiftUI
 import XCTest
 @testable import FlashTeXMac
@@ -203,7 +204,7 @@ final class EditorChangeEnvironmentTests: XCTestCase {
 
     private func host(_ model: ShellModel) async throws -> (NSWindow, NSTextView, SourceEditorView.Coordinator) {
         HostedWindowSupport.prepare()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model))
         window.orderFrontRegardless()
         var found: NSTextView?
