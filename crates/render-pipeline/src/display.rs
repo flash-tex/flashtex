@@ -497,7 +497,7 @@ impl DisplayList {
     pub fn estimated_json_bytes(&self) -> usize {
         let mut n = 512 + self.fonts.len() * 400 + self.documents.len() * 200;
         for d in &self.diagnostics {
-            n += 160 + d.message.len() + d.sources.len() * 80;
+            n += 160 + d.message.len() + d.sources.len() * 80 + d.suggestion.as_ref().map(|s| s.len() + 20).unwrap_or(0);
         }
         for p in &self.pages {
             n += 64;
@@ -626,7 +626,7 @@ impl DisplayList {
         payload.set("pages", Value::Arr(self.pages.iter().map(|p| page_json(p, wire)).collect()));
         payload.set(
             "diagnostics",
-            Value::Arr(self.diagnostics.iter().map(diagnostic_json).collect()),
+            Value::Arr(self.diagnostics.iter().map(|d| diagnostic_json_wire(d, wire)).collect()),
         );
         let mut v = Value::obj();
         v.set("protocol_version", json::num(PROTOCOL_VERSION as f64));
@@ -681,7 +681,7 @@ impl DisplayList {
         o.push_str("{\"id\":");
         json::write_string_into(id, &mut o);
         o.push_str(",\"payload\":{\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":");
-        write_diagnostics(&mut o, &self.diagnostics);
+        write_diagnostics(&mut o, &self.diagnostics, wire);
         o.push_str(",\"documents\":");
         write_documents(&mut o, &self.documents);
         o.push_str(",\"fonts\":");
@@ -720,7 +720,7 @@ pub const FULL_LINE_FRAME_BYTES: usize = "{\"id\":".len()
     + ",\"text_extraction\":\"cluster-actualtext\"},\"protocol_version\":2,\"type\":\"display_list\"}".len();
 
 /// The `diagnostics` array of the full line (also carried complete by a delta).
-pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic]) {
+pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic], wire: Wire) {
     o.push('[');
     for (i, d) in diagnostics.iter().enumerate() {
         sep(o, i);
@@ -735,6 +735,12 @@ pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic]) {
         });
         o.push_str(",\"sources\":");
         write_sources(o, &d.sources);
+        if wire.diagnostics {
+            if let Some(s) = &d.suggestion {
+                o.push_str(",\"suggestion\":");
+                json::write_string_into(s, o);
+            }
+        }
         o.push('}');
     }
     o.push(']');
@@ -1167,6 +1173,12 @@ fn rect_json(r: &Rect) -> Value {
 }
 
 pub fn diagnostic_json(d: &Diagnostic) -> Value {
+    diagnostic_json_wire(d, Wire::default())
+}
+
+/// [`diagnostic_json`](diagnostic_json) with negotiated proposals: `suggestion`
+/// is present only when `wire.diagnostics` is set and the value is `Some`.
+pub fn diagnostic_json_wire(d: &Diagnostic, wire: Wire) -> Value {
     let mut o = Value::obj();
     o.set("code", json::str_(d.code.clone()));
     o.set("message", json::str_(d.message.clone()));
@@ -1178,6 +1190,11 @@ pub fn diagnostic_json(d: &Diagnostic) -> Value {
         }),
     );
     o.set("sources", Value::Arr(d.sources.iter().map(source_json).collect()));
+    if wire.diagnostics {
+        if let Some(s) = &d.suggestion {
+            o.set("suggestion", json::str_(s.clone()));
+        }
+    }
     o
 }
 

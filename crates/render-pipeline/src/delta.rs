@@ -277,6 +277,11 @@ pub fn header_digest(l: &DisplayList, wire: Wire) -> [u8; 32] {
             Severity::Error => "error",
         });
         c.ranges(&d.sources);
+        if wire.diagnostics {
+            if let Some(s) = &d.suggestion {
+                c.s(s);
+            }
+        }
     }
     c.sha()
 }
@@ -658,7 +663,7 @@ pub fn try_delta(state: &DeltaState, id: &str, list: &DisplayList, wire: Wire, b
     o.push_str("],\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":");
     let mut header_len = 0;
     let start = o.len();
-    display::write_diagnostics(&mut o, &list.diagnostics);
+    display::write_diagnostics(&mut o, &list.diagnostics, wire);
     header_len += o.len() - start;
     o.push_str(",\"digest_scheme\":\"dl2-canon-1\",\"documents\":");
     let start = o.len();
@@ -808,7 +813,14 @@ mod tests {
                 number: 1,
                 width: display::Tick(1),
                 height: display::Tick(1),
-                items: Vec::new(),
+                items: vec![Item::Rule(display::Rule {
+                    x: display::Tick(0),
+                    top: display::Tick(0),
+                    width: display::Tick(10),
+                    height: display::Tick(10),
+                    paint: display::Paint::BLACK,
+                    provenance: Provenance::Synthetic("pad".repeat(800)),
+                })],
             }],
             diagnostics: vec![d],
         }
