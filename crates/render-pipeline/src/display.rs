@@ -39,14 +39,69 @@ impl Tick {
     }
 }
 
-/// A byte range in one source document. `path` is shared: a page carries
-/// one range per cluster, so the string is reference-counted rather than
-/// copied a hundred thousand times per compile.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// A document's index in the display list's `documents` table (and in a
+/// page's [`DocumentPaths`], which is that same list in that same order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct DocId(pub u32);
+
+/// The document paths a display list's [`SourceRange`]s index. One table per
+/// display list, shared by every page.
+///
+/// A range used to carry `Rc<str>`: 16 bytes of fat pointer per cluster, to
+/// one of a handful of strings. A 2 MB document has 1.5 M clusters, so the
+/// pointers cost far more than the paths they pointed at. The index is 4
+/// bytes, and the table is the request's document list -- exactly what
+/// `Span::document` already indexes, so this carries the identity the
+/// compiler was using rather than resolving it to a string per glyph.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct DocumentPaths(Vec<std::rc::Rc<str>>);
+
+impl DocumentPaths {
+    pub fn new(paths: Vec<std::rc::Rc<str>>) -> DocumentPaths {
+        DocumentPaths(paths)
+    }
+
+    /// The path `id` names, or `""` when it names none -- the same fallback
+    /// the `Rc<str>` form used for a span with no document.
+    pub fn path(&self, id: DocId) -> &str {
+        self.0.get(id.0 as usize).map_or("", |p| &**p)
+    }
+
+    pub fn id_of(&self, path: &str) -> Option<DocId> {
+        self.0.iter().position(|p| &**p == path).map(|i| DocId(i as u32))
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// A byte range in one source document, naming the document by index.
+///
+/// `Copy`, 12 bytes. Offsets are `u32`: they come from the compiler's own
+/// `Span` over a request payload. Use [`SourceRange::start`] and
+/// [`SourceRange::end`] where a `usize` is wanted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SourceRange {
-    pub path: std::rc::Rc<str>,
-    pub start_byte: usize,
-    pub end_byte: usize,
+    pub document: DocId,
+    pub start_byte: u32,
+    pub end_byte: u32,
+}
+
+impl SourceRange {
+    pub fn new(document: DocId, start: usize, end: usize) -> SourceRange {
+        SourceRange { document, start_byte: start as u32, end_byte: end as u32 }
+    }
+    pub fn start(&self) -> usize {
+        self.start_byte as usize
+    }
+    pub fn end(&self) -> usize {
+        self.end_byte as usize
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -112,12 +167,31 @@ pub struct Caret {
 pub enum Provenance {
     /// One source range (the common case; no allocation per cluster).
     Source(SourceRange),
-    /// Several ranges (macro expansion); reserved, unused today.
-    Sources(Vec<SourceRange>),
-    Synthetic(String),
+    /// Several ranges (macro expansion); reserved, unused today. Boxed
+    /// behind a thin pointer so the common `Source` arm is not widened to a
+    /// `Vec` header on every one of a document's clusters.
+    Sources(Box<Vec<SourceRange>>),
+    /// Boxed for the same reason: a synthetic reason is rare, and an inline
+    /// `String` would cost every cluster 24 bytes to say so.
+    Synthetic(Box<String>),
 }
 
 impl Provenance {
+    /// One source range.
+    pub fn source(range: SourceRange) -> Provenance {
+        Provenance::Source(range)
+    }
+
+    /// Several source ranges.
+    pub fn of_sources(ranges: Vec<SourceRange>) -> Provenance {
+        Provenance::Sources(Box::new(ranges))
+    }
+
+    /// Content the pipeline made up, with the stated reason.
+    pub fn synthetic(reason: impl Into<String>) -> Provenance {
+        Provenance::Synthetic(Box::new(reason.into()))
+    }
+
     /// The source ranges, in order (empty for synthetic content).
     pub fn sources(&self) -> &[SourceRange] {
         match self {
@@ -128,12 +202,30 @@ impl Provenance {
     }
 }
 
-/// One or two carets per cluster (its start, and the run end on the last
-/// cluster), stored inline: a page carries a caret pair per cluster.
+/// One or two carets for a cluster: its start, and the run end on the last
+/// cluster.
+///
+/// Derived, never stored (FT-070). The start caret is exactly the cluster's
+/// `hit_rect` and `text_start_byte`, and the end caret's `top`/`height` are
+/// that same rect's — measured over 1 991 552 clusters of the corpus, with
+/// zero exceptions. `place_item` and `shift_x` move the rect and the carets
+/// by the same offset, so placement cannot break the identity either. What
+/// is *not* derivable is the end caret's `x` (the TikZ path clamps the hit
+/// rect's width to one tick but not the caret) and which cluster carries
+/// it, so a run stores that once in [`GlyphRun::end_caret`] instead of
+/// 72 bytes per glyph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Carets {
     pub first: Caret,
     pub last: Option<Caret>,
+}
+
+/// The run-end caret: the part of it that the cluster geometry does not
+/// already say. Held once per [`GlyphRun`], not once per cluster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EndCaret {
+    pub x: Tick,
+    pub text_byte: usize,
 }
 
 impl Carets {
@@ -150,18 +242,32 @@ impl Carets {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cluster {
-    pub text_start_byte: usize,
-    pub text_end_byte: usize,
+    /// Byte offsets into the *run's* `text`, which is one word at most, so
+    /// `u32` where the rest of the pipeline uses `usize`. This is the field
+    /// that takes a cluster from 72 bytes of payload to 64 once the source
+    /// range is an index.
+    pub text_start_byte: u32,
+    pub text_end_byte: u32,
     /// The cluster's hit rectangle (the wire format is a list; this
-    /// pipeline emits exactly one per cluster).
+    /// pipeline emits exactly one per cluster). Also the geometry of both
+    /// of the cluster's carets: see [`Carets`].
     pub hit_rect: Rect,
-    pub carets: Carets,
     pub provenance: Provenance,
 }
 
 impl Cluster {
     pub fn hit_rects(&self) -> &[Rect] {
         std::slice::from_ref(&self.hit_rect)
+    }
+
+    /// The cluster's start caret.
+    pub fn first_caret(&self) -> Caret {
+        Caret {
+            text_byte: self.text_start_byte as usize,
+            x: self.hit_rect.x,
+            top: self.hit_rect.top,
+            height: self.hit_rect.height,
+        }
     }
 }
 
@@ -196,6 +302,27 @@ pub struct GlyphRun {
     pub clusters: Vec<Cluster>,
     pub paint: Paint,
     pub role: RunRole,
+    /// The caret at the end of the run's text, carried by its last cluster.
+    /// `None` for a run that does not end a word (a math run, or a word
+    /// fragment continued by the next run).
+    pub end_caret: Option<EndCaret>,
+}
+
+impl GlyphRun {
+    /// The carets of cluster `i`: its start caret, and the run-end caret if
+    /// this is the last cluster.
+    pub fn carets_of(&self, i: usize) -> Carets {
+        let c = &self.clusters[i];
+        Carets {
+            first: c.first_caret(),
+            last: self.end_caret.filter(|_| i + 1 == self.clusters.len()).map(|e| Caret {
+                text_byte: e.text_byte,
+                x: e.x,
+                top: c.hit_rect.top,
+                height: c.hit_rect.height,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -344,10 +471,9 @@ pub fn shift_x(item: &mut Item, dx: Tick) {
             }
             for c in &mut r.clusters {
                 c.hit_rect.x = add(c.hit_rect.x);
-                c.carets.first.x = add(c.carets.first.x);
-                if let Some(l) = &mut c.carets.last {
-                    l.x = add(l.x);
-                }
+            }
+            if let Some(e) = &mut r.end_caret {
+                e.x = add(e.x);
             }
         }
         Item::Rule(rule) => rule.x = add(rule.x),
@@ -375,6 +501,21 @@ pub struct Page {
     pub width: Tick,
     pub height: Tick,
     pub items: Vec<Item>,
+    /// The table this page's `SourceRange`s index. Shared with the display
+    /// list and every other page, so it costs one pointer per page.
+    pub documents: std::rc::Rc<DocumentPaths>,
+}
+
+impl Page {
+    /// A page whose ranges index `documents`.
+    pub fn new(number: u32, width: Tick, height: Tick, items: Vec<Item>, documents: std::rc::Rc<DocumentPaths>) -> Page {
+        Page { number, width, height, items, documents }
+    }
+
+    /// The path of `range`'s document, as this page names it.
+    pub fn path_of(&self, range: &SourceRange) -> &str {
+        self.documents.path(range.document)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -436,8 +577,10 @@ impl Diagnostic {
         }
     }
 
-    /// Converts a compiler diagnostic; `paths` is indexed by `DocumentId`.
-    pub fn from_compiler(d: &flashtex_compiler::diagnostics::Diagnostic, paths: &[&str]) -> Diagnostic {
+    /// Converts a compiler diagnostic. The compiler's `DocumentId` is the
+    /// display list's [`DocId`] -- both index the request's document list --
+    /// so the span's document carries straight over.
+    pub fn from_compiler(d: &flashtex_compiler::diagnostics::Diagnostic) -> Diagnostic {
         use flashtex_compiler::diagnostics::Severity as S;
         Diagnostic {
             code: "compiler".into(),
@@ -448,13 +591,7 @@ impl Diagnostic {
             },
             sources: d
                 .span
-                .map(|s| {
-                    vec![SourceRange {
-                        path: std::rc::Rc::from(paths.get(s.document.0).copied().unwrap_or("")),
-                        start_byte: s.start,
-                        end_byte: s.end,
-                    }]
-                })
+                .map(|s| vec![SourceRange::new(DocId(s.document.0 as u32), s.start, s.end)])
                 .unwrap_or_default(),
             recovery: d.recovery.clone(),
         }
@@ -466,6 +603,9 @@ pub struct DisplayList {
     pub project_id: String,
     pub revision: u64,
     pub documents: Vec<DocumentResource>,
+    /// The table every `SourceRange` in this list indexes -- the same
+    /// `Rc` each page holds, and the same order as `documents`.
+    pub document_paths: std::rc::Rc<DocumentPaths>,
     pub fonts: Vec<FontResource>,
     pub pages: Vec<Page>,
     pub diagnostics: Vec<Diagnostic>,
@@ -608,7 +748,7 @@ impl DisplayList {
         payload.set("pages", Value::Arr(self.pages.iter().map(|p| page_json(p, wire)).collect()));
         payload.set(
             "diagnostics",
-            Value::Arr(self.diagnostics.iter().map(diagnostic_json).collect()),
+            Value::Arr(self.diagnostics.iter().map(|d| diagnostic_json(d, &self.document_paths)).collect()),
         );
         let mut v = Value::obj();
         v.set("protocol_version", json::num(PROTOCOL_VERSION as f64));
@@ -663,7 +803,7 @@ impl DisplayList {
         o.push_str("{\"id\":");
         json::write_string_into(id, &mut o);
         o.push_str(",\"payload\":{\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":");
-        write_diagnostics(&mut o, &self.diagnostics);
+        write_diagnostics(&mut o, &self.diagnostics, &self.document_paths);
         o.push_str(",\"documents\":");
         write_documents(&mut o, &self.documents);
         o.push_str(",\"fonts\":");
@@ -702,7 +842,7 @@ pub const FULL_LINE_FRAME_BYTES: usize = "{\"id\":".len()
     + ",\"text_extraction\":\"cluster-actualtext\"},\"protocol_version\":2,\"type\":\"display_list\"}".len();
 
 /// The `diagnostics` array of the full line (also carried complete by a delta).
-pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic]) {
+pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic], docs: &DocumentPaths) {
     o.push('[');
     for (i, d) in diagnostics.iter().enumerate() {
         sep(o, i);
@@ -716,7 +856,7 @@ pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic]) {
             Severity::Error => "\"error\"",
         });
         o.push_str(",\"sources\":");
-        write_sources(o, &d.sources);
+        write_sources(o, &d.sources, docs);
         o.push('}');
     }
     o.push(']');
@@ -788,14 +928,14 @@ fn write_tick(o: &mut String, t: Tick) {
     num(o, t.0 as f64);
 }
 
-fn write_sources(o: &mut String, sources: &[SourceRange]) {
+fn write_sources(o: &mut String, sources: &[SourceRange], docs: &DocumentPaths) {
     o.push('[');
     for (i, s) in sources.iter().enumerate() {
         sep(o, i);
         o.push_str("{\"end_byte\":");
         num(o, s.end_byte as f64);
         o.push_str(",\"path\":");
-        json::write_string_into(&s.path, o);
+        json::write_string_into(docs.path(s.document), o);
         o.push_str(",\"start_byte\":");
         num(o, s.start_byte as f64);
         o.push('}');
@@ -805,11 +945,11 @@ fn write_sources(o: &mut String, sources: &[SourceRange]) {
 
 /// `sources` or `synthetic_reason`, preceded by a comma (both sort after
 /// every key written before them and before every key written after).
-fn write_provenance(o: &mut String, p: &Provenance) {
+fn write_provenance(o: &mut String, p: &Provenance, docs: &DocumentPaths) {
     match p {
         Provenance::Source(_) | Provenance::Sources(_) => {
             o.push_str(",\"sources\":");
-            write_sources(o, p.sources());
+            write_sources(o, p.sources(), docs);
         }
         Provenance::Synthetic(reason) => {
             o.push_str(",\"synthetic_reason\":");
@@ -865,7 +1005,7 @@ fn write_path(o: &mut String, cmds: &[PathCmd]) {
 /// (byte_length, format, image_id, path, pdf_box, pdf_page, pdf_rotate,
 /// pixel_height, pixel_width, sha256), kind, sources/synthetic_reason, top,
 /// transform, width, x.
-fn write_image(o: &mut String, i: &Image) {
+fn write_image(o: &mut String, i: &Image, docs: &DocumentPaths) {
     let r = &i.resource;
     o.push_str("{\"height\":");
     write_tick(o, i.height);
@@ -897,7 +1037,7 @@ fn write_image(o: &mut String, i: &Image) {
     o.push_str(",\"sha256\":");
     json::write_string_into(&r.sha256, o);
     o.push_str("},\"kind\":\"image\"");
-    write_provenance(o, &i.provenance);
+    write_provenance(o, &i.provenance, docs);
     o.push_str(",\"top\":");
     write_tick(o, i.top);
     o.push_str(",\"transform\":[");
@@ -924,19 +1064,21 @@ fn device_space(d: &flashtex_compiler::color::DeviceColor) -> &'static str {
 /// (and inside a delta's `changed_pages`).
 pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
     let images = wire.images;
+    // `p` is shadowed by the path item inside the match below.
+    let docs: &DocumentPaths = &p.documents;
     o.push_str("{\"height\":");
     write_tick(o, p.height);
     o.push_str(",\"items\":[");
     for (i, it) in p.items.iter().filter(|it| images || !matches!(it, Item::Image(_))).enumerate() {
         sep(o, i);
         match it {
-            Item::Image(img) => write_image(o, img),
+            Item::Image(img) => write_image(o, img, docs),
             Item::GlyphRun(r) => {
                 o.push_str("{\"clusters\":[");
                 for (j, c) in r.clusters.iter().enumerate() {
                     sep(o, j);
                     o.push_str("{\"carets\":[");
-                    for (k, caret) in c.carets.iter().enumerate() {
+                    for (k, caret) in r.carets_of(j).iter().enumerate() {
                         sep(o, k);
                         o.push_str("{\"height\":");
                         write_tick(o, caret.height);
@@ -962,7 +1104,7 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
                         o.push('}');
                     }
                     o.push(']');
-                    write_provenance(o, &c.provenance);
+                    write_provenance(o, &c.provenance, docs);
                     o.push_str(",\"text_end_byte\":");
                     num(o, c.text_end_byte as f64);
                     o.push_str(",\"text_start_byte\":");
@@ -1001,7 +1143,7 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
                 write_tick(o, r.height);
                 o.push_str(",\"kind\":\"rule\",\"paint\":");
                 write_paint(o, &r.paint, wire.device_color);
-                write_provenance(o, &r.provenance);
+                write_provenance(o, &r.provenance, docs);
                 o.push_str(",\"top\":");
                 write_tick(o, r.top);
                 o.push_str(",\"width\":");
@@ -1044,7 +1186,7 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
                 write_path(o, &p.commands);
                 let synthetic = matches!(p.provenance, Provenance::Synthetic(_));
                 if !synthetic {
-                    write_provenance(o, &p.provenance);
+                    write_provenance(o, &p.provenance, docs);
                 }
                 if let Some(s) = stroke {
                     o.push_str(",\"stroke\":{\"cap\":");
@@ -1076,7 +1218,7 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
                     o.push('}');
                 }
                 if synthetic {
-                    write_provenance(o, &p.provenance);
+                    write_provenance(o, &p.provenance, docs);
                 }
                 o.push('}');
             }
@@ -1093,18 +1235,20 @@ fn tick(t: Tick) -> Value {
     json::num(t.0 as f64)
 }
 
-fn source_json(s: &SourceRange) -> Value {
+fn source_json(s: &SourceRange, docs: &DocumentPaths) -> Value {
     let mut o = Value::obj();
-    o.set("path", json::str_(s.path.to_string()));
+    o.set("path", json::str_(docs.path(s.document).to_string()));
     o.set("start_byte", json::num(s.start_byte as f64));
     o.set("end_byte", json::num(s.end_byte as f64));
     o
 }
 
-fn provenance_into(o: &mut Value, p: &Provenance) {
+fn provenance_into(o: &mut Value, p: &Provenance, docs: &DocumentPaths) {
     match p {
-        Provenance::Source(_) | Provenance::Sources(_) => o.set("sources", Value::Arr(p.sources().iter().map(source_json).collect())),
-        Provenance::Synthetic(reason) => o.set("synthetic_reason", json::str_(reason.clone())),
+        Provenance::Source(_) | Provenance::Sources(_) => {
+            o.set("sources", Value::Arr(p.sources().iter().map(|s| source_json(s, docs)).collect()))
+        }
+        Provenance::Synthetic(reason) => o.set("synthetic_reason", json::str_((**reason).clone())),
     }
 }
 
@@ -1148,7 +1292,7 @@ fn rect_json(r: &Rect) -> Value {
     o
 }
 
-pub fn diagnostic_json(d: &Diagnostic) -> Value {
+pub fn diagnostic_json(d: &Diagnostic, docs: &DocumentPaths) -> Value {
     let mut o = Value::obj();
     o.set("code", json::str_(d.code.clone()));
     o.set("message", json::str_(d.message.clone()));
@@ -1159,12 +1303,14 @@ pub fn diagnostic_json(d: &Diagnostic) -> Value {
             Severity::Error => "error",
         }),
     );
-    o.set("sources", Value::Arr(d.sources.iter().map(source_json).collect()));
+    o.set("sources", Value::Arr(d.sources.iter().map(|s| source_json(s, docs)).collect()));
     o
 }
 
 fn page_json(p: &Page, wire: Wire) -> Value {
     let images = wire.images;
+    // `p` is shadowed by the path item inside the match below.
+    let docs: &DocumentPaths = &p.documents;
     let mut o = Value::obj();
     o.set("number", json::num(f64::from(p.number)));
     o.set("width", tick(p.width));
@@ -1205,7 +1351,8 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                             Value::Arr(
                                 r.clusters
                                     .iter()
-                                    .map(|c| {
+                                    .enumerate()
+                                    .map(|(ci, c)| {
                                         let mut o = Value::obj();
                                         o.set("text_start_byte", json::num(c.text_start_byte as f64));
                                         o.set("text_end_byte", json::num(c.text_end_byte as f64));
@@ -1213,7 +1360,7 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                                         o.set(
                                             "carets",
                                             Value::Arr(
-                                                c.carets
+                                                r.carets_of(ci)
                                                     .iter()
                                                     .map(|k| {
                                                         let mut o = Value::obj();
@@ -1226,7 +1373,7 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                                                     .collect(),
                                             ),
                                         );
-                                        provenance_into(&mut o, &c.provenance);
+                                        provenance_into(&mut o, &c.provenance, docs);
                                         o
                                     })
                                     .collect(),
@@ -1291,7 +1438,7 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                             );
                         }
                         o.set("paint", paint_json(&p.paint, wire.device_color));
-                        provenance_into(&mut o, &p.provenance);
+                        provenance_into(&mut o, &p.provenance, docs);
                         o
                     }
                     Item::Rule(r) => {
@@ -1302,10 +1449,10 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                         o.set("width", tick(r.width));
                         o.set("height", tick(r.height));
                         o.set("paint", paint_json(&r.paint, wire.device_color));
-                        provenance_into(&mut o, &r.provenance);
+                        provenance_into(&mut o, &r.provenance, docs);
                         o
                     }
-                    Item::Image(i) => image_json(i),
+                    Item::Image(i) => image_json(i, docs),
                 })
                 .collect(),
         ),
@@ -1313,7 +1460,7 @@ fn page_json(p: &Page, wire: Wire) -> Value {
     o
 }
 
-fn image_json(i: &Image) -> Value {
+fn image_json(i: &Image, docs: &DocumentPaths) -> Value {
     let mut o = Value::obj();
     o.set("kind", json::str_("image"));
     o.set("x", tick(i.x));
@@ -1340,7 +1487,7 @@ fn image_json(i: &Image) -> Value {
         res.set("pdf_rotate", json::num(f64::from(r.pdf_rotate)));
     }
     o.set("image", res);
-    provenance_into(&mut o, &i.provenance);
+    provenance_into(&mut o, &i.provenance, docs);
     o
 }
 
@@ -1358,17 +1505,9 @@ mod tests {
 
     #[test]
     fn write_json_matches_the_value_tree() {
-        let src = |a, b| SourceRange {
-            path: std::rc::Rc::from("dir/ma\"in.tex"),
-            start_byte: a,
-            end_byte: b,
-        };
-        let caret = |x| Caret {
-            text_byte: 3,
-            x: Tick(x),
-            top: Tick(-7),
-            height: Tick(1 << 40),
-        };
+        // One document at index 0; the table below names it.
+        let docs = std::rc::Rc::new(DocumentPaths::new(vec![std::rc::Rc::from("dir/ma\"in.tex")]));
+        let src = |a, b| SourceRange::new(DocId(0), a, b);
         let cluster = |provenance| Cluster {
             text_start_byte: 0,
             text_end_byte: 4,
@@ -1377,10 +1516,6 @@ mod tests {
                 top: Tick(-2),
                 width: Tick(3),
                 height: Tick(4),
-            },
-            carets: Carets {
-                first: caret(5),
-                last: Some(caret(9)),
             },
             provenance,
         };
@@ -1401,9 +1536,13 @@ mod tests {
             ],
             clusters: vec![
                 cluster(Provenance::Source(src(1, 2))),
-                cluster(Provenance::Sources(vec![src(3, 4), src(5, 6)])),
-                cluster(Provenance::Synthetic("heading number".into())),
+                cluster(Provenance::of_sources(vec![src(3, 4), src(5, 6)])),
+                cluster(Provenance::synthetic("heading number")),
             ],
+            // Only the run's last cluster shows it, so the two writers have
+            // to agree about which cluster that is as well as about the
+            // value.
+            end_caret: Some(EndCaret { x: Tick(9), text_byte: 3 }),
             paint: Paint {
                 r: 0.25,
                 g: 0.1,
@@ -1490,6 +1629,7 @@ mod tests {
             })
         };
         let list = DisplayList {
+            document_paths: docs.clone(),
             project_id: "p\\1".into(),
             revision: 42,
             documents: vec![DocumentResource {
@@ -1511,25 +1651,28 @@ mod tests {
             }],
             pages: vec![
                 Page {
+                    documents: docs.clone(),
                     number: 1,
                     width: Tick(612 << 20),
                     height: Tick(792 << 20),
-                    items: vec![run, rule(Provenance::Source(src(7, 8))), rule(Provenance::Synthetic("frac".into()))],
+                    items: vec![run, rule(Provenance::Source(src(7, 8))), rule(Provenance::synthetic("frac"))],
                 },
                 Page {
+                    documents: docs.clone(),
                     number: 3,
                     width: Tick(612 << 20),
                     height: Tick(792 << 20),
                     items: vec![
                         path(PathPaintOp::Fill { even_odd: true }, Vec::new(), Provenance::Source(src(1, 3))),
-                        path(PathPaintOp::Fill { even_odd: false }, clips(), Provenance::Synthetic("tikz".into())),
-                        path(PathPaintOp::Stroke(stroke(Vec::new())), Vec::new(), Provenance::Synthetic("tikz".into())),
+                        path(PathPaintOp::Fill { even_odd: false }, clips(), Provenance::synthetic("tikz")),
+                        path(PathPaintOp::Stroke(stroke(Vec::new())), Vec::new(), Provenance::synthetic("tikz")),
                         image(png(), Provenance::Source(src(4, 7))),
-                        path(PathPaintOp::Stroke(stroke(vec![Tick(3), Tick(-4)])), clips(), Provenance::Sources(vec![src(2, 5), src(6, 9)])),
-                        image(pdf(), Provenance::Synthetic("float".into())),
+                        path(PathPaintOp::Stroke(stroke(vec![Tick(3), Tick(-4)])), clips(), Provenance::of_sources(vec![src(2, 5), src(6, 9)])),
+                        image(pdf(), Provenance::synthetic("float")),
                     ],
                 },
                 Page {
+                    documents: docs.clone(),
                     number: 2,
                     width: Tick(1),
                     height: Tick(2),
@@ -1551,6 +1694,7 @@ mod tests {
             project_id: String::new(),
             revision: 0,
             documents: Vec::new(),
+            document_paths: Default::default(),
             fonts: Vec::new(),
             pages: Vec::new(),
             diagnostics: Vec::new(),

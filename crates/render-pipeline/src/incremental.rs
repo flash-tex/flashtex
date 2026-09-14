@@ -57,6 +57,10 @@ pub struct AssembledBlock {
     pub faces: Vec<Rc<crate::fonts::LoadedFace>>,
     pub base: usize,
     pub path: Rc<str>,
+    /// The document index the block's source ranges were assembled against.
+    /// A later request may list the same document at a different index, so
+    /// placement remaps from this one (`Relocate::from`).
+    pub document: crate::display::DocId,
     /// `(tfm font, face, exact)` resource selections made for math glyphs.
     pub resources: Vec<(String, String, bool)>,
     /// `(tfm font, code, char)` math glyphs with no outline mapping.
@@ -135,6 +139,34 @@ impl RenderCache {
 
     pub fn is_empty(&self) -> bool {
         self.blocks.borrow().is_empty()
+    }
+
+    /// Measurement only (`memsize`): the cached blocks, for deep heap
+    /// accounting. Clones the `Rc`s, so nothing is borrowed across the walk.
+    pub fn debug_blocks(&self) -> Vec<Rc<CachedBlock>> {
+        self.blocks.borrow().values().cloned().collect()
+    }
+
+    /// Measurement only (`memsize`): the assembled blocks.
+    pub fn debug_assembled(&self) -> Vec<Rc<AssembledBlock>> {
+        self.assembled.borrow().values().cloned().collect()
+    }
+
+    /// Measurement only (`memsize`): the adapted blocks.
+    pub fn debug_adapted(&self) -> Vec<Rc<AdaptedBlock>> {
+        self.adapted.borrow().values().cloned().collect()
+    }
+
+    pub fn debug_blocks_len(&self) -> usize {
+        self.blocks.borrow().len()
+    }
+
+    pub fn debug_assembled_len(&self) -> usize {
+        self.assembled.borrow().len()
+    }
+
+    pub fn debug_adapted_len(&self) -> usize {
+        self.adapted.borrow().len()
     }
 
     /// `(hits, misses)` since creation.
@@ -435,6 +467,41 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
     }
 }
 
+/// How a placement moves a cached block's source ranges: ranges in
+/// `from` become ranges in `to` with every offset shifted by `delta`.
+/// Ranges in any other document are left exactly as assembled.
+///
+/// Both halves matter. A block is cached under a key that hashes its items
+/// with offsets relative to the block, so the same block reused at a new
+/// position needs `delta`; and the request that reuses it may list its
+/// documents in a different order than the request that built it, so the
+/// document index needs remapping too. The index is the display list's, not
+/// a global identity -- `from` is what the block was assembled against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Relocate {
+    pub from: crate::display::DocId,
+    pub to: crate::display::DocId,
+    pub delta: isize,
+}
+
+impl Relocate {
+    /// Leaves every source range exactly as assembled.
+    pub const NONE: Relocate =
+        Relocate { from: crate::display::DocId(0), to: crate::display::DocId(0), delta: 0 };
+
+    pub fn is_noop(&self) -> bool {
+        self.delta == 0 && self.from.0 == self.to.0
+    }
+
+    /// The range as this relocation leaves it.
+    pub fn apply(&self, s: &crate::display::SourceRange) -> crate::display::SourceRange {
+        if s.document != self.from {
+            return *s;
+        }
+        crate::display::SourceRange::new(self.to, shift(s.start(), self.delta), shift(s.end(), self.delta))
+    }
+}
+
 fn shift(v: usize, delta: isize) -> usize {
     (v as isize + delta) as usize
 }
@@ -463,10 +530,11 @@ fn shift_tags(b: &mut flashtex_math_layout::MathBox, delta: isize) {
 }
 
 /// Moves every source offset of a cached block by `delta` bytes.
-pub fn relocate_block(b: &mut BuiltBlock, recs: &mut [BoxRec], maths: &mut [MathRec], diags: &mut [(Option<String>, Diagnostic)], path: &str, delta: isize) {
-    if delta == 0 {
+pub fn relocate_block(b: &mut BuiltBlock, recs: &mut [BoxRec], maths: &mut [MathRec], diags: &mut [(Option<String>, Diagnostic)], reloc: Relocate) {
+    if reloc.is_noop() {
         return;
     }
+    let delta = reloc.delta;
     for line in &mut b.block.lines.lines {
         for run in &mut line.runs {
             shift_range(&mut run.source, delta);
@@ -510,10 +578,7 @@ pub fn relocate_block(b: &mut BuiltBlock, recs: &mut [BoxRec], maths: &mut [Math
     }
     for (_, d) in diags {
         for s in &mut d.sources {
-            if &*s.path == path {
-                s.start_byte = shift(s.start_byte, delta);
-                s.end_byte = shift(s.end_byte, delta);
-            }
+            *s = reloc.apply(s);
         }
     }
 }
@@ -528,19 +593,16 @@ pub fn style_fingerprint(style: &crate::style::Stylesheet) -> u64 {
 
 /// Places a line-local item: every y moves by `dy` ticks and every source
 /// offset in `path` by `delta` bytes.
-pub fn place_item(item: &crate::display::Item, dy: crate::display::Tick, path: &str, delta: isize) -> crate::display::Item {
+pub fn place_item(item: &crate::display::Item, dy: crate::display::Tick, reloc: Relocate) -> crate::display::Item {
     use crate::display::{Item, Provenance, Tick};
     let add = |t: Tick| Tick(t.0 + dy.0);
     let shift_prov = |p: &Provenance| -> Provenance {
-        if delta == 0 {
+        if reloc.is_noop() {
             return p.clone();
         }
         match p {
-            Provenance::Source(s) if &*s.path == path => Provenance::Source(crate::display::SourceRange {
-                path: s.path.clone(),
-                start_byte: shift(s.start_byte, delta),
-                end_byte: shift(s.end_byte, delta),
-            }),
+            Provenance::Source(s) => Provenance::Source(reloc.apply(s)),
+            Provenance::Sources(v) => Provenance::of_sources(v.iter().map(|s| reloc.apply(s)).collect()),
             other => other.clone(),
         }
     };
@@ -551,11 +613,10 @@ pub fn place_item(item: &crate::display::Item, dy: crate::display::Tick, path: &
                 g.baseline_y = add(g.baseline_y);
             }
             for c in &mut r.clusters {
+                // The carets derive from this rect, so moving it moves them
+                // by exactly the same `dy` the three separate fields used
+                // to be moved by.
                 c.hit_rect.top = add(c.hit_rect.top);
-                c.carets.first.top = add(c.carets.first.top);
-                if let Some(l) = &mut c.carets.last {
-                    l.top = add(l.top);
-                }
                 c.provenance = shift_prov(&c.provenance);
             }
             Item::GlyphRun(r)

@@ -101,7 +101,7 @@ fn float_fixtures_match_pdflatex_within_one_point() {
                             continue;
                         }
                         let Some(c) = run.clusters.first() else { continue };
-                        if c.provenance.sources().first().is_some_and(|s| s.start_byte == byte) {
+                        if c.provenance.sources().first().is_some_and(|s| s.start() == byte) {
                             let g = run.glyphs[0];
                             return Some(Found { page: p.number, x: g.origin_x.to_bp(), y: g.baseline_y.to_bp() });
                         }

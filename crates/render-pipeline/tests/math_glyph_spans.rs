@@ -23,7 +23,7 @@ fn math_map(doc: &str) -> (Vec<(String, String)>, Vec<String>) {
                         let [s] = c.provenance.sources() else {
                             panic!("one source per math cluster");
                         };
-                        glyphs.push((run.text[c.text_start_byte..c.text_end_byte].to_string(), doc[s.start_byte..s.end_byte].to_string()));
+                        glyphs.push((run.text[c.text_start_byte as usize..c.text_end_byte as usize].to_string(), doc[s.start_byte..s.end_byte].to_string()));
                     }
                 }
                 Item::Rule(rule) => {

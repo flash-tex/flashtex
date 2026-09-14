@@ -105,14 +105,14 @@ pub fn compile(project: &Project, fonts: &FontSet, options: &RenderOptions, revi
         .collect();
     for d in &rendered.v2.diagnostics {
         let source = d.sources.first();
-        let path = source.map_or(project.entry.as_str(), |s| &*s.path);
-        let at = source.and_then(|s| text_of(path).map(|t| line_col(t, s.start_byte)));
+        let path = source.map_or(project.entry.as_str(), |s| rendered.v2.document_paths.path(s.document));
+        let at = source.and_then(|s| text_of(path).map(|t| line_col(t, s.start())));
         diagnostics.push(Diagnostic {
             path: path.to_string(),
             line: at.map(|a| a.0),
             column: at.map(|a| a.1),
-            start_byte: source.map(|s| s.start_byte),
-            end_byte: source.map(|s| s.end_byte),
+            start_byte: source.map(|s| s.start()),
+            end_byte: source.map(|s| s.end()),
             error: d.severity == Severity::Error,
             code: d.code.clone(),
             message: d.message.clone(),

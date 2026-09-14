@@ -484,8 +484,8 @@ pub fn prepare(
     let (em, ex) = em_ex(style.body_size_pt);
     let env = LengthEnv { text_width: style.text_width_pt, text_height: style.text_height_pt, paper_width: style.page_width_pt, paper_height: style.page_height_pt, em, ex };
     for (d, doc_envs) in envs.iter().enumerate() {
-        let path: Rc<str> = Rc::from(documents[d].path);
-        let src = |span: Span| SourceRange { path: path.clone(), start_byte: span.start, end_byte: span.end };
+        let document = crate::display::DocId(d as u32);
+        let src = |span: Span| SourceRange::new(document, span.start, span.end);
         for (fi, f) in doc_envs.iter().enumerate() {
             let number = numbers[d][fi];
             let bits = match placement_bits(f.placement.as_deref()) {

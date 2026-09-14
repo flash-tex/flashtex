@@ -537,7 +537,17 @@ impl<'a> Context<'a> {
                 let mut maths = c.maths.clone();
                 let mut diags = c.diagnostics.clone();
                 let delta = base as isize - c.base as isize;
-                incremental::relocate_block(&mut block, &mut recs, &mut maths, &mut diags, &path, delta);
+                incremental::relocate_block(
+                    &mut block,
+                    &mut recs,
+                    &mut maths,
+                    &mut diags,
+                    incremental::Relocate {
+                        from: display::DocId(c.document.0 as u32),
+                        to: display::DocId(document.0 as u32),
+                        delta,
+                    },
+                );
                 block.cache_key = Some((key, document, base));
                 self.recs.extend(recs);
                 self.maths.extend(maths);
@@ -580,11 +590,7 @@ impl<'a> Context<'a> {
     }
 
     fn source(&self, span: Span) -> SourceRange {
-        SourceRange {
-            path: self.path_rc(span.document),
-            start_byte: span.start,
-            end_byte: span.end,
-        }
+        SourceRange::new(display::DocId(span.document.0 as u32), span.start, span.end)
     }
 
     /// The shared path string of a document (one allocation per document).
@@ -6658,11 +6664,10 @@ pub fn assemble(
 ) -> DisplayList {
     let paths: Vec<Rc<str>> = documents.iter().map(|d| Rc::from(d.path)).collect();
     let empty: Rc<str> = Rc::from("");
-    let source_of = |span: Span| SourceRange {
-        path: paths.get(span.document.0).cloned().unwrap_or_else(|| empty.clone()),
-        start_byte: span.start,
-        end_byte: span.end,
-    };
+    // One table per display list, shared by every page: a cluster's source
+    // range names its document by index into this.
+    let doc_paths = Rc::new(display::DocumentPaths::new(paths.clone()));
+    let source_of = |span: Span| SourceRange::new(display::DocId(span.document.0 as u32), span.start, span.end);
     let mut used: BTreeMap<Rc<str>, Rc<LoadedFace>> = BTreeMap::new();
     // Every block's lines are assembled once in line-local coordinates
     // (cached across requests by the block's key), then placed per page by
@@ -6698,9 +6703,16 @@ pub fn assemble(
             let Some(line_items) = a.lines.get(placed.line) else { continue };
             let dy = Tick::from_tex_pt(placed.baseline_y);
             let dx = laid.line_dx.get(pi).and_then(|d| d.get(li)).map_or(Tick(0), |d| Tick::from_tex_pt(*d));
-            let delta = block.cache_key.map_or(0, |(_, _, b)| b as isize - a.base as isize);
+            let reloc = match block.cache_key {
+                Some((_, d, b)) => incremental::Relocate {
+                    from: a.document,
+                    to: display::DocId(d.0 as u32),
+                    delta: b as isize - a.base as isize,
+                },
+                None => incremental::Relocate::NONE,
+            };
             for it in line_items {
-                let mut item = incremental::place_item(it, dy, &a.path, delta);
+                let mut item = incremental::place_item(it, dy, reloc);
                 if dx.0 != 0 {
                     display::shift_x(&mut item, dx);
                 }
@@ -6731,7 +6743,7 @@ pub fn assemble(
                     width: Tick::from_tex_pt(page.width),
                     height: Tick::from_tex_pt(page.height),
                     paint: Paint::of(Some(color)),
-                    provenance: Provenance::Synthetic("\\pagecolor".into()),
+                    provenance: Provenance::synthetic("\\pagecolor"),
                 }),
             );
         }
@@ -6740,6 +6752,7 @@ pub fn assemble(
             width: Tick::from_tex_pt(page.width),
             height: Tick::from_tex_pt(page.height),
             items,
+            documents: Rc::clone(&doc_paths),
         });
     }
     // Resource selection provenance: which outline resource drew each TFM
@@ -6816,6 +6829,7 @@ pub fn assemble(
         project_id: project_id.to_string(),
         revision,
         documents: docs,
+        document_paths: doc_paths,
         fonts,
         pages,
         diagnostics,
@@ -6911,7 +6925,7 @@ fn assemble_block(
                             let dy = piece.baseline + piece_lines.get(li).map_or(0.0, |l| l.baseline_y - first);
                             let dy = Tick::from_tex_pt(dy);
                             for it in line_items {
-                                let mut item = incremental::place_item(it, dy, "", 0);
+                                let mut item = incremental::place_item(it, dy, incremental::Relocate::NONE);
                                 display::shift_x(&mut item, dx);
                                 items.push(item);
                             }
@@ -6956,7 +6970,7 @@ fn assemble_block(
                     let dx = Tick::from_tex_pt(x0);
                     for line_items in &a.lines {
                         for it in line_items {
-                            let mut item = incremental::place_item(it, Tick(0), "", 0);
+                            let mut item = incremental::place_item(it, Tick(0), incremental::Relocate::NONE);
                             display::shift_x(&mut item, dx);
                             items.push(item);
                         }
@@ -7000,6 +7014,7 @@ fn assemble_block(
         faces: used.into_values().collect(),
         base,
         path: paths.get(document.0).cloned().unwrap_or_else(|| empty.clone()),
+        document: display::DocId(document.0 as u32),
         resources,
         unmapped,
     }
@@ -7144,6 +7159,7 @@ fn picture_items(
         let n = g.glyphs.len();
         let mut glyphs = Vec::with_capacity(n);
         let mut clusters = Vec::with_capacity(n);
+        let mut end_caret = None;
         for (ci, sg) in g.glyphs.iter().enumerate() {
             let ox = tx(bx + sg.x_pt / PT_PER_BP);
             let adv = Tick::from_tex_pt(sg.advance_pt);
@@ -7158,29 +7174,17 @@ fn picture_items(
             // Clusters partition the text: spaces belong to the glyph before.
             let start = if ci == 0 { 0 } else { sg.text_range.start };
             let end = g.glyphs.get(ci + 1).map_or(t.text.len(), |next| next.text_range.start).max(start);
-            let last = (ci + 1 == n).then(|| display::Caret {
-                text_byte: t.text.len(),
-                x: Tick(ox.0 + adv.0),
-                top,
-                height: box_h,
-            });
+            if ci + 1 == n {
+                end_caret = Some(display::EndCaret { x: Tick(ox.0 + adv.0), text_byte: t.text.len() });
+            }
             clusters.push(display::Cluster {
-                text_start_byte: start,
-                text_end_byte: end,
+                text_start_byte: start as u32,
+                text_end_byte: end as u32,
                 hit_rect: display::Rect {
                     x: ox,
                     top,
                     width: adv.max(Tick(1)),
                     height: box_h,
-                },
-                carets: display::Carets {
-                    first: display::Caret {
-                        text_byte: start,
-                        x: ox,
-                        top,
-                        height: box_h,
-                    },
-                    last,
                 },
                 provenance: Provenance::Source(node_source.clone()),
             });
@@ -7193,6 +7197,7 @@ fn picture_items(
             clusters,
             paint: paint(&t.paint),
             role: display::RunRole::Text,
+            end_caret,
         }));
     };
     let mut ti = 0;
@@ -7217,24 +7222,25 @@ fn picture_items(
 fn join_runs(prev: &mut GlyphRun, next: GlyphRun) {
     let offset = prev.text.len();
     let base = prev.clusters.len() as u32;
-    if let Some(last) = prev.clusters.last_mut() {
-        last.carets.last = None;
-    }
+    // The joined run ends where `next` ends. Holding the end caret on the
+    // run rather than on a cluster makes "only the last cluster carries the
+    // trailing caret" true by construction instead of by maintenance.
+    prev.end_caret = next.end_caret.map(|mut e| {
+        e.text_byte += offset;
+        e
+    });
     prev.text.push_str(&next.text);
     prev.glyphs.extend(next.glyphs.into_iter().map(|mut g| {
         g.cluster += base;
         g
     }));
     prev.clusters.extend(next.clusters.into_iter().map(|mut c| {
-        c.text_start_byte += offset;
-        c.text_end_byte += offset;
-        // Carets are byte offsets into the same run text: re-base them too
-        // (a caret outside its cluster is refused by rendering-core and the
-        // Mac consumer, which then shows no frame at all).
-        c.carets.first.text_byte += offset;
-        if let Some(last) = c.carets.last.as_mut() {
-            last.text_byte += offset;
-        }
+        // Cluster text bytes index the joined run text; the carets derive
+        // from these, so re-basing them re-bases the carets too. (A caret
+        // outside its cluster is refused by rendering-core and the Mac
+        // consumer, which then shows no frame at all.)
+        c.text_start_byte += offset as u32;
+        c.text_end_byte += offset as u32;
         c
     }));
 }
@@ -7288,6 +7294,7 @@ fn text_item(
         return None;
     }
     let last_index = clusters.len().saturating_sub(1);
+    let mut end_caret = None;
     let out_clusters = clusters
         .iter()
         .enumerate()
@@ -7296,30 +7303,18 @@ fn text_item(
                 (Some(a), Some(b)) => (a.0, b.0 + b.1),
                 _ => (run.x, run.x),
             };
-            let carets = display::Carets {
-                first: Caret {
-                    text_byte: c.text_range.start,
-                    x: Tick::from_tex_pt(x0),
-                    top,
-                    height: box_height,
-                },
-                last: (ci == last_index).then(|| Caret {
-                    text_byte: c.text_range.end,
-                    x: Tick::from_tex_pt(x1),
-                    top,
-                    height: box_height,
-                }),
-            };
+            if ci == last_index {
+                end_caret = Some(display::EndCaret { x: Tick::from_tex_pt(x1), text_byte: c.text_range.end });
+            }
             Cluster {
-                text_start_byte: c.text_range.start,
-                text_end_byte: c.text_range.end,
+                text_start_byte: c.text_range.start as u32,
+                text_end_byte: c.text_range.end as u32,
                 hit_rect: Rect {
                     x: Tick::from_tex_pt(x0),
                     top,
                     width: Tick::from_tex_pt(x1 - x0),
                     height: box_height,
                 },
-                carets,
                 provenance: Provenance::Source(source_of(c.span)),
             }
         })
@@ -7332,6 +7327,7 @@ fn text_item(
         clusters: out_clusters,
         paint,
         role: display::RunRole::Text,
+        end_caret,
     }))
 }
 
@@ -7471,6 +7467,7 @@ fn math_items(
             clusters: Vec::new(),
             paint,
             role: display::RunRole::Math,
+            end_caret: None,
         });
         // A stacked extensible delimiter: one cluster holding the whole
         // Latin Modern Math assembly. Each part draws from its own origin up
@@ -7596,22 +7593,13 @@ fn math_items(
             }
         }
         r.clusters.push(Cluster {
-            text_start_byte: start,
-            text_end_byte: r.text.len(),
+            text_start_byte: start as u32,
+            text_end_byte: r.text.len() as u32,
             hit_rect: Rect {
                 x: Tick::from_tex_pt(g.x),
                 top,
                 width: Tick::from_tex_pt(adv),
                 height: hh,
-            },
-            carets: display::Carets {
-                first: Caret {
-                    text_byte: start,
-                    x: Tick::from_tex_pt(g.x),
-                    top,
-                    height: hh,
-                },
-                last: None,
             },
             provenance: Provenance::Source(glyph_src),
         });
@@ -7656,8 +7644,8 @@ pub fn documents_referenced(list: &DisplayList) -> BTreeSet<DocumentId> {
             if let display::Item::GlyphRun(r) = it {
                 for c in &r.clusters {
                     for s in c.provenance.sources() {
-                        if let Some(i) = list.documents.iter().position(|d| *d.path == *s.path) {
-                            out.insert(DocumentId(i));
+                        if (s.document.0 as usize) < list.documents.len() {
+                            out.insert(DocumentId(s.document.0 as usize));
                         }
                     }
                 }

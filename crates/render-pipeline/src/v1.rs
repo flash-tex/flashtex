@@ -140,6 +140,9 @@ pub struct V1Payload {
     pub pages: Vec<V1Page>,
     pub diagnostics: Vec<display::Diagnostic>,
     pub accepted: Option<Vec<String>>,
+    /// The table this payload's source ranges index -- the display list's,
+    /// shared rather than copied.
+    pub documents: std::rc::Rc<display::DocumentPaths>,
 }
 
 /// Height of the U+2500 glyph box relative to the font size, as the current
@@ -175,8 +178,8 @@ fn union(sources: &[SourceRange]) -> Option<SourceRange> {
 /// The smallest range covering every source in the first source's document.
 fn union_of<'a>(mut sources: impl Iterator<Item = &'a SourceRange>) -> Option<SourceRange> {
     let first = sources.next()?;
-    let mut out = first.clone();
-    for s in sources.filter(|s| s.path == first.path) {
+    let mut out = *first;
+    for s in sources.filter(|s| s.document == first.document) {
         out.start_byte = out.start_byte.min(s.start_byte);
         out.end_byte = out.end_byte.max(s.end_byte);
     }
@@ -213,7 +216,7 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
                                 let Some(c) = run.clusters.get(g.cluster as usize) else { continue };
                                 let Some(source) = union(c.provenance.sources()) else { continue };
                                 items.push(V1Item::Text {
-                                    text: run.text[c.text_start_byte..c.text_end_byte].to_string(),
+                                    text: run.text[c.text_start_byte as usize..c.text_end_byte as usize].to_string(),
                                     x_pt: g.origin_x.to_bp(),
                                     baseline_y_pt: g.baseline_y.to_bp(),
                                     font_size_pt: size,
@@ -278,12 +281,13 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
         pages,
         diagnostics: v2.diagnostics.clone(),
         accepted,
+        documents: v2.document_paths.clone(),
     }
 }
 
-fn source_json(s: &SourceRange) -> Value {
+fn source_json(s: &SourceRange, docs: &display::DocumentPaths) -> Value {
     let mut o = Value::obj();
-    o.set("path", json::str_(s.path.to_string()));
+    o.set("path", json::str_(docs.path(s.document).to_string()));
     o.set("start_byte", json::num(s.start_byte as f64));
     o.set("end_byte", json::num(s.end_byte as f64));
     o
@@ -295,7 +299,7 @@ fn pt(v: f64) -> Value {
     json::num((v * 1000.0).round() / 1000.0)
 }
 
-pub fn diagnostic_json(d: &display::Diagnostic) -> Value {
+pub fn diagnostic_json(d: &display::Diagnostic, docs: &display::DocumentPaths) -> Value {
     let mut v = Value::obj();
     v.set(
         "severity",
@@ -305,7 +309,7 @@ pub fn diagnostic_json(d: &display::Diagnostic) -> Value {
         }),
     );
     v.set("message", json::str_(d.message.clone()));
-    v.set("source", d.sources.first().map(source_json).unwrap_or(Value::Null));
+    v.set("source", d.sources.first().map(|s| source_json(s, docs)).unwrap_or(Value::Null));
     v.set("recovery", d.recovery.clone().map(json::str_).unwrap_or(Value::Null));
     v.set("code", json::str_(d.code.clone()));
     v
@@ -313,6 +317,7 @@ pub fn diagnostic_json(d: &display::Diagnostic) -> Value {
 
 impl V1Payload {
     pub fn to_json(&self) -> Value {
+        let docs: &display::DocumentPaths = &self.documents;
         let mut p = Value::obj();
         p.set("project_id", json::str_(self.project_id.clone()));
         p.set("revision", json::num(self.revision as f64));
@@ -348,7 +353,7 @@ impl V1Payload {
                                                 o.set("x_pt", pt(*x_pt));
                                                 o.set("baseline_y_pt", pt(*baseline_y_pt));
                                                 o.set("font_size_pt", pt(*font_size_pt));
-                                                o.set("source", source_json(source));
+                                                o.set("source", source_json(source, docs));
                                                 if let Some(f) = font {
                                                     let mut fo = Value::obj();
                                                     fo.set("family", json::str_(f.family.to_string()));
@@ -369,7 +374,7 @@ impl V1Payload {
                                                 o.set("y_pt", pt(*y_pt));
                                                 o.set("width_pt", pt(*width_pt));
                                                 o.set("height_pt", pt(*height_pt));
-                                                o.set("source", source_json(source));
+                                                o.set("source", source_json(source, docs));
                                             }
                                         }
                                         o
@@ -382,7 +387,7 @@ impl V1Payload {
                     .collect(),
             ),
         );
-        p.set("diagnostics", Value::Arr(self.diagnostics.iter().map(diagnostic_json).collect()));
+        p.set("diagnostics", Value::Arr(self.diagnostics.iter().map(|d| diagnostic_json(d, docs)).collect()));
         p.set("pdf_path", Value::Null);
         if let Some(acc) = &self.accepted {
             p.set("layout_capabilities", Value::Arr(acc.iter().cloned().map(json::str_).collect()));
@@ -489,17 +494,17 @@ fn jpt(out: &mut String, v: f64) {
     }
 }
 
-fn jsource(out: &mut String, s: &SourceRange) {
+fn jsource(out: &mut String, s: &SourceRange, docs: &display::DocumentPaths) {
     out.push_str("{\"end_byte\":");
     jn(out, s.end_byte as f64);
     out.push_str(",\"path\":");
-    js(out, &s.path);
+    js(out, docs.path(s.document));
     out.push_str(",\"start_byte\":");
     jn(out, s.start_byte as f64);
     out.push('}');
 }
 
-fn jdiag(out: &mut String, d: &display::Diagnostic) {
+fn jdiag(out: &mut String, d: &display::Diagnostic, docs: &display::DocumentPaths) {
     out.push_str("{\"code\":");
     js(out, &d.code);
     out.push_str(",\"message\":");
@@ -519,7 +524,7 @@ fn jdiag(out: &mut String, d: &display::Diagnostic) {
     );
     out.push_str(",\"source\":");
     match d.sources.first() {
-        Some(s) => jsource(out, s),
+        Some(s) => jsource(out, s, docs),
         None => out.push_str("null"),
     }
     out.push('}');
@@ -540,12 +545,13 @@ impl V1Payload {
     }
 
     fn write_payload(&self, out: &mut String) {
+        let docs: &display::DocumentPaths = &self.documents;
         out.push_str("{\"diagnostics\":[");
         for (i, d) in self.diagnostics.iter().enumerate() {
             if i > 0 {
                 out.push(',');
             }
-            jdiag(out, d);
+            jdiag(out, d, docs);
         }
         out.push(']');
         if let Some(acc) = &self.accepted {
@@ -593,7 +599,7 @@ impl V1Payload {
                         out.push_str(",\"font_size_pt\":");
                         jpt(out, *font_size_pt);
                         out.push_str(",\"kind\":\"text\",\"source\":");
-                        jsource(out, source);
+                        jsource(out, source, docs);
                         out.push_str(",\"text\":");
                         js(out, text);
                         out.push_str(",\"x_pt\":");
@@ -610,7 +616,7 @@ impl V1Payload {
                         out.push_str("{\"height_pt\":");
                         jpt(out, *height_pt);
                         out.push_str(",\"kind\":\"rule\",\"source\":");
-                        jsource(out, source);
+                        jsource(out, source, docs);
                         out.push_str(",\"width_pt\":");
                         jpt(out, *width_pt);
                         out.push_str(",\"x_pt\":");
@@ -659,12 +665,17 @@ mod tests {
 
     #[test]
     fn writer_matches_value_tree() {
-        let src = |path: &str, a: usize, b: usize| SourceRange {
-            path: std::rc::Rc::from(path),
-            start_byte: a,
-            end_byte: b,
+        // Two documents, so the writer has to resolve an index other
+        // than zero back to the right path.
+        let docs = std::rc::Rc::new(display::DocumentPaths::new(vec![
+            std::rc::Rc::from("main.tex"),
+            std::rc::Rc::from("a/b.tex"),
+        ]));
+        let src = |path: &str, a: usize, b: usize| {
+            SourceRange::new(docs.id_of(path).expect("test path is in the table"), a, b)
         };
         let payload = V1Payload {
+            documents: docs.clone(),
             project_id: "p\"q".into(),
             revision: 7,
             status: "recovered",
