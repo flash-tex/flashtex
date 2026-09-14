@@ -93,7 +93,7 @@ fn glyph_words(r: &flashtex_render_pipeline::Rendered) -> Vec<(Word, String)> {
     let tick = flashtex_render_pipeline::display::TICKS_PER_BP;
     let mut words = Vec::new();
     for page in &r.v2.pages {
-        for it in &page.items {
+        for it in page.resident_items() {
             let flashtex_render_pipeline::display::Item::GlyphRun(run) = it else { continue };
             if run.glyphs.is_empty() {
                 continue;
