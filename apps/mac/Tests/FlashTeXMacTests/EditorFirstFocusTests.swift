@@ -125,6 +125,45 @@ final class EditorFirstFocusTests: XCTestCase {
         try await assertColouredAndCompletes(tv, "ContentView, opened after mount")
     }
 
+    /// GH#280 repro context: the startup document `ShellModel` loads itself
+    /// (no File > Open), in the whole window that was never key at launch.
+    func testStartupDocumentInContentViewIsColouredAndCompletes() async throws {
+        let model = ShellModel()
+        let tv = try await hostContentView(model)
+        try await turn()
+        let length = (tv.string as NSString).length
+        XCTAssertGreaterThan(length, 0, "the startup document is loaded")
+        // The fixture-backed startup text ("Hello FlashTeX.") holds no LaTeX
+        // token, so there is nothing to colour until the user types one.
+        XCTAssertTrue(window!.makeFirstResponder(tv))
+        let caret = min(length, 200)
+        tv.setSelectedRange(NSRange(location: caret, length: 0))
+        let before = colourRuns(tv)
+        type(tv, " \\se")
+        XCTAssertEqual(tv.automaticOpenCount, 1, "startup document: typing \\se requests the list")
+        try await waitUntil("startup document: the completion list is showing", timeout: 3) { tv.isCompletionActive }
+        try await turn()
+        XCTAssertGreaterThan(colourRuns(tv), before, "startup document: the typed command is coloured")
+        tv.close(.escape)
+    }
+
+    /// The painted-range arithmetic behind GH#280: edits that touch a painted
+    /// range join it; edits clear of it only move it.
+    func testPaintedRangeAbsorbsEditsAtItsEdges() {
+        let r = NSRange(location: 10, length: 6)
+        func shifted(_ at: Int, _ length: Int, _ replacement: Int) -> NSRange {
+            SyntaxPainter.shifted(r, edit: NSRange(location: at, length: length), replacementLength: replacement)
+        }
+        XCTAssertEqual(shifted(16, 0, 4), NSRange(location: 10, length: 10), "typing at the end joins the range")
+        XCTAssertEqual(shifted(10, 0, 4), NSRange(location: 10, length: 10), "typing at the start joins the range")
+        XCTAssertEqual(shifted(12, 0, 3), NSRange(location: 10, length: 9), "typing inside grows the range")
+        XCTAssertEqual(shifted(20, 0, 3), r, "an edit after the range leaves it")
+        XCTAssertEqual(shifted(2, 0, 3), NSRange(location: 13, length: 6), "an edit before the range moves it")
+        XCTAssertEqual(shifted(16, 2, 0), r, "deleting just after the end leaves it")
+        XCTAssertEqual(shifted(8, 2, 0), NSRange(location: 8, length: 6), "deleting just before the start moves it")
+        XCTAssertEqual(shifted(14, 2, 0), NSRange(location: 10, length: 4), "deleting inside shrinks it")
+    }
+
     func testDocumentPresentBeforeTheEditorMountsIsColouredAndCompletes() async throws {
         let model = ShellModel()
         model.replaceProject(entryText: Self.document)
