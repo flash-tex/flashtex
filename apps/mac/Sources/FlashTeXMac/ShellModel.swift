@@ -41,6 +41,12 @@ final class ShellModel {
     // The panel state is shared with the palette so Next/Previous
     // Occurrence work from there too (DiagnosticsPanel.swift).
     var problemsVisible = true
+    /// Below the width where editor and preview both fit, the preview
+    /// collapses to a toggle instead of being crushed (design-principles §4).
+    /// `narrowLayout` mirrors the split's available width; the toggle picks
+    /// which column the narrow window shows.
+    var narrowLayout = false
+    var narrowPreviewShown = false
     var problemsSeverityFilter: RuntimeV1.Severity?
     var commandPaletteShown = false
     /// Rename Symbol / Wrap in Environment / Go to Symbol sheets (ShellModel+EditorNavigation.swift).

@@ -386,9 +386,13 @@ public enum FocusOrder {
     }
 
     public static let panes: [Pane] = [
+        Pane(name: "Tool rail",
+             contents: "One toggle per tool window: Project, Outline, and — in the bottom group — Problems (⌘⇧M). Each reads its name and selected state; toggling shows or hides that tool window.",
+             rationale: "Leads the window because it decides what the window shows; it is the keyboard path to every tool window, so no panel is reachable only by mouse.",
+             container: "ContentView", sourceMarker: "ToolRail("),
         Pane(name: "Sidebar",
-             contents: "Project: every open member as a row (“main.tex, entry, edited, active”; bibliography members say so) plus not-yet-open \\input/\\include targets (“chapter1.tex, not open, included from main.tex; activate to open”); Outline: Sections, Environments and Labels of the active buffer as disclosure groups, each row “section Title, line n” and activation selects it in the editor; Problems: error/warning counts whose activation shows the Problems panel filtered to that severity.",
-             rationale: "Leads the window because it answers “where am I in the project” before editing; every row is a button that drives an existing operation (switch, open include, select, show problems) so nothing is reachable only by mouse.",
+             contents: "The tool column. Project: every open member as a row (“main.tex, entry, edited, active”; bibliography members say so) plus not-yet-open \\input/\\include targets (“chapter1.tex, not open, included from main.tex; activate to open”). Stacked under it when shown (it ships collapsed), Outline: Sections, Environments and Labels of the active buffer as disclosure groups, each row “section Title, line n” and activation selects it in the editor. Problems counts moved to the status bar; the list is the bottom panel.",
+             rationale: "Answers “where am I in the project” before editing; every row is a button that drives an existing operation (switch, open include, select) so nothing is reachable only by mouse.",
              container: "WorkspaceSidebar", sourceMarker: "ProjectSection()", sourceFile: "WorkspaceSidebar.swift"),
         Pane(name: "Tabs",
              contents: "One tab per open document (“main.tex, entry, edited”), the active one selected; a Detach button on non-entry members; then the Project menu (open \\input/\\include targets, save or detach a member, bibliography kinds), the kind indicator and the byte/UTF-16 counts.",
@@ -419,7 +423,7 @@ public enum FocusOrder {
     /// Non-focusable status text around the panes, in view order, so the help
     /// can say what VoiceOver reads when it walks the whole window.
     public static let statusLines: [String] = [
-        "Toolbar: Compile (⌘B), the Producer menu (attach the built compiler ⌘⇧K, the Latin Modern render pipeline ⌘⇧R, any executable ⌘K, auto-compile, detach), v2 pane and Dark preview switches, Find in Project (⌘⇧F), Rename Citation, Durable History, the Export menu (⌘⇧E, ⌘⌥E, exact v2), Nearby (⌘⇧N), the Problems toggle with its count (⌘⇧M) and Commands (the palette, ⌘⇧P); every tooltip names the menu shortcut.",
+        "Toolbar: three chips — Compile (⌘B; its menu attaches the built compiler ⌘⇧K, the Latin Modern render pipeline ⌘⇧R, any executable ⌘K, toggles auto-compile, detaches), the Export menu (⌘⇧E, ⌘⌥E, exact v2) and Commands (the palette, ⌘⇧P) — plus the Captures inspector toggle. Everything else lives in its menu, its shortcut and the palette; the v2 pane and Dark preview switches are in the preview header. Every tooltip names the menu shortcut.",
         "Preview header: preview source badge, compile status, whether the editor is ahead of the preview, and the accepted layout capabilities.",
         "Status bar (bottom): editor revision, the active document's durable revision, compile latency, the route (fixture / worker / controller), error and warning counts (a button that shows the Problems panel), then the last navigation note, the stale-diagnostics note, or the preview-click hint; capture notes and the exact-export progress on the right.",
     ]

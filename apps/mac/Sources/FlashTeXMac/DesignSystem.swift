@@ -149,6 +149,8 @@ enum DS {
         static let inlineStatusSlot: CGFloat = 12
         /// File-type icon column in trees and tabs.
         static let fileIcon: CGFloat = 14
+        /// Rail buttons: icon hit target on the tool-window stripe.
+        static let railButton: CGFloat = 28
         /// Hairline separators drawn as frames.
         static let hairline: CGFloat = 1
         /// Short vertical divider between inline groups (status bar).
@@ -161,6 +163,11 @@ enum DS {
     // MARK: layout — split minimums and panel bounds
 
     enum Layout {
+        /// The left icon rail (tool-window stripe).
+        static let railWidth: CGFloat = 40
+        /// The window itself: usable from ~900pt wide (design-principles §4).
+        static let windowMinWidth: CGFloat = 900
+        static let windowMinHeight: CGFloat = 600
         static let editorMinWidth: CGFloat = 340
         static let previewMinWidth: CGFloat = 380
         static let sidebarMinWidth: CGFloat = 200

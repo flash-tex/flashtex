@@ -2,55 +2,158 @@ import SwiftUI
 import FlashTeXProtocol
 import FlashTeXAccessibility
 
-/// The main window (mac-ui-redesign): a `NavigationSplitView` whose sidebar
-/// is the project/outline/problems navigator (WorkspaceSidebar.swift) and
-/// whose detail is the document tabs + editor and the preview side by side,
-/// the Problems panel underneath (ProblemsPanel.swift) and a status bar at
-/// the bottom. The window toolbar carries the everyday commands with their
-/// menu shortcuts in tooltips, and View > Command Palette… (⌘⇧P) lists every
-/// command of the accessibility table (CommandPalette.swift). Every action
-/// here is an existing model operation; the redesign moves and labels them.
+/// The main window: an IntelliJ-style tool-window shell built flat
+/// (design-principles §4) — a left icon rail that toggles the tool column
+/// (WorkspaceSidebar.swift: Project tree, and the Outline, which ships
+/// collapsed), the document tabs + editor and the preview side by side, the
+/// Problems panel underneath (ProblemsPanel.swift), and a full-width status
+/// bar. Regions are separated by hairlines and a slight tonal shift, never
+/// by distinct region backgrounds; the title bar carries at most three
+/// interactive chips at rest (style-guide chrome budget). Every action here
+/// is an existing model operation; View > Command Palette… (⌘⇧P) lists every
+/// command of the accessibility table (CommandPalette.swift).
 struct ContentView: View {
     @Environment(ShellModel.self) var model
     @Environment(\.openWindow) private var openWindow
-    @State private var columns: NavigationSplitViewVisibility = .all
+    /// Tool-window visibility (the rail toggles them). The Outline ships
+    /// collapsed; the Project tree shows by default.
+    @AppStorage("FlashTeX.workspace.projectVisible") private var projectVisible = true
+    @AppStorage("FlashTeX.workspace.outlineVisible") private var outlineVisible = false
+    /// Width of the tool column; remembered across launches.
+    @AppStorage("FlashTeX.workspace.toolColumnWidth") private var toolColumnWidth: Double = Double(DS.Layout.sidebarIdealWidth)
     /// Height of the Problems panel; remembered across launches.
     @AppStorage("FlashTeX.workspace.problemsHeight") private var problemsHeight: Double = ProblemsPanel.idealHeight
 
     var body: some View {
         @Bindable var model = model
-        NavigationSplitView(columnVisibility: $columns) {
-            WorkspaceSidebar()
-                .navigationSplitViewColumnWidth(min: DS.Layout.sidebarMinWidth, ideal: DS.Layout.sidebarIdealWidth, max: DS.Layout.sidebarMaxWidth)
-        } detail: {
-            GeometryReader { geo in
-                VStack(spacing: 0) {
-                    HSplitView {
-                        EditorPane().frame(minWidth: DS.Layout.editorMinWidth, maxWidth: .infinity)
-                        PreviewPane().frame(minWidth: DS.Layout.previewMinWidth, maxWidth: .infinity)
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ToolRail(projectVisible: $projectVisible, outlineVisible: $outlineVisible)
+                Divider()
+                if projectVisible || outlineVisible {
+                    WorkspaceSidebar(projectVisible: projectVisible, outlineVisible: outlineVisible)
+                        .frame(width: toolColumnWidth)
+                    ColumnResizeHandle(width: $toolColumnWidth,
+                                       range: DS.Layout.sidebarMinWidth...DS.Layout.sidebarMaxWidth)
+                }
+                GeometryReader { geo in
+                    // Below the width where both columns fit, the preview
+                    // collapses to a toggle (tab bar / preview header) rather
+                    // than being crushed under its minimum.
+                    let narrow = geo.size.width < DS.Layout.editorMinWidth + DS.Layout.previewMinWidth + DS.Layout.resizeHandleHeight
+                    VStack(spacing: 0) {
+                        HSplitView {
+                            if !(narrow && model.narrowPreviewShown) {
+                                EditorPane().frame(minWidth: DS.Layout.editorMinWidth, maxWidth: .infinity)
+                            }
+                            if !narrow || model.narrowPreviewShown {
+                                PreviewPane().frame(minWidth: DS.Layout.previewMinWidth, maxWidth: .infinity)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .onChange(of: narrow, initial: true) { _, now in
+                            if model.narrowLayout != now { model.narrowLayout = now }
+                        }
+                        if model.problemsVisible {
+                            // Drag the handle to give the diagnostics list more or less
+                            // room; the list scrolls within whatever height it has.
+                            // Never more than 40 % of the window: at 1000×640 the
+                            // editor keeps ~15 lines instead of 10 (daniel-fable-ui-qa #3).
+                            let panelCap = max(ProblemsPanel.minHeight, min(geo.size.height - DS.Layout.editorMinHeightAbovePanel, geo.size.height * DS.Layout.problemsMaxFraction))
+                            PanelResizeHandle(height: $problemsHeight, range: ProblemsPanel.minHeight...panelCap)
+                            ProblemsPanel().frame(height: min(problemsHeight, panelCap))
+                        }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if model.problemsVisible {
-                        // Drag the handle to give the diagnostics list more or less
-                        // room; the list scrolls within whatever height it has.
-                        // Never more than 40 % of the window: at 1000×640 the
-                        // editor keeps ~15 lines instead of 10 (daniel-fable-ui-qa #3).
-                        let panelCap = max(ProblemsPanel.minHeight, min(geo.size.height - DS.Layout.editorMinHeightAbovePanel, geo.size.height * DS.Layout.problemsMaxFraction))
-                        PanelResizeHandle(height: $problemsHeight, range: ProblemsPanel.minHeight...panelCap)
-                        ProblemsPanel().frame(height: min(problemsHeight, panelCap))
-                    }
-                    Divider()
-                    StatusBar()
                 }
             }
+            Divider()
+            StatusBar()
         }
-        .navigationSplitViewStyle(.balanced)
         .inspector(isPresented: $model.captureInboxVisible) { // Captures (CaptureInbox.swift): View > Captures, ⌘⇧I
             CaptureInboxPanel(inbox: model.captureInbox).inspectorColumnWidth(min: DS.Layout.inspectorMinWidth, ideal: DS.Layout.inspectorIdealWidth, max: DS.Layout.inspectorMaxWidth)
         }
         .toolbar { WorkspaceToolbar(openWindow: openWindow) }
         .sheet(isPresented: $model.commandPaletteShown) { CommandPalette().environment(model) }
         .modifier(EditorNavigationSheets()) // Rename Symbol… / Wrap Selection in Environment… / Go to Symbol… (ShellModel+EditorNavigation.swift)
+    }
+}
+
+/// The left icon rail (IntelliJ tool-window stripe, one notch calmer): one
+/// icon per tool window, toggling it. Selected = accent icon on a selection
+/// pill; the bottom group holds the bottom panel's toggle. Every button is a
+/// real button with a spoken name and a shortcut in its tooltip.
+private struct ToolRail: View {
+    @Environment(ShellModel.self) var model
+    @Binding var projectVisible: Bool
+    @Binding var outlineVisible: Bool
+
+    var body: some View {
+        @Bindable var model = model
+        VStack(spacing: DS.Space.s) {
+            RailButton(icon: "folder", label: "Project", isOn: $projectVisible,
+                       help: "Show or hide the project tree")
+            RailButton(icon: "list.bullet.indent", label: "Outline", isOn: $outlineVisible,
+                       help: "Show or hide the outline of the active document")
+            Spacer()
+            RailButton(icon: "exclamationmark.triangle", label: "Problems", isOn: $model.problemsVisible,
+                       help: "Show or hide the Problems panel (⌘⇧M)")
+        }
+        .padding(.vertical, DS.Space.m)
+        .frame(width: DS.Layout.railWidth)
+        .frame(maxHeight: .infinity)
+        .background(DS.Colors.surfaceSecondary)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Tool windows")
+    }
+}
+
+private struct RailButton: View {
+    let icon: String
+    let label: String
+    @Binding var isOn: Bool
+    let help: String
+    @State private var hovering = false
+
+    var body: some View {
+        Button { isOn.toggle() } label: {
+            Image(systemName: icon)
+                .font(DS.Fonts.base)
+                .foregroundStyle(isOn ? DS.Colors.accentSelection : DS.Colors.textSecondary)
+                .frame(width: DS.Size.railButton, height: DS.Size.railButton)
+                .background(
+                    isOn ? DS.Colors.accentSelection.opacity(DS.State.badgeFillOpacity)
+                         : hovering ? DS.Colors.textPrimary.opacity(DS.State.hoverOpacity) : .clear,
+                    in: RoundedRectangle(cornerRadius: DS.Radius.tab))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
+/// The vertical divider at the tool column's trailing edge, draggable left
+/// and right (the cursor shows the resize arrows on hover).
+private struct ColumnResizeHandle: View {
+    @Binding var width: Double
+    let range: ClosedRange<CGFloat>
+    @State private var startWidth: Double?
+
+    var body: some View {
+        Rectangle().fill(.clear)
+            .frame(width: DS.Layout.resizeHandleHeight)
+            .overlay(Divider(), alignment: .center)
+            .contentShape(Rectangle())
+            .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+            .gesture(DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    let start = startWidth ?? width
+                    startWidth = start
+                    width = min(max(start + value.translation.width, range.lowerBound), range.upperBound)
+                }
+                .onEnded { _ in startWidth = nil })
+            .accessibilityHidden(true)
     }
 }
 
@@ -81,8 +184,12 @@ private struct PanelResizeHandle: View {
 
 // MARK: toolbar
 
-/// Labelled toolbar items; each tooltip names the menu shortcut so the
-/// keyboard workflow is discoverable from the toolbar itself.
+
+/// The chrome budget (style-guide): at most three interactive chips at rest
+/// — Compile (with the producer menu behind its chevron), Export, and the
+/// command palette — plus the right-side panel toggles. Everything that used
+/// to be a toolbar button here is reachable from its menu, its shortcut and
+/// the palette; tooltips still name the shortcuts.
 private struct WorkspaceToolbar: ToolbarContent {
     @Environment(ShellModel.self) var model
     let openWindow: OpenWindowAction
@@ -90,12 +197,7 @@ private struct WorkspaceToolbar: ToolbarContent {
     var body: some ToolbarContent {
         @Bindable var model = model
         ToolbarItemGroup(placement: .principal) {
-            Button {
-                if !model.outputBoundExplicitRetry() { model.compile() }
-            } label: { Label("Compile", systemImage: "hammer.fill") }
-                .labelStyle(.titleAndIcon)
-                .disabled(!model.workerAttached)
-                .help("Send the current buffers to the attached producer (File > Compile, ⌘B)")
+            // One chip: click compiles, the chevron holds the producer menu.
             Menu {
                 Button("Attach Built Compiler") { _ = model.attachDiscoveredWorker() }
                     .help("⌘⇧K")
@@ -108,32 +210,23 @@ private struct WorkspaceToolbar: ToolbarContent {
                 Button("Detach Worker") { model.detachWorker() }.disabled(!model.workerAttached)
                 if model.isFixture { Divider(); Button("Reload Fixture") { model.reloadFixture() } }
             } label: {
-                Label(model.workerAttached ? "Producer" : "Attach", systemImage: model.workerAttached ? "cpu.fill" : "cpu")
+                Label("Compile", systemImage: "hammer.fill")
+            } primaryAction: {
+                if !model.outputBoundExplicitRetry() { model.compile() }
             }
             // `producerSummary`, not `workerStatus`: the toolbar must not re-evaluate per request (ShellModel toolbar mirrors).
-            .help("Producer: " + (model.isFixture ? "fixture (not a real compile)" : model.producerSummary) + " — attach the built compiler (⌘⇧K), the Latin Modern render pipeline (⌘⇧R) or any executable (⌘K)")
+            .help("Compile (File > Compile, ⌘B) — producer: " + (model.isFixture ? "fixture (not a real compile)" : model.producerSummary) + ". The menu attaches the built compiler (⌘⇧K), the Latin Modern render pipeline (⌘⇧R) or any executable (⌘K).")
         }
         ToolbarItemGroup(placement: .automatic) {
-            Toggle(isOn: $model.previewV2) { Label("v2 pane", systemImage: "rectangle.on.rectangle") }
-                .toggleStyle(.button)
-                .help("Experimental display-list-v2 preview (File > Open Display List (v2)…)")
-            Toggle(isOn: $model.darkPreview) { Label("Dark preview", systemImage: "moon") }
-                .toggleStyle(.button)
-                .help("Draw the preview pages dark (page and text colors only)")
-            Button { openWindow(id: ProjectSearch.windowID) } label: { Label("Find in Project", systemImage: "magnifyingglass") }
-                .help("Find in Project… (Edit, ⌘⇧F)")
-            Button { openWindow(id: CitationRename.windowID) } label: { Label("Rename Citation", systemImage: "quote.bubble") }
-                .help("Rename Citation… (Edit): reviewed plan across the project")
-            Button { openWindow(id: EditHistoryPanel.windowID) } label: { Label("Durable History", systemImage: "clock.arrow.circlepath") }
-                .help("Durable History… (Edit): undo/redo on the helper's edit ledger")
             Menu {
                 Button("Export PDF…") { model.exportPDF() }.disabled(!model.toolbarHasResult)
                 Button("Export PDF via Rust Writer…") { model.exportPDFViaRust() }.disabled(!model.toolbarHasResult)
                 Button("Export PDF (exact, v2)…") { model.exportPDFExact() }.disabled(!model.toolbarHasV2Frame)
             } label: { Label("Export", systemImage: "square.and.arrow.up") }
                 .help("Export PDF… (⌘⇧E), via Rust writer (⌘⌥E), or exact from the v2 display list (File menu)")
-            Button { openWindow(id: "nearby") } label: { Label("Nearby", systemImage: "ipad.and.iphone") }
-                .help("Nearby Companion… (Edit, ⌘⇧N): pair an iPad/iPhone to send captures")
+            Button { model.commandPaletteShown = true } label: { Label("Commands", systemImage: "command") }
+                .help("Command Palette… (View, ⌘⇧P): every command with its shortcut")
+                .accessibilityIdentifier("toolbar.command-palette")
             Toggle(isOn: $model.captureInboxVisible) {
                 let n = model.captureInbox.items.count
                 Label(n > 0 ? "Captures \(n)" : "Captures", systemImage: n > 0 ? "tray.full" : "tray")
@@ -141,15 +234,6 @@ private struct WorkspaceToolbar: ToolbarContent {
             .toggleStyle(.button)
             .help("Show or hide the Captures inspector (View, ⌘⇧I): captures from the iPad, their proposals, Insert at caret")
             .accessibilityIdentifier("toolbar.captures")
-            Toggle(isOn: $model.problemsVisible) {
-                let n = model.toolbarProblemCount
-                Label(n > 0 ? "Problems \(n)" : "Problems", systemImage: n > 0 ? "exclamationmark.triangle.fill" : "exclamationmark.triangle")
-            }
-            .toggleStyle(.button)
-            .help("Show or hide the Problems panel (View, ⌘⇧M)")
-            Button { model.commandPaletteShown = true } label: { Label("Commands", systemImage: "command") }
-                .help("Command Palette… (View, ⌘⇧P): every command with its shortcut")
-                .accessibilityIdentifier("toolbar.command-palette")
         }
     }
 }
@@ -362,11 +446,18 @@ struct PreviewHeader: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
+        @Bindable var model = model
         // Reads the throttled chrome mirror (ShellChrome.swift), not `result`,
         // `editorRevision` or `inFlightRevision`: this header re-evaluated on
         // every keystroke and every reply (FT-071 main-thread sample).
         let chrome = model.chrome
         HStack(spacing: DS.Space.m) {
+            if model.narrowLayout && model.narrowPreviewShown {
+                Button { model.narrowPreviewShown = false } label: { Image(systemName: "chevron.left") }
+                    .buttonStyle(.accessoryBar).controlSize(.small)
+                    .help("Back to the editor (the window is too narrow for editor and preview side by side)")
+                    .accessibilityLabel("Back to editor")
+            }
             sourceBadge(chrome)
             if chrome.hasResult {
                 Text(sourceName(chrome)).font(.caption).lineLimit(1)
@@ -394,6 +485,16 @@ struct PreviewHeader: View {
                 Text("Preview").font(DS.Fonts.header).foregroundStyle(DS.Colors.textSecondary)
             }
             Spacer()
+            // Preview-scoped switches (formerly toolbar chips): the v2 pane
+            // and dark page drawing belong to this column, not the title bar.
+            Toggle(isOn: $model.previewV2) { Image(systemName: "rectangle.on.rectangle") }
+                .toggleStyle(.button).buttonStyle(.accessoryBar).controlSize(.small)
+                .help("Experimental display-list-v2 preview (File > Open Display List (v2)…)")
+                .accessibilityLabel("v2 preview pane")
+            Toggle(isOn: $model.darkPreview) { Image(systemName: "moon") }
+                .toggleStyle(.button).buttonStyle(.accessoryBar).controlSize(.small)
+                .help("Draw the preview pages dark (page and text colors only)")
+                .accessibilityLabel("Dark preview")
             PreviewZoomControl() // PreviewZoom.swift: percentage and −/+
             ForEach(chrome.capabilityNotes, id: \.self) { note in
                 Image(systemName: "exclamationmark.circle").foregroundStyle(DS.Colors.severityWarning).help(note)

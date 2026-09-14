@@ -37,7 +37,7 @@ final class ShellSnapshotTests: XCTestCase {
 
     func testSidebar() {
         let model = DesignFixtures.project()
-        assertSurfaceBothAppearances(WorkspaceSidebar().environment(model), named: "sidebar",
+        assertSurfaceBothAppearances(WorkspaceSidebar(projectVisible: true, outlineVisible: true).environment(model), named: "sidebar",
                                      size: CGSize(width: 260, height: 700))
     }
 

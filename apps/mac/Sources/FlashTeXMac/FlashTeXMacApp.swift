@@ -102,7 +102,7 @@ struct FlashTeXMacApp: App {
             ContentView()
                 .environment(model)
                 .environmentObject(nearby) // Captures inspector: status pill, pairing code (CaptureInbox.swift)
-                .frame(minWidth: 1200, minHeight: 640) // sidebar + editor + preview + Problems panel
+                .frame(minWidth: DS.Layout.windowMinWidth, minHeight: DS.Layout.windowMinHeight) // usable from ~900pt: below three columns the preview collapses to a toggle
                 .onAppear {
                     appDelegate.model = model; nearby.attach(sink: model, destinations: model); TypingBench.shared.install(model: model)
                     // A paired iPad reconnects at launch without opening any window (mac-capture-fluid).

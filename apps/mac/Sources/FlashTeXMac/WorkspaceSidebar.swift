@@ -1,16 +1,19 @@
 import SwiftUI
 import FlashTeXProtocol
 
-/// The main window's sidebar (mac-ui-redesign): the project's members with
-/// their kind and state, the active buffer's Outline (sections,
-/// environments, labels — DocumentOutline.swift) and a Problems summary.
-/// Every row drives an existing model operation: switching goes through
-/// `ProjectDocuments.switchDocument`, includes open through
-/// `openDocument`, outline rows select through `reveal(outlineItem:)`, and
-/// the Problems rows show/filter the bottom panel. Nothing here is a new
-/// source of truth.
+/// The tool column (design-principles §4): tool windows stack sharing this
+/// column — the Project tree, and under it the Outline of the active buffer
+/// (sections, environments, labels — DocumentOutline.swift), each toggled
+/// from the rail (ContentView.swift). The Outline ships collapsed. Problems
+/// moved out of this column entirely: its homes are the bottom panel and the
+/// status-bar badge. Every row drives an existing model operation: switching
+/// goes through `ProjectDocuments.switchDocument`, includes open through
+/// `openDocument`, outline rows select through `reveal(outlineItem:)`.
+/// Nothing here is a new source of truth.
 struct WorkspaceSidebar: View {
     @Environment(ShellModel.self) var model
+    let projectVisible: Bool
+    let outlineVisible: Bool
     /// Outline of the active buffer, rescanned ~150 ms after edits settle so
     /// a keystroke never pays for a scan on its own frame (TypingBench).
     @State private var outline: [DocumentOutline.Item] = []
@@ -20,15 +23,28 @@ struct WorkspaceSidebar: View {
     static let identifier = "workspace.sidebar"
 
     var body: some View {
-        List {
-            ProjectSection()
-            OutlineSection(outline: outline, expanded: $expanded, stale: outlineFor.revision != model.chrome.editorRevision) // throttled (ShellChrome): not per keystroke
-            ProblemsSection()
+        VStack(spacing: 0) {
+            if projectVisible {
+                List {
+                    ProjectSection()
+                }
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+            }
+            if projectVisible && outlineVisible { Divider() }
+            if outlineVisible {
+                List {
+                    OutlineSection(outline: outline, expanded: $expanded, stale: outlineFor.revision != model.chrome.editorRevision) // throttled (ShellChrome): not per keystroke
+                }
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+            }
         }
-        .listStyle(.sidebar)
+        .background(DS.Colors.surfaceSecondary)
         .accessibilityIdentifier(Self.identifier)
         .modifier(ProjectScaffoldSheets()) // New Project / New File / Rename / Delete (ProjectScaffoldViews.swift)
-        .task(id: "\(model.activePath)@\(model.chrome.editorRevision)") {
+        .task(id: "\(model.activePath)@\(model.chrome.editorRevision)/\(outlineVisible)") {
+            guard outlineVisible else { return } // no scans for a hidden panel
             // Rescan after a short quiet period; the previous scan is cancelled.
             let revision = model.chrome.editorRevision, path = model.activePath
             if outlineFor.revision >= 0 { try? await Task.sleep(for: .milliseconds(150)) }
@@ -264,43 +280,6 @@ private struct CaretFollower: View {
                 let id = DocumentOutline.current(at: model.caretUTF16, in: outline)?.id
                 if id != currentID { currentID = id }
             }
-    }
-}
-
-// MARK: - Problems
-
-/// Counts by severity; activating a row shows the Problems panel filtered to
-/// that severity (ProblemsPanel.swift), the "all" row clears the filter.
-private struct ProblemsSection: View {
-    @Environment(ShellModel.self) var model
-
-    var body: some View {
-        let diags = model.problemsList // change-only (ShellModel): `displayedDiagnostics` reads `result`, replaced per reply
-        let (errors, warnings, gaps) = EditorDiagnostics.counts(diags)
-        Section {
-            if diags.isEmpty {
-                Label { Text("No problems").foregroundStyle(DS.Colors.textSecondary) } icon: { Image(systemName: "checkmark.circle").foregroundStyle(DS.Colors.severitySuccess) }
-                    .font(DS.Fonts.secondary)
-            } else {
-                row("\(errors) error\(errors == 1 ? "" : "s")", icon: "xmark.octagon.fill", tint: DS.Colors.severityError, filter: .error, enabled: errors > 0)
-                row("\(warnings) warning\(warnings == 1 ? "" : "s")", icon: "exclamationmark.triangle.fill", tint: DS.Colors.severityWarning, filter: .warning, enabled: warnings > 0)
-                if gaps > 0 { row("\(gaps) not implemented", icon: "puzzlepiece.extension", tint: DS.Colors.textSecondary, filter: nil, enabled: true) }
-                row("All \(diags.count)", icon: "list.bullet.rectangle", tint: DS.Colors.textSecondary, filter: nil, enabled: true)
-            }
-        } header: {
-            Label("Problems", systemImage: "exclamationmark.triangle")
-        }
-    }
-
-    private func row(_ title: String, icon: String, tint: Color, filter: RuntimeV1.Severity?, enabled: Bool) -> some View {
-        SidebarRow(selected: model.problemsVisible && model.problemsSeverityFilter == filter && filter != nil) {
-            model.problemsSeverityFilter = filter
-            model.problemsVisible = true
-        } label: {
-            Label { Text(title) } icon: { Image(systemName: icon).foregroundStyle(enabled ? tint : DS.Colors.textSecondary) }
-        }
-        .disabled(!enabled)
-        .help("Show the Problems panel (⌘⇧M)\(filter.map { " filtered to \($0.rawValue)s" } ?? "")")
     }
 }
 

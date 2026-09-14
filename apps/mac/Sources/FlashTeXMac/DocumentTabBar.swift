@@ -29,6 +29,16 @@ struct DocumentTabBar: View {
             .accessibilityLabel("Open documents")
             .accessibilityIdentifier(Self.identifier)
             Spacer(minLength: DS.Space.m)
+            if model.narrowLayout {
+                // The collapsed preview's way back (design-principles §4):
+                // the window is too narrow for both columns.
+                Toggle(isOn: Binding(get: { model.narrowPreviewShown }, set: { model.narrowPreviewShown = $0 })) {
+                    Image(systemName: "doc.richtext")
+                }
+                .toggleStyle(.button).buttonStyle(.accessoryBar).controlSize(.small)
+                .help("Show the preview (the window is too narrow for editor and preview side by side)")
+                .accessibilityLabel("Show preview")
+            }
             ProjectMenu()
             DocumentKindIndicator() // DocumentKinds.swift: helper-reported bibliography kind, read-only
             if let url = model.documentURL {
