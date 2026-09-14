@@ -246,6 +246,12 @@
     {"name": "k", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "ogonek text accent (T1 only; OT1 reports it unavailable): the precomposed character the dfu tables declare; without one the bare letter and a warning", "renders": true},
     {"name": "d", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "dot-below text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
     {"name": "b", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "bar-below text accent: no dfu declarations, so the bare letter and a warning", "renders": true},
+    {"name": "capitalcaron", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "capital caron text accent: an alias of \\v, the precomposed character the dfu tables declare", "renders": true},
+    {"name": "capitalbreve", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "capital breve text accent: an alias of \\u, the precomposed character the dfu tables declare", "renders": true},
+    {"name": "capitalring", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "capital ring text accent: an alias of \\r, the precomposed character the dfu tables declare", "renders": true},
+    {"name": "capitalogonek", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "capital ogonek text accent: an alias of \\k (T1 only; OT1 reports it unavailable)", "renders": true},
+    {"name": "capitalhungarumlaut", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "capital double-acute text accent: an alias of \\H, the precomposed character the dfu tables declare", "renders": true},
+    {"name": "capitalcedilla", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "capital cedilla text accent: an alias of \\c, the precomposed character the dfu tables declare", "renders": true},
     {"name": "uline", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)", "renders": true},
     {"name": "underline", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox", "renders": true},
     {"name": "sout", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)", "renders": true},
@@ -912,7 +918,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 174, "percent": 42.4},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 180, "percent": 43.9},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 17, "percent": 56.7},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 41, "percent": 40.2},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -927,6 +933,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 17, "percent": 7.1}
     ],
-    "total": {"canonical": 1314, "supported": 515, "percent": 39.2}
+    "total": {"canonical": 1314, "supported": 521, "percent": 39.6}
   }
 }
