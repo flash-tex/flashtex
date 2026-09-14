@@ -3,7 +3,7 @@
 use flashtex_compiler::diagnostics::DiagnosticCode;
 use flashtex_compiler::incremental::compile_full_project;
 use flashtex_compiler::layout::{LayoutConstraints, Page, PARAGRAPH_GAP_PT};
-use flashtex_compiler::parser::{parse, SourceDocument};
+use flashtex_compiler::parser::{parse, Block, Inline, SourceDocument};
 
 fn compile(text: &str) -> (Vec<Page>, Vec<String>) {
     let out = compile_full_project(
@@ -95,6 +95,38 @@ fn no_preamble_length_noise(messages: &[String]) {
         assert!(!m.contains("after \\advance"), "{messages:?}");
         assert!(!m.contains("You can't use"), "{messages:?}");
     }
+}
+
+/// Joined paragraph text after expansion (so `\\the\\mylen` is the printed skip).
+fn paragraph_text(text: &str) -> String {
+    parse(text)
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Paragraph(inlines) => {
+                let mut out = String::new();
+                for inline in inlines {
+                    if let Inline::Text {
+                        text, space_before, ..
+                    } = inline
+                    {
+                        if *space_before && !out.is_empty() {
+                            out.push(' ');
+                        }
+                        out.push_str(text);
+                    }
+                }
+                Some(out)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn assert_the_mylen(src: &str, expected: &str) {
+    assert_no_diagnostics(src);
+    assert_eq!(paragraph_text(src), expected, "{src}");
 }
 
 #[test]
@@ -231,5 +263,87 @@ fn hw1_keeps_its_three_reference_pages_with_parskip_applied() {
     assert!(
         !messages.iter().any(|m| m.contains("setlength")),
         "{messages:?}"
+    );
+}
+
+/// Article 10pt class defaults used as `<internal dimen>` in scaled
+/// `\setlength`/`\addtolength` values (letter paper, oneside, onecolumn):
+/// - `\textwidth` 345pt — size10.clo lines 107–127 (`345\p@` when
+///   `\paperwidth-2in` is larger, which it is for letter)
+/// - `\parindent` 15pt — size10.clo lines 87–91
+/// - `\linewidth` equals `\hsize`/`\textwidth` in the main text (latex.ltx)
+/// - `\paperwidth` 8.5in = 614.295pt — article.cls `letterpaper` (default)
+///
+/// `0.5\paperwidth` prints as `307.14749pt` (`print_scaled` of 0.5 × 8.5in
+/// in sp, matching class-geometry's `Sp::parse("8.5in")`).
+#[test]
+fn scaled_factor_times_internal_dimen_setlength_and_addtolength() {
+    // (value, expected `\the` of a skip that starts at 0pt, extra preamble
+    // that runs before the assignment — used for `2\mylen` so the source
+    // skip already has a known value)
+    let cases: &[(&str, &str, &str)] = &[
+        ("0.5\\textwidth", "172.5pt", ""),
+        ("-1.5\\parindent", "-22.5pt", ""),
+        ("2\\mylen", "20.0pt", "\\setlength{\\mylen}{10pt}\\newlength{\\acc}"),
+        (".25\\linewidth", "86.25pt", ""),
+        ("0.5\\paperwidth", "307.14749pt", ""),
+    ];
+    for &(expr, expected, extra) in cases {
+        let target = if extra.contains("\\acc") { "acc" } else { "mylen" };
+        let preamble_set = format!(
+            "\\documentclass{{article}}\\newlength{{\\mylen}}{extra}\\setlength{{\\{target}}}{{{expr}}}\\begin{{document}}\\the\\{target}\\end{{document}}"
+        );
+        let preamble_add = format!(
+            "\\documentclass{{article}}\\newlength{{\\mylen}}{extra}\\addtolength{{\\{target}}}{{{expr}}}\\begin{{document}}\\the\\{target}\\end{{document}}"
+        );
+        let body_set = format!(
+            "\\documentclass{{article}}\\newlength{{\\mylen}}{extra}\\begin{{document}}\\setlength{{\\{target}}}{{{expr}}}\\the\\{target}\\end{{document}}"
+        );
+        let body_add = format!(
+            "\\documentclass{{article}}\\newlength{{\\mylen}}{extra}\\begin{{document}}\\addtolength{{\\{target}}}{{{expr}}}\\the\\{target}\\end{{document}}"
+        );
+        for src in [&preamble_set, &preamble_add, &body_set, &body_add] {
+            assert_the_mylen(src, expected);
+        }
+    }
+}
+
+#[test]
+fn unknown_length_register_is_named_in_the_diagnostic() {
+    let src = "\\documentclass{article}\\newlength{\\mylen}\\setlength{\\mylen}{0.5\\foo}\\begin{document}x\\end{document}";
+    let (_, messages) = compile(src);
+    assert!(
+        messages.iter().any(|m| m == "\\foo is not a known length"),
+        "expected a diagnostic naming \\foo, got {messages:?}"
+    );
+    assert!(
+        messages.iter().all(|m| !m.contains("got ''") && !m.contains("got '0.5")),
+        "must not truncate the register name: {messages:?}"
+    );
+}
+
+#[test]
+fn calc_length_expressions_keep_a_clean_diagnostic() {
+    let minus = "\\documentclass{article}\\setlength{\\textwidth}{\\textwidth-2cm}\\begin{document}x\\end{document}";
+    let (_, messages) = compile(minus);
+    assert!(
+        messages.iter().any(|m| m.contains("textwidth-2cm")
+            || m.contains("unsupported length expression")
+            || m.contains("recognised dimension")),
+        "calc minus must stay a clean diagnostic, got {messages:?}"
+    );
+    assert!(
+        messages.iter().all(|m| !m.contains("got ''")),
+        "calc minus must not report an empty name: {messages:?}"
+    );
+    let widthof = "\\documentclass{article}\\setlength{\\textwidth}{\\widthof{Hello}}\\begin{document}x\\end{document}";
+    let (_, messages) = compile(widthof);
+    assert!(
+        messages.iter().any(|m| m.contains("widthof")),
+        "\\widthof must be named, got {messages:?}"
+    );
+    assert!(
+        messages.iter().all(|m| !m.contains("got ''")),
+        "\\widthof must not report an empty name: {messages:?}"
     );
 }
