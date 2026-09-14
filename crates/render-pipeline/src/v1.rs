@@ -47,6 +47,18 @@ pub const CAP_DELTA: &str = crate::delta::CAP;
 /// `display-list-v2`; echoed only when the pages were actually elided.
 pub const CAP_V2_ONLY: &str = "display-list-v2-only";
 
+/// `display-list-v2` and every capability this producer only honours next
+/// to it. `-images` / `-device-color` / `-diagnostics` / `-delta` / `-only`
+/// are accepted only with `display-list-v2` (`negotiate`); declining the
+/// parent must drop them too so a reply never echoes a dependent alone.
+/// `display-list-v2-links` is not negotiated here.
+pub fn is_display_list_family(cap: &str) -> bool {
+    matches!(
+        cap,
+        CAP_DISPLAY_LIST | CAP_IMAGES | CAP_DEVICE_COLOR | CAP_DIAGNOSTICS | CAP_DELTA | CAP_V2_ONLY
+    )
+}
+
 /// Capabilities the producer accepted for one request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Capabilities {

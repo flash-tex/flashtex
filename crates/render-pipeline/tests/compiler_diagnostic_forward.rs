@@ -5,12 +5,27 @@
 
 mod common;
 
+use std::sync::Mutex;
+
 use common::*;
 use flashtex_compiler::json::{self, Value};
 use flashtex_render_pipeline::display;
 use flashtex_render_pipeline::protocol::handle_line;
 use flashtex_render_pipeline::v1::{self, Capabilities};
 use flashtex_render_pipeline::{FontSet, RenderOptions};
+
+/// `FLASHTEX_MAX_REPLY_BYTES` is process-global; tests that call `handle_line`
+/// must not run over a sibling that temporarily lowers it.
+static REPLY_LIMIT: Mutex<()> = Mutex::new(());
+
+/// This file measures real compiles; a missing Latin Modern must not skip
+/// to a green result. The repo bundles faces under `apps/mac/Fonts`.
+fn require_lm() {
+    assert!(
+        FontSet::with_default_dirs(&[]).latin_modern_available(),
+        "compiler_diagnostic_forward requires Latin Modern (bundled under apps/mac/Fonts); set FLASHTEX_FONT_DIRS and FLASHTEX_TFM_DIRS"
+    );
+}
 
 fn doc(body: &str) -> String {
     format!("\\documentclass{{article}}\\begin{{document}}{body}\\end{{document}}")
@@ -95,10 +110,7 @@ fn echoed_caps(line: &str) -> Vec<String> {
 
 #[test]
 fn typo_alpah_is_unknown_command_with_alpha_suggestion_in_v1_only() {
-    if !lm_available() {
-        eprintln!("skipping: Latin Modern not installed");
-        return;
-    }
+    require_lm();
     let r = render_one(&doc(r"Text \alpah here."));
     let d = by_needle(&r, r"\alpah");
     assert_eq!(d.code, "unknown_command", "{d:?}");
@@ -131,10 +143,8 @@ fn typo_alpah_is_unknown_command_with_alpha_suggestion_in_v1_only() {
 
 #[test]
 fn negotiated_v2_diagnostics_emits_suggestion() {
-    if !lm_available() {
-        eprintln!("skipping: Latin Modern not installed");
-        return;
-    }
+    require_lm();
+    let _limit = REPLY_LIMIT.lock().unwrap();
     let fonts = FontSet::with_default_dirs(&[]);
     let options = RenderOptions::default();
     let text = doc(r"Text \alpah here.");
@@ -173,12 +183,67 @@ fn negotiated_v2_diagnostics_emits_suggestion() {
     assert!(!echoed_caps(&alone.line).iter().any(|c| c == "display-list-v2-diagnostics"));
 }
 
+struct ReplyBytesGuard(Option<String>);
+
+impl Drop for ReplyBytesGuard {
+    fn drop(&mut self) {
+        match self.0.take() {
+            Some(v) => std::env::set_var("FLASHTEX_MAX_REPLY_BYTES", v),
+            None => std::env::remove_var("FLASHTEX_MAX_REPLY_BYTES"),
+        }
+    }
+}
+
+#[test]
+fn declining_display_list_also_drops_dependent_diagnostics_capability() {
+    require_lm();
+    let _limit = REPLY_LIMIT.lock().unwrap();
+    let _restore = ReplyBytesGuard(std::env::var("FLASHTEX_MAX_REPLY_BYTES").ok());
+    std::env::set_var("FLASHTEX_MAX_REPLY_BYTES", "6000");
+    let fonts = FontSet::with_default_dirs(&[]);
+    let options = RenderOptions::default();
+    let text = "\\begin{document}Hello $\\frac{1}{2}$ wörld.\\end{document}";
+    let reply = handle_line(
+        &compile_line("big", text, &["display-list-v2", "display-list-v2-diagnostics"]),
+        &fonts,
+        &options,
+        None,
+    );
+    assert!(reply.extra_lines.is_empty(), "no display-list sibling: {:?}", reply.extra_lines.len());
+    let caps = echoed_caps(&reply.line);
+    assert!(!caps.iter().any(|c| c == "display-list-v2"), "{caps:?}");
+    assert!(!caps.iter().any(|c| c == "display-list-v2-diagnostics"), "dependent cap must drop with display-list-v2: {caps:?}");
+}
+
+#[test]
+fn declining_display_list_also_drops_images_and_device_color() {
+    require_lm();
+    let _limit = REPLY_LIMIT.lock().unwrap();
+    let _restore = ReplyBytesGuard(std::env::var("FLASHTEX_MAX_REPLY_BYTES").ok());
+    std::env::set_var("FLASHTEX_MAX_REPLY_BYTES", "6000");
+    let fonts = FontSet::with_default_dirs(&[]);
+    let options = RenderOptions::default();
+    let text = "\\begin{document}Hello $\\frac{1}{2}$ wörld.\\end{document}";
+    let reply = handle_line(
+        &compile_line(
+            "big",
+            text,
+            &["display-list-v2", "display-list-v2-images", "display-list-v2-device-color"],
+        ),
+        &fonts,
+        &options,
+        None,
+    );
+    assert!(reply.extra_lines.is_empty(), "no display-list sibling: {:?}", reply.extra_lines.len());
+    let caps = echoed_caps(&reply.line);
+    assert!(!caps.iter().any(|c| c == "display-list-v2"), "{caps:?}");
+    assert!(!caps.iter().any(|c| c == "display-list-v2-images"), "dependent -images must drop with display-list-v2: {caps:?}");
+    assert!(!caps.iter().any(|c| c == "display-list-v2-device-color"), "dependent -device-color must drop with display-list-v2: {caps:?}");
+}
+
 #[test]
 fn unimplemented_tikz_is_unsupported_feature() {
-    if !lm_available() {
-        eprintln!("skipping: Latin Modern not installed");
-        return;
-    }
+    require_lm();
     let r = render_one(&doc(r"Text \tikz here."));
     let d = by_needle(&r, r"\tikz");
     assert_eq!(d.code, "unsupported_feature", "{d:?}");

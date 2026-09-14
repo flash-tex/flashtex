@@ -277,10 +277,8 @@ pub fn header_digest(l: &DisplayList, wire: Wire) -> [u8; 32] {
             Severity::Error => "error",
         });
         c.ranges(&d.sources);
-        if wire.diagnostics {
-            if let Some(s) = &d.suggestion {
-                c.s(s);
-            }
+        if let Some(s) = d.wire_suggestion(wire) {
+            c.s(s);
         }
     }
     c.sha()
@@ -834,6 +832,9 @@ mod tests {
         let some = diag_list(Some(r"\alpha"));
         assert_eq!(header_digest(&none, off), header_digest(&some, off));
         assert_ne!(header_digest(&none, on), header_digest(&some, on));
+        // Diagnostics-off is the old canonical form: a present suggestion must
+        // not change the digest relative to stripping it.
+        assert_eq!(header_digest(&some, off), header_digest(&none, off));
 
         let docs = vec![("notes.tex".into(), r"\alpah".into())];
         let state = DeltaState::new();
@@ -844,5 +845,65 @@ mod tests {
         let line = try_delta(&state, "b", &some, on, &base, &docs, usize::MAX).expect("delta for suggestion-only change");
         assert!(line.contains(r#""suggestion":"\\alpha""#), "{line}");
         assert!(line.contains("\"type\":\"display_list_delta\""), "{line}");
+    }
+
+    #[test]
+    fn empty_suggestion_is_not_hashed_when_diagnostics_are_on() {
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        assert_eq!(header_digest(&diag_list(Some("")), on), header_digest(&diag_list(None), on));
+    }
+
+    /// Minimal list so Appendix A can be walked by hand: empty pages →
+    /// `required_features` is exactly `glyph_run`, `rgba-srgb`, `cluster-actualtext`.
+    fn header_only_diag_list(suggestion: Option<&str>) -> DisplayList {
+        let mut d = display::Diagnostic::error("unknown_command", r"\alpah", vec![SourceRange {
+            path: std::rc::Rc::from("notes.tex"),
+            start_byte: 0,
+            end_byte: 6,
+        }]);
+        d.suggestion = suggestion.map(str::to_string);
+        DisplayList {
+            project_id: "p".into(),
+            revision: 1,
+            documents: Vec::new(),
+            fonts: Vec::new(),
+            pages: Vec::new(),
+            diagnostics: vec![d],
+        }
+    }
+
+    #[test]
+    fn diagnostics_suggestion_header_digest_matches_appendix_a() {
+        // Appendix A header_digest (docs/proposals/display-list-v2-delta.md) over
+        // this payload, with suggestion hashed because display-list-v2-diagnostics
+        // is negotiated and the value is the non-empty string "\alpha".
+        //
+        // Canonical bytes, in order (s(t) = i64(len(utf8)) ‖ utf8; i64 little-endian):
+        //   "flashtex:dl2:header:1\0"
+        //   s("display-list-v2") s("bp_2pow20") s("srgb") s("cluster-actualtext") s("p")
+        //   i64(1)                                      // revision
+        //   i64(3) s("glyph_run") s("rgba-srgb") s("cluster-actualtext")
+        //   i64(0) i64(0)                               // documents, fonts
+        //   i64(1)                                      // one diagnostic
+        //   s("unknown_command") s("\\alpah") s("error")
+        //   ranges([{path:"notes.tex", start_byte:0, end_byte:6}])
+        //   s("\\alpha")                                // same encoding as other strings
+        // SHA-256 of that concatenation:
+        let expected = "c4e7c7129994d1b73c8dfe3d9b1b9a0cbf0edc49e7f9e6bc848d8c66e0126bb6";
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        let list = header_only_diag_list(Some(r"\alpha"));
+        assert_eq!(sha256::hex(&header_digest(&list, on)), expected);
+    }
+
+    #[test]
+    fn diagnostics_off_header_digest_ignores_in_memory_suggestion() {
+        let off = Wire::default();
+        let with = header_only_diag_list(Some(r"\alpha"));
+        let without = header_only_diag_list(None);
+        assert_eq!(header_digest(&with, off), header_digest(&without, off));
+        // Same as Appendix A over the payload with the suggestion key omitted:
+        let expected = "e554935e8987d50810a82c72274b661d6be747d2b41993b0d008715cad5f8dbe";
+        assert_eq!(sha256::hex(&header_digest(&with, off)), expected);
+        assert_eq!(sha256::hex(&header_digest(&without, off)), expected);
     }
 }

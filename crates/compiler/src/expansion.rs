@@ -387,6 +387,11 @@ struct Converter<'d> {
     out: Vec<ExpandedToken>,
     diagnostics: Vec<Diagnostic>,
     arraystretch: HashMap<(usize, usize), String>,
+    /// Names from a preamble `\includeonly{...}` (`None`: never used).
+    /// Recorded once like other preamble-scoped kernel state and read by
+    /// [`include`]; each entry is kept trimmed and, when suffixed, stripped
+    /// of one trailing `.tex`, mirroring `\include`'s own lookup.
+    includeonly: Option<HashSet<String>>,
     /// Characters of the word being assembled, with its provenance.
     word: Option<PendingWord>,
     last_span: Span,
@@ -621,6 +626,8 @@ enum Flow {
     /// A source-level `\input`/`\include`: its braced path is still to be
     /// read.
     Include(String, Placement),
+    /// A source-level `\includeonly`: its braced list is still to be read.
+    IncludeOnly(Placement),
 }
 
 impl<'d> Converter<'d> {
@@ -628,6 +635,7 @@ impl<'d> Converter<'d> {
         Converter {
             documents,
             document_by_path: documents.iter().enumerate().map(|(i, d)| (d.path, i)).collect(),
+            includeonly: None,
             source_documents: HashMap::from([(0, Some(entry))]),
             entry,
             out: Vec::new(),
@@ -754,6 +762,9 @@ impl<'d> Converter<'d> {
                     "input" | "include" if origin.is_none() && real_text == format!("\\{name}") => {
                         return Flow::Include(name.clone(), at);
                     }
+                    "includeonly" if origin.is_none() && real_text == "\\includeonly" => {
+                        return Flow::IncludeOnly(at);
+                    }
                     _ if name.chars().count() == 1 && !name.chars().all(char::is_alphabetic) => {
                         conv.flush_word();
                         conv.push(TokenKind::Word(name.clone()), at);
@@ -844,48 +855,28 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
             None => engine.next_content_token_with_origin(),
         };
         let Some((token, origin)) = next else { break };
-        let Flow::Include(name, at) = conv.convert_token(&prepared, &token, origin) else {
-            continue;
-        };
-        // Read the braced path through the engine.
-        let mut taken = Vec::new();
-        let mut path = String::new();
-        let mut ok = false;
-        let mut depth = 0usize;
-        while let Some((t, o)) = engine.next_content_token_with_origin() {
-            let kind = t.kind.clone();
-            taken.push((t, o));
-            match kind {
-                TexKind::Char(_, CatCode::Space) if depth == 0 => {}
-                TexKind::Char(_, CatCode::BeginGroup) => {
-                    depth += 1;
-                    if depth > 1 {
-                        path.push('{');
-                    }
+        match conv.convert_token(&prepared, &token, origin) {
+            Flow::Next => continue,
+            Flow::Include(name, at) => {
+                // Read the braced path through the engine.
+                let (taken, path, ok) = read_braced_argument(&mut engine);
+                if !ok {
+                    conv.push(TokenKind::Command(name), at);
+                    lookahead.extend(taken);
+                    continue;
                 }
-                TexKind::Char(_, CatCode::EndGroup) if depth > 0 => {
-                    depth -= 1;
-                    if depth == 0 {
-                        ok = true;
-                        break;
-                    }
-                    path.push('}');
+                include(&mut conv, &mut engine, &prepared, &name, path.trim(), at.span);
+            }
+            Flow::IncludeOnly(at) => {
+                let (taken, path, ok) = read_braced_argument(&mut engine);
+                if !ok {
+                    conv.push(TokenKind::Command("includeonly".to_string()), at);
+                    lookahead.extend(taken);
+                    continue;
                 }
-                _ if depth == 0 => break,
-                TexKind::Char(c, _) | TexKind::ActiveChar(c) => path.push(c),
-                TexKind::ControlSequence(cs) => {
-                    path.push('\\');
-                    path.push_str(&cs);
-                }
-                _ => {}
+                record_includeonly(&mut conv, path.trim(), at.span);
             }
         }
-        if !ok {
-            conv.push(TokenKind::Command(name), at);
-            lookahead.extend(taken);
-            continue;
-        }
-        include(&mut conv, &mut engine, &prepared, &name, path.trim(), at.span);
     }
     conv.flush_word();
 
@@ -1146,8 +1137,13 @@ fn convert_range(
             }
         }
         conv.index = k;
-        if let Flow::Include(name, at) = conv.convert_token(prepared, &tokens[k], origins[k]) {
-            conv.push(TokenKind::Command(name), at);
+        // Includes never reach this path (`has_includes` sends their
+        // documents through the full expansion above); pass both commands
+        // through untouched so the parser, not the cache, reports them.
+        match conv.convert_token(prepared, &tokens[k], origins[k]) {
+            Flow::Include(name, at) => conv.push(TokenKind::Command(name), at),
+            Flow::IncludeOnly(at) => conv.push(TokenKind::Command("includeonly".to_string()), at),
+            Flow::Next => {}
         }
     }
     None
@@ -1303,6 +1299,111 @@ fn recovery_for(message: &str) -> &'static str {
     }
 }
 
+/// Read a `{...}` group through the engine (macro-expanding its content),
+/// the way `\input`/`\include`/`\includeonly` arguments are read: the taken
+/// engine tokens (for re-queueing when no group follows), the group text,
+/// and whether a group closed.
+fn read_braced_argument(engine: &mut Engine) -> (Vec<(tex::Token, Option<tex::Span>)>, String, bool) {
+    let mut taken = Vec::new();
+    let mut path = String::new();
+    let mut ok = false;
+    let mut depth = 0usize;
+    while let Some((t, o)) = engine.next_content_token_with_origin() {
+        let kind = t.kind.clone();
+        taken.push((t, o));
+        match kind {
+            TexKind::Char(_, CatCode::Space) if depth == 0 => {}
+            TexKind::Char(_, CatCode::BeginGroup) => {
+                depth += 1;
+                if depth > 1 {
+                    path.push('{');
+                }
+            }
+            TexKind::Char(_, CatCode::EndGroup) if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    ok = true;
+                    break;
+                }
+                path.push('}');
+            }
+            _ if depth == 0 => break,
+            TexKind::Char(c, _) | TexKind::ActiveChar(c) => path.push(c),
+            TexKind::ControlSequence(cs) => {
+                path.push('\\');
+                path.push_str(&cs);
+            }
+            _ => {}
+        }
+    }
+    (taken, path, ok)
+}
+
+/// True when `span` sits in the entry document before `\begin{document}`.
+/// Fragments without a document environment have no preamble/body split, so
+/// every position counts as preamble there.
+fn in_preamble(conv: &Converter<'_>, span: Span) -> bool {
+    if span.document.0 != conv.entry {
+        return false;
+    }
+    match conv.documents.get(conv.entry).map(|d| d.text).unwrap_or("").find("\\begin{document}") {
+        Some(body) => span.start < body,
+        None => true,
+    }
+}
+
+/// Record a preamble `\includeonly{...}` list for [`include`]: comma-split
+/// and trimmed (real LaTeX allows spaces after commas), each entry kept both
+/// as written and stripped of one trailing `.tex`, mirroring [`include`]'s
+/// exact-then-`+.tex` lookup. Real LaTeX errors on a second or post-preamble
+/// use; `diagnostics.rs` carries no preamble-only pattern to reuse, so the
+/// simplification is a warning that keeps the first preamble list.
+fn record_includeonly(conv: &mut Converter<'_>, list: &str, span: Span) {
+    if conv.includeonly.is_some() {
+        conv.diagnostics.push(Diagnostic::warning(
+            "\\includeonly given more than once; kept the first list and continued",
+            Some(span),
+            Some("ignored the later \\includeonly and continued".into()),
+        ));
+        return;
+    }
+    if !in_preamble(conv, span) {
+        conv.diagnostics.push(Diagnostic::warning(
+            "\\includeonly must appear in the preamble; ignored this use and continued",
+            Some(span),
+            Some("ignored the misplaced \\includeonly and continued".into()),
+        ));
+        return;
+    }
+    let mut set = HashSet::new();
+    for name in list.split(',') {
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        set.insert(name.to_string());
+        if let Some(stripped) = name.strip_suffix(".tex") {
+            set.insert(stripped.to_string());
+        }
+    }
+    conv.includeonly = Some(set);
+}
+
+/// True when `requested` names a file in the recorded `\includeonly` set:
+/// the trimmed name itself, the name minus one `.tex`, or the name plus
+/// `.tex` — the same two-way match [`include`] performs against the project
+/// documents.
+fn include_allowed(allowed: &HashSet<String>, requested: &str) -> bool {
+    let requested = requested.trim();
+    if allowed.contains(requested) {
+        return true;
+    }
+    match requested.strip_suffix(".tex") {
+        Some(stripped) => allowed.contains(stripped),
+        None => allowed.contains(&format!("{requested}.tex")),
+    }
+}
+
 fn include(
     conv: &mut Converter<'_>,
     engine: &mut Engine,
@@ -1327,6 +1428,16 @@ fn include(
             format!("rejected include path '{requested}': paths must be project-relative with no parent traversal"),
             "skipped the unsafe include and continued",
         );
+    }
+    // A recorded, non-empty `\includeonly` list selects which files are read:
+    // any other file is a pure no-op. (`\include` has no page-break or
+    // paragraph-flush side effect of its own, so there is nothing to replay
+    // for the skipped file.) With no `\includeonly`, or an empty list, every
+    // `\include` behaves exactly as before.
+    if let Some(allowed) = conv.includeonly.as_ref() {
+        if !allowed.is_empty() && !include_allowed(allowed, requested) {
+            return;
+        }
     }
     let appended = format!("{requested}.tex");
     let Some(index) = conv

@@ -8,12 +8,40 @@ import hashlib
 import importlib.util
 import math
 from pathlib import Path
+import struct
 import unittest
 
 SPEC = importlib.util.spec_from_file_location('rendering', Path(__file__).parents[1]/'scripts/check_rendering_v2.py')
 rendering = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(rendering)
 FEATURES = ['glyph_run','rule','static-truetype','rgba-srgb','cluster-actualtext']
+
+def dl2_header_digest(pl):
+    """Appendix A `header_digest` (docs/proposals/display-list-v2-delta.md)."""
+    def i64(n):
+        return struct.pack('<q', int(n))
+    def s(t):
+        b=t.encode('utf-8'); return i64(len(b))+b
+    def ranges(rs):
+        out=i64(len(rs))
+        for r in rs: out += s(r['path'])+i64(r['start_byte'])+i64(r['end_byte'])
+        return out
+    h=hashlib.sha256(b'flashtex:dl2:header:1\0')
+    for k in ('render_format','coordinate_unit','color_space','text_extraction','project_id'): h.update(s(pl[k]))
+    h.update(i64(pl['revision']))
+    h.update(i64(len(pl['required_features'])))
+    for f in pl['required_features']: h.update(s(f))
+    h.update(i64(len(pl['documents'])))
+    for d in pl['documents']: h.update(s(d['path'])+i64(d['revision'])+s(d['sha256'])+i64(d['byte_length']))
+    h.update(i64(len(pl['fonts'])))
+    for f in pl['fonts']:
+        h.update(s(f['font_id'])+s(f['sha256'])+i64(f['byte_length'])+s(f['format'])+i64(f['face_index'])+i64(f['units_per_em'])+i64(f['glyph_count'])+s(f['postscript_name']))
+    h.update(i64(len(pl['diagnostics'])))
+    for d in pl['diagnostics']:
+        h.update(s(d['code'])+s(d['message'])+s(d['severity'])+ranges(d['sources']))
+        sug=d.get('suggestion')
+        if sug: h.update(s(sug))
+    return h.hexdigest()
 
 def sample():
     text='office e\u0301'
@@ -160,6 +188,16 @@ class RenderingTests(unittest.TestCase):
     def test_rejection_envelope_never_paints(self):
         rejected={'protocol_version':2,'id':'hello','type':'render_format_rejected','payload':{'code':'unsupported_feature','message':'image is unsupported'}}
         self.assertEqual(rendering.validate(rejected),{'status':'rejected','paintable':False})
+
+    def test_header_digest_includes_suggestion_when_present(self):
+        # Appendix A walk-through of a diagnostics-enabled payload whose only
+        # extra field is suggestion "\\alpha" (same vector as delta.rs).
+        payload={'render_format':'display-list-v2','coordinate_unit':'bp_2pow20','color_space':'srgb','text_extraction':'cluster-actualtext','project_id':'p','revision':1,'required_features':['glyph_run','rgba-srgb','cluster-actualtext'],'documents':[],'fonts':[],'diagnostics':[{'code':'unknown_command','message':'\\alpah','severity':'error','sources':[{'path':'notes.tex','start_byte':0,'end_byte':6}],'suggestion':'\\alpha'}]}
+        self.assertEqual(dl2_header_digest(payload),'c4e7c7129994d1b73c8dfe3d9b1b9a0cbf0edc49e7f9e6bc848d8c66e0126bb6')
+        off=copy.deepcopy(payload); del off['diagnostics'][0]['suggestion']
+        self.assertEqual(dl2_header_digest(off),'e554935e8987d50810a82c72274b661d6be747d2b41993b0d008715cad5f8dbe')
+        empty=copy.deepcopy(payload); empty['diagnostics'][0]['suggestion']=''
+        self.assertEqual(dl2_header_digest(empty),dl2_header_digest(off))
 
 
 if __name__=='__main__':unittest.main()

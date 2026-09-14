@@ -421,12 +421,21 @@ pub struct Diagnostic {
     pub recovery: Option<String>,
     /// Replacement text for the source range (runtime-v1 `suggestion`).
     /// Serialised on display-list-v2 only when `Wire.diagnostics` is set
-    /// (`protocol/proposals/display-list-v2-diagnostics.md`); omitted from
-    /// the frozen four-key object otherwise.
+    /// (`protocol/proposals/display-list-v2-diagnostics.md`) and the text
+    /// is non-empty; omitted from the frozen four-key object otherwise.
     pub suggestion: Option<String>,
 }
 
 impl Diagnostic {
+    /// `suggestion` as it appears on the wire: only when the diagnostics
+    /// capability is on and the text is non-empty (omitted, never `""`).
+    pub(crate) fn wire_suggestion(&self, wire: Wire) -> Option<&str> {
+        if !wire.diagnostics {
+            return None;
+        }
+        self.suggestion.as_deref().filter(|s| !s.is_empty())
+    }
+
     pub fn error(code: &str, message: impl Into<String>, sources: Vec<SourceRange>) -> Diagnostic {
         Diagnostic {
             code: code.into(),
@@ -493,9 +502,18 @@ impl DisplayList {
     /// serialising a line it would then throw away (the exact check still
     /// runs on the serialised line when the estimate is under the limit).
     pub fn estimated_json_bytes(&self) -> usize {
+        self.estimated_json_bytes_for(Wire { images: true, device_color: true, diagnostics: true })
+    }
+
+    /// [`estimated_json_bytes`](Self::estimated_json_bytes) under a negotiated
+    /// [`Wire`]: `suggestion` is charged only when it would be serialised.
+    pub fn estimated_json_bytes_for(&self, wire: Wire) -> usize {
         let mut n = 512 + self.fonts.len() * 400 + self.documents.len() * 200;
         for d in &self.diagnostics {
-            n += 160 + d.message.len() + d.sources.len() * 80 + d.suggestion.as_ref().map(|s| s.len() + 20).unwrap_or(0);
+            n += 160 + d.message.len() + d.sources.len() * 80;
+            if let Some(s) = d.wire_suggestion(wire) {
+                n += s.len() + 20;
+            }
         }
         for p in &self.pages {
             n += 64;
@@ -733,11 +751,9 @@ pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic], wire
         });
         o.push_str(",\"sources\":");
         write_sources(o, &d.sources);
-        if wire.diagnostics {
-            if let Some(s) = &d.suggestion {
-                o.push_str(",\"suggestion\":");
-                json::write_string_into(s, o);
-            }
+        if let Some(s) = d.wire_suggestion(wire) {
+            o.push_str(",\"suggestion\":");
+            json::write_string_into(s, o);
         }
         o.push('}');
     }
@@ -1175,7 +1191,7 @@ pub fn diagnostic_json(d: &Diagnostic) -> Value {
 }
 
 /// [`diagnostic_json`](diagnostic_json) with negotiated proposals: `suggestion`
-/// is present only when `wire.diagnostics` is set and the value is `Some`.
+/// is present only when `wire.diagnostics` is set and the value is a non-empty `Some`.
 pub fn diagnostic_json_wire(d: &Diagnostic, wire: Wire) -> Value {
     let mut o = Value::obj();
     o.set("code", json::str_(d.code.clone()));
@@ -1188,10 +1204,8 @@ pub fn diagnostic_json_wire(d: &Diagnostic, wire: Wire) -> Value {
         }),
     );
     o.set("sources", Value::Arr(d.sources.iter().map(source_json).collect()));
-    if wire.diagnostics {
-        if let Some(s) = &d.suggestion {
-            o.set("suggestion", json::str_(s.clone()));
-        }
+    if let Some(s) = d.wire_suggestion(wire) {
+        o.set("suggestion", json::str_(s.to_string()));
     }
     o
 }
@@ -1669,5 +1683,29 @@ mod tests {
         assert_eq!(on_with, json::write(&with.to_json_wire("r1", on)));
         assert_eq!(on_without, json::write(&without.to_json_wire("r1", on)));
         assert_eq!(on_without, off_without);
+    }
+
+    #[test]
+    fn estimate_omits_suggestion_when_diagnostics_are_off() {
+        let off = Wire::default();
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        let with = diag_list(Some(r"\alpha"));
+        let stripped = diag_list(None);
+        let off_bytes = with.write_json_wire("r1", off);
+        assert_eq!(off_bytes, stripped.write_json_wire("r1", off));
+        assert_eq!(with.estimated_json_bytes_for(off), stripped.estimated_json_bytes_for(off), "old-client estimate must match a suggestion-stripped list");
+        assert!(with.estimated_json_bytes_for(on) > stripped.estimated_json_bytes_for(on));
+    }
+
+    #[test]
+    fn empty_suggestion_is_omitted_even_when_diagnostics_are_on() {
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        let empty = diag_list(Some(""));
+        let none = diag_list(None);
+        let empty_bytes = empty.write_json_wire("r1", on);
+        assert_eq!(empty_bytes, none.write_json_wire("r1", on));
+        assert!(!empty_bytes.contains("suggestion"), "{empty_bytes}");
+        assert_eq!(empty.to_json_wire("r1", on), none.to_json_wire("r1", on));
+        assert!(empty.to_json_wire("r1", on).get("payload").unwrap().get("diagnostics").unwrap().as_arr().unwrap()[0].get("suggestion").is_none());
     }
 }
