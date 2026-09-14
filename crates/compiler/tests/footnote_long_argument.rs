@@ -58,6 +58,25 @@ fn a_blank_line_inside_a_footnote_is_a_paragraph_break_in_the_note() {
 }
 
 #[test]
+fn text_after_an_optional_footnote_mark_is_kept() {
+    // `\footnote[2]{x}` reads its explicit mark with the shared bracket
+    // reader: `TEXT` glued after the closing brace is host text, not note
+    // text, and must still be typeset.
+    let parsed = parse(&doc("Before\\footnote[2]{x}TEXT after."));
+    let paras = paragraphs(&parsed.blocks);
+    assert_eq!(paras.len(), 1, "{:?}", parsed.blocks);
+    let host = texts(paras[0]);
+    assert!(
+        host.contains("TEXT"),
+        "text glued after `\\footnote[2]{{x}}` is still typeset: {host:?}"
+    );
+    assert!(
+        host.contains("after"),
+        "later host text is unaffected: {host:?}"
+    );
+}
+
+#[test]
 fn an_unclosed_footnote_is_still_closed_at_the_end_of_its_paragraph() {
     let parsed = parse(&doc("Before\\footnote{never closed\n\nNext paragraph."));
     assert!(

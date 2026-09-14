@@ -158,6 +158,21 @@ fn cite_is_citet_without_a_note_and_citep_with_one() {
 }
 
 #[test]
+fn text_after_a_citation_note_is_kept() {
+    // The optional post-note reader must consume exactly up to `]`:
+    // `TEXT` glued after `\cite[p.~7]{kp}` is body text, not note text.
+    let out = set(r"\cite[p.~7]{kp}TEXT");
+    assert!(
+        out.contains("p. 7"),
+        "the post-note is still read: {out:?}"
+    );
+    assert!(
+        out.contains("TEXT"),
+        "text glued after the citation is still typeset: {out:?}"
+    );
+}
+
+#[test]
 fn several_keys_keep_their_order_and_use_the_separator() {
     assert_eq!(
         set(r"\citep{plass81,hobby,frank}"),

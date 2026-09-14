@@ -9,6 +9,7 @@
 use flashtex_compiler::diagnostics::Severity;
 use flashtex_compiler::incremental::{compile_full, CompileOutput};
 use flashtex_compiler::layout::LayoutConstraints;
+use flashtex_compiler::parser::{parse, Block, Inline};
 
 fn compile(text: &str) -> CompileOutput {
     compile_full(text, LayoutConstraints::default())
@@ -186,9 +187,11 @@ fn document_metadata_nested_braces_are_a_single_key() {
 
 #[test]
 fn document_metadata_escaped_comma_is_not_a_separator() {
-    // `\,` lexes as a standalone one-character `Word`, while a real
-    // separator comma always sits inside a longer word — so the escaped
-    // comma stays part of `foo`'s value instead of splitting out `world`.
+    // `\,` lexes as a standalone one-character `Word` whose source span
+    // covers the backslash too, while a plain `,` — even standing alone
+    // between spaces — has a span exactly as long as its text. Only the
+    // escaped comma stays part of `foo`'s value instead of splitting out
+    // `world`.
     let out = compile(&format!(
         "\\DocumentMetadata{{foo=hello\\,world,lang=en}}\n\\documentclass{{article}}\n{BODY}"
     ));
@@ -205,6 +208,36 @@ fn document_metadata_escaped_comma_is_not_a_separator() {
         "escaped comma stays inside the value: {:?}",
         diagnostic.message
     );
+}
+
+#[test]
+fn document_metadata_comma_splitting_review_cases() {
+    // The reviewer's four exact inputs: a plain top-level comma splits no
+    // matter the surrounding whitespace, while an escaped `\,` and commas
+    // inside a braced value never do.
+    for (options, expected) in [
+        ("foo=bar , lang=en", "foo, lang"),
+        ("foo=bar,lang=en", "foo, lang"),
+        ("foo=hello\\,world,lang=en", "foo, lang"),
+        ("foo={a,b},lang=en", "foo, lang"),
+    ] {
+        let out = compile(&format!(
+            "\\DocumentMetadata{{{options}}}\n\\documentclass{{article}}\n{BODY}"
+        ));
+        assert_eq!(
+            out.diagnostics.len(),
+            1,
+            "{options}: exactly one diagnostic: {:?}",
+            out.diagnostics
+        );
+        assert_eq!(out.diagnostics[0].severity, Severity::Warning);
+        assert_eq!(
+            out.diagnostics[0].message,
+            format!("\\DocumentMetadata keys have no effect in this compiler: {expected}"),
+            "{options}: wrong key list: {:?}",
+            out.diagnostics[0].message
+        );
+    }
 }
 
 #[test]
@@ -226,6 +259,87 @@ fn document_metadata_after_empty_documentclass_is_an_error() {
             .contains("\\DocumentMetadata must come before \\documentclass")),
         "a real error, not a warning: {:?}",
         out.diagnostics
+    );
+}
+
+/// Regression net for the shared `optional_bracket_argument` reader (and its
+/// `\\[<length>]` sibling, which uses the same span-length tail trick): each
+/// caller kind below takes an `[opt]` argument, and text glued right after
+/// the closing `]` must still be typeset. (Citation and footnote callers
+/// live with their own commands in `natbib.rs` and
+/// `footnote_long_argument.rs`.)
+fn paragraph_texts(source: &str) -> Vec<String> {
+    parse(source)
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Paragraph(inlines) => Some(
+                inlines
+                    .iter()
+                    .filter_map(|inline| match inline {
+                        Inline::Text { text, .. } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn bracket_reader_line_break_length_keeps_trailing_text() {
+    // `\\[3pt]` goes through `skip_line_break_length`, the same
+    // consume-up-to-`]`-and-leave-the-tail technique: `TEXT` is glued to
+    // the bracket and must survive.
+    let source = "\\documentclass{article}\n\\begin{document}\nA\\\\[3pt]TEXT\n\\end{document}\n";
+    let texts = paragraph_texts(source);
+    assert!(
+        texts.iter().any(|text| text.contains("TEXT")),
+        "text glued after `\\\\[3pt]` is still typeset: {texts:?}"
+    );
+}
+
+#[test]
+fn bracket_reader_theorem_head_keeps_body_text() {
+    // `\begin{theorem}[Fermat]` reads its head note with the shared
+    // bracket reader; the body that follows must still be typeset.
+    let source = "\\newtheorem{theorem}{Theorem}\n\\begin{theorem}[Fermat]\nTEXT\n\\end{theorem}";
+    let texts = paragraph_texts(source);
+    assert!(
+        texts.iter().any(|text| text.contains("(Fermat)")),
+        "the head note is still read: {texts:?}"
+    );
+    assert!(
+        texts.iter().any(|text| text.contains("TEXT")),
+        "the body after `[Fermat]` is still typeset: {texts:?}"
+    );
+}
+
+#[test]
+fn bracket_reader_listing_options_keep_body() {
+    // `\begin{lstlisting}[...]` reads its options with the shared bracket
+    // reader; the verbatim body that follows must still be typeset whole.
+    let source = "\\documentclass{article}\n\\begin{document}\n\\begin{lstlisting}[language=TeX]\nTEXT\n\\end{lstlisting}\n\\end{document}\n";
+    let parsed = parse(source);
+    let bodies: Vec<String> = parsed
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Verbatim { lines, .. } => Some(
+                lines
+                    .iter()
+                    .map(|line| line.text.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        bodies.iter().any(|body| body.contains("TEXT")),
+        "the listing body after `[language=TeX]` is still typeset: {bodies:?}"
     );
 }
 

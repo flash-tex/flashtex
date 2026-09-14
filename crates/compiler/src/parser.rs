@@ -2687,21 +2687,35 @@ impl P<'_> {
         // name cannot disturb the depth tracking.)
         //
         // A control symbol such as `\,` lexes as a standalone one-character
-        // `Word` (see the lexer), while a real separator comma is always
-        // swept into a longer word (`world,lang=en` is a single token) — so
-        // a `Word` that is exactly `,`, `{` or `}` is an escaped literal,
-        // not syntax. Those hide behind placeholders while splitting (a
-        // literal `\{` must not open a brace group either) and are restored
-        // in each split-out part afterwards.
+        // `Word` (see the lexer) — exactly like a real separator comma that
+        // happens to stand alone (`foo=bar , lang=en`). The two are told
+        // apart the same way [`P::optional_bracket_argument`] does: an
+        // escaped symbol's source span covers the backslash too, so it is
+        // longer than its one-character text, while an ordinary word token
+        // is accumulated character-by-character and its span length always
+        // equals its text length. Only the genuinely escaped literals hide
+        // behind placeholders while splitting (a literal `\{` must not open
+        // a brace group either) and are restored in each split-out part
+        // afterwards; every plain top-level comma splits, whatever
+        // whitespace surrounds it.
         const ESCAPED_COMMA: char = '\u{E000}';
         const ESCAPED_OPEN: char = '\u{E001}';
         const ESCAPED_CLOSE: char = '\u{E002}';
         let mut rich = String::new();
         for input in &tokens {
             match &input.token.kind {
-                TokenKind::Word(text) if text == "," => rich.push(ESCAPED_COMMA),
-                TokenKind::Word(text) if text == "{" => rich.push(ESCAPED_OPEN),
-                TokenKind::Word(text) if text == "}" => rich.push(ESCAPED_CLOSE),
+                TokenKind::Word(text) if text == "," || text == "{" || text == "}" => {
+                    let literal = input.token.span.end - input.token.span.start == text.len();
+                    if literal {
+                        rich.push_str(text);
+                    } else {
+                        rich.push(match text.as_str() {
+                            "," => ESCAPED_COMMA,
+                            "{" => ESCAPED_OPEN,
+                            _ => ESCAPED_CLOSE,
+                        });
+                    }
+                }
                 TokenKind::Word(text) | TokenKind::Command(text) => rich.push_str(text),
                 TokenKind::Space | TokenKind::ParBreak => rich.push(' '),
                 TokenKind::LBrace => rich.push('{'),
