@@ -1,0 +1,19 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\begin{document}
+
+Body text before the list.
+
+\begin{enumerate}
+  \item An outer item.
+  \begin{enumerate}
+    \item An inner item whose text runs on long enough to wrap onto a second
+      line so the inner left margin is visible.
+    \item Another inner item.
+  \end{enumerate}
+  \item A second outer item.
+\end{enumerate}
+
+Body text after the list.
+\end{document}

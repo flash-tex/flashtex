@@ -777,7 +777,14 @@ for the preview currently on screen, never for the request in flight.
 Completion (`Completion.swift`) is a pure engine over the buffer's UTF-8 bytes
 with the caret in UTF-16 units, wired into the editor through a small
 `NSTextView` subclass (`CompletingTextView`) whose user-completion range includes
-a leading `\`. Esc or ⌃Space opens the editor's own non-activating completion
+a leading `\`. The list opens on its own while you type — `opensAutomatically`
+is true for a control word (including a bare `\`) and for an argument key whose
+command has completions (`\begin{`, `\end{`, `\ref{`, `\cite{`, `\label{`,
+`\usepackage{`, `\input{`); a plain prose word does not open it (word
+suggestions are still reachable via ⌃Space). The open fires `automaticCompletionDelay`
+(50 ms) after the keystroke, so one fast burst of typing costs one document
+scan rather than one per character; Esc or ⌃Space also open it explicitly at
+any time. It is the editor's own non-activating completion
 list (`CompletionPopup`, a child panel that never becomes key): ↑/↓ or Tab/⇧Tab
 choose (wrapping, each choice announced to VoiceOver as "n of m: candidate, kind,
 origin"), Return/Enter inserts the chosen entry over the partial token as one

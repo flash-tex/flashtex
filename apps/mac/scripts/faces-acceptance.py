@@ -15,7 +15,8 @@ import tempfile
 import time
 
 REPO=Path(__file__).resolve().parents[3]
-MISSING={'tfm_missing','required_metrics_unavailable','font_unavailable','math_font_unavailable'}
+MISSING={'tfm_missing','required_metrics_unavailable','font_unavailable','math_font_unavailable',
+         'ec_metrics_unavailable','font_outline_substituted'}
 
 def sha(path): return hashlib.sha256(path.read_bytes()).hexdigest()
 def missing(d):

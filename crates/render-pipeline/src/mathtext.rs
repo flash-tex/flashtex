@@ -98,6 +98,16 @@ pub struct TextSink {
     /// Whether `amsfonts` (or `amssymb`, which loads it) is loaded: its
     /// `\widehat`/`\widetilde` switch to msbm's extra-wide accents past 2em.
     pub amsfonts: bool,
+    /// Whether `amsmath` is loaded. **Not** implied by [`Self::amsfonts`]:
+    /// `amssymb`/`amsfonts` bring the msam/msbm symbol fonts and nothing
+    /// else, so a document may load either package without the other.
+    ///
+    /// `\big`..`\Bigg` are sized by whichever definition is in force:
+    /// amsmath's `\bBigg@` (amsmath.sty 721-738), a `\vcenter` scaled by
+    /// the body size, or -- without amsmath -- the kernel's own absolute
+    /// `\vbox` lengths (fontmath.ltx 513-520), which do not move with the
+    /// body size at all.
+    pub amsmath: bool,
 }
 
 /// An `array`/`cases`/matrix/`aligned` grid met inside a sub-formula (a
@@ -468,8 +478,8 @@ impl MathFontMetrics for TextRunMetrics<'_> {
         self.inner.radical_extensible(size)
     }
 
-    fn extension_glyph(&self, code: u8, ch: char) -> Option<Glyph> {
-        self.inner.extension_glyph(code, ch)
+    fn extension_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
+        self.inner.extension_glyph(code, ch, size)
     }
 
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {

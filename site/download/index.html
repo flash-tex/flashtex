@@ -104,70 +104,7 @@
   <section id="panel-stable" role="tabpanel" aria-labelledby="tab-stable">
     <p class="path-lede">Two ways to install: <strong>A</strong> gets you just the LaTeX engine and the <code>flashtex</code> command line, for macOS or Linux, any editor; <strong>B</strong> gets the native Mac app — a SwiftUI IDE with a live preview, built on that same engine — and bundles the CLI inside it too.</p>
 
-    <h2 class="group-head" id="cli-install">A — Engine + CLI <span class="group-sub">macOS · Linux</span></h2>
-    <ul class="rows">
-      <li class="row">
-        <div>
-          <h2 class="row-name">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M4 17l6-5-6-5M12 19h8"/></svg>
-            Command line
-          </h2>
-          <div class="row-sub">macOS (Apple Silicon) · Linux (x86_64)</div>
-        </div>
-        <div class="row-body">
-          <div class="snippet">
-            <code><span class="p">$ </span>curl -fsSL https://flash-tex.github.io/flashtex/install-cli.sh | sh</code>
-            <button class="copy" type="button" data-copy="curl -fsSL https://flash-tex.github.io/flashtex/install-cli.sh | sh">Copy</button>
-          </div>
-          <p>Detects your OS and CPU, downloads the matching <code>flashtex-cli-{{TAG}}-&lt;platform&gt;.tar.gz</code>, verifies it against the release's <a href="https://github.com/flash-tex/flashtex/releases/download/{{TAG}}/SHA256SUMS">SHA256SUMS</a> and refuses on a mismatch, then installs <code>flashtex</code> into <code>~/.local/bin</code> and its fonts/metrics into <code>~/.local/share/flashtex</code>. Pass <code>--prefix /usr/local</code> for a system install, <code>--version vX.Y.Z</code> for another release, or <code>--uninstall</code> to remove it. <a href="../install-cli.sh">Read the script</a>.</p>
-        </div>
-      </li>
-
-      <li class="row">
-        <div>
-          <h2 class="row-name">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M12 3v13m0 0l-5.5-5.5M12 16l5.5-5.5M4 21h16"/></svg>
-            Direct download
-          </h2>
-          <div class="row-sub">flashtex-cli-{{TAG}}</div>
-        </div>
-        <div class="row-body">
-          <div class="row-actions">
-            <a class="btn btn-primary" href="https://github.com/flash-tex/flashtex/releases/download/{{TAG}}/flashtex-cli-{{VERSION}}-macos-arm64.tar.gz">
-              macOS arm64 <span class="btn-meta">{{CLI_MACOS_ARM64_SIZE}}</span>
-            </a>
-            {{#if HAS_LINUX_CLI}}<a class="btn" href="https://github.com/flash-tex/flashtex/releases/download/{{TAG}}/flashtex-cli-{{VERSION}}-linux-x86_64.tar.gz">
-              Linux x86_64 <span class="btn-meta">{{CLI_LINUX_X86_64_SIZE}}</span>
-            </a>{{/if}}
-            {{#if NO_LINUX_CLI}}<span class="btn is-disabled">Linux x86_64 <span class="btn-meta">not built for {{TAG}}</span></span>{{/if}}
-          </div>
-          <p>Extract anywhere and run <code>bin/flashtex build main.tex</code> — no TeX installation, no environment variables. <code>bin/flashtex install-cli</code> symlinks it into <code>/usr/local/bin</code> without breaking the fonts it finds next to itself.</p>
-        </div>
-      </li>
-
-      <li class="row">
-        <div>
-          <h2 class="row-name">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/></svg>
-            Checksums
-          </h2>
-          <div class="row-sub">SHA-256</div>
-        </div>
-        <div class="row-body">
-          <div class="snippet">
-            <code class="hash">{{CLI_MACOS_ARM64_SHA256}}</code>
-            <button class="copy" type="button" data-copy="{{CLI_MACOS_ARM64_SHA256}}">Copy</button>
-          </div>
-          {{#if HAS_LINUX_CLI}}<div class="snippet">
-            <code class="hash">{{CLI_LINUX_X86_64_SHA256}}</code>
-            <button class="copy" type="button" data-copy="{{CLI_LINUX_X86_64_SHA256}}">Copy</button>
-          </div>{{/if}}
-          <p><code>install-cli.sh</code> checks this automatically; by hand, compare with <a href="https://github.com/flash-tex/flashtex/releases/download/{{TAG}}/SHA256SUMS">SHA256SUMS</a> from the release.</p>
-        </div>
-      </li>
-    </ul>
-
-    <h2 class="group-head" id="gui-install">B — Engine + native GUI <span class="group-sub">macOS only, for now</span></h2>
+    <h2 class="group-head" id="gui-install">A — Engine + native GUI <span class="group-sub">macOS only, for now</span></h2>
     <ul class="rows">
       <li class="row">
         <div>
@@ -253,6 +190,69 @@
       <pre class="cmd"><code>curl -fsSL https://flash-tex.github.io/flashtex/install.sh | sh</code></pre>
       <p>That route verifies the release&rsquo;s SHA-256 before installing and never attaches the browser quarantine flag, so the app opens normally the first time. Same build, same checksum &mdash; only the delivery differs.</p>
     </div>
+    <h2 class="group-head" id="cli-install">B — Engine + CLI <span class="group-sub">macOS · Linux</span></h2>
+    <ul class="rows">
+      <li class="row">
+        <div>
+          <h2 class="row-name">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M4 17l6-5-6-5M12 19h8"/></svg>
+            Command line
+          </h2>
+          <div class="row-sub">macOS (Apple Silicon) · Linux (x86_64)</div>
+        </div>
+        <div class="row-body">
+          <div class="snippet">
+            <code><span class="p">$ </span>curl -fsSL https://flash-tex.github.io/flashtex/install-cli.sh | sh</code>
+            <button class="copy" type="button" data-copy="curl -fsSL https://flash-tex.github.io/flashtex/install-cli.sh | sh">Copy</button>
+          </div>
+          <p>Detects your OS and CPU, downloads the matching <code>flashtex-cli-{{TAG}}-&lt;platform&gt;.tar.gz</code>, verifies it against the release's <a href="https://github.com/flash-tex/flashtex/releases/download/{{TAG}}/SHA256SUMS">SHA256SUMS</a> and refuses on a mismatch, then installs <code>flashtex</code> into <code>~/.local/bin</code> and its fonts/metrics into <code>~/.local/share/flashtex</code>. Pass <code>--prefix /usr/local</code> for a system install, <code>--version vX.Y.Z</code> for another release, or <code>--uninstall</code> to remove it. <a href="../install-cli.sh">Read the script</a>.</p>
+        </div>
+      </li>
+
+      <li class="row">
+        <div>
+          <h2 class="row-name">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M12 3v13m0 0l-5.5-5.5M12 16l5.5-5.5M4 21h16"/></svg>
+            Direct download
+          </h2>
+          <div class="row-sub">flashtex-cli-{{TAG}}</div>
+        </div>
+        <div class="row-body">
+          <div class="row-actions">
+            <a class="btn btn-primary" href="https://github.com/flash-tex/flashtex/releases/download/{{TAG}}/flashtex-cli-{{VERSION}}-macos-arm64.tar.gz">
+              macOS arm64 <span class="btn-meta">{{CLI_MACOS_ARM64_SIZE}}</span>
+            </a>
+            {{#if HAS_LINUX_CLI}}<a class="btn" href="https://github.com/flash-tex/flashtex/releases/download/{{TAG}}/flashtex-cli-{{VERSION}}-linux-x86_64.tar.gz">
+              Linux x86_64 <span class="btn-meta">{{CLI_LINUX_X86_64_SIZE}}</span>
+            </a>{{/if}}
+            {{#if NO_LINUX_CLI}}<span class="btn is-disabled">Linux x86_64 <span class="btn-meta">not built for {{TAG}}</span></span>{{/if}}
+          </div>
+          <p>Extract anywhere and run <code>bin/flashtex build main.tex</code> — no TeX installation, no environment variables. <code>bin/flashtex install-cli</code> symlinks it into <code>/usr/local/bin</code> without breaking the fonts it finds next to itself.</p>
+        </div>
+      </li>
+
+      <li class="row">
+        <div>
+          <h2 class="row-name">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/></svg>
+            Checksums
+          </h2>
+          <div class="row-sub">SHA-256</div>
+        </div>
+        <div class="row-body">
+          <div class="snippet">
+            <code class="hash">{{CLI_MACOS_ARM64_SHA256}}</code>
+            <button class="copy" type="button" data-copy="{{CLI_MACOS_ARM64_SHA256}}">Copy</button>
+          </div>
+          {{#if HAS_LINUX_CLI}}<div class="snippet">
+            <code class="hash">{{CLI_LINUX_X86_64_SHA256}}</code>
+            <button class="copy" type="button" data-copy="{{CLI_LINUX_X86_64_SHA256}}">Copy</button>
+          </div>{{/if}}
+          <p><code>install-cli.sh</code> checks this automatically; by hand, compare with <a href="https://github.com/flash-tex/flashtex/releases/download/{{TAG}}/SHA256SUMS">SHA256SUMS</a> from the release.</p>
+        </div>
+      </li>
+    </ul>
+
   </section>
 
   <section id="panel-source" role="tabpanel" aria-labelledby="tab-source">

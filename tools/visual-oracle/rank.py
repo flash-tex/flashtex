@@ -396,7 +396,8 @@ def write_report(out_dir, meta, results, ranked, top_pages):
     for n, (fid, page) in enumerate(ranked, 1):
         g = page.get("geometry") or {}
         top = (g.get("top") or [{}])[0]
-        px = f"{page['differing']} ({page['differing_fraction'] * 100:.1f}%)" if page.get("result") == "compared" else "—"
+        px = (f"{page['differing']} ({page['differing_fraction'] * 100:.1f}%)"
+              if page.get("result") == "compared" and "differing" in page else "—")
         words = f"{g.get('reference_words', '—')}/{g.get('candidate_words', '—')} ({g.get('aligned', 0)})"
         ms = f"{g['median_shift'][0]:+.2f},{g['median_shift'][1]:+.2f}" if g.get("median_shift") else "—"
         mx = f"{g['dx_max']:.2f} / {g['dy_max']:.2f}" if g.get("max_delta") is not None else "—"
@@ -417,8 +418,11 @@ def write_report(out_dir, meta, results, ranked, top_pages):
             continue
         if page.get("thumbnail"):
             L.append(f"- thumbnail sheet: `{page['thumbnail']}` (reference | candidate | diff: red = candidate-only ink, blue = reference-only ink)")
-        L.append(f"- pixels: {page['differing']} differing of {page['pixels']} ({page['differing_fraction'] * 100:.2f}%), "
-                 f"max grey Δ {page['max_delta']}, ink px ref/cand {page['ink_pixels_reference']}/{page['ink_pixels_candidate']}")
+        if "differing" in page:
+            L.append(f"- pixels: {page['differing']} differing of {page['pixels']} ({page['differing_fraction'] * 100:.2f}%), "
+                     f"max grey Δ {page['max_delta']}, ink px ref/cand {page['ink_pixels_reference']}/{page['ink_pixels_candidate']}")
+        else:
+            L.append("- pixels: not compared (no rasterizer on this host); geometry only")
         if g.get("max_delta") is None:
             L.append(f"- geometry: no aligned words (reference {g.get('reference_words')}, candidate {g.get('candidate_words')}); owner: {page.get('owner', '')}")
             L.append("")
