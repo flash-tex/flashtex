@@ -4085,17 +4085,24 @@ impl P<'_> {
             {
                 return None;
             }
+            let starred = source
+                .get(atom.span.start..)
+                .is_some_and(|suffix| suffix.starts_with("\\tag*"));
             let text = match &atom.nucleus {
                 math::Nucleus::Text(text) => text.clone(),
-                math::Nucleus::TextRun(pieces) => math::text_run_reference_text(pieces),
+                math::Nucleus::TextRun(pieces) => {
+                    math::text_run_reference_text_with_source(pieces, source)
+                }
                 _ => return None,
             };
-            Some(
+            Some(if starred {
+                text
+            } else {
                 text.strip_prefix('(')
                     .and_then(|text| text.strip_suffix(')'))
                     .unwrap_or(&text)
-                    .to_string(),
-            )
+                    .to_string()
+            })
         })
     }
 

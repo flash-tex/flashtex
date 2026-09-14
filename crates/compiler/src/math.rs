@@ -273,29 +273,39 @@ pub fn text_run_plain_text(pieces: &[TextPiece]) -> Option<String> {
     Some(text)
 }
 
-/// Flattens a mixed text/math run for the compiler's string-only references.
-/// Literal text and rendered symbol glyphs are preserved; simple superscripts
-/// use Unicode glyphs (`x^2` becomes `x²`). References do not retain a
-/// structured `MathList` yet, so more complex math uses a source-like fallback.
+/// Flattens a mixed text/math run for string-only references when no source is
+/// available. Literal text and rendered symbol glyphs are preserved; simple
+/// superscripts use Unicode glyphs (`x^2` becomes `x²`).
 pub fn text_run_reference_text(pieces: &[TextPiece]) -> String {
+    text_run_reference_text_inner(pieces, None)
+}
+
+/// Flattens a mixed text/math run for a reference, using the source span of a
+/// composite math atom when it has no single rendered glyph. References do not
+/// retain a structured `MathList`, so this is deliberately a plain-text view.
+pub fn text_run_reference_text_with_source(pieces: &[TextPiece], source: &str) -> String {
+    text_run_reference_text_inner(pieces, Some(source))
+}
+
+fn text_run_reference_text_inner(pieces: &[TextPiece], source: Option<&str>) -> String {
     let mut text = String::new();
     for piece in pieces {
         match piece {
             TextPiece::Text { text: part, .. } => text.push_str(part),
-            TextPiece::Math(list) => append_math_reference_text(&mut text, list),
+            TextPiece::Math(list) => append_math_reference_text(&mut text, list, source),
         }
     }
     text
 }
 
-fn append_math_reference_text(out: &mut String, list: &MathList) {
+fn append_math_reference_text(out: &mut String, list: &MathList, source: Option<&str>) {
     for atom in &list.atoms {
         match &atom.nucleus {
             Nucleus::Symbol(text)
             | Nucleus::Text(text)
             | Nucleus::Bold(text)
             | Nucleus::SizedDelimiter { glyph: text, .. } => out.push_str(text),
-            Nucleus::TextRun(pieces) => out.push_str(&text_run_reference_text(pieces)),
+            Nucleus::TextRun(pieces) => out.push_str(&text_run_reference_text_inner(pieces, source)),
             Nucleus::Space { .. } => out.push(' '),
             Nucleus::Fraction {
                 numerator,
@@ -306,61 +316,175 @@ fn append_math_reference_text(out: &mut String, list: &MathList) {
                 denominator,
                 ..
             } => {
-                out.push('(');
-                append_math_reference_text(out, numerator);
-                out.push('/');
-                append_math_reference_text(out, denominator);
-                out.push(')');
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    out.push('(');
+                    append_math_reference_text(out, numerator, source);
+                    out.push('/');
+                    append_math_reference_text(out, denominator, source);
+                    out.push(')');
+                }
             }
-            Nucleus::Radical(body)
-            | Nucleus::Framed { body, .. }
-            | Nucleus::Group(body)
-            | Nucleus::Phantom { body, .. }
-            | Nucleus::Operator { body, .. }
-            | Nucleus::Accent { body, .. } => append_math_reference_text(out, body),
-            Nucleus::Stacked { base, .. } => append_math_reference_text(out, base),
+            Nucleus::Radical(body) => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    out.push('√');
+                    append_math_reference_text(out, body, source);
+                }
+            }
+            Nucleus::Framed { body, .. }
+            | Nucleus::Accent { body, .. }
+            | Nucleus::Stacked { base: body, .. } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    append_math_reference_text(out, body, source);
+                }
+            }
             Nucleus::Matrix {
                 rows, left, right, ..
             } => {
-                out.push_str(left);
-                for (row_index, row) in rows.iter().enumerate() {
-                    if row_index > 0 {
-                        out.push(';');
-                    }
-                    for (column_index, cell) in row.iter().enumerate() {
-                        if column_index > 0 {
-                            out.push(',');
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    out.push_str(left);
+                    for (row_index, row) in rows.iter().enumerate() {
+                        if row_index > 0 {
+                            out.push(';');
                         }
-                        append_math_reference_text(out, cell);
+                        for (column_index, cell) in row.iter().enumerate() {
+                            if column_index > 0 {
+                                out.push(',');
+                            }
+                            append_math_reference_text(out, cell, source);
+                        }
                     }
+                    out.push_str(right);
                 }
-                out.push_str(right);
             }
-            Nucleus::Rule(_) => {}
-            Nucleus::SubArray { rows, .. } => {
-                for (index, row) in rows.iter().enumerate() {
-                    if index > 0 {
-                        out.push(';');
-                    }
-                    append_math_reference_text(out, row);
+            Nucleus::Rule(_) => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
                 }
+            }
+            Nucleus::SubArray { rows, .. } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    for (index, row) in rows.iter().enumerate() {
+                        if index > 0 {
+                            out.push(';');
+                        }
+                        append_math_reference_text(out, row, source);
+                    }
+                }
+            }
+            Nucleus::Group(body) | Nucleus::Phantom { body, .. } | Nucleus::Operator { body, .. } => {
+                append_math_reference_text(out, body, source)
             }
             Nucleus::ExtArrow { above, below, .. } => {
-                append_math_reference_text(out, above);
-                append_math_reference_text(out, below);
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    append_math_reference_text(out, above, source);
+                    append_math_reference_text(out, below, source);
+                }
             }
         }
         if let Some(superscript) = &atom.superscript {
-            append_math_script(out, '^', superscript);
+            append_math_script(out, '^', superscript, source);
         }
         if let Some(subscript) = &atom.subscript {
-            append_math_script(out, '_', subscript);
+            append_math_script(out, '_', subscript, source);
         }
     }
 }
 
-fn append_math_script(out: &mut String, marker: char, list: &MathList) {
-    let text = math_reference_text(list);
+fn source_text<'a>(source: Option<&'a str>, atom: &MathAtom) -> Option<&'a str> {
+    let source = source?;
+    let mut end = reference_atom_end(atom).min(source.len());
+    while source.as_bytes().get(end) == Some(&b'}') {
+        end += 1;
+    }
+    source.get(atom.span.start..end)
+}
+
+fn reference_atom_end(atom: &MathAtom) -> usize {
+    let mut end = atom.span.end;
+    let mut extend = |list: &MathList| {
+        if let Some(nested_end) = reference_list_end(list) {
+            end = end.max(nested_end);
+        }
+    };
+    match &atom.nucleus {
+        Nucleus::Fraction {
+            numerator,
+            denominator,
+        }
+        | Nucleus::GenFraction {
+            numerator,
+            denominator,
+            ..
+        } => {
+            extend(numerator);
+            extend(denominator);
+        }
+        Nucleus::Radical(body)
+        | Nucleus::Framed { body, .. }
+        | Nucleus::Group(body)
+        | Nucleus::Phantom { body, .. }
+        | Nucleus::Operator { body, .. }
+        | Nucleus::Accent { body, .. } => extend(body),
+        Nucleus::TextRun(pieces) => {
+            for piece in pieces {
+                if let TextPiece::Math(list) = piece {
+                    extend(list);
+                }
+            }
+        }
+        Nucleus::Stacked { base, over, under } => {
+            extend(base);
+            if let Some(over) = over {
+                extend(over);
+            }
+            if let Some(under) = under {
+                extend(under);
+            }
+        }
+        Nucleus::Matrix { rows, .. } => {
+            for row in rows {
+                for cell in row {
+                    extend(cell);
+                }
+            }
+        }
+        Nucleus::SubArray { rows, .. } => {
+            for row in rows {
+                extend(row);
+            }
+        }
+        Nucleus::ExtArrow { above, below, .. } => {
+            extend(above);
+            extend(below);
+        }
+        Nucleus::Symbol(_)
+        | Nucleus::SizedDelimiter { .. }
+        | Nucleus::Text(_)
+        | Nucleus::Space { .. }
+        | Nucleus::Rule(_)
+        | Nucleus::Bold(_) => {}
+    }
+    end
+}
+
+fn reference_list_end(list: &MathList) -> Option<usize> {
+    list.atoms.iter().map(reference_atom_end).max()
+}
+
+fn append_math_script(out: &mut String, marker: char, list: &MathList, source: Option<&str>) {
+    let text = math_reference_text(list, source);
     if marker == '^' {
         if let Some(superscript) = text
             .chars()
@@ -370,14 +494,19 @@ fn append_math_script(out: &mut String, marker: char, list: &MathList) {
             out.push_str(&superscript);
             return;
         }
+    } else if marker == '_' {
+        if let Some(subscript) = text.chars().map(subscript_char).collect::<Option<String>>() {
+            out.push_str(&subscript);
+            return;
+        }
     }
     out.push(marker);
     out.push_str(&text);
 }
 
-fn math_reference_text(list: &MathList) -> String {
+fn math_reference_text(list: &MathList, source: Option<&str>) -> String {
     let mut text = String::new();
-    append_math_reference_text(&mut text, list);
+    append_math_reference_text(&mut text, list, source);
     text
 }
 
@@ -411,6 +540,44 @@ fn superscript_char(ch: char) -> Option<char> {
         'x' => 'ˣ',
         'y' => 'ʸ',
         'z' => 'ᶻ',
+        _ => return None,
+    })
+}
+
+fn subscript_char(ch: char) -> Option<char> {
+    Some(match ch {
+        '0' => '₀',
+        '1' => '₁',
+        '2' => '₂',
+        '3' => '₃',
+        '4' => '₄',
+        '5' => '₅',
+        '6' => '₆',
+        '7' => '₇',
+        '8' => '₈',
+        '9' => '₉',
+        '+' => '₊',
+        '-' => '₋',
+        '=' => '₌',
+        '(' => '₍',
+        ')' => '₎',
+        'a' => 'ₐ',
+        'e' => 'ₑ',
+        'h' => 'ₕ',
+        'i' => 'ᵢ',
+        'j' => 'ⱼ',
+        'k' => 'ₖ',
+        'l' => 'ₗ',
+        'm' => 'ₘ',
+        'n' => 'ₙ',
+        'o' => 'ₒ',
+        'p' => 'ₚ',
+        'r' => 'ᵣ',
+        's' => 'ₛ',
+        't' => 'ₜ',
+        'u' => 'ᵤ',
+        'v' => 'ᵥ',
+        'x' => 'ₓ',
         _ => return None,
     })
 }

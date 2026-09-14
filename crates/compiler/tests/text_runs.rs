@@ -1,4 +1,5 @@
-use flashtex_compiler::incremental::{compile_full, LayoutConstraints};
+use flashtex_compiler::diagnostics::Severity;
+use flashtex_compiler::incremental::{compile_full, CompileOutput, LayoutConstraints};
 use flashtex_compiler::math::{self, MathList, Nucleus, TextPiece, TextStyle, MAX_MATH_DEPTH};
 use flashtex_compiler::parser::{parse, Block, Inline};
 
@@ -29,6 +30,23 @@ fn text_run(list: &MathList) -> &Vec<TextPiece> {
 fn eqref_text(source: &str) -> String {
     let output = compile_full(source, LayoutConstraints::default());
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    eqref_item_text(source, &output)
+}
+
+fn eqref_text_allowing_text_font_warnings(source: &str) -> String {
+    let output = compile_full(source, LayoutConstraints::default());
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.severity == Severity::Warning),
+        "unexpected error diagnostics: {:?}",
+        output.diagnostics
+    );
+    eqref_item_text(source, &output)
+}
+
+fn eqref_item_text(source: &str, output: &CompileOutput) -> String {
     output
         .pages
         .iter()
@@ -151,6 +169,35 @@ fn starred_tag_omits_parentheses() {
 }
 
 #[test]
+fn starred_tag_keeps_literal_parentheses_for_the_equation_and_eqref_adds_another_pair() {
+    let starred = parse(r"\begin{equation}a=b\tag*{(custom)}\end{equation}");
+    assert!(starred.diagnostics.is_empty(), "{:?}", starred.diagnostics);
+    assert!(starred.blocks.iter().any(|block| matches!(
+        block,
+        Block::Paragraph(inlines) if inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Math { list, .. } if list.atoms.iter().any(|atom| matches!(
+                &atom.nucleus,
+                Nucleus::Text(text) if text == "(custom)"
+            ))
+        ))
+    )));
+
+    let unstarred = parse(r"\begin{equation}a=b\tag{(custom)}\end{equation}");
+    assert!(unstarred.diagnostics.is_empty(), "{:?}", unstarred.diagnostics);
+    assert!(unstarred.blocks.iter().any(|block| matches!(
+        block,
+        Block::Paragraph(inlines) if inlines.iter().any(|inline| matches!(
+            inline,
+            Inline::Math { list, .. } if list.atoms.iter().any(|atom| matches!(
+                &atom.nucleus,
+                Nucleus::Text(text) if text == "((custom))"
+            ))
+        ))
+    )));
+}
+
+#[test]
 fn eqref_uses_a_custom_tag_as_the_label_value() {
     let source = r"See \eqref{e}.\begin{equation}a=b\tag{custom}\label{e}\end{equation}";
     assert_eq!(eqref_text(&source.replace("{e}", "{l}")), "(custom)");
@@ -164,25 +211,48 @@ fn eqref_uses_rich_starred_and_plain_tag_values() {
     let starred = r"See \eqref{l}.\begin{equation}a=b\tag*{custom}\label{l}\end{equation}";
     assert_eq!(eqref_text(starred), "(custom)");
 
+    let starred_literal_parens =
+        r"See \eqref{l}.\begin{equation}a=b\tag*{(custom)}\label{l}\end{equation}";
+    assert_eq!(eqref_text(starred_literal_parens), "((custom))");
+
+    let unstarred_literal_parens =
+        r"See \eqref{l}.\begin{equation}a=b\tag{(custom)}\label{l}\end{equation}";
+    assert_eq!(eqref_text(unstarred_literal_parens), "((custom))");
+
     let plain = r"See \eqref{l}.\begin{equation}a=b\tag{1}\label{l}\end{equation}";
     assert_eq!(eqref_text(plain), "(1)");
 }
 
 #[test]
-fn compiler_layouts_parser_text_runs_against_the_pinned_tag_oracle() {
+fn eqref_keeps_rendered_and_source_fallback_math_in_rich_tags() {
+    let radical = r"See \eqref{l}.\begin{equation}a=b\tag{$\sqrt{x}$}\label{l}\end{equation}";
+    assert_eq!(eqref_text(radical), r"(\sqrt{x})");
+
+    let fraction = r"See \eqref{l}.\begin{equation}a=b\tag{$\frac{a}{b}$}\label{l}\end{equation}";
+    assert_eq!(eqref_text(fraction), r"(\frac{a}{b})");
+
+    let greek_subscript = r"See \eqref{l}.\begin{equation}a=b\tag{$\alpha_1$}\label{l}\end{equation}";
+    // References are string-only in the compiler route. The flattened Greek
+    // and subscript glyphs therefore go through the legacy text face, which
+    // may report a text-font fidelity warning; the reference value is intact.
+    assert_eq!(eqref_text_allowing_text_font_warnings(greek_subscript), "(α₁)");
+}
+
+#[test]
+fn compiler_layouts_parser_text_runs_at_the_legacy_core14_pin() {
     let source = r"\begin{equation}a=b\tag{hi $x^2$}\end{equation}";
     let output = compile_full(source, LayoutConstraints::default());
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
 
     // Measured with:
     // /Library/TeX/texbin/pdflatex -interaction=nonstopmode -halt-on-error
-    //   -output-directory=/private/tmp/flashtex-tag-oracle flashtex_tag_box.tex
+    //   -output-directory=/private/tmp/flashtex-tag-pdflatex-measurement flashtex_tag_box.tex
     // flashtex_tag_box.tex contains:
     //   \setbox\flashbox=\hbox{$\text{(hi $x^2$)}$}
-    // TeX Live 2026 reported 29.64589pt for the Computer Modern hbox. The
-    // compiler route keeps its existing Core14 text/NewCM math metrics, whose
-    // parsed TextRun box is pinned here at 24.88pt; the exact TeX metric is
-    // pinned by crates/math-layout/tests/text_runs.rs.
+    // This is not a pdflatex oracle: TeX Live 2026 reported 29.64589pt for
+    // the Computer Modern hbox, while this compiler route intentionally keeps
+    // its existing Core14 text/NewCM metrics. The 24.88pt value pins that
+    // legacy compiler route; PR 2 owns the real pdflatex comparison.
     let width = parsed_text_run_box(source).width;
     assert!((width - 24.88).abs() <= 0.01, "{width}pt vs 24.88pt");
 }
