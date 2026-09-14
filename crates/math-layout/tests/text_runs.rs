@@ -1,4 +1,6 @@
-use flashtex_math_layout::{layout, Atom, AtomClass, CmMathMetrics, MathList, Nucleus, Style, TextPiece, TextStyle};
+use flashtex_math_layout::{
+    layout, Atom, AtomClass, CmMathMetrics, MathList, Nucleus, Style, TextPiece, TextStyle,
+};
 
 fn x_squared() -> MathList {
     Atom::symbol('x')
@@ -29,11 +31,26 @@ fn text_run_widths_match_the_text_and_inline_math_shapes() {
         TextPiece::Math(MathList::symbols("S")),
     ]);
 
-    // Measured with TeX Live pdflatex using the .tex sources documented in
-    // the issue; replace these pins with the recorded \showbox widths.
-    assert_eq!(f5(layout(&tag, Style::TEXT, &metrics).width), "0.00000");
-    assert_eq!(f5(layout(&star, Style::TEXT, &metrics).width), "0.00000");
-    assert_eq!(f5(layout(&sentence, Style::TEXT, &metrics).width), "0.00000");
+    // Oracle command:
+    // /Library/TeX/texbin/pdflatex -interaction=nonstopmode -halt-on-error
+    //   -output-directory=/private/tmp/flashtex-tag-oracle oracle_tag.tex
+    // oracle_tag.tex contains:
+    //   \setbox\flashbox=\hbox{$\text{hi $x^2$}$}
+    //   \setbox\flashbox=\hbox{$\text{$\ast$}$}
+    //   \setbox\flashbox=\hbox{$\text{for all $x$ in $S$}$}
+    // TeX Live 2026 reported 21.86809pt, 5.00002pt, and 56.61810pt.
+    let widths = [
+        layout(&tag, Style::TEXT, &metrics).width,
+        layout(&star, Style::TEXT, &metrics).width,
+        layout(&sentence, Style::TEXT, &metrics).width,
+    ];
+    let oracles = [21.86809, 5.00002, 56.61810];
+    for (&width, oracle) in widths.iter().zip(oracles) {
+        assert!((width - oracle).abs() <= 0.5, "{width}pt vs {oracle}pt");
+    }
+    assert_eq!(f5(widths[0]), "21.86809");
+    assert_eq!(f5(widths[1]), "5.00002");
+    assert_eq!(f5(widths[2]), "56.61810");
 }
 
 #[test]

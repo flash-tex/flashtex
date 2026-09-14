@@ -66,7 +66,9 @@ fn tag_math_command_is_valid_only_inside_nested_math() {
 
 #[test]
 fn text_accepts_multiple_nested_math_spans_and_styles() {
-    let parsed = parse(r"\(\text{for all $x$ in $S$ and \textbf{bold} \emph{italic}}\)");
+    let parsed = parse(
+        r"\begin{equation}\text{for all $x$ in $S$ and \(T\) and \textbf{bold} \emph{italic}}\end{equation}",
+    );
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     let pieces = text_run(first_math(&parsed));
     assert_eq!(
@@ -74,7 +76,7 @@ fn text_accepts_multiple_nested_math_spans_and_styles() {
             .iter()
             .filter(|piece| matches!(piece, TextPiece::Math(_)))
             .count(),
-        2
+        3
     );
     assert!(pieces.iter().any(|piece| matches!(
         piece,
@@ -91,10 +93,29 @@ fn tag_does_not_insert_the_old_two_quad_glue() {
     let parsed = parse(r"\begin{equation}a=b\tag{hi}\end{equation}");
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     let list = first_math(&parsed);
+    assert!(list
+        .atoms
+        .iter()
+        .any(|atom| matches!(&atom.nucleus, Nucleus::Text(text) if text == "(hi)")));
     assert!(!list.atoms.iter().any(|atom| matches!(
         atom.nucleus,
         Nucleus::Space { em, font_em: true } if (em - 2.0).abs() < f64::EPSILON
     )));
+}
+
+#[test]
+fn starred_tag_omits_parentheses() {
+    let parsed = parse(r"\begin{equation}a=b\tag*{custom}\end{equation}");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let list = first_math(&parsed);
+    assert!(list
+        .atoms
+        .iter()
+        .any(|atom| matches!(&atom.nucleus, Nucleus::Text(text) if text == "custom")));
+    assert!(!list
+        .atoms
+        .iter()
+        .any(|atom| matches!(&atom.nucleus, Nucleus::Text(text) if text == "(custom)")));
 }
 
 #[test]

@@ -696,6 +696,11 @@ impl MathFontMetrics for CmMathMetrics {
         self.make_glyph(Family::Roman, code, ch, size)
     }
 
+    fn text_space(&self, size: SizeClass) -> f64 {
+        let (font, _, at) = self.font(Family::Roman, size);
+        font.fontdimen(2, at)
+    }
+
     fn accent_sizes(&self, ch: char, size: SizeClass) -> Vec<Glyph> {
         let mut out = Vec::new();
         // \widehat and \widetilde live in cmex and grow with the base.

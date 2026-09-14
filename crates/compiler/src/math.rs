@@ -29,6 +29,82 @@ pub struct MathList {
     pub atoms: Vec<MathAtom>,
 }
 
+/// The text-face state carried by a piece of a mixed text/math run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextStyle {
+    Normal,
+    Bold,
+    Italic,
+    BoldItalic,
+}
+
+impl TextStyle {
+    pub const NORMAL: Self = Self::Normal;
+    pub const BOLD: Self = Self::Bold;
+    pub const ITALIC: Self = Self::Italic;
+
+    fn bold(self) -> Self {
+        match self {
+            Self::Normal | Self::Bold => Self::Bold,
+            Self::Italic | Self::BoldItalic => Self::BoldItalic,
+        }
+    }
+
+    fn italic(self) -> Self {
+        match self {
+            Self::Normal | Self::Italic => Self::Italic,
+            Self::Bold | Self::BoldItalic => Self::BoldItalic,
+        }
+    }
+
+    fn toggle_italic(self) -> Self {
+        match self {
+            Self::Normal => Self::Italic,
+            Self::Bold => Self::BoldItalic,
+            Self::Italic => Self::Normal,
+            Self::BoldItalic => Self::Bold,
+        }
+    }
+
+    fn normal(self) -> Self {
+        match self {
+            Self::Italic => Self::Normal,
+            Self::BoldItalic => Self::Bold,
+            other => other,
+        }
+    }
+
+    fn medium(self) -> Self {
+        match self {
+            Self::Bold => Self::Normal,
+            Self::BoldItalic => Self::Italic,
+            other => other,
+        }
+    }
+
+    fn reset(self) -> Self {
+        let _ = self;
+        Self::Normal
+    }
+}
+
+/// One part of a text-mode argument. Nested math remains a real math list so
+/// later layout stages can typeset it at the surrounding text size.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TextPiece {
+    Text { text: String, style: TextStyle },
+    Math(MathList),
+}
+
+impl TextPiece {
+    pub fn text(text: impl Into<String>, style: TextStyle) -> Self {
+        Self::Text {
+            text: text.into(),
+            style,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MathAtom {
     pub nucleus: Nucleus,
@@ -78,6 +154,8 @@ pub enum Nucleus {
     },
     /// Literal text with explicit Roman intent, distinct from math symbols.
     Text(String),
+    /// A text-mode hbox containing literal text and inline math pieces.
+    TextRun(Vec<TextPiece>),
     /// Explicit TeX math glue. `em` is in quads of the math symbol font
     /// (18 mu: `\,` is 3/18) unless `font_em`, when it is in ems of the
     /// current text font: `\quad` is `\hskip1em` (latex.ltx), and `em` in
@@ -178,6 +256,73 @@ pub enum Nucleus {
         above: MathList,
         below: MathList,
     },
+}
+
+/// Returns the literal text when a run contains no nested math.
+pub fn text_run_plain_text(pieces: &[TextPiece]) -> Option<String> {
+    let mut text = String::new();
+    for piece in pieces {
+        match piece {
+            TextPiece::Text { text: part, .. } => text.push_str(part),
+            TextPiece::Math(_) => return None,
+        }
+    }
+    Some(text)
+}
+
+fn text_run_nucleus(pieces: Vec<TextPiece>) -> Nucleus {
+    if pieces.iter().all(|piece| {
+        matches!(
+            piece,
+            TextPiece::Text {
+                style: TextStyle::Normal,
+                ..
+            }
+        )
+    }) {
+        return Nucleus::Text(text_run_plain_text(&pieces).unwrap_or_default());
+    }
+    Nucleus::TextRun(pieces)
+}
+
+fn push_text_piece(pieces: &mut Vec<TextPiece>, text: impl Into<String>, style: TextStyle) {
+    let text = text.into();
+    if text.is_empty() {
+        return;
+    }
+    if let Some(TextPiece::Text {
+        text: previous,
+        style: previous_style,
+    }) = pieces.last_mut()
+    {
+        if *previous_style == style {
+            previous.push_str(&text);
+            return;
+        }
+    }
+    pieces.push(TextPiece::text(text, style));
+}
+
+fn append_text_pieces(dst: &mut Vec<TextPiece>, src: impl IntoIterator<Item = TextPiece>) {
+    for piece in src {
+        match piece {
+            TextPiece::Text { text, style } => push_text_piece(dst, text, style),
+            TextPiece::Math(list) => dst.push(TextPiece::Math(list)),
+        }
+    }
+}
+
+fn text_command_style(name: &str, style: TextStyle) -> Option<TextStyle> {
+    Some(match name {
+        "text" | "mbox" | "hbox" | "texttt" | "textsf" => style,
+        "textbf" => style.bold(),
+        "textit" | "textsl" => style.italic(),
+        "emph" => style.toggle_italic(),
+        "textup" | "textrm" => style.normal(),
+        "textmd" => style.medium(),
+        "textnormal" => style.reset(),
+        _ => return None,
+    })
 }
 
 /// Which extensible arrow an [`Nucleus::ExtArrow`] draws.
@@ -1197,8 +1342,7 @@ impl MathParser<'_> {
             // Upright roman is already the math default in this subset, and
             // the other style switches have no distinct face yet: keep the
             // argument's content rather than dropping or garbling it.
-            "mathrm" | "mathit" | "mathsf" | "mathtt" | "mathnormal" | "boldsymbol" | "bm"
-            | "mbox" | "hbox" | "textrm" | "textit" | "textnormal" => {
+            "mathrm" | "mathit" | "mathsf" | "mathtt" | "mathnormal" | "boldsymbol" | "bm" => {
                 // `\mathsf{AB}`, `\mathtt{T}`, `\mathit{diff}` with a plain
                 // argument: the letters of that math alphabet (fontmath.ltx
                 // `\DeclareMathAlphabet`: OT1 cmss/m/n, cmtt/m/n, cmr/m/it)
@@ -1209,7 +1353,7 @@ impl MathParser<'_> {
                     // fontmath.ltx: `\mathrm` is the `operators` font (OT1
                     // cmr/m/n), the upright roman `Text` sets, so `\mathrm{K}`
                     // is upright; math ignores the spaces in the argument.
-                    let (text, argument_span) = self.required_text_group(&name, span);
+                    let (text, argument_span) = self.required_text_group_string(&name, span);
                     let span = span.merge(argument_span);
                     let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
                     if letters.is_empty() {
@@ -1218,7 +1362,7 @@ impl MathParser<'_> {
                         text_atom(letters, span)
                     }
                 } else if matches!(&*name, "mathit" | "mathsf" | "mathtt") && self.plain_text_argument() {
-                    let (text, argument_span) = self.required_text_group(&name, span);
+                    let (text, argument_span) = self.required_text_group_string(&name, span);
                     let span = span.merge(argument_span);
                     let glyphs: String = text
                         .chars()
@@ -1312,10 +1456,10 @@ impl MathParser<'_> {
                 gen_fraction(numerator, denominator, binom, style, span)
             }
             "genfrac" => {
-                let (left, _) = self.required_text_group("genfrac", span);
-                let (right, _) = self.required_text_group("genfrac", span);
-                let (thickness, thickness_span) = self.required_text_group("genfrac", span);
-                let (style, _) = self.required_text_group("genfrac", span);
+                let (left, _) = self.required_text_group_string("genfrac", span);
+                let (right, _) = self.required_text_group_string("genfrac", span);
+                let (thickness, thickness_span) = self.required_text_group_string("genfrac", span);
+                let (style, _) = self.required_text_group_string("genfrac", span);
                 let numerator = self.required_group("genfrac", span);
                 let denominator = self.required_group("genfrac", span);
                 let thickness = thickness.trim();
@@ -1426,9 +1570,15 @@ impl MathParser<'_> {
                 }
             }
             "mathbf" | "textbf" => {
-                let (text, argument_span) = self.required_text_group(&name, span);
+                let (pieces, argument_span) =
+                    self.required_text_group_styled(&name, span, TextStyle::BOLD);
+                let nucleus = if let Some(text) = text_run_plain_text(&pieces) {
+                    Nucleus::Bold(text)
+                } else {
+                    Nucleus::TextRun(pieces)
+                };
                 MathAtom {
-                    nucleus: Nucleus::Bold(text),
+                    nucleus,
                     span: span.merge(argument_span),
                     superscript: None,
                     subscript: None,
@@ -1467,11 +1617,24 @@ impl MathParser<'_> {
             "tag" => {
                 let starred = matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Word(w)) if w == "*");
                 self.skip_star();
-                let (text, argument_span) = self.required_text_group("tag", span);
-                let label = if starred { text } else { format!("({text})") };
-                self.pending
-                    .push(text_atom(label, span.merge(argument_span)));
-                text_space(2.0 * QUAD_EM, span)
+                let (mut pieces, argument_span) = self.required_text_group("tag", span);
+                if !starred {
+                    let mut wrapped = Vec::with_capacity(pieces.len() + 2);
+                    push_text_piece(&mut wrapped, "(", TextStyle::NORMAL);
+                    append_text_pieces(&mut wrapped, pieces);
+                    push_text_piece(&mut wrapped, ")", TextStyle::NORMAL);
+                    pieces = wrapped;
+                }
+                self.pending.push(MathAtom {
+                    nucleus: text_run_nucleus(pieces),
+                    span: span.merge(argument_span),
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                });
+                space(0.0, span)
             }
             // The kernel's `\pmod` (`latex.ltx` 15709) opens with
             // `\mkern18mu`; amsmath renews it through `\pod`, which is
@@ -1513,9 +1676,23 @@ impl MathParser<'_> {
                 space(0.0, span)
             }
             "text" => {
-                let (text, argument_span) = self.required_text_group("text", span);
+                let (pieces, argument_span) = self.required_text_group("text", span);
                 MathAtom {
-                    nucleus: Nucleus::Text(text),
+                    nucleus: text_run_nucleus(pieces),
+                    span: span.merge(argument_span),
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                }
+            }
+            "textit" | "textrm" | "textnormal" | "mbox" | "hbox" => {
+                let style =
+                    text_command_style(&name, TextStyle::NORMAL).unwrap_or(TextStyle::NORMAL);
+                let (pieces, argument_span) = self.required_text_group_styled(&name, span, style);
+                MathAtom {
+                    nucleus: text_run_nucleus(pieces),
                     span: span.merge(argument_span),
                     superscript: None,
                     subscript: None,
@@ -1527,7 +1704,7 @@ impl MathParser<'_> {
             "quad" => text_space(QUAD_EM, span),
             "qquad" => text_space(2.0 * QUAD_EM, span),
             "mathbb" => {
-                let (text, argument_span) = self.required_text_group("mathbb", span);
+                let (text, argument_span) = self.required_text_group_string("mathbb", span);
                 let span = span.merge(argument_span);
                 let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
                 match letters
@@ -1553,7 +1730,7 @@ impl MathParser<'_> {
             // Euler Fraktur letters as Unicode mathematical fraktur; digits
             // and other characters are kept as they are.
             "mathfrak" => {
-                let (text, argument_span) = self.required_text_group("mathfrak", span);
+                let (text, argument_span) = self.required_text_group_string("mathfrak", span);
                 let span = span.merge(argument_span);
                 let glyphs: String = text
                     .chars()
@@ -1567,7 +1744,7 @@ impl MathParser<'_> {
                 }
             }
             "mathcal" => {
-                let (text, argument_span) = self.required_text_group("mathcal", span);
+                let (text, argument_span) = self.required_text_group_string("mathcal", span);
                 let span = span.merge(argument_span);
                 let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
                 match letters
@@ -1881,7 +2058,7 @@ impl MathParser<'_> {
         }
         match self.tokens.get(self.i).map(|t| &t.kind) {
             Some(TokenKind::LBrace) => {}
-            _ => return self.required_text_group(command, span),
+            _ => return self.required_text_group_string(command, span),
         }
         let open = self.tokens[self.i].span;
         self.i += 1;
@@ -2086,7 +2263,38 @@ impl MathParser<'_> {
         }
     }
 
-    fn required_text_group(&mut self, command: &str, span: Span) -> (String, Span) {
+    fn required_text_group(&mut self, command: &str, span: Span) -> (Vec<TextPiece>, Span) {
+        self.required_text_group_styled(command, span, TextStyle::NORMAL)
+    }
+
+    fn required_text_group_string(&mut self, command: &str, span: Span) -> (String, Span) {
+        let (pieces, argument_span) = self.required_text_group(command, span);
+        if pieces
+            .iter()
+            .any(|piece| matches!(piece, TextPiece::Math(_)))
+        {
+            self.diagnostics.push(Diagnostic::error(
+                format!("math syntax is not supported inside \\{command}"),
+                Some(argument_span),
+                Some("used only the literal text and continued".into()),
+            ));
+        }
+        let text = pieces
+            .into_iter()
+            .filter_map(|piece| match piece {
+                TextPiece::Text { text, .. } => Some(text),
+                TextPiece::Math(_) => None,
+            })
+            .collect();
+        (text, argument_span)
+    }
+
+    fn required_text_group_styled(
+        &mut self,
+        command: &str,
+        span: Span,
+        style: TextStyle,
+    ) -> (Vec<TextPiece>, Span) {
         while matches!(
             self.tokens.get(self.i).map(|t| &t.kind),
             Some(TokenKind::Space)
@@ -2099,17 +2307,15 @@ impl MathParser<'_> {
                 Some(span),
                 Some("used an empty argument and continued".into()),
             ));
-            return (String::new(), span);
+            return (Vec::new(), span);
         };
         if open.kind != TokenKind::LBrace {
-            // TeX's undelimited argument: without a brace, the argument is
-            // the next single token by itself -- one already-split character
-            // (`\mathbb R`, `\mathbf v`) or one whole control sequence --
-            // not a full group scan.
+            // TeX's undelimited argument is one already-split token, not a
+            // scan through the rest of the surrounding math list.
             return match open.kind {
-                TokenKind::Word(ch) => {
+                TokenKind::Word(text) => {
                     self.i += 1;
-                    (ch, open.span)
+                    (vec![TextPiece::text(text, style)], open.span)
                 }
                 TokenKind::Command(name) => {
                     self.i += 1;
@@ -2118,7 +2324,7 @@ impl MathParser<'_> {
                         Some(open.span),
                         Some("typeset the command name literally and continued".into()),
                     ));
-                    (format!("\\{name}"), open.span)
+                    (vec![TextPiece::text(format!("\\{name}"), style)], open.span)
                 }
                 _ => {
                     self.diagnostics.push(Diagnostic::error(
@@ -2126,14 +2332,23 @@ impl MathParser<'_> {
                         Some(span),
                         Some("used an empty argument and continued".into()),
                     ));
-                    (String::new(), span)
+                    (Vec::new(), span)
                 }
             };
         }
         self.i += 1;
+        self.text_group(command, open.span, style)
+    }
+
+    fn text_group(
+        &mut self,
+        command: &str,
+        open: Span,
+        style: TextStyle,
+    ) -> (Vec<TextPiece>, Span) {
+        let mut pieces = Vec::new();
         let mut depth = 1usize;
-        let mut text = String::new();
-        let mut end = open.span;
+        let mut end = open;
         let mut after_comment = false;
         let mut depth_reported = false;
         while let Some(token) = self.tokens.get(self.i).cloned() {
@@ -2154,13 +2369,13 @@ impl MathParser<'_> {
                 TokenKind::RBrace => {
                     depth -= 1;
                     if depth == 0 {
-                        return (text, open.span.merge(end));
+                        return (pieces, open.merge(end));
                     }
                 }
-                TokenKind::Word(word) => text.push_str(&word),
+                TokenKind::Word(word) => push_text_piece(&mut pieces, word, style),
                 TokenKind::Space => {
                     if !after_comment {
-                        text.push(' ');
+                        push_text_piece(&mut pieces, " ", style);
                     }
                 }
                 TokenKind::Comment => {
@@ -2173,7 +2388,7 @@ impl MathParser<'_> {
                         Some(token.span),
                         Some("collapsed the paragraph break to one space and continued".into()),
                     ));
-                    text.push(' ');
+                    push_text_piece(&mut pieces, " ", style);
                 }
                 TokenKind::LineBreak => {
                     self.diagnostics.push(Diagnostic::error(
@@ -2181,29 +2396,43 @@ impl MathParser<'_> {
                         Some(token.span),
                         Some("typeset the line-break command literally and continued".into()),
                     ));
-                    text.push_str("\\\\");
+                    push_text_piece(&mut pieces, "\\\\", style);
                 }
                 TokenKind::Command(name) => {
-                    self.diagnostics.push(Diagnostic::command_error(
-                        &name,
-                        format!("\\{name} is not supported inside \\{command}"),
-                        Some(token.span),
-                        Some("typeset the command name literally and continued".into()),
-                    ));
-                    text.push('\\');
-                    text.push_str(&name);
+                    if let Some(nested_style) = text_command_style(&name, style) {
+                        let (nested, nested_span) =
+                            self.required_text_group_styled(&name, token.span, nested_style);
+                        end = nested_span;
+                        append_text_pieces(&mut pieces, nested);
+                    } else {
+                        self.diagnostics.push(Diagnostic::command_error(
+                            &name,
+                            format!("\\{name} is not supported inside \\{command}"),
+                            Some(token.span),
+                            Some("typeset the command name literally and continued".into()),
+                        ));
+                        push_text_piece(&mut pieces, format!("\\{name}"), style);
+                    }
                 }
-                TokenKind::Verb { .. } => {
-                    self.diagnostics.push(Diagnostic::error(
-                        format!("\\verb is not supported inside \\{command}"),
-                        Some(token.span),
-                        Some("ignored the \\verb and continued".into()),
-                    ));
+                TokenKind::MathShift => {
+                    let (math, math_span) =
+                        self.text_math(command, token.span, TokenKind::MathShift);
+                    end = math_span;
+                    pieces.push(TextPiece::Math(math));
                 }
-                TokenKind::MathShift
-                | TokenKind::DisplayMathOpen
-                | TokenKind::DisplayMathClose
-                | TokenKind::InlineMathOpen
+                TokenKind::InlineMathOpen => {
+                    let (math, math_span) =
+                        self.text_math(command, token.span, TokenKind::InlineMathClose);
+                    end = math_span;
+                    pieces.push(TextPiece::Math(math));
+                }
+                TokenKind::DisplayMathOpen => {
+                    let (math, math_span) =
+                        self.text_math(command, token.span, TokenKind::DisplayMathClose);
+                    end = math_span;
+                    pieces.push(TextPiece::Math(math));
+                }
+                TokenKind::DisplayMathClose
                 | TokenKind::InlineMathClose
                 | TokenKind::Superscript
                 | TokenKind::Subscript => {
@@ -2212,27 +2441,65 @@ impl MathParser<'_> {
                         Some(token.span),
                         Some("typeset the token literally and continued".into()),
                     ));
-                    text.push_str(match token.kind {
-                        TokenKind::MathShift => "$",
-                        TokenKind::DisplayMathOpen => "\\[",
+                    let literal = match token.kind {
                         TokenKind::DisplayMathClose => "\\]",
-                        TokenKind::InlineMathOpen => "\\(",
                         TokenKind::InlineMathClose => "\\)",
                         TokenKind::Superscript => "^",
                         TokenKind::Subscript => "_",
                         _ => unreachable!(),
-                    });
+                    };
+                    push_text_piece(&mut pieces, literal, style);
+                }
+                TokenKind::Verb { .. } => {
+                    self.diagnostics.push(Diagnostic::error(
+                        format!("\\verb is not supported inside \\{command}"),
+                        Some(token.span),
+                        Some("ignored the \\verb and continued".into()),
+                    ));
                 }
             }
             after_comment = false;
         }
+        self.diagnostics.push(
+            Diagnostic::error(
+                format!("argument to \\{command} is missing its closing brace"),
+                Some(open),
+                Some("closed the text argument at the math delimiter".into()),
+            )
+            .with_help("add a closing '}'"),
+        );
+        (pieces, open.merge(end))
+    }
+
+    fn text_math(&mut self, command: &str, open: Span, close: TokenKind) -> (MathList, Span) {
+        let start = self.i;
+        let mut braces = 0usize;
+        let mut end = open;
+        while let Some(token) = self.tokens.get(self.i).cloned() {
+            if token.kind == close && braces == 0 {
+                let inner = self.tokens[start..self.i].to_vec();
+                self.i += 1;
+                let list = self.sub_list(&inner);
+                return (list, open.merge(token.span));
+            }
+            if matches!(token.kind, TokenKind::RBrace) && braces == 0 {
+                break;
+            }
+            match token.kind {
+                TokenKind::LBrace => braces += 1,
+                TokenKind::RBrace => braces = braces.saturating_sub(1),
+                _ => {}
+            }
+            end = token.span;
+            self.i += 1;
+        }
+        let inner = self.tokens[start..self.i].to_vec();
         self.diagnostics.push(Diagnostic::error(
-            format!("argument to \\{command} is missing its closing brace"),
-            Some(open.span),
-            Some("closed the text argument at the math delimiter".into()),
-        )
-        .with_help("add a closing '}'"));
-        (text, open.span.merge(end))
+            format!("math argument inside \\{command} is missing its closing delimiter"),
+            Some(open.merge(end)),
+            Some("closed the nested math at the end of the text argument".into()),
+        ));
+        (self.sub_list(&inner), open.merge(end))
     }
 
     /// Reads `{name}` after a `\begin` as plain characters.
@@ -2322,7 +2589,7 @@ impl MathParser<'_> {
         }
         if name == "alignedat" {
             // The column-pair count argument; the grid sizes itself from cells.
-            let _ = self.required_text_group("alignedat", span);
+            let _ = self.required_text_group_string("alignedat", span);
         }
         if matches!(name.as_str(), "aligned" | "alignedat" | "split") {
             columns = "rl".repeat(8);
@@ -3387,6 +3654,58 @@ fn layout_list_with_scales(
     out
 }
 
+fn text_piece_font(style: TextStyle) -> crate::layout::Font {
+    match style {
+        TextStyle::Normal => crate::layout::Font::TimesRoman,
+        TextStyle::Bold => crate::layout::Font::TimesBold,
+        TextStyle::Italic => crate::layout::Font::TimesItalic,
+        TextStyle::BoldItalic => crate::layout::Font::TimesBoldItalic,
+    }
+}
+
+fn layout_text_run(
+    pieces: &[TextPiece],
+    size: f64,
+    root_size: f64,
+    level: usize,
+    atom: &MathAtom,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> MathBox {
+    let mut out = MathBox {
+        items: Vec::new(),
+        width: 0.0,
+        ascent: size,
+        descent: 0.2 * size,
+    };
+    for piece in pieces {
+        match piece {
+            TextPiece::Text { text, style } => {
+                let font = text_piece_font(*style);
+                let width = crate::layout::shaped_width(text, size, font, atom.span, diagnostics).0;
+                out.items.push(MathItem {
+                    font: Some(font),
+                    text: text.clone(),
+                    x: out.width,
+                    baseline: 0.0,
+                    size,
+                    span: atom.span,
+                    rule: None,
+                });
+                out.width += width;
+            }
+            TextPiece::Math(list) => {
+                let mut math = layout_list(list, size, root_size, level, diagnostics);
+                out.ascent = out.ascent.max(math.ascent);
+                out.descent = out.descent.max(math.descent);
+                offset_items(&mut math.items, out.width, 0.0);
+                out.width += math.width;
+                out.items.extend(math.items);
+            }
+        }
+    }
+    out
+}
+
 /// Pairs each `\left` in `list` with the `\right` at the same nesting depth
 /// (a stack of open indices, like matching parentheses) and computes TeX's
 /// rule-19 stretch scale for every matched pair from the atoms strictly
@@ -3566,6 +3885,9 @@ fn layout_nucleus(
             ascent: size,
             descent: 0.2 * size,
         },
+        Nucleus::TextRun(pieces) => {
+            layout_text_run(pieces, size, root_size, level, atom, diagnostics)
+        }
         Nucleus::SizedDelimiter { glyph, scale, .. } => {
             let glyph_size = size * scale;
             let width = match crate::lm_math::width_pt(glyph, glyph_size) {
@@ -4199,6 +4521,18 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
             Nucleus::Symbol(s) => Nucleus::Symbol(s.clone()),
             Nucleus::SizedDelimiter { .. } => atom.nucleus.clone(),
             Nucleus::Text(s) => Nucleus::Text(s.clone()),
+            Nucleus::TextRun(pieces) => Nucleus::TextRun(
+                pieces
+                    .iter()
+                    .map(|piece| match piece {
+                        TextPiece::Text { text, style } => TextPiece::Text {
+                            text: text.clone(),
+                            style: *style,
+                        },
+                        TextPiece::Math(list) => TextPiece::Math(shift_list(list, delta)),
+                    })
+                    .collect(),
+            ),
             Nucleus::Space { em, font_em } => Nucleus::Space {
                 em: *em,
                 font_em: *font_em,
@@ -5939,6 +6273,14 @@ mod shift_tests {
                     let nested = match &a.nucleus {
                         Nucleus::Symbol(_) | Nucleus::SizedDelimiter { .. } => usize::MAX,
                         Nucleus::Text(_) => usize::MAX,
+                        Nucleus::TextRun(pieces) => pieces
+                            .iter()
+                            .filter_map(|piece| match piece {
+                                TextPiece::Text { .. } => None,
+                                TextPiece::Math(list) => Some(min_start(list)),
+                            })
+                            .min()
+                            .unwrap_or(usize::MAX),
                         Nucleus::Space { .. } | Nucleus::Rule(_) => usize::MAX,
                         Nucleus::Fraction {
                             numerator,

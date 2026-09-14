@@ -3939,6 +3939,29 @@ impl P<'_> {
         self.finish_block_dependencies();
     }
 
+    fn custom_tag_text(list: &MathList, source: &str, document: DocumentId) -> Option<String> {
+        list.atoms.iter().find_map(|atom| {
+            if atom.span.document != document
+                || !source
+                    .get(atom.span.start..)
+                    .is_some_and(|suffix| suffix.starts_with("\\tag"))
+            {
+                return None;
+            }
+            let text = match &atom.nucleus {
+                math::Nucleus::Text(text) => text.clone(),
+                math::Nucleus::TextRun(pieces) => math::text_run_plain_text(pieces)?,
+                _ => return None,
+            };
+            Some(
+                text.strip_prefix('(')
+                    .and_then(|text| text.strip_suffix(')'))
+                    .unwrap_or(&text)
+                    .to_string(),
+            )
+        })
+    }
+
     fn equation_environment(
         &mut self,
         open: Span,
@@ -3956,7 +3979,7 @@ impl P<'_> {
             self.counters.the("equation").unwrap_or_default()
         };
         let mut raw = Vec::new();
-        let mut labels = Vec::new();
+        let mut labels: Vec<(String, Span)> = Vec::new();
         let mut end = open.end;
         let mut found_end = false;
 
@@ -3984,11 +4007,7 @@ impl P<'_> {
                             Some("replaced the earlier label definition".into()),
                         ));
                     }
-                    labels.push(Inline::Label {
-                        key,
-                        value: number.clone(),
-                        span: label_span,
-                    });
+                    labels.push((key, label_span));
                 }
                 continue;
             }
@@ -4011,20 +4030,25 @@ impl P<'_> {
             ));
         }
         let list = math::parse_tokens(&raw, self.math_packages, &mut self.diags);
+        let tag = Self::custom_tag_text(&list, self.documents[open.document.0].text, open.document);
         let color_ranges = self.math_color_ranges(&raw);
         para.push(Inline::Math {
             color: self.style.color,
             color_ranges,
             list,
             display: true,
-            number: numbered.then_some(number),
+            number: numbered.then_some(number.clone()),
             number_span: numbered.then_some(open),
             span: Span::in_document(open.document, open.start, end),
             // Always its own line (see `layout::LayoutCursor::display_math`),
             // so whether real source whitespace preceded it is moot.
             space_before: true,
         });
-        para.extend(labels);
+        para.extend(labels.into_iter().map(|(key, span)| Inline::Label {
+            key,
+            value: tag.clone().unwrap_or_else(|| number.clone()),
+            span,
+        }));
         self.flush_paragraph(blocks, para);
     }
 
