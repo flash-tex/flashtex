@@ -2588,6 +2588,49 @@ fn list_end_adjust(source: &str, gap_start: usize, gap: &str, size: u32, style: 
 }
 
 /// The environment of the last `\end{itemize}`/`\end{enumerate}` in `gap`.
+/// The `\endtrivlist` glue (`\addvspace\@topsepadd`) of the list that
+/// `run` closes at its very end, in points; 0 when it closes none.
+///
+/// [`adapt`] gives this skip to the block that *follows* the list, which is
+/// how LaTeX contributes it. A float body's last content run has no block
+/// after it -- `\caption` is set by `\@makecaption` and the box then ends
+/// -- so `crate::floats` asks for it here rather than re-deriving the list
+/// parameters of a second copy.
+pub(crate) fn list_end_skip(source: &str, run: &std::ops::Range<usize>, body_size_pt: f64, style: &Stylesheet) -> f64 {
+    let text = &source[run.start..run.end];
+    let Some(at) = rfind_command(text, "end") else { return 0.0 };
+    let rest = text[at + "\\end".len()..].trim_start();
+    let Some(env) = ["itemize", "enumerate", "thebibliography"]
+        .into_iter()
+        .find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}"))))
+    else {
+        return 0.0;
+    };
+    // Only when the `\end` is the last thing in the run: material after it
+    // is a block of its own, and the adapter has already given it the skip.
+    if !rest["{}".len() + env.len()..].trim().is_empty() {
+        return 0.0;
+    }
+    // `\@topsepadd` is what `\@trivlist` computed when the list opened:
+    // `\topsep`, plus `\partopsep` when its `\begin` was read in vertical
+    // mode (the run's start, or after a blank line or `\par`).
+    let vmode = find_command(text, "begin").is_none_or(|b| {
+        let before = &text[..b];
+        before.trim().is_empty() || has_blank_line(before) || find_command(before, "par").is_some()
+    });
+    let stack = list_stack_at(source, run.start + at);
+    let begin_keys = stack.last().map_or("", |(e, keys)| if *e == env && *e != "thebibliography" { keys } else { "" });
+    let size = if body_size_pt >= 11.5 {
+        12
+    } else if body_size_pt >= 10.5 {
+        11
+    } else {
+        10
+    };
+    let seps = list_seps_with(source, env, 1, size, style, begin_keys);
+    seps.topsep + if vmode { seps.partopsep } else { 0.0 }
+}
+
 fn gap_has_list_end(gap: &str) -> Option<&'static str> {
     let end = rfind_command(gap, "end")?;
     let rest = gap[end + "\\end".len()..].trim_start();

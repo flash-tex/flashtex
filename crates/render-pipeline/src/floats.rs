@@ -1,13 +1,24 @@
-//! `figure`/`table` floats: source scan and masking.
+//! `figure`/`table` floats: source scan, masking and body content.
 //!
-//! Like the adapter, this re-derives structure from the exact source bytes
-//! instead of changing the compiler's parse tree (whose `figure` support is
-//! a caption paragraph in the text flow). Every float environment in the
-//! document body is found here, split into its pieces (`\includegraphics`,
-//! `\caption`, `\label`, `\centering`), and then blanked to spaces of the
-//! same byte length before the compiler parses the document, so every other
-//! span stays exact and the surrounding text flows as if the float were an
-//! invisible marker — which is what LaTeX does with it.
+//! Like the adapter, this re-derives the float's *structure* from the exact
+//! source bytes instead of changing the compiler's parse tree (whose
+//! `figure` support is a caption paragraph in the text flow). Every float
+//! environment in the document body is found here and then blanked to
+//! spaces of the same byte length before the compiler parses the document,
+//! so every other span stays exact and the surrounding text flows as if the
+//! float were an invisible marker — which is what LaTeX does with it.
+//!
+//! Only the commands that are *float* semantics rather than content are
+//! read from the bytes: `\caption` (numbering and the list of figures),
+//! `\label` (which resolves to the float's number and page), the alignment
+//! declarations, and — until `\includegraphics` sets a box in running text
+//! — a standalone `\includegraphics`. **Everything else is body material**:
+//! its byte range becomes a [`Piece::Content`], which [`prepare`] parses and
+//! adapts into ordinary [`adapter::Block`]s the way `caption_items` already
+//! does for one caption argument. `typeset::Context::box_blocks` then sets
+//! those blocks with the same code the page's own text goes through, so a
+//! `tabular`, a list, a display or a paragraph of prose inside a float is
+//! typeset, not dropped.
 
 use flashtex_compiler::{DocumentId, Span};
 
@@ -33,11 +44,23 @@ impl FloatKind {
     }
 }
 
+/// An alignment declaration in a float body (latex.ltx `\centering`,
+/// `\raggedright`, `\raggedleft`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Align {
+    Center,
+    FlushLeft,
+    FlushRight,
+}
+
 /// One piece of a float body, in source order.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Piece {
-    /// `\centering`.
-    Centering,
+    /// `\centering`/`\raggedright`/`\raggedleft`. The declaration's own
+    /// bytes stay inside the [`Piece::Content`] run that holds them, and are
+    /// carried into every later run of the same float (its scope is the rest
+    /// of the float box, which a `\caption` between them must not end).
+    Align { span: Span, align: Align },
     /// `\includegraphics[options]{path}`; `span` covers the whole command.
     Graphic { span: Span, options: String, path: String },
     /// `\caption[...]{...}`: `span` covers the command, `arg` the argument's
@@ -46,10 +69,11 @@ pub enum Piece {
     Caption { span: Span, arg: Span, short: Option<Span> },
     /// `\label{key}`.
     Label { span: Span, key: String },
-    /// A blank line or `\par`: ends the current paragraph.
+    /// A blank line or `\par` between two graphics: ends their line.
     ParBreak,
-    /// Anything else that is not whitespace: not typeset (reported).
-    Other { span: Span },
+    /// Body material: everything that is not one of the above, as one
+    /// maximal byte range, typeset through the ordinary block path.
+    Content { span: Span },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -212,11 +236,33 @@ fn skip_ws(text: &str, mut i: usize, end: usize) -> usize {
     i
 }
 
+/// The float body's pieces in source order: the float-level commands, and
+/// everything else as maximal [`Piece::Content`] runs (see the module docs).
 fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Piece> {
     let b = text.as_bytes();
     let mut out = Vec::new();
     let mut i = start;
     let span = |s: usize, e: usize| Span::in_document(document, s, e);
+    // The open body-material run, as `(first byte, last byte + 1)`. Only a
+    // float-level command ends it, so a blank line inside it stays in it and
+    // the compiler makes the paragraph break.
+    let mut run: Option<(usize, usize)> = None;
+    macro_rules! flush {
+        () => {
+            if let Some((s, e)) = run.take() {
+                out.push(Piece::Content { span: span(s, e) });
+            }
+        };
+    }
+    macro_rules! body {
+        ($s:expr, $e:expr) => {{
+            let (s, e) = ($s, $e);
+            run = Some(match run {
+                Some((was, _)) => (was, e),
+                None => (s, e),
+            });
+        }};
+    }
     while i < end {
         match b[i] {
             b'%' => {
@@ -224,7 +270,7 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
             }
             b'\n' => {
                 let j = skip_ws(text, i, end);
-                if text[i..j].matches('\n').count() >= 2 {
+                if run.is_none() && text[i..j].matches('\n').count() >= 2 {
                     out.push(Piece::ParBreak);
                 }
                 i = j.max(i + 1);
@@ -234,11 +280,20 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                 let name_end = text[i + 1..end].find(|c: char| !c.is_ascii_alphabetic()).map_or(end, |n| i + 1 + n);
                 let name = &text[i + 1..name_end];
                 match name {
-                    "centering" => {
-                        out.push(Piece::Centering);
+                    "centering" | "raggedright" | "raggedleft" => {
+                        // The declaration is body material too: its bytes stay
+                        // in the run so the compiler sets the paragraph style,
+                        // and the piece records it for the graphics line.
+                        let align = match name {
+                            "centering" => Align::Center,
+                            "raggedright" => Align::FlushLeft,
+                            _ => Align::FlushRight,
+                        };
+                        out.push(Piece::Align { span: span(i, name_end), align });
+                        body!(i, name_end);
                         i = name_end;
                     }
-                    "par" => {
+                    "par" if run.is_none() => {
                         out.push(Piece::ParBreak);
                         i = name_end;
                     }
@@ -253,11 +308,12 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                         }
                         match group(text, j).filter(|(_, e)| *e < end) {
                             Some((s, e)) => {
+                                flush!();
                                 out.push(Piece::Graphic { span: span(i, e + 1), options, path: text[s..e].trim().to_string() });
                                 i = e + 1;
                             }
                             None => {
-                                out.push(Piece::Other { span: span(i, name_end) });
+                                body!(i, name_end);
                                 i = name_end;
                             }
                         }
@@ -273,6 +329,7 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                         }
                         match group(text, j).filter(|(_, e)| *e < end) {
                             Some((s, e)) => {
+                                flush!();
                                 out.push(if name == "caption" {
                                     Piece::Caption { span: span(i, e + 1), arg: span(s, e), short }
                                 } else {
@@ -281,14 +338,14 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                                 i = e + 1;
                             }
                             None => {
-                                out.push(Piece::Other { span: span(i, name_end) });
+                                body!(i, name_end);
                                 i = name_end;
                             }
                         }
                     }
                     _ => {
                         let stop = name_end.max(i + 2).min(end);
-                        out.push(Piece::Other { span: span(i, stop) });
+                        body!(i, stop);
                         i = stop;
                     }
                 }
@@ -299,11 +356,12 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                     i += 1;
                 }
                 if !text[s..i].trim().is_empty() {
-                    out.push(Piece::Other { span: span(s, i) });
+                    body!(s, i);
                 }
             }
         }
     }
+    flush!();
     out
 }
 
@@ -322,10 +380,16 @@ pub fn mask(text: &str, floats: &[FloatEnv]) -> String {
 /// `text` blanked except the preamble (through `\begin{document}`) and
 /// `keep`: the input for parsing one caption argument in place.
 pub fn isolate(text: &str, keep: Span) -> String {
+    isolate_all(text, &[keep])
+}
+
+/// [`isolate`] keeping several ranges: a float body's content run together
+/// with the alignment declarations whose scope reaches it.
+pub fn isolate_all(text: &str, keep: &[Span]) -> String {
     let preamble_end = find_uncommented(text, "\\begin{document}", 0).map_or(0, |p| p + "\\begin{document}".len());
     let mut bytes = text.as_bytes().to_vec();
     for (i, b) in bytes.iter_mut().enumerate() {
-        if i >= preamble_end && !(keep.start..keep.end).contains(&i) {
+        if i >= preamble_end && !keep.iter().any(|k| (k.start..k.end).contains(&i)) {
             *b = b' ';
         }
     }
@@ -498,20 +562,25 @@ pub fn prepare(
             };
             let mut parts = Vec::new();
             let mut spec_labels = Vec::new();
-            let mut reported_other = false;
+            // `\centering` and friends stay in force for the rest of the
+            // float box, so every later content run is parsed with them.
+            let mut aligns: Vec<Span> = Vec::new();
             for piece in &f.pieces {
                 match piece {
-                    Piece::Centering => parts.push(FloatPart::Centering),
+                    Piece::Align { span, align } => {
+                        aligns.push(*span);
+                        parts.push(FloatPart::Align(*align));
+                    }
                     Piece::ParBreak => parts.push(FloatPart::ParBreak),
                     Piece::Label { key, .. } => spec_labels.push(key.clone()),
-                    Piece::Other { span } => {
-                        if !reported_other {
-                            reported_other = true;
-                            diags.push(Diagnostic::warning(
-                                "float_content_unsupported",
-                                format!("{} {number}: only \\includegraphics, \\caption, \\label and \\centering are typeset inside a float so far; this material is omitted", f.kind.name()),
-                                vec![src(*span)],
-                            ));
+                    Piece::Content { span } => {
+                        let mut keep = aligns.clone();
+                        keep.push(*span);
+                        let (blocks, problems) = body_blocks(&keep, *span, d, documents, entry_index, texts, options, labels);
+                        diags.extend(problems);
+                        if !blocks.is_empty() {
+                            let end_skip = adapter::list_end_skip(documents[d].text, &(span.start..span.end), style.body_size_pt, style);
+                            parts.push(FloatPart::Content { blocks, end_skip });
                         }
                     }
                     Piece::Graphic { span, options: opts, path: file } => {
@@ -554,6 +623,60 @@ pub fn prepare(
         }
     }
     (specs, diags)
+}
+
+/// The blocks of one content run of a float body: the document with
+/// everything but `keep` blanked is parsed and adapted, exactly as
+/// [`caption_items`] does for a caption argument, so the run's `tabular`,
+/// list, display or prose becomes ordinary [`adapter::Block`]s. Only the
+/// diagnostics the run itself raised are returned (the rest of the
+/// document, and the preamble, are reported by the main parse).
+#[allow(clippy::too_many_arguments)]
+fn body_blocks(
+    keep: &[Span],
+    run: Span,
+    d: usize,
+    documents: &[SourceDocument<'_>],
+    entry_index: usize,
+    texts: &[&str],
+    options: &RenderOptions,
+    labels: &Labels,
+) -> (Vec<adapter::Block>, Vec<Diagnostic>) {
+    let isolated = isolate_all(documents[d].text, keep);
+    let mut texts2: Vec<&str> = texts.to_vec();
+    texts2[d] = &isolated;
+    let docs2: Vec<SourceDocument<'_>> = documents.iter().zip(&texts2).map(|(doc, t)| SourceDocument { path: doc.path, text: t }).collect();
+    let parsed = flashtex_compiler::parser::parse_project(&docs2, documents[d].path);
+    let doc = adapter::adapt(&texts2, entry_index, &parsed, options, labels);
+    let path = documents[d].path;
+    let mine = |dg: &Diagnostic| {
+        dg.sources.iter().any(|s| s.path.as_ref() == path && s.start_byte >= run.start && s.start_byte < run.end)
+    };
+    let mut blocks = doc.blocks;
+    // `\centering` is a declaration, not `\begin{center}`: it adds no
+    // `\topsep`/`\partopsep` and no closing `\@endparenv` skip. The
+    // adapter decides that from the bytes before the block, which here are
+    // the preamble the isolation kept -- so the run's leading `\begin{document}`
+    // reads as an environment opening. When the run's own bytes hold no
+    // paragraph-shape environment, there is none to open or close.
+    if !run_opens_styled_env(&documents[d].text[run.start..run.end]) {
+        for block in &mut blocks {
+            if let adapter::Block::Paragraph { env_open, env_close, .. } = block {
+                *env_open = None;
+                *env_close = false;
+            }
+        }
+    }
+    (blocks, doc.diagnostics.into_iter().filter(mine).collect())
+}
+
+/// Whether `run` opens one of the compiler's paragraph-shape environments
+/// (`parser::paragraph_style`), whose `\trivlist` really does add the
+/// `\topsep` glue around it.
+fn run_opens_styled_env(run: &str) -> bool {
+    ["center", "flushright", "flushleft", "quote", "quotation", "verse"]
+        .iter()
+        .any(|name| run.contains(&format!("\\begin{{{name}}}")))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -609,16 +732,19 @@ mod tests {
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].placement.as_deref(), Some("ht"));
         assert!(!f[0].hmode);
-        assert!(matches!(f[0].pieces[0], Piece::Centering));
-        match &f[0].pieces[1] {
+        assert!(matches!(f[0].pieces[0], Piece::Align { align: Align::Center, .. }));
+        // `\centering`'s own bytes stay in a content run (the compiler reads
+        // the declaration), and the graphic ends that run.
+        assert!(matches!(&f[0].pieces[1], Piece::Content { span } if &src[span.start..span.end] == "\\centering"));
+        match &f[0].pieces[2] {
             Piece::Graphic { options, path, .. } => assert_eq!((options.as_str(), path.as_str()), ("width=2in", "a.png")),
             other => panic!("{other:?}"),
         }
-        match &f[0].pieces[2] {
+        match &f[0].pieces[3] {
             Piece::Caption { arg, .. } => assert_eq!(&src[arg.start..arg.end], "A {nested} cap."),
             other => panic!("{other:?}"),
         }
-        assert!(matches!(&f[0].pieces[3], Piece::Label { key, .. } if key == "fig:a"));
+        assert!(matches!(&f[0].pieces[4], Piece::Label { key, .. } if key == "fig:a"));
         let masked = mask(src, &f);
         assert_eq!(masked.len(), src.len());
         assert!(!masked.contains("figure") && masked.contains("After."));
@@ -626,6 +752,26 @@ mod tests {
         // `\@fpsadddefault`: a bare `!` becomes `!tbp`, and `!` clears 16.
         assert_eq!(placement_bits(Some("!")), Ok(2 | 4 | 8));
         assert_eq!(placement_bits(Some("!h")), Ok(1));
+    }
+
+    #[test]
+    fn body_material_is_one_content_run_across_blank_lines() {
+        let src = "\\begin{document}\n\\begin{table}\n\\centering\n\\caption{C}\n\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\n\nAnd a note.\n\\end{table}\n\\end{document}\n";
+        let f = scan(src, DocumentId(0));
+        let runs: Vec<&str> = f[0]
+            .pieces
+            .iter()
+            .filter_map(|p| match p {
+                Piece::Content { span } => Some(&src[span.start..span.end]),
+                _ => None,
+            })
+            .collect();
+        // `\centering` before the caption, then one run holding the whole
+        // tabular *and* the paragraph after the blank line.
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0], "\\centering");
+        assert!(runs[1].starts_with("\\begin{tabular}") && runs[1].ends_with("And a note."));
+        assert!(matches!(f[0].pieces[2], Piece::Caption { .. }));
     }
 
     #[test]
