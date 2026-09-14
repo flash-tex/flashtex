@@ -216,10 +216,14 @@ final class PreviewAnchorProbe: NSView {
         if let doc = scroll.documentView {
             doc.postsFrameChangedNotifications = true
             observers.append(NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: doc, queue: nil) { [weak self] _ in
-                MainActor.assumeIsolated { self?.note("docFrame"); self?.applyPending() }
+                MainActor.assumeIsolated { self?.note("docFrame"); self?.applyPending(); self?.reportVisiblePages() }
             })
         }
         capture()
+        // The first viewport must be reported without waiting for a scroll:
+        // `updateNSView` can run before this view is inside the scroll view, so
+        // there is no visible rect to read yet (display-list-v2-window).
+        reportVisiblePages()
     }
 
     /// The visible rect in document coordinates with y down, or nil when not
@@ -257,6 +261,7 @@ final class PreviewAnchorProbe: NSView {
         guard let old = layout else {
             layout = new
             capture()
+            reportVisiblePages()
             return
         }
         guard old != new else { return }
@@ -284,6 +289,7 @@ final class PreviewAnchorProbe: NSView {
             }
             self.pending = nil
             self.capture()
+            self.reportVisiblePages()
         }
     }
 
