@@ -1,4 +1,5 @@
-//! `\documentclass[..pt]` body size and preamble `\setlength{\parskip|\parindent}`.
+//! `\documentclass[..pt]` body size and preamble page/paragraph lengths:
+//! `\setlength`, `\addtolength`, and TeX assignments `\len=<dimen>`.
 use flashtex_compiler::incremental::compile_full_project;
 use flashtex_compiler::layout::{LayoutConstraints, Page, PARAGRAPH_GAP_PT};
 use flashtex_compiler::parser::{parse, SourceDocument};
@@ -68,6 +69,49 @@ fn parskip_replaces_the_paragraph_gap_with_em_relative_to_the_class_size() {
     );
 }
 
+fn no_preamble_length_noise(messages: &[String]) {
+    for m in messages {
+        assert!(
+            !m.contains("is not supported in the document preamble"),
+            "{messages:?}"
+        );
+        assert!(
+            !m.contains("is recognised but not implemented here"),
+            "{messages:?}"
+        );
+        assert!(!m.contains("after \\advance"), "{messages:?}");
+        assert!(!m.contains("You can't use"), "{messages:?}");
+    }
+}
+
+#[test]
+fn preamble_setlength_of_page_geometry_is_accepted() {
+    let (_, messages) = compile(
+        "\\documentclass{article}\\setlength{\\textwidth}{6in}\\addtolength{\\oddsidemargin}{-.5in}\
+         \\begin{document}Hello\\end{document}",
+    );
+    no_preamble_length_noise(&messages);
+}
+
+#[test]
+fn preamble_tex_assignments_are_accepted() {
+    let (_, messages) = compile(
+        "\\documentclass{article}\\textwidth=6.5in\\paperwidth=8.5in\\oddsidemargin=0in\
+         \\parindent=0pt\\parskip=12pt\\begin{document}Hello\\end{document}",
+    );
+    no_preamble_length_noise(&messages);
+}
+
+#[test]
+fn preamble_setlength_space_form_and_length_reference() {
+    let (_, messages) = compile(
+        "\\documentclass{article}\\textwidth 6in\\setlength{\\textheight}{9in}\
+         \\setlength{\\topmargin}{-.5in}\\setlength{\\oddsidemargin}{\\textwidth}\
+         \\begin{document}Hello\\end{document}",
+    );
+    no_preamble_length_noise(&messages);
+}
+
 #[test]
 fn unimplemented_lengths_are_reported_not_silently_ignored() {
     let (_, messages) = compile(
@@ -76,7 +120,6 @@ fn unimplemented_lengths_are_reported_not_silently_ignored() {
     );
     for expected in [
         "\\parindent is recognised but paragraph indentation is not implemented",
-        "\\setlength{\\textwidth} is recognised but not implemented here",
         "\\setlength{\\parskip} is recognised but not implemented here",
         "\\setlength requires a recognised dimension, got 'banana'",
     ] {
@@ -85,6 +128,12 @@ fn unimplemented_lengths_are_reported_not_silently_ignored() {
             "missing {expected:?} in {messages:?}"
         );
     }
+    assert!(
+        !messages
+            .iter()
+            .any(|m| m.contains("textwidth") && m.contains("not implemented")),
+        "preamble \\textwidth must be accepted: {messages:?}"
+    );
 }
 
 #[test]
