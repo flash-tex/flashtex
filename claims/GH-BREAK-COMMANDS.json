@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead",
+  "branch": "agent/daniel-muse-lead/break-commands",
+  "gh_ref": null,
+  "machine": "Overpriced-Hardware",
+  "note": null,
+  "started_utc": "2026-09-14T16:41:29Z",
+  "state": "claimed",
+  "task_id": "GH-BREAK-COMMANDS",
+  "updated_utc": "2026-09-14T16:41:29Z"
+}
