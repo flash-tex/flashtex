@@ -2658,6 +2658,8 @@ fn last_geometry_offset(source: &str, preamble_end: usize) -> Option<usize> {
 }
 
 fn next_command(source: &str, from: usize) -> Option<(usize, &str)> {
+    // ASCII letters only: `\@setlength` after `\makeatletter` is a known
+    // limit (ignored test `preamble_scan_does_not_see_at_setlength`).
     let bytes = source.as_bytes();
     let mut i = from;
     let mut in_comment = false;
