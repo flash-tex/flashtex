@@ -214,6 +214,10 @@ pub enum Inline {
     },
     /// xcolor `\colorbox`/`\fcolorbox` (see [`ColorBox`]).
     ColorBox(Box<ColorBox>),
+    /// ulem `\uline`/`\sout` or kernel text-mode `\underline`: the argument
+    /// as one fragment with a rule. First step: the fragment does not
+    /// break across lines (ulem's leaders can). Geometry is [`Underline::geom`].
+    Underline(Box<Underline>),
     /// `\includegraphics` in running text: an image box (see
     /// `crate::graphics`). Figures and tables re-derive their graphics from
     /// the source instead.
@@ -221,6 +225,88 @@ pub enum Inline {
     /// `\scalebox`, `\resizebox`, `\rotatebox`, `\reflectbox` around
     /// horizontal material (see `crate::graphics`).
     Transform(Box<crate::graphics::TransformBox>),
+}
+
+/// ulem.sty `\def\ULthickness{.4pt}`.
+pub const UL_THICKNESS_PT: f64 = 0.4;
+
+/// cmex10 `\fontdimen8` (TeX `default_rule_thickness`). pdflatex shows
+/// `0.39998pt`; article 12pt still uses unscaled cmex10, so \theta is
+/// the same at 10pt and 12pt.
+pub const MATH_RULE_THETA_PT: f64 = 0.39998;
+
+/// cmr x-height / design size. pdflatex: 4.30554pt at 10pt, 5.16667pt at
+/// 12pt. Used for ulem `\sout`'s `-.55ex` (not Core 14 Times x-height).
+pub const CMR_EX_PER_EM: f64 = 0.430554;
+
+/// ulem.sty `\def\sout{\bgroup \ULdepth=-.55ex \ULset}`.
+pub const SOUT_RAISE_EX: f64 = 0.55;
+
+/// How [`Underline`] places its rule. Thickness is [`Underline::thickness_pt`].
+///
+/// Offsets are positive downward from the content baseline. Core 14 has no
+/// per-glyph TFM: `\uline` uses the cmr/lmr 0.25em `(` depth and kernel
+/// `\underline` uses hbox depth 0 (true for the no-descender test words).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum UnderlineGeom {
+    /// ulem `\uline`: rule top at `\dp` of `\hbox{{(j}}` (0.25em for cmr/lmr).
+    /// pdflatex 10pt `rule(-2.5+2.9)`; 12pt `rule(-3.0+3.4)`.
+    UlemDescender,
+    /// latex.ltx text `\underline` = `$\@@underline{\hbox{#1}}$`. TeXbook
+    /// Rule 10 / tex.web §735: kern 3\theta, rule \theta, extra depth \theta
+    /// (total depth = box depth + 5\theta). Rule top is 3\theta below the
+    /// hbox depth. \theta = [`MATH_RULE_THETA_PT`].
+    MathUnderline,
+    /// ulem `\sout`: `\UL@setULdepth` is a no-op when `\ULdepth` is not
+    /// `\maxdimen`, so `-.55ex` is kept. Leaders are
+    /// `\hrule height (0.55ex+0.4pt) depth -0.55ex`: rule bottom 0.55ex
+    /// above the baseline, thickness `\ULthickness`. pdflatex 10pt
+    /// `rule(2.76805+-2.36806)`; 12pt `rule(3.24167+-2.84167)`.
+    Strike,
+}
+
+impl UnderlineGeom {
+    /// Rule top relative to the baseline (positive down) and the extra
+    /// depth the construction adds below the baseline.
+    ///
+    /// `box_depth` is the hbox depth of the content; `descender` is `\dp`
+    /// of `\hbox{{(j}}`; `ex` is the current x-height.
+    pub fn rule_top_and_depth(
+        self,
+        thickness: f64,
+        box_depth: f64,
+        descender: f64,
+        ex: f64,
+    ) -> (f64, f64) {
+        match self {
+            Self::UlemDescender => (descender, descender + thickness),
+            Self::MathUnderline => (
+                box_depth + 3.0 * thickness,
+                box_depth + 5.0 * thickness,
+            ),
+            Self::Strike => {
+                let bottom_above = SOUT_RAISE_EX * ex;
+                (-(bottom_above + thickness), 0.0)
+            }
+        }
+    }
+}
+
+/// An underline / strike wrapper (`Inline::Underline`).
+///
+/// [`UnderlineGeom::UlemDescender`] is ulem `\uline` (`\ULthickness` 0.4pt,
+/// top at 0.25em). [`UnderlineGeom::MathUnderline`] is kernel text
+/// `\underline`. [`UnderlineGeom::Strike`] is ulem `\sout`. The fragment
+/// does not break across lines.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Underline {
+    pub content: Vec<Inline>,
+    pub thickness_pt: f64,
+    pub geom: UnderlineGeom,
+    /// From the command through the argument's closing brace.
+    pub span: Span,
+    /// See `Inline::Text::space_before`.
+    pub space_before: bool,
 }
 
 /// `\colorbox[model]{fill}{text}` or `\fcolorbox[model]{frame}{fill}{text}`
@@ -862,6 +948,9 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textgreater",
     "textbraceleft",
     "textbraceright",
+    "uline",
+    "underline",
+    "sout",
 ];
 
 /// Parses a LaTeX dimension (`12pt`, `1.5em`, `0.5in`, `2cm`, `10mm`, `2ex`,
@@ -2210,6 +2299,17 @@ impl P<'_> {
                 self.text_symbol(name, span, para)
             }
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
+            // ulem `\uline`/`\sout` (need the package). Kernel text-mode
+            // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
+            // Rule 10); math-mode `\underline` is in `math.rs`.
+            "uline" | "underline" | "sout" => {
+                let geom = match name {
+                    "underline" => UnderlineGeom::MathUnderline,
+                    "sout" => UnderlineGeom::Strike,
+                    _ => UnderlineGeom::UlemDescender,
+                };
+                self.text_underline_cmd(name, span, para, geom);
+            }
             "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
             | "negthickspace" | "enspace" => {
                 if let Some(amount) = text_builtins::text_kern(name, self.math_packages.amsmath) {
@@ -5038,6 +5138,44 @@ impl P<'_> {
         siunitx::raw_text(tokens.iter().map(|t| &t.token))
     }
 
+    /// `\uline`/`\sout` (ulem) or kernel text-mode `\underline`. Without
+    /// ulem, the package commands diagnose and typeset the argument as
+    /// plain text. Kernel `\underline` needs no package.
+    fn text_underline_cmd(
+        &mut self,
+        name: &str,
+        span: Span,
+        para: &mut Vec<Inline>,
+        geom: UnderlineGeom,
+    ) {
+        let space_before = self.space_precedes(self.i - 1);
+        let (tokens, argument_span) = self.required_group(name, span);
+        let full = span.merge(argument_span);
+        let needs_ulem = !matches!(geom, UnderlineGeom::MathUnderline);
+        if needs_ulem && !self.packages.iter().any(|package| package == "ulem") {
+            self.diags.push(Diagnostic::command_error(
+                name,
+                format!("\\{name} needs \\usepackage{{ulem}}"),
+                Some(full),
+                Some("typeset the argument as plain text".into()),
+            ));
+            para.extend(self.box_inlines(tokens));
+            return;
+        }
+        let content = self.box_inlines(tokens);
+        let thickness_pt = match geom {
+            UnderlineGeom::MathUnderline => MATH_RULE_THETA_PT,
+            _ => UL_THICKNESS_PT,
+        };
+        para.push(Inline::Underline(Box::new(Underline {
+            content,
+            thickness_pt,
+            geom,
+            span: full,
+            space_before,
+        })));
+    }
+
     fn text_logo(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         let space_before = self.space_precedes(self.i - 1);
         if let Some(logo) = TextLogo::from_command(name) {
@@ -5956,6 +6094,9 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // Colour packages (crate::color) with every option replayed.
         "xcolor" => crate::color::Colors::xcolor(&options.join(","), None).1.is_empty(),
         "color" => crate::color::Colors::color_sty(&options.join(",")).1.is_empty(),
+        // `\uline` and `\sout` are implemented; `\emph` is not redefined
+        // (ulem's default `ULforem`) and `\uuline` stays unsupported if used.
+        "ulem" => options.iter().all(|option| *option == "normalem"),
         _ => false,
     }
 }

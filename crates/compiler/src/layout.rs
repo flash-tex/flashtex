@@ -14,6 +14,7 @@ use crate::export::{self, ExportFont};
 use crate::math::{self, MathBox};
 use crate::parser::{FillLeader, 
     Block, FontSizeLevel, Inline, ListLeftMargin, MathRow, ParagraphStyle, TextFamily, TextStyle,
+    CMR_EX_PER_EM,
 };
 use crate::Span;
 use flashtex_font_engine::core14::Core14;
@@ -2169,6 +2170,7 @@ fn visit_inline_references(inlines: &[Inline], visitor: &mut impl FnMut(&str, Sp
                 }
             }
             Inline::Transform(b) => visit_inline_references(&b.content, visitor),
+            Inline::Underline(u) => visit_inline_references(&u.content, visitor),
             _ => {}
         }
     }
@@ -2355,6 +2357,47 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     size_declaration_pt(level, c.constraints.font_size_pt)
                 });
                 c.place_rule(rule, text_size, *span, style_font(*style), *space_before)
+            }
+            Inline::Underline(u) => {
+                if !u.space_before {
+                    c.x = c.content_end;
+                }
+                let start_x = c.x;
+                emit(c, &u.content, size, font);
+                let width = c.content_end - start_x;
+                let baseline = c.y;
+                // Core 14 has no per-glyph TFM: `\uline` uses the cmr/lmr
+                // 0.25em `(` depth; kernel `\underline` uses hbox depth 0
+                // (true for no-descender words). `\sout` uses cmr ex, not
+                // Times x-height, so 0.55ex matches pdflatex within 0.01pt.
+                let descender = 0.25 * size;
+                let ex = CMR_EX_PER_EM * size;
+                let (top, extra_depth) = u.geom.rule_top_and_depth(
+                    u.thickness_pt,
+                    0.0,
+                    descender,
+                    ex,
+                );
+                c.ensure_extents(0.0, extra_depth.max(0.0));
+                if width > 0.0 && u.thickness_pt > 0.0 {
+                    c.pages
+                        .last_mut()
+                        .expect("at least one page")
+                        .items
+                        .push(TextItem {
+                            text: math::FRACTION_RULE_CHAR.to_string(),
+                            x_pt: round2(start_x),
+                            baseline_y_pt: round2(baseline),
+                            font_size_pt: size,
+                            span: u.span,
+                            font,
+                            rule: Some(RuleGeometry {
+                                y_pt: round2(baseline + top),
+                                width_pt: round2(width),
+                                height_pt: round2(u.thickness_pt),
+                            }),
+                        });
+                }
             }
         }
     }
