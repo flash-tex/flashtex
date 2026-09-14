@@ -1094,6 +1094,40 @@ fn unknown_length_dimension_message(who: &str, raw: &str) -> String {
     format!("{who} requires a recognised dimension, got '{}'", raw.trim())
 }
 
+fn is_calc_length_raw(raw: &str) -> bool {
+    let s = raw.trim().trim_start_matches('=').trim();
+    if s.contains("\\widthof") || s.contains("\\heightof") || s.contains("\\depthof") {
+        return true;
+    }
+    let Some(bs) = s.find('\\') else {
+        return false;
+    };
+    let name_len = s[bs + 1..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic() || *c == '@')
+        .count();
+    let rest = s[bs + 1 + name_len..].trim_start();
+    rest.starts_with('+') || rest.starts_with('-')
+}
+
+fn scaled_class_length_raw(raw: &str) -> Option<&str> {
+    if is_calc_length_raw(raw) {
+        return None;
+    }
+    let s = raw.trim().trim_start_matches('=').trim();
+    let bs = s.find('\\')?;
+    let factor = s[..bs].trim();
+    if factor.is_empty() || factor == "+" {
+        return None;
+    }
+    let name = s[bs + 1..].trim();
+    if is_page_or_line_width(name) {
+        Some(s)
+    } else {
+        None
+    }
+}
+
 fn is_length_reference(raw: &str) -> bool {
     let s = raw.trim().trim_start_matches('=').trim();
     s.contains('\\') || is_preamble_length(s.trim_start_matches('\\'))
@@ -2852,6 +2886,24 @@ impl P<'_> {
     }
 
     fn apply_length_value(&mut self, command: &str, target: &str, raw: &str, span: Span, add: bool) {
+        if is_calc_length_raw(raw) {
+            self.diags.push(Diagnostic::warning(
+                "calc-style length expressions are not supported",
+                Some(span),
+                Some("ignored the length assignment".into()),
+            ));
+            return;
+        }
+        if let Some(expr) = scaled_class_length_raw(raw) {
+            self.diags.push(Diagnostic::warning(
+                format!(
+                    "scaled class lengths like {expr} are not supported yet; the length is left unchanged"
+                ),
+                Some(span),
+                Some("ignored the length assignment".into()),
+            ));
+            return;
+        }
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
         let Some(pt) = parse_dimen_pt_at(raw, body) else {
             let who = if command.is_empty() {

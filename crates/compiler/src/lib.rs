@@ -16,7 +16,6 @@ mod color_names;
 pub mod date;
 pub mod diagnostics;
 pub mod export;
-mod class_lengths;
 pub mod expansion;
 pub mod graphics;
 pub mod incremental;
