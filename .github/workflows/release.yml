@@ -183,9 +183,13 @@ jobs:
     timeout-minutes: 60
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      # Every crate the Linux tarball is expected to contain a binary from.
+      REQUIRED_CRATES: flashtex-cli render-pipeline compiler pdf
     outputs:
       built: ${{ steps.build.outputs.built }}
       skipped: ${{ steps.build.outputs.skipped }}
+      degraded: ${{ steps.gate.outputs.degraded }}
+      missing: ${{ steps.gate.outputs.missing }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -198,17 +202,25 @@ jobs:
             crates/pdf
           key: cli
       - name: Build the CLI crates (each may fail independently)
+        # Each crate is built separately so one failure does not lose the
+        # others' binaries; whether that is allowed to *ship* is decided by the
+        # gate step below, not here. This step therefore never fails.
         id: build
         run: |
           set -uo pipefail
           built=(); skipped=()
-          for c in flashtex-cli render-pipeline compiler pdf; do
+          for c in $REQUIRED_CRATES; do
             if (cd "crates/$c" && cargo build --release --locked); then built+=("$c"); else skipped+=("$c"); fi
           done
           echo "built=${built[*]:-}" >> "$GITHUB_OUTPUT"
           echo "skipped=${skipped[*]:-}" >> "$GITHUB_OUTPUT"
           echo "built: ${built[*]:-none}; did not build on Linux: ${skipped[*]:-none}"
-          [ ${#built[@]} -gt 0 ]
+      - name: Release gate — every CLI crate built, or the gap is declared
+        # Replaces the old `[ ${#built[@]} -gt 0 ]`, which passed when any one
+        # of the four crates built: a regression breaking `compiler` or `pdf`
+        # left this job green and shipped a tarball still advertising them.
+        id: gate
+        run: scripts/ci/linux-release-gate.sh --required "$REQUIRED_CRATES" --built "${{ steps.build.outputs.built }}"
       - name: Package the CLI
         run: |
           set -euo pipefail
@@ -216,14 +228,50 @@ jobs:
           scripts/ci/package-cli.sh "$VERSION" linux-x86_64 dist
           (cd dist && sha256sum -- * | tee SHA256SUMS.linux)
       - name: Smoke-test the packaged CLI
-        if: contains(steps.build.outputs.built, 'flashtex-cli')
+        # Runs unconditionally: the gate above has already established that the
+        # tarball contains every binary it advertises (or that the gap is
+        # declared), so there is no "the one crate we test happened to build"
+        # case left to guard against. MISSING comes from the gate, so a
+        # declared-degraded release skips only the binaries it declared.
+        env:
+          MISSING: ${{ steps.gate.outputs.missing }}
         run: |
           set -euo pipefail
+          root="$RUNNER_TEMP/cli/flashtex-cli-$VERSION-linux-x86_64"
           mkdir -p "$RUNNER_TEMP/cli" && tar -C "$RUNNER_TEMP/cli" -xzf "dist/flashtex-cli-$VERSION-linux-x86_64.tar.gz"
+
+          # Every binary the tarball claims must exist and must be able to
+          # start. The helpers are JSON-Lines workers with no --version, so
+          # "starts" is: exec succeeds with stdin closed. Only 126/127 (not
+          # executable / loader failure, e.g. a missing shared library) fail
+          # here; a protocol complaint about empty stdin is a healthy binary.
+          declare -A CRATE_BINS=(
+            [flashtex-cli]="flashtex"
+            [render-pipeline]="flashtex-render"
+            [compiler]="flashtex-compiler"
+            [pdf]="flashtex-pdf flashtex-pdf-exact"
+          )
+          for c in $REQUIRED_CRATES; do
+            case " $MISSING " in *" $c "*) echo "skip $c: declared as not built"; continue ;; esac
+            for b in ${CRATE_BINS[$c]}; do
+              [ -x "$root/bin/$b" ] || { echo "::error::$b missing from the tarball but $c built"; exit 1; }
+              rc=0; timeout 30 "$root/bin/$b" < /dev/null > /dev/null 2>&1 || rc=$?
+              case "$rc" in
+                126|127) echo "::error::$root/bin/$b cannot be executed (exit $rc)"; exit 1 ;;
+                *) echo "ok $b starts (exit $rc)" ;;
+              esac
+            done
+          done
+
           printf '\\begin{document}\nHello $\\frac{1}{2}$ world.\n\\end{document}\n' > "$RUNNER_TEMP/smoke.tex"
-          "$RUNNER_TEMP/cli/flashtex-cli-$VERSION-linux-x86_64/bin/flashtex" build "$RUNNER_TEMP/smoke.tex" -o "$RUNNER_TEMP/smoke.pdf" --timing
+          "$root/bin/flashtex" build "$RUNNER_TEMP/smoke.tex" -o "$RUNNER_TEMP/smoke.pdf" --timing
           head -c 8 "$RUNNER_TEMP/smoke.pdf" | grep -q '%PDF-1.'
-          "$RUNNER_TEMP/cli/flashtex-cli-$VERSION-linux-x86_64/bin/flashtex" build fixtures/real-world/hw1/HW1.tex -o "$RUNNER_TEMP/hw1.pdf"
+          "$root/bin/flashtex" build fixtures/real-world/hw1/HW1.tex -o "$RUNNER_TEMP/hw1.pdf"
+          "$root/bin/flashtex" --version
+          # Same end-to-end route the macOS leg smoke-tests, so a
+          # render-pipeline regression that only shows on Linux is caught.
+          "$root/bin/flashtex-render" --tex "$RUNNER_TEMP/smoke.tex" --pdf "$RUNNER_TEMP/smoke-render.pdf"
+          head -c 8 "$RUNNER_TEMP/smoke-render.pdf" | grep -q '%PDF-1.'
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux
@@ -234,11 +282,13 @@ jobs:
   publish:
     name: GitHub release + website
     needs: [version, macos, linux]
-    # `if: always()` means a failed `linux` job never blocks this: the release and
-    # site publish as long as `macos` (the app + its own CLI tarball) succeeded.
-    # The assets step below only includes the Linux CLI tarball when that job
-    # actually produced one (see "Write release notes header").
-    if: always() && needs.macos.result == 'success'
+    # Both platforms must pass. `linux` is no longer advisory: it succeeds when
+    # every CLI crate built, or when the gap is declared in
+    # `.github/linux-release-allowed-failures` (in which case the notes below
+    # carry a degraded banner). Previously this was `always() && macos ==
+    # 'success'`, which never consulted `needs.linux.result`, so a Linux build
+    # that had lost `compiler` or `pdf` still published.
+    if: needs.macos.result == 'success' && needs.linux.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -268,19 +318,33 @@ jobs:
           LINUX_RESULT: ${{ needs.linux.result }}
           LINUX_BUILT: ${{ needs.linux.outputs.built }}
           LINUX_SKIPPED: ${{ needs.linux.outputs.skipped }}
+          LINUX_DEGRADED: ${{ needs.linux.outputs.degraded }}
+          LINUX_MISSING: ${{ needs.linux.outputs.missing }}
         run: |
           set -euo pipefail
           {
+            # A degraded Linux tarball is stated before the download table, not
+            # only inside one of its cells.
+            if [ "$LINUX_DEGRADED" = "true" ]; then
+              echo "> [!WARNING]"
+              echo "> **The Linux tarball in this release is incomplete.** These tools could not be"
+              echo "> built for Linux x86_64 and are absent from \`flashtex-cli-$VERSION-linux-x86_64.tar.gz\`:"
+              echo "> \`$LINUX_MISSING\`. The macOS app and its CLI tarball are unaffected."
+              echo
+            fi
             echo "## Downloads"
             echo
             echo "| Asset | What |"
             echo "|---|---|"
             echo "| \`FlashTeX.dmg\` / \`FlashTeX-$VERSION-macos-arm64.dmg\` | The Mac app (macOS 14+, Apple Silicon). Same file under both names; \`install.sh\` on the website fetches \`FlashTeX.dmg\`. |"
             echo "| \`flashtex-cli-$VERSION-macos-arm64.tar.gz\` | The \`flashtex\` CLI (\`flashtex build main.tex\`, check, watch, supported, worker, fonts) plus flashtex-render/compiler/pdf helpers, with the bundled fonts/metrics. |"
-            if [ "$LINUX_RESULT" = "success" ]; then
-              echo "| \`flashtex-cli-$VERSION-linux-x86_64.tar.gz\` | Command-line tools for Linux x86_64 (built: ${LINUX_BUILT:-none}${LINUX_SKIPPED:+; not built on Linux: $LINUX_SKIPPED}). |"
+            # `publish` requires needs.linux.result == 'success', so reaching
+            # here means the Linux tarball exists; `degraded` says whether it is
+            # complete.
+            if [ "$LINUX_DEGRADED" = "true" ]; then
+              echo "| \`flashtex-cli-$VERSION-linux-x86_64.tar.gz\` | **Incomplete** command-line tools for Linux x86_64 — missing \`$LINUX_MISSING\` (see the warning above). Built: ${LINUX_BUILT:-none}. |"
             else
-              echo "| _(no Linux CLI)_ | The Linux build job did not succeed for this release (result: $LINUX_RESULT). |"
+              echo "| \`flashtex-cli-$VERSION-linux-x86_64.tar.gz\` | Command-line tools for Linux x86_64 (\`flashtex\` plus flashtex-render/compiler/pdf helpers), with the bundled fonts/metrics. |"
             fi
             echo "| \`SHA256SUMS\` | \`sha256sum -c SHA256SUMS\` after downloading. |"
             echo

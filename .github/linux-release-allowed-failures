@@ -1,0 +1,14 @@
+# Crates allowed to fail to build in the Linux release job.
+#
+# The Linux CLI release builds each crate independently. A crate that does not
+# build fails the release — and therefore blocks `publish` — unless it is named
+# here. Listing one is a deliberate, reviewable decision to ship a Linux tarball
+# that does not contain that tool; the release notes say so in a banner and the
+# job is annotated as degraded.
+#
+# Format: one crate name per line; `#` starts a comment. Put the reason in a
+# comment above the name, and remove the entry once the build is fixed — the
+# gate warns about entries whose crate builds fine.
+#
+# Empty on purpose: as of v0.1.3 all four CLI crates build on Linux and the
+# shipped tarball contains all five binaries.

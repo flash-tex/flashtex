@@ -21,6 +21,18 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  release-gate:
+    name: release gate (self-test)
+    # The Linux release gate decides whether a partial CLI build may ship. Its
+    # own logic is only exercised during a release, so its self-test runs here:
+    # a change that makes the gate stop rejecting an incomplete build fails CI
+    # rather than surfacing at the next tag.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/ci/linux-release-gate.sh --self-test
+
   rust:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
