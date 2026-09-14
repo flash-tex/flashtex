@@ -213,40 +213,47 @@ final class DocumentStatisticsTests: XCTestCase {
 /// published on the main actor, and only the most recent schedule's result
 /// survives a burst — the same shape `DocumentWatcherTests` uses for its own
 /// coalesced-delivery assertions. These tests inject an immediate scheduler
-/// (no real wall-clock wait); production still debounces on the main queue.
+/// AND a synchronous background executor, so the whole
+/// schedule→scan→publish pipeline is deterministic with no real wall-clock
+/// wait at all; production still debounces on the main queue and still scans
+/// on a background queue.
 @MainActor
 final class WordCountModelTests: XCTestCase {
-    private func settles(_ timeout: TimeInterval = 2, _ cond: () -> Bool) async -> Bool {
-        let start = Date()
-        while !cond() {
-            if Date().timeIntervalSince(start) > timeout { return false }
-            try? await Task.sleep(nanoseconds: 10_000_000)
-        }
-        return true
+    /// Synchronous pipeline: the debounce fires immediately and the
+    /// background scan runs inline, so the only remaining hop is the
+    /// `Task { @MainActor }` publish inside `recompute`.
+    private func makeModel() -> WordCountModel {
+        let model = WordCountModel()
+        model.scheduleDebounce = { _, item in item.perform() }
+        model.recomputeExecutor = { work in work() }
+        return model
+    }
+
+    /// Deterministically drains that publish hop: awaiting an unstructured
+    /// `Task { @MainActor }` enqueued *after* `recompute`'s publish task
+    /// means the publish has run by the time this returns — no wall-clock
+    /// polling, so no flake window under full-suite load. (Deliberately not
+    /// `MainActor.run`, which may execute inline without yielding when the
+    /// caller is already on the main actor and so would not flush the queue.)
+    private func published() async {
+        await Task { @MainActor in }.value
     }
 
     func testScheduleUpdateEventuallyPublishesTotals() async {
-        let model = WordCountModel()
-        // Deterministic scheduling: run the debounce work immediately
-        // instead of waiting on a real wall-clock timer (flaky under
-        // main-queue contention). The `settles` wait below only covers the
-        // background scan + MainActor hop, not a fixed-duration timer.
-        model.scheduleDebounce = { _, item in item.perform() }
+        let model = makeModel()
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three.")])
-        let ok = await settles { model.total?.totalWords == 3 }
-        XCTAssertTrue(ok)
+        await published()
+        XCTAssertEqual(model.total?.totalWords, 3)
     }
 
     func testOnlyTheLastScheduledUpdateWins() async {
-        let model = WordCountModel()
-        // Same deterministic scheduling: both updates are scheduled before
-        // either background result lands, so only the `generation` guard —
-        // the real coalescing mechanism — decides the winner.
-        model.scheduleDebounce = { _, item in item.perform() }
+        let model = makeModel()
+        // Both updates run their scans inline before either publish lands,
+        // so only the `generation` guard — the real coalescing mechanism —
+        // decides the winner.
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One.")])
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three four.")])
-        let ok = await settles { model.total?.totalWords == 4 }
-        XCTAssertTrue(ok)
+        await published()
         XCTAssertEqual(model.total?.totalWords, 4)
     }
 }
