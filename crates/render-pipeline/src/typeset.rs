@@ -1671,6 +1671,17 @@ impl<'a> Context<'a> {
         if glyphs.len() != run.glyphs.len() || !glyphs.iter().any(|g| g.tfm_code.is_some()) {
             return None;
         }
+        // microtype's default `patch` list includes `verbatim`, which turns
+        // protrusion off inside `\verb` and `\@verbatim` (the log says
+        // "Applying patch `verbatim'"). It is the *construct* and not the
+        // family: measured with microtype under pdflatex TL2025, a line
+        // starting `--` sets at x 133.7680 inside `verbatim` (no protrusion)
+        // but at 131.1530 as `\texttt{--...}` in ordinary text, and at
+        // 131.7760 in roman. Expansion needs no rule here -- microtype's
+        // default expansion set is `alltext-nott`, which excludes `tt*`.
+        if style.literal {
+            return None;
+        }
         let (face, size, style) = (face.clone(), *size, *style);
         let z = (size * 65536.0).round() as i32;
         let scaled = |fix: i32| flashtex_microtype::arith::tfm_scaled(fix, z);
@@ -6532,16 +6543,25 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 // `\begin{center}`/`\begin{quote}`: `\addvspace{\topsep}` (plus
                 // `\partopsep` from vertical mode) before the first paragraph;
                 // `\end{...}` adds the same after the last (`\@endparenv`).
-                let env_skip = |vmode: bool| {
+                // `\@trivlist`: `\@topsep = \topsep` (plus `\partopsep` in
+                // vertical mode) `+ \parskip`, where `\parskip` is the one
+                // in force where `\begin` was read -- zero at the outer
+                // level, the enclosing list's `\parsep` inside one.
+                let env_skip = |vmode: bool, outer_parskip: f64| {
                     let t = ctx.style.topsep;
                     let p = if vmode { ctx.style.partopsep } else { crate::style::Skip::default() };
-                    (t.natural + p.natural, t.stretch + p.stretch, t.shrink + p.shrink)
+                    (t.natural + p.natural + outer_parskip, t.stretch + p.stretch, t.shrink + p.shrink)
                 };
                 if let Some(e) = env_open {
                     env_vmode = e.vmode;
                 }
-                let mut env_before = env_open.map(|e| env_skip(e.vmode));
-                let env_after = env_close.then(|| env_skip(env_vmode));
+                let mut env_before = env_open.map(|e| env_skip(e.vmode, e.outer_parskip));
+                // `\@endparenv` adds `\@topsepadd`, which `\@trivlist` set to
+                // `\topsep` (+ `\partopsep`) *before* it advanced `\@topsep`
+                // by `\parskip` -- so the closing skip carries no `\parskip`.
+                // Measured on `10-verbatim-itemize`: 8 pt from `\@endparenv`
+                // and then 4 pt of the next item's own `\parskip`, not 12.
+                let env_after = env_close.then(|| env_skip(env_vmode, 0.0));
                 let first_block = blocks.len();
                 // TeX's pre_display_size: the width of the line before a
                 // display plus 2em; -infinity when nothing precedes it.

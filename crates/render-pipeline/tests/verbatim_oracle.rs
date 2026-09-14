@@ -44,7 +44,7 @@ const SUBSTITUTION_CODES: [&str; 4] = [
 ];
 
 /// The fixtures this lane sets exactly as pdfLaTeX does.
-const GATED: [&str; 30] = [
+const GATED: [&str; 32] = [
     "01-verbatim-basic",
     "02-verbatim-ligatures",
     "03-verbatim-tabs",
@@ -54,10 +54,12 @@ const GATED: [&str; 30] = [
     "07-verbatim-t1",
     "08-verbatim-lmodern",
     "09-verbatim-vmode",
+    "10-verbatim-itemize",
     "11-verbatim-11pt",
     "12-verbatim-12pt",
     "13-verbatim-long-line",
     "14-verbatim-pagebreak",
+    "32-verbatim-microtype",
     // `listings` (PR #248's material): the column algorithm, the skips,
     // the gutter, the frames, `tabsize`/`gobble`, `xleftmargin`,
     // `breaklines` and the language styles.
@@ -87,19 +89,17 @@ const GATED: [&str; 30] = [
 /// Committed with their references but not gated yet, each for a reason
 /// that names what is still missing. Listed here so the material is in the
 /// tree and the follow-up is visible rather than forgotten.
-const NOT_YET: [(&str, &str); 4] = [
-    ("10-verbatim-itemize",
-     "`\\@verbatim`'s `\\trivlist` inside a list. Measured with `\\showoutput`: pdfTeX sets \
-      `\\leftskip 25.00003` (the enclosing `\\leftmargini`) on every verbatim line and 12 pt of \
-      glue above it (`\\topsep` 8 pt + the enclosing list's `\\parsep` 4 pt, which `\\list` made \
-      `\\parskip`). The pipeline lowers verbatim to a top-level flush-left paragraph, so it sets \
-      the lines at the page margin with only `\\topsep`: 25 pt out and 4 pt up."),
+const NOT_YET: [(&str, &str); 2] = [
     ("15-verbatim-small",
-     "The size declaration in force. pdfTeX sets the body in CMTT9 (per-character advance 4.7073 bp \
-      against CMTT10's 5.2303); the pipeline sets CMTT10. The compiler's `Inline::Verbatim` and \
-      `Block::Verbatim` carry no `style`, so the declaration never reaches the pipeline, and \
-      `declared_size` is explicit that the pipeline must not re-derive sizes from the source \
-      (pin `b38e1884`). It is a compiler change plus a vendor re-pin."),
+     "The `\\small` in force. Verified by swapping PR #261's compiler into `vendor/compiler` \
+      (uncommitted, restored after): with it the horizontal geometry is exact -- the body sets in \
+      CMTT9 and the line's last glyph lands at 194.964 against pdfTeX's 194.964 -- and the whole \
+      block is left exactly 1.0 pt low. `\\showoutput` says why: pdfTeX's skip above the block is \
+      `\\glue 10.0 plus 4.0 minus 5.0` (`\\topsep` 8+2-4, `\\partopsep` 2+1-1, `\\parskip` 0+1) and \
+      its `\\glue(\\baselineskip) 3.55557` is `\\small`'s 11 pt baselineskip minus the previous \
+      depth 1.94444 and the line's height 5.49998. The pipeline sets the block at the body's 12 pt \
+      baselineskip, which is the entire remaining pound. Needs the re-pin, the pipeline's \
+      conversion arms for the new `style` field, and the block's baselineskip to follow its size."),
     ("25-lst-java-roman",
      "Two OT1 slot lookups a listing makes that the pipeline's T1/EC font model cannot address. \
       listings sets `\"` as `\\char34` (listings.sty `\\lst@CCPutMacro`, `upquote` false) and the \
@@ -110,9 +110,6 @@ const NOT_YET: [(&str, &str); 4] = [
       slot 32 is `visiblespace` (0.5 em in ec-lmr10), so those three glyphs land 0.62, 1.10 and \
       0.62 bp out; the other 228 are exact. Everything listings-specific in this fixture (the \
       Java keyword list, the `[c]fixed` grid, the skips) is already right."),
-    ("32-verbatim-microtype",
-     "microtype's protrusion on the surrounding roman text; the verbatim lines themselves are \
-      already excluded (the default sets are `rm*`/`sf*`)."),
 ];
 
 fn fixtures_dir() -> PathBuf {
