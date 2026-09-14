@@ -17,9 +17,11 @@ use crate::lexer::{apply_text_ligatures, tokenize_document, Token, TokenKind};
 #[cfg(test)]
 use crate::lexer::tokenize;
 use crate::math::{self, MathList, MathPackages};
+use crate::natbib;
 use crate::siunitx;
-use crate::text_builtins::{self, SymbolOutcome, TextDimen, TextLogo, TextRule};
+use crate::text_builtins::{self, AccentOutcome, SymbolOutcome, TextDimen, TextLogo, TextRule};
 use crate::theorems::{self, TheoremDef, TheoremStyle};
+use crate::vocabulary;
 use crate::{DocumentId, Span};
 use flashtex_tex_text_encoding::encoding::Encoding;
 
@@ -57,6 +59,19 @@ pub struct ParseOptions {
 pub struct SourceDocument<'a> {
     pub path: &'a str,
     pub text: &'a str,
+}
+
+/// The material a fill's glue is filled with. latex.ltx:
+/// `\def\hrulefill{\leavevmode\leaders\hrule\hfill\kern\z@}` and
+/// `\def\dotfill{\leavevmode\cleaders\hb@xt@.44em{\hss.\hss}\hfill\kern\z@}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FillLeader {
+    #[default]
+    None,
+    /// A 0.4pt rule on the baseline (`\hrule` in horizontal leaders).
+    Rule,
+    /// Periods centred in 0.44em boxes, the boxes centred in the glue (`\cleaders`).
+    Dots,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -130,6 +145,9 @@ pub enum Inline {
     /// simplification. See `layout::LayoutCursor::resolve_hfill`.
     HFill {
         span: Span,
+        /// What fills the glue: nothing (`\hfill`), a rule (`\hrulefill`)
+        /// or dots (`\dotfill`).
+        leader: FillLeader,
     },
     /// `\hspace{<dimen>}`/`\hspace*{<dimen>}`: a fixed, non-stretching space.
     /// `pt` is already converted (see `parse_dimen_pt`). Real TeX also lets
@@ -197,6 +215,10 @@ pub enum Inline {
     },
     /// xcolor `\colorbox`/`\fcolorbox` (see [`ColorBox`]).
     ColorBox(Box<ColorBox>),
+    /// ulem `\uline`/`\sout` or kernel text-mode `\underline`: the argument
+    /// as one fragment with a rule. First step: the fragment does not
+    /// break across lines (ulem's leaders can). Geometry is [`Underline::geom`].
+    Underline(Box<Underline>),
     /// `\includegraphics` in running text: an image box (see
     /// `crate::graphics`). Figures and tables re-derive their graphics from
     /// the source instead.
@@ -204,6 +226,88 @@ pub enum Inline {
     /// `\scalebox`, `\resizebox`, `\rotatebox`, `\reflectbox` around
     /// horizontal material (see `crate::graphics`).
     Transform(Box<crate::graphics::TransformBox>),
+}
+
+/// ulem.sty `\def\ULthickness{.4pt}`.
+pub const UL_THICKNESS_PT: f64 = 0.4;
+
+/// cmex10 `\fontdimen8` (TeX `default_rule_thickness`). pdflatex shows
+/// `0.39998pt`; article 12pt still uses unscaled cmex10, so \theta is
+/// the same at 10pt and 12pt.
+pub const MATH_RULE_THETA_PT: f64 = 0.39998;
+
+/// cmr x-height / design size. pdflatex: 4.30554pt at 10pt, 5.16667pt at
+/// 12pt. Used for ulem `\sout`'s `-.55ex` (not Core 14 Times x-height).
+pub const CMR_EX_PER_EM: f64 = 0.430554;
+
+/// ulem.sty `\def\sout{\bgroup \ULdepth=-.55ex \ULset}`.
+pub const SOUT_RAISE_EX: f64 = 0.55;
+
+/// How [`Underline`] places its rule. Thickness is [`Underline::thickness_pt`].
+///
+/// Offsets are positive downward from the content baseline. Core 14 has no
+/// per-glyph TFM: `\uline` uses the cmr/lmr 0.25em `(` depth and kernel
+/// `\underline` uses hbox depth 0 (true for the no-descender test words).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum UnderlineGeom {
+    /// ulem `\uline`: rule top at `\dp` of `\hbox{{(j}}` (0.25em for cmr/lmr).
+    /// pdflatex 10pt `rule(-2.5+2.9)`; 12pt `rule(-3.0+3.4)`.
+    UlemDescender,
+    /// latex.ltx text `\underline` = `$\@@underline{\hbox{#1}}$`. TeXbook
+    /// Rule 10 / tex.web §735: kern 3\theta, rule \theta, extra depth \theta
+    /// (total depth = box depth + 5\theta). Rule top is 3\theta below the
+    /// hbox depth. \theta = [`MATH_RULE_THETA_PT`].
+    MathUnderline,
+    /// ulem `\sout`: `\UL@setULdepth` is a no-op when `\ULdepth` is not
+    /// `\maxdimen`, so `-.55ex` is kept. Leaders are
+    /// `\hrule height (0.55ex+0.4pt) depth -0.55ex`: rule bottom 0.55ex
+    /// above the baseline, thickness `\ULthickness`. pdflatex 10pt
+    /// `rule(2.76805+-2.36806)`; 12pt `rule(3.24167+-2.84167)`.
+    Strike,
+}
+
+impl UnderlineGeom {
+    /// Rule top relative to the baseline (positive down) and the extra
+    /// depth the construction adds below the baseline.
+    ///
+    /// `box_depth` is the hbox depth of the content; `descender` is `\dp`
+    /// of `\hbox{{(j}}`; `ex` is the current x-height.
+    pub fn rule_top_and_depth(
+        self,
+        thickness: f64,
+        box_depth: f64,
+        descender: f64,
+        ex: f64,
+    ) -> (f64, f64) {
+        match self {
+            Self::UlemDescender => (descender, descender + thickness),
+            Self::MathUnderline => (
+                box_depth + 3.0 * thickness,
+                box_depth + 5.0 * thickness,
+            ),
+            Self::Strike => {
+                let bottom_above = SOUT_RAISE_EX * ex;
+                (-(bottom_above + thickness), 0.0)
+            }
+        }
+    }
+}
+
+/// An underline / strike wrapper (`Inline::Underline`).
+///
+/// [`UnderlineGeom::UlemDescender`] is ulem `\uline` (`\ULthickness` 0.4pt,
+/// top at 0.25em). [`UnderlineGeom::MathUnderline`] is kernel text
+/// `\underline`. [`UnderlineGeom::Strike`] is ulem `\sout`. The fragment
+/// does not break across lines.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Underline {
+    pub content: Vec<Inline>,
+    pub thickness_pt: f64,
+    pub geom: UnderlineGeom,
+    /// From the command through the argument's closing brace.
+    pub span: Span,
+    /// See `Inline::Text::space_before`.
+    pub space_before: bool,
 }
 
 /// `\colorbox[model]{fill}{text}` or `\fcolorbox[model]{frame}{fill}{text}`
@@ -688,10 +792,14 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "rotatebox",
     "reflectbox",
     "graphicspath",
+    "hypersetup",
+    "allowdisplaybreaks",
     "url",
     "href",
     "nolinkurl",
     "hfill",
+    "hrulefill",
+    "dotfill",
     "hfil",
     "hspace",
     "footnote",
@@ -757,6 +865,21 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "huge",
     "Huge",
     "cite",
+    "citet",
+    "citep",
+    "citealt",
+    "citealp",
+    "citeauthor",
+    "citefullauthor",
+    "citeyear",
+    "citeyearpar",
+    "citenum",
+    "citetext",
+    "Citet",
+    "Citep",
+    "Citealt",
+    "Citealp",
+    "Citeauthor",
     "nocite",
     "bibitem",
     "bibliography",
@@ -828,6 +951,18 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textgreater",
     "textbraceleft",
     "textbraceright",
+    // `text_builtins::TEXT_ACCENTS`.
+    "c",
+    "v",
+    "u",
+    "H",
+    "r",
+    "k",
+    "d",
+    "b",
+    "uline",
+    "underline",
+    "sout",
 ];
 
 /// Parses a LaTeX dimension (`12pt`, `1.5em`, `0.5in`, `2cm`, `10mm`, `2ex`,
@@ -1065,8 +1200,11 @@ pub fn parse_project_with(
         theorem_style: TheoremStyle::default(),
         theorem_counters: HashMap::new(),
         noted_unclickable_link: false,
+        noted_hypersetup_keys: false,
         bibliography,
         bib_cursor: 0,
+        natbib_limitations: std::collections::BTreeSet::new(),
+        natbib_forced_numbers_reported: false,
         title: None,
         author: None,
         date: None,
@@ -1088,14 +1226,17 @@ pub fn parse_project_with(
             "unmatched '{' — group never closed",
             Some(open),
             Some("treated the rest of the document as part of the group".into()),
-        ));
+        )
+        .with_help("add a closing '}'")
+        .with_label(open, "this group opens here", true));
     }
     while let Some((name, span)) = p.env_stack.pop() {
         p.diags.push(Diagnostic::error(
             format!("unterminated environment '{}' — no matching \\end", name),
             Some(span),
             Some("closed the environment at end of input".into()),
-        ));
+        )
+        .with_help(format!("add \\end{{{name}}}")));
     }
 
     let incremental_safe = p.diags.is_empty();
@@ -1230,6 +1371,10 @@ struct P<'a> {
     /// reached so far; advanced by each real `\bibitem`, whose own displayed
     /// label is looked up at this index.
     bib_cursor: usize,
+    /// natbib options that are parsed but not applied, reported once each.
+    natbib_limitations: std::collections::BTreeSet<String>,
+    /// Whether natbib's `\NAT@force@numbers` fallback has been reported.
+    natbib_forced_numbers_reported: bool,
     /// Current text style; saved on `{` and environment entry, restored on
     /// the matching `}` or `\end`.
     style: TextStyle,
@@ -1259,6 +1404,10 @@ struct P<'a> {
     /// "links are not clickable yet" diagnostic (see `note_links_unclickable`),
     /// so a document with many links gets a single notice, not one per use.
     noted_unclickable_link: bool,
+    /// Set once `\hypersetup` has reported a key outside the measured
+    /// layout-neutral set (see `hypersetup`), so a document that calls it
+    /// several times gets a single notice.
+    noted_hypersetup_keys: bool,
     /// Raw (unexpanded) tokens most recently given to `\title`/`\author`,
     /// with the command's own span for diagnostics. `\maketitle` reads
     /// whichever is active at its call site, mirroring how real
@@ -1437,7 +1586,8 @@ impl P<'_> {
                                 "unmatched '}' — no group is open here",
                                 Some(tok.span),
                                 Some("ignored the stray brace and continued".into()),
-                            ));
+                            )
+                            .with_help("remove this '}' or add a matching '{'"));
                         }
                     } else {
                         if let Some(style) = self.style_stack.pop() {
@@ -1450,6 +1600,7 @@ impl P<'_> {
                 }
                 TokenKind::MathShift if render => self.dollar_math(tok.span, para),
                 TokenKind::DisplayMathOpen if render => self.bracket_math(tok.span, para),
+                TokenKind::InlineMathOpen if render => self.paren_math(tok.span, para),
                 TokenKind::DisplayMathClose if render => {
                     self.i += 1;
                     self.diags.push(Diagnostic::error(
@@ -1458,17 +1609,28 @@ impl P<'_> {
                         Some("ignored the stray display-math delimiter".into()),
                     ));
                 }
+                TokenKind::InlineMathClose if render => {
+                    self.i += 1;
+                    self.diags.push(Diagnostic::error(
+                        "stray \\) has no matching \\(",
+                        Some(tok.span),
+                        Some("ignored the stray inline-math delimiter".into()),
+                    ));
+                }
                 TokenKind::Superscript | TokenKind::Subscript if render => {
                     self.i += 1;
                     self.diags.push(Diagnostic::error(
                         "math script marker used outside math mode",
                         Some(tok.span),
                         Some("ignored the script marker and continued".into()),
-                    ));
+                    )
+                    .with_help("wrap the marked atom in math mode: \\(x^{...}\\)"));
                 }
                 TokenKind::MathShift
                 | TokenKind::DisplayMathOpen
                 | TokenKind::DisplayMathClose
+                | TokenKind::InlineMathOpen
+                | TokenKind::InlineMathClose
                 | TokenKind::Superscript
                 | TokenKind::Subscript => self.i += 1,
                 TokenKind::Command(name) => {
@@ -1654,6 +1816,47 @@ impl P<'_> {
             "graphicspath" => {
                 let _ = self.required_group(name, span);
             }
+            // amsmath's `\allowdisplaybreaks[<0-4>]` only changes where a
+            // page may break inside a display: nothing typeset, no material.
+            "allowdisplaybreaks" => {
+                let _ = self.optional_bracket_argument();
+            }
+            // Preamble or body (GH#321: the preamble is where documents usually
+            // declare them).
+            "pagestyle" => {
+                // No header/footer rendering exists yet, so every style is
+                // accepted with the same (honest) effect: none. `empty` and
+                // `plain` both describe "no footer content beyond a page
+                // number", which is already what happens.
+                let _ = self.required_group(name, span);
+            }
+            // `\thispagestyle` differs from `\pagestyle` only in scope
+            // (current page vs. every later one); since no style ever
+            // renders anything either way, the same honest no-op covers it.
+            "thispagestyle" => {
+                let _ = self.required_group(name, span);
+            }
+            // `\pagenumbering{arabic|roman}` resets the page counter and its
+            // display style. With no footer rendering to show a number in
+            // (see `\pagestyle` above) and no separate "displayed page
+            // number" distinct from `Page::number` for `\pageref` to read,
+            // there is nothing observable left for it to change; accepted
+            // with the same honest no-op rather than faking a counter reset
+            // whose only visible effect would be through those two missing
+            // features.
+            "pagenumbering" => {
+                let _ = self.required_group(name, span);
+            }
+            // `\hypersetup{key=value,...}` (hyperref): the same keys the
+            // package options take, settable anywhere. Every key this
+            // compiler recognises is a PDF annotation, outline or metadata
+            // setting that moves no glyph -- see
+            // `hyperref_option_is_layout_neutral` for the pdflatex
+            // measurement -- so the argument is read and the keys checked,
+            // and nothing is typeset. It is accepted in the preamble, where
+            // real documents put it, and in the body, where LaTeX also
+            // allows it.
+            "hypersetup" => self.hypersetup(span),
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
@@ -1739,15 +1942,19 @@ impl P<'_> {
                 self.finish_block_dependencies();
             }
             "cite" => {
-                let note = self.optional_bracket_argument().map(|(text, _)| text);
+                // natbib redefines `\cite` (natbib.sty line 693): with an
+                // optional argument it is `\citep`, without one `\citet`.
+                // That asymmetry is natbib's, not a simplification here.
+                let natbib = self.bibliography.natbib().cloned();
+                let star = natbib.is_some() && self.take_cite_star();
+                let (pre, note) = match &natbib {
+                    Some(_) => self.cite_notes(),
+                    // The kernel's `\cite` takes one optional argument only.
+                    None => (None, self.optional_bracket_argument().map(|(text, _)| text)),
+                };
                 let (tokens, argument_span) = self.required_group(name, span);
                 let full_span = span.merge(argument_span);
-                let keys: Vec<String> = token_text(&tokens)
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|key| !key.is_empty())
-                    .map(str::to_string)
-                    .collect();
+                let keys = cite_keys(&tokens);
                 self.document_global_state = true;
                 if keys.is_empty() {
                     self.diags.push(Diagnostic::warning(
@@ -1755,6 +1962,14 @@ impl P<'_> {
                         Some(full_span),
                         Some("rendered nothing for the empty citation".into()),
                     ));
+                } else if let Some(options) = natbib {
+                    let mut kind = if note.is_some() || options.numbers {
+                        natbib::CITE_WITH_NOTE
+                    } else {
+                        natbib::CITE_PLAIN
+                    };
+                    kind.full = star;
+                    self.push_natbib_cite(&options, kind, pre, note, &keys, full_span, para);
                 } else {
                     para.extend(bib::cite_inlines(
                         &keys,
@@ -1764,6 +1979,21 @@ impl P<'_> {
                         &mut self.diags,
                     ));
                 }
+            }
+            "citet" | "citep" | "citealt" | "citealp" | "citeauthor" | "citefullauthor"
+            | "citeyear" | "citeyearpar" | "citenum" | "Citet" | "Citep" | "Citealt"
+            | "Citealp" | "Citeauthor" => self.natbib_cite(name, span, para),
+            // `\citetext{...}`: natbib's delimiters around arbitrary text
+            // (natbib.sty line 741).
+            "citetext" => {
+                let options = self.natbib_options(name, span);
+                let (tokens, argument_span) = self.required_group(name, span);
+                let full_span = span.merge(argument_span);
+                para.extend(natbib::citetext_inlines(
+                    &options,
+                    token_text(&tokens).trim(),
+                    full_span,
+                ));
             }
             // Real LaTeX's `\nocite` only writes a BibTeX aux-file entry (to
             // pull an uncited reference into the printed bibliography); it
@@ -1871,22 +2101,26 @@ impl P<'_> {
                     let _ = self.optional_bracket_argument();
                     let _ = self.required_group(name, span);
                     self.document_global_state = true;
-                    let label = self
+                    // The printed marker, already bracketed — and empty under
+                    // natbib's author-year mode, whose `\@biblabel` is
+                    // `\hfill` (natbib.sty line 622), so the entry starts
+                    // flush at the margin with no `[1]` in front of it.
+                    let text = self
                         .bibliography
-                        .label_at(self.bib_cursor)
-                        .map(str::to_string);
-                    let label = label.unwrap_or_else(|| {
-                        // Should not happen: the pre-scan and this real parse
-                        // walk the same literal `\bibitem`s in lockstep (see
-                        // `bib::prescan`). Recover with a plain sequential
-                        // number rather than losing the entry.
-                        (self.bib_cursor + 1).to_string()
-                    });
+                        .marker_at(self.bib_cursor)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| {
+                            // Should not happen: the pre-scan and this real
+                            // parse walk the same literal `\bibitem`s in
+                            // lockstep (see `bib::prescan`). Recover with a
+                            // plain sequential number rather than losing the
+                            // entry.
+                            bib::label_bracket(&(self.bib_cursor + 1).to_string())
+                        });
                     self.bib_cursor += 1;
                     if let Some(list) = self.list_stack.last_mut() {
                         list.count += 1;
                     }
-                    let text = bib::label_bracket(&label);
                     self.pending_item = Some(ItemLabel::Template { text: text.clone() });
                     self.pending_item_label = Some((text, span));
                 }
@@ -1935,7 +2169,9 @@ impl P<'_> {
                 }
             }
             _ if style_declaration(name) => self.style = apply_style(self.style, name),
-            "hfill" | "hfil" => para.push(Inline::HFill { span }),
+            "hfill" | "hfil" => para.push(Inline::HFill { span, leader: FillLeader::None }),
+            "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule }),
+            "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots }),
             "footnote" | "footnotemark" | "footnotetext" => self.footnote(name, span, para),
             // `\linebreak[n]`/`\nolinebreak[n]`: real TeX's 0-4 priority only
             // ever hints a badness-based line-breaking algorithm this greedy
@@ -2099,30 +2335,6 @@ impl P<'_> {
             }
             // multicol.sty 564-567: column heights at output time.
             "raggedcolumns" | "flushcolumns" => {}
-            "pagestyle" => {
-                // No header/footer rendering exists yet, so every style is
-                // accepted with the same (honest) effect: none. `empty` and
-                // `plain` both describe "no footer content beyond a page
-                // number", which is already what happens.
-                let _ = self.required_group(name, span);
-            }
-            // `\thispagestyle` differs from `\pagestyle` only in scope
-            // (current page vs. every later one); since no style ever
-            // renders anything either way, the same honest no-op covers it.
-            "thispagestyle" => {
-                let _ = self.required_group(name, span);
-            }
-            // `\pagenumbering{arabic|roman}` resets the page counter and its
-            // display style. With no footer rendering to show a number in
-            // (see `\pagestyle` above) and no separate "displayed page
-            // number" distinct from `Page::number` for `\pageref` to read,
-            // there is nothing observable left for it to change; accepted
-            // with the same honest no-op rather than faking a counter reset
-            // whose only visible effect would be through those two missing
-            // features.
-            "pagenumbering" => {
-                let _ = self.required_group(name, span);
-            }
             // Kernel text symbols (`text_builtins::TEXT_SYMBOLS`; the
             // `text_symbol_arms_match_the_builtin_table` test keeps them equal).
             "AA" | "aa" | "AE" | "ae" | "OE" | "oe" | "O" | "o" | "L" | "l" | "ss" | "SS"
@@ -2134,7 +2346,20 @@ impl P<'_> {
             | "textgreater" | "textbraceleft" | "textbraceright" => {
                 self.text_symbol(name, span, para)
             }
+            // `text_builtins::TEXT_ACCENTS`.
+            "c" | "v" | "u" | "H" | "r" | "k" | "d" | "b" => self.text_accent(name, span, para),
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
+            // ulem `\uline`/`\sout` (need the package). Kernel text-mode
+            // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
+            // Rule 10); math-mode `\underline` is in `math.rs`.
+            "uline" | "underline" | "sout" => {
+                let geom = match name {
+                    "underline" => UnderlineGeom::MathUnderline,
+                    "sout" => UnderlineGeom::Strike,
+                    _ => UnderlineGeom::UlemDescender,
+                };
+                self.text_underline_cmd(name, span, para, geom);
+            }
             "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
             | "negthickspace" | "enspace" => {
                 if let Some(amount) = text_builtins::text_kern(name, self.math_packages.amsmath) {
@@ -2152,7 +2377,9 @@ impl P<'_> {
                 format!("\\{} requires math mode", name),
                 Some(span),
                 Some("skipped the command and typeset its braced arguments as plain text".into()),
-            )),
+            )
+            .with_help(format!("wrap it in math mode: \\(\\{name}{{...}}\\)"))
+            .with_label(span, "this command", true)),
             other => self.unsupported(other, span),
         }
     }
@@ -2196,7 +2423,10 @@ impl P<'_> {
                 format!("included file not found: looked for '{requested}' and '{appended}'"),
                 Some(span),
                 Some("skipped the missing include and continued".into()),
-            ));
+            )
+            .with_help(format!(
+                "add '{requested}' or '{appended}' to the project documents, or fix the \\input path"
+            )));
             return;
         };
 
@@ -2438,6 +2668,203 @@ impl P<'_> {
         }
     }
 
+    /// natbib's `[pre][post]` optional arguments (`\NAT@citetp`/`\NAT@@citetp`,
+    /// natbib.sty lines 688-690). **One bracket is the post-note**: natbib
+    /// reads `[#1]` and, only if a second bracket follows, treats the first
+    /// as the pre-note; otherwise it calls `\@citex[][#1]`.
+    fn cite_notes(&mut self) -> (Option<String>, Option<String>) {
+        let Some(first) = self.cite_note_argument() else {
+            return (None, None);
+        };
+        match self.cite_note_argument() {
+            Some(second) => (Some(first), Some(second)),
+            None => (None, Some(first)),
+        }
+    }
+
+    /// One `[...]`, leaving whatever is glued to it after the `]` in the
+    /// stream. `[`, `]` and `*` are ordinary word characters to the lexer, so
+    /// `\citep[see][p.~7]` is a **single** `Word` token: the shared
+    /// [`P::optional_bracket_argument`], which consumes whole tokens, would
+    /// take "see" and swallow `[p.~7]` with it — the pre-note would silently
+    /// become the post-note and the post-note would vanish.
+    fn cite_note_argument(&mut self) -> Option<String> {
+        self.skip_spaces();
+        let word = match &self.t.get(self.i)?.token.kind {
+            TokenKind::Word(word) if word.starts_with('[') => word.clone(),
+            _ => return None,
+        };
+        match word.find(']') {
+            Some(close) => {
+                let note = word[1..close].to_string();
+                self.trim_word_prefix(close + 1);
+                Some(note)
+            }
+            // The note runs past this word (`[see this]`): the shared reader
+            // already accumulates tokens until the `]`, and nothing can be
+            // glued to that `]` inside the same word.
+            None => self.optional_bracket_argument().map(|(text, _)| text),
+        }
+    }
+
+    /// natbib's `\@ifstar` on a citation command, with the same word-splitting
+    /// as [`P::cite_note_argument`]: `\citet*[p.~7]` is one lexer word.
+    fn take_cite_star(&mut self) -> bool {
+        self.skip_spaces();
+        let starred = matches!(
+            self.t.get(self.i).map(|input| &input.token.kind),
+            Some(TokenKind::Word(word)) if word.starts_with('*')
+        );
+        if starred {
+            self.trim_word_prefix(1);
+        }
+        starred
+    }
+
+    /// Drops the first `len` bytes of the `Word` token at the cursor, moving
+    /// past the token when nothing is left (`skip_line_break_length` does the
+    /// same for `\\[3pt]Next`).
+    fn trim_word_prefix(&mut self, len: usize) {
+        let Some(input) = self.token_mut(self.i) else {
+            return;
+        };
+        let TokenKind::Word(word) = &input.token.kind else {
+            return;
+        };
+        let full = word.len();
+        let rest = word[len.min(full)..].to_string();
+        if rest.is_empty() {
+            self.i += 1;
+            return;
+        }
+        let span = input.token.span;
+        // Only a token whose span matches its text can be re-spanned; one a
+        // macro produced keeps the call site's span.
+        if span.end - span.start == full {
+            input.token.span = Span::in_document(span.document, span.start + len, span.end);
+        }
+        input.token.kind = TokenKind::Word(rest);
+    }
+
+    /// The natbib options in force, or natbib's own defaults plus one error
+    /// when the document never loaded the package — which is what pdfLaTeX
+    /// reports too, as an undefined control sequence.
+    fn natbib_options(&mut self, name: &str, span: Span) -> natbib::Options {
+        match self.bibliography.natbib() {
+            Some(options) => options.clone(),
+            None => {
+                self.diags.push(Diagnostic::error(
+                    format!("\\{name} is a natbib command, but this document does not \\usepackage{{natbib}}"),
+                    Some(span),
+                    Some("set the citation with natbib's default author-year style".into()),
+                ));
+                natbib::Options::default()
+            }
+        }
+    }
+
+    /// `\citet`, `\citep`, `\citealt`, `\citealp`, `\citeauthor`,
+    /// `\citefullauthor`, `\citeyear`, `\citeyearpar`, `\citenum` and their
+    /// starred and `\Cite`-capitalised forms.
+    fn natbib_cite(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let star = self.take_cite_star();
+        let command = if star { format!("{name}*") } else { name.to_string() };
+        let options = self.natbib_options(name, span);
+        let (pre, post) = self.cite_notes();
+        let (tokens, argument_span) = self.required_group(name, span);
+        let full_span = span.merge(argument_span);
+        let keys = cite_keys(&tokens);
+        self.document_global_state = true;
+        if keys.is_empty() {
+            self.diags.push(Diagnostic::warning(
+                format!("\\{name} was given an empty key list"),
+                Some(full_span),
+                Some("rendered nothing for the empty citation".into()),
+            ));
+            return;
+        }
+        let Some(kind) = natbib::kind(&command) else {
+            // `\citeyear*` and friends: natbib's `\citeyear` takes no star,
+            // so the `*` is ordinary text after the citation.
+            self.diags.push(Diagnostic::warning(
+                format!("\\{command} is not a natbib command"),
+                Some(full_span),
+                Some(format!("set it as \\{name}")),
+            ));
+            let kind = natbib::kind(name).expect("dispatch arm is a natbib command");
+            self.push_natbib_cite(&options, kind, pre, post, &keys, full_span, para);
+            return;
+        };
+        self.push_natbib_cite(&options, kind, pre, post, &keys, full_span, para);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_natbib_cite(
+        &mut self,
+        options: &natbib::Options,
+        kind: natbib::Kind,
+        pre: Option<String>,
+        post: Option<String>,
+        keys: &[String],
+        span: Span,
+        para: &mut Vec<Inline>,
+    ) {
+        if options.sort || options.compress {
+            self.note_natbib_limitation(
+                "natbib's sort/compress options are parsed but not applied; citations keep the order the document wrote them",
+                span,
+            );
+        }
+        if options.superscript {
+            self.note_natbib_limitation(
+                "natbib's super option is parsed but the numbers are set on the baseline, not raised",
+                span,
+            );
+        }
+        if options.longnamesfirst {
+            self.note_natbib_limitation(
+                "natbib's longnamesfirst option is parsed but every citation uses the short author list",
+                span,
+            );
+        }
+        if self.bibliography.natbib_forced_numbers() && !self.natbib_forced_numbers_reported {
+            self.natbib_forced_numbers_reported = true;
+            self.diags.push(Diagnostic::warning(
+                "Package natbib Error: Bibliography not compatible with author-year citations",
+                Some(span),
+                Some(
+                    "a \\bibitem has no [Author(Year)] label; continued in numerical citation style, as natbib's second pass does"
+                        .into(),
+                ),
+            ));
+        }
+        let bibliography = &self.bibliography;
+        let inlines = natbib::cite_inlines(
+            options,
+            kind,
+            pre.as_deref(),
+            post.as_deref(),
+            keys,
+            &|key: &str| bibliography.entry(key),
+            span,
+            &mut self.diags,
+        );
+        para.extend(inlines);
+    }
+
+    /// One diagnostic per natbib option this implementation does not apply,
+    /// however many citations the document has.
+    fn note_natbib_limitation(&mut self, message: &str, span: Span) {
+        if !self.natbib_limitations.insert(message.to_string()) {
+            return;
+        }
+        self.diags.push(Diagnostic::warning(
+            message,
+            Some(span),
+            Some("rendered the citation without it".into()),
+        ));
+    }
+
     fn use_package(&mut self, span: Span) {
         // siunitx keys keep their braces (`output-decimal-marker={,}`).
         let raw_options = {
@@ -2507,6 +2934,9 @@ impl P<'_> {
             ),
             Some(span.merge(argument_span)),
             Some("continued without package-specific commands or formatting".into()),
+        )
+        .with_help(
+            "remove that \\usepackage if you do not need it; its commands are still diagnosed when used",
         ));
     }
 
@@ -2645,10 +3075,10 @@ impl P<'_> {
     /// `\maketitle`: builds `Block::TitleBlock` from whatever `\title`/
     /// `\author`/`\date` are currently set to, mirroring how real
     /// `article.cls` reads `\@title`/`\@author`/`\@date`. Requires `\title`
-    /// and a non-empty `\author` (real LaTeX degrades to an invisible empty
-    /// box; this compiler never fabricates one — see the crate's `README.md`
-    /// boundary) and otherwise produces no block, with a diagnostic naming
-    /// what is missing.
+    /// (LaTeX's `No \title given` is an error) and otherwise produces no
+    /// block. A missing `\author` is LaTeX's `No \author given` warning and an
+    /// empty `\author{}` is silent; both set the block with no author line,
+    /// which is LaTeX's empty author box, not a fabricated placeholder.
     fn maketitle(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         self.flush_paragraph(blocks, para);
 
@@ -2657,17 +3087,21 @@ impl P<'_> {
                 "\\maketitle requires \\title to be set first",
                 Some(span),
                 Some("no title block was produced".into()),
-            ));
+            )
+            .with_help("add \\title{...} before \\maketitle"));
             return;
         };
-        let Some((author_tokens, author_span)) = self.author.clone() else {
-            self.diags.push(Diagnostic::error(
-                "\\maketitle requires \\author to be set first",
+        // latex.ltx: `\def\@author{\@latex@warning@no@line{No \noexpand\author
+        // given}}`. The title block is set regardless, with an empty author box.
+        let (author_tokens, author_span) = self.author.clone().unwrap_or_else(|| {
+            self.diags.push(Diagnostic::warning(
+                "No \\author given",
                 Some(span),
-                Some("no title block was produced".into()),
-            ));
-            return;
-        };
+                Some("set the title block without an author line, as LaTeX does".into()),
+            )
+            .with_help("add \\author{...} before \\maketitle; an empty \\author{} is silent like LaTeX"));
+            (Vec::new(), span)
+        });
 
         // `\@maketitle` sets `\@title`, `\@author`, `\@date` in that
         // order; each `\thanks` steps `footnote` there.
@@ -2698,15 +3132,9 @@ impl P<'_> {
             author_content.extend(inlines);
             wrote_author = true;
         }
-        if !wrote_author {
-            self.diags.push(Diagnostic::error(
-                "\\maketitle requires \\author to name at least one author",
-                Some(author_span),
-                Some("no title block was produced".into()),
-            ));
-            return;
-        }
-        if and_count > 0 {
+        // `\author{}` (or only blank `\and` slots) is an author that is given
+        // but empty: pdfLaTeX sets an empty author box without a warning.
+        if and_count > 0 && wrote_author {
             self.diags.push(Diagnostic::warning(
                 "multiple \\and-separated authors are typeset one per line; this compiler does not yet place them side by side in columns",
                 Some(author_span),
@@ -3007,7 +3435,8 @@ impl P<'_> {
                     ),
                     Some(span),
                     Some("typeset the body without the environment's formatting".into()),
-                ));
+                )
+                .with_optional_help(vocabulary::environment_help(&environment)));
             }
             if is_minipage(&environment) {
                 // `\@iiiminipage`: `\c@mpfootnote\z@`.
@@ -3134,7 +3563,7 @@ impl P<'_> {
         } else if environment == "figure" || self.theorems.contains_key(&environment) {
             self.flush_paragraph(blocks, para);
         } else if environment == "proof" {
-            para.push(Inline::HFill { span });
+            para.push(Inline::HFill { span, leader: FillLeader::None });
             para.push(Inline::Text {
                 text: "∎".to_string(),
                 span,
@@ -3826,6 +4255,44 @@ impl P<'_> {
         );
     }
 
+    /// `\(...\)`: LaTeX's inline math, the `$...$` rules with the
+    /// robust delimiters (an unterminated one ends with its paragraph too).
+    fn paren_math(&mut self, open: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i);
+        self.i += 1;
+        let content_start = self.i;
+        while self.i < self.t.len() {
+            if self.t[self.i].token.kind == TokenKind::InlineMathClose
+                || paragraph_boundary_at(&self.t, self.i)
+            {
+                break;
+            }
+            self.i += 1;
+        }
+        let content_end = self.i;
+        let found = matches!(
+            self.t.get(self.i).map(|input| &input.token.kind),
+            Some(TokenKind::InlineMathClose)
+        );
+        let close_end = if found {
+            let end = self.t[self.i].token.span.end;
+            self.i += 1;
+            end
+        } else {
+            open.end
+        };
+        self.finish_math(
+            open,
+            content_start,
+            content_end,
+            close_end,
+            found,
+            false,
+            space_before,
+            para,
+        );
+    }
+
     fn bracket_math(&mut self, open: Span, para: &mut Vec<Inline>) {
         let space_before = self.space_precedes(self.i);
         self.i += 1;
@@ -3911,7 +4378,8 @@ impl P<'_> {
                 "math group is missing its closing brace",
                 Some(group),
                 Some("closed the group at the math delimiter".into()),
-            )),
+            )
+            .with_help("add a closing '}'")),
             // One primary diagnostic at the innermost opener: closing it is
             // the next thing the author has to type.
             (false, Some(group)) => self.diags.push(Diagnostic::error(
@@ -3936,7 +4404,13 @@ impl P<'_> {
                 Some(
                     "closed math mode at the end of the paragraph and typeset its contents".into(),
                 ),
-            )),
+            )
+            .with_help(if display {
+                "add a closing \\] or $$ to end the display"
+            } else {
+                "add a closing '$' to end the formula"
+            })
+            .with_label(open, "math starts here", true)),
             (true, None) => {}
         }
         // `\[...\]` and `$$...$$` are unnumbered displays in LaTeX: they never
@@ -4024,7 +4498,8 @@ impl P<'_> {
             format!("argument to \\{} is missing its closing brace", command),
             Some(open),
             Some(recovery.into()),
-        ));
+        )
+        .with_help("add a closing '}'"));
         (
             self.t[start..stop].to_vec(),
             Span::in_document(open.document, open.start, end),
@@ -4085,7 +4560,8 @@ impl P<'_> {
                     format!("argument to \\{command} is missing its closing brace"),
                     Some(open),
                     Some("closed the argument at end of input".into()),
-                ));
+                )
+                .with_help("add a closing '}'"));
                 break pos;
             };
             let ch_len = ch.len_utf8();
@@ -4138,8 +4614,9 @@ impl P<'_> {
     }
 
     /// Pushes literal `\url`/`\nolinkurl` text as one or more `Inline::Text`
-    /// runs, split at `URL_BREAK_AFTER` characters (see its doc comment) so
-    /// the layout can wrap a long URL without ever inserting a hyphen.
+    /// runs (see `url_pieces`), so the layout can wrap a long URL at a
+    /// `URL_BREAK_AFTER` character without ever inserting a hyphen, with the
+    /// 0.5pt `URL_HYPHEN_KERN_PT` url.sty puts after each hyphen.
     fn push_url_text(
         &mut self,
         text: &str,
@@ -4151,14 +4628,57 @@ impl P<'_> {
             return;
         }
         let style = apply_style(self.style, "ttfamily");
-        for (index, segment) in url_segments(text).into_iter().enumerate() {
-            para.push(Inline::Text {
-                text: segment.to_string(),
-                span,
-                style,
-                space_before: index == 0 && space_before,
-            });
+        for (index, piece) in url_pieces(text).into_iter().enumerate() {
+            match piece {
+                UrlPiece::Run(run) => para.push(Inline::Text {
+                    text: run.to_string(),
+                    span,
+                    style,
+                    space_before: index == 0 && space_before,
+                }),
+                UrlPiece::HyphenKern => para.push(Inline::Kern {
+                    amount: crate::text_builtins::TextDimen {
+                        negative: false,
+                        integer: 0,
+                        frac: vec![URL_HYPHEN_KERN_PT],
+                        unit: crate::text_builtins::DimenUnit::Physical(
+                            crate::text_builtins::PhysicalUnit::Pt,
+                        ),
+                    },
+                    span,
+                    style,
+                }),
+            }
         }
+    }
+
+    /// `\hypersetup{key=value,...}`: reads the key list and typesets
+    /// nothing. A key outside `hyperref_option_is_layout_neutral` is
+    /// reported once, because that is the set whose neutrality was actually
+    /// measured against pdflatex; an unlisted key may well be neutral too,
+    /// but this compiler has not checked it and will not say that it has.
+    fn hypersetup(&mut self, span: Span) {
+        let (tokens, argument_span) = self.required_group("hypersetup", span);
+        let keys = token_text(&tokens);
+        let unchecked: Vec<&str> = keys
+            .split(',')
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .filter(|key| !hyperref_option_is_layout_neutral(key))
+            .map(|key| key.split_once('=').map_or(key, |(name, _)| name).trim())
+            .collect();
+        if unchecked.is_empty() || self.noted_hypersetup_keys {
+            return;
+        }
+        self.noted_hypersetup_keys = true;
+        self.diags.push(Diagnostic::warning(
+            format!(
+                "\\hypersetup keys {} are not modelled by this compiler",
+                unchecked.join(", ")
+            ),
+            Some(span.merge(argument_span)),
+            Some("read the key list and typeset nothing for it".into()),
+        ));
     }
 
     /// Emits the one honest "links are not clickable yet" diagnostic the
@@ -4223,7 +4743,8 @@ impl P<'_> {
                 "optional argument is missing its closing ']'",
                 Some(span),
                 Some("used the text through end of input as the option".into()),
-            ));
+            )
+            .with_help("add a closing ']'"));
         }
         Some((content, span))
     }
@@ -4613,6 +5134,13 @@ impl P<'_> {
                 TokenKind::Command(name) if name == "hfill" || name == "hfil" => {
                     content.push(Inline::HFill {
                         span: input.token.span,
+                        leader: FillLeader::None,
+                    })
+                }
+                TokenKind::Command(name) if name == "hrulefill" || name == "dotfill" => {
+                    content.push(Inline::HFill {
+                        span: input.token.span,
+                        leader: if name == "hrulefill" { FillLeader::Rule } else { FillLeader::Dots },
                     })
                 }
                 TokenKind::Verb { text, starred, .. } => content.push(Inline::Verbatim {
@@ -4682,6 +5210,127 @@ impl P<'_> {
             style,
             space_before,
         })
+    }
+
+    /// A kernel text accent (`text_builtins::TEXT_ACCENTS`): `\c{c}`,
+    /// `\v{\i}`, `\k{}`, or unbraced `\v s`, where TeX reads one token so
+    /// `\v sice` accents only the `s`. One text inline spans the command and
+    /// its argument and holds the character the dfu tables declare for it.
+    fn text_accent(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let style = self.style;
+        self.skip_spaces();
+        let dotless = |kind: Option<&TokenKind>| match kind {
+            Some(TokenKind::Command(c)) if c == "i" || c == "j" => Some(format!("\\{c}")),
+            _ => None,
+        };
+        fn kind_at<'a>(p: &'a P<'_>, j: usize) -> Option<&'a TokenKind> {
+            p.t.get(j).map(|t| &t.token.kind)
+        }
+        // A macro's argument can come from another document than its body.
+        let join = |a: Span, b: Span| if a.document == b.document { a.merge(b) } else { a };
+        let (base, full) = match kind_at(self, self.i) {
+            Some(TokenKind::LBrace) => {
+                let j = self.i + 1;
+                let (base, mut close) = match kind_at(self, j) {
+                    Some(TokenKind::RBrace) => (String::new(), j),
+                    Some(TokenKind::Word(w)) if w.chars().count() == 1 => (w.clone(), j + 1),
+                    kind => match dotless(kind) {
+                        Some(base) => (base, j + 1),
+                        None => (String::new(), usize::MAX),
+                    },
+                };
+                if close != usize::MAX
+                    && close != j
+                    && matches!(kind_at(self, close), Some(TokenKind::Space))
+                {
+                    close += 1;
+                }
+                if close == usize::MAX || !matches!(kind_at(self, close), Some(TokenKind::RBrace)) {
+                    // `\v{\textbf{s}}`, `\c{cc}`: typeset the group as text.
+                    self.diags.push(Diagnostic::warning(
+                        format!("the argument to \\{name} is not a single letter, \\i or \\j; the accent is not drawn"),
+                        Some(span),
+                        Some("typeset the argument without the accent".into()),
+                    ));
+                    return;
+                }
+                let end = self.t[close].token.span;
+                self.i = close + 1;
+                (base, join(span, end))
+            }
+            Some(TokenKind::Word(w)) => {
+                let w = w.clone();
+                let first = w.chars().next().expect("words are non-empty");
+                let word_span = self.t[self.i].token.span;
+                let exact = word_span.end - word_span.start == w.len();
+                let base_end =
+                    if exact { word_span.start + first.len_utf8() } else { word_span.end };
+                if w.len() == first.len_utf8() {
+                    self.i += 1;
+                } else if let Some(input) = self.token_mut(self.i) {
+                    if exact {
+                        input.token.span =
+                            Span::in_document(word_span.document, base_end, word_span.end);
+                    }
+                    input.token.kind = TokenKind::Word(w[first.len_utf8()..].to_string());
+                }
+                let base_span = Span::in_document(word_span.document, word_span.start, base_end);
+                (first.to_string(), join(span, base_span))
+            }
+            kind => match dotless(kind) {
+                Some(base) => {
+                    let end = self.t[self.i].token.span;
+                    self.i += 1;
+                    (base, join(span, end))
+                }
+                None => {
+                    self.diags.push(Diagnostic::warning(
+                        format!("\\{name} has no letter to accent"),
+                        Some(span),
+                        Some("typeset nothing for the accent".into()),
+                    ));
+                    return;
+                }
+            },
+        };
+        let enc = self.font_encoding;
+        let bare = || match base.strip_prefix('\\') {
+            Some(dotless) => match text_builtins::text_symbol(dotless, enc) {
+                Some(SymbolOutcome::Char(ch)) => ch.to_string(),
+                _ => String::new(),
+            },
+            None => base.clone(),
+        };
+        let text = match text_builtins::text_accent(name, &base, enc) {
+            Some(AccentOutcome::Char(ch)) => ch.to_string(),
+            Some(AccentOutcome::NoComposite) => {
+                self.diags.push(Diagnostic::warning(
+                    format!("\\{name}{{{base}}} has no precomposed character and \\accent is not implemented; the accent is not drawn"),
+                    Some(full),
+                    Some("typeset the letter without the accent".into()),
+                ));
+                bare()
+            }
+            Some(AccentOutcome::Unavailable(message)) => {
+                self.diags.push(Diagnostic::error(
+                    message,
+                    Some(span),
+                    Some("typeset the letter without the accent".into()),
+                ));
+                bare()
+            }
+            None => return,
+        };
+        if text.is_empty() {
+            return;
+        }
+        para.push(Inline::Text {
+            text,
+            span: full,
+            style,
+            space_before,
+        });
     }
 
     fn text_symbol(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
@@ -4761,6 +5410,44 @@ impl P<'_> {
         }
         let (tokens, _) = self.required_group(name, span);
         siunitx::raw_text(tokens.iter().map(|t| &t.token))
+    }
+
+    /// `\uline`/`\sout` (ulem) or kernel text-mode `\underline`. Without
+    /// ulem, the package commands diagnose and typeset the argument as
+    /// plain text. Kernel `\underline` needs no package.
+    fn text_underline_cmd(
+        &mut self,
+        name: &str,
+        span: Span,
+        para: &mut Vec<Inline>,
+        geom: UnderlineGeom,
+    ) {
+        let space_before = self.space_precedes(self.i - 1);
+        let (tokens, argument_span) = self.required_group(name, span);
+        let full = span.merge(argument_span);
+        let needs_ulem = !matches!(geom, UnderlineGeom::MathUnderline);
+        if needs_ulem && !self.packages.iter().any(|package| package == "ulem") {
+            self.diags.push(Diagnostic::command_error(
+                name,
+                format!("\\{name} needs \\usepackage{{ulem}}"),
+                Some(full),
+                Some("typeset the argument as plain text".into()),
+            ));
+            para.extend(self.box_inlines(tokens));
+            return;
+        }
+        let content = self.box_inlines(tokens);
+        let thickness_pt = match geom {
+            UnderlineGeom::MathUnderline => MATH_RULE_THETA_PT,
+            _ => UL_THICKNESS_PT,
+        };
+        para.push(Inline::Underline(Box::new(Underline {
+            content,
+            thickness_pt,
+            geom,
+            span: full,
+            space_before,
+        })));
     }
 
     fn text_logo(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
@@ -5493,7 +6180,10 @@ impl P<'_> {
             format!("\\{} is not supported in the document preamble", name),
             Some(span),
             Some("skipped the command and did not typeset preamble content".into()),
-        ));
+        )
+        .with_help(format!(
+            "move \\{name} after \\begin{{document}}, or remove it from the preamble"
+        )));
     }
 
     /// Recovery policy for a command this compiler does not implement.
@@ -5531,17 +6221,18 @@ impl P<'_> {
         let skipped = self.skip_recoverable_argument(name);
         self.diags.push(Diagnostic::command_error(
             name,
-            format!(
-                "\\{} is not supported by this compiler version; unrestricted TeX math mode is not implemented",
-                name
-            ),
+            // A text-mode command: math has its own reader and diagnostics,
+            // so this message says nothing about math mode.
+            format!("\\{} is not supported by this compiler version", name),
             Some(span),
             Some(if skipped {
                 "skipped the command and its argument, which looked like a parameter rather than text".into()
             } else {
                 "skipped the command; any braced argument was typeset as plain text".into()
             }),
-        ));
+        )
+        .with_optional_help(vocabulary::command_help(name))
+        .with_label(span, "this command", true));
     }
 
     /// Commands this compiler recognises by name as taking a fixed count of
@@ -5654,6 +6345,13 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // array.sty's preamble builder, column types and row strut are
         // implemented (parser/tabular.rs, crate::tabular); no options.
         "array" => options.is_empty(),
+        // natbib citation commands (crate::natbib) with the delimiter,
+        // separator and citation-style options that decide the characters
+        // they set. `sort`/`compress`/`super`/`longnamesfirst` are parsed but
+        // change the output, so they keep the warning.
+        "natbib" => options
+            .iter()
+            .all(|option| crate::natbib::IMPLEMENTED_OPTIONS.contains(option)),
         // siunitx v3 numbers, units, quantities, lists, ranges and angles
         // (crate::siunitx); its options are \sisetup keys, and a key that
         // is not modelled gets its own diagnostic there.
@@ -5672,11 +6370,66 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // align, ...) and microtype (character protrusion/expansion kerning)
         // are genuinely unimplemented and change real output; they must keep
         // warning rather than being silently matched here.
+        // hyperref: its options are PDF annotation, outline and metadata
+        // settings, and none of them moves a glyph (see
+        // `hyperref_option_is_layout_neutral`). `\url`/`\href`/`\nolinkurl`
+        // are typeset; the annotations themselves are reported once by
+        // `note_links_unclickable`, so a second "not implemented" line here
+        // would only suggest the *text* is wrong, which it is not.
+        "hyperref" => options.iter().all(|option| hyperref_option_is_layout_neutral(option)),
         // Colour packages (crate::color) with every option replayed.
         "xcolor" => crate::color::Colors::xcolor(&options.join(","), None).1.is_empty(),
         "color" => crate::color::Colors::color_sty(&options.join(",")).1.is_empty(),
+        // `\uline` and `\sout` are implemented; `\emph` is not redefined
+        // (ulem's default `ULforem`) and `\uuline` stays unsupported if used.
+        "ulem" => options.iter().all(|option| *option == "normalem"),
         _ => false,
     }
+}
+
+/// Whether one `hyperref` package option or `\hypersetup` key leaves the
+/// typeset material alone.
+///
+/// Measured, not assumed: the same document (`\maketitle`, `abstract`,
+/// `\tableofcontents`, `\ref`/`\pageref`, `\url`, `\href`, a `\footnote` and
+/// a `\cite`d `thebibliography`) was set by pdflatex (TeX Live 2025) once per
+/// option set and every word's origin compared against a control that loads
+/// `url.sty` with a text-only `\href`. `default`, `colorlinks`, `hidelinks`,
+/// `pdfborder`, `bookmarks=false`, `breaklinks`, `linktoc=all`,
+/// `pdfstartview`, the `pdf*` metadata keys, `unicode` and `pdfpagemode` all
+/// give **identical text at identical positions**: 137 words, 1 page, 0
+/// moved. The same holds on `fixtures/real-world/hyperref-toc` itself: 1062
+/// words and 4 pages with and without hyperref, 0 moved.
+///
+/// `backref` and `pagebackref` are **not** on the list. They add
+/// back-reference text to every bibliography entry, which is new material,
+/// and they were not measurable in that harness (they need `\newblock`
+/// structure this document did not have), so they keep warning rather than
+/// being claimed neutral on an unmeasured guess. Anything unrecognised warns
+/// for the same reason.
+fn hyperref_option_is_layout_neutral(option: &str) -> bool {
+    let key = option.split_once('=').map_or(option, |(key, _)| key).trim();
+    matches!(
+        key,
+        // Link appearance: colour and border only.
+        "colorlinks" | "hidelinks" | "linkcolor" | "urlcolor" | "citecolor" | "filecolor"
+            | "menucolor" | "runcolor" | "anchorcolor" | "allcolors" | "pdfborder"
+            | "linkbordercolor" | "urlbordercolor" | "citebordercolor" | "allbordercolors"
+            | "pdfborderstyle" | "borderwidth"
+            // Outline (bookmark) settings: no page material.
+            | "bookmarks" | "bookmarksopen" | "bookmarksnumbered" | "bookmarksdepth"
+            | "bookmarksopenlevel" | "bookmarkstype"
+            // Viewer preferences and document metadata.
+            | "pdfstartview" | "pdfstartpage" | "pdfpagemode" | "pdfpagelayout" | "pdfview"
+            | "pdftitle" | "pdfauthor" | "pdfsubject" | "pdfkeywords" | "pdfcreator"
+            | "pdfproducer" | "pdflang" | "pdfdisplaydoctitle" | "pdfnewwindow"
+            // Which constructs become links, and how names are made.
+            | "linktoc" | "linktocpage" | "hyperindex" | "hyperfootnotes" | "pageanchor"
+            | "plainpages" | "hypertexnames" | "naturalnames" | "destlabel" | "breaklinks"
+            // Encoding of the PDF strings, and the driver.
+            | "unicode" | "psdextra" | "pdfencoding" | "driverfallback" | "pdftex" | "dvipdfm"
+            | "dvips" | "xetex" | "luatex" | "final" | "draft"
+    )
 }
 
 fn length_pt(value: &str) -> Option<f64> {
@@ -5964,6 +6717,18 @@ fn bracket_inner(text: &str, open: usize) -> Option<&str> {
     None
 }
 
+/// The keys of a `\cite`-family argument: comma-separated, each trimmed
+/// (`\@for` over `\NAT@cite@list` does the same, which is why
+/// `\citep{a, b}` and `\citep{a,b}` set identically).
+fn cite_keys(tokens: &[InputToken]) -> Vec<String> {
+    token_text(tokens)
+        .split(',')
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 fn token_text(tokens: &[InputToken]) -> String {
     let mut result = String::new();
     for input in tokens {
@@ -5976,32 +6741,77 @@ fn token_text(tokens: &[InputToken]) -> String {
     result
 }
 
-/// Characters after which `url.sty` allows a URL to break onto a new line
-/// (its `\UrlBreaks` default set, trimmed to the characters that actually
-/// show up in real URLs), with no hyphen ever inserted at the break — see
-/// `url_segments` and `P::push_url_text`.
-const URL_BREAK_AFTER: &[char] = &['/', '.', '-', '?', '&', '#', '=', '~', '+'];
+/// Characters after which `url.sty` allows a URL to break onto a new line,
+/// with no hyphen ever inserted at the break — see `url_pieces` and
+/// `P::push_url_text`.
+///
+/// **Measured, not copied from the package source.** Each candidate was set
+/// as `\url{xxxxxxxx<c>xxxxxxxx}` in a 56pt `minipage` by pdflatex (TeX Live
+/// 2025, 11pt `article`, T1), a width where the only possible break is right
+/// after `<c>`; the box has two lines exactly when url.sty permits that
+/// break. Breaking: `/ . ? & # = + : _ , ; ! | > ) ] ' @`. Not breaking:
+/// `- ~ * $` (each stayed on one overfull line).
+///
+/// Two of those corrections matter in real documents:
+///
+/// - **`-` is not a break.** url.sty deliberately refuses to break at a
+///   hyphen, so a reader cannot mistake a URL's own hyphen for hyphenation.
+///   It puts a 0.5pt kern there instead (`URL_HYPHEN_KERN_PT`).
+/// - **`~` is not a break** either, though it reads like a path separator.
+const URL_BREAK_AFTER: &[char] = &[
+    '/', '.', '?', '&', '#', '=', '+', ':', '_', ',', ';', '!', '|', '>', ')', ']', '\'', '@',
+];
 
-/// Splits literal `\url`/`\nolinkurl` text into the runs `LayoutCursor::place`
-/// should lay out independently, so a long URL can wrap at a
-/// `URL_BREAK_AFTER` character without ever inserting a hyphen: each run
-/// keeps its trailing break character, since real `url.sty` breaks *after*
-/// `/`, `.`, ... rather than before it, and `place` already starts a new
-/// line for whichever run does not fit.
-fn url_segments(text: &str) -> Vec<&str> {
-    let mut segments = Vec::new();
+/// The kern `url.sty` puts after every hyphen of a URL, in points.
+///
+/// Measured with pdflatex (TeX Live 2025, 11pt `article`, T1):
+/// `\setbox0=\hbox{\url{a-b}}` is 17.47511pt where `\texttt{a-b}` is
+/// 16.97511pt, and `\url{a-b-c}` is 29.29185pt against `\texttt`'s
+/// 28.29185pt — exactly 0.5pt per hyphen, and nothing for `/`, `.` or any
+/// other character (`\url{x.y}` and `\texttt{x.y}` are both 16.97511pt).
+/// Reading the glyph origins back out of the PDF puts the gap immediately
+/// *after* the hyphen, in the same `ectt` run.
+const URL_HYPHEN_KERN_PT: u8 = 5; // tenths of a point
+
+/// One piece of a literal `\url`/`\nolinkurl` argument.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UrlPiece<'a> {
+    /// A run of URL text, ending at a break character or a hyphen.
+    Run(&'a str),
+    /// The 0.5pt kern `url.sty` puts after a hyphen (`URL_HYPHEN_KERN_PT`).
+    HyphenKern,
+}
+
+/// Splits literal `\url`/`\nolinkurl` text into the pieces
+/// `P::push_url_text` emits.
+///
+/// A run ends after a `URL_BREAK_AFTER` character — keeping that character,
+/// because url.sty breaks *after* `/`, `.`, ... rather than before — so a
+/// long URL can wrap there without any hyphen being inserted. A run also
+/// ends after a hyphen, but only so the `HyphenKern` that follows can be
+/// placed: a hyphen is deliberately *not* a break in url.sty.
+///
+/// Concatenating the `Run` pieces reproduces the argument exactly; the kerns
+/// carry no text.
+fn url_pieces(text: &str) -> Vec<UrlPiece<'_>> {
+    let mut pieces = Vec::new();
     let mut start = 0;
     for (index, ch) in text.char_indices() {
-        if URL_BREAK_AFTER.contains(&ch) {
-            let end = index + ch.len_utf8();
-            segments.push(&text[start..end]);
-            start = end;
+        let hyphen = ch == '-';
+        if !hyphen && !URL_BREAK_AFTER.contains(&ch) {
+            continue;
         }
+        let end = index + ch.len_utf8();
+        pieces.push(UrlPiece::Run(&text[start..end]));
+        if hyphen {
+            pieces.push(UrlPiece::HyphenKern);
+        }
+        start = end;
     }
     if start < text.len() {
-        segments.push(&text[start..]);
+        pieces.push(UrlPiece::Run(&text[start..]));
     }
-    segments
+    pieces
 }
 
 /// Renders one raw verbatim source line for layout: a tab becomes exactly one
@@ -7625,7 +8435,7 @@ mod tests {
         // `%`, `#`, `_`, `~`, and `&` all have some other special meaning to
         // the ordinary tokenizer (comment, none, math subscript, none, none)
         // — `\url` must still take every one of them literally. The URL is
-        // laid out as several break-opportunity runs (see `url_segments`),
+        // laid out as several break-opportunity runs (see `url_pieces`),
         // which is only visible in wrapping; concatenated, it must still
         // read back exactly as written, with "now." never swallowed by the
         // literal '%' as a stray comment.
@@ -7701,6 +8511,99 @@ mod tests {
             "\\nolinkurl was never a link, so it needs no 'not clickable' notice: {:?}",
             parsed.diagnostics
         );
+    }
+
+    /// `\hypersetup` is where real documents put hyperref's options, and it
+    /// used to be a hard *error* ("not supported in the document preamble")
+    /// on a perfectly valid document — `fixtures/real-world/hyperref-toc`
+    /// line 7 is exactly this call. Every key it carries is a PDF
+    /// annotation, outline or metadata setting: pdflatex (TeX Live 2025)
+    /// sets the same 1062 words on the same 4 pages with and without it.
+    #[test]
+    fn hypersetup_is_accepted_in_the_preamble_and_typesets_nothing() {
+        let source = concat!(
+            r"\documentclass{article}",
+            "\n",
+            r"\usepackage{hyperref}",
+            "\n",
+            r"\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}",
+            "\n",
+            r"\begin{document}",
+            "\nBody text.\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        assert!(
+            parsed.diagnostics.is_empty(),
+            "a valid hyperref preamble must produce no diagnostic at all: {:?}",
+            parsed.diagnostics
+        );
+        assert_eq!(
+            items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            ["Body", "text."],
+            "\\hypersetup contributes no material"
+        );
+    }
+
+    /// `\hypersetup` is legal in the body too, and a key whose neutrality
+    /// this compiler has not measured says so once rather than being
+    /// silently swallowed.
+    #[test]
+    fn an_unmeasured_hypersetup_key_is_reported_once() {
+        let source = concat!(
+            r"\documentclass{article}\usepackage{hyperref}",
+            "\n",
+            r"\begin{document}",
+            "\n",
+            r"\hypersetup{pagebackref=true}A",
+            "\n\n",
+            r"\hypersetup{pagebackref=true}B",
+            "\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        let notes: Vec<&Diagnostic> = parsed
+            .diagnostics
+            .iter()
+            .filter(|d| d.message.contains("hypersetup keys"))
+            .collect();
+        assert_eq!(notes.len(), 1, "one notice per document: {:?}", parsed.diagnostics);
+        assert!(notes[0].message.contains("pagebackref"), "{:?}", notes[0]);
+        assert_eq!(items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(), ["A", "B"]);
+    }
+
+    /// `\usepackage{hyperref}` no longer warns "recognised but not
+    /// implemented": that wording says the *text* may be wrong, and it is
+    /// not — pdflatex sets `fixtures/real-world/hyperref-toc` identically
+    /// with and without hyperref (1062 words, 4 pages, 0 moved). What is
+    /// genuinely missing (the link annotations) keeps its own diagnostic.
+    /// `backref`/`pagebackref` add bibliography text and still warn.
+    #[test]
+    fn hyperref_is_accepted_with_its_annotation_options_but_not_with_backref() {
+        let doc = |options: &str| {
+            format!(
+                "\\documentclass{{article}}\\usepackage{options}{{hyperref}}\
+                 \\begin{{document}}x\\end{{document}}"
+            )
+        };
+        for options in ["", "[colorlinks]", "[hidelinks,breaklinks,unicode]", "[bookmarks=false]"] {
+            let parsed = parse(&doc(options));
+            assert!(
+                !parsed.diagnostics.iter().any(|d| d.message.contains("hyperref are recognised")),
+                "hyperref{options} must not warn: {:?}",
+                parsed.diagnostics
+            );
+        }
+        for options in ["[backref]", "[pagebackref]"] {
+            let parsed = parse(&doc(options));
+            assert!(
+                parsed.diagnostics.iter().any(|d| d.message.contains("hyperref are recognised")),
+                "hyperref{options} adds bibliography text and must keep warning: {:?}",
+                parsed.diagnostics
+            );
+        }
     }
 
     #[test]
@@ -7900,6 +8803,17 @@ mod tests {
         );
     }
 
+    /// Runs of a URL, ignoring the kerns (see `url_runs_and_kerns` for those).
+    fn url_runs(text: &str) -> Vec<&str> {
+        url_pieces(text)
+            .into_iter()
+            .filter_map(|p| match p {
+                UrlPiece::Run(run) => Some(run),
+                UrlPiece::HyphenKern => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn url_segments_break_after_but_not_before_the_delimiter() {
         // Adjacent break characters (the `//` in `http://`) each end their
@@ -7907,11 +8821,81 @@ mod tests {
         // glues consecutive zero-`space_before` runs back together whenever
         // they fit on the line.
         assert_eq!(
-            url_segments("http://ex.com/a/b.c?d&e"),
-            ["http:/", "/", "ex.", "com/", "a/", "b.", "c?", "d&", "e"]
+            url_runs("http://ex.com/a/b.c?d&e"),
+            ["http:", "/", "/", "ex.", "com/", "a/", "b.", "c?", "d&", "e"]
         );
-        assert_eq!(url_segments("plain"), ["plain"]);
-        assert!(url_segments("").is_empty());
+        assert_eq!(url_runs("plain"), ["plain"]);
+        assert!(url_pieces("").is_empty());
+    }
+
+    /// url.sty's break set, measured with pdflatex (TeX Live 2025, 11pt
+    /// `article`, T1): `\url{xxxxxxxx<c>xxxxxxxx}` in a 56pt `minipage`,
+    /// where the only possible break is right after `<c>`, gives two lines
+    /// for `/ . ? & # = + : _ , ; ! | > ) ] ' @` and one overfull line for
+    /// `- ~ * $`. The hyphen is the one that matters in practice: url.sty
+    /// refuses to break there so a URL's own hyphen cannot be read as
+    /// hyphenation, and puts a 0.5pt kern there instead.
+    #[test]
+    fn url_runs_and_kerns() {
+        for c in "/.?&#=+:_,;!|>)]'@".chars() {
+            let text = format!("aa{c}bb");
+            assert_eq!(
+                url_runs(&text),
+                [format!("aa{c}"), "bb".to_string()],
+                "url.sty breaks after {c:?}"
+            );
+            assert!(
+                !url_pieces(&text).contains(&UrlPiece::HyphenKern),
+                "only a hyphen takes a kern, not {c:?}"
+            );
+        }
+        for c in "~*$".chars() {
+            let text = format!("aa{c}bb");
+            assert_eq!(url_runs(&text), [text.as_str()], "url.sty does not break after {c:?}");
+        }
+        // A hyphen ends a run only so the kern has a place; it is not a break.
+        assert_eq!(
+            url_pieces("a-b-c"),
+            [
+                UrlPiece::Run("a-"),
+                UrlPiece::HyphenKern,
+                UrlPiece::Run("b-"),
+                UrlPiece::HyphenKern,
+                UrlPiece::Run("c"),
+            ]
+        );
+        // The runs always reproduce the argument exactly.
+        for text in ["a-b", "http://e.org/a-b/c.d", "-", "--", "a-"] {
+            assert_eq!(url_runs(text).concat(), text, "runs must reconstruct {text:?}");
+        }
+    }
+
+    /// `\url{a-b}` is 17.47511pt where `\texttt{a-b}` is 16.97511pt
+    /// (pdflatex, TeX Live 2025, 11pt `article`, T1): url.sty puts a 0.5pt
+    /// kern after every hyphen, and `\url{a-b-c}` is a full 1.0pt wider
+    /// than its `\texttt` for the same reason.
+    #[test]
+    fn a_url_hyphen_carries_the_half_point_kern_url_sty_puts_there() {
+        let (parsed, _items) = items(r"\url{a-b}");
+        let kerns: Vec<&crate::text_builtins::TextDimen> = parsed
+            .blocks
+            .iter()
+            .flat_map(|block| match block {
+                Block::Paragraph(content) => content.iter().collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .filter_map(|inline| match inline {
+                Inline::Kern { amount, .. } => Some(amount),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kerns.len(), 1, "one kern per hyphen: {:?}", parsed.blocks);
+        assert_eq!(kerns[0].integer, 0);
+        assert_eq!(kerns[0].frac, vec![5]);
+        assert_eq!(
+            kerns[0].unit,
+            crate::text_builtins::DimenUnit::Physical(crate::text_builtins::PhysicalUnit::Pt)
+        );
     }
 
     #[test]

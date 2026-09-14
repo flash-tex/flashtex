@@ -21,6 +21,21 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  # The Mac app's bundled command inventory must stay byte-identical to the
+  # compiler's. That gate lived only in `mac-app` below, on a macOS runner --
+  # and macOS runners queue for hours behind ~90 branches, so in practice a
+  # compiler PR could drift the inventory and nothing would say so until
+  # someone ran the Mac suite by hand. It is a sha256 comparison of two files;
+  # it does not need a Mac.
+  inventory:
+    name: bundled inventory matches the compiler
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Completion vocabulary is the compiler's inventory
+        run: apps/mac/scripts/sync-supported-latex.sh --check
+
   rust:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

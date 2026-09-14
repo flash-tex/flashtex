@@ -156,7 +156,8 @@ enum EditorIntelligence {
     /// command name (ShellModel.definitionSummary); shown as a peek under
     /// the standard documentation.
     static func quickInfo(in text: NSString, at utf16: Int, marks: [EditorDiagnostics.Mark] = [],
-                          highlighter: SyntaxHighlighter? = nil, userDefinition: (String) -> String? = { _ in nil }) -> QuickInfo? {
+                          highlighter: SyntaxHighlighter? = nil, userDefinition: (String) -> String? = { _ in nil },
+                          context: HoverContext = .init()) -> QuickInfo? {
         let hits = marks.filter { NSLocationInRange(utf16, $0.nsRange) }
         let diagnostics = hits.map { m in
             QuickInfo.Diagnostic(severity: m.severity, message: m.message,
@@ -173,13 +174,39 @@ enum EditorIntelligence {
             let isLabel = command == "label"
             let isCite = CommandDocs.citationCommands.contains(command)
             let detail = isLabel ? "Label" : isCite ? "Citation key" : "Label reference"
-            let doc = isLabel ? "Referenced with \\ref{\(key)}; ⌘-click a reference to come back here."
-                : isCite ? "⌘-click to go to the bibliography entry." : "⌘-click to go to \\label{\(key)}."
-            return QuickInfo(title: key, detail: detail, documentation: doc, diagnostics: diagnostics, range: range)
+            // What the key points at, resolved from the buffer and the other
+            // open documents (EditorHoverResolution.swift), above the
+            // navigation hint — which is the part the reader already knew.
+            var lines: [String] = []
+            if isCite {
+                if let entry = bibliographyEntry(forKey: key, in: text as String, context: context) {
+                    lines.append(entry.summary)
+                    if let path = entry.path { lines.append("in " + path) }
+                } else {
+                    lines.append("No bibliography entry found for this key.")
+                }
+                lines.append("⌘-click to go to the bibliography entry.")
+            } else if isLabel {
+                lines.append("Referenced with \\ref{\(key)}; ⌘-click a reference to come back here.")
+            } else {
+                if let target = labelTarget(forKey: key, in: text as String, context: context) {
+                    lines.append(target.summary)
+                } else {
+                    lines.append("No \\label{\(key)} in this document or the open ones.")
+                }
+                lines.append("⌘-click to go to \\label{\(key)}.")
+            }
+            return QuickInfo(title: key, detail: detail, documentation: lines.joined(separator: "\n"),
+                             diagnostics: diagnostics, range: range)
         case .file(let command, let path, let range)?:
             let detail = command == "includegraphics" ? "Graphics file" : ["usepackage", "RequirePackage"].contains(command) ? "Package"
                 : command == "documentclass" ? "Document class" : "Input file"
-            let doc = ["input", "include", "subfile", "import", "subimport"].contains(command) ? "⌘-click to open the file." : nil
+            var doc: String?
+            if command == "includegraphics" {
+                doc = resolveGraphics(path, in: text as String, context: context).summary
+            } else if ["input", "include", "subfile", "import", "subimport"].contains(command) {
+                doc = "⌘-click to open the file."
+            }
             return QuickInfo(title: path, detail: detail, documentation: doc, diagnostics: diagnostics, range: range)
         case .environment(let name, let range)?:
             return QuickInfo(title: name, detail: "Environment", documentation: CommandDocs.environmentDocumentation(for: name),
@@ -397,7 +424,7 @@ enum EditorIntelligence {
         /// `CompletionTests.testCommandDocsNameOnlyKnownCommands`), and a
         /// name listed here must leave the list once the compiler renders it.
         static let beyondCompiler: Set<String> = [
-            "chapter", "part", "paragraph", "autoref", "cref", "citep", "citet",
+            "chapter", "part", "paragraph", "autoref", "cref",
             "def", "newline", "hline", "toprule", "midrule",
             "bottomrule", "multicolumn", "verb", "%", "$", "&", "#", "_", "{", "}",
             "geometry", "onehalfspacing", "doublespacing",

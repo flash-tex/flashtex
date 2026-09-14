@@ -12,14 +12,13 @@
 //! evidence (main f261b36c) found: `a b` advanced by rm-lmr12 slot 32,
 //! `\{x\}` by OT1 slots 123/125, `ffi` as three glyphs.
 //!
-//! math-layout has no nucleus for a pre-typeset box, so a run enters the
-//! layout as `Nucleus::Text(handle)` whose single placeholder character
-//! reports the run's exact width/height/depth through
+//! math-layout has no nucleus for a pre-typeset box, so text, grids and boxed
+//! math enter the layout as `Nucleus::Text(handle)` whose single placeholder
+//! character reports the exact width/height/depth through
 //! [`MathFontMetrics::text_glyph`]; after layout the placeholder glyph box
-//! is replaced by the shaped hbox (identical metrics ⇒ identical Appendix G
-//! spacing and script placement). Handles are Supplementary Private Use
-//! Area-A characters and never reach the display list. The proper API —
-//! `Nucleus::HBox(MathBox)` — is requested from math-layout in the handoff.
+//! is replaced by the shaped or framed hbox (identical metrics ⇒ identical
+//! Appendix G spacing and script placement). Handles are Supplementary
+//! Private Use Area-A characters and never reach the display list.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -92,6 +91,8 @@ pub struct TextSink {
     /// [`TextSink::grid_atom`]); each reserves a handle (an empty entry of
     /// `texts`).
     pub grids: Vec<GridCells>,
+    /// `\boxed` bodies set as framed boxes inside the formula.
+    pub(crate) frames: Vec<FrameBoxSpec>,
     /// The document's body font size in pt (`\f@size`), for size-dependent
     /// kerns such as amsmath's `\ex@`; 0 when unknown.
     pub body_size_pt: f64,
@@ -129,6 +130,16 @@ pub struct GridCells {
     pub span: flashtex_compiler::Span,
 }
 
+/// A `\boxed` body converted to a math-layout list. It is always laid out in
+/// display style, as amsmath defines `\boxed{#1}` through `\fbox{...$\displaystyle#1$}`.
+#[derive(Debug, Clone)]
+pub(crate) struct FrameBoxSpec {
+    /// Index of the handle character (as for [`GridCells`]).
+    handle: usize,
+    body: ml::MathList,
+    tag: ml::SourceTag,
+}
+
 /// A [`GridCells`] with its environment spec resolved from the source.
 #[derive(Debug, Clone)]
 pub struct NestedGrid {
@@ -146,9 +157,21 @@ pub struct GridBox {
     pub hbox: ml::MathBox,
 }
 
+/// A framed body laid out at one parent size: substituted for its placeholder
+/// after the parent formula has been laid out.
+#[derive(Debug, Clone)]
+pub(crate) struct FrameBox {
+    ch: char,
+    size: f64,
+    hbox: ml::MathBox,
+}
+
 /// `font_id` of a nested grid's placeholder glyph (never drawn: every one
 /// is replaced by [`substitute_grids`]).
 pub const GRID_FONT_ID: u32 = RUN_FONT_BASE - 1;
+
+/// `font_id` of a `\boxed` placeholder glyph (never emitted).
+const FRAME_FONT_ID: u32 = RUN_FONT_BASE - 2;
 
 impl TextSink {
     /// Text-font quad / math quad, 1 when unknown.
@@ -171,11 +194,30 @@ impl TextSink {
                     span,
                 });
                 self.texts.push(String::new());
+                self.keys.push(None);
                 ml::Atom::new(class, ml::Nucleus::Text(handle.to_string()))
             }
             None => {
                 self.refused.push("\\begin{...} grid".to_string());
                 ml::Atom::new(class, ml::Nucleus::Empty)
+            }
+        }
+    }
+
+    /// An `Ord` atom for a `\boxed` body; the frame is built after its body is
+    /// laid out in display style through the existing placeholder seam.
+    pub(crate) fn frame_atom(&mut self, body: ml::MathList, tag: ml::SourceTag) -> ml::Atom {
+        let index = self.texts.len();
+        match handle_char(index) {
+            Some(handle) => {
+                self.frames.push(FrameBoxSpec { handle: index, body, tag });
+                self.texts.push(String::new());
+                self.keys.push(None);
+                ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Text(handle.to_string()))
+            }
+            None => {
+                self.refused.push("\\boxed{...}".to_string());
+                ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Empty)
             }
         }
     }
@@ -306,6 +348,9 @@ pub struct TextRunMetrics<'a> {
     grids: &'a [NestedGrid],
     grid_boxes: RefCell<Vec<GridBox>>,
     grid_limitations: RefCell<Vec<ml::Limitation>>,
+    frames: &'a [FrameBoxSpec],
+    frame_boxes: RefCell<Vec<FrameBox>>,
+    frame_limitations: RefCell<Vec<ml::Limitation>>,
 }
 
 impl<'a> TextRunMetrics<'a> {
@@ -331,6 +376,9 @@ impl<'a> TextRunMetrics<'a> {
             grids: &[],
             grid_boxes: RefCell::new(Vec::new()),
             grid_limitations: RefCell::new(Vec::new()),
+            frames: &[],
+            frame_boxes: RefCell::new(Vec::new()),
+            frame_limitations: RefCell::new(Vec::new()),
         }
     }
 
@@ -340,10 +388,21 @@ impl<'a> TextRunMetrics<'a> {
         self
     }
 
+    pub(crate) fn with_frames(mut self, frames: &'a [FrameBoxSpec]) -> TextRunMetrics<'a> {
+        self.frames = frames;
+        self
+    }
+
     /// The nested grid boxes laid out so far (for [`substitute_grids`]) and
     /// the limitations met inside their cells and fences.
     pub fn take_grids(&self) -> (Vec<GridBox>, Vec<ml::Limitation>) {
         (self.grid_boxes.take(), self.grid_limitations.take())
+    }
+
+    /// The framed boxes laid out so far and limitations met inside their
+    /// display-style bodies.
+    pub(crate) fn take_frames(&self) -> (Vec<FrameBox>, Vec<ml::Limitation>) {
+        (self.frame_boxes.take(), self.frame_limitations.take())
     }
 
     /// Lays out `grid` at `size` (cached per handle and size): each cell a
@@ -414,6 +473,21 @@ impl<'a> TextRunMetrics<'a> {
         let dims = (hbox.width, hbox.height, hbox.depth);
         self.grid_limitations.borrow_mut().extend(limitations);
         self.grid_boxes.borrow_mut().push(GridBox { ch, size: p.size, hbox });
+        dims
+    }
+
+    /// Lays out a `\boxed` body in display style and wraps it in the standard
+    /// `\fbox` frame. The result is cached per placeholder and parent size.
+    fn frame_box(&self, frame: &FrameBoxSpec, ch: char, size: SizeClass) -> (f64, f64, f64) {
+        let p = self.inner.params(size);
+        if let Some(b) = self.frame_boxes.borrow().iter().find(|b| b.ch == ch && b.size == p.size) {
+            return (b.hbox.width, b.hbox.height, b.hbox.depth);
+        }
+        let laid = ml::layout_with_report(&frame.body, ml::Style::DISPLAY, self);
+        self.frame_limitations.borrow_mut().extend(laid.limitations);
+        let hbox = framed_math_box(laid.root, frame.tag);
+        let dims = (hbox.width, hbox.height, hbox.depth);
+        self.frame_boxes.borrow_mut().push(FrameBox { ch, size: p.size, hbox });
         dims
     }
 
@@ -501,6 +575,20 @@ impl MathFontMetrics for TextRunMetrics<'_> {
                 skew: 0.0,
             });
         }
+        if let Some(frame) = self.frames.iter().find(|f| f.handle == text_index) {
+            let (width, height, depth) = self.frame_box(frame, ch, size);
+            return Some(Glyph {
+                font_id: MathFontId(FRAME_FONT_ID),
+                gid: 0,
+                ch,
+                size: at,
+                width,
+                height,
+                depth,
+                italic: 0.0,
+                skew: 0.0,
+            });
+        }
         let i = self.run_for(text_index, at)?;
         let runs = self.runs.borrow();
         let run = &runs[i];
@@ -527,30 +615,82 @@ pub fn abbreviate(text: &str) -> String {
     s
 }
 
-/// Replaces every nested grid placeholder in `root` by its box, then the
-/// grids nested in that box's cells. Run [`substitute`] afterwards for the
-/// `\text` runs inside the grids.
-pub fn substitute_grids(root: &mut ml::MathBox, grids: &[GridBox]) {
-    if grids.is_empty() {
-        return;
+/// `\fbox` geometry used by amsmath's `\boxed`: 3pt separation and a 0.4pt
+/// rule on every side. Side rules overlap the horizontal rules by half their
+/// thickness, matching the existing color-box display-list geometry.
+fn framed_math_box(body: ml::MathBox, tag: ml::SourceTag) -> ml::MathBox {
+    const SEP: f64 = 3.0;
+    const RULE: f64 = 0.4;
+    let inset = SEP + RULE;
+    let width = body.width + 2.0 * inset;
+    let height = body.height + inset;
+    let depth = body.depth + inset;
+    let side_height = height + depth - RULE;
+    let side_dy = depth - RULE / 2.0;
+    let rule = |width, height| ml::MathBox::rule(width, height, 0.0).with_tag(tag);
+    ml::MathBox {
+        kind: ml::BoxKind::HBox(vec![
+            ml::Child {
+                dx: inset,
+                dy: 0.0,
+                content: body,
+            },
+            ml::Child {
+                dx: 0.0,
+                dy: -height + RULE,
+                content: rule(width, RULE),
+            },
+            ml::Child {
+                dx: 0.0,
+                dy: side_dy,
+                content: rule(RULE, side_height),
+            },
+            ml::Child {
+                dx: width - RULE,
+                dy: side_dy,
+                content: rule(RULE, side_height),
+            },
+            ml::Child {
+                dx: 0.0,
+                dy: depth,
+                content: rule(width, RULE),
+            },
+        ]),
+        width,
+        height,
+        depth,
+        tag: ml::SourceTag::NONE,
     }
+}
+
+/// Replaces nested grid and framed-box placeholders in `root` by their boxes,
+/// including handles nested in a substituted box. Run [`substitute`]
+/// afterwards for the `\text` runs inside them.
+pub(crate) fn substitute_math_boxes(root: &mut ml::MathBox, grids: &[GridBox], frames: &[FrameBox]) {
     let found = match &root.kind {
-        ml::BoxKind::Glyph { ch, size, .. } => grids.iter().find(|b| b.ch == *ch && b.size == *size),
+        ml::BoxKind::Glyph { ch, size, .. } => grids
+            .iter()
+            .find(|b| b.ch == *ch && b.size == *size)
+            .map(|b| &b.hbox)
+            .or_else(|| frames.iter().find(|b| b.ch == *ch && b.size == *size).map(|b| &b.hbox)),
         _ => None,
     };
-    if let Some(b) = found {
-        // The grid's fences and rules belong to the grid environment.
+    if let Some(hbox) = found {
         #[cfg(feature = "math-glyph-spans")]
         let tag = root.tag;
-        *root = b.hbox.clone();
+        *root = hbox.clone();
         #[cfg(feature = "math-glyph-spans")]
         root.inherit_tag(tag);
     }
     if let ml::BoxKind::HBox(children) | ml::BoxKind::VBox(children) = &mut root.kind {
         for c in children {
-            substitute_grids(&mut c.content, grids);
+            substitute_math_boxes(&mut c.content, grids, frames);
         }
     }
+}
+
+pub fn substitute_grids(root: &mut ml::MathBox, grids: &[GridBox]) {
+    substitute_math_boxes(root, grids, &[]);
 }
 
 /// Replaces every placeholder glyph box in `root` by its shaped hbox.
