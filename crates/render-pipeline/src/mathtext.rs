@@ -92,7 +92,7 @@ pub struct TextSink {
     /// `texts`).
     pub grids: Vec<GridCells>,
     /// `\boxed` bodies set as framed boxes inside the formula.
-    pub frames: Vec<FrameBoxSpec>,
+    pub(crate) frames: Vec<FrameBoxSpec>,
     /// The document's body font size in pt (`\f@size`), for size-dependent
     /// kerns such as amsmath's `\ex@`; 0 when unknown.
     pub body_size_pt: f64,
@@ -133,11 +133,11 @@ pub struct GridCells {
 /// A `\boxed` body converted to a math-layout list. It is always laid out in
 /// display style, as amsmath defines `\boxed{#1}` through `\fbox{...$\displaystyle#1$}`.
 #[derive(Debug, Clone)]
-pub struct FrameBoxSpec {
+pub(crate) struct FrameBoxSpec {
     /// Index of the handle character (as for [`GridCells`]).
-    pub handle: usize,
-    pub body: ml::MathList,
-    pub tag: ml::SourceTag,
+    handle: usize,
+    body: ml::MathList,
+    tag: ml::SourceTag,
 }
 
 /// A [`GridCells`] with its environment spec resolved from the source.
@@ -160,10 +160,10 @@ pub struct GridBox {
 /// A framed body laid out at one parent size: substituted for its placeholder
 /// after the parent formula has been laid out.
 #[derive(Debug, Clone)]
-pub struct FrameBox {
-    pub ch: char,
-    pub size: f64,
-    pub hbox: ml::MathBox,
+pub(crate) struct FrameBox {
+    ch: char,
+    size: f64,
+    hbox: ml::MathBox,
 }
 
 /// `font_id` of a nested grid's placeholder glyph (never drawn: every one
@@ -171,7 +171,7 @@ pub struct FrameBox {
 pub const GRID_FONT_ID: u32 = RUN_FONT_BASE - 1;
 
 /// `font_id` of a `\boxed` placeholder glyph (never emitted).
-pub const FRAME_FONT_ID: u32 = RUN_FONT_BASE - 2;
+const FRAME_FONT_ID: u32 = RUN_FONT_BASE - 2;
 
 impl TextSink {
     /// Text-font quad / math quad, 1 when unknown.
@@ -194,6 +194,7 @@ impl TextSink {
                     span,
                 });
                 self.texts.push(String::new());
+                self.keys.push(None);
                 ml::Atom::new(class, ml::Nucleus::Text(handle.to_string()))
             }
             None => {
@@ -205,12 +206,13 @@ impl TextSink {
 
     /// An `Ord` atom for a `\boxed` body; the frame is built after its body is
     /// laid out in display style through the existing placeholder seam.
-    pub fn frame_atom(&mut self, body: ml::MathList, tag: ml::SourceTag) -> ml::Atom {
+    pub(crate) fn frame_atom(&mut self, body: ml::MathList, tag: ml::SourceTag) -> ml::Atom {
         let index = self.texts.len();
         match handle_char(index) {
             Some(handle) => {
                 self.frames.push(FrameBoxSpec { handle: index, body, tag });
                 self.texts.push(String::new());
+                self.keys.push(None);
                 ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Text(handle.to_string()))
             }
             None => {
@@ -386,7 +388,7 @@ impl<'a> TextRunMetrics<'a> {
         self
     }
 
-    pub fn with_frames(mut self, frames: &'a [FrameBoxSpec]) -> TextRunMetrics<'a> {
+    pub(crate) fn with_frames(mut self, frames: &'a [FrameBoxSpec]) -> TextRunMetrics<'a> {
         self.frames = frames;
         self
     }
@@ -399,7 +401,7 @@ impl<'a> TextRunMetrics<'a> {
 
     /// The framed boxes laid out so far and limitations met inside their
     /// display-style bodies.
-    pub fn take_frames(&self) -> (Vec<FrameBox>, Vec<ml::Limitation>) {
+    pub(crate) fn take_frames(&self) -> (Vec<FrameBox>, Vec<ml::Limitation>) {
         (self.frame_boxes.take(), self.frame_limitations.take())
     }
 
@@ -664,7 +666,7 @@ fn framed_math_box(body: ml::MathBox, tag: ml::SourceTag) -> ml::MathBox {
 /// Replaces nested grid and framed-box placeholders in `root` by their boxes,
 /// including handles nested in a substituted box. Run [`substitute`]
 /// afterwards for the `\text` runs inside them.
-pub fn substitute_math_boxes(root: &mut ml::MathBox, grids: &[GridBox], frames: &[FrameBox]) {
+pub(crate) fn substitute_math_boxes(root: &mut ml::MathBox, grids: &[GridBox], frames: &[FrameBox]) {
     let found = match &root.kind {
         ml::BoxKind::Glyph { ch, size, .. } => grids
             .iter()
