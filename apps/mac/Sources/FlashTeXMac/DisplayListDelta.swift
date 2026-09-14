@@ -35,7 +35,9 @@ enum DisplayListDelta {
     static var v2OnlyEnabled: Bool { ProcessInfo.processInfo.environment["FLASHTEX_DISPLAY_V2_ONLY"] != "0" }
     /// The per-request capabilities (never part of the mode set
     /// `requestedLayoutCapabilities`; echoed only on replies that honour them).
-    static let perRequestCapabilities: Set<String> = [capability, v2OnlyCapability]
+    /// `display-list-v2-compact` is one too: the producer echoes it only on a
+    /// reply that carries a sibling, and its absence is never a missing mode.
+    static let perRequestCapabilities: Set<String> = [capability, v2OnlyCapability, DisplayListCompact.capability]
     static func stripPerRequest(_ caps: [String]) -> [String] { caps.filter { !perRequestCapabilities.contains($0) } }
 
     // MARK: dl2-canon-1
@@ -198,7 +200,13 @@ enum DisplayListDelta {
 
     /// Exact byte length of `relocatePage(p)` from the cached length of `p`: only the
     /// decimal width of moved offsets changes. Checked arithmetic; nil on invalid/overflow.
-    static func relocatedPageBytes(_ p: RenderingV2.Page, cached: Int, _ relocs: [Relocation]) -> Int? {
+    ///
+    /// `compact` (`display-list-v2-compact`): a glyph run's per-cluster offsets are
+    /// chain deltas, invariant under relocation (the producer sends a page whose run
+    /// straddles the edit as changed); the absolute numbers that move are the
+    /// run-level span (`DisplayListCompact.runSpan`) and the ranges of the run's
+    /// explicit clusters. Other items are unchanged.
+    static func relocatedPageBytes(_ p: RenderingV2.Page, cached: Int, _ relocs: [Relocation], compact: Bool = false) -> Int? {
         let by = Dictionary(relocs.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
         var delta = 0
         func visit(_ sources: [RenderingV2.SourceRange]?) -> Bool {
@@ -211,7 +219,20 @@ enum DisplayListDelta {
         }
         for it in p.items {
             switch it {
-            case .glyphRun(let r): for c in r.clusters where !visit(c.sources) { return nil }
+            case .glyphRun(let r):
+                if compact {
+                    if let span = DisplayListCompact.runSpan(r) {
+                        // The span moves with its clusters: relocate its extreme
+                        // ranges as ranges (the same rule the producer's model uses).
+                        let s = RenderingV2.SourceRange(path: span.path, startByte: span.start, endByte: span.end)
+                        guard visit([s]) else { return nil }
+                        for c in r.clusters where !DisplayListCompact.isImplicit(c, runPath: span.path) { guard visit(c.sources) else { return nil } }
+                    } else {
+                        for c in r.clusters { guard visit(c.sources) else { return nil } }
+                    }
+                } else {
+                    for c in r.clusters where !visit(c.sources) { return nil }
+                }
             case .rule(let r): if !visit(r.sources) { return nil }
             case .image(let i): if !visit(i.sources) { return nil }
             case .path(let p): if !visit(p.sources) { return nil }
@@ -231,9 +252,15 @@ enum DisplayListDelta {
         return template.utf8.count
     }()
 
+    /// `frameConstantBytes` for a line in the given cluster encoding: the compact
+    /// encoding's `cluster_encoding` key is part of the fixed framing.
+    static func frameConstantBytes(clusterEncoding: String?) -> Int {
+        frameConstantBytes + (clusterEncoding == nil ? 0 : DisplayListCompact.encodingKeyBytes)
+    }
+
     /// `F + H + Σ page_bytes + max(N − 1, 0)`, checked; nil on overflow.
-    static func fullLineBytes(raw: RenderingV2Fast.DeltaEnvelope.RawParts, pageBytes: [Int]) -> Int? {
-        var total = frameConstantBytes
+    static func fullLineBytes(raw: RenderingV2Fast.DeltaEnvelope.RawParts, pageBytes: [Int], clusterEncoding: String? = nil) -> Int? {
+        var total = frameConstantBytes(clusterEncoding: clusterEncoding)
         for part in [raw.id, raw.projectId, raw.revision, raw.requiredFeatures, raw.documents, raw.fonts, raw.diagnostics, max(pageBytes.count - 1, 0)] {
             let (t, o) = total.addingReportingOverflow(part); guard !o else { return nil }; total = t
         }
@@ -280,6 +307,8 @@ enum DisplayListDelta {
         case relocationInvalid(page: Int)
         case digestMismatch(page: Int)
         case listDigestMismatch
+        /// `display-list-v2-compact`: the delta's `cluster_encoding` is not the installed base's.
+        case encodingMismatch(String)
         var code: String {
             switch self {
             case .unsolicited: return "delta_unsolicited"
@@ -292,11 +321,12 @@ enum DisplayListDelta {
             case .relocationInvalid: return "delta_relocation_invalid"
             case .digestMismatch: return "delta_digest_mismatch"
             case .listDigestMismatch: return "delta_list_digest_mismatch"
+            case .encodingMismatch: return "delta_encoding_mismatch"
             }
         }
         var description: String {
             switch self {
-            case .unsolicited(let m), .unsupportedScheme(let m), .baseMismatch(let m), .pageCount(let m), .removedPages(let m): return "\(code): \(m)"
+            case .unsolicited(let m), .unsupportedScheme(let m), .baseMismatch(let m), .pageCount(let m), .removedPages(let m), .encodingMismatch(let m): return "\(code): \(m)"
             case .pageBytesMismatch(let p, let w, let c): return "\(code): page \(p) wire page_bytes \(w) != computed \(c)"
             case .targetOversize(let b, let c): return "\(code): reconstructed size \(b) bytes over the cap \(c)"
             case .relocationInvalid(let p): return "\(code): page \(p)"
@@ -312,6 +342,15 @@ enum DisplayListDelta {
     /// caller runs the unchanged full validation (`V2Frame.prepare`) on it.
     static func apply(_ d: RenderingV2Fast.DeltaEnvelope, to installed: Installed, cap: Int = maxSnapshotBytes) throws -> (envelope: RenderingV2.Envelope, pageBytes: [Int], targetBytes: Int) {
         guard d.digestScheme == digestScheme else { throw Refusal.unsupportedScheme(d.digestScheme) }
+        // display-list-v2-compact: a delta is applied only in the encoding its base
+        // was installed in (the producer keys its snapshot on the same wire options;
+        // the exact page_bytes arithmetic below differs between the encodings).
+        let encoding = installed.list.clusterEncoding
+        guard d.clusterEncoding == encoding else {
+            throw Refusal.encodingMismatch("delta cluster_encoding \(d.clusterEncoding ?? "full") but the installed base is \(encoding ?? "full")")
+        }
+        if let encoding, !DisplayListCompact.knownEncodings.contains(encoding) { throw Refusal.encodingMismatch("unknown cluster_encoding \(encoding)") }
+        let compact = encoding != nil
         let ack = installed.acknowledgement
         guard d.base.requestId == ack.requestId, d.base.projectId == ack.projectId, d.base.revision == ack.revision,
               d.base.pageCount == ack.pageCount, d.base.listDigest == ack.listDigest else {
@@ -338,11 +377,11 @@ enum DisplayListDelta {
             if let cp = changedIndex[i] {
                 guard cp.wireBytes == d.pageBytes[i] else { throw Refusal.pageBytesMismatch(page: i + 1, wire: d.pageBytes[i], computed: cp.wireBytes) }
             } else {
-                guard let got = relocatedPageBytes(installed.list.pages[i], cached: installed.pageBytes[i], d.relocations) else { throw Refusal.relocationInvalid(page: i + 1) }
+                guard let got = relocatedPageBytes(installed.list.pages[i], cached: installed.pageBytes[i], d.relocations, compact: compact) else { throw Refusal.relocationInvalid(page: i + 1) }
                 guard got == d.pageBytes[i] else { throw Refusal.pageBytesMismatch(page: i + 1, wire: d.pageBytes[i], computed: got) }
             }
         }
-        guard let target = fullLineBytes(raw: d.raw, pageBytes: d.pageBytes) else { throw Refusal.targetOversize(bytes: Int.max, cap: cap) }
+        guard let target = fullLineBytes(raw: d.raw, pageBytes: d.pageBytes, clusterEncoding: encoding) else { throw Refusal.targetOversize(bytes: Int.max, cap: cap) }
         guard target <= cap, n <= maxSnapshotPages else { throw Refusal.targetOversize(bytes: target, cap: cap) }
         // --- reconstruction ---
         var pages: [RenderingV2.Page] = []
@@ -363,7 +402,7 @@ enum DisplayListDelta {
         let list = RenderingV2.DisplayList(renderFormat: d.renderFormat, coordinateUnit: d.coordinateUnit, colorSpace: d.colorSpace,
                                            textExtraction: d.textExtraction, projectId: d.projectId, revision: d.revision,
                                            requiredFeatures: d.requiredFeatures, documents: d.documents, fonts: d.fonts,
-                                           pages: pages, diagnostics: d.diagnostics)
+                                           pages: pages, diagnostics: d.diagnostics, clusterEncoding: d.clusterEncoding)
         guard hex(listDigest(list, pageDigests: digests)) == d.listDigest else { throw Refusal.listDigestMismatch }
         return (RenderingV2.Envelope(protocolVersion: d.protocolVersion, id: d.id, type: RenderingV2.messageType, payload: list), d.pageBytes, target)
     }

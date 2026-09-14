@@ -396,7 +396,13 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
     for (b, n) in bi.into_iter().zip(ni) {
         let ok = match (b, n) {
             (Item::GlyphRun(x), Item::GlyphRun(y)) => {
-                x.font_id == y.font_id
+                // Under the compact encoding the per-cluster digit arithmetic
+                // is replaced by the run-level rule of `display_list_compact`
+                // (the chain deltas are invariant; only the run span and
+                // explicit ranges move), so the clusters are compared without
+                // counting and the run's delta is added afterwards.
+                let mut cluster_width = 0isize;
+                let same = x.font_id == y.font_id
                     && x.font_size == y.font_size
                     && x.text == y.text
                     && x.glyphs == y.glyphs
@@ -407,8 +413,20 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
                             && c.text_end_byte == d.text_end_byte
                             && c.hit_rect == d.hit_rect
                             && c.carets == d.carets
-                            && provenance_matches(&c.provenance, &d.provenance, relocs, &mut width_delta)
-                    })
+                            && provenance_matches(&c.provenance, &d.provenance, relocs, &mut cluster_width)
+                    });
+                if same && wire.compact {
+                    // Whether a (valid) range of a relocated document moves: the
+                    // `apply` rule's second branch, with a zero delta moving nothing.
+                    let relocated = |r: &SourceRange| relocs.iter().find(|rl| *rl.path == *r.path).map(|rl| rl.delta != 0 && r.start_byte >= rl.edit_end && r.end_byte > rl.edit_start);
+                    match crate::display_list_compact::source_width_delta(x, y, &relocated) {
+                        Some(d) => width_delta += d,
+                        None => return None,
+                    }
+                } else {
+                    width_delta += cluster_width;
+                }
+                same
             }
             (Item::Rule(x), Item::Rule(y)) => {
                 x.x == y.x && x.top == y.top && x.width == y.width && x.height == y.height && x.paint == y.paint && provenance_matches(&x.provenance, &y.provenance, relocs, &mut width_delta)
@@ -655,7 +673,14 @@ pub fn try_delta(state: &DeltaState, id: &str, list: &DisplayList, wire: Wire, b
         }
         o.push_str(page);
     }
-    o.push_str("],\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":");
+    o.push_str("],");
+    if wire.compact {
+        // display-list-v2-compact: the changed pages above are compact, and
+        // the reconstructed list's payload carries the same key (sorted
+        // between `changed_pages` and `color_space`).
+        o.push_str(crate::display_list_compact::ENCODING_KEY_BYTES);
+    }
+    o.push_str("\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":");
     let mut header_len = 0;
     let start = o.len();
     display::write_diagnostics(&mut o, &list.diagnostics);
@@ -725,7 +750,7 @@ pub fn try_delta(state: &DeltaState, id: &str, list: &DisplayList, wire: Wire, b
     // The exact size of the full line this delta stands for (the consumer's
     // `fullLineBytes`): fixed framing + measured header parts + Σ page_bytes
     // + page separators.
-    let full_len = display::FULL_LINE_FRAME_BYTES + id_len + header_len + page_bytes.iter().sum::<usize>() + n.saturating_sub(1);
+    let full_len = display::full_line_frame_bytes(wire) + id_len + header_len + page_bytes.iter().sum::<usize>() + n.saturating_sub(1);
     if o.len() > limit || full_len > MAX_SNAPSHOT_BYTES || o.len() * SIZE_POLICY.1 > full_len * SIZE_POLICY.0 {
         return None;
     }

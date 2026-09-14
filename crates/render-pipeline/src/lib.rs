@@ -15,6 +15,7 @@ pub mod adapter;
 pub mod cff;
 pub mod delta;
 pub mod display;
+pub mod display_list_compact;
 pub mod floats;
 pub mod fonts;
 pub mod graphics;

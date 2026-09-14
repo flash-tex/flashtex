@@ -169,12 +169,14 @@ public struct RenderingV2Fast {
         var projectId: String?, revision: Int?, features: [String]?
         var documents: [RenderingV2.DocumentResource]?, fonts: [RenderingV2.FontResource]?
         var pages: [RenderingV2.Page]?, diagnostics: [RenderingV2.Diagnostic]?
+        var encoding: String?
         try object { key, p in
             switch key {
             case "render_format": renderFormat = try p.string()
             case "coordinate_unit": unit = try p.string()
             case "color_space": colorSpace = try p.string()
             case "text_extraction": extraction = try p.string()
+            case "cluster_encoding": encoding = try p.optionalString()
             case "project_id": projectId = try p.string()
             case "revision": revision = try p.int()
             case "required_features": features = try p.array { try $0.string() }
@@ -193,7 +195,7 @@ public struct RenderingV2Fast {
               let features, let documents, let fonts, let pages, let diagnostics else { throw err("missing display_list field") }
         return RenderingV2.DisplayList(renderFormat: renderFormat, coordinateUnit: unit, colorSpace: colorSpace, textExtraction: extraction,
                                        projectId: projectId, revision: revision, requiredFeatures: features, documents: documents,
-                                       fonts: fonts, pages: pages, diagnostics: diagnostics)
+                                       fonts: fonts, pages: pages, diagnostics: diagnostics, clusterEncoding: encoding)
     }
 
     private mutating func document() throws -> RenderingV2.DocumentResource {
@@ -327,6 +329,12 @@ public struct RenderingV2Fast {
         var sources: [RenderingV2.SourceRange]?, synthetic: String?
         var transform: [Double]?, image: RenderingV2.ImageResource?
         var fillRule: String?, stroke: RenderingV2.Stroke?, commands: [RenderingV2.PathCommand]?, clips: [RenderingV2.ClipPath]?
+        // display-list-v2-compact (DisplayListCompact.swift): a glyph run's
+        // clusters may be compact objects, resolved once the whole run is read
+        // (keys come in any order; the derivation needs the glyphs and the
+        // run-level fields). A run's `sources` is its compact span.
+        var compactClusters: [DisplayListCompact.RawCluster]?
+        var compactHeader = DisplayListCompact.RunHeader()
         let start = i
         try object { key, p in
             switch key {
@@ -341,7 +349,18 @@ public struct RenderingV2Fast {
             case "font_size": fontSize = try p.int64()
             case "text": text = try p.string()
             case "glyphs": glyphs = try p.array { try $0.glyph() }
-            case "clusters": clusters = try p.array { try $0.cluster() }
+            case "clusters":
+                var full: [RenderingV2.Cluster] = []
+                var compact: [DisplayListCompact.RawCluster] = []
+                _ = try p.array { q -> Bool in
+                    switch try q.clusterEither() {
+                    case .full(let c): full.append(c)
+                    case .compact(let c): compact.append(c)
+                    }
+                    return true
+                }
+                guard full.isEmpty || compact.isEmpty else { throw p.err("a glyph run mixes full and compact clusters") }
+                if compact.isEmpty { clusters = full } else { compactClusters = compact }
             case "paint": paint = try p.paint()
             case "x": x = try p.int64()
             case "top": top = try p.int64()
@@ -349,13 +368,35 @@ public struct RenderingV2Fast {
             case "height": height = try p.int64()
             case "sources": sources = try p.optionalArray { try $0.sourceRange() }
             case "synthetic_reason": synthetic = try p.optionalString()
+            case "hit_top": compactHeader.hitTop = try p.int64()
+            case "hit_height": compactHeader.hitHeight = try p.int64()
+            case "end_caret":
+                var tb: Int?, ex: Int64?
+                try p.object { k, q in
+                    switch k {
+                    case "text_byte": tb = try q.int()
+                    case "x": ex = try q.int64()
+                    default: try q.skip(depth: 5)
+                    }
+                }
+                guard let tb, let ex else { throw p.err("malformed end_caret") }
+                compactHeader.endCaret = (tb, ex)
             default: try p.skip(depth: 4)
             }
         }
         guard let kind else { throw Error(offset: start, message: "item without kind") }
         switch kind {
         case "glyph_run":
-            guard let fontId, let fontSize, let text, let glyphs, let clusters, let paint else { throw Error(offset: start, message: "missing glyph_run field") }
+            guard let fontId, let fontSize, let text, let glyphs, let paint else { throw Error(offset: start, message: "missing glyph_run field") }
+            if let compactClusters {
+                compactHeader.sources = sources
+                do {
+                    clusters = try DisplayListCompact.resolve(compactClusters, header: compactHeader, glyphs: glyphs, text: text)
+                } catch let e as DisplayListCompact.Error {
+                    throw Error(offset: start, message: e.description)
+                }
+            }
+            guard let clusters else { throw Error(offset: start, message: "missing glyph_run field") }
             return .glyphRun(RenderingV2.GlyphRun(fontId: fontId, fontSize: fontSize, text: text, glyphs: glyphs, clusters: clusters, paint: paint))
         case "rule":
             guard let x, let top, let width, let height, let paint else { throw Error(offset: start, message: "missing rule field") }
@@ -486,6 +527,15 @@ public struct RenderingV2Fast {
 
     private mutating func glyph() throws -> RenderingV2.Glyph {
         var gid: Int?, ox: Int64?, by: Int64?, ax: Int64?, ay: Int64?, cluster: Int?
+        ws()
+        if i < b.count, b[i] == 0x5B {
+            // Compact: `[gid, origin_x, baseline_y, advance_x, advance_y, cluster]`.
+            let start = i
+            let n = try array { try $0.int64() }
+            guard n.count == 6 else { throw Error(offset: start, message: "compact glyph needs 6 integers (found \(n.count))") }
+            guard let g = Int(exactly: n[0]), let c = Int(exactly: n[5]) else { throw Error(offset: start, message: "compact glyph gid/cluster out of range") }
+            return RenderingV2.Glyph(gid: g, originX: n[1], baselineY: n[2], advanceX: n[3], advanceY: n[4], cluster: c)
+        }
         try object { key, p in
             switch key {
             case "gid": gid = try p.int()
@@ -502,21 +552,65 @@ public struct RenderingV2Fast {
     }
 
     private mutating func cluster() throws -> RenderingV2.Cluster {
+        switch try clusterEither() {
+        case .full(let c): return c
+        case .compact: throw err("compact cluster outside a glyph run")
+        }
+    }
+
+    enum EitherCluster {
+        case full(RenderingV2.Cluster)
+        case compact(DisplayListCompact.RawCluster)
+    }
+
+    /// One cluster object: the full form when it carries `hit_rects`, else
+    /// the compact form of `display-list-v2-compact` (all fields optional,
+    /// resolved by the run reader).
+    private mutating func clusterEither() throws -> EitherCluster {
         var start: Int?, end: Int?, rects: [RenderingV2.Rect]?, carets: [RenderingV2.Caret]?
         var sources: [RenderingV2.SourceRange]?, synthetic: String?
+        var raw = DisplayListCompact.RawCluster()
+        var full = false
+        let at = i
         try object { key, p in
             switch key {
-            case "text_start_byte": start = try p.int()
-            case "text_end_byte": end = try p.int()
-            case "hit_rects": rects = try p.array { try $0.rect() }
-            case "carets": carets = try p.array { try $0.caret() }
+            case "text_start_byte": start = try p.int(); full = true
+            case "text_end_byte": end = try p.int(); full = true
+            case "hit_rects": rects = try p.array { try $0.rect() }; full = true
+            case "carets": carets = try p.array { try $0.caret() }; full = true
             case "sources": sources = try p.optionalArray { try $0.sourceRange() }
             case "synthetic_reason": synthetic = try p.optionalString()
+            case "c":
+                raw.carets = try p.array { q in
+                    let n = try q.array { try $0.int64() }
+                    guard n.count == 4, let tb = Int(exactly: n[0]) else { throw q.err("compact caret needs [text_byte, x, top, height]") }
+                    return RenderingV2.Caret(textByte: tb, x: n[1], top: n[2], height: n[3])
+                }
+            case "e": raw.sourceLength = try p.int()
+            case "h":
+                let n = try p.array { try $0.int64() }
+                guard n.count == 4 else { throw p.err("h needs [x, top, width, height]") }
+                raw.hitRect = RenderingV2.Rect(x: n[0], top: n[1], width: n[2], height: n[3])
+            case "hv":
+                let n = try p.array { try $0.int64() }
+                guard n.count == 2 else { throw p.err("hv needs [top, height]") }
+                raw.hitVertical = (n[0], n[1])
+            case "l": raw.textLength = try p.int()
+            case "s": raw.sourceDelta = try p.int()
+            case "ts": raw.textStart = try p.int()
             default: try p.skip(depth: 5)
             }
         }
-        guard let start, let end, let rects, let carets else { throw err("missing cluster field") }
-        return RenderingV2.Cluster(textStartByte: start, textEndByte: end, hitRects: rects, carets: carets, sources: sources, syntheticReason: synthetic)
+        if full {
+            guard let start, let end, let rects, let carets else { throw Error(offset: at, message: "missing cluster field") }
+            return .full(RenderingV2.Cluster(textStartByte: start, textEndByte: end, hitRects: rects, carets: carets, sources: sources, syntheticReason: synthetic))
+        }
+        if sources != nil || synthetic != nil {
+            raw.hasExplicitProvenance = true
+            raw.sources = sources
+            raw.syntheticReason = synthetic
+        }
+        return .compact(raw)
     }
 
     private mutating func rect() throws -> RenderingV2.Rect {
@@ -829,12 +923,14 @@ extension RenderingV2Fast {
         var documents: [RenderingV2.DocumentResource]?, fonts: [RenderingV2.FontResource]?
         var pages: [RenderingV2.Page]?, diagnostics: [RenderingV2.Diagnostic]?
         var lengths: [Int] = []
+        var encoding: String?
         try object { key, p in
             switch key {
             case "render_format": renderFormat = try p.string()
             case "coordinate_unit": unit = try p.string()
             case "color_space": colorSpace = try p.string()
             case "text_extraction": extraction = try p.string()
+            case "cluster_encoding": encoding = try p.optionalString()
             case "project_id": projectId = try p.string()
             case "revision": revision = try p.int()
             case "required_features": features = try p.array { try $0.string() }
@@ -857,7 +953,7 @@ extension RenderingV2Fast {
         pageBytes = lengths
         return RenderingV2.DisplayList(renderFormat: renderFormat, coordinateUnit: unit, colorSpace: colorSpace, textExtraction: extraction,
                                        projectId: projectId, revision: revision, requiredFeatures: features, documents: documents,
-                                       fonts: fonts, pages: pages, diagnostics: diagnostics)
+                                       fonts: fonts, pages: pages, diagnostics: diagnostics, clusterEncoding: encoding)
     }
 
     /// Decoded `display_list_delta` envelope. Raw byte lengths of the header
@@ -883,6 +979,9 @@ extension RenderingV2Fast {
         public var id: String
         public var type: String
         public var renderFormat: String, coordinateUnit: String, colorSpace: String, textExtraction: String
+        /// `display-list-v2-compact`: the encoding of the changed pages and of
+        /// the reconstructed list (nil: the full encoding).
+        public var clusterEncoding: String?
         public var projectId: String
         public var revision: Int
         public var requiredFeatures: [String]
@@ -936,7 +1035,7 @@ extension RenderingV2Fast {
 
     private mutating func deltaPayload(maxPages: Int) throws -> DeltaEnvelope {
         var renderFormat: String?, unit: String?, colorSpace: String?, extraction: String?
-        var projectId: String?, revision: Int?, features: [String]?, scheme: String?
+        var projectId: String?, revision: Int?, features: [String]?, scheme: String?, encoding: String?
         var base: DeltaEnvelope.Base?
         var documents: [RenderingV2.DocumentResource]?, fonts: [RenderingV2.FontResource]?, diagnostics: [RenderingV2.Diagnostic]?
         var relocations: [DeltaEnvelope.Relocation]?
@@ -962,6 +1061,7 @@ extension RenderingV2Fast {
                 features = try p.array { try $0.string() }
                 raw.requiredFeatures = p.i - s
             case "digest_scheme": scheme = try p.string()
+            case "cluster_encoding": encoding = try p.optionalString()
             case "base":
                 var rid: String?, pid: String?, rev: Int?, count: Int?, digest: String?
                 try p.object { k, q in
@@ -1032,7 +1132,7 @@ extension RenderingV2Fast {
         guard pageDigests.count == pageCount, pageBytes.count == pageCount else { throw err("page_digests/page_bytes must have page_count entries") }
         guard changed.count <= pageCount else { throw err("more changed pages than page_count") }
         return DeltaEnvelope(protocolVersion: 0, id: "", type: "", renderFormat: renderFormat, coordinateUnit: unit, colorSpace: colorSpace,
-                             textExtraction: extraction, projectId: projectId, revision: revision, requiredFeatures: features, digestScheme: scheme,
+                             textExtraction: extraction, clusterEncoding: encoding, projectId: projectId, revision: revision, requiredFeatures: features, digestScheme: scheme,
                              base: base, documents: documents, fonts: fonts, diagnostics: diagnostics, relocations: relocations,
                              pageCount: pageCount, pageDigests: pageDigests, pageBytes: pageBytes, changedPages: changed, removedPages: removed,
                              listDigest: listDigest, raw: raw)

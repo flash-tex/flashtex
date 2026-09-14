@@ -46,7 +46,7 @@ impl Outputs {
             eprintln!("flashtex-render: {id} rendered in {:.2} ms", r.elapsed_ms);
         }
         if let Some(p) = &self.v2 {
-            let wire = flashtex_render_pipeline::display::Wire { images: false, device_color: self.device_color };
+            let wire = flashtex_render_pipeline::display::Wire { images: false, device_color: self.device_color, compact: false };
             let text = r.v2.write_json_wire(id, wire);
             if let Err(e) = std::fs::write(p, text) {
                 eprintln!("flashtex-render: cannot write {}: {e}", p.display());

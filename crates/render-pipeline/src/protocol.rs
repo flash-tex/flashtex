@@ -354,7 +354,9 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
         v1.accepted = v1.accepted.take().map(|a| a.into_iter().filter(|c| c != cap).collect());
     };
     if caps.display_list && v1.status != "failed" {
-        let wire = crate::display::Wire { images: caps.images, device_color: caps.device_color };
+        // display-list-v2-compact rides on every sibling of this reply (full
+        // or delta); it is echoed only when a sibling is actually emitted.
+        let wire = crate::display::Wire { images: caps.images, device_color: caps.device_color, compact: caps.compact };
         // display-list-v2-delta (proposal r5 §3): against the acknowledged
         // installed base, when it is also this worker's last emitted sibling.
         let base = if caps.delta { payload.get("display_list_base").and_then(delta::Base::from_json) } else { None };
@@ -368,7 +370,7 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
         if !emitted_delta {
             // Size first (an upper-bound estimate, then the exact line), so an
             // oversized frame is declined without serialising 16+ MB in vain.
-            let estimate = rendered.v2.estimated_json_bytes();
+            let estimate = rendered.v2.estimated_json_bytes_wire(wire);
             let mut page_bytes = Vec::new();
             let dl = if estimate > limit {
                 None
@@ -409,9 +411,14 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
         } else {
             drop_cap(&mut v1, crate::v1::CAP_V2_ONLY);
         }
+        // display-list-v2-compact: echoed only with a sibling line.
+        if extra_lines.is_empty() {
+            drop_cap(&mut v1, crate::v1::CAP_COMPACT);
+        }
     } else {
         drop_cap(&mut v1, crate::v1::CAP_DELTA);
         drop_cap(&mut v1, crate::v1::CAP_V2_ONLY);
+        drop_cap(&mut v1, crate::v1::CAP_COMPACT);
     }
     let accepted = v1.accepted.clone();
     let line = v1.write_envelope(&id);
@@ -426,7 +433,7 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
                     "compile_result would be {} bytes for {pages} pages, over the {limit}-byte reply limit; split the project or compile fewer pages",
                     line.len(),
                 ),
-                accepted.map(|a| a.into_iter().filter(|c| c != crate::v1::CAP_DISPLAY_LIST).collect()),
+                accepted.map(|a| a.into_iter().filter(|c| c != crate::v1::CAP_DISPLAY_LIST && c != crate::v1::CAP_COMPACT).collect()),
             )),
             extra_lines: Vec::new(),
             rendered: Some(rendered),
