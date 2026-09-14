@@ -308,7 +308,12 @@ extension ShellModel {
     /// cluster for text (`MathCaretHighlight.swift`) — on the first page that
     /// has one.
     static func caretTarget(byte: Int, path: String, in frame: V2Frame) -> CaretFollow.Target? {
-        for page in frame.list.pages {
+        // display-list-v2-window §4.1: a windowed reply never authorises a
+        // source action outside its coverage. An elided page carries no
+        // provenance at all, so following onto it is not "no match" — it is
+        // unknowable, and the pane must not scroll to a placeholder as if the
+        // caret were there. It is skipped explicitly rather than by accident.
+        for page in frame.list.pages where page.isResident {
             var rect: CGRect?
             for highlight in V2Geometry.caretHighlights(containing: byte, path: path, in: page) {
                 switch highlight {

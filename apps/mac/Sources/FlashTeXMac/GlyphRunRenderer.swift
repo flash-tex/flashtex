@@ -151,6 +151,12 @@ struct V2PreparedPage: @unchecked Sendable {
     var widthPt: Double
     var heightPt: Double
     var items: [Item]
+    /// `display-list-v2-window`: false when the producer did not build this
+    /// page. The frame (`widthPt`/`heightPt`) is still real — the pane places
+    /// the page in the scroll column and paints a placeholder over it — but
+    /// there is no content, and nothing may treat the empty `items` as
+    /// evidence that the page is blank.
+    var isResident = true
     var glyphCount: Int
     /// Image items on this page whose bytes were refused (stale hash/length,
     /// symlink, unreadable, no project root): one notice per path, in item
@@ -170,6 +176,13 @@ struct V2PreparedPage: @unchecked Sendable {
         number = page.number
         widthPt = page.widthPt
         self.heightPt = heightPt
+        isResident = page.isResident
+        guard page.isResident else {
+            // Nothing to prepare and nothing to paint from: the placeholder is
+            // drawn from the frame alone (PreviewV2View.PageV2View).
+            items = []; glyphCount = 0; sourceBounds = [:]
+            return
+        }
         var items: [Item] = []
         items.reserveCapacity(page.items.count)
         var glyphs = 0
@@ -310,6 +323,21 @@ struct V2Frame: @unchecked Sendable {
 
     func page(number: Int) -> RenderingV2.Page? { list.pages.first { $0.number == number } }
     func preparedPage(number: Int) -> V2PreparedPage? { prepared.first { $0.number == number } }
+
+    /// `display-list-v2-window`: the window the producer actually served, or
+    /// nil for the complete list every route sends today.
+    var window: RenderingV2.PageWindow? { list.window }
+    var isWindowed: Bool { list.window != nil }
+    /// How many pages of this document were not built. Zero unless windowed.
+    var elidedPageCount: Int { list.window?.elidedCount ?? 0 }
+    /// Whether this frame stands for the whole document: the precondition for
+    /// exporting it, digesting it, or installing it as a delta base
+    /// (proposal §4.1). A windowed frame never does.
+    var isCompleteDocument: Bool { !isWindowed }
+    /// Whether a source action (caret sync, click-to-source, select-to-source)
+    /// is valid for `page`. Only resident pages carry the provenance it needs;
+    /// for anything else the pane must re-request a window, not guess.
+    func allowsSourceActions(page number: Int) -> Bool { preparedPage(number: number)?.isResident ?? false }
 }
 
 /// The one draw routine. `ctx`'s user space must be PDF space for the page:

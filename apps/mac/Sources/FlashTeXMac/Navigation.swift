@@ -697,6 +697,13 @@ extension ShellModel {
               let page = result.pages.first(where: { $0.number == hit.page }),
               hit.index < page.items.count,
               case .text(let item) = page.items[hit.index], let source = item.source else {
+            // display-list-v2-window §4.1: with pages elided, "no item" is not
+            // the same claim as "nothing here" — the item may be on a page the
+            // producer was never asked to build. Say which it is.
+            if let why = v2WindowSourceActionRefusal {
+                navigationNote = why
+                return
+            }
             navigationNote = "Caret byte \(byte) is inside no preview item" + (previewIsStale ? " (preview is from an older revision)." : ".")
             return
         }

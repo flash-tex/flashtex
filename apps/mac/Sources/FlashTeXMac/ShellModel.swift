@@ -52,8 +52,14 @@ final class ShellModel {
     /// The display-list-v2 pane (PreviewV2View.swift) is the default; `FLASHTEX_PREVIEW_V2=0` selects the v1 pane.
     var previewV2 = ProcessInfo.processInfo.environment["FLASHTEX_PREVIEW_V2"] != "0" {
         // Leaving the v2 pane: a result whose v1 pages were elided
-        // (`display-list-v2-only`) is re-requested with pages.
-        didSet { if oldValue, !previewV2, v1PagesElided, autoCompile, workerAttached { compile() } }
+        // (`display-list-v2-only`) is re-requested with pages, and the page
+        // window is forgotten — the next request must be unwindowed rather than
+        // pinned to wherever the reader last was (display-list-v2-window §4).
+        didSet {
+            guard oldValue != previewV2 else { return }
+            if !previewV2 { v2WindowReset() }
+            if oldValue, !previewV2, v1PagesElided, autoCompile, workerAttached { compile() }
+        }
     }
     /// Whether the applied result's runtime-v1 `pages` were elided at this
     /// shell's request (`display-list-v2-only`, DisplayListDelta.swift).
@@ -253,6 +259,25 @@ final class ShellModel {
     /// frame is published after full validation; cleared by any refusal,
     /// worker exit or relaunch, or a result that did not accept `display-list-v2`.
     @ObservationIgnored var deltaInstalled: DisplayListDelta.Installed?
+    /// `display-list-v2-window`: the window last sent with a compile request,
+    /// i.e. where this shell told the producer the reader was. Nil asks for an
+    /// unwindowed reply even when the capability is listed (proposal §4), which
+    /// is the state until the pane has reported a viewport.
+    private(set) var v2WindowRequest: RuntimeV1.CompileRequest.DisplayListWindow?
+    /// The window that actually went out with the last compile request (nil
+    /// when the route was not windowed), so a moved viewport re-requests even
+    /// though the capability set and the revision are unchanged.
+    private(set) var v2WindowSent: RuntimeV1.CompileRequest.DisplayListWindow?
+    /// The window this request would carry: the reported viewport's window when
+    /// the v2 pane is live and the capability is in the mode set, else nil
+    /// (which asks for an unwindowed reply even with the name listed, §4).
+    var windowedRequest: RuntimeV1.CompileRequest.DisplayListWindow? {
+        guard previewV2, v2WindowEnabled, requestedLayoutCapabilities.contains(V2Live.capability) else { return nil }
+        return v2WindowRequest
+    }
+    /// The page range the v2 pane last reported as visible.
+    private(set) var v2VisiblePages: ClosedRange<Int>?
+    @ObservationIgnored private var v2WindowDebounce: DispatchWorkItem?
     /// Id of the most recently sent compile request. A reply to any older
     /// request is valid but stale (`scripts/check_runtime.py`: `stale_ignore`):
     /// it is checked, logged and dropped, and never changes the preview or the
@@ -678,6 +703,54 @@ final class ShellModel {
         bridgeTextChanged(path: activePath, old: old, new: text, base: base, revision: editorRevision)
     }
 
+    // MARK: display-list-v2-window — the resident window follows the viewport
+
+    /// Whether this shell is asking the producer for a bounded page window.
+    /// Off until the capability is advertised; `FLASHTEX_DISPLAY_LIST_WINDOW=0`
+    /// turns it off for a session.
+    var v2WindowEnabled: Bool { requestedLayoutCapabilities.contains(RenderingV2.windowCapability) }
+
+    /// The v2 pane reports the page range under the viewport. Re-requests only
+    /// when `PreviewV2Window.next` says the reader has approached the edge of
+    /// what is resident — a scroll inside the window sends nothing — and the
+    /// send itself is debounced so a flick through many pages is one request.
+    func v2ViewportDidShow(pages: ClosedRange<Int>) {
+        v2VisiblePages = pages
+        guard v2WindowEnabled, previewV2, workerAttached else { return }
+        let served = displayListV2?.frame?.window
+        let documentPages = served?.documentPageCount ?? displayListV2?.frame?.list.pages.count ?? 0
+        guard let want = PreviewV2Window.next(visible: pages, documentPageCount: documentPages,
+                                              served: served, requested: v2WindowRequest) else { return }
+        v2WindowRequest = want
+        log("preview-v2: viewport shows pages \(pages.lowerBound)–\(pages.upperBound); requesting window \(want.firstPage)+\(want.pageCount)")
+        guard autoCompile else { return }
+        v2WindowDebounce?.cancel()
+        if Self.debounceInterval == 0 { compile(); return }
+        let item = DispatchWorkItem { [weak self] in self?.compile() }
+        v2WindowDebounce = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounceInterval, execute: item)
+    }
+
+    /// Why a source action (caret sync, click-to-source, select-to-source) is
+    /// not authorised right now, or nil when it is. `display-list-v2-window`
+    /// §4.1: a windowed reply is valid only for the pages it actually built,
+    /// so a caret that matches nothing may simply be on a page nobody asked
+    /// for — a different claim from "there is nothing there", and the pane
+    /// says which. Nil on every unwindowed reply, i.e. everything today.
+    var v2WindowSourceActionRefusal: String? {
+        guard let window = displayListV2?.frame?.window, window.elidedCount > 0 else { return nil }
+        return "Caret sync is limited to the loaded page window (pages \(window.firstPage)–\(window.firstPage + window.pageCount - 1) of \(window.documentPageCount)); the caret maps to no page in it. Scroll to the page you want and it is requested."
+    }
+
+    /// Forgets where the viewport was: a new document (or leaving the v2 pane)
+    /// must not carry another document's page numbers into its first request.
+    func v2WindowReset() {
+        v2WindowDebounce?.cancel()
+        v2WindowDebounce = nil
+        v2WindowRequest = nil
+        v2VisiblePages = nil
+    }
+
     private func scheduleAutoCompile() {
         guard autoCompile, workerAttached else { return }
         if controllerAttached { controllerSubmitEdit(); return }
@@ -842,8 +915,9 @@ final class ShellModel {
             }
             log("layout capability switch while \(latestID) is in flight: re-requesting revision \(editorRevision) under \(LayoutNegotiation.describe(capabilities))")
         } else if let current = result, previewSource != .fixture, current.revision == editorRevision,
-                  negotiation.requested == capabilities, previewV2 || !v1PagesElided {
-            return // buffers and capability set unchanged since the applied result
+                  negotiation.requested == capabilities, v2WindowSent == windowedRequest,
+                  previewV2 || !v1PagesElided {
+            return // buffers, capability set and page window unchanged since the applied result
         }
         let id = "mac-\(nextRequestID)"
         nextRequestID += 1
@@ -858,13 +932,19 @@ final class ShellModel {
         // v2 frame is acknowledged so the producer may answer with a delta.
         var sent = capabilities
         var displayListBase: RuntimeV1.CompileRequest.DisplayListBase?
+        // display-list-v2-window: where the reader is. The capability name is
+        // part of the mode set (`setLiveV2`); only the position is per request.
+        // Never together with `-delta`, which needs the whole list as its base
+        // (proposal §7: the two are exclusive).
+        let displayListWindow = windowedRequest
         if previewV2, capabilities.contains(V2Live.capability) {
             if DisplayListDelta.v2OnlyEnabled { sent.append(DisplayListDelta.v2OnlyCapability) }
-            if DisplayListDelta.enabled, let installed = deltaInstalled, installed.list.projectId == projectId {
+            if displayListWindow == nil, DisplayListDelta.enabled, let installed = deltaInstalled, installed.list.projectId == projectId {
                 sent.append(DisplayListDelta.capability)
                 displayListBase = installed.acknowledgement
             }
         }
+        v2WindowSent = displayListWindow
         let request = RuntimeV1.CompileRequest(
             projectId: projectId,
             revision: editorRevision,
@@ -872,6 +952,7 @@ final class ShellModel {
             documents: sendDocuments,
             layoutCapabilities: sent.isEmpty ? nil : sent,
             displayListBase: displayListBase,
+            displayListWindow: displayListWindow,
             // display-list-v2-images: the producer sizes `\includegraphics`
             // files under the open project's directory (V2ImageStore.swift).
             projectRoot: capabilities.contains(RenderingV2.imagesCapability) ? project.projectRoot?.path : nil,
