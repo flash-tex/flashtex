@@ -8,19 +8,17 @@
 
 mod common;
 
+use flashtex_compiler::json;
 use common::render_one;
 use flashtex_render_pipeline::display::{GlyphRun, Item, Provenance, Rule, Severity};
 
 const PT_PER_BP: f64 = 72.27 / 72.0;
 const TOL: f64 = 0.01;
-
-fn bp(pt: f64) -> f64 {
-    pt / PT_PER_BP
-}
+const BASE_HFILL_ITEMS: &str = r#"[{"clusters":[{"carets":[{"height":7196394,"text_byte":0,"top":84721021,"x":216398394},{"height":7196394,"text_byte":1,"top":84721021,"x":224233333}],"hit_rects":[{"height":7196394,"top":84721021,"width":7834939,"x":216398394}],"sources":[{"end_byte":138,"path":"main.tex","start_byte":137}],"text_end_byte":1,"text_start_byte":0}],"font_id":"1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852","font_size":10446585,"glyphs":[{"advance_x":7834939,"advance_y":0,"baseline_y":91917415,"cluster":0,"gid":27,"origin_x":216398394}],"kind":"glyph_run","paint":{"a":1,"b":0,"g":0,"r":0},"text":"A"},{"clusters":[{"carets":[{"height":7196394,"text_byte":0,"top":84721021,"x":417930788},{"height":7196394,"text_byte":1,"top":84721021,"x":425330100}],"hit_rects":[{"height":7196394,"top":84721021,"width":7399313,"x":417930788}],"sources":[{"end_byte":146,"path":"main.tex","start_byte":145}],"text_end_byte":1,"text_start_byte":0}],"font_id":"1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852","font_size":10446585,"glyphs":[{"advance_x":7399313,"advance_y":0,"baseline_y":91917415,"cluster":0,"gid":34,"origin_x":417930788}],"kind":"glyph_run","paint":{"a":1,"b":0,"g":0,"r":0},"text":"B"},{"clusters":[{"carets":[{"height":6578471,"text_byte":0,"top":733027233,"x":318252601},{"height":6578471,"text_byte":1,"top":733027233,"x":323475893}],"hit_rects":[{"height":6578471,"top":733027233,"width":5223293,"x":318252601}],"sources":[{"end_byte":0,"path":"main.tex","start_byte":0}],"text_end_byte":1,"text_start_byte":0}],"font_id":"1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852","font_size":10446585,"glyphs":[{"advance_x":5223293,"advance_y":0,"baseline_y":739605704,"cluster":0,"gid":82,"origin_x":318252601}],"kind":"glyph_run","paint":{"a":1,"b":0,"g":0,"r":0},"text":"1"}]"#;
 
 fn doc(body: &str) -> String {
     format!(
-        "\\documentclass[10pt]{{article}}\\usepackage[textwidth=200pt,textheight=600pt]{{geometry}}\\begin{{document}}\\noindent{{{body}}}\\end{{document}}"
+        "\\documentclass[10pt]{{article}}\\usepackage[textwidth=200pt,textheight=600pt]{{geometry}}\\setlength{{\\parindent}}{{0pt}}\\begin{{document}}\\noindent{{{body}}}\\end{{document}}"
     )
 }
 
@@ -54,6 +52,17 @@ fn synthetic_run<'a>(items: &'a [Item], name: &str) -> &'a GlyphRun {
 
 fn pt(tick: flashtex_render_pipeline::display::Tick) -> f64 {
     tick.to_bp() * PT_PER_BP
+}
+
+fn item_json(rendered: &flashtex_render_pipeline::Rendered) -> String {
+    let document = rendered.v2.to_json("hfill-base");
+    let page = document
+        .get("payload")
+        .and_then(|payload| payload.get("pages"))
+        .and_then(|pages| pages.as_arr())
+        .and_then(|pages| pages.first())
+        .expect("one page");
+    json::write(page.get("items").expect("page items"))
 }
 
 #[test]
@@ -112,12 +121,5 @@ fn plain_hfill_has_no_leader_paint() {
         return;
     }
     let rendered = rendered("A\\hfill B");
-    let items = &rendered.v2.pages[0].items;
-    assert!(items.iter().any(|item| matches!(item, Item::GlyphRun(run) if run.text == "A")));
-    assert!(items.iter().any(|item| matches!(item, Item::GlyphRun(run) if run.text == "B")));
-    assert!(items.iter().all(|item| match item {
-        Item::Rule(rule) => !matches!(rule.provenance, Provenance::Synthetic(_)),
-        Item::GlyphRun(run) => !run.clusters.iter().any(|c| matches!(c.provenance, Provenance::Synthetic(_))),
-        _ => true,
-    }));
+    assert_eq!(item_json(&rendered), BASE_HFILL_ITEMS, "plain \\hfill changed from the #402 item list");
 }
