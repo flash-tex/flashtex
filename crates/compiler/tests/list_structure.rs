@@ -4,6 +4,7 @@
 //! `quote` inside an item. See `src/parser/lists.rs` for the latex.ltx,
 //! article.cls and enumitem.sty provenance.
 
+use flashtex_compiler::math::Nucleus;
 use flashtex_compiler::parser::{
     self, Block, CounterStyle, FontSizeLevel, Inline, ItemLabel, ListEnvironment, ListLength,
     ListOption, TextFamily,
@@ -393,4 +394,75 @@ fn renewcommand_of_a_deeper_labelitem_applies_only_at_that_nesting_level() {
     // changes.
     let source = doc("\\renewcommand{\\labelitemii}{Y}\\begin{itemize}\\item A\\begin{itemize}\\item B\\end{itemize}\\item C\\end{itemize}");
     assert_eq!(label_texts(&source), ["•", "Y", "•"]);
+}
+
+#[test]
+fn labelitem_override_textbf_body_is_parsed_as_bold_content() {
+    // The captured `\labelitem<i>` body is inline LaTeX, not plain text:
+    // `\textbf{X}` must typeset bold `X`, not the literal `\textbf{X}`.
+    let source = doc("\\renewcommand{\\labelitemi}{\\textbf{X}}\\begin{itemize}\\item A\\end{itemize}");
+    let parsed = parser::parse(&source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(label_texts(&source), ["X"]);
+    let all = items(&source);
+    match &all[0].1 {
+        Some(ItemLabel::Explicit { content, text, .. }) => {
+            assert_eq!(text, "X");
+            assert!(
+                matches!(&content[..], [Inline::Text { text, style, .. }] if text == "X" && style.bold),
+                "{content:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn labelitem_override_math_body_becomes_a_math_nucleus() {
+    // `$\star$`: the marker is a math nucleus, not the literal `$\star$`
+    // text. (`\star` itself is unsupported in math mode in this compiler
+    // version; running text reports the same diagnostic, so the test pins
+    // parity with running text rather than clean compilation.)
+    let source = doc("\\renewcommand{\\labelitemi}{$\\star$}\\begin{itemize}\\item A\\end{itemize}");
+    let parsed = parser::parse(&source);
+    let running = parser::parse(&doc("A $\\star$ B"));
+    assert_eq!(
+        parsed.diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>(),
+        running.diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>(),
+        "the override body must diagnose exactly like the same source in running text"
+    );
+    assert_eq!(label_texts(&source), [""]);
+    let all = items(&source);
+    match &all[0].1 {
+        Some(ItemLabel::Explicit { content, .. }) => {
+            assert!(
+                matches!(&content[..], [Inline::Math { list, .. }] if list.atoms.iter().any(|a| matches!(&a.nucleus, Nucleus::Symbol(s) if s == "\\star"))),
+                "{content:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn labelitem_override_textendash_body_gets_the_usual_diagnostic() {
+    // `\textendash` is not a supported text-symbol command in this compiler
+    // version (running text reports the same error), so the marker carries
+    // the usual diagnostic instead of the literal `\textendash` text.
+    let source = doc("\\renewcommand{\\labelitemi}{\\textendash}\\begin{itemize}\\item A\\end{itemize}");
+    let parsed = parser::parse(&source);
+    let running = parser::parse(&doc("A \\textendash B"));
+    assert_eq!(
+        parsed.diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>(),
+        running.diagnostics.iter().map(|d| d.message.clone()).collect::<Vec<_>>(),
+        "the override body must diagnose exactly like the same source in running text"
+    );
+    assert!(
+        parsed.diagnostics.iter().any(|d| d.message.contains("\\textendash")),
+        "{:?}",
+        parsed.diagnostics
+    );
+    assert_eq!(label_texts(&source), [""]);
+    let all = items(&source);
+    assert!(matches!(&all[0].1, Some(ItemLabel::Explicit { .. })), "{:?}", all[0].1);
 }

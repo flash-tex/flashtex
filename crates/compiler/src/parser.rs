@@ -6048,17 +6048,56 @@ impl P<'_> {
     /// keying as `array_stretch` — wins over the kernel glyph. Captured
     /// text that is just the kernel default
     /// (`lists::is_kernel_labelitem_text`) still takes the
-    /// `lists::default_label` path; anything else is typeset as plain text,
-    /// the way the running-text `\labelitem<i>` arms typeset a redefinition
-    /// the expansion pass already expanded. An enumitem `label=` template
-    /// never reaches here (it wins earlier, as in real LaTeX).
-    fn itemize_default_label(&self, environment: ListEnvironment, kind_depth: u8, begin: Span) -> ItemLabel {
+    /// `lists::default_label` path; anything else is re-lexed and parsed
+    /// as inline LaTeX through the ordinary dispatch
+    /// (`P::argument_inlines`), the way a `\renewcommand` the expansion
+    /// pass already expanded typesets in running text — so `$\star$`,
+    /// `\textendash` and `\textbf{X}` bodies become real content, and an
+    /// unsupported command gets the usual diagnostic. An enumitem `label=`
+    /// template never reaches here (it wins earlier, as in real LaTeX).
+    ///
+    /// Accepted limitation (documented, not fixed here): only the value in
+    /// force at `\begin{itemize}`-time is captured, so a `\renewcommand`
+    /// issued mid-list, after the `\begin`, is not picked up.
+    fn itemize_default_label(&mut self, environment: ListEnvironment, kind_depth: u8, begin: Span) -> ItemLabel {
         if environment == ListEnvironment::Itemize {
             let index = kind_depth.clamp(1, 4) as usize - 1;
             if let Some(texts) = self.labelitem_overrides.get(&(begin.document.0, begin.start)) {
                 let text = texts[index].trim();
                 if !lists::is_kernel_labelitem_text(kind_depth, text) {
-                    return ItemLabel::Template { text: apply_text_ligatures(text) };
+                    // The capture is LaTeX source (see `LabelCapture`), not
+                    // rendered text: re-lex it and parse it as inline
+                    // content, mirroring the `\item[<label>]` explicit
+                    // branch above (same `Explicit` shape, same plain-text
+                    // derivation; `span` is the capturing `\begin`).
+                    let tokens = tokenize_document(text, begin.document)
+                        .into_iter()
+                        .map(|token| InputToken {
+                            token,
+                            definition: None,
+                            maps_to_invocation: false,
+                        })
+                        .collect::<Vec<_>>();
+                    let content = self.argument_inlines(tokens, begin, TextStyle::default());
+                    let mut plain = String::new();
+                    for inline in &content {
+                        if let Inline::Text {
+                            text: word,
+                            space_before,
+                            ..
+                        } = inline
+                        {
+                            if *space_before && !plain.is_empty() {
+                                plain.push(' ');
+                            }
+                            plain.push_str(word);
+                        }
+                    }
+                    return ItemLabel::Explicit {
+                        content,
+                        text: plain,
+                        span: begin,
+                    };
                 }
             }
         }
