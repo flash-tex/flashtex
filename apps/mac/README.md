@@ -247,7 +247,11 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   (`RuleGeometry.pdfRect`). It exports the layout the Rust compiler reported,
   not a TeX-engine PDF: no fonts beyond Latin Modern/Times, no images, no links
   or metadata. The dark toggle only changes page/text colors. Disabled when no
-  result is loaded.
+  result is loaded. `File > Print…` (⌘P) prints those same bytes through
+  PDFKit's system print panel (`PrintController.swift`); it is also disabled
+  when the compile failed or produced no pages (a blank PDF is not printed).
+  `File > Print Source…` prints the editor buffer with line numbers from a copy
+  and is disabled when no document is open.
 
 ## Capture bridge (transfer-v1)
 
@@ -945,6 +949,8 @@ explain that nothing is loaded.
 | ⌘B | Compile now (auto-compile also runs 250 ms after edits) |
 | ⌘⇧E | Export PDF… (CoreGraphics, always white) |
 | ⌘⌥E | Export PDF via Rust writer… (`flashtex-pdf --verify`, always white) |
+| ⌘P | Print… (compiled document PDF, same CoreGraphics bytes as Export PDF…; system print panel; page size follows the PDF) |
+| File > Print Source… | Print Source… (editor text with line numbers, monospaced, from a copy so the live editor is untouched) |
 | ⌘⌥P | Pin insertion point at caret (capture destination anchor) |
 | Edit > Open Capture Proposal… | Open capture proposal… file (review sheet; ⏎ approves, inserts one undoable edit; no shortcut since ⌘⇧I moved to the Captures inspector) |
 | ⌘⇧I | Toggle Captures inspector (View; also the toolbar's Captures button): captures from the paired iPad with image, instruction and state (received → converting → proposal ready → inserted), the proposed LaTeX/TikZ, Insert at caret / Edit / Review… / Reject; opening it starts advertising and attaches the bridge; Pairing code… is one click |
@@ -977,6 +983,8 @@ explain that nothing is loaded.
 | ⌘⇧Space | Signature help for the command whose argument the caret is in (also opens on `{`/`[` typed after a command name; `}`, Esc or leaving the argument closes it) |
 | ⌥⇧↓ / ⌥⇧↑ | Duplicate the caret's line — or every line the selection touches — below / above itself, caret on the copy so the key repeats |
 | ⌘/ | Toggle `% ` line comment on the selection's lines |
+| ⌃I | Re-indent Lines (selected lines, or the caret's line; LaTeX-aware; one undo step). Not Tab; Vim does not bind ⌃I; ⌘⇧I is Toggle Captures |
+| Edit > Re-indent Document | Re-indent Document (same rules over the whole buffer; one undo step; no shortcut) |
 | ⌘⌥← | Fold the innermost environment or section at the caret (first line stays visible with an inline …; hidden characters stay in the buffer) |
 | ⌘⌥→ | Unfold the innermost folded region at the caret |
 | ⌘⌥⇧← | Fold All environments and sectioning blocks |
