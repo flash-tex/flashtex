@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/underline-sout-gh330",
+  "gh_ref": "https://github.com/flash-tex/flashtex/issues/330",
+  "machine": "mac-m5pro-dq222",
+  "note": "daniel-parent (Max, not daniel-vpclaude): text \\underline + ulem \\sout (args dropped); stacked on #328/#329; cursor worker",
+  "started_utc": "2026-09-14T06:20:19Z",
+  "state": "claimed",
+  "task_id": "GH-330",
+  "updated_utc": "2026-09-14T06:20:19Z"
+}
