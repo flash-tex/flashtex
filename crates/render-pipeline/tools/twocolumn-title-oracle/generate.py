@@ -130,8 +130,6 @@ def fixtures():
     # against a no-`\maketitle` control: this fixture's float is on page 2
     # either way, so the fixture pins the spanning title's own geometry with
     # a full-width float in the document, not the `\@dbltopnum` rule).
-    # flashtex sets `figure*` as a single-column `figure` (floats.rs), so
-    # this fixture is `REPORTED`, not gated, in the test.
     f["04-title-figure-star"] = doc(
         "twocolumn",
         paras(41, 2) + "\n\n" + figure("t", RED, "A full-width float beside the title.", star=True) + "\n\n" + paras(42, 9),

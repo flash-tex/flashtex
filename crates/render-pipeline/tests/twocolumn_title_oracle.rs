@@ -25,6 +25,12 @@
 //! nearest position) within 0.5bp in x and baseline; every rule and image
 //! rectangle within 0.1bp and 1bp. Fixtures listed in `REPORTED` are
 //! measured and printed, not gated.
+//!
+//! `04-title-figure-star` also pins the full-width float path: `\@dbflt`
+//! sets the box at `\hsize\textwidth \linewidth\textwidth`, every column
+//! placement refuses it (`\@testwrongwidth` against the `1sp` box depth)
+//! and `\@addtodblcol` puts it in the next page's `\@dbltoplist`, which
+//! shortens both of that page's columns exactly as `\@topnewpage` does.
 
 mod common;
 
@@ -38,12 +44,8 @@ const WORD_TOL_BP: f64 = 0.5;
 const RULE_TOL_BP: f64 = 0.1;
 const IMAGE_TOL_BP: f64 = 1.0;
 
-/// Not implemented yet, measured and printed only:
-/// * `04-title-figure-star`: full-width floats. `figure*`/`table*` reach
-///   the float placer as ordinary single-column floats (`floats.rs`), never
-///   as `\@dbltoplist` entries, so `\@addtodblcol`, `\dblfigrule` and
-///   `\@topnewpage`'s `\global\@dbltopnum\m@ne` have no counterpart.
-const REPORTED: &[&str] = &["04-title-figure-star"];
+/// Fixtures measured and printed but not gated (none today).
+const REPORTED: &[&str] = &[];
 
 #[derive(Debug, Clone)]
 struct W {

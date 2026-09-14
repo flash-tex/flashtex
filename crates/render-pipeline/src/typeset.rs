@@ -7052,7 +7052,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     } else {
         let regions = pagebuild::resolve_regions(&list, &longtables);
         let (mut pages, images, labels, areas) =
-            floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref(), short_cols, short);
+            floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref(), short_cols, short, columns);
         if insertions.is_some() {
             footnotes::place(ctx, &mut blocks, &mut pages, areas);
         }
