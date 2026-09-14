@@ -308,7 +308,11 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
     let terminal = std::io::IsTerminal::is_terminal(&err);
     let style = c.diagnostics.unwrap_or(if terminal { report::Style::Full } else { report::Style::Short });
     let color = c.color.unwrap_or(terminal && std::env::var_os("NO_COLOR").is_none());
-    for d in &outcome.diagnostics {
+    let shown = match style {
+        report::Style::Full => report::collapse_repeats(&outcome.diagnostics),
+        report::Style::Short => outcome.diagnostics.clone(),
+    };
+    for d in &shown {
         match style {
             report::Style::Short => {
                 let _ = writeln!(err, "{}", d.line_text());
@@ -412,6 +416,10 @@ fn watch(c: &Common, fonts: &FontSet) -> i32 {
             .collect();
         snapshot = now;
         revision += 1;
+        if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+            // Clear the screen so the latest rebuild is the only one on it.
+            eprint!("\x1b[2J\x1b[H");
+        }
         eprintln!("flashtex: change in {} -> rebuild #{revision}", changed.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
         if let Err(e) = build_once(&timed, fonts, Mode::Build, revision) {
             eprintln!("flashtex: {e}");
