@@ -377,6 +377,12 @@ pub enum Block {
         /// The paragraph is set at a size other than `\normalsize`
         /// (`abstract`'s `\small`); see [`SizedPara`].
         sized: Option<SizedPara>,
+        /// `\baselineskip` for every line of this paragraph and for the glue
+        /// above its first one, when the `\par` that ended it ran under a
+        /// size declaration ([`ParLeading`]). `None` is the body's. Set
+        /// *instead of* the whole-paragraph resize [`SizedPara`] carries:
+        /// the runs keep their own sizes, only the leading moves.
+        leading_pt: Option<f64>,
     },
     Heading {
         level: u8,
@@ -605,6 +611,12 @@ pub struct SizedPara {
     pub close_skip: Option<crate::style::Skip>,
 }
 
+/// The size declaration in force when a paragraph's `\par` ran, which is the
+/// `\baselineskip` TeX reads in `append_to_vlist` (§679) for every one of its
+/// lines — the compiler's `parser::ParLeading`, mirrored here so the pipeline
+/// builds against a `vendor/compiler` that predates the name.
+pub type ParLeading = Option<flashtex_compiler::parser::FontSizeLevel>;
+
 /// How a paragraph-shape environment began (see [`Block::Paragraph`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnvOpen {
@@ -681,9 +693,9 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
 ///   exact `\vskip`s and `\thanks` are not.
 /// - `\vfill`: dropped (the page builder has no stretchable vertical
 ///   glue), reported on the next block.
-fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<CBlock>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>) {
+fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: bool) -> (Vec<(CBlock, ParLeading)>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>) {
     use flashtex_compiler::parser::{FontSizeLevel, ParagraphStyle, TextFamily, TextStyle as CStyle};
-    let mut out: Vec<CBlock> = Vec::with_capacity(blocks.len());
+    let mut out: Vec<(CBlock, ParLeading)> = Vec::with_capacity(blocks.len());
     let mut limitations: Vec<(&'static str, Span, String)> = Vec::new();
     let mut titles: Vec<StashedTitle> = Vec::new();
     let mut pending_vfill = 0usize;
@@ -704,7 +716,8 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
             })
             .collect()
     };
-    for block in blocks {
+    for (block, par_leading) in blocks {
+        let par_leading = *par_leading;
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
             CBlock::Verbatim { span, .. } | CBlock::TableOfContents { span } | CBlock::Rule { span } => Some(*span),
@@ -769,16 +782,22 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
                         ),
                     ));
                 }
-                out.push(CBlock::Styled {
-                    style: ParagraphStyle::FlushLeft,
-                    content,
-                    lists: Vec::new(),
-                    line_break_before: None,
-                });
+                out.push((
+                    CBlock::Styled {
+                        style: ParagraphStyle::FlushLeft,
+                        content,
+                        lists: Vec::new(),
+                        line_break_before: None,
+                    },
+                    // `\lstset`'s `basicstyle` is not parsed (see the
+                    // limitation above), so nothing here declares a size and
+                    // the body's `\baselineskip` stands.
+                    None,
+                ));
             }
             // Set by `crate::toc` from the source command; the block stays
             // as the position a following `\clearpage` is measured from.
-            CBlock::TableOfContents { .. } => out.push(block.clone()),
+            CBlock::TableOfContents { .. } => out.push((block.clone(), par_leading)),
             CBlock::TitleBlock { title, authors, date } if stash_titles => titles.push((title.clone(), authors.clone(), date.clone())),
             CBlock::TitleBlock { title, authors, date } => {
                 if let Some(at) = first {
@@ -788,25 +807,40 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
                         "\\maketitle set as centred paragraphs (title \\LARGE, authors/date \\large): article's exact \\@maketitle skips and \\thanks are not applied".to_string(),
                     ));
                 }
-                for (part, size) in [(Some(title), FontSizeLevel::Large3), (Some(authors), FontSizeLevel::Large1), (date.as_ref(), FontSizeLevel::Large1)] {
+                // `\@maketitle` (article.cls 172-186) puts a `\par` inside
+                // the title's and the authors' groups but *not* the date's:
+                // `{\LARGE \@title \par}`, `{\large ... \par}`, then
+                // `{\large \@date}` and only then `\end{center}`. So the
+                // date's `\par` runs after `}` has restored `\baselineskip`
+                // and its lines are the body's 13.6 pt apart, not `\large`'s
+                // 14 — measured on a wrapping `\date` under pdfTeX
+                // 3.141592653-2.6-1.40.27: title 21.918 bp, date 13.549 bp.
+                for (part, size, leading) in [
+                    (Some(title), FontSizeLevel::Large3, Some(FontSizeLevel::Large3)),
+                    (Some(authors), FontSizeLevel::Large1, Some(FontSizeLevel::Large1)),
+                    (date.as_ref(), FontSizeLevel::Large1, None),
+                ] {
                     let Some(part) = part else { continue };
                     if part.is_empty() {
                         continue;
                     }
-                    out.push(CBlock::Styled {
-                        style: ParagraphStyle::Center,
-                        content: sized(part, size),
-                        lists: Vec::new(),
-                        line_break_before: None,
-                    });
+                    out.push((
+                        CBlock::Styled {
+                            style: ParagraphStyle::Center,
+                            content: sized(part, size),
+                            lists: Vec::new(),
+                            line_break_before: None,
+                        },
+                        leading,
+                    ));
                 }
             }
             CBlock::VFill => pending_vfill += 1,
-            other => out.push(other.clone()),
+            other => out.push((other.clone(), par_leading)),
         }
     }
     if pending_vfill > 0 {
-        let at = out.iter().rev().flat_map(|b| inlines_of(b).iter().map(inline_span).last()).next().unwrap_or(Span {
+        let at = out.iter().rev().flat_map(|(b, _)| inlines_of(b).iter().map(inline_span).last()).next().unwrap_or(Span {
             document: DocumentId(0),
             start: 0,
             end: 0,
@@ -1018,7 +1052,23 @@ pub fn adapt_cached(
     let maketitles = commands.iter().filter(|c| matches!(c.kind, BodyKind::MakeTitle)).count();
     let title_blocks = parsed.blocks.iter().filter(|b| matches!(b, CBlock::TitleBlock { .. })).count();
     let stash_titles = style.class_geometry.is_some() && maketitles == title_blocks && maketitles > 0;
-    let (mut lowered, mut limitations, stashed) = lower_blocks(texts, &parsed.blocks, stash_titles);
+    // `Parsed::block_par_leading` is one entry per block, in `blocks` order
+    // (the compiler pushes both from the same place). Without the
+    // `par-leading` feature the pinned `vendor/compiler` has no such field
+    // and every paragraph keeps the body's `\baselineskip`, which is what
+    // the pipeline did before this existed.
+    #[cfg(feature = "par-leading")]
+    let leadings: Vec<ParLeading> = parsed.block_par_leading.clone();
+    #[cfg(not(feature = "par-leading"))]
+    let leadings: Vec<ParLeading> = vec![None; parsed.blocks.len()];
+    debug_assert_eq!(leadings.len(), parsed.blocks.len());
+    let paired: Vec<(CBlock, ParLeading)> = parsed
+        .blocks
+        .iter()
+        .cloned()
+        .zip(leadings.into_iter().chain(std::iter::repeat(None)))
+        .collect();
+    let (mut lowered, mut limitations, stashed) = lower_blocks(texts, &paired, stash_titles);
     let mut stashed = stashed.into_iter();
     let title_of = |(title, authors, date): StashedTitle, span: Span| Block::Title {
         title: items_for(&title, false),
@@ -1390,6 +1440,7 @@ pub fn adapt_cached(
                 in_theorem,
                 list,
                 run_in,
+                par_leading,
             } => {
                 for inline in inlines {
                     unsupported_inlines(inline, &mut limitations);
@@ -1614,6 +1665,7 @@ pub fn adapt_cached(
                     endlist_adjust: unit.endlist_adjust,
                     list,
                     sized: None,
+                    leading_pt: par_leading_pt(par_leading, style.base),
                 });
                 after_heading = false;
             }
@@ -1915,6 +1967,8 @@ enum UnitKind<'p> {
         /// The paragraph opens with a run-in heading (`\paragraph`,
         /// `\subparagraph`); see [`RunIn`] and [`run_in_heading_at`].
         run_in: Option<RunIn>,
+        /// The leading this paragraph's `\par` selected ([`ParLeading`]).
+        par_leading: ParLeading,
     },
     Rule {
         span: Span,
@@ -1945,7 +1999,7 @@ fn gap_has_page_break(texts: &[&str], prev: Span, next: Span) -> bool {
     PAGE_BREAKS.iter().any(|c| find_command(gap, c).is_some())
 }
 
-fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, style: &Stylesheet) -> Vec<Unit<'p>> {
+fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], size: u32, style: &Stylesheet) -> Vec<Unit<'p>> {
     let theorem_envs = theorem_environments(texts);
     let mut units = Vec::new();
     let mut prev_end: Option<Span> = None;
@@ -1965,7 +2019,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
     // `tikzpicture` environments per document, and those already emitted.
     let pictures: Vec<Vec<flashtex_vector_graphics::tikz::PictureSource>> = texts.iter().map(|t| flashtex_vector_graphics::tikz::find_pictures(t)).collect();
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
-    for block in blocks {
+    for (block, par_leading) in blocks {
+        let par_leading = *par_leading;
         match block {
             CBlock::PageBreak => {
                 pending_eject = true;
@@ -2304,6 +2359,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                                     in_theorem,
                                     list: list.clone(),
                                     run_in: std::mem::take(&mut run_in),
+                                    par_leading,
                                 },
                                 eject_before: eject,
                                 vspace_before: std::mem::take(&mut vspace_before),
@@ -2328,6 +2384,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                             in_theorem,
                             list: list.clone(),
                             run_in: std::mem::take(&mut run_in),
+                            par_leading,
                         },
                         eject_before: eject,
                         vspace_before: std::mem::take(&mut vspace_before),
@@ -3656,6 +3713,34 @@ fn font_declaration(name: &str) -> Option<(&'static [crate::nfss::Command], bool
     })
 }
 
+/// The `\baselineskip` a [`ParLeading`] selects, in points: the *second*
+/// argument of the `\@setfontsize` call the declaration makes
+/// (`size1x.clo`'s table, e.g. `\small` at an 11 pt base is
+/// `\@setfontsize\small\xpt{12}`). `None` for `\normalsize`, whose leading
+/// is the stylesheet's own.
+///
+/// Only the leading is taken from here. The *glyph* size of each run already
+/// travels on `TextStyle::size_cpt` ([`declared_size`]), and TeX's two are
+/// independent: a paragraph can be set in `\small` type at the body's
+/// leading, or in body type at `\small`'s, depending only on where the
+/// `\par` fell (see [`ParLeading`]).
+fn par_leading_pt(leading: ParLeading, base: flashtex_document_style::BaseSize) -> Option<f64> {
+    use flashtex_compiler::parser::FontSizeLevel as L;
+    use flashtex_document_style::SizeName as N;
+    let name = match leading? {
+        L::Tiny => N::Tiny,
+        L::ScriptSize => N::ScriptSize,
+        L::FootnoteSize => N::FootnoteSize,
+        L::Small => N::Small,
+        L::Large1 => N::Large,
+        L::Large2 => N::LARGE2,
+        L::Large3 => N::LARGE3,
+        L::Huge1 => N::Huge,
+        L::Huge2 => N::HUGE2,
+    };
+    Some(flashtex_document_style::font_size(base, name).baselineskip.0)
+}
+
 /// The point size a `\tiny`..`\Huge` declaration selects at a class base
 /// size (size10/11/12.clo), in hundredths of a point; 0 for `\normalsize`
 /// (the paragraph's own size). The declaration in force comes from the
@@ -4457,7 +4542,7 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
 /// Drops the compiler's text for the arguments of `\markboth`,
 /// `\markright` and `\chapter` (it sets them as body text), and the
 /// paragraphs left empty.
-fn strip_command_text(blocks: &mut Vec<CBlock>, document: DocumentId, commands: &[BodyCommand]) {
+fn strip_command_text(blocks: &mut Vec<(CBlock, ParLeading)>, document: DocumentId, commands: &[BodyCommand]) {
     let ranges: Vec<(usize, usize)> = commands
         .iter()
         .filter(|c| matches!(c.kind, BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::AddContentsLine { .. } | BodyKind::Event(ChromeEvent::MarkBoth(..) | ChromeEvent::MarkRight(_) | ChromeEvent::SetPage(_) | ChromeEvent::PageNumbering(_))))
@@ -4470,13 +4555,13 @@ fn strip_command_text(blocks: &mut Vec<CBlock>, document: DocumentId, commands: 
         let s = inline_span(i);
         s.document == document && ranges.iter().any(|(a, b)| s.start >= *a && s.start < *b)
     };
-    for block in blocks.iter_mut() {
+    for (block, _) in blocks.iter_mut() {
         match block {
             CBlock::Paragraph(inlines) | CBlock::Styled { content: inlines, .. } | CBlock::ListItem { content: inlines, .. } | CBlock::FigureCaption { content: inlines } => inlines.retain(|i| !inside(i)),
             _ => {}
         }
     }
-    blocks.retain(|b| !matches!(b, CBlock::Paragraph(i) | CBlock::Styled { content: i, .. } if i.is_empty()));
+    blocks.retain(|(b, _)| !matches!(b, CBlock::Paragraph(i) | CBlock::Styled { content: i, .. } if i.is_empty()));
 }
 
 /// Body-font words of `source[start..end]` split at whitespace, every
@@ -4870,7 +4955,13 @@ fn gap_has_space(gap: &str) -> bool {
 /// letter "A." keeps 1000), which is why the update runs per character.
 pub fn space_factor(ch: char, previous: u32) -> u32 {
     let code = match ch {
-        '.' | '?' | '!' => 3000,
+        // `…` is `\textellipsis`, whose last character is a period
+        // (`.\kern\fontdimen3\font` three times), so it leaves the period's
+        // space factor behind exactly as a typed `.` does: pdflatex sets
+        // `ellipsis… here` with a 5.213 bp space at 12 pt
+        // (`\fontdimen2 + \fontdimen7`), not the 3.902 bp of `\fontdimen2`
+        // alone.
+        '.' | '?' | '!' | '\u{2026}' => 3000,
         ':' => 2000,
         ';' => 1500,
         ',' => 1250,

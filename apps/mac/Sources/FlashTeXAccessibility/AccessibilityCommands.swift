@@ -191,7 +191,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          description: "Shows the signature of the command whose argument the caret is in; also opens on `{`/`[` typed after a command name. `}`, Esc, or leaving the argument closes it.")
         case .toggleVimKeybindings:
             return Entry(command: self, title: "Toggle Vim keybindings", shortcuts: ["⌃⌘V"], menu: "View",
-                         description: "Switches the source editor's modal Vim emulation (normal/insert/visual modes, motions, operators, text objects, registers, marks, `/` search and `:` commands) on or off; the same as the Settings switch. The status bar shows -- NORMAL -- / -- INSERT -- / -- VISUAL --.",
+                         description: "Switches the source editor's modal Vim emulation (normal/insert/visual modes, motions, operators, text objects, registers, marks, `/` search and `:` commands) on or off; the same as the Settings switch. A Vim status line at the bottom of the editor pane shows -- NORMAL -- / -- INSERT -- / -- VISUAL -- and the `:` command line.",
                          menuItem: "Toggle Vim Keybindings")
         case .duplicateLine:
             return Entry(command: self, title: "Duplicate line", shortcuts: ["⌥⇧↓", "⌥⇧↑"], menu: "Editor",

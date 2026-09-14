@@ -961,7 +961,7 @@ explain that nothing is loaded.
 | ⌘⌥- | Decrease editor font size (View): -1 pt down to 8 pt |
 | ⌘⌥0 | Reset editor font size (View): back to the default 13 pt |
 | ⌘⇧M | Toggle Problems panel (View): the grouped diagnostics list under the editor and preview with a severity filter, jump, explanations and Fix…; the sidebar's Problems rows and the status bar counts open it too |
-| ⌃⌘V | Toggle Vim keybindings (View; also the Settings switch, default off): modal editing in the source editor — the status bar shows `-- NORMAL --` / `-- INSERT --` / `-- VISUAL --`; see *Vim keybindings* below |
+| ⌃⌘V | Toggle Vim keybindings (View; also the Settings switch, default off): modal editing in the source editor — a Vim status line at the bottom of the editor pane shows `-- NORMAL --` / `-- INSERT --` / `-- VISUAL --`; see *Vim keybindings* below |
 | Edit > Durable History… | Durable History window (undo/redo on the helper's edit ledger: Refresh, Undo, Redo, Retry/Discard after an uncertain reply, retention gauge, both stacks) |
 | ⌘F | Find… (opens the source editor's find bar; AppKit's built-in incremental search) |
 | ⌘⌥F | Find and Replace… (opens the find bar already showing its Replace row; a replacement is one undoable edit, so ⌘Z undoes it and the preview recompiles) |
@@ -975,6 +975,7 @@ explain that nothing is loaded.
 | Esc / ⌃Space | Completion popup (supported commands, `\end{…}` for open environments, labels, citation keys, document words; never takes the keyboard from the editor) |
 | ↑ / ↓ / Tab / ⇧Tab / Return | Completion list keys, while the list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Return/Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list, any other caret move closes it |
 | ⌘⇧Space | Signature help for the command whose argument the caret is in (also opens on `{`/`[` typed after a command name; `}`, Esc or leaving the argument closes it) |
+| ⌥⇧↓ / ⌥⇧↑ | Duplicate the caret's line — or every line the selection touches — below / above itself, caret on the copy so the key repeats |
 | ⌘/ | Toggle `% ` line comment on the selection's lines |
 | ⌘⌥← | Fold the innermost environment or section at the caret (first line stays visible with an inline …; hidden characters stay in the buffer) |
 | ⌘⌥→ | Unfold the innermost folded region at the caret |
@@ -1017,7 +1018,11 @@ editor behavior.
 text view's `keyDown`, active only while the "Vim keybindings" preference is on
 (Settings ▸ Typing, or View ▸ Toggle Vim Keybindings ⌃⌘V; default off — with it
 off nothing is intercepted and `CompletionLatencyTests` measures the plain
-editor). The status bar shows the mode and the `:`/`/` line being typed.
+editor). The mode and the `:`/`/` line being typed show in a status line at
+the **bottom of the editor pane** (`VimStatusLine`, ContentView.swift), where
+vim puts the status line of the window being edited — not in the window's
+status bar, which the Problems panel would push two panes below the caret.
+With the preference off the line takes no space at all.
 
 - **Modes**: normal, insert (`i a I A o O s S c C`), visual `v`, visual line
   `V`, replace-one `r{char}`; Esc or ⌃[ returns to normal. A mouse selection
