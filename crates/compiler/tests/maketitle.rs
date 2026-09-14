@@ -65,7 +65,11 @@ fn title_block_authors(parsed: &flashtex_compiler::parser::Parsed) -> Option<usi
 #[test]
 fn maketitle_without_an_author_warns_like_latex_and_sets_the_title() {
     let no_author = parse(&doc("\\title{T}", "\\maketitle"));
-    let messages: Vec<&str> = no_author.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    let messages: Vec<&str> = no_author
+        .diagnostics
+        .iter()
+        .map(|d| d.message.as_str())
+        .collect();
     assert_eq!(messages, ["No \\author given"]);
     assert!(no_author
         .diagnostics
@@ -80,7 +84,11 @@ fn maketitle_without_an_author_warns_like_latex_and_sets_the_title() {
 fn an_empty_author_is_silent_like_latex() {
     for preamble in ["\\title{T}\\author{}", "\\title{T}\\author{ \\and }"] {
         let parsed = parse(&doc(preamble, "\\maketitle"));
-        assert!(parsed.diagnostics.is_empty(), "{preamble}: {:?}", parsed.diagnostics);
+        assert!(
+            parsed.diagnostics.is_empty(),
+            "{preamble}: {:?}",
+            parsed.diagnostics
+        );
         assert_eq!(title_block_authors(&parsed), Some(0), "{preamble}");
     }
 }
