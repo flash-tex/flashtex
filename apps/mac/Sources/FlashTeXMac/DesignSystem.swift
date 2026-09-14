@@ -71,6 +71,8 @@ enum DS {
         /// The palette / search field: one size up from base so the type-here
         /// surface reads as the primary element of its panel.
         static let field = Font.system(size: 15)
+        /// The pairing code: read across the room, typed on another device.
+        static let pairingCode = Font.system(size: 34, weight: .semibold, design: .monospaced)
     }
 
     // MARK: colour — semantic AppKit colours so all three appearance modes are correct
@@ -84,6 +86,9 @@ enum DS {
         static let surfaceRaised = Color(nsColor: .controlBackgroundColor)
         /// The preview column's neutral ground the page floats on.
         static let surfaceGround = Color(nsColor: .underPageBackgroundColor)
+        /// QR ground: scanners need literal white behind the code in both
+        /// appearances — the one deliberately non-semantic surface.
+        static let qrGround = Color.white
         static let separator = Color(nsColor: .separatorColor)
 
         static let textPrimary = Color(nsColor: .labelColor)
@@ -177,6 +182,12 @@ enum DS {
         static let hairline: CGFloat = 1
         /// Short vertical divider between inline groups (status bar).
         static let inlineDividerHeight: CGFloat = 12
+        /// Small status dot (connection state, capture state).
+        static let statusDot: CGFloat = 7
+        /// Image thumbnails in capture rows and previews.
+        static let thumbnail: CGFloat = 72
+        /// Larger imagery: pairing QR, proposal preview images.
+        static let imageTile: CGFloat = 120
         /// Minimum width of the zoom percentage readout, so 100% → 1000%
         /// never shifts its neighbours.
         static let zoomReadoutMinWidth: CGFloat = 40
@@ -228,6 +239,18 @@ enum DS {
         /// documentation pane that package docs can never inflate.
         static let completionWidth: CGFloat = 480
         static let completionDocHeight: CGFloat = 58
+        /// Secondary windows and sheets.
+        static let sheetNarrowWidth: CGFloat = 440
+        static let pickerWindowSize = CGSize(width: 560, height: 400)
+        static let historyWindowMinWidth: CGFloat = 360
+        static let historyWindowMinHeight: CGFloat = 320
+        static let nearbyWindowMinWidth: CGFloat = 460
+        static let nearbyWindowIdealWidth: CGFloat = 500
+        static let nearbyWindowMinHeight: CGFloat = 560
+        static let citationWindowMinWidth: CGFloat = 560
+        static let citationWindowMinHeight: CGFloat = 300
+        static let sheetListMaxHeight: CGFloat = 200
+        static let nearbyEventsMaxHeight: CGFloat = 120
         /// The Settings window's fixed content width.
         static let settingsWidth: CGFloat = 460
         /// Find in Project window.
