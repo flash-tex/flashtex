@@ -270,8 +270,17 @@ final class WordCountModelTests: XCTestCase {
         XCTAssertEqual(model.total?.totalWords, 4)
     }
 
-    func testCancelledScheduleNeverPublishesItsResult() async {
-        let model = WordCountModel()
+    func testCancelledScheduleNeverPublishesItsResult() async throws {
+        // `debounceInterval` is a `static let`: if the environment forces it
+        // to 0, `scheduleUpdate` calls `item.perform()` itself and never
+        // reaches the injected `scheduleDebounce` at all, so `captured` would
+        // stay empty and `captured[0]` below would crash. Skip rather than
+        // crash if some other process in this run set that override.
+        try XCTSkipIf(
+            WordCountModel.debounceInterval == 0,
+            "FLASHTEX_WORDCOUNT_DEBOUNCE_MS=0 bypasses scheduleDebounce entirely"
+        )
+        let model = makeModel()
         // Capturing scheduler: neither item runs until we say so, so the
         // second `scheduleUpdate` must cancel the still-pending first item —
         // the real production coalescing path (`debounce?.cancel()`).
@@ -281,13 +290,26 @@ final class WordCountModelTests: XCTestCase {
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three four.")])
         XCTAssertEqual(captured.count, 2)
         XCTAssertTrue(captured[0].isCancelled)
-        // Even if a queue naively invoked the cancelled item anyway (real
-        // `DispatchQueue.asyncAfter` would not), the `generation` guard is a
-        // second line of defense: only the second update may publish.
-        captured[0].perform()
+
+        // `DispatchWorkItem.perform()` on a cancelled item is a no-op — it
+        // never reaches `recompute` at all (verified: a print inside
+        // `recompute` never fires for `captured[0].perform()` here). So
+        // `captured[0]` above already proves `debounce?.cancel()` was called,
+        // but it cannot exercise the `generation` guard as an independent
+        // second line of defense — that needs a call that actually reaches
+        // `recompute` with a stale generation, bypassing `DispatchWorkItem`
+        // entirely. `recompute` is `internal` (not `private`) precisely so
+        // this test can do that directly.
+        model.recompute([("main.tex", "One.")], generation: 1)
+        await published(model)
+        XCTAssertNil(
+            model.total,
+            "a stale generation (1, superseded by the second scheduleUpdate's 2) must never publish, even called directly"
+        )
+
+        // The real, current update still runs and publishes normally.
         captured[1].perform()
-        let ok = await settles { model.total?.totalWords == 4 }
-        XCTAssertTrue(ok)
+        await published(model)
         XCTAssertEqual(model.total?.totalWords, 4)
     }
 }
