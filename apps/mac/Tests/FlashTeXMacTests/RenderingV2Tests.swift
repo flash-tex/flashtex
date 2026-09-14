@@ -401,8 +401,8 @@ final class RenderingV2Tests: XCTestCase {
         XCTAssertEqual(fast.payload.diagnostics[1].help?.message, "did you mean \\alpha?")
     }
 
-    /// `delta.rs` hashes `suggestion` only when it is `Some`; labels/notes/help
-    /// stay out of the header digest. Shared golden bytes are a follow-up.
+    /// `delta.rs` hashes `suggestion` only when the diagnostics cap is on;
+    /// labels/notes/help stay out of the header digest.
     func testHeaderDigestHashesSuggestionOnlyWhenPresent() throws {
         let list = try RenderingV2.decode(try Self.fixture("display-list-v2-diagnostics.json")).payload
         XCTAssertNotNil(list.diagnostics[1].suggestion)
@@ -410,8 +410,9 @@ final class RenderingV2Tests: XCTestCase {
         without.diagnostics = without.diagnostics.map { d in
             var d = d; d.suggestion = nil; return d
         }
-        XCTAssertNotEqual(DisplayListDelta.headerDigest(list), DisplayListDelta.headerDigest(without),
-                          "a present suggestion must change the header digest")
+        XCTAssertNotEqual(DisplayListDelta.headerDigest(list, diagnosticsCapability: true),
+                          DisplayListDelta.headerDigest(without, diagnosticsCapability: true),
+                          "a present suggestion must change the header digest when the cap is on")
         var extra = list
         extra.diagnostics = extra.diagnostics.map { d in
             var d = d
@@ -419,8 +420,50 @@ final class RenderingV2Tests: XCTestCase {
             d.help = .init(message: "ignored in the digest")
             return d
         }
-        XCTAssertEqual(DisplayListDelta.headerDigest(list), DisplayListDelta.headerDigest(extra),
+        XCTAssertEqual(DisplayListDelta.headerDigest(list, diagnosticsCapability: true),
+                       DisplayListDelta.headerDigest(extra, diagnosticsCapability: true),
                        "notes/help are not part of the header digest")
+    }
+
+    /// Appendix A vectors from #358 (`delta.rs` / `tests/test_rendering_v2.py`).
+    func testHeaderDigestMatchesAppendixAPinnedSuggestionVectors() {
+        let with = Self.appendixAList(suggestion: "\\alpha")
+        XCTAssertEqual(DisplayListDelta.hex(DisplayListDelta.headerDigest(with, diagnosticsCapability: true)),
+                       "c4e7c7129994d1b73c8dfe3d9b1b9a0cbf0edc49e7f9e6bc848d8c66e0126bb6")
+        let without = Self.appendixAList(suggestion: nil)
+        XCTAssertEqual(DisplayListDelta.hex(DisplayListDelta.headerDigest(without, diagnosticsCapability: true)),
+                       "e554935e8987d50810a82c72274b661d6be747d2b41993b0d008715cad5f8dbe")
+        XCTAssertEqual(DisplayListDelta.hex(DisplayListDelta.headerDigest(without, diagnosticsCapability: false)),
+                       "e554935e8987d50810a82c72274b661d6be747d2b41993b0d008715cad5f8dbe")
+        // Capability off must omit an in-memory suggestion, matching the producer.
+        XCTAssertEqual(DisplayListDelta.hex(DisplayListDelta.headerDigest(with, diagnosticsCapability: false)),
+                       "e554935e8987d50810a82c72274b661d6be747d2b41993b0d008715cad5f8dbe")
+    }
+
+    /// Empty `suggestion` is omitted (`""` → nil) on both readers.
+    func testEmptySuggestionNormalisesToNilOnSlowAndFastReaders() throws {
+        XCTAssertNil(RenderingV2.Diagnostic(code: "unknown_command", message: "\\alpah",
+                                            severity: .error, sources: [], suggestion: "").suggestion)
+        var obj = try JSONSerialization.jsonObject(with: try Self.fixture("display-list-v2-diagnostics.json")) as! [String: Any]
+        var payload = obj["payload"] as! [String: Any]
+        var diags = payload["diagnostics"] as! [[String: Any]]
+        diags[1]["suggestion"] = ""
+        payload["diagnostics"] = diags
+        obj["payload"] = payload
+        let data = Self.data(obj)
+        XCTAssertNil(try RenderingV2.decode(data).payload.diagnostics[1].suggestion)
+        XCTAssertNil(try RenderingV2Fast.envelope(data).payload.diagnostics[1].suggestion)
+        XCTAssertEqual(try RenderingV2Fast.envelope(data), try JSONDecoder().decode(RenderingV2.Envelope.self, from: data))
+    }
+
+    /// Minimal header-only list matching `header_only_diag_list` in `delta.rs`.
+    static func appendixAList(suggestion: String?) -> RenderingV2.DisplayList {
+        .init(projectId: "p", revision: 1,
+              requiredFeatures: ["glyph_run", "rgba-srgb", "cluster-actualtext"],
+              documents: [], fonts: [], pages: [],
+              diagnostics: [.init(code: "unknown_command", message: "\\alpah", severity: .error,
+                                  sources: [.init(path: "notes.tex", startByte: 0, endByte: 6)],
+                                  suggestion: suggestion)])
     }
 
     func testValidationErrorCarriesADiagnostic() {

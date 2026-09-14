@@ -117,10 +117,14 @@ enum DisplayListDelta {
         return c.sha()
     }
 
-    static func headerDigest(_ l: RenderingV2.DisplayList) -> Data { Data(SHA256.hash(data: headerCanon(l))) }
+    static func headerDigest(_ l: RenderingV2.DisplayList, diagnosticsCapability: Bool = false) -> Data {
+        Data(SHA256.hash(data: headerCanon(l, diagnosticsCapability: diagnosticsCapability)))
+    }
 
     /// The canonical header bytes (exposed for cross-implementation debugging).
-    static func headerCanon(_ l: RenderingV2.DisplayList) -> Data {
+    /// `suggestion` is hashed iff `display-list-v2-diagnostics` was accepted
+    /// and the value is a non-empty string (Appendix A).
+    static func headerCanon(_ l: RenderingV2.DisplayList, diagnosticsCapability: Bool = false) -> Data {
         var c = Canon(bytes: Data("flashtex:dl2:header:1\0".utf8))
         for s in [l.renderFormat, l.coordinateUnit, l.colorSpace, l.textExtraction, l.projectId] { c.s(s) }
         c.u(l.revision)
@@ -130,14 +134,17 @@ enum DisplayListDelta {
         for f in l.fonts { c.s(f.fontId); c.s(f.sha256); c.i(f.byteLength); c.s(f.format); c.u(f.faceIndex); c.u(f.unitsPerEm); c.u(f.glyphCount); c.s(f.postscriptName) }
         c.u(l.diagnostics.count); for d in l.diagnostics {
             c.s(d.code); c.s(d.message); c.s(d.severity.rawValue); c.ranges(d.sources)
+            // WIP: still hashes a present suggestion regardless of the flag so
+            // the Appendix A capability-off golden can fail first.
             if let s = d.suggestion { c.s(s) }
+            _ = diagnosticsCapability
         }
         return c.bytes
     }
 
-    static func listDigest(_ l: RenderingV2.DisplayList, pageDigests: [Data]) -> Data {
+    static func listDigest(_ l: RenderingV2.DisplayList, pageDigests: [Data], diagnosticsCapability: Bool = false) -> Data {
         var c = Canon(bytes: Data("flashtex:dl2:list:1\0".utf8))
-        c.bytes.append(headerDigest(l)); c.u(pageDigests.count); for d in pageDigests { c.bytes.append(d) }
+        c.bytes.append(headerDigest(l, diagnosticsCapability: diagnosticsCapability)); c.u(pageDigests.count); for d in pageDigests { c.bytes.append(d) }
         return c.sha()
     }
 
