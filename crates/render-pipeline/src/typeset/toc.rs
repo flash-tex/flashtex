@@ -136,7 +136,7 @@ impl Context<'_> {
         };
         Some(BuiltBlock {
             block: pl::ParagraphBlock::body(lines),
-            items: list,
+            items: std::rc::Rc::new(list),
             recs,
             vertical,
             labels: Vec::new(),
