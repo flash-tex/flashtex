@@ -83,9 +83,15 @@ pub enum Nucleus {
     /// current text font: `\quad` is `\hskip1em` (latex.ltx), and `em` in
     /// math mode is `\fontdimen6\font` of the text font selected outside the
     /// formula, at the text size whatever the math style.
+    ///
+    /// `nonscript` marks glue written behind TeX's `\nonscript`, which
+    /// cancels the glue that follows it in script and scriptscript style.
+    /// The kernel uses it to take back class spacing that those styles do
+    /// not add in the first place — see `\bmod` in `command_atom`.
     Space {
         em: f64,
         font_em: bool,
+        nonscript: bool,
     },
     Fraction {
         numerator: MathList,
@@ -1040,6 +1046,51 @@ impl MathParser<'_> {
                 ams_symbol: None,
                 ..symbol("△".into(), span)
             },
+            // The six `vert` spellings are two glyphs — `\mid`'s U+2223 and
+            // `\|`'s U+2016 — in three different classes, and `symbol_class`
+            // is keyed by the glyph, so the class has to be forced on the
+            // atom exactly as `\bot` forces Ord onto `\perp`'s glyph.
+            //
+            // amsmath builds its four from the kernel's delimiter codes
+            // (`amsmath.sty` 182-209): `\lvert`/`\lVert` add `"4000000`,
+            // setting the class nibble to 4, `\mathopen`; `\rvert`/`\rVert`
+            // add `"1000000` on top of that for 5, `\mathclose`. Its own
+            // fallback branch spells the same thing out as
+            // `\DeclareMathDelimiter{\lvert}{\mathopen}{symbols}{"6A}...`.
+            // The kernel's `\vert`/`\Vert` stay `\mathord` (`fontmath.ltx`
+            // 465-470), which is why they are not simply aliases of the
+            // amsmath pair.
+            //
+            // Measured at 10pt with TeX Live 2025 pdflatex under amsmath,
+            // against `\hbox{$abc$}` 13.90510pt and `\hbox{$a=b$}` 22.91077pt:
+            //
+            //   $a\lvert b\rvert c$  19.46068  abc + 2 glyphs, no spacing
+            //   $a\vert b\vert c$    19.46068  Ord lands on the same box here
+            //   $a\lVert b\rVert c$  23.90514  abc + 2 glyphs, no spacing
+            //   $a\mid b\mid c$      30.57152  abc + 2 glyphs + 20mu (Rel)
+            //   $a=\rvert b$         22.91084  a=b + glyph - 5mu
+            //   $a=\rVert b$         25.13307  a=b + glyph - 5mu
+            //
+            // The 20mu separating the first row from the `\mid` row is what
+            // every `\lvert x\rvert` was paying before this arm, and the 5mu
+            // on the last two is what a closing bar after a relation was.
+            // `$a\left|b\right|c$` is a third box again, 22.79393pt, because
+            // `\left`/`\right` build an Inner atom; it is not a substitute
+            // for either spelling.
+            "lvert" | "rvert" | "lVert" | "rVert" | "vert" | "Vert" => {
+                let class = match name.as_str() {
+                    "lvert" | "lVert" => AtomClass::Open,
+                    "rvert" | "rVert" => AtomClass::Close,
+                    _ => AtomClass::Ord,
+                };
+                let glyph = if name.ends_with("Vert") { "‖" } else { "∣" };
+                MathAtom {
+                    class_override: Some(class),
+                    width_em: None,
+                    ams_symbol: None,
+                    ..symbol(glyph.into(), span)
+                }
+            }
             // TeXbook Chapter 17's `\mathbin`/`\mathrel`/... family: the
             // argument is a full math list, boxed as one atom whose class is
             // forced regardless of what its own contents would imply.
@@ -1268,14 +1319,37 @@ impl MathParser<'_> {
             // The rows with 2mu are the Bin degrading to Ord at a boundary,
             // where only the explicit 5mu and the -4mu survive.
             //
-            // Residual: the two `\nonscript`s drop the -4mu in script styles,
-            // where the Bin class contributes nothing either, so pdflatex
-            // keeps the full 5mu there and this keeps 1mu. That needs a
-            // style-aware kern, which no atom here carries.
+            // The `\mkern5mu` is unconditional but the `\mskip-\medmuskip`
+            // sits behind a `\nonscript`, so it only applies in text and
+            // display style — exactly where the Bin class contributes its own
+            // 4mu. The two cancel whenever the Bin survives, which is why the
+            // total is 5mu a side in every style, and why a boundary that
+            // degrades the Bin to Ord leaves 1mu in text but the full 5mu in
+            // script. Measured at 10pt, `\mathrm{mod}` as the control and
+            // 1mu = 0.555542pt text, 0.455246pt script, 0.408950pt
+            // scriptscript (a quad of 10, 8.19443 and 7.36111pt):
+            //
+            //   $a\bmod b$                    34.29970 - 28.74428 = 10mu
+            //   $\scriptstyle a\bmod b$       27.59433 - 23.04187 = 10mu
+            //   $\scriptscriptstyle a\bmod b$ 23.94104 - 19.85153 = 10mu
+            //   $\bmod b$                     24.56947 - 23.45839 =  2mu
+            //   $\scriptstyle\bmod b$         23.25668 - 18.70422 = 10mu
+            //   $\scriptscriptstyle\bmod b$   20.06890 - 15.97939 = 10mu
+            //   $a\bmod$                      25.56370 - 24.45262 =  2mu
+            //   $\scriptstyle a\bmod$         24.07767 - 19.52520 = 10mu
+            //
+            // so the two script rows that degrade are 8mu wider than the text
+            // row that degrades, and nothing here may fold the -4mu into a
+            // constant.
             "bmod" => {
+                // In the definition's own order; the returned atom leads and
+                // `pending` follows it.
+                self.pending.push(space(BMOD_KERN_MU / 18.0, span));
                 self.pending.push(text_atom("mod".into(), span));
-                self.pending.push(space(BMOD_EXTRA_MU / 18.0, span));
-                space(BMOD_EXTRA_MU / 18.0, span)
+                self.pending.push(space(BMOD_KERN_MU / 18.0, span));
+                self.pending
+                    .push(nonscript_space(-BMOD_MEDMUSKIP_MU / 18.0, span));
+                nonscript_space(-BMOD_MEDMUSKIP_MU / 18.0, span)
             }
             // amsmath's `\mod` (`amsmath.sty` 726-728) is a different command
             // with a different kern and no parentheses, and is undefined in
@@ -2586,9 +2660,21 @@ fn operator_body(list: MathList) -> MathList {
 /// `\varnothing`'s advance in ems: msbm10.tfm character "3F (CHARWD R 0.777781).
 pub(crate) const VARNOTHING_MSBM_EM: f64 = 0.777781;
 
-/// The mu `\bmod` adds on each side beyond the 4mu of its Bin class: its
-/// definition cancels `\medmuskip` and puts an explicit `\mkern5mu` there.
-pub(crate) const BMOD_EXTRA_MU: f64 = 1.0;
+/// `\bmod`'s unconditional `\mkern5mu`, on each side of its Bin atom.
+pub(crate) const BMOD_KERN_MU: f64 = 5.0;
+
+/// The `\medmuskip` `\bmod` takes back on each side, behind a `\nonscript`
+/// so it applies in text and display style only. It is the same 4mu the Bin
+/// class contributes there, so the pair cancels whenever the Bin survives.
+pub(crate) const BMOD_MEDMUSKIP_MU: f64 = 4.0;
+
+/// What is left of the two on a text-style boundary, where the Bin has
+/// degraded to Ord and contributes nothing but the `\nonscript` still fires:
+/// `$\bmod b$` is 2mu wider than `$\mathrm{mod}b$`, 1mu a side. In script
+/// style the `\nonscript` fires too and the full `BMOD_KERN_MU` survives.
+/// Only the tests name it; the layout derives it from the two above.
+#[cfg(test)]
+pub(crate) const BMOD_EXTRA_MU: f64 = BMOD_KERN_MU - BMOD_MEDMUSKIP_MU;
 
 /// The mu amsmath's `\pod` opens with in a non-display formula, against the
 /// kernel's 18mu (`QUAD_EM`).
@@ -2756,20 +2842,41 @@ pub fn varepsilon_list(span: Span) -> MathList {
 /// `\hskip<em>em`: glue in ems of the current text font (`\quad`).
 fn text_space(em: f64, span: Span) -> MathAtom {
     MathAtom {
-        nucleus: Nucleus::Space { em, font_em: true },
+        nucleus: Nucleus::Space {
+            em,
+            font_em: true,
+            nonscript: false,
+        },
         ..space(0.0, span)
     }
 }
 
 fn space(em: f64, span: Span) -> MathAtom {
     MathAtom {
-        nucleus: Nucleus::Space { em, font_em: false },
+        nucleus: Nucleus::Space {
+            em,
+            font_em: false,
+            nonscript: false,
+        },
         span,
         superscript: None,
         subscript: None,
         class_override: None,
         width_em: None,
         ams_symbol: None,
+    }
+}
+
+/// `\nonscript\mskip<em>`: glue that vanishes in script and scriptscript
+/// style, where TeX's `\nonscript` cancels the glue node behind it.
+fn nonscript_space(em: f64, span: Span) -> MathAtom {
+    MathAtom {
+        nucleus: Nucleus::Space {
+            em,
+            font_em: false,
+            nonscript: true,
+        },
+        ..space(0.0, span)
     }
 }
 
@@ -3629,9 +3736,16 @@ fn layout_nucleus(
                 descent: b.descent.max(bottom + rule),
             }
         }
-        Nucleus::Space { em, .. } => MathBox {
+        // `\nonscript` cancels the glue behind it in script and scriptscript
+        // style, which is every level past 0 here — the same `level > 0` the
+        // class-spacing table uses for its text-styles-only rows.
+        Nucleus::Space { em, nonscript, .. } => MathBox {
             items: Vec::new(),
-            width: em * size,
+            width: if *nonscript && level > 0 {
+                0.0
+            } else {
+                em * size
+            },
             ascent: size,
             descent: 0.2 * size,
         },
@@ -4120,9 +4234,14 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
             Nucleus::Symbol(s) => Nucleus::Symbol(s.clone()),
             Nucleus::SizedDelimiter { .. } => atom.nucleus.clone(),
             Nucleus::Text(s) => Nucleus::Text(s.clone()),
-            Nucleus::Space { em, font_em } => Nucleus::Space {
+            Nucleus::Space {
+                em,
+                font_em,
+                nonscript,
+            } => Nucleus::Space {
                 em: *em,
                 font_em: *font_em,
+                nonscript: *nonscript,
             },
             Nucleus::Fraction {
                 numerator,
@@ -4702,7 +4821,7 @@ mod parse_tests {
             .atoms
             .iter()
             .filter_map(|a| match a.nucleus {
-                Nucleus::Space { em, font_em } => Some((em, font_em)),
+                Nucleus::Space { em, font_em, .. } => Some((em, font_em)),
                 _ => None,
             })
             .collect();
@@ -6191,6 +6310,107 @@ mod package_gating_tests {
         );
         assert_eq!(class("article"), MathPackages::KERNEL);
     }
+
+    /// amsmath's `\lvert`/`\rvert`/`\lVert`/`\rVert` are `\mathopen` and
+    /// `\mathclose`, and the kernel's `\vert`/`\Vert` are `\mathord` — none
+    /// of the six is the `\mathrel` that their glyphs carry by default.
+    ///
+    /// At 10pt with TeX Live 2025 pdflatex, `\hbox{$abc$}` 13.90510pt and
+    /// `\hbox{$a=b$}` 22.91077pt as the controls:
+    ///
+    ///   $a\lvert b\rvert c$  19.46068  the bars cost nothing on either side
+    ///   $a\vert b\vert c$    19.46068
+    ///   $a\lVert b\rVert c$  23.90514
+    ///   $a\Vert b\Vert c$    23.90514
+    ///   $a\mid b\mid c$      30.57152  the Rel form, 20mu wider
+    ///   $a=\rvert b$         22.91084  a closing bar after a relation
+    ///   $a=\rVert b$         25.13307
+    ///   $a=\lvert b$         25.68855  an opening one still pays the 5mu
+    ///
+    /// so the `\mid` row is the divergence for the four amsmath spellings,
+    /// and the two `\r...` rows are 5mu of it on their own.
+    #[test]
+    fn the_vert_family_is_open_close_and_ord_but_never_rel() {
+        // A lone bar has no neighbour, so its box is the bare glyph.
+        let bar = laid_out(r"\lvert", AMSMATH).width;
+        let dbar = laid_out(r"\lVert", AMSMATH).width;
+        let abc = laid_out("abc", AMSMATH).width;
+        let aeqb = laid_out("a=b", AMSMATH).width;
+
+        // Open/Close and Ord all put nothing between an Ord and a bar, where
+        // `\mid`'s Rel puts 5mu on each of the four boundaries.
+        for (source, glyph) in [
+            (r"a\lvert b\rvert c", bar),
+            (r"a\vert b\vert c", bar),
+            (r"a\lVert b\rVert c", dbar),
+            (r"a\Vert b\Vert c", dbar),
+        ] {
+            close(laid_out(source, AMSMATH).width, abc + 2.0 * glyph);
+        }
+        close(laid_out(r"a\mid b\mid c", AMSMATH).width, abc + 2.0 * bar + 20.0);
+
+        // Rel->Close is 0mu where Rel->Ord and Rel->Open are both 5mu, so a
+        // closing bar after a relation is the sharpest of the six.
+        close(laid_out(r"a=\rvert b", AMSMATH).width, aeqb + bar - 5.0);
+        close(laid_out(r"a=\rVert b", AMSMATH).width, aeqb + dbar - 5.0);
+        close(laid_out(r"a=\lvert b", AMSMATH).width, aeqb + bar);
+        close(laid_out(r"a=\lVert b", AMSMATH).width, aeqb + dbar);
+        close(laid_out(r"a=\vert b", AMSMATH).width, aeqb + bar);
+        close(laid_out(r"a=\Vert b", AMSMATH).width, aeqb + dbar);
+
+        // Two glyphs, not six: the `V` spellings are U+2016 and the rest
+        // `\mid`'s U+2223.
+        for (source, glyph) in [
+            (r"\lvert", "\u{2223}"),
+            (r"\rvert", "\u{2223}"),
+            (r"\vert", "\u{2223}"),
+            (r"\lVert", "\u{2016}"),
+            (r"\rVert", "\u{2016}"),
+            (r"\Vert", "\u{2016}"),
+        ] {
+            let items = laid_out(source, AMSMATH).items;
+            assert_eq!(items.len(), 1, "{source}");
+            assert_eq!(items[0].text, glyph, "{source}");
+        }
+    }
+
+    /// `\bmod`'s `\mskip-\medmuskip` sits behind a `\nonscript`, so in script
+    /// and scriptscript style it does not fire — and neither does the 4mu its
+    /// Bin class would contribute there. The explicit `\mkern5mu` is all that
+    /// is left on each side, in every style and at either boundary.
+    ///
+    /// Measured at 10pt, `\mathrm{mod}` as the control, with a mu of
+    /// 0.555542pt in text and 0.455246pt in script:
+    ///
+    ///   $a\bmod b$               34.29970 - 28.74428 = 10mu
+    ///   $\scriptstyle a\bmod b$  27.59433 - 23.04187 = 10mu
+    ///   $\bmod b$                24.56947 - 23.45839 =  2mu
+    ///   $\scriptstyle\bmod b$    23.25668 - 18.70422 = 10mu
+    ///
+    /// The third row is the Bin degrading to Ord with no left operand, where
+    /// the `\nonscript` still fires; the fourth is the same boundary in a
+    /// style where it does not, and is the one this lane corrects.
+    #[test]
+    fn bmod_keeps_the_full_five_mu_a_side_in_script_styles() {
+        // 1mu of the superscript's style, against 1pt of the text style.
+        let script_mu = SCRIPT_SCALE;
+        for packages in [MathPackages::KERNEL, AMSMATH, AMSSYMB] {
+            let ab = laid_out("x^{ab}", packages);
+            let a = x(&ab, "b") - x(&ab, "a");
+
+            let mid = laid_out(r"x^{a\bmod b}", packages);
+            close(x(&mid, "mod"), x(&mid, "a") + a + 5.0 * script_mu);
+            let own = x(&mid, "b") - x(&mid, "mod") - 5.0 * script_mu;
+
+            // No left operand in script style: the Bin degrades to Ord, but
+            // unlike the text-style case the -4mu is gone too, so both sides
+            // keep the whole kern rather than 1mu of it.
+            close(
+                laid_out(r"x^{\bmod b}", packages).width - laid_out("x^{b}", packages).width,
+                own + 10.0 * script_mu,
+            );
+        }
+    }
 }
 
 /// `\|`/`\Vert` against `\mid`: two different symbols, not one spelled twice.
@@ -6222,10 +6442,12 @@ mod double_bar_tests {
     /// belongs once the delimiter grows.
     #[test]
     fn every_spelling_of_the_double_bar_is_one_u2016() {
-        // `\Vert` on its own is still an unsupported command here (it is
-        // only a fence name, `DELIMITER_COMMANDS`); `\|` is its spelling
-        // that parses everywhere.
+        // `\Vert` used to be a fence name only (`DELIMITER_COMMANDS`), so
+        // `\|` was the sole spelling that parsed on its own; both are
+        // `\DeclareMathDelimiter{..}{\mathord}{symbols}{"6B}..` in
+        // `fontmath.ltx` 465-468 and both parse everywhere now.
         assert_eq!(texts(r"\|", MathPackages::KERNEL), vec!["\u{2016}"]);
+        assert_eq!(texts(r"\Vert", MathPackages::KERNEL), vec!["\u{2016}"]);
         for source in [r"\lVert", r"\rVert"] {
             assert_eq!(texts(source, AMSMATH), vec!["\u{2016}"], "{source}");
         }
