@@ -37,6 +37,7 @@ impl RenderIdentity {
             fonts,
             pages: vec![],
             diagnostics: vec![],
+            window: None,
         };
         shell.validate(&Capabilities {
             render_formats: vec![RenderFormat::DisplayListV2],

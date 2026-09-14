@@ -294,13 +294,104 @@ pub enum Item {
     #[serde(rename = "rule")]
     Rule(Rule),
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// PROPOSAL display-list-v2-window: a page outside the negotiated window is
+// elided — it decodes/encodes with no `items` key and `resident: false`
+// instead. `Page` keeps the pre-proposal `items` accessor working (empty for
+// an elided page) by hand-rolling (de)serialization around a private wire
+// shape rather than deriving it, so every existing resident page round-trips
+// byte-identically (no `resident` key ever appears for it).
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct PageWireDe {
+    number: u32,
+    width: Tick,
+    height: Tick,
+    #[serde(default)]
+    items: Option<Vec<Item>>,
+    #[serde(default)]
+    resident: Option<bool>,
+}
+#[derive(Serialize)]
+struct PageWireSer<'a> {
+    number: u32,
+    width: Tick,
+    height: Tick,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    items: Option<&'a [Item]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resident: Option<bool>,
+}
+#[derive(Debug, Clone)]
 pub struct Page {
     pub number: u32,
     pub width: Tick,
     pub height: Tick,
+    /// Empty for an elided (non-resident) page.
     pub items: Vec<Item>,
+    resident: bool,
+}
+impl Page {
+    /// PROPOSAL display-list-v2-window: false only for a page elided from a
+    /// windowed display list (no `items`, wire `resident: false`).
+    pub fn is_resident(&self) -> bool {
+        self.resident
+    }
+}
+impl<'de> Deserialize<'de> for Page {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = PageWireDe::deserialize(deserializer)?;
+        match (wire.items, wire.resident) {
+            (Some(items), None) => Ok(Page {
+                number: wire.number,
+                width: wire.width,
+                height: wire.height,
+                items,
+                resident: true,
+            }),
+            (None, Some(false)) => Ok(Page {
+                number: wire.number,
+                width: wire.width,
+                height: wire.height,
+                items: Vec::new(),
+                resident: false,
+            }),
+            // Fail closed: a consumer that never learned about windows must
+            // be refused, not shown a blank page. This rejects `items`
+            // absent without an explicit `resident: false`, and any other
+            // combination (both present, or an explicit `resident: true`).
+            _ => Err(serde::de::Error::custom(
+                "page must have `items`, or an explicit `resident: false` and no `items`",
+            )),
+        }
+    }
+}
+impl Serialize for Page {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let wire = if self.resident {
+            PageWireSer {
+                number: self.number,
+                width: self.width,
+                height: self.height,
+                items: Some(&self.items),
+                resident: None,
+            }
+        } else {
+            PageWireSer {
+                number: self.number,
+                width: self.width,
+                height: self.height,
+                items: None,
+                resident: Some(false),
+            }
+        };
+        wire.serialize(serializer)
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -330,6 +421,19 @@ pub struct DisplayList {
     pub fonts: Vec<FontResource>,
     pub pages: Vec<Page>,
     pub diagnostics: Vec<Diagnostic>,
+    /// PROPOSAL display-list-v2-window: present only when the list was
+    /// produced under a negotiated page window. Omitted (not `null`) when
+    /// absent so an unwindowed list serializes byte-identically to before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<PageWindow>,
+}
+/// PROPOSAL display-list-v2-window: the negotiated window, echoed verbatim.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PageWindow {
+    pub first_page: u32,
+    pub page_count: u32,
+    pub document_page_count: u32,
 }
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -507,6 +611,13 @@ impl DisplayList {
             )?;
             page.width.positive()?;
             page.height.positive()?;
+            // PROPOSAL display-list-v2-window: an elided page carries no
+            // items (enforced by `Page`'s custom `Deserialize`), so skip
+            // item-level checks for it entirely; residency itself is
+            // checked against `self.window` below.
+            if !page.is_resident() {
+                continue;
+            }
             bounded_len(page.items.len(), 0, 100000, "page item count")?;
             for item in &page.items {
                 match item {
@@ -604,6 +715,35 @@ impl DisplayList {
                         )?;
                     }
                 }
+            }
+        }
+        // PROPOSAL display-list-v2-window: residency must agree exactly with
+        // `self.window`. Without a window every page must be resident (an
+        // elided page with no window is a refusal, not a blank paint).
+        match &self.window {
+            Some(window) => {
+                require(
+                    window.first_page > 0 && window.page_count > 0,
+                    "window range must be positive",
+                )?;
+                require(
+                    window.document_page_count as usize == self.pages.len(),
+                    "window document page count mismatch",
+                )?;
+                let start = u64::from(window.first_page);
+                let end = start.saturating_add(u64::from(window.page_count));
+                for page in &self.pages {
+                    require(
+                        page.is_resident() == (start..end).contains(&u64::from(page.number)),
+                        "page residency disagrees with window",
+                    )?;
+                }
+            }
+            None => {
+                require(
+                    self.pages.iter().all(Page::is_resident),
+                    "elided page requires a window",
+                )?;
             }
         }
         for diagnostic in &self.diagnostics {

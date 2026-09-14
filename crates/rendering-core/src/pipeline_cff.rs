@@ -65,6 +65,11 @@ impl PipelineCff {
                 "source identity mismatch",
             )?;
         }
+        // PROPOSAL display-list-v2-window: `fonts[]` is always the whole-document
+        // font closure, independent of which pages are currently resident, so
+        // binding it here does not need — and must not require — every page to
+        // be resident. A frame with only the window's pages resident still
+        // binds because this loop never reads page/item residency.
         let mut fonts = BTreeMap::new();
         for f in &list.fonts {
             require(
@@ -92,6 +97,9 @@ impl PipelineCff {
                 .map_err(|e| ValidationError(format!("CFF resource: {e:?}")))?;
             fonts.insert(f.font_id.clone(), CachedCffConsumer::new(cache));
         }
+        // PROPOSAL display-list-v2-window: an elided page's `items` is always
+        // empty, so this loop naturally contributes nothing for it — no
+        // special-casing needed to bind a windowed frame.
         for page in &list.pages {
             for item in &page.items {
                 match item {

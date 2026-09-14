@@ -215,6 +215,58 @@ fn source_registry_rejects_unknown_paths_and_out_of_bounds_offsets() {
     v["payload"]["pages"][0]["items"][0]["clusters"][0]["sources"][0]["end_byte"] = json!(11);
     assert!(valid(&v).is_err());
 }
+// PROPOSAL display-list-v2-window: fail closed. A page decodes only when it
+// has `items` (resident) or an explicit `resident: false` and no `items`
+// (elided) — never neither, and never both.
+#[test]
+fn page_without_items_or_explicit_resident_false_is_refused() {
+    let mut v = value();
+    v["payload"]["pages"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("items");
+    assert!(envelope(&v).is_err());
+    // Also refused with both present.
+    let mut v = value();
+    v["payload"]["pages"][0]["resident"] = json!(false);
+    assert!(envelope(&v).is_err());
+    // And refused with an explicit `resident: true` (the wire form for a
+    // resident page never carries a `resident` key at all).
+    let mut v = value();
+    v["payload"]["pages"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("items");
+    v["payload"]["pages"][0]["resident"] = json!(true);
+    assert!(envelope(&v).is_err());
+}
+// PROPOSAL display-list-v2-window: residency must agree exactly with the
+// negotiated `window`; disagreement is refused rather than silently trusted.
+#[test]
+fn residency_disagreeing_with_window_is_refused() {
+    // Single resident page numbered 1, but the window claims pages 5..6 are
+    // the resident ones.
+    let mut v = value();
+    v["payload"]["window"] = json!({"first_page": 5, "page_count": 1, "document_page_count": 1});
+    assert!(valid(&v).is_err());
+    // A two-page list where the second page is elided but the window claims
+    // both pages are resident.
+    let mut v = value();
+    let mut elided_page = v["payload"]["pages"][0].clone();
+    elided_page["number"] = json!(2);
+    elided_page.as_object_mut().unwrap().remove("items");
+    elided_page["resident"] = json!(false);
+    v["payload"]["pages"].as_array_mut().unwrap().push(elided_page);
+    v["payload"]["window"] = json!({"first_page": 1, "page_count": 2, "document_page_count": 2});
+    assert!(valid(&v).is_err());
+    // An elided page with no window at all is a refusal, not a blank paint.
+    let mut v = value();
+    let mut elided_page = v["payload"]["pages"][0].clone();
+    elided_page.as_object_mut().unwrap().remove("items");
+    elided_page["resident"] = json!(false);
+    v["payload"]["pages"][0] = elided_page;
+    assert!(valid(&v).is_err());
+}
 #[test]
 fn rule_is_explicit_geometry_not_inferred_text() {
     let mut v = value();

@@ -111,3 +111,63 @@ fn offers_selections_and_explicit_rejections_roundtrip() {
     let bytes = serialize_validated(&offer, None, MAX_MESSAGE_BYTES).unwrap();
     parse_validated(&bytes, None).unwrap();
 }
+// PROPOSAL display-list-v2-window: a windowed display list round-trips
+// through the wire boundary losslessly — `window` and `resident: false`
+// survive, and resident pages gain no `resident` key.
+#[test]
+fn windowed_display_list_roundtrips_byte_preserving() {
+    let offer = offer();
+    let mut value: serde_json::Value =
+        serde_json::from_slice(include_bytes!("fixtures/synthetic-display-list.json")).unwrap();
+    let mut elided_page = value["payload"]["pages"][0].clone();
+    elided_page["number"] = json!(2);
+    elided_page.as_object_mut().unwrap().remove("items");
+    elided_page["resident"] = json!(false);
+    value["payload"]["pages"]
+        .as_array_mut()
+        .unwrap()
+        .push(elided_page);
+    value["payload"]["window"] =
+        json!({"first_page": 1, "page_count": 1, "document_page_count": 2});
+    let envelope = parse_validated(&serde_json::to_vec(&value).unwrap(), Some(&offer)).unwrap();
+    let bytes = serialize_validated(&envelope, Some(&offer), MAX_MESSAGE_BYTES).unwrap();
+    let decoded = parse_validated(&bytes, Some(&offer)).unwrap();
+    assert_eq!(
+        bytes,
+        serialize_validated(&decoded, Some(&offer), MAX_MESSAGE_BYTES).unwrap()
+    );
+    let round_tripped: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        round_tripped["payload"]["window"],
+        json!({"first_page": 1, "page_count": 1, "document_page_count": 2})
+    );
+    let pages = round_tripped["payload"]["pages"].as_array().unwrap();
+    assert!(pages[0]["items"].is_array());
+    assert!(pages[0].get("resident").is_none());
+    assert!(pages[1].get("items").is_none());
+    assert_eq!(pages[1]["resident"], json!(false));
+    if let Message::DisplayList(list) = decoded.message {
+        assert!(list.pages[0].is_resident());
+        assert!(list.pages[0].items.len() == 1);
+        assert!(!list.pages[1].is_resident());
+        assert!(list.pages[1].items.is_empty());
+        assert_eq!(list.window.unwrap().document_page_count, 2);
+    } else {
+        panic!("fixture is display list")
+    }
+}
+// PROPOSAL display-list-v2-window: an unwindowed list's serialization stays
+// byte-identical to before — no `window` or `resident` key is ever emitted.
+#[test]
+fn unwindowed_display_list_serialization_never_gains_window_or_resident_keys() {
+    let offer = offer();
+    let envelope = parse_validated(
+        include_bytes!("fixtures/synthetic-display-list.json"),
+        Some(&offer),
+    )
+    .unwrap();
+    let bytes = serialize_validated(&envelope, Some(&offer), MAX_MESSAGE_BYTES).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(!text.contains("\"window\""));
+    assert!(!text.contains("\"resident\""));
+}
