@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/primes-gh278",
+  "gh_ref": "https://github.com/flash-tex/flashtex/issues/278",
+  "machine": "mac-m5pro-dq222",
+  "note": "daniel-parent (Max, not daniel-vpclaude), Commander-assigned 05:23Z; Codex worker for implementation, daniel-parent reviews",
+  "started_utc": "2026-09-14T05:26:49Z",
+  "state": "claimed",
+  "task_id": "GH-278",
+  "updated_utc": "2026-09-14T05:26:49Z"
+}
