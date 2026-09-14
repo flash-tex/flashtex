@@ -181,7 +181,7 @@ final class V2PageWindowTests: XCTestCase {
     // MARK: 2. an elided page is painted, not skipped
 
     func testElidedPageIsPreparedAsAPlaceholderWithItsRealFrame() throws {
-        let frame = try V2Frame.prepare(Self.data(Self.list()))
+        let frame = try V2Frame.prepare(data: Self.data(Self.list()))
         XCTAssertTrue(frame.isWindowed)
         XCTAssertEqual(frame.elidedPageCount, 6)
         XCTAssertFalse(frame.isCompleteDocument)
@@ -214,7 +214,7 @@ final class V2PageWindowTests: XCTestCase {
     /// the placeholder must not be a white page of the right size, which is
     /// exactly what a rasterized empty page would look like.
     func testElidedPagesAreNotRasterized() throws {
-        let frame = try V2Frame.prepare(Self.data(Self.list()))
+        let frame = try V2Frame.prepare(data: Self.data(Self.list()))
         let prerastered = V2Loader.preraster(frame, pixelsPerPoint: 1, dark: false)
         let residentTokens = Set(frame.prepared.enumerated().filter { $0.element.isResident }.map { frame.pageToken(at: $0.offset) })
         XCTAssertEqual(Set(prerastered.images.map(\.token)), residentTokens,
@@ -230,8 +230,8 @@ final class V2PageWindowTests: XCTestCase {
         var pages = p["pages"] as! [[String: Any]]
         pages[0]["items"] = []
         p["pages"] = pages; withEmpty["payload"] = p
-        let empty = try V2Frame.prepare(Self.data(withEmpty))
-        let windowed = try V2Frame.prepare(Self.data(Self.list()))
+        let empty = try V2Frame.prepare(data: Self.data(withEmpty))
+        let windowed = try V2Frame.prepare(data: Self.data(Self.list()))
         XCTAssertTrue(empty.prepared[0].items.isEmpty)
         XCTAssertTrue(windowed.prepared[0].items.isEmpty)
         XCTAssertTrue(empty.prepared[0].isResident, "a genuinely empty page IS resident")
@@ -398,7 +398,7 @@ final class V2PageWindowTests: XCTestCase {
     func testExportRefusesAWindowedFrameOnEveryRoute() throws {
         let model = ShellModel()
         model.previewV2 = true
-        let frame = try V2Frame.prepare(Self.data(Self.list()))
+        let frame = try V2Frame.prepare(data: Self.data(Self.list()))
         model.displayListV2 = .loaded(frame, .file(URL(fileURLWithPath: "/tmp/window.json")))
 
         model.captureNote = nil
@@ -414,7 +414,7 @@ final class V2PageWindowTests: XCTestCase {
         // A complete frame is not refused (it reaches the save panel, which is
         // as far as a headless test can go — so assert only that the refusal
         // did not fire).
-        let whole = try V2Frame.prepare(Self.data(Self.list(documentPages: 2, window: nil)))
+        let whole = try V2Frame.prepare(data: Self.data(Self.list(documentPages: 2, window: nil)))
         XCTAssertFalse(whole.isWindowed)
         XCTAssertNil(whole.window)
     }
@@ -423,7 +423,7 @@ final class V2PageWindowTests: XCTestCase {
     func testAWindowedFrameIsNeverADeltaBase() throws {
         // §7: `-window` and `-delta` are exclusive — a windowed list is not a
         // complete compile, so it cannot be the base a delta is applied to.
-        let frame = try V2Frame.prepare(Self.data(Self.list()))
+        let frame = try V2Frame.prepare(data: Self.data(Self.list()))
         XCTAssertNil(frame.installedBase)
         XCTAssertFalse(frame.isCompleteDocument)
     }
@@ -432,7 +432,7 @@ final class V2PageWindowTests: XCTestCase {
     /// coverage. An elided page carries no provenance, so caret sync and
     /// click-to-source must decline rather than land somewhere plausible.
     func testSourceActionsAreDeclinedForElidedPages() throws {
-        let frame = try V2Frame.prepare(Self.data(Self.list()))
+        let frame = try V2Frame.prepare(data: Self.data(Self.list()))
         XCTAssertFalse(frame.allowsSourceActions(page: 1))
         XCTAssertTrue(frame.allowsSourceActions(page: 3))
         // Click-to-source: the resident page answers at the rule, the elided
@@ -453,7 +453,7 @@ final class V2PageWindowTests: XCTestCase {
         let model = ShellModel()
         model.previewV2 = true
         XCTAssertNil(model.v2WindowSourceActionRefusal, "nothing to explain without a window")
-        model.displayListV2 = .loaded(try V2Frame.prepare(Self.data(Self.list())), .file(URL(fileURLWithPath: "/tmp/window.json")))
+        model.displayListV2 = .loaded(try V2Frame.prepare(data: Self.data(Self.list())), .file(URL(fileURLWithPath: "/tmp/window.json")))
         let why = try XCTUnwrap(model.v2WindowSourceActionRefusal)
         XCTAssertTrue(why.contains("pages 3–4 of 8"), "got: \(why)")
     }
