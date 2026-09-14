@@ -105,7 +105,9 @@ pub struct Expansion {
 /// target (`\\textwidth`, `\\parindent`, `\\fboxsep`, ...) is rewritten to a
 /// host command the converter maps back, so the parser sees the original
 /// name with its argument still a control sequence, not consumed as a
-/// skip assignment, which would yield `\\addtolength{\\}`.
+/// skip assignment, which would yield `\\addtolength{\\}`. Those same
+/// undefined names are still `<internal dimen>` in `scan_dimen` (article
+/// 10pt defaults), so `0.5\\textwidth` assigns a real skip.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined

@@ -3589,6 +3589,11 @@ impl Engine {
                         self.skip_one_optional_space();
                         return if neg { -v } else { v };
                     }
+                    Meaning::Undefined => {
+                        if let Some(v) = self.take_pass_through_or_unknown_dimen(&t) {
+                            return if neg { -v } else { v };
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -3656,6 +3661,25 @@ impl Engine {
                         self.next_raw_token();
                         Some(self.scan_expr(true))
                     }
+                    Meaning::Undefined => {
+                        if let Some(name) = token_cs_name(&t) {
+                            if let Some(v) = pass_through_dimen_sp(name) {
+                                self.next_raw_token();
+                                Some(v)
+                            } else {
+                                self.err(
+                                    format!("{} is not a known length", self.cs_display(&t)),
+                                    t.span,
+                                );
+                                self.next_raw_token();
+                                let n: i64 = int_part.parse().unwrap_or(0);
+                                let sp = scale_decimal(n, &frac, 65536.0);
+                                return if neg { -sp } else { sp };
+                            }
+                        } else {
+                            None
+                        }
+                    }
                     _ => None,
                 };
                 if let Some(v) = v {
@@ -3676,6 +3700,23 @@ impl Engine {
         } else {
             sp
         }
+    }
+
+    /// Consume an undefined control sequence used as a dimen: either a
+    /// pass-through class length (`\textwidth` and friends, still undefined
+    /// so the typesetter sees them) or a named "not a known length" error.
+    fn take_pass_through_or_unknown_dimen(&mut self, t: &Token) -> Option<i64> {
+        let name = token_cs_name(t)?;
+        if let Some(v) = pass_through_dimen_sp(name) {
+            self.next_raw_token();
+            return Some(v);
+        }
+        self.err(
+            format!("{} is not a known length", self.cs_display(t)),
+            t.span,
+        );
+        self.next_raw_token();
+        Some(0)
     }
 
     fn unit_sp(&mut self, unit: &str) -> f64 {
@@ -4657,6 +4698,32 @@ fn round_decimals(digits: &str) -> i64 {
         a = (a + (d - b'0') as i64 * 131072) / 10;
     }
     (a + 1) / 2
+}
+
+fn token_cs_name(t: &Token) -> Option<&str> {
+    match &t.kind {
+        TokenKind::ControlSequence(name) => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+/// Article 10pt / letterpaper defaults for length names the LaTeX-mode
+/// engine leaves undefined so they pass through to the typesetter
+/// (CONTRACT.md). `scan_dimen` still treats them as `<internal dimen>`
+/// so `0.5\textwidth` works inside a `\newlength` assignment.
+///
+/// Sources: size10.clo lines 87–91 (`\parindent` 15pt) and 107–127
+/// (`\textwidth` 345pt when `\paperwidth-2in` is larger); latex.ltx
+/// `\linewidth`/`\columnwidth`/`\hsize` equal `\textwidth` in onecolumn
+/// main text; article.cls `letterpaper` `\paperwidth` 8.5in. 8.5in in sp
+/// is TeX §458 `dimen_from_parts(8, [5], in)` = 40258437 (`614.295pt`).
+fn pass_through_dimen_sp(name: &str) -> Option<i64> {
+    Some(match name {
+        "textwidth" | "linewidth" | "columnwidth" | "hsize" => 345 * 65536,
+        "parindent" => 15 * 65536,
+        "paperwidth" => 40258437,
+        _ => return None,
+    })
 }
 
 /// tex.web §107 `xn_over_d`: x*n/d truncated toward zero.
