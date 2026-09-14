@@ -752,6 +752,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "par",
     "documentclass",
     "setlength",
+    "addtolength",
     "usepackage",
     "definecolor",
     "providecolor",
@@ -977,9 +978,58 @@ pub(crate) fn parse_dimen_pt(text: &str) -> Option<f64> {
     parse_dimen_pt_at(text, crate::layout::BODY_SIZE_PT)
 }
 
+/// Page and paragraph lengths a preamble may assign (`\setlength`,
+/// `\addtolength`, or a TeX `\len=<dimen>` / `\len <dimen>` assignment).
+const PREAMBLE_LENGTHS: &[&str] = &[
+    "paperwidth",
+    "paperheight",
+    "textwidth",
+    "textheight",
+    "oddsidemargin",
+    "evensidemargin",
+    "topmargin",
+    "headheight",
+    "headsep",
+    "footskip",
+    "marginparwidth",
+    "marginparsep",
+    "columnsep",
+    "parindent",
+    "parskip",
+];
+
+fn is_preamble_length(name: &str) -> bool {
+    PREAMBLE_LENGTHS.contains(&name)
+}
+
 /// `parse_dimen_pt` with `em`/`ex` relative to `body_pt`.
+///
+/// Also accepts an optional leading `=`, a leading sign, and a factor times
+/// a known length (`\textwidth`, `-.5\textwidth`). A bare length name (with
+/// or without the backslash) is a factor of 1. The referenced length is not
+/// looked up here: the render pipeline applies real page geometry from the
+/// source; a zero is enough for the compiler to accept the assignment.
 pub(crate) fn parse_dimen_pt_at(text: &str, body_pt: f64) -> Option<f64> {
-    let text = text.trim();
+    let text = text.trim().trim_start_matches('=').trim();
+    if text.is_empty() {
+        return None;
+    }
+    if let Some(bs) = text.find('\\') {
+        let (factor, rest) = text.split_at(bs);
+        let name = rest[1..].trim();
+        if !is_preamble_length(name) && !matches!(name, "linewidth" | "columnwidth" | "hsize") {
+            return None;
+        }
+        let factor = factor.trim();
+        if !factor.is_empty() {
+            let _: f64 = factor.parse().ok()?;
+        }
+        return Some(0.0);
+    }
+    let stripped = text.trim_start_matches('\\');
+    if is_preamble_length(stripped) {
+        return Some(0.0);
+    }
     let unit_len = text
         .chars()
         .rev()
@@ -1676,6 +1726,7 @@ impl P<'_> {
         match name {
             "documentclass" => self.document_class(span),
             "setlength" => self.set_length(span),
+            "addtolength" => self.add_to_length(span),
             "usepackage" => self.use_package(span),
             "definecolor" | "providecolor" | "xdefinecolor" | "colorlet" | "definecolorset"
             | "DefineNamedColor" => self.define_color(name, span),
@@ -1857,6 +1908,9 @@ impl P<'_> {
             // real documents put it, and in the body, where LaTeX also
             // allows it.
             "hypersetup" => self.hypersetup(span),
+            _ if self.has_document && !self.in_body && is_preamble_length(name) => {
+                self.length_assignment(name, span)
+            }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
@@ -2524,46 +2578,118 @@ impl P<'_> {
     /// `\setlength{\parskip}{..}` and `\setlength{\parindent}{..}` in the
     /// preamble. `em`/`ex` resolve against the class body size. This engine
     /// never indents paragraphs, so only a zero `\parindent` is exact.
+    /// Page-geometry lengths (`\textwidth`, `\oddsidemargin`, ...) are
+    /// accepted in the preamble without a diagnostic; the render pipeline
+    /// applies them from the source.
     fn set_length(&mut self, span: Span) {
-        let (target_tokens, _) = self.required_group("setlength", span);
-        let (value_tokens, value_span) = self.required_group("setlength", span);
+        self.length_command("setlength", span, false);
+    }
+
+    fn add_to_length(&mut self, span: Span) {
+        self.length_command("addtolength", span, true);
+    }
+
+    fn length_command(&mut self, command: &str, span: Span, add: bool) {
+        let (target_tokens, _) = self.required_group(command, span);
+        let (value_tokens, value_span) = self.required_group(command, span);
         let span = span.merge(value_span);
         let target = token_text(&target_tokens)
             .trim()
             .trim_start_matches('\\')
             .to_string();
-        let raw = token_text(&value_tokens);
+        let raw = dimen_source(&value_tokens);
+        self.apply_length_value(command, &target, &raw, span, add);
+    }
+
+    /// A TeX assignment `\textwidth=6in` / `\textwidth 6in` in the preamble.
+    fn length_assignment(&mut self, name: &str, span: Span) {
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-        let Some(pt) = parse_dimen_pt_at(&raw, body) else {
+        let mut raw = String::new();
+        let mut end = span;
+        loop {
+            self.skip_spaces();
+            let Some(input) = self.t.get(self.i).cloned() else {
+                break;
+            };
+            let tok = &input.token;
+            match &tok.kind {
+                TokenKind::Word(word) => {
+                    raw.push_str(word);
+                    end = end.merge(tok.span);
+                    self.i += 1;
+                    if parse_dimen_pt_at(&raw, body).is_some() {
+                        break;
+                    }
+                }
+                TokenKind::Command(cmd)
+                    if is_preamble_length(cmd)
+                        || matches!(cmd.as_str(), "linewidth" | "columnwidth" | "hsize") =>
+                {
+                    raw.push('\\');
+                    raw.push_str(cmd);
+                    end = end.merge(tok.span);
+                    self.i += 1;
+                    if parse_dimen_pt_at(&raw, body).is_some() {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+            if raw.len() > 64 {
+                break;
+            }
+        }
+        self.apply_length_value("", name, &raw, end, false);
+    }
+
+    fn apply_length_value(&mut self, command: &str, target: &str, raw: &str, span: Span, add: bool) {
+        let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+        let Some(pt) = parse_dimen_pt_at(raw, body) else {
+            let who = if command.is_empty() {
+                format!("\\{target}")
+            } else {
+                format!("\\{command}")
+            };
             self.diags.push(Diagnostic::error(
-                format!(
-                    "\\setlength requires a recognised dimension, got '{}'",
-                    raw.trim()
-                ),
+                format!("{who} requires a recognised dimension, got '{}'", raw.trim()),
                 Some(span),
                 Some("ignored the length assignment".into()),
             ));
             return;
         };
         let in_preamble = self.has_document && !self.in_body;
-        match target.as_str() {
+        match target {
             // Read by `\colorbox`/`\fcolorbox` (not group-scoped here).
-            "fboxsep" => self.fboxsep_pt = pt,
-            "fboxrule" => self.fboxrule_pt = pt,
+            "fboxsep" => {
+                self.fboxsep_pt = if add { self.fboxsep_pt + pt } else { pt };
+            }
+            "fboxrule" => {
+                self.fboxrule_pt = if add { self.fboxrule_pt + pt } else { pt };
+            }
             // longtable's lengths are read from the source by the render
             // pipeline's longtable layout.
             "LTleft" | "LTright" | "LTpre" | "LTpost" | "LTcapwidth" => {}
-            "parskip" if in_preamble => self.parskip_pt = Some(pt),
+            "parskip" if in_preamble => {
+                // A length reference (`\parskip=\textwidth`) is accepted but
+                // is not a usable paragraph skip for this layout engine.
+                if !raw.contains('\\') && !is_preamble_length(raw.trim().trim_start_matches('=').trim()) {
+                    self.parskip_pt = Some(if add {
+                        self.parskip_pt.unwrap_or(0.0) + pt
+                    } else {
+                        pt
+                    });
+                }
+            }
             "parindent" if in_preamble && pt == 0.0 => {}
             "parindent" if in_preamble => self.diags.push(Diagnostic::warning(
                 "\\parindent is recognised but paragraph indentation is not implemented",
                 Some(span),
                 Some("paragraphs are not indented".into()),
             )),
+            name if in_preamble && is_preamble_length(name) => {}
             _ => self.diags.push(Diagnostic::warning(
                 format!(
-                    "\\setlength{{\\{}}} is recognised but not implemented here",
-                    target
+                    "\\{command}{{\\{target}}} is recognised but not implemented here"
                 ),
                 Some(span),
                 Some("ignored the length assignment".into()),
@@ -7131,6 +7257,10 @@ mod tests {
         assert_eq!(parse_dimen_pt("12pt"), Some(12.0));
         assert_eq!(parse_dimen_pt(" 1em "), Some(crate::layout::BODY_SIZE_PT));
         assert_eq!(parse_dimen_pt("1in"), Some(72.27));
+        assert_eq!(parse_dimen_pt("-.5in"), Some(-0.5 * 72.27));
+        assert_eq!(parse_dimen_pt("=6in"), Some(6.0 * 72.27));
+        assert_eq!(parse_dimen_pt("\\textwidth"), Some(0.0));
+        assert_eq!(parse_dimen_pt("0.5\\textwidth"), Some(0.0));
         assert!(parse_dimen_pt("banana").is_none());
         assert!(parse_dimen_pt("").is_none());
     }
