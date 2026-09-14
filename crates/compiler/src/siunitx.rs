@@ -392,7 +392,11 @@ pub fn raw_text<'a>(tokens: impl IntoIterator<Item = &'a Token>) -> String {
             TokenKind::MathShift => out.push('$'),
             TokenKind::Superscript => out.push('^'),
             TokenKind::Subscript => out.push('_'),
-            TokenKind::DisplayMathOpen | TokenKind::DisplayMathClose | TokenKind::Comment => {}
+            TokenKind::DisplayMathOpen
+            | TokenKind::DisplayMathClose
+            | TokenKind::InlineMathOpen
+            | TokenKind::InlineMathClose
+            | TokenKind::Comment => {}
             TokenKind::Verb { text, .. } => out.push_str(text),
         }
     }

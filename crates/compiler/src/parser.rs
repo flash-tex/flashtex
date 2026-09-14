@@ -686,6 +686,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "rotatebox",
     "reflectbox",
     "graphicspath",
+    "allowdisplaybreaks",
     "url",
     "href",
     "nolinkurl",
@@ -1428,12 +1429,21 @@ impl P<'_> {
                 }
                 TokenKind::MathShift if render => self.dollar_math(tok.span, para),
                 TokenKind::DisplayMathOpen if render => self.bracket_math(tok.span, para),
+                TokenKind::InlineMathOpen if render => self.paren_math(tok.span, para),
                 TokenKind::DisplayMathClose if render => {
                     self.i += 1;
                     self.diags.push(Diagnostic::error(
                         "stray \\] has no matching \\[",
                         Some(tok.span),
                         Some("ignored the stray display-math delimiter".into()),
+                    ));
+                }
+                TokenKind::InlineMathClose if render => {
+                    self.i += 1;
+                    self.diags.push(Diagnostic::error(
+                        "stray \\) has no matching \\(",
+                        Some(tok.span),
+                        Some("ignored the stray inline-math delimiter".into()),
                     ));
                 }
                 TokenKind::Superscript | TokenKind::Subscript if render => {
@@ -1447,6 +1457,8 @@ impl P<'_> {
                 TokenKind::MathShift
                 | TokenKind::DisplayMathOpen
                 | TokenKind::DisplayMathClose
+                | TokenKind::InlineMathOpen
+                | TokenKind::InlineMathClose
                 | TokenKind::Superscript
                 | TokenKind::Subscript => self.i += 1,
                 TokenKind::Command(name) => {
@@ -1615,6 +1627,11 @@ impl P<'_> {
             // consumer that loads image files (see `crate::graphics`).
             "graphicspath" => {
                 let _ = self.required_group(name, span);
+            }
+            // amsmath's `\allowdisplaybreaks[<0-4>]` only changes where a
+            // page may break inside a display: nothing typeset, no material.
+            "allowdisplaybreaks" => {
+                let _ = self.optional_bracket_argument();
             }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
@@ -3691,6 +3708,44 @@ impl P<'_> {
             close_end,
             found,
             display,
+            space_before,
+            para,
+        );
+    }
+
+    /// `\(...\)`: LaTeX's inline math, the `$...$` rules with the
+    /// robust delimiters (an unterminated one ends with its paragraph too).
+    fn paren_math(&mut self, open: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i);
+        self.i += 1;
+        let content_start = self.i;
+        while self.i < self.t.len() {
+            if self.t[self.i].token.kind == TokenKind::InlineMathClose
+                || paragraph_boundary_at(&self.t, self.i)
+            {
+                break;
+            }
+            self.i += 1;
+        }
+        let content_end = self.i;
+        let found = matches!(
+            self.t.get(self.i).map(|input| &input.token.kind),
+            Some(TokenKind::InlineMathClose)
+        );
+        let close_end = if found {
+            let end = self.t[self.i].token.span.end;
+            self.i += 1;
+            end
+        } else {
+            open.end
+        };
+        self.finish_math(
+            open,
+            content_start,
+            content_end,
+            close_end,
+            found,
+            false,
             space_before,
             para,
         );

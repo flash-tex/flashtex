@@ -76,6 +76,7 @@
     {"name": "rotatebox", "mode": "text", "origin": "text_dispatch", "arguments": "[keys]{angle}{...}", "description": "graphicx rotated box; the box is the rotated bounding box", "renders": true},
     {"name": "reflectbox", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "graphics.sty box mirrored left to right", "renders": true},
     {"name": "graphicspath", "mode": "text", "origin": "text_dispatch", "arguments": "{{dir/}...}", "description": "image search directories; no material", "renders": true},
+    {"name": "allowdisplaybreaks", "mode": "text", "origin": "text_dispatch", "arguments": "[0-4]", "description": "amsmath page-break permission inside displays; no material", "renders": true},
     {"name": "url", "mode": "text", "origin": "text_dispatch", "arguments": "{url}", "description": "monospaced URL text; links are not clickable", "renders": true},
     {"name": "href", "mode": "text", "origin": "text_dispatch", "arguments": "{url}{text}", "description": "link text; links are not clickable", "renders": true},
     {"name": "nolinkurl", "mode": "text", "origin": "text_dispatch", "arguments": "{url}", "description": "monospaced URL text without a link", "renders": true},
@@ -867,7 +868,7 @@
     "rows": [
       {"set": "kernel", "kind": "command", "canonical": 410, "supported": 163, "percent": 39.8},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 17, "percent": 56.7},
-      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 40, "percent": 39.2},
+      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 41, "percent": 40.2},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
       {"set": "amssymb", "kind": "command", "canonical": 229, "supported": 225, "percent": 98.3},
       {"set": "enumitem", "kind": "command", "canonical": 17, "supported": 1, "percent": 5.9},
@@ -880,6 +881,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 17, "percent": 7.1}
     ],
-    "total": {"canonical": 1314, "supported": 502, "percent": 38.2}
+    "total": {"canonical": 1314, "supported": 503, "percent": 38.3}
   }
 }

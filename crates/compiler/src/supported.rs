@@ -268,6 +268,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("rotatebox", "[keys]{angle}{...}", "graphicx rotated box; the box is the rotated bounding box"),
     ("reflectbox", "{...}", "graphics.sty box mirrored left to right"),
     ("graphicspath", "{{dir/}...}", "image search directories; no material"),
+    ("allowdisplaybreaks", "[0-4]", "amsmath page-break permission inside displays; no material"),
     ("clearpage", "", "forces a page break"),
     ("cleardoublepage", "", "forces a page break (one-sided article)"),
     ("TeX", "", "latex.ltx logo: T, kern -.1667em, E lowered .5ex, kern -.125em, X"),
