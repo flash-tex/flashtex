@@ -410,6 +410,46 @@ pub enum Block {
         eject_before: bool,
         vspace_before: f64,
     },
+    /// A `longtable` (`crate::longtable`). Unlike `tabular` this is not a
+    /// box inside a paragraph: `\LT@array` contributes every row straight
+    /// to the page's vertical list so the page builder can break between
+    /// them, repeating `\LT@head` and `\LT@foot`.
+    LongTable {
+        table: Box<crate::table::TableItem>,
+        eject_before: bool,
+        vspace_before: f64,
+        /// The package's own skips and dimensions, as `\setlength` left
+        /// them: `\LTpre`/`\LTpost` (`\bigskipamount` by default),
+        /// `\LTleft`/`\LTright` (`\fill`) and `\LTcapwidth` (4in).
+        lengths: LongtableLengths,
+        /// `\label` keys inside the table, so `\caption`'s number can be
+        /// referenced.
+        labels: Vec<String>,
+    },
+}
+
+/// longtable.sty 61-67: the lengths a document may `\setlength`. `None`
+/// keeps the package default.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct LongtableLengths {
+    pub pre: Option<f64>,
+    pub post: Option<f64>,
+    pub left: Option<f64>,
+    pub right: Option<f64>,
+    pub capwidth: Option<f64>,
+}
+
+impl LongtableLengths {
+    /// Reads each one through a `\setlength` lookup.
+    pub fn read(mut value: impl FnMut(&str) -> Option<f64>) -> LongtableLengths {
+        LongtableLengths {
+            pre: value("LTpre"),
+            post: value("LTpost"),
+            left: value("LTleft"),
+            right: value("LTright"),
+            capwidth: value("LTcapwidth"),
+        }
+    }
 }
 
 /// LaTeX `\list` geometry of one `\item` paragraph (see
@@ -1272,6 +1312,23 @@ pub fn adapt_cached(
                     .iter()
                     .all(|p| matches!(p, ParaPart::Lines(items) if items.iter().all(|i| matches!(i, Item::Label { .. }))));
                 if parts.is_empty() {
+                    continue;
+                }
+                // `\longtable` begins with `\par` and `\endlongtable`
+                // ends with one, so the compiler always gives it a
+                // paragraph of its own: it becomes a block the page
+                // builder can break inside rather than a box on a line.
+                if let Some(table) = lone_longtable(&mut parts) {
+                    let src = texts.get(table.span.document.0).copied().unwrap_or("");
+                    blocks.push(Block::LongTable {
+                        lengths: LongtableLengths::read(|name| setlength(src, name, size)),
+                        labels: Vec::new(),
+                        table,
+                        eject_before,
+                        vspace_before,
+                    });
+                    prev_para_end = inlines.iter().map(inline_span).last();
+                    after_heading = false;
                     continue;
                 }
                 // A display environment inside a paragraph (no blank line or
@@ -2301,6 +2358,24 @@ pub fn parskip(source: &str, size: u32) -> Option<f64> {
 }
 
 /// The last `\setlength{\<name>}{<dimen>}` of the source, in points.
+/// A paragraph that holds nothing but one `longtable` (and `\label`s):
+/// takes the table out, leaving the labels behind for the caller.
+fn lone_longtable(parts: &mut Vec<ParaPart>) -> Option<Box<crate::table::TableItem>> {
+    let [ParaPart::Lines(items)] = &parts[..] else { return None };
+    let mut table = None;
+    for item in items {
+        match item {
+            Item::Table(t) if t.longtable.is_some() && table.is_none() => table = Some(t.clone()),
+            Item::Label { .. } => {}
+            // A space either side of the box is the paragraph's own
+            // `\parskip`/`\par` material, which the block replaces.
+            Item::Space { .. } => {}
+            _ => return None,
+        }
+    }
+    table
+}
+
 fn setlength(source: &str, name: &str, size: u32) -> Option<f64> {
     setlength_in(source, name, size, None)
 }
@@ -3828,7 +3903,7 @@ fn gap_has_space(gap: &str) -> bool {
 /// delimiters and quotes 0 (keep), uppercase 999. A code above 1000 does
 /// not take effect while the factor is below 1000 (after an uppercase
 /// letter "A." keeps 1000), which is why the update runs per character.
-pub(crate) fn space_factor(ch: char, previous: u32) -> u32 {
+pub fn space_factor(ch: char, previous: u32) -> u32 {
     let code = match ch {
         '.' | '?' | '!' => 3000,
         ':' => 2000,
@@ -4799,6 +4874,7 @@ mod tests {
                 Block::Title { .. } => "T".to_string(),
                 Block::ClearPage { .. } => "N".to_string(),
                 Block::TocEntry(..) => "E".to_string(),
+                Block::LongTable { .. } => "L".to_string(),
             })
             .collect();
         // `Problem 1 \hfill \normalfont[4 points]`: one fill, no space after it.
