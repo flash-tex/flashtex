@@ -178,7 +178,11 @@ pub fn block_origin(items: &[Item]) -> Option<(DocumentId, usize)> {
             // A table's cell blocks hold absolute record indices and
             // spans: blocks containing one are never cached.
             Item::Table(_) | Item::ColorBox(_) => return None,
-            Item::Math { span, .. } => {
+            // A literal space carries the source byte of the space it
+            // stands for, and reaches `BoxRec::Rule`'s span: a block that
+            // opens with one (an indented verbatim line) still bases its
+            // offsets on its own first byte.
+            Item::Math { span, .. } | Item::LiteralSpace { span, .. } => {
                 if !note(&CharSrc {
                     document: span.document,
                     start: span.start,
@@ -204,7 +208,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                     seg.style.bold.hash(h);
                     seg.style.italic.hash(h);
                     seg.style.color.hash(h);
-                    (seg.style.slanted, seg.style.caps, seg.style.family, seg.style.undefined).hash(h);
+                    (seg.style.slanted, seg.style.caps, seg.style.family, seg.style.undefined, seg.style.literal).hash(h);
                     for c in &seg.chars {
                         (c.start.wrapping_sub(base)).hash(h);
                         (c.end.wrapping_sub(base)).hash(h);
@@ -215,9 +219,18 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 1u8.hash(h);
                 style.bold.hash(h);
                 style.italic.hash(h);
-                (style.slanted, style.caps, style.family, style.undefined).hash(h);
+                (style.slanted, style.caps, style.family, style.undefined, style.literal).hash(h);
                 factor.hash(h);
                 no_break.hash(h);
+            }
+            Item::LiteralSpace { style, span, visible } => {
+                visible.hash(h);
+                11u8.hash(h);
+                style.bold.hash(h);
+                style.italic.hash(h);
+                (style.slanted, style.caps, style.family, style.undefined, style.literal).hash(h);
+                (span.start.wrapping_sub(base)).hash(h);
+                (span.end.wrapping_sub(base)).hash(h);
             }
             Item::Math { list, span } => {
                 2u8.hash(h);

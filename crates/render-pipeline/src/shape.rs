@@ -101,9 +101,24 @@ impl Shaped {
 /// edited for hours never grows it without bound).
 pub const SHAPER_CACHE_LIMIT: usize = 200_000;
 
+/// The six characters latex.ltx's `\@noligs` makes active inside `\verb`
+/// and `\@verbatim`:
+///
+/// ```tex
+/// \def\do@noligs#1{\catcode`#1\active
+///   \begingroup \lccode`\~=`#1\relax
+///   \lowercase{\endgroup\def~{\leavevmode\kern\z@\char`#1}}}
+/// \def\@noligs{\do@noligs\`\do@noligs\<\do@noligs\>\do@noligs\'\do@noligs\,\do@noligs\-}
+/// ```
+///
+/// Each expands to `\kern\z@` followed by `\char`, and a kern ends the
+/// current ligature/kern run — so no ligature forms across one of them and
+/// no pair kern reaches one. Everything else keeps its ordinary program.
+const NOLIGS: [char; 6] = ['`', '<', '>', '\'', ',', '-'];
+
 #[derive(Default)]
 pub struct Shaper {
-    cache: RefCell<HashMap<(Rc<str>, String), Rc<Shaped>>>,
+    cache: RefCell<HashMap<(Rc<str>, String, bool), Rc<Shaped>>>,
 }
 
 impl Shaper {
@@ -113,14 +128,23 @@ impl Shaper {
 
     /// Shapes `text` in `face` with kerning and ligatures on.
     pub fn shape(&self, face: &Rc<LoadedFace>, text: &str) -> Rc<Shaped> {
+        self.shape_with(face, text, false)
+    }
+
+    /// [`Shaper::shape`], or literal text (`\verb`, a `verbatim` body, a
+    /// listing line) when `literal` is set: the ligature/kern run is split
+    /// before each [`NOLIGS`] character, exactly where `\@noligs`'s
+    /// `\kern\z@` falls. `--` is then two hyphens rather than an en dash,
+    /// `` `` `` two grave accents rather than an opening quote.
+    pub fn shape_with(&self, face: &Rc<LoadedFace>, text: &str, literal: bool) -> Rc<Shaped> {
         // Keyed by the face's metrics identity, not its wire `font_id`: one
         // OpenType program is laid out with different TFMs (`ec-lmr10` for
         // `lmodern`, `ecrm1095`/`ecrm1000` for T1 `cmr`).
-        let key = (face.shape_key.clone(), text.to_string());
+        let key = (face.shape_key.clone(), text.to_string(), literal);
         if let Some(hit) = self.cache.borrow().get(&key) {
             return hit.clone();
         }
-        let shaped = Rc::new(shape_uncached(face, text));
+        let shaped = Rc::new(if literal { shape_noligs(face, text) } else { shape_uncached(face, text) });
         let mut cache = self.cache.borrow_mut();
         if cache.len() >= SHAPER_CACHE_LIMIT {
             cache.clear();
@@ -136,6 +160,52 @@ impl Shaper {
     pub fn is_empty(&self) -> bool {
         self.cache.borrow().is_empty()
     }
+}
+
+/// `\@noligs` shaping: the text split into runs that start at each
+/// [`NOLIGS`] character, each shaped on its own and concatenated, which is
+/// what the `\kern\z@` in front of those characters does to the ligature
+/// program. A run that ends up with no [`NOLIGS`] character in it (ordinary
+/// prose in a roman `basicstyle`) is one run and shapes exactly as usual.
+fn shape_noligs(face: &Rc<LoadedFace>, text: &str) -> Shaped {
+    let mut bounds = vec![0usize];
+    for (i, c) in text.char_indices() {
+        if i > 0 && NOLIGS.contains(&c) {
+            bounds.push(i);
+        }
+    }
+    bounds.push(text.len());
+    if bounds.len() == 2 {
+        return shape_uncached(face, text);
+    }
+    let mut out: Option<Shaped> = None;
+    for w in bounds.windows(2) {
+        let (start, end) = (w[0], w[1]);
+        let mut part = shape_uncached(face, &text[start..end]);
+        for cluster in &mut part.clusters {
+            cluster.text_range = (cluster.text_range.start + start)..(cluster.text_range.end + start);
+        }
+        for (_, at) in &mut part.missing {
+            *at += start;
+        }
+        match &mut out {
+            None => {
+                part.text = text.to_string();
+                out = Some(part);
+            }
+            Some(all) => {
+                all.clusters.append(&mut part.clusters);
+                all.missing.append(&mut part.missing);
+                all.width_units += part.width_units;
+                all.height_units = all.height_units.max(part.height_units);
+                all.depth_units = all.depth_units.max(part.depth_units);
+                all.tfm_metrics = all.tfm_metrics && part.tfm_metrics;
+                all.refused = all.refused.take().or(part.refused);
+                all.tfm_error = all.tfm_error.take().or(part.tfm_error);
+            }
+        }
+    }
+    out.expect("at least one run")
 }
 
 fn shape_uncached(face: &Rc<LoadedFace>, text: &str) -> Shaped {

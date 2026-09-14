@@ -46,6 +46,10 @@ use crate::style::Stylesheet;
 const MATH_SENTINEL: pl::FontId = pl::FontId::from_label("flashtex:math-box");
 
 /// `\hyphenpenalty` and `\exhyphenpenalty` (plain TeX and article: 50).
+/// Cork slot 32, `\textvisiblespace`: the open box `\verb*` and
+/// `verbatim*` set for each space (`\char32` of the typewriter font).
+const VISIBLE_SPACE: char = '\u{2423}';
+
 const HYPHEN_PENALTY: i32 = 50;
 const EX_HYPHEN_PENALTY: i32 = 50;
 
@@ -876,6 +880,23 @@ impl<'a> Context<'a> {
     /// `\rule` (compiler `Inline::Rule`, latex.ltx 16359-16367): an hbox
     /// `RuleBox::width` wide whose painted part spans `rule_bottom..rule_top`
     /// above the baseline; zero-width or empty rules are struts.
+    /// An empty box `width` points wide: `\hbox to <width>{}`. Nothing is
+    /// painted (`BoxRec::Rule` paints only when both width and height are
+    /// positive) and it is a box, so a line break never discards it.
+    fn empty_box(&mut self, width: f64, size: f64, span: Span) -> (pl::GlyphRun, usize) {
+        self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span });
+        let run = pl::GlyphRun {
+            font: MATH_SENTINEL,
+            size,
+            glyphs: Vec::new(),
+            width,
+            height: 0.0,
+            depth: 0.0,
+            source: span.start..span.end,
+        };
+        (run, self.recs.len() - 1)
+    }
+
     fn rule_box(&mut self, rule: &flashtex_compiler::text_builtins::TextRule, cx: &flashtex_compiler::text_builtins::DimenContext, size: f64, span: Span) -> (pl::GlyphRun, usize) {
         use flashtex_compiler::text_builtins::sp_to_pt;
         let b = rule.resolve(cx);
@@ -980,7 +1001,8 @@ impl<'a> Context<'a> {
     fn text_box(&mut self, seg: &adapter::Segment, size: f64) -> Option<(pl::GlyphRun, usize)> {
         let span = seg_span(seg)?;
         let face = self.face(seg.style, size, span);
-        let shaped = self.shaper.shape(&face, &seg.text);
+        // `\@noligs` is in force inside `\verb`/`\@verbatim`/a listing.
+        let shaped = self.shaper.shape_with(&face, &seg.text, seg.style.literal);
         if let Some(e) = &shaped.tfm_error {
             let src = self.source(span);
             self.report_once(
@@ -1900,10 +1922,18 @@ impl<'a> Context<'a> {
                     let joined = matches!(items.get(idx + 1), Some(AItem::Word(_) | AItem::Math { .. }));
                     // The typewriter families declare `\hyphenchar\font=-1`
                     // (`ot1cmtt.fd`, `t1cmtt.fd`, `t1lmtt.fd`): no hyphens.
+                    // Literal text is never hyphenated either: `\verb` and
+                    // `\@verbatim` set `\language` aside with `\@noligs`
+                    // and are always unbreakable runs, and a listing set in
+                    // a roman `basicstyle` must not acquire hyphens the
+                    // source does not have.
                     let hyphenate = after_glue
                         && !joined
                         && w.segments.len() == 1
-                        && merge_style(base, w.segments[0].style).family != crate::nfss::FamilyKind::Tt;
+                        && {
+                            let merged = merge_style(base, w.segments[0].style);
+                            !merged.literal && merged.family != crate::nfss::FamilyKind::Tt
+                        };
                     for seg in &w.segments {
                         let seg = adapter::Segment {
                             text: seg.text.clone(),
@@ -1916,6 +1946,34 @@ impl<'a> Context<'a> {
                         for (item, rec) in self.word_items(&seg, seg_size, hyphenate) {
                             push(&mut out, &mut recs, item, rec);
                         }
+                    }
+                }
+                AItem::LiteralSpace { style, span, visible } => {
+                    // `\@xobeysp` = `\leavevmode\nobreak\ `: an empty box
+                    // (so a line break before it cannot discard it, and the
+                    // indentation of a verbatim line survives) exactly one
+                    // interword space of the typewriter font wide, which
+                    // has no stretch and no shrink.
+                    //
+                    // `verbatim*`/`\verb*` set `\char32` instead — Cork slot
+                    // 32, the open box — which in every typewriter design is
+                    // exactly that same width, so the star form moves nothing
+                    // and only paints.
+                    let style = merge_base(*style, base);
+                    let size = style.size_or(size);
+                    if *visible {
+                        let seg = adapter::Segment {
+                            text: VISIBLE_SPACE.to_string(),
+                            chars: vec![adapter::CharSrc { document: span.document, start: span.start, end: span.end }],
+                            style,
+                        };
+                        for (item, rec) in self.word_items(&seg, size, false) {
+                            push(&mut out, &mut recs, item, rec);
+                        }
+                    } else {
+                        let width = self.space_glue(style, size, 1000).width;
+                        let (run, rec) = self.empty_box(width, size, *span);
+                        push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                     }
                 }
                 AItem::Space { style, factor, no_break } => {
@@ -1938,7 +1996,16 @@ impl<'a> Context<'a> {
                     }
                 }
                 AItem::LineBreak { skip_pt } => {
+                    // `\@gnewline` is `\nobreak \hfil \break`, and
+                    // `\obeylines`' `\par` inside `\@verbatim` ends the
+                    // line with TeX's own `\penalty10000 \parfillskip
+                    // \penalty-10000` (tex.web 816). The infinite penalty
+                    // matters: without it the fil glue is itself a legal
+                    // breakpoint, and a line too wide for the measure --
+                    // an overfull verbatim line -- is broken there instead
+                    // of at the forced break, leaving an empty line behind.
                     if fills {
+                        push(&mut out, &mut recs, pl::Item::penalty(pl::INFINITE_PENALTY), None);
                         push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fil()), None);
                     }
                     if *skip_pt != 0.0 {
@@ -5276,6 +5343,7 @@ fn merge_style(base: TextStyle, s: TextStyle) -> TextStyle {
         slanted: s.slanted || base.slanted,
         caps: s.caps || base.caps,
         family: if s.family != crate::nfss::FamilyKind::Rm { s.family } else { base.family },
+        literal: s.literal || base.literal,
         undefined: s.undefined.or(base.undefined),
         color: s.color.or(base.color),
     }
@@ -5291,6 +5359,7 @@ fn merge_base(style: TextStyle, base: TextStyle) -> TextStyle {
         slanted: style.slanted || base.slanted,
         caps: style.caps || base.caps,
         family: if style.family != crate::nfss::FamilyKind::Rm { style.family } else { base.family },
+        literal: style.literal || base.literal,
         undefined: style.undefined.or(base.undefined),
         color: style.color.or(base.color),
     }

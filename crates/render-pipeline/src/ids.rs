@@ -35,6 +35,11 @@ pub enum Encoding {
 /// left undeclared; 0x17 (compound word mark) and 0x18 (perthousandzero)
 /// have no character either. Everything else is declared explicitly.
 const T1_TO_UNICODE: &[(u8, char)] = &[
+    // `t1enc.def`: `\DeclareTextSymbol{\textvisiblespace}{T1}{32}`. Slot 32
+    // of a Cork font is the open box `\verb*`/`verbatim*` set with
+    // `\char32`, not a blank -- TeX sets interword space as glue and never
+    // asks a font for a space character.
+    (0x20, '\u{2423}'), // visiblespace
     (0x0D, '\u{201A}'), // quotesinglbase
     (0x0E, '\u{2039}'), // guilsinglleft
     (0x0F, '\u{203A}'), // guilsinglright
@@ -144,8 +149,8 @@ impl EncodingCode {
                 }
                 let c = self.0;
                 // Printable ASCII occupies its own code points in T1 except
-                // the two quote slots declared above.
-                if (0x20..0x7F).contains(&c) && c != 0x27 && c != 0x60 {
+                // the two quote slots and slot 32, declared above.
+                if (0x21..0x7F).contains(&c) && c != 0x27 && c != 0x60 {
                     return Some(char::from(c));
                 }
                 // 0xC0–0xFE follow Latin-1 except Œ/œ (0xD7/0xF7) and "SS" (0xDF).
@@ -167,13 +172,19 @@ impl EncodingCode {
                     return Some(EncodingCode(*code));
                 }
                 let u = u32::from(ch);
-                if (0x20..0x7F).contains(&u) && u != 0x27 && u != 0x60 {
+                if (0x21..0x7F).contains(&u) && u != 0x27 && u != 0x60 {
                     return Some(EncodingCode(u as u8));
                 }
                 if (0xC0..=0xFE).contains(&u) && u != 0xD7 && u != 0xDF && u != 0xF7 {
                     return Some(EncodingCode(u as u8));
                 }
                 // ASCII apostrophe and grave are typed as the curly quotes.
+                // A plain space is deliberately absent: T1 has no space
+                // character (slot 32 is `visiblespace`), because TeX sets
+                // interword space as glue and never asks a font for one.
+                // A space therefore reaches this only from text that should
+                // not hold one, and answering `None` says so rather than
+                // painting an open box.
                 match ch {
                     '\'' => Some(EncodingCode(0x27)),
                     '`' => Some(EncodingCode(0x60)),
@@ -203,6 +214,13 @@ mod tests {
         assert_ne!(EncodingCode(0x15).to_char(Encoding::T1), Some('\u{15}'));
         assert_eq!(EncodingCode(0x00).to_char(Encoding::T1), None);
         // Cork: `` -> 0x10, '' -> 0x11, ` -> 0x60, ' -> 0x27, é -> 0xE9, Œ -> 0xD7.
+        // Cork slot 32 is `visiblespace` (`t1enc.def`:
+        // `\DeclareTextSymbol{\textvisiblespace}{T1}{32}`), and T1 has no
+        // ordinary space character at all.
+        assert_eq!(EncodingCode(0x20).to_char(Encoding::T1), Some('\u{2423}'));
+        assert_eq!(EncodingCode::for_char('\u{2423}', Encoding::T1), Some(EncodingCode(0x20)));
+        assert_eq!(EncodingCode::for_char(' ', Encoding::T1), None);
+        assert_eq!(EncodingCode(0x21).to_char(Encoding::T1), Some('!'));
         assert_eq!(EncodingCode::for_char('\u{201C}', Encoding::T1), Some(EncodingCode(0x10)));
         assert_eq!(EncodingCode::for_char('\u{2019}', Encoding::T1), Some(EncodingCode(0x27)));
         assert_eq!(EncodingCode::for_char('\u{2018}', Encoding::T1), Some(EncodingCode(0x60)));
