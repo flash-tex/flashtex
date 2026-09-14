@@ -56,6 +56,12 @@ final class ShellSnapshotTests: XCTestCase {
                                      size: CGSize(width: 1440, height: 24), settle: 0.8)
     }
 
+    func testSettings() {
+        let model = DesignFixtures.project()
+        assertSurfaceBothAppearances(SettingsRootView().environment(model), named: "settings",
+                                     size: CGSize(width: 500, height: 720), settle: 0.5)
+    }
+
     func testCommandPalette() {
         let model = DesignFixtures.project()
         assertSurfaceBothAppearances(CommandPalette().environment(model), named: "palette",
