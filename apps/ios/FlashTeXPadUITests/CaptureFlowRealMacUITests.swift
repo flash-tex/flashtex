@@ -54,17 +54,6 @@ final class CaptureFlowRealMacUITests: XCTestCase {
         return target
     }
 
-    /// iOS paste-from-another-app may show a system "Allow Paste" control.
-    private func confirmPasteIfPrompted() {
-        let spring = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        for label in ["Allow Paste", "Allow paste"] {
-            if spring.buttons[label].waitForExistence(timeout: 1.0) {
-                spring.buttons[label].tap()
-                return
-            }
-        }
-    }
-
     private func text(_ app: XCUIApplication, startingWith p: String) -> XCUIElement {
         app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", p)).firstMatch
     }
@@ -102,45 +91,38 @@ final class CaptureFlowRealMacUITests: XCTestCase {
         app.launch()
 
         app.staticTexts.matching(NSPredicate(format: "label == %@", "Mac link")).firstMatch.tap()
-        XCTAssertTrue(el(app, "pair.qr.text").waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(el(app, "pair.qr.text").waitForExistence(timeout: 10), "Mac link QR field missing")
 
-        // Paste while the QR section is still on-screen; then scroll to the
-        // typed host/port section (lazy Form cells are not queryable off-screen).
-        UIPasteboard.general.string = info.bootstrap
-        XCTAssertTrue(el(app, "pair.qr.paste").waitForExistence(timeout: 5))
-        el(app, "pair.qr.paste").tap()
-        confirmPasteIfPrompted()
-        if !el(app, "pair.qr.go").isEnabled {
-            let qr = el(app, "pair.qr.text")
-            qr.tap()
-            qr.typeText(info.bootstrap)
-        }
-
-        // Host defaults to 127.0.0.1 (loopback); re-typing would duplicate it.
+        // Host/port first: the QR Paste button trips a 60s "Allow Paste" idle
+        // wait that can outlive the Mac's 120s pairing code. Loopback host is
+        // already 127.0.0.1; do not re-type it (that duplicates the value).
         if info.host != "127.0.0.1" {
             let hostField = reveal(app, "pair.host")
-            XCTAssertTrue(hostField.waitForExistence(timeout: 2), app.debugDescription)
+            XCTAssertTrue(hostField.waitForExistence(timeout: 2), "pair.host missing")
             hostField.tap()
             hostField.typeText(info.host)
         }
         let portField = reveal(app, "pair.port")
-        XCTAssertTrue(portField.waitForExistence(timeout: 2), "pair.port still missing after scrolling the Form: \(app.debugDescription)")
+        XCTAssertTrue(portField.waitForExistence(timeout: 2), "pair.port still missing after scrolling the Form")
         portField.tap()
         portField.typeText(String(info.port))
 
+        let qr = reveal(app, "pair.qr.text")
+        XCTAssertTrue(qr.waitForExistence(timeout: 2), "pair.qr.text after port")
+        qr.tap()
+        qr.typeText(info.bootstrap)
+
         let go = reveal(app, "pair.qr.go")
-        XCTAssertTrue(go.waitForExistence(timeout: 5) && go.isEnabled,
-                      "Paste should fill the payload field")
+        XCTAssertTrue(go.waitForExistence(timeout: 5) && go.isEnabled, "bootstrap URL should enable Pair from payload")
         attach(app, "e2e-01-mac-link-filled")
         go.tap()
 
-        let paired = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "connected")).firstMatch
-        XCTAssertTrue(paired.waitForExistence(timeout: 20), app.debugDescription)
-        attach(app, "e2e-02-paired")
-
+        // Link status sits above the fold we scrolled; Capture shows "Connected to".
         app.staticTexts.matching(NSPredicate(format: "label == %@", "Capture")).firstMatch.tap()
-        XCTAssertTrue(el(app, "capture.sample").waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(text(app, startingWith: "Connected to").waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(el(app, "capture.sample").waitForExistence(timeout: 10), "Capture panel")
+        XCTAssertTrue(text(app, startingWith: "Connected to").waitForExistence(timeout: 25),
+                      "pairing did not connect")
+        attach(app, "e2e-02-paired")
 
         el(app, "capture.sample").tap()
         XCTAssertTrue(el(app, "capture.pickedImage").waitForExistence(timeout: 5))
