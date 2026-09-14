@@ -200,6 +200,43 @@ fn a_missing_include_is_reported_and_the_build_still_writes() {
 }
 
 #[test]
+fn diagnostics_full_shows_the_source_line_and_carets() {
+    let dir = tmp("full");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{nothere}\nAfter.\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let check = |extra: &[&str]| {
+        let mut args = vec!["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        run(&args)
+    };
+    // Piped stderr defaults to the one-line form.
+    let short = stderr(&check(&[]));
+    assert!(short.contains("main.tex:4:1: error[missing_file]"), "{short}");
+    assert!(!short.contains("-->"), "{short}");
+
+    for flag in [&["--diagnostics=full"][..], &["--diagnostics", "full"][..]] {
+        let o = check(flag);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{err}");
+        assert!(err.contains("error[missing_file]: "), "{err}");
+        assert!(err.contains(" --> main.tex:4:1\n"), "{err}");
+        assert!(err.contains("\n4 | \\input{nothere}\n  | ^"), "{err}");
+        assert!(!err.contains('\x1b'), "piped output is uncoloured by default:\n{err}");
+        assert!(err.contains("flashtex: main.tex: recovered"), "summary line stays:\n{err}");
+    }
+    assert!(stderr(&check(&["--diagnostics=full", "--color=always"])).contains("\x1b[1;31merror[missing_file]\x1b[0m"));
+    // `json` is `--json` (the report carries wall time, so compare its shape).
+    let as_json = json(&stdout(&check(&["--diagnostics=json"])));
+    assert_eq!(as_json.get("schema").and_then(|s| s.as_str()), Some("flashtex-check/1"));
+    assert!(as_json.get("diagnostics").and_then(|d| d.as_arr()).map_or(false, |d| !d.is_empty()));
+    let bad = check(&["--diagnostics=long"]);
+    assert_eq!(bad.status.code(), Some(2), "{}", stderr(&bad));
+    assert_eq!(check(&["--color", "sometimes"]).status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn an_include_cannot_escape_the_project_root() {
     let dir = tmp("escape");
     let proj = dir.join("proj");
