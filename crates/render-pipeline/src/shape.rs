@@ -103,7 +103,7 @@ pub const SHAPER_CACHE_LIMIT: usize = 200_000;
 
 #[derive(Default)]
 pub struct Shaper {
-    cache: RefCell<HashMap<(Rc<str>, String), Rc<Shaped>>>,
+    cache: RefCell<HashMap<(Rc<str>, String, bool), Rc<Shaped>>>,
 }
 
 impl Shaper {
@@ -113,14 +113,25 @@ impl Shaper {
 
     /// Shapes `text` in `face` with kerning and ligatures on.
     pub fn shape(&self, face: &Rc<LoadedFace>, text: &str) -> Rc<Shaped> {
+        self.shape_with(face, text, false)
+    }
+
+    /// Shapes `text` with ligatures and kerns **off**: verbatim's regime
+    /// (`crate::tfm::literal_run`). A separate cache entry, because the same
+    /// face and text shape differently under it.
+    pub fn shape_literal(&self, face: &Rc<LoadedFace>, text: &str) -> Rc<Shaped> {
+        self.shape_with(face, text, true)
+    }
+
+    fn shape_with(&self, face: &Rc<LoadedFace>, text: &str, literal: bool) -> Rc<Shaped> {
         // Keyed by the face's metrics identity, not its wire `font_id`: one
         // OpenType program is laid out with different TFMs (`ec-lmr10` for
         // `lmodern`, `ecrm1095`/`ecrm1000` for T1 `cmr`).
-        let key = (face.shape_key.clone(), text.to_string());
+        let key = (face.shape_key.clone(), text.to_string(), literal);
         if let Some(hit) = self.cache.borrow().get(&key) {
             return hit.clone();
         }
-        let shaped = Rc::new(shape_uncached(face, text));
+        let shaped = Rc::new(shape_uncached(face, text, literal));
         let mut cache = self.cache.borrow_mut();
         if cache.len() >= SHAPER_CACHE_LIMIT {
             cache.clear();
@@ -138,25 +149,25 @@ impl Shaper {
     }
 }
 
-fn shape_uncached(face: &Rc<LoadedFace>, text: &str) -> Shaped {
+fn shape_uncached(face: &Rc<LoadedFace>, text: &str, literal: bool) -> Shaped {
     if let Some(tfm) = &face.tfm {
-        match shape_tfm(face, tfm, text) {
+        match shape_tfm(face, tfm, text, literal) {
             Ok(Some(s)) => return s,
             Ok(None) => {}
             Err(e) => {
-                let mut s = shape_otf(face, text);
+                let mut s = shape_otf(face, text, literal);
                 s.tfm_error = Some(e.to_string());
                 return s;
             }
         }
     }
-    shape_otf(face, text)
+    shape_otf(face, text, literal)
 }
 
 /// TFM shaping; `Ok(None)` when a character has no T1 slot (the caller then
 /// shapes through the font program and its own metrics); `Err` propagates
 /// the shared interpreter's errors (malformed program, run budget).
-fn shape_tfm(face: &Rc<LoadedFace>, tfm: &Tfm, text: &str) -> Result<Option<Shaped>, crate::tfm::TfmError> {
+fn shape_tfm(face: &Rc<LoadedFace>, tfm: &Tfm, text: &str, literal: bool) -> Result<Option<Shaped>, crate::tfm::TfmError> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut codes = Vec::with_capacity(chars.len());
     for (_, c) in &chars {
@@ -172,7 +183,8 @@ fn shape_tfm(face: &Rc<LoadedFace>, tfm: &Tfm, text: &str) -> Result<Option<Shap
     let mut y_min = 0i32;
     let mut height = 0i32;
     let mut depth = 0i32;
-    let run = tfm.ligkern(&codes)?;
+    // `\@noligs`: verbatim runs no ligature/kern program at all.
+    let run = if literal { crate::tfm::literal_run(&codes) } else { tfm.ligkern(&codes)? };
     if run.leading_kern != 0 {
         // A left-boundary kern: an explicit advance before the first
         // character, attributed to an empty range at the text start.
@@ -252,9 +264,17 @@ fn shape_tfm(face: &Rc<LoadedFace>, tfm: &Tfm, text: &str) -> Result<Option<Shap
     }))
 }
 
-fn shape_otf(face: &Rc<LoadedFace>, text: &str) -> Shaped {
+fn shape_otf(face: &Rc<LoadedFace>, text: &str, literal: bool) -> Shaped {
     let f = face.face();
-    let opts = ShapeOptions::default();
+    // Verbatim: no GSUB `liga`, no f-ligature cmap fallback, no pair
+    // kerning. Mark composition stays on — it is not a ligature, and a
+    // verbatim run reaching this path at all means the text left T1.
+    let opts = ShapeOptions {
+        ligatures: !literal,
+        kerning: !literal,
+        cmap_ligature_fallback: !literal,
+        ..ShapeOptions::default()
+    };
     let (clusters, missing, refused) = match fe_shape::shape(f, text, &opts) {
         Ok(s) => {
             let clusters = s
@@ -333,12 +353,12 @@ mod tests {
         let face = fonts.resolve(Family::LatinModern, Role::Text { bold: false, italic: false }, 10.0).face;
         let shaper = Shaper::new();
         // The OpenType path (GSUB/GPOS), bypassing the TFM.
-        let s = Rc::new(shape_otf(&face, "office"));
+        let s = Rc::new(shape_otf(&face, "office", false));
         // "ffi" is one cluster covering bytes 1..4.
         let lig = s.clusters.iter().find(|c| c.text == "ffi").expect("ffi ligature cluster");
         assert_eq!(lig.text_range, 1..4);
         assert_eq!(lig.glyphs.len(), 1);
-        let av = Rc::new(shape_otf(&face, "AV"));
+        let av = Rc::new(shape_otf(&face, "AV", false));
         let plain: i64 = av.clusters.iter().flat_map(|c| c.glyphs.iter()).map(|g| i64::from(g.advance)).sum();
         // font-engine README: "AV" shaped at 10pt is 13.89pt -> 1389 units (kerned).
         assert_eq!(plain, 1389);

@@ -43,6 +43,18 @@ pub struct TextStyle {
     pub caps: bool,
     /// `\rmfamily`/`\sffamily`/`\ttfamily`.
     pub family: crate::nfss::FamilyKind,
+    /// Verbatim text: `\verb`/`\verb*`, the `verbatim`/`verbatim*` and
+    /// `lstlisting` environments, and `\lstinline`.
+    ///
+    /// TeX typesets these with every ligature and kern suppressed
+    /// (`\@noligs`) and with each blank a rigid `\fontdimen2` rather than
+    /// interword glue, so the run is *not* the same as `\texttt` over the
+    /// same characters: measured against pdflatex at 12 pt T1,
+    /// `\verb|x--y|` is 24.69397 pt (4 characters of `ectt1200`) while
+    /// `\ttfamily x--y` is 18.52048 pt (3, the `--` having ligated). The
+    /// family alone therefore cannot carry this; it is a separate property
+    /// of the *text*, and `\texttt` must keep its ligatures.
+    pub literal: bool,
     /// The shape LaTeX reported undefined on the way to this style
     /// (`\wrong@fontshape`); the typesetter reports it once.
     pub undefined: Option<crate::nfss::FontKey>,
@@ -182,6 +194,20 @@ pub enum Item {
     Footnote { number: String, mark: bool, span: Span, text: Option<Vec<Item>> },
     /// `\colorbox`/`\fcolorbox` (compiler `Inline::ColorBox`).
     ColorBox(Box<ColorBoxItem>),
+    /// LaTeX's `\leavevmode`: an empty zero-width `\hbox`.
+    ///
+    /// Emitted only in front of a verbatim blank that would otherwise open
+    /// a line, and there for the reason TeX has it. `verbatim` sets
+    /// `\obeylines` and makes the blank `\@xobeysp` = `\leavevmode\penalty
+    /// \@M\ `, so an indented line starts *box, glue* rather than *glue* —
+    /// and only glue at the head of a horizontal list is discarded
+    /// (TeX §879, `pl::Item::is_discardable`). Without the box, every
+    /// leading space of every listing is dropped and the indentation of a
+    /// code block disappears.
+    ///
+    /// pdflatex shows it: `\showbox` of `\verb*"a b-c"` opens with
+    /// `.\hbox(0.0+0.0)x0.0`.
+    LeaveVmode,
 }
 
 /// A `\colorbox`/`\fcolorbox`: `items` set as an `\hbox` on a `fill`
@@ -704,11 +730,29 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
                         space_before: true,
                     });
                 }
-                limitations.push((
-                    "unsupported_block",
-                    *span,
-                    format!("verbatim ({} line(s)) set as a flush-left paragraph in the body face with forced line breaks: the pipeline has no monospaced face or literal-text block", lines.len()),
-                ));
+                // The text itself is now typewriter and literal (see
+                // `style_intervals`/`TextStyle::literal`), so the old
+                // "no monospaced face" limitation no longer applies. What
+                // is still missing is package-specific: `listings` key
+                // handling (`basicstyle`, `frame`, `numbers`, `caption`).
+                let env = texts
+                    .get(span.document.0)
+                    .and_then(|t| t.get(span.start..span.end))
+                    .and_then(|t| environment_name(t, t.find("\\begin").map(|b| b + 6)?))
+                    .map(|(name, _)| name)
+                    .unwrap_or("");
+                if env.starts_with("lstlisting") {
+                    limitations.push((
+                        "unsupported_block",
+                        *span,
+                        format!(
+                            "lstlisting ({} line(s)) set as a flush-left typewriter paragraph with forced line breaks: \
+                             the listings keys are not applied, so `basicstyle` (its font size), `frame`, `numbers` \
+                             and `caption` are missing",
+                            lines.len()
+                        ),
+                    ));
+                }
                 out.push(CBlock::Styled {
                     style: ParagraphStyle::FlushLeft,
                     content,
@@ -906,7 +950,7 @@ pub fn adapt_cached(
     }
     let secnumdepth = counter(source, "secnumdepth").unwrap_or(options.default_secnumdepth);
     style.nfss = crate::nfss::Scheme::for_document(&parsed.packages, t1_encoding(source));
-    let styles: Vec<Styles> = texts.iter().map(|t| Styles::new(style_intervals(t), style.nfss)).collect();
+    let styles: Vec<Styles> = texts.iter().map(|t| Styles::new(t, style_intervals(t), style.nfss)).collect();
     let labels_fp = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1662,8 +1706,18 @@ fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, Strin
                 }
             }
         }
-        Inline::Verbatim { text, span, .. } => {
-            out.push(("unsupported_block", *span, format!("\\verb {text:?} set in the body face: the pipeline has no monospaced face")));
+        Inline::Verbatim { .. } => {
+            // `\verb`/`\verb*`/`\lstinline` are typeset in the typewriter
+            // family with ligatures, kerns and stretchable blanks
+            // suppressed (`style_intervals`, `TextStyle::literal`), so
+            // there is nothing to report. Measured against pdflatex at
+            // 12 pt T1: `\verb"ftxc --version"` 86.4289 pt, the oracle's
+            // 86.4289 pt.
+            //
+            // `\verb*`'s visible-space glyph is the one remaining
+            // difference, and it is not a geometry one: the compiler's
+            // `Inline::Verbatim` does not record the star, and the blank
+            // is `\fontdimen2` wide either way.
         }
         #[cfg(feature = "amsmath-inline")]
         Inline::MathRows { rows, .. } => {
@@ -3211,6 +3265,137 @@ fn url_command(name: &str) -> bool {
     matches!(name, "url" | "nolinkurl")
 }
 
+/// A verbatim construct's extent in the source: `whole` is every byte the
+/// style interval must cover and the scanner must skip, `body` is the
+/// literal text inside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VerbatimSpan {
+    whole: (usize, usize),
+    body: (usize, usize),
+}
+
+/// `\verb`/`\verb*` and `\lstinline`: a *delimited* argument, the next
+/// character after the command (and after `\lstinline`'s optional
+/// `[...]`) being the delimiter, which then closes the argument.
+///
+/// Like [`url_command`] these cannot be [`text_font_command`] entries,
+/// for the same two reasons plus a third:
+///
+/// 1. The argument is **opaque** — more so than a URL's, because `\verb`
+///    ends at a *character*, not a brace. `\verb|{|` and `\verb|%|` are
+///    legal, and scanning them as LaTeX corrupts the `groups` stack and
+///    starts a comment that eats the rest of the line's styles.
+/// 2. The interval covers the **whole command**, because the compiler
+///    gives `Inline::Verbatim` the span of the entire `\verb|...|` and the
+///    style is looked up at `span.start`.
+/// 3. The body is **literal** (`TextStyle::literal`), which no font
+///    command implies: `\texttt` ligates `--` and `\verb` must not.
+fn verb_command(name: &str) -> bool {
+    matches!(name, "verb" | "lstinline")
+}
+
+/// The verbatim *environments*, whose body runs to the matching
+/// `\end{<name>}`. `lstlisting` and `verbatim*` take an optional `[...]`
+/// after the `\begin{...}` that is read as ordinary LaTeX, not as text.
+fn verbatim_environment(name: &str) -> bool {
+    matches!(name, "verbatim" | "verbatim*" | "lstlisting" | "lstlisting*" | "Verbatim" | "alltt")
+}
+
+/// The `\verb`/`\verb*`/`\lstinline` starting at the backslash `at`, whose
+/// control word ends at `word_end`.
+///
+/// The delimiter is the first character after an optional `*` and, for
+/// `\lstinline`, an optional bracketed key list. LaTeX forbids a space or
+/// `*` as the delimiter (`\verb` reads `\@ifstar` then one token), and an
+/// unterminated `\verb` is an error there, so `None` here leaves the bytes
+/// to the ordinary scan rather than swallowing the rest of the document.
+fn verb_span(source: &str, at: usize, word_end: usize) -> Option<VerbatimSpan> {
+    let bytes = source.as_bytes();
+    let mut i = word_end;
+    if bytes.get(i) == Some(&b'*') {
+        i += 1;
+    }
+    if source[at + 1..word_end] == *"lstinline" && bytes.get(i) == Some(&b'[') {
+        // A key list, read as LaTeX; only the delimited body is literal.
+        let close = source[i..].find(']')? + i;
+        i = close + 1;
+    }
+    let delim = *bytes.get(i)?;
+    if delim == b' ' || delim == b'\t' || delim == b'\n' || delim == b'*' {
+        return None;
+    }
+    let body = i + 1;
+    let end = source[body..].find(delim as char)? + body;
+    Some(VerbatimSpan { whole: (at, end + 1), body: (body, end) })
+}
+
+/// The `\begin{<name>}` verbatim environment starting at the backslash
+/// `at`, given the environment name's bytes.
+///
+/// The body starts after the `\begin{...}`'s optional `[...]` argument and
+/// the newline that ends that line (LaTeX's verbatim discards it), and runs
+/// to the `\end{<name>}`. Verbatim environments do not nest, so the *first*
+/// `\end{<name>}` closes the body — which is exactly why the body must be
+/// skipped rather than scanned: a `\begin{...}` typed inside a listing is
+/// text, not a group.
+fn verbatim_environment_span(source: &str, at: usize, name: &str, after_name: usize) -> Option<VerbatimSpan> {
+    let bytes = source.as_bytes();
+    let mut i = after_name;
+    if bytes.get(i) == Some(&b'[') {
+        let close = matching_bracket(bytes, i)?;
+        i = close + 1;
+    }
+    // `\begin{verbatim}` swallows the rest of its own line.
+    let body = match source[i..].find('\n') {
+        Some(nl) => i + nl + 1,
+        None => i,
+    };
+    let closing = format!("\\end{{{name}}}");
+    let end = source[body..].find(&closing)? + body;
+    // The newline in front of `\end{...}` belongs to the terminator, not to
+    // the last line of the body.
+    let body_end = if end > body && bytes[end - 1] == b'\n' { end - 1 } else { end };
+    Some(VerbatimSpan { whole: (at, end + closing.len()), body: (body, body_end) })
+}
+
+/// The `]` matching the `[` at `open`, counting nested brackets. Used for
+/// the optional key list of `lstlisting`/`\lstinline`.
+fn matching_bracket(bytes: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' => {
+                // A braced value (`caption={...}`) may hold a `]`.
+                let mut d = 0usize;
+                while i < bytes.len() {
+                    match bytes[i] {
+                        b'{' => d += 1,
+                        b'}' => {
+                            d -= 1;
+                            if d == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+            }
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 /// The end of a `\url`/`\nolinkurl` argument that starts at the `{` at
 /// `open`: the matching `}`, counting nested braces and reading `\{` / `\}`
 /// as literal characters rather than grouping. This mirrors
@@ -3338,9 +3523,83 @@ fn declared_size(level: Option<flashtex_compiler::parser::FontSizeLevel>, base: 
 /// ...) to the end of the innermost group. Family, series and shape only:
 /// size declarations are read from the compiler's `TextStyle::size` (see
 /// [`declared_size`]).
+/// Every verbatim construct in `source`, in order and non-overlapping.
+///
+/// This is a separate scan from [`style_intervals`] because the two need it
+/// for different reasons — the style scan must *skip* these bytes, while the
+/// item builder must know that the text it is laying out is literal — and
+/// because it has to run before the style scan can trust its own comment and
+/// brace state: a `%` or a `{` inside `\verb|%|` or a `lstlisting` body is a
+/// character, and reading it as LaTeX silently drops the style of everything
+/// after it.
+fn literal_spans(source: &str) -> Vec<VerbatimSpan> {
+    let bytes = source.as_bytes();
+    let mut out: Vec<VerbatimSpan> = Vec::new();
+    let mut i = 0;
+    let mut in_comment = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_comment {
+            if c == b'\n' {
+                in_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == b'%' {
+            in_comment = true;
+            i += 1;
+            continue;
+        }
+        if c != b'\\' {
+            i += 1;
+            continue;
+        }
+        let rest = &source[i..];
+        let word_end = i + 1 + rest[1..].bytes().take_while(u8::is_ascii_alphabetic).count();
+        let name = &source[i + 1..word_end];
+        if verb_command(name) {
+            if let Some(span) = verb_span(source, i, word_end) {
+                i = span.whole.1;
+                out.push(span);
+                continue;
+            }
+        } else if name == "begin" {
+            if let Some((env, after)) = environment_name(source, word_end) {
+                if verbatim_environment(env) {
+                    if let Some(span) = verbatim_environment_span(source, i, env, after) {
+                        i = span.whole.1;
+                        out.push(span);
+                        continue;
+                    }
+                }
+            }
+        }
+        i = word_end.max(i + 2);
+    }
+    out
+}
+
+/// The environment name of a `\begin`/`\end` whose control word ends at
+/// `at`, and the byte after its closing brace.
+fn environment_name(source: &str, at: usize) -> Option<(&str, usize)> {
+    let bytes = source.as_bytes();
+    let mut i = at;
+    while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+        i += 1;
+    }
+    if bytes.get(i) != Some(&b'{') {
+        return None;
+    }
+    let close = source[i..].find('}')? + i;
+    Some((&source[i + 1..close], close + 1))
+}
+
 fn style_intervals(source: &str) -> Vec<StyleInterval> {
     let mut out = Vec::new();
     let bytes = source.as_bytes();
+    let literal = literal_spans(source);
+    let mut next_literal = 0usize;
     let mut i = 0;
     let mut in_comment = false;
     // Open brace groups (byte of `{`): a declaration (`\bfseries`,
@@ -3348,6 +3607,23 @@ fn style_intervals(source: &str) -> Vec<StyleInterval> {
     // `\end{...}`/the document end outside any group.
     let mut groups: Vec<usize> = Vec::new();
     while i < bytes.len() {
+        // A verbatim construct starting here: typewriter over the whole of
+        // it, and its bytes are skipped rather than scanned (see
+        // `literal_spans`). The interval covers the whole command because
+        // the compiler spans `\verb|...|` and the `\begin{verbatim}` block
+        // from the backslash, and the style is looked up at `span.start`.
+        while next_literal < literal.len() && literal[next_literal].whole.1 <= i {
+            next_literal += 1;
+        }
+        if let Some(span) = literal.get(next_literal) {
+            if span.whole.0 == i && !in_comment {
+                use crate::nfss::{Command as C, FamilyKind as F};
+                out.push((span.whole.0, span.whole.1, C::Family(F::Tt), false));
+                i = span.whole.1;
+                next_literal += 1;
+                continue;
+            }
+        }
         let c = bytes[i];
         if in_comment {
             if c == b'\n' {
@@ -4095,11 +4371,13 @@ struct Styles {
     intervals: Vec<(usize, usize, crate::nfss::Command)>,
     max_end: Vec<usize>,
     ends: Vec<usize>,
+    /// Verbatim bodies, in order (`literal_spans`), for [`Styles::literal_at`].
+    literal: Vec<VerbatimSpan>,
     scheme: crate::nfss::Scheme,
 }
 
 impl Styles {
-    fn new(intervals: Vec<StyleInterval>, scheme: crate::nfss::Scheme) -> Styles {
+    fn new(source: &str, intervals: Vec<StyleInterval>, scheme: crate::nfss::Scheme) -> Styles {
         let mut max_end = Vec::with_capacity(intervals.len());
         let mut m = 0;
         for (_, end, _, _) in &intervals {
@@ -4109,7 +4387,30 @@ impl Styles {
         let mut ends: Vec<usize> = intervals.iter().filter(|i| i.3).map(|i| i.1).collect();
         ends.sort_unstable();
         let intervals = intervals.into_iter().map(|(s, e, c, _)| (s, e, c)).collect();
-        Styles { intervals, max_end, ends, scheme }
+        Styles { intervals, max_end, ends, literal: literal_spans(source), scheme }
+    }
+
+    /// Whether the text an inline spanning from `at` typesets is verbatim.
+    ///
+    /// Two shapes answer yes, because the compiler spans the two verbatim
+    /// constructs differently:
+    ///
+    /// * `at` is inside a verbatim *body* — a `verbatim`/`lstlisting` line,
+    ///   which the compiler spans at its own bytes.
+    /// * `at` is exactly where a `\verb`/`\lstinline` starts. That span is
+    ///   the whole command (`parser::Inline::Verbatim` carries the span of
+    ///   `\verb|...|` from the backslash), so no byte of it is in the body
+    ///   and the containment test alone would miss every `\verb`.
+    ///
+    /// Constructs do not overlap and are in source order, so one binary
+    /// search on each start byte finds the only candidate.
+    fn literal_at(&self, at: usize) -> bool {
+        let i = self.literal.partition_point(|s| s.body.0 <= at);
+        if i > 0 && at < self.literal[i - 1].body.1 {
+            return true;
+        }
+        let j = self.literal.partition_point(|s| s.whole.0 < at);
+        self.literal.get(j).is_some_and(|s| s.whole.0 == at)
     }
 
     /// The style in force at byte `at`: the font commands of every interval
@@ -4767,6 +5068,10 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     None
                 };
                 let mut style = style_at(styles_of(span.document), span.start);
+                // Verbatim text: no ligatures, no kerns, rigid blanks. The
+                // span of a `\verb|...|` starts at the backslash, so the
+                // body byte is what decides — `span.start` is the `\`.
+                style.literal = styles_of(span.document).literal_at(span.start);
                 // `\tiny`..`\Huge` come from the compiler's scoping.
                 let Inline::Text { style: compiler_style, .. } = &**inline else { unreachable!() };
                 style.size_cpt = declared_size(compiler_style.size, size);
@@ -4850,7 +5155,11 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                         }
                     }
                 }
-                let chars = tex_ligatures(chars);
+                // `--`, ``` `` ```, `''`, `` ?` `` are ligatures of the
+                // *input*, and verbatim suppresses them (`\@noligs`): they
+                // stay the characters that were typed. `\texttt` is not
+                // verbatim and keeps them.
+                let chars = if style.literal { chars } else { tex_ligatures(chars) };
                 // `~` is an unbreakable space.
                 let mut run: Vec<(char, CharSrc)> = Vec::new();
                 let flush = |run: &mut Vec<(char, CharSrc)>, items: &mut Vec<Item>, factor: &mut u32| {
@@ -4871,6 +5180,26 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     // *token*, so it is interword glue in the font in force,
                     // not a character. Only `exact` text -- the source's own
                     // bytes, verbatim included -- keeps a literal blank.
+                    // A blank in verbatim is neither a space token nor a
+                    // character: LaTeX's `\@vobeyspaces` makes it a control
+                    // space (`\ `), which pdflatex's `\showbox` of
+                    // `\verb|a b|` shows as `\penalty 10000` + `\glue
+                    // 5.65837` at 11 pt. That glue is rigid here for free —
+                    // the typewriter families set `\fontdimen3` and
+                    // `\fontdimen4` to zero — and a control space ignores
+                    // the space factor, so `\fontdimen7` is never added
+                    // after a `.`.
+                    if ch == ' ' && style.literal {
+                        flush(&mut run, &mut items, &mut factor);
+                        // `\leavevmode` before a blank that would open the
+                        // line, so the indentation is not discarded.
+                        if items.is_empty() || matches!(items.last(), Some(Item::LineBreak { .. })) {
+                            items.push(Item::LeaveVmode);
+                        }
+                        items.push(Item::Space { style, factor: 1000, no_break: true });
+                        factor = 1000;
+                        continue;
+                    }
                     if ch == ' ' && !exact {
                         flush(&mut run, &mut items, &mut factor);
                         // natbib writes every space of its own as
@@ -5363,7 +5692,102 @@ mod tests {
             .expect("the URL contributes a typewriter interval");
         assert_eq!(&src[url.0..url.1], "\\url{ab}", "{intervals:?}");
         // The text after the URL is outside it.
-        assert_eq!(Styles::new(intervals, crate::nfss::Scheme::LmT1).at(src.find('y').unwrap()).family,
+        assert_eq!(Styles::new(src, intervals, crate::nfss::Scheme::LmT1).at(src.find('y').unwrap()).family,
                    crate::nfss::FamilyKind::Rm);
+    }
+
+    /// `\verb`, the `verbatim` environment and `lstlisting` are set in the
+    /// typewriter family, like `\url` and for the same reason: the compiler
+    /// marks the run mono (`parser::Inline::Verbatim`, `Block::Verbatim`)
+    /// but the pipeline re-derives the family from the source, and these
+    /// were in none of its tables.
+    #[test]
+    fn verbatim_constructs_are_set_in_the_typewriter_family() {
+        assert_eq!(families(&items("A \\verb|x| B")), "rtr");
+        assert_eq!(families(&items("A \\verb*|x| B")), "rtr");
+        assert_eq!(families(&items("A \\lstinline|x| B")), "rtr");
+        assert_eq!(families(&items("A \\lstinline[language=C]|x| B")), "rtr");
+        assert_eq!(families(&items("\\begin{verbatim}\nx\n\\end{verbatim}")), "t");
+        assert_eq!(families(&items("\\begin{lstlisting}[language=C]\nx\n\\end{lstlisting}")), "t");
+    }
+
+    /// A verbatim body is raw source bytes, so the style scan must skip it
+    /// rather than read it as LaTeX. A `%` inside `\verb` used to start a
+    /// comment and swallow the rest of the line's styles, and a lone brace
+    /// used to corrupt the group stack that decides where a declaration
+    /// ends. Both are reachable from ordinary code listings.
+    #[test]
+    fn a_comment_or_brace_inside_verbatim_does_not_disturb_a_later_font_command() {
+        let it = items("A \\verb|100%| \\textbf{bold} C");
+        assert_eq!(families(&it), "rtrr", "{it:?}");
+        assert!(
+            it.iter().any(|i| matches!(i, Item::Word(w) if w.segments.iter().any(|s| s.style.bold))),
+            "the \\textbf after the \\verb is still bold: {it:?}"
+        );
+        // An unbalanced brace in the body is a character, not a group.
+        let it = items("A \\verb|{| \\textbf{bold} C");
+        assert_eq!(families(&it), "rtrr", "{it:?}");
+        // `\end{verbatim}` closes the body, so everything before it is
+        // text: a `\begin`, a `%` and a lone `{` are characters, not a
+        // nested environment, a comment and a group.
+        let it = items("\\begin{verbatim}\n\\begin{x} 50% {\n\\end{verbatim}");
+        let words: Vec<String> = it
+            .iter()
+            .filter_map(|i| match i {
+                Item::Word(w) => Some(w.segments.iter().map(|s| s.text.clone()).collect()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(words, vec!["\\begin{x}", "50%", "{"], "{it:?}");
+        assert!(
+            it.iter().all(|i| match i {
+                Item::Word(w) => w.segments.iter().all(|s| s.style.literal),
+                _ => true,
+            }),
+            "{it:?}"
+        );
+    }
+
+    /// Verbatim suppresses every ligature of the input (`\@noligs`), which
+    /// `\texttt` over the same characters does not. Measured against
+    /// pdflatex (TeX Live 2025, 12pt `article`, T1, `ectt1200`, every
+    /// character 6.1735pt): `\verb|x--y|` is 24.69397pt = 4 characters,
+    /// while `\ttfamily x--y` is 18.52048pt = 3, the `--` having ligated
+    /// into an endash. So the family alone cannot carry this.
+    #[test]
+    fn verbatim_suppresses_input_ligatures_but_texttt_keeps_them() {
+        let text = |it: &[Item]| -> String {
+            it.iter()
+                .filter_map(|i| match i {
+                    Item::Word(w) => Some(w.text()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("|")
+        };
+        assert_eq!(text(&items("\\verb|x--y|")), "x--y");
+        assert_eq!(text(&items("\\begin{verbatim}\nx--y\n\\end{verbatim}")), "x--y");
+        // `\texttt` is not verbatim: the `--` is still an endash.
+        assert_eq!(text(&items("\\texttt{x--y}")), "x\u{2013}y");
+        assert_eq!(text(&items("plain x--y")), "plain|x\u{2013}y");
+    }
+
+    /// A blank in verbatim is a control space (`\@vobeyspaces`), not an
+    /// interword space token: rigid, unbreakable, and preceded by
+    /// `\leavevmode` so that the indentation of a code line is not
+    /// discarded at the line break in front of it (TeX §879).
+    #[test]
+    fn a_verbatim_blank_is_rigid_and_survives_at_the_start_of_a_line() {
+        let it = items("\\verb|a b|");
+        let space = it.iter().find(|i| matches!(i, Item::Space { .. })).expect("{it:?}");
+        let Item::Space { factor, no_break, style } = space else { panic!() };
+        assert_eq!(*factor, 1000, "a control space ignores the space factor");
+        assert!(*no_break, "`\\penalty\\@M` in front of the blank");
+        assert!(style.literal);
+        // An indented listing line opens with the `\leavevmode` box.
+        let it = items("\\begin{verbatim}\na\n    b\n\\end{verbatim}");
+        let lead = it.iter().position(|i| matches!(i, Item::LeaveVmode));
+        let brk = it.iter().position(|i| matches!(i, Item::LineBreak { .. }));
+        assert!(lead.is_some() && brk.is_some() && lead > brk, "{it:?}");
     }
 }
