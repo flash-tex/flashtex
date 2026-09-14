@@ -145,3 +145,19 @@ fn a_bare_accent_warns_and_draws_nothing() {
     let out = compile(source);
     assert_eq!(messages(&out), ["\\v has no letter to accent"]);
 }
+
+#[test]
+fn a_document_may_redefine_an_accent_name() {
+    let renew = compile("\\renewcommand{\\v}[1]{\\textbf{#1}}\nx \\v{s} end\n");
+    assert!(renew.diagnostics.is_empty(), "{:?}", messages(&renew));
+    // The user's macro, not the caron: `s`, never `š`.
+    let texts: Vec<&str> = renew
+        .pages
+        .iter()
+        .flat_map(|p| p.items.iter())
+        .map(|i| i.text.as_str())
+        .collect();
+    assert_eq!(texts, ["x", "s", "end"]);
+    let def = compile("\\def\\b{bee}\nx \\b\\ end\n");
+    assert!(def.diagnostics.is_empty(), "{:?}", messages(&def));
+}
