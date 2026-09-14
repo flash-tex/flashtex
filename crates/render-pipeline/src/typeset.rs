@@ -2999,7 +2999,7 @@ impl<'a> Context<'a> {
         let mut minipage = minipage;
         for block in body {
             match block {
-                Block::Paragraph { .. } if std::mem::take(&mut minipage) => {
+                Block::Paragraph { .. } if minipage => {
                     let mut opened = block.clone();
                     if let Block::Paragraph { addvspace_before, env_open, vspace_before, list, .. } = &mut opened {
                         *addvspace_before = 0.0;
@@ -3018,6 +3018,9 @@ impl<'a> Context<'a> {
                         b.vertical.parskip = None;
                         b.vertical.space_before = None;
                     }
+                    // A block that set nothing (a paragraph with no boxes)
+                    // started no paragraph, so `\if@minipage` still holds.
+                    minipage = blocks.len() == at;
                 }
                 // The cache is keyed on a block's own bytes and the page's
                 // parameters, which `\@parboxrestore` has changed: a float
@@ -3032,6 +3035,8 @@ impl<'a> Context<'a> {
                     let mut b = self.picture_block(*document, picture, *centered);
                     add_vspace(&mut b.vertical, *vspace_before);
                     blocks.push(b);
+                    // A picture is set in a paragraph: `\everypar` has run.
+                    minipage = false;
                 }
                 // Page-level material: LaTeX forbids it in a float box (a
                 // `\section` there would number and mark out of order, and
