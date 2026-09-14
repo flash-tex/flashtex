@@ -100,6 +100,13 @@ final class ShellModel {
     /// Triggers: `updateActiveText` (edit), a result or v2 frame landing
     /// (recompile), a caret move, and ⌘⇧J (explicit).
     @ObservationIgnored let caretFollow = CaretFollowController()
+    /// Clicking an internal hyperref destination: a one-shot scroll request
+    /// the v2 pane's `PreviewAnchorKeeper` acts on (token space separate from
+    /// caret following).
+    var previewReveal: CaretFollowController.Request?
+    /// Last link activation (tests); never opens a URL by itself.
+    private(set) var lastPreviewLinkAction: DisplayListLinks.Action?
+    private var previewRevealTokens = 0
     var anchor: InsertionAnchor?
     var proposals: [RuntimeV1.CaptureProposal] = []
     var reviewing: RuntimeV1.CaptureProposal?
@@ -317,6 +324,28 @@ final class ShellModel {
         for note in capabilityNotes { log(note) }
         for d in layoutDiagnostics { log(d.message) }
     }
+
+    /// Click on a v2 link: allowlisted URIs go through `NSWorkspace`;
+    /// internal destinations scroll the preview. Scheme policy is the app's
+    /// (proposal §6: writer does not filter).
+    func activatePreviewLink(_ link: RenderingV2.Navigation.Link, in list: RenderingV2.DisplayList) {
+        let destinations = list.navigation?.destinations ?? [:]
+        let action = DisplayListLinks.action(for: link, destinations: destinations)
+        lastPreviewLinkAction = action
+        switch action {
+        case .openURI(let url):
+            if DisplayListLinks.openURL(url) { navigationNote = "Opened \(url.absoluteString)" }
+            else { navigationNote = "Could not open \(url.absoluteString)" }
+        case .reveal(let dest):
+            previewRevealTokens += 1
+            previewReveal = CaretFollowController.Request(token: previewRevealTokens, target: DisplayListLinks.previewTarget(for: dest), reason: .explicit)
+            navigationNote = "Scrolled to page \(dest.page)"
+        case .rejectedScheme(let scheme):
+            navigationNote = "Blocked link scheme ‘\(scheme.isEmpty ? "none" : scheme)’ (allowed: http, https, mailto)"
+        case .unknownDestination(let name):
+            navigationNote = "Unknown destination \(name)"
+        }
+    }
     var autoCompile = true
     private(set) var lastLatencyMs: Double?
     private(set) var latenciesMs: [Double] = []
@@ -457,6 +486,54 @@ final class ShellModel {
                             token: nextEditToken(), revision: editorRevision)
         navigationNote = "Applied: \(preview.summary) (undo with ⌘Z)"
         quickFix = nil
+    }
+
+    // MARK: the fix at the caret (Tab)
+
+    /// Set by Esc while a caret fix is showing, so the hint stays down until
+    /// the caret moves somewhere else. Dismissing must also hand Tab straight
+    /// back to indentation — that is the whole point of Esc here.
+    @ObservationIgnored private var dismissedCaretFix: EditorDiagnostics.CaretFix?
+
+    /// The mechanical fix offered where the caret is, or `nil`.
+    ///
+    /// This is the single source of truth for both halves of the feature: the
+    /// editor draws a hint exactly when it is non-nil, and Tab accepts a fix
+    /// exactly when it is non-nil. They cannot disagree, so Tab can never
+    /// silently do something the author was not shown.
+    var caretFix: EditorDiagnostics.CaretFix? {
+        let diagnostics = displayedDiagnostics
+        // Cheap bail-out before `caretByte`, whose UTF-16 → UTF-8 conversion is
+        // linear in the document: this is read on every keystroke, and most
+        // documents carry no mechanical fix at all.
+        guard result?.revision == editorRevision,
+              diagnostics.contains(where: { $0.help?.replacement != nil || $0.suggestion != nil })
+        else { return nil }
+        guard let caretByte, let fix = EditorDiagnostics.fixOffered(
+            at: caretByte, in: diagnostics, path: activePath,
+            currentText: activeText, compiledRevision: result?.revision,
+            editorRevision: editorRevision
+        ) else { return nil }
+        return fix == dismissedCaretFix ? nil : fix
+    }
+
+    /// Esc: take the hint down and leave Tab alone until the caret moves onto
+    /// a different fix.
+    func dismissCaretFix() {
+        guard let fix = caretFix else { return }
+        dismissedCaretFix = fix
+    }
+
+    /// Tab on a visible caret fix. Routed through `previewQuickFix` /
+    /// `applyQuickFix` rather than a second application path, so the edit
+    /// ledger, the revision counter and undo behave exactly as they do for
+    /// "Fix…" in the Problems panel — one undo step.
+    func acceptCaretFix() {
+        guard let fix = caretFix else { return }
+        previewQuickFix(diagnosticIndex: fix.diagnosticIndex)
+        guard quickFix != nil else { return } // refusal already in the footer
+        applyQuickFix()
+        dismissedCaretFix = nil
     }
 
     /// Asks the helper once per result; the cache is read by `editorMarkReport`.
@@ -877,6 +954,7 @@ final class ShellModel {
                 displayListBase = installed.acknowledgement
             }
         }
+        sent = DisplayListLinks.sent(with: sent)
         let request = RuntimeV1.CompileRequest(
             projectId: projectId,
             revision: editorRevision,
@@ -1120,6 +1198,23 @@ final class ShellModel {
         if reviewing == nil { reviewing = proposals.first }
     }
 
+    /// Closes the review sheet without deciding anything.
+    ///
+    /// The sheet is window-modal, so while it is up every other control in
+    /// the window — including the Captures inspector's "Insert at caret" —
+    /// is unclickable. Before this existed the only ways out were Reject
+    /// (destructive) and a successful Approve, so a proposal the reviewer
+    /// wanted to insert from the inspector instead could not be reached at
+    /// all: the inspector's Insert is enabled only while the proposal is in
+    /// `proposals`, which is exactly when the blocking sheet is raised.
+    ///
+    /// The proposal stays queued and insertable; only the sheet goes away.
+    func dismissReviewWithoutDeciding() {
+        guard let p = reviewing else { return }
+        reviewing = nil
+        captureNote = "Review of \(p.captureId) closed; it is still queued — insert it from the Captures inspector (⌘⇧I)."
+    }
+
     func rejectProposal(_ proposal: RuntimeV1.CaptureProposal) {
         proposals.removeAll { $0.captureId == proposal.captureId }
         if reviewing?.captureId == proposal.captureId { reviewing = proposals.first }
@@ -1163,7 +1258,17 @@ final class ShellModel {
             captureNote = "Cannot insert \(proposal.captureId): \(why). Pin a new insertion point."
             return .needsReselection(why)
         }
-        let insert = Insertion.insertionText(latex, into: doc.text, atByte: byte)
+        // Make the proposal legal where it is actually landing before it becomes
+        // an edit: a formula recognised at a text caret is wrapped, and one
+        // recognised inside an existing `$…$` has its own delimiters removed
+        // rather than producing `$a + $x^2$ + b$` (issue #2, owner report).
+        // The bridge-attached path gets the same treatment inside the bridge.
+        let normalized = Insertion.captureInsertion(latex, into: doc.text, atByte: byte)
+        guard let insert = normalized.text else {
+            captureNote = "Cannot insert \(proposal.captureId) here: "
+                + (normalized.advisories.first ?? "the proposal is not legal LaTeX at this caret.")
+            return .needsReselection("unsafe at caret")
+        }
         guard let ns = doc.text.nsRange(utf8Bytes: .init(path: anchor.path, startByte: byte, endByte: byte)) else {
             captureNote = "Anchor offset is not a valid position."; return .needsReselection("invalid offset")
         }
@@ -1178,7 +1283,8 @@ final class ShellModel {
         // Keep the anchor after the inserted text so successive captures append in order.
         self.anchor = InsertionAnchor(id: anchor.id, path: anchor.path, byteOffset: byte + insert.utf8.count,
                                       revision: editorRevision, contextAfter: anchor.contextAfter)
-        captureNote = "Inserted \(proposal.captureId) at byte \(byte) (undo with ⌘Z)."
+        captureNote = "Inserted \(proposal.captureId) at byte \(byte) (\(normalized.caret.label); undo with ⌘Z)."
+            + (normalized.advisories.isEmpty ? "" : " " + normalized.advisories.joined(separator: " "))
         return .inserted(byteOffset: byte)
     }
 
@@ -1190,7 +1296,12 @@ final class ShellModel {
     func editRefused(_ edit: PendingEdit, reason: String) {
         if pendingEdit == edit { pendingEdit = nil }
         guard let refund = edit.captureRefund else {
+            // Bridge inserts build their pendingEdit without a refund, so this
+            // is the path a refused capture insertion takes. navigationNote
+            // alone only reaches the status bar, which is behind the modal
+            // review sheet — the refusal looked like a dead Insert button.
             navigationNote = "Edit not applied: \(reason)."
+            captureNote = "Nothing was inserted: \(reason)."
             return
         }
         let id = refund.proposal.captureId

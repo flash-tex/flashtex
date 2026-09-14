@@ -169,6 +169,7 @@ public struct RenderingV2Fast {
         var projectId: String?, revision: Int?, features: [String]?
         var documents: [RenderingV2.DocumentResource]?, fonts: [RenderingV2.FontResource]?
         var pages: [RenderingV2.Page]?, diagnostics: [RenderingV2.Diagnostic]?
+        var navigation: RenderingV2.Navigation?
         try object { key, p in
             switch key {
             case "render_format": renderFormat = try p.string()
@@ -186,6 +187,9 @@ public struct RenderingV2Fast {
                 p.fontsRange = start..<p.i
             case "pages": pages = try p.pages()
             case "diagnostics": diagnostics = try p.array { try $0.diagnostic() }
+            case "navigation":
+                p.ws()
+                if try p.literalNull() { navigation = nil } else { navigation = try p.navigation() }
             default: try p.skip(depth: 2)
             }
         }
@@ -193,7 +197,7 @@ public struct RenderingV2Fast {
               let features, let documents, let fonts, let pages, let diagnostics else { throw err("missing display_list field") }
         return RenderingV2.DisplayList(renderFormat: renderFormat, coordinateUnit: unit, colorSpace: colorSpace, textExtraction: extraction,
                                        projectId: projectId, revision: revision, requiredFeatures: features, documents: documents,
-                                       fonts: fonts, pages: pages, diagnostics: diagnostics)
+                                       fonts: fonts, pages: pages, diagnostics: diagnostics, navigation: navigation)
     }
 
     private mutating func document() throws -> RenderingV2.DocumentResource {
@@ -537,6 +541,141 @@ public struct RenderingV2Fast {
         ws()
         if try literalNull() { return nil }
         return try int()
+    }
+
+    private mutating func bool() throws -> Bool {
+        ws()
+        if i + 4 <= b.count, b[i] == 0x74, b[i + 1] == 0x72, b[i + 2] == 0x75, b[i + 3] == 0x65 { i += 4; return true }
+        if i + 5 <= b.count, b[i] == 0x66, b[i + 1] == 0x61, b[i + 2] == 0x6C, b[i + 3] == 0x73, b[i + 4] == 0x65 { i += 5; return false }
+        throw err("expected boolean")
+    }
+
+    /// `display-list-v2-links` §3; every field optional except that a present
+    /// object is kept (empty links/destinations are legal).
+    private mutating func navigation() throws -> RenderingV2.Navigation {
+        var links: [RenderingV2.Navigation.Link]?
+        var destinations: [String: RenderingV2.Navigation.Destination]?
+        var outline: [RenderingV2.Navigation.OutlineEntry]?
+        var outlineOpen: Bool?, pageMode: String?, openAction: String?
+        var info: RenderingV2.Navigation.Info?
+        try object { key, p in
+            switch key {
+            case "links": links = try p.array { try $0.navLink() }
+            case "destinations":
+                var map: [String: RenderingV2.Navigation.Destination] = [:]
+                try p.object { name, q in map[name] = try q.navDestination() }
+                destinations = map
+            case "outline": outline = try p.array { try $0.navOutlineEntry() }
+            case "outline_open": outlineOpen = try p.bool()
+            case "page_mode": pageMode = try p.string()
+            case "open_action": openAction = try p.string()
+            case "info": info = try p.navInfo()
+            default: try p.skip(depth: 3)
+            }
+        }
+        return RenderingV2.Navigation(links: links ?? [], destinations: destinations ?? [:], outline: outline,
+                                      outlineOpen: outlineOpen, pageMode: pageMode, openAction: openAction, info: info)
+    }
+
+    private mutating func navRect() throws -> RenderingV2.Navigation.Rect {
+        let n = try array { try $0.int64() }
+        guard n.count == 4 else { throw err("link rect must be [x0, y0, x1, y1]") }
+        return RenderingV2.Navigation.Rect(x0: n[0], y0: n[1], x1: n[2], y1: n[3])
+    }
+
+    private mutating func navLink() throws -> RenderingV2.Navigation.Link {
+        var page: Int?, rects: [RenderingV2.Navigation.Rect] = []
+        var className: String?, border: [String]?, color: [String]?
+        var target: RenderingV2.Navigation.Target?, source: RenderingV2.Navigation.Source?
+        try object { key, p in
+            switch key {
+            case "page": page = try p.int()
+            case "rect": rects.append(try p.navRect())
+            case "rects": rects.append(contentsOf: try p.array { try $0.navRect() })
+            case "class": className = try p.string()
+            case "border": border = try p.array { try $0.string() }
+            case "color": color = try p.array { try $0.string() }
+            case "target": target = try p.navTarget()
+            case "source": source = try p.navSource()
+            default: try p.skip(depth: 4)
+            }
+        }
+        guard let page, let target, !rects.isEmpty else { throw err("missing link field") }
+        return RenderingV2.Navigation.Link(page: page, rects: rects, className: className, border: border, color: color, target: target, source: source)
+    }
+
+    private mutating func navTarget() throws -> RenderingV2.Navigation.Target {
+        var uri: String?, dest: String?
+        try object { key, p in
+            switch key {
+            case "uri": uri = try p.string()
+            case "destination": dest = try p.string()
+            default: try p.skip(depth: 5)
+            }
+        }
+        switch (uri, dest) {
+        case (let u?, nil): return .uri(u)
+        case (nil, let d?): return .destination(d)
+        default: throw err("target must be exactly one of uri or destination")
+        }
+    }
+
+    private mutating func navSource() throws -> RenderingV2.Navigation.Source {
+        var document: String?, start: Int?, end: Int?
+        try object { key, p in
+            switch key {
+            case "document": document = try p.string()
+            case "start": start = try p.int()
+            case "end": end = try p.int()
+            default: try p.skip(depth: 5)
+            }
+        }
+        guard let document, let start, let end else { throw err("missing link source field") }
+        return RenderingV2.Navigation.Source(document: document, start: start, end: end)
+    }
+
+    private mutating func navDestination() throws -> RenderingV2.Navigation.Destination {
+        var page: Int?, x: Int64?, y: Int64?, view: String?
+        try object { key, p in
+            switch key {
+            case "page": page = try p.int()
+            case "x": x = try p.int64()
+            case "y": y = try p.int64()
+            case "view": view = try p.string()
+            default: try p.skip(depth: 5)
+            }
+        }
+        guard let page, let x, let y else { throw err("missing destination field") }
+        return RenderingV2.Navigation.Destination(page: page, x: x, y: y, view: view)
+    }
+
+    private mutating func navOutlineEntry() throws -> RenderingV2.Navigation.OutlineEntry {
+        var title: String?, level: Int?, destination: String?
+        try object { key, p in
+            switch key {
+            case "title": title = try p.string()
+            case "level": level = try p.int()
+            case "destination": destination = try p.string()
+            default: try p.skip(depth: 4)
+            }
+        }
+        guard let title, let level, let destination else { throw err("missing outline entry field") }
+        return RenderingV2.Navigation.OutlineEntry(title: title, level: level, destination: destination)
+    }
+
+    private mutating func navInfo() throws -> RenderingV2.Navigation.Info {
+        var title: String?, author: String?, subject: String?, keywords: String?, creator: String?
+        try object { key, p in
+            switch key {
+            case "title": title = try p.string()
+            case "author": author = try p.string()
+            case "subject": subject = try p.string()
+            case "keywords": keywords = try p.string()
+            case "creator": creator = try p.string()
+            default: try p.skip(depth: 4)
+            }
+        }
+        return RenderingV2.Navigation.Info(title: title, author: author, subject: subject, keywords: keywords, creator: creator)
     }
 
     private mutating func glyph() throws -> RenderingV2.Glyph {
@@ -890,6 +1029,7 @@ extension RenderingV2Fast {
         var projectId: String?, revision: Int?, features: [String]?
         var documents: [RenderingV2.DocumentResource]?, fonts: [RenderingV2.FontResource]?
         var pages: [RenderingV2.Page]?, diagnostics: [RenderingV2.Diagnostic]?
+        var navigation: RenderingV2.Navigation?
         var lengths: [Int] = []
         try object { key, p in
             switch key {
@@ -911,6 +1051,9 @@ extension RenderingV2Fast {
                     return page
                 }
             case "diagnostics": diagnostics = try p.array { try $0.diagnostic() }
+            case "navigation":
+                p.ws()
+                if try p.literalNull() { navigation = nil } else { navigation = try p.navigation() }
             default: try p.skip(depth: 2)
             }
         }
@@ -919,7 +1062,7 @@ extension RenderingV2Fast {
         pageBytes = lengths
         return RenderingV2.DisplayList(renderFormat: renderFormat, coordinateUnit: unit, colorSpace: colorSpace, textExtraction: extraction,
                                        projectId: projectId, revision: revision, requiredFeatures: features, documents: documents,
-                                       fonts: fonts, pages: pages, diagnostics: diagnostics)
+                                       fonts: fonts, pages: pages, diagnostics: diagnostics, navigation: navigation)
     }
 
     /// Decoded `display_list_delta` envelope. Raw byte lengths of the header

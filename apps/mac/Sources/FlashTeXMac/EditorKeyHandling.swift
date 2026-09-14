@@ -101,6 +101,37 @@ enum EditorKeyHandling {
         return (edits, selectionAfter(edits, range: range, firstLineStart: starts[0]))
     }
 
+    // MARK: duplicate line (⌥⇧↓ / ⌥⇧↑)
+
+    /// Copies every line `range` touches, placing the copy below (`below`) or
+    /// above the block, as one edit. The returned `selection` lands on the
+    /// **copy** in both directions, so holding the key stacks copies and the
+    /// caret keeps its column — which is the point of the shortcut when you
+    /// are working an equation down the page a line at a time.
+    ///
+    /// Duplicating downward inserts after the block and shifts the selection
+    /// by the inserted length; duplicating upward inserts before it, which
+    /// leaves the original offsets describing the copy, so the selection does
+    /// not move at all. The last line of a document has no newline to copy,
+    /// so one is supplied on whichever side the copy is joined.
+    static func duplicateLinesEdit(in text: String, range: NSRange, below: Bool) -> (edit: LineEdit, selection: NSRange)? {
+        let ns = text as NSString
+        guard range.location >= 0, NSMaxRange(range) <= ns.length else { return nil }
+        let starts = lineStarts(in: text, range: range)
+        guard let first = starts.first, let last = starts.last else { return nil }
+        let blockStart = first
+        let blockEnd = NSMaxRange(ns.lineRange(for: NSRange(location: last, length: 0)))
+        let block = ns.substring(with: NSRange(location: blockStart, length: blockEnd - blockStart))
+        // `lineRange(for:)` includes the terminator when there is one; the
+        // document's last line has none.
+        let terminated = block.hasSuffix("\n") || block.hasSuffix("\r") || block.hasSuffix("\r\n")
+        let replacement = terminated ? block : (below ? "\n" + block : block + "\n")
+        let at = below ? blockEnd : blockStart
+        let edit = LineEdit(range: NSRange(location: at, length: 0), replacement: replacement)
+        let shift = below ? (replacement as NSString).length : 0
+        return (edit, NSRange(location: range.location + shift, length: range.length))
+    }
+
     // MARK: completion-inserted closers (Completion.swift's small hook)
 
     /// A programmatic multi-character insertion (a completion snippet like
@@ -171,6 +202,24 @@ extension SourceEditorView.Coordinator {
         if let completing = tv as? CompletingTextView, completing.isCompletionActive { return false }
         let text = currentText(of: tv)
         let range = tv.selectedRange()
+        // The fix at the caret sits between the modal lanes and indentation.
+        //
+        // Completion and snippets come first and are already handled above and
+        // in `CompletingTextView.keyDown`: both are mid-interaction, the author
+        // is looking at them, and Tab plainly belongs to them. Indentation
+        // comes after, but only loses the key on three conditions, so Tab never
+        // does something invisible:
+        //   - a fix is actually offered (`parent.caretFix` is non-nil, which is
+        //     the same value that draws the hint, and Esc has not taken it down);
+        //   - the selection is empty — Tab on a multi-line selection is
+        //     unambiguously "indent this block", never "fix a word in it";
+        //   - it is Tab, not ⇧Tab, which always means outdent.
+        // With no fix offered this falls straight through and Tab indents
+        // exactly as it did before.
+        if !reverse, range.length == 0, parent.caretFix != nil {
+            parent.onAcceptCaretFix()
+            return true
+        }
         let unit = EditorPreferences.shared.indentString
         if reverse {
             guard let (edits, selection) = EditorKeyHandling.outdentEdits(in: text, range: range, unit: unit) else { return true }

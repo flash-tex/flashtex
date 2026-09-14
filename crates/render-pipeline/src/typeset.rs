@@ -347,6 +347,9 @@ struct ParaState {
 const CLUB_PENALTY: i32 = 150;
 const WIDOW_PENALTY: i32 = 150;
 const SEC_PENALTY: i32 = -300;
+/// `\brokenpenalty` (latex.ltx: `\brokenpenalty 100`), added to the penalty
+/// after a line the paragraph broke at a discretionary (TeX §890).
+const BROKEN_PENALTY: i32 = 100;
 const PREDISPLAY_PENALTY: i32 = pagebuild::INF_PENALTY;
 
 /// Sets `run`'s glyphs at `x` on a line (what `layout_paragraph` does for
@@ -980,7 +983,13 @@ impl<'a> Context<'a> {
     fn text_box(&mut self, seg: &adapter::Segment, size: f64) -> Option<(pl::GlyphRun, usize)> {
         let span = seg_span(seg)?;
         let face = self.face(seg.style, size, span);
-        let shaped = self.shaper.shape(&face, &seg.text);
+        // Verbatim runs the font's ligature/kern program not at all
+        // (`\@noligs`); every other run runs it as TeX does.
+        let shaped = if seg.style.literal {
+            self.shaper.shape_literal(&face, &seg.text)
+        } else {
+            self.shaper.shape(&face, &seg.text)
+        };
         if let Some(e) = &shaped.tfm_error {
             let src = self.source(span);
             self.report_once(
@@ -1119,6 +1128,11 @@ impl<'a> Context<'a> {
             let sp = &a.span;
             class_override_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start)
         };
+        // `\lim`/`\sin`/`\max`: the `\mathop` class and the limit placement
+        // the kernel declares each with, plus any `\limits`/`\nolimits`
+        // switch after it -- none of which the compiler's `Nucleus::Text`
+        // carries, so all of it is re-read from the source at the span.
+        let op_limits = |sp: &Span| operator_limits_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\quad`/`\qquad`/`\,`/`\:`/`\;`/`\!` (compiler `Space { em }`) at
         // the top level of the formula (outside `\left...\right`): math-layout
         // has no kern atom, so the formula is split there into runs laid out
@@ -1132,7 +1146,7 @@ impl<'a> Context<'a> {
         // fraction, a script, inside `\left...\right`, another grid's cell)
         // enters math-layout as a box handle (`mathtext::GridCells`).
         let segments = split_at_spaces(list, &fence, sink.font_em_ratio());
-        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class)).collect();
+        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits)).collect();
         // Glue at a top-level grid cell's own top level is split out like
         // the formula's; only deeper glue is dropped.
         let nested_glue_em: f64 = segments
@@ -1162,10 +1176,11 @@ impl<'a> Context<'a> {
             let src = self.source(span);
             self.report_once(format!("mathlim:{msg}"), Diagnostic::warning("math_limitation", msg, vec![src]));
         }
-        let style = if display { ml::Style::DISPLAY } else { ml::Style::TEXT };
+        let default_style = if display { ml::Style::DISPLAY } else { ml::Style::TEXT };
+        let style = leading_style_switch(list, texts).unwrap_or(default_style);
         let has_grid = segments.iter().any(|(atoms, _)| top_level_grids(atoms, &fence).into_iter().any(|top| top));
         // Every `\text` must be collected before the metrics borrow the sink.
-        let grid_pieces = if has_grid { grid_pieces(&segments, &mut sink, &fence, &class, texts) } else { Vec::new() };
+        let grid_pieces = if has_grid { grid_pieces(&segments, &mut sink, &fence, &class, &op_limits, texts) } else { Vec::new() };
         let pitch = crate::mathgrid::Pitch {
             baselineskip: self.style.baselineskip_pt,
             lineskip: self.style.lineskip_pt,
@@ -1181,7 +1196,10 @@ impl<'a> Context<'a> {
                 grid: g.clone(),
             })
             .collect();
-        let text_metrics = crate::mathtext::TextRunMetrics::new(fonts.metrics(), self.fonts, self.shaper, self.style.family, &sink.texts, &sink.keys).with_grids(&nested);
+        let frames = sink.frames.clone();
+        let text_metrics = crate::mathtext::TextRunMetrics::new(fonts.metrics(), self.fonts, self.shaper, self.style.family, &sink.texts, &sink.keys)
+            .with_grids(&nested)
+            .with_frames(&frames);
         let mut laid = if has_grid {
             self.grid_formula(&grid_pieces, style, &text_metrics, span)
         } else {
@@ -1189,9 +1207,11 @@ impl<'a> Context<'a> {
             layout_kerned(&ml_lists, &glue, style, &text_metrics)
         };
         let (grid_boxes, grid_limitations) = text_metrics.take_grids();
+        let (frame_boxes, frame_limitations) = text_metrics.take_frames();
         laid.limitations.extend(grid_limitations);
+        laid.limitations.extend(frame_limitations);
         let (text_runs, notices) = text_metrics.finish();
-        crate::mathtext::substitute_grids(&mut laid.root, &grid_boxes);
+        crate::mathtext::substitute_math_boxes(&mut laid.root, &grid_boxes, &frame_boxes);
         crate::mathtext::substitute(&mut laid.root, &text_runs);
         // Text-style formulas in a paragraph break after top-level Bin/Rel
         // atoms; a formula holding a grid stays one box.
@@ -1556,9 +1576,27 @@ impl<'a> Context<'a> {
         if points.is_empty() {
             return self.whole_word(seg, size);
         }
-        let upem = shaped.units_per_em as f64;
-        let pt = |units: i64| size * units as f64 / upem;
-        let width = |t: &str| shaper.shape(&face, t).width_units;
+        // Each measurement carries the units of the shaping that produced
+        // it: a substring whose characters all have T1 slots is measured by
+        // the TFM ligature/kern program (2^20 per em), one that carries a
+        // character with no T1 slot falls back to the font program (the
+        // face's own units per em). `shape` decides that per string, so two
+        // substrings of the same word can come back in different units;
+        // measuring in points is the only scale they share. Dividing a TFM
+        // width by the face's 1000 units instead put the tail of a word like
+        // `ellipsis\dots` (U+2026 has no T1 slot, `ellip` does) 12676 pt to
+        // the left of the page, and every later word on its line with it.
+        let width_pt = |t: &str| shaper.shape(&face, t).width_pt(size);
+        // Whole minus parts, with the exact integer subtraction kept for the
+        // usual case where all three came back in the same units.
+        let residual_pt = |whole: &str, head: &str, tail: &str| {
+            let (w, h, t) = (shaper.shape(&face, whole), shaper.shape(&face, head), shaper.shape(&face, tail));
+            if w.units_per_em == h.units_per_em && h.units_per_em == t.units_per_em {
+                size * (w.width_units - h.width_units - t.width_units) as f64 / w.units_per_em as f64
+            } else {
+                w.width_pt(size) - h.width_pt(size) - t.width_pt(size)
+            }
+        };
         // Byte offset -> char index, for the fragments' `chars`.
         let mut char_index = vec![0usize; text.len() + 1];
         for (ci, (bi, _)) in text.char_indices().enumerate() {
@@ -1586,7 +1624,7 @@ impl<'a> Context<'a> {
                     };
                     self.text_box(&hyphen, size).map(|(mut run, rec)| {
                         self.mark_continues(rec);
-                        let adv = pt(width(&format!("{}-", &text[prev..at])) - width(&text[prev..at]));
+                        let adv = width_pt(&format!("{}-", &text[prev..at])) - width_pt(&text[prev..at]);
                         let doc_at = seg.chars[char_index[at]].start;
                         for g in &mut run.glyphs {
                             g.cluster = doc_at..doc_at;
@@ -1616,7 +1654,7 @@ impl<'a> Context<'a> {
                     }),
                     rec,
                 ));
-                let kern = pt(width(&text[prev..b]) - width(&text[prev..at]) - width(&text[at..b]));
+                let kern = residual_pt(&text[prev..b], &text[prev..at], &text[at..b]);
                 if kern != 0.0 {
                     out.push((pl::Item::kern(kern), None));
                 }
@@ -1931,6 +1969,25 @@ impl<'a> Context<'a> {
                             push(&mut out, &mut recs, item, rec);
                         }
                     }
+                }
+                AItem::LeaveVmode => {
+                    // The empty `\hbox` `\leavevmode` starts a paragraph
+                    // with; its only job is to be undiscardable so the
+                    // verbatim blank behind it survives the line break.
+                    // Every box needs a record (see `NoteParBreak`), so it
+                    // is a rule of no width, height or depth: nothing is
+                    // shipped for it.
+                    self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    let run = pl::GlyphRun {
+                        font: MATH_SENTINEL,
+                        size,
+                        glyphs: Vec::new(),
+                        width: 0.0,
+                        height: 0.0,
+                        depth: 0.0,
+                        source: 0..0,
+                    };
+                    push(&mut out, &mut recs, pl::Item::Box(run), Some(self.recs.len() - 1));
                 }
                 AItem::LineBreak { skip_pt } => {
                     if fills {
@@ -2354,6 +2411,7 @@ impl<'a> Context<'a> {
             baselineskip: Some(0.0),
             lineskip: Some(0.0),
             vskip_after: Vec::new(),
+            broken_penalty: Vec::new(),
             pre_space_after: None,
             contributed: Some(contributed),
             line_penalty,
@@ -2676,6 +2734,12 @@ impl<'a> Context<'a> {
     /// `\@afterheading` (`\clubpenalty 10000`). `sized` sets the paragraph
     /// at a size other than `\normalsize` with that size's own leading and
     /// `em` (`abstract`; see [`adapter::SizedPara`]).
+    ///
+    /// `leading` is the narrower thing: `\baselineskip` alone, for a
+    /// paragraph whose `\par` ran under a size declaration
+    /// (`adapter::ParLeading`). The runs keep the sizes they were typed at —
+    /// TeX reads `\baselineskip` in `append_to_vlist` (§679) without ever
+    /// looking at the boxes it is stacking, so the two are independent.
     fn paragraph_block(
         &mut self,
         items: &[AItem],
@@ -2685,9 +2749,12 @@ impl<'a> Context<'a> {
         style: ParaStyle,
         list_geom: Option<&ListGeom>,
         sized: Option<adapter::SizedPara>,
+        leading: Option<f64>,
     ) -> Option<BuiltBlock> {
         let size = sized.map_or(self.style.body_size_pt, |s| s.size_pt);
-        let baselineskip = sized.map_or(self.style.baselineskip_pt, |s| s.baselineskip_pt);
+        let baselineskip = leading
+            .or(sized.map(|s| s.baselineskip_pt))
+            .unwrap_or(self.style.baselineskip_pt);
         let (mut list, mut recs, labels, mut skips) = self.hlist(items, size, TextStyle::default(), style);
         if !list.iter().any(|i| matches!(i, pl::Item::Box(_))) {
             return None;
@@ -2698,18 +2765,32 @@ impl<'a> Context<'a> {
         // first line (`\@item`'s `\everypar`); a label wider than
         // `\labelwidth` keeps its own width and pushes the text right.
         let mut hang_pt = 0.0;
+        let mut inner_margin_pt = 0.0;
         if let Some(geom) = list_geom {
-            let (hang, labelwidth) = self.list_geometry(geom, size);
+            let (hang, labelwidth, inner) = self.list_geometry(geom, size);
             hang_pt = hang;
+            inner_margin_pt = inner;
             if let Some((text, span)) = geom.label.as_ref().filter(|_| starts_paragraph) {
-                if let Some((run, rec)) = self.label_box(text, *span, size) {
+                if let Some(nb) = self.label_box(text, *span, size, geom.description) {
                     let labelsep = self.style.labelsep_pt;
                     let protrude = self.item_left_protrusion(&list, &recs);
-                    let mut lead = vec![
-                        (pl::Item::kern(-(labelsep + run.width.min(labelwidth))), None),
-                        (pl::Item::Box(run), Some(rec)),
-                        (pl::Item::kern(labelsep), None),
-                    ];
+                    let mut lead = vec![(pl::Item::kern(-(labelsep + nb.width.min(labelwidth))), None)];
+                    // `\descriptionlabel`: `\hspace\labelsep \normalfont
+                    // \bfseries #1` — the label box itself opens with
+                    // `\labelsep`, so the bold text starts at the margin the
+                    // `\itemindent` below put the line on.
+                    if geom.description {
+                        lead.push((pl::Item::kern(labelsep), None));
+                    }
+                    let mut at = 0.0;
+                    for (run, rec, x) in nb.pieces {
+                        if x > at {
+                            lead.push((pl::Item::kern(x - at), None));
+                        }
+                        at = x + run.width;
+                        lead.push((pl::Item::Box(run), Some(rec)));
+                    }
+                    lead.push((pl::Item::kern(labelsep), None));
                     if protrude != 0.0 {
                         lead.push((pl::Item::kern(-protrude), None));
                     }
@@ -2729,6 +2810,19 @@ impl<'a> Context<'a> {
         // (`\fontdimen6`) of the font the list's own text is set in.
         if let (true, Some(em)) = (indent, sized.and_then(|s| s.parindent_em)) {
             params.parindent = em * self.text_params(TextStyle::default(), size).quad;
+        }
+        // `\itemindent`: `\@labels` opens the item's first line with
+        // `\hskip\itemindent`, so that line alone starts `\leftmargin +
+        // \itemindent` in. Only natbib's author-year bibliography sets it
+        // (to `-\bibhang`), and only the line the `\item` starts.
+        if let Some(geom) = list_geom.filter(|g| g.itemindent_em != 0.0 && starts_paragraph) {
+            params.parindent += geom.itemindent_em * self.text_params(TextStyle::default(), size).quad;
+        }
+        // `description`: `\itemindent-\leftmargin`, so the item's first line
+        // is flush at the text margin and only its continuation lines hang
+        // `\leftmargin` in (article.cls `\description`).
+        if list_geom.is_some_and(|g| g.description) && starts_paragraph {
+            params.parindent -= inner_margin_pt;
         }
         let lines = self.break_paragraph(&list, &params, items, Some(&recs))?;
         self.report_overfull(&lines, &list, &recs);
@@ -2774,8 +2868,12 @@ impl<'a> Context<'a> {
             },
             no_interline_first: false,
             no_interline_after: false,
-            baselineskip: sized.map(|s| s.baselineskip_pt),
+            // Also the glue *above* the first line: `post_line_break`
+            // appends every line of the paragraph, the first included, under
+            // the same `\baselineskip`.
+            baselineskip: leading.or(sized.map(|s| s.baselineskip_pt)),
             vskip_after: vskips_of(&lines, &skips),
+            broken_penalty: broken_of(&lines),
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -2809,9 +2907,12 @@ impl<'a> Context<'a> {
             eject_before,
             vspace_before,
             addvspace_before,
+            addvspace_flex,
+            vspace_flex,
             endlist_adjust,
             list,
             sized,
+            leading_pt,
         } = block
         else {
             return;
@@ -2821,6 +2922,7 @@ impl<'a> Context<'a> {
             let mut first = true;
             let mut eject = *eject_before;
             let mut vspace = *vspace_before;
+            let mut flex = *vspace_flex;
             // `\endtrivlist`: a positive trailing skip of the previous
             // block is changed in place before `\@endparenv`'s
             // `\addvspace` compares against it.
@@ -2836,6 +2938,14 @@ impl<'a> Context<'a> {
             if *addvspace_before != 0.0 {
                 let prev_after = blocks.last().and_then(|b| b.vertical.space_after).map_or(0.0, |s| s.0);
                 vspace += (addvspace_before - prev_after).max(0.0);
+                // `\@xaddvskip` keeps whichever skip is larger *whole*: when
+                // the previous block's trailing skip wins, its own stretch
+                // and shrink are what survive, so the list skip's are not
+                // added on top of them.
+                if prev_after <= 0.0 {
+                    flex.0 += addvspace_flex.0;
+                    flex.1 += addvspace_flex.1;
+                }
             }
             // `\begin{center}`/`\begin{quote}`: `\addvspace{\topsep}` (plus
             // `\partopsep` from vertical mode) before the first paragraph;
@@ -2894,6 +3004,7 @@ impl<'a> Context<'a> {
                     match m {
                         ListMargin::Fixed(pt) => pt.to_bits().hash(&mut h),
                         ListMargin::Widest(text) => text.hash(&mut h),
+                        ListMargin::Em(em) => em.to_bits().hash(&mut h),
                     }
                 }
                 if let Some((text, span)) = &g.label {
@@ -2918,9 +3029,14 @@ impl<'a> Context<'a> {
                             s.vspace_after_em.to_bits().hash(&mut h);
                             h.finish()
                         });
-                        let (key, origin) = key_for(b'P', items, &[u64::from(ind), u64::from(starts), u64::from(ah), *style as u64, list_fp, sized_fp]);
+                        let (key, origin) = key_for(
+                            b'P',
+                            items,
+                            &[u64::from(ind), u64::from(starts), u64::from(ah), *style as u64, list_fp, sized_fp, leading_pt.map_or(0, f64::to_bits)],
+                        );
                         let st = *style;
                         let sz = *sized;
+                        let lead = *leading_pt;
                         // `\label` whatsits and a space left in horizontal
                         // mode after a display (the adapter's
                         // `label_line` part): TeX's line_break still sets
@@ -2933,12 +3049,12 @@ impl<'a> Context<'a> {
                         if label_line && !first {
                             blocks.push(ctx.empty_line_block());
                             pre_display = None;
-                        } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz)) {
+                        } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz, lead)) {
                             pre_display = b.block.lines.lines.last().map(|l| l.natural_width + 2.0 * quad);
                             if std::mem::take(&mut eject) {
                                 b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                             }
-                            add_vspace(&mut b.vertical, std::mem::take(&mut vspace));
+                            add_skip(&mut b.vertical, std::mem::take(&mut vspace), std::mem::take(&mut flex));
                             add_skip_before(&mut b.vertical, env_before.take());
                             blocks.push(b);
                         }
@@ -3089,8 +3205,10 @@ impl<'a> Context<'a> {
             match block {
                 Block::Paragraph { .. } if minipage => {
                     let mut opened = block.clone();
-                    if let Block::Paragraph { addvspace_before, env_open, vspace_before, list, .. } = &mut opened {
+                    if let Block::Paragraph { addvspace_before, addvspace_flex, vspace_flex, env_open, vspace_before, list, .. } = &mut opened {
                         *addvspace_before = 0.0;
+                        *addvspace_flex = (0.0, 0.0);
+                        *vspace_flex = (0.0, 0.0);
                         *env_open = None;
                         // `\@item`'s `\addvspace\@topsep` and its paired
                         // `\addvspace{-\parskip}` are both suppressed.
@@ -3176,26 +3294,38 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// `(\@totalleftmargin, \labelwidth)` of an item paragraph, in points:
-    /// the sum of the enclosing lists' `\leftmargin`s, and the innermost
-    /// list's label width (`\leftmargin - \labelsep` for a class margin;
-    /// the widest label's own width under enumitem's `leftmargin=*`).
-    fn list_geometry(&mut self, geom: &ListGeom, size: f64) -> (f64, f64) {
+    /// `(\@totalleftmargin, \labelwidth, innermost \leftmargin)` of an item
+    /// paragraph, in points: the sum of the enclosing lists' `\leftmargin`s,
+    /// the innermost list's label width (`\leftmargin - \labelsep` for a
+    /// class margin; the widest label's own width under enumitem's
+    /// `leftmargin=*`; zero for a `description`, whose `\list` sets
+    /// `\labelwidth\z@`), and the innermost `\leftmargin` on its own, which
+    /// is what `description`'s `\itemindent-\leftmargin` cancels.
+    fn list_geometry(&mut self, geom: &ListGeom, size: f64) -> (f64, f64, f64) {
         let labelsep = self.style.labelsep_pt;
         let mut hang = 0.0;
         let mut labelwidth = 0.0;
+        let mut inner = 0.0;
+        let quad = self.text_params(TextStyle::default(), size).quad;
         for margin in &geom.margins {
             let (m, w) = match margin {
                 ListMargin::Fixed(pt) => (*pt, (pt - labelsep).max(0.0)),
+                // natbib's `\bibhang`: `1em` of the body font, and no label
+                // to measure (`\@biblabel` is `\hfill`).
+                ListMargin::Em(em) => (em * quad, 0.0),
                 ListMargin::Widest(text) => {
                     let w = self.text_width(text, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
                     (w + labelsep, w)
                 }
             };
             hang += m;
+            inner = m;
             labelwidth = w;
         }
-        (hang, labelwidth)
+        if geom.description {
+            labelwidth = 0.0;
+        }
+        (hang, labelwidth, inner)
     }
 
     /// Width of `text` shaped in the body font at `size`, in points.
@@ -3226,25 +3356,16 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// The `\item` label as a text box whose characters all point at the
-    /// `\item` command's bytes (article's `\labelenumi`/`\labelitemi` in
-    /// the body font).
-    fn label_box(&mut self, text: &str, span: Span, size: f64) -> Option<(pl::GlyphRun, usize)> {
-        let seg = adapter::Segment {
-            text: text.to_string(),
-            chars: text
-                .chars()
-                .map(|_| adapter::CharSrc {
-                    document: span.document,
-                    start: span.start,
-                    end: span.end,
-                })
-                .collect(),
-            style: TextStyle::default(),
-        };
-        let boxed = self.text_box(&seg, size);
-        if let Some((_, rec)) = &boxed {
-            self.label_recs.insert(*rec);
+    /// The `\item` label as `\@item` boxes it, every character pointing at
+    /// the `\item` command's bytes: the words of `text` in the
+    /// list's label style (`\descriptionlabel`'s `\bfseries` for a
+    /// `description`), separated by interword glue at natural width.
+    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool) -> Option<NumberBox> {
+        let boxed = self.word_box(text, span, size, TextStyle { bold, ..TextStyle::default() });
+        if let Some(nb) = &boxed {
+            for (_, rec, _) in &nb.pieces {
+                self.label_recs.insert(*rec);
+            }
         }
         boxed
     }
@@ -3286,6 +3407,7 @@ impl<'a> Context<'a> {
             no_interline_after: false,
             baselineskip: Some(h.baselineskip_pt),
             vskip_after: vskips_of(&lines, &skips),
+            broken_penalty: Vec::new(),
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -3322,23 +3444,41 @@ impl<'a> Context<'a> {
     fn display_opener_block(&mut self, bracket: bool, list_geom: Option<&ListGeom>) -> (BuiltBlock, f64) {
         let s = self.style;
         let size = s.body_size_pt;
-        let (hang, labelwidth) = list_geom.map_or((0.0, 0.0), |g| self.list_geometry(g, size));
+        let (hang, labelwidth, inner) = list_geom.map_or((0.0, 0.0, 0.0), |g| self.list_geometry(g, size));
+        let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
-        let label = list_geom.and_then(|g| g.label.as_ref()).and_then(|(text, span)| self.label_box(text, *span, size));
+        let label = list_geom
+            .and_then(|g| g.label.as_ref().map(|l| (l, g.description)))
+            .and_then(|((text, span), bold)| self.label_box(text, *span, size, bold));
         let mut width = hang + if bracket { 0.6 * linewidth } else { 0.0 };
         let (mut runs, mut items, mut recs) = (Vec::new(), Vec::new(), Vec::new());
         let (mut height, mut depth) = (0.0, 0.0);
         match label {
-            Some((run, rec)) => {
+            Some(nb) => {
                 // `\hskip-\labelwidth \hskip-\labelsep \hbox to\labelwidth
                 // {\hss <label>} \hskip\labelsep`: the label's right edge
                 // ends `\labelsep` before the text edge.
-                let x = hang - s.labelsep_pt - run.width.min(labelwidth);
-                height = run.height;
-                depth = run.depth;
-                runs.push(position_run(&run, x, run.height));
-                items.push(pl::Item::Box(run));
-                recs.push(Some(rec));
+                //
+                // `description` instead has `\labelwidth\z@
+                // \itemindent-\leftmargin`, and `\descriptionlabel`'s own
+                // leading `\hspace\labelsep` cancels the `\hskip-\labelsep`,
+                // so the term sets flush at `\leftmargin + \itemindent` —
+                // the same rule [`Self::paragraph_block`] applies when the
+                // item opens with text rather than a display.
+                let x0 = if description {
+                    // `\itemindent-\leftmargin`: `inner` is the innermost
+                    // list's `\leftmargin`, so this is `hang + \itemindent`.
+                    hang - inner
+                } else {
+                    hang - s.labelsep_pt - nb.width.min(labelwidth)
+                };
+                height = nb.height;
+                depth = nb.depth;
+                for (run, rec, dx) in nb.pieces {
+                    runs.push(position_run(&run, x0 + dx, nb.height));
+                    items.push(pl::Item::Box(run));
+                    recs.push(Some(rec));
+                }
             }
             // `\@parboxrestore` has zeroed `\parindent`, so the box a
             // display opens a paragraph with is empty in a float body.
@@ -3390,6 +3530,7 @@ impl<'a> Context<'a> {
             no_interline_after: false,
             baselineskip: None,
             vskip_after: Vec::new(),
+            broken_penalty: Vec::new(),
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -3466,6 +3607,7 @@ impl<'a> Context<'a> {
             no_interline_after: true,
             baselineskip: None,
             vskip_after: Vec::new(),
+            broken_penalty: Vec::new(),
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -3527,6 +3669,7 @@ impl<'a> Context<'a> {
                 no_interline_after: false,
                 baselineskip: None,
                 vskip_after: Vec::new(),
+                broken_penalty: Vec::new(),
                 pre_space_after: None,
                 lineskip: None,
                 contributed: None,
@@ -3651,6 +3794,7 @@ impl<'a> Context<'a> {
             no_interline_after: false,
             baselineskip: Some(baselineskip_pt),
             vskip_after: vskips_of(&lines, &skips),
+            broken_penalty: Vec::new(),
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -4032,6 +4176,7 @@ impl<'a> Context<'a> {
                 no_interline_after: true,
                 baselineskip: None,
                 vskip_after: Vec::new(),
+                broken_penalty: Vec::new(),
                 pre_space_after: None,
                 lineskip: None,
                 contributed: None,
@@ -4151,6 +4296,7 @@ impl<'a> Context<'a> {
                 no_interline_after: true,
                 baselineskip: None,
                 vskip_after: Vec::new(),
+                broken_penalty: Vec::new(),
                 pre_space_after: None,
                 lineskip: None,
                 contributed: None,
@@ -4286,6 +4432,7 @@ impl<'a> Context<'a> {
             no_interline_after: false,
             baselineskip: None,
             vskip_after: Vec::new(),
+            broken_penalty: Vec::new(),
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -4333,6 +4480,7 @@ impl<'a> Context<'a> {
             no_interline_after: false,
             baselineskip: None,
             vskip_after: Vec::new(),
+            broken_penalty: Vec::new(),
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -4375,7 +4523,17 @@ impl<'a> Context<'a> {
     /// outer ones), not the T1 visible-space glyph one shaped run would use.
     /// Each word is its own text box at its offset.
     fn number_box(&mut self, text: &str, nspan: Span, size: f64) -> Option<NumberBox> {
-        let space = self.space_glue(TextStyle::default(), size, 1000).width;
+        self.word_box(text, nspan, size, TextStyle::default())
+    }
+
+    /// `text` as one `\hbox`, each word its own shaped run at its offset and
+    /// the gaps TeX's interword glue at natural width. One shaped run over
+    /// the whole string would paint the T1 *visible space* glyph in the gap,
+    /// whose advance is not `\fontdimen2` — 6.27 bp instead of 4.18 bp for
+    /// `\bfseries` Latin Modern at 11 pt, which pushed everything after a
+    /// two-word `\item[...]` label 2.1 bp right of pdflatex.
+    fn word_box(&mut self, text: &str, nspan: Span, size: f64, style: TextStyle) -> Option<NumberBox> {
+        let space = self.space_glue(style, size, 1000).width;
         let mut pieces = Vec::new();
         let (mut x, mut height, mut depth) = (0.0f64, 0.0f64, 0.0f64);
         for (i, word) in text.split_whitespace().enumerate() {
@@ -4392,7 +4550,7 @@ impl<'a> Context<'a> {
                         end: nspan.end,
                     })
                     .collect(),
-                style: TextStyle::default(),
+                style,
             };
             let (run, rec) = self.text_box(&seg, size)?;
             height = height.max(run.height);
@@ -4663,6 +4821,7 @@ impl<'a> Context<'a> {
             no_interline_after: false,
             baselineskip: None,
             vskip_after: Vec::new(),
+            broken_penalty: Vec::new(),
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -4970,7 +5129,7 @@ impl<'a> Context<'a> {
                     Some(v) => *v += before,
                     None => lead += before,
                 }
-                if let Some(b) = self.paragraph_block(&text.items, false, true, false, ParaStyle::Plain, None, None) {
+                if let Some(b) = self.paragraph_block(&text.items, false, true, false, ParaStyle::Plain, None, None, None) {
                     let offset = items.len();
                     let n = b.block.lines.lines.len();
                     for (k, mut line) in b.block.lines.lines.into_iter().enumerate() {
@@ -5085,6 +5244,7 @@ impl<'a> Context<'a> {
             no_interline_after: false,
             baselineskip: Some(normal + JOT),
             vskip_after: vskips,
+            broken_penalty: Vec::new(),
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -5157,6 +5317,19 @@ impl<'a> Context<'a> {
 
 /// The `\\[<dimen>]` skip after each line: a skip recorded at a forced
 /// break lands after the line that break ends.
+/// `\brokenpenalty` per line: TeX's `disc_break` is the flagged break at the
+/// end of the line (a hyphenation point, `\-`, or the empty discretionary
+/// pdfTeX inserts after an explicit hyphen), which `paragraph-layout` reports
+/// as `Line::hyphenated`. The last line's entry is never read (§890 appends
+/// no penalty after it), and an all-zero vector is dropped so blocks without
+/// a hyphenated line keep the empty vector.
+fn broken_of(lines: &pl::Lines) -> Vec<i32> {
+    if !lines.lines.iter().any(|l| l.hyphenated) {
+        return Vec::new();
+    }
+    lines.lines.iter().map(|l| if l.hyphenated { BROKEN_PENALTY } else { 0 }).collect()
+}
+
 fn vskips_of(lines: &pl::Lines, skips: &[(usize, f64)]) -> Vec<f64> {
     if skips.is_empty() {
         return Vec::new();
@@ -5188,6 +5361,7 @@ fn table_cell_block(lines: pl::Lines, items: Vec<pl::Item>, recs: Vec<Option<usi
         no_interline_after: false,
         baselineskip: None,
         vskip_after: Vec::new(),
+        broken_penalty: Vec::new(),
         pre_space_after: None,
         lineskip: None,
         contributed: None,
@@ -5259,6 +5433,9 @@ fn merge_style(base: TextStyle, s: TextStyle) -> TextStyle {
         slanted: s.slanted || base.slanted,
         caps: s.caps || base.caps,
         family: if s.family != crate::nfss::FamilyKind::Rm { s.family } else { base.family },
+        // Verbatim is a property of the text, so it never comes from the
+        // block's base style; it is carried, not merged away.
+        literal: s.literal,
         undefined: s.undefined.or(base.undefined),
         color: s.color.or(base.color),
     }
@@ -5274,6 +5451,7 @@ fn merge_base(style: TextStyle, base: TextStyle) -> TextStyle {
         slanted: style.slanted || base.slanted,
         caps: style.caps || base.caps,
         family: if style.family != crate::nfss::FamilyKind::Rm { style.family } else { base.family },
+        literal: style.literal,
         undefined: style.undefined.or(base.undefined),
         color: style.color.or(base.color),
     }
@@ -5441,12 +5619,60 @@ pub fn fence_before(text: &str, at: usize) -> Option<Fence> {
     None
 }
 
+/// The math style a formula opening with `\displaystyle`, `\textstyle`,
+/// `\scriptstyle` or `\scriptscriptstyle` is set in, re-read from the control
+/// word at the atom's span like [`class_override_of`].
+///
+/// A style switch is not a command with an argument: it changes the style for
+/// the rest of the enclosing group (TeX §1171, `\mathchoice`-free). The pinned
+/// compiler does not model that at all — all four switches, and `\nonumber`,
+/// `\notag` and `\middle` with them, are one zero-width `Nucleus::Space` atom
+/// (`crates/compiler/src/math.rs`), which the pipeline then skips. So
+/// `$\displaystyle\sum_{n=1}^{\infty}x_n$` was laid out in *text* style: the
+/// limits sat beside the operator as scripts instead of above and below it,
+/// and the box was 8 pt shorter than pdfTeX's. That is a vertical defect as
+/// much as a horizontal one, because a short box never trips TeX's interline
+/// rule (`\baselineskip - \prevdepth - height < \lineskiplimit` -> `\lineskip`,
+/// §679), so the following baseline stayed a plain `\baselineskip` away and
+/// every later line in the document was that much too high.
+///
+/// Only a switch that is the formula's *first* atom is honoured, which is the
+/// case where it governs the whole formula and nothing else — the idiom in
+/// every corpus use (`$\displaystyle\int_0^{\pi/2}\dots$`). A switch in the
+/// middle of a list, or inside a grid cell or sub-formula, still needs the
+/// compiler to emit an atom for it (math-layout is ready: it already has
+/// `Nucleus::Styled`, laid out at `layout.rs:345`).
+pub fn leading_style_switch(list: &flashtex_compiler::math::MathList, texts: &[&str]) -> Option<ml::Style> {
+    let a = list.atoms.first()?;
+    if a.superscript.is_some() || a.subscript.is_some() {
+        return None;
+    }
+    let flashtex_compiler::math::Nucleus::Space { em, .. } = a.nucleus else { return None };
+    if em != 0.0 {
+        return None;
+    }
+    style_switch_of(texts.get(a.span.document.0).copied().unwrap_or(""), a.span.start)
+}
+
+/// The style a style-switch control word at byte `at` of `text` selects.
+pub fn style_switch_of(text: &str, at: usize) -> Option<ml::Style> {
+    let rest = text.get(at..)?.strip_prefix('\\')?;
+    let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
+    Some(match &rest[..word_len] {
+        "displaystyle" => ml::Style::DISPLAY,
+        "textstyle" => ml::Style::TEXT,
+        "scriptstyle" => ml::Style::SCRIPT,
+        "scriptscriptstyle" => ml::Style::SCRIPT_SCRIPT,
+        _ => return None,
+    })
+}
+
 /// [`convert_math_with`] with `fence` telling which delimiter atoms follow a
 /// `\left`/`\right`; matched pairs become math-layout `Delimited` atoms
 /// (Appendix G Rule 19: sized to the body, `Inner` class). An unmatched
 /// fence stays a plain symbol, as the compiler already reports it.
 pub fn convert_math_fenced(list: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink, fence: &dyn Fn(&Span) -> Option<Fence>) -> ml::MathList {
-    convert_math_classed(list, sink, fence, &|_| None)
+    convert_math_classed(list, sink, fence, &|_| None, &|_| None)
 }
 
 /// Maps the compiler's own atom class onto math-layout's.
@@ -5502,22 +5728,124 @@ pub fn class_override_of(text: &str, at: usize) -> Option<ml::AtomClass> {
     })
 }
 
+/// The named operators of the LaTeX kernel's "Log-like functions"
+/// (`latex.ltx` 15523-15556), and the limit placement each is declared with.
+///
+/// The ten defined as a bare `\mathop{\operator@font ...}` -- no `\nolimits`
+/// after it -- keep TeX's default `\displaylimits`: limits over and under in
+/// display style, scripts beside in text style. The rest are declared
+/// `\mathop{...}\nolimits` and keep their scripts beside them at every style.
+/// `\sgn` is not a kernel command at all; the compiler accepts it anyway, and
+/// the amsmath spelling everyone writes for it (`\DeclareMathOperator{\sgn}`,
+/// no star) is `\nolimits`, so that is the row it gets here.
+const NAMED_OPERATORS: &[(&str, ml::Limits)] = &[
+    ("lim", ml::Limits::DisplayLimits),
+    ("liminf", ml::Limits::DisplayLimits),
+    ("limsup", ml::Limits::DisplayLimits),
+    ("max", ml::Limits::DisplayLimits),
+    ("min", ml::Limits::DisplayLimits),
+    ("sup", ml::Limits::DisplayLimits),
+    ("inf", ml::Limits::DisplayLimits),
+    ("det", ml::Limits::DisplayLimits),
+    ("gcd", ml::Limits::DisplayLimits),
+    ("Pr", ml::Limits::DisplayLimits),
+    ("sin", ml::Limits::NoLimits),
+    ("cos", ml::Limits::NoLimits),
+    ("tan", ml::Limits::NoLimits),
+    ("cot", ml::Limits::NoLimits),
+    ("sec", ml::Limits::NoLimits),
+    ("csc", ml::Limits::NoLimits),
+    ("arcsin", ml::Limits::NoLimits),
+    ("arccos", ml::Limits::NoLimits),
+    ("arctan", ml::Limits::NoLimits),
+    ("sinh", ml::Limits::NoLimits),
+    ("cosh", ml::Limits::NoLimits),
+    ("tanh", ml::Limits::NoLimits),
+    ("coth", ml::Limits::NoLimits),
+    ("log", ml::Limits::NoLimits),
+    ("ln", ml::Limits::NoLimits),
+    ("lg", ml::Limits::NoLimits),
+    ("exp", ml::Limits::NoLimits),
+    ("deg", ml::Limits::NoLimits),
+    ("dim", ml::Limits::NoLimits),
+    ("ker", ml::Limits::NoLimits),
+    ("arg", ml::Limits::NoLimits),
+    ("hom", ml::Limits::NoLimits),
+    ("sgn", ml::Limits::NoLimits),
+];
+
+/// The limit placement of the named operator (`\lim`, `\sin`, `\max`, ...)
+/// whose control word starts at `at`, or `None` when the atom at that span
+/// did not come from one.
+///
+/// The compiler turns every one of them into an upright [`Nucleus::Text`] run
+/// (`text_atom(operator, span)`) and keeps neither TeX's `\mathop` class nor
+/// the `\limits`/`\nolimits`/`\displaylimits` switch that may follow: its
+/// parser drops those switches without producing an atom, so that a following
+/// script still attaches to the operator. Both facts are therefore re-read
+/// from the source at the atom's span, exactly as [`fence_of`] and
+/// [`class_override_of`] do for the other things a pinned compiler does not
+/// carry.
+///
+/// Reading the *control word* rather than matching the letters is what keeps
+/// `\mathrm{lim}` out: it also arrives as `Nucleus::Text("lim")`, but it is an
+/// ordinary atom in TeX and its span starts at `\mathrm`.
+pub fn operator_limits_of(text: &str, at: usize) -> Option<ml::Limits> {
+    let rest = text.get(at..)?.strip_prefix('\\')?;
+    let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
+    let declared = NAMED_OPERATORS.iter().find(|(name, _)| *name == &rest[..word_len]).map(|(_, limits)| *limits)?;
+    // `\lim\limits_{n}`, `\max\nolimits_{k}`: the switch overrides the
+    // declaration (TeXbook p. 144). Only an immediately following switch
+    // counts, as in TeX, where it is read by `\mathop`'s scanner.
+    let after = rest[word_len..].trim_start_matches([' ', '\t', '\r', '\n']);
+    for (switch, limits) in [
+        ("nolimits", ml::Limits::NoLimits),
+        ("limits", ml::Limits::Limits),
+        ("displaylimits", ml::Limits::DisplayLimits),
+    ] {
+        match after.strip_prefix('\\').and_then(|a| a.strip_prefix(switch)) {
+            Some(tail) if !tail.starts_with(|c: char| c.is_ascii_alphabetic()) => return Some(limits),
+            _ => {}
+        }
+    }
+    Some(declared)
+}
+
 /// [`convert_math_fenced`] with `class` giving the forced class of a
-/// `Group` (`\mathbin{...}`) or class-overridden symbol atom at a span.
+/// `Group` (`\mathbin{...}`) or class-overridden symbol atom at a span, and
+/// `op_limits` the limit placement of a named operator at a span
+/// ([`operator_limits_of`]).
 pub fn convert_math_classed(
     list: &flashtex_compiler::math::MathList,
     sink: &mut crate::mathtext::TextSink,
     fence: &dyn Fn(&Span) -> Option<Fence>,
     class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
+    op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
 ) -> ml::MathList {
     use flashtex_compiler::math::{DelimiterRole, Nucleus as N};
     // Open fences: (left delimiter, atoms converted since it, its span).
     let mut stack: Vec<(Option<char>, Vec<ml::Atom>, Span)> = Vec::new();
     let mut atoms = Vec::new();
     for a in &list.atoms {
-        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class);
+        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits);
         let mut out: Vec<ml::Atom> = match &a.nucleus {
-            N::Text(text) => vec![sink.atom(text)],
+            // `\lim`, `\sin`, `\max`, ...: TeX's `\mathop` of upright roman
+            // text (`latex.ltx` 15523-15556), so an `Op` atom -- which is both
+            // the thin space the Op class contributes on each side and, for
+            // the ten declared without `\nolimits`, Rule 13a limits over and
+            // under the word in display style instead of scripts beside it.
+            // Every other `Nucleus::Text` (`\text{...}`, `\mathrm{K}`, a
+            // grid or `\boxed` handle) is an hbox in math, which TeX §1076
+            // makes an ordinary atom.
+            N::Text(text) => match op_limits(&a.span) {
+                Some(limits) => {
+                    let mut op = sink.atom(text);
+                    op.class = ml::AtomClass::Op;
+                    op.limits = limits;
+                    vec![op]
+                }
+                None => vec![sink.atom(text)],
+            },
             // Glue inside a sub-formula (`\operatorname*{arg\,max}`, `\;`
             // inside `\left...\right`): math-layout's `Glue` atom, which
             // takes no part in atom spacing, like TeX's glue node. Top-level
@@ -5754,15 +6082,24 @@ pub fn convert_math_classed(
                 }
             }
             // `\overline`/`\underline` are Appendix G Rules 9/10 atoms;
-            // `\boxed` has no frame atom, so the body is set as a group and
-            // reported by `math_box`.
+            // `\boxed` uses the pipeline's existing framed-box placeholder
+            // and rule substitution path.
             N::Framed { body, frame } => {
                 use flashtex_compiler::math::Frame;
                 let body = sub(body, sink);
                 vec![match frame {
                     Frame::Over => ml::Atom::overline(body),
                     Frame::Under => ml::Atom::underline(body),
-                    Frame::Box => ml::Atom::group(body),
+                    Frame::Box => sink.frame_atom(body, {
+                        #[cfg(feature = "math-glyph-spans")]
+                        {
+                            math_tag(a.span)
+                        }
+                        #[cfg(not(feature = "math-glyph-spans"))]
+                        {
+                            ml::SourceTag::NONE
+                        }
+                    }),
                     // `\mathop{..}\limits` (`fontmath.ltx` 430-437): the
                     // compiler's scripts attach below as limits.
                     Frame::OverBrace => ml::Atom::brace(body, false),
@@ -6090,6 +6427,7 @@ fn grid_pieces(
     sink: &mut crate::mathtext::TextSink,
     fence: &dyn Fn(&Span) -> Option<Fence>,
     class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
+    op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
     texts: &[&str],
 ) -> Vec<GridPiece> {
     use flashtex_compiler::math::{MathAtom, MathList as CList, Nucleus as N};
@@ -6098,7 +6436,7 @@ fn grid_pieces(
         let mut run: Vec<MathAtom> = Vec::new();
         let flush = |run: &mut Vec<MathAtom>, pieces: &mut Vec<GridPiece>, sink: &mut crate::mathtext::TextSink| {
             if !run.is_empty() {
-                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class)));
+                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits)));
             }
         };
         for (a, top) in atoms.iter().zip(top_level_grids(atoms, fence)) {
@@ -6129,7 +6467,7 @@ fn grid_pieces(
                             _ => cell,
                         };
                         let parts = split_at_spaces(cell, fence, sink.font_em_ratio());
-                        let runs = parts.iter().map(|(atoms, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class)).collect();
+                        let runs = parts.iter().map(|(atoms, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits)).collect();
                         let glue = parts.iter().map(|(_, em)| *em).collect();
                         (runs, glue)
                     };
@@ -6377,10 +6715,9 @@ fn ams_ex(size_pt: f64) -> f64 {
 
 /// Constructs in `list` and its sub-formulas the pipeline sets only
 /// approximately, as `math_limitation` messages (one entry per occurrence;
-/// `math_box` deduplicates by message): `\mathbf` in the roman face and
-/// `\boxed` without its frame.
+/// `math_box` deduplicates by message): `\mathbf` in the roman face.
 fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<String>) {
-    use flashtex_compiler::math::{Frame, Nucleus as N};
+    use flashtex_compiler::math::Nucleus as N;
     for a in &list.atoms {
         match &a.nucleus {
             // `\mathbf` is now set through the text sink's bold alphabet role
@@ -6388,12 +6725,7 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
             // the regular roman face, so it is no longer a math_limitation.
             N::Bold(_) => {}
             N::Rule(_) => out.push("math-mode \\rule set as horizontal space of its width: math-layout has no rule atom, nothing painted".to_string()),
-            N::Framed { body, frame } => {
-                if *frame == Frame::Box {
-                    out.push("\\boxed frame dropped: math-layout has no framed-box atom".to_string());
-                }
-                math_approximations(body, out);
-            }
+            N::Framed { body, .. } => math_approximations(body, out),
             N::Fraction { numerator, denominator } => {
                 math_approximations(numerator, out);
                 math_approximations(denominator, out);
@@ -6543,6 +6875,7 @@ fn plain_vblock(lines: Vec<(f64, f64)>) -> VBlock {
         no_interline_after: false,
         baselineskip: None,
         vskip_after: Vec::new(),
+        broken_penalty: Vec::new(),
         pre_space_after: None,
         lineskip: None,
         contributed: None,
@@ -6610,6 +6943,23 @@ pub enum TitleForm {
 /// `\tabcolsep` (article.cls line 444, report.cls/book.cls the same).
 const TABCOLSEP_PT: f64 = 6.0;
 
+/// `\dbltextfloatsep` (latex.ltx, and `size10/11/12.clo` all keep 20pt): the
+/// gap `\@combinedblfloats` leaves between the `\@dbltoplist` material and
+/// the two-column box, and the amount `\@topnewpage`'s `\vskip
+/// -\dbltextfloatsep` takes back off its own box.
+const DBLTEXTFLOATSEP_PT: f64 = 20.0;
+
+/// Reports a `\twocolumn[<material>]` case `\@topnewpage` handles and this
+/// page builder does not, against the title block's first source span.
+fn top_title_warning(ctx: &mut Context, blocks: &[BuiltBlock], first: usize, message: &str) {
+    let span = blocks.get(first).and_then(|b| b.recs.iter().flatten().next().copied()).and_then(|r| match &ctx.recs[r] {
+        BoxRec::Text { clusters, .. } => clusters.first().map(|c| c.span),
+        _ => None,
+    });
+    let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
+    ctx.diagnostics.push(Diagnostic::warning("unsupported_block", message.to_string(), src));
+}
+
 fn add_skip_before(v: &mut pagebuild::VBlock, skip: Option<(f64, f64, f64)>) {
     let Some((n, s, k)) = skip else { return };
     v.space_before = Some(match v.space_before {
@@ -6621,12 +6971,18 @@ fn add_skip_before(v: &mut pagebuild::VBlock, skip: Option<(f64, f64, f64)>) {
 /// Adds `pt` points of `\vspace` glue (compiler `Block::VSpace`) to the
 /// block's before-skip. Zero is a no-op so cached blocks stay identical.
 fn add_vspace(v: &mut pagebuild::VBlock, pt: f64) {
-    if pt == 0.0 {
+    add_skip(v, pt, (0.0, 0.0));
+}
+
+/// [`add_vspace`] with the skip's stretch and shrink (a list's `\topsep` /
+/// `\itemsep` / `\parsep` glue, which is not rigid).
+fn add_skip(v: &mut pagebuild::VBlock, pt: f64, flex: (f64, f64)) {
+    if pt == 0.0 && flex == (0.0, 0.0) {
         return;
     }
     v.space_before = Some(match v.space_before {
-        Some((n, s, k)) => (n + pt, s, k),
-        None => (pt, 0.0, 0.0),
+        Some((n, s, k)) => (n + pt, s + flex.0, k + flex.1),
+        None => (pt, flex.0, flex.1),
     });
 }
 
@@ -6967,10 +7323,59 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // (`\@colht`); `\@outputdblcol` ships the first column and the second
     // side by side, the second `\columnwidth + \columnsep` to the right.
     let columns = n_columns;
-    let (mut built, images, float_labels) = if let Some(b) = multicol::paginate(ctx, doc, &mut blocks, &params) {
+    // `\@topnewpage` (latex.ltx 20466-20505). `\twocolumn[<material>]` sets
+    // the material in `\vbox{\hsize\textwidth \@parboxrestore \col@number\@ne
+    // <material> \vskip -\dbltextfloatsep}`: the trailing negative skip makes
+    // `\ht\@currbox` the material's natural height *less* `\dbltextfloatsep`
+    // (and zero depth, the last list item being glue). `\@colht` then loses
+    // `\ht\@currbox + \dbltextfloatsep` -- exactly the natural height -- and
+    // `\vsize`/`\@colroom` follow it, so **both** columns of this page are
+    // that much shorter; `\@outputpage` restores `\global\@colht\textheight`
+    // when the page ships, so only this page is affected.
+    //
+    // The box is `\@cons`ed to `\@dbltoplist`, and `\@combinedblfloats`
+    // (21019) stacks `\ht\@currbox`, `\vskip\dbltextfloatsep` and the
+    // two-column box inside a `\vbox to\textheight` -- so the columns begin
+    // the same natural height below the top of the text area that `\@colht`
+    // lost. That is why one number, `top_title`'s height, is both the page's
+    // shortening and the column material's shift.
+    //
+    // `\@topnewpage` also sets `\global\@dbltopnum\m@ne`, which suppresses
+    // `\dblfigrule` and makes `\@addtodblcol` (21280) defer every later
+    // full-width float off this page. Full-width floats are not modelled as
+    // `\@dbltoplist` entries here at all (`figure*` is placed as `figure`,
+    // floats.rs), so that part is not reproduced; see the module note.
+    let (short_cols, short) = match top_title.as_ref() {
+        None => (0, 0.0),
+        Some(&(first, _, height)) => {
+            // `\ifdim \ht\@currbox>\textheight \ht\@currbox\textheight \fi`
+            // caps the box, so the shortening is capped the same way.
+            let capped = height.min(params.vsize + DBLTEXTFLOATSEP_PT);
+            if capped < params.vsize {
+                if params.vsize - capped < 2.5 * s.baselineskip_pt {
+                    top_title_warning(
+                        ctx,
+                        &blocks,
+                        first,
+                        "the optional argument of \\twocolumn is too tall for page 1 (\\@topnewpage leaves \\@colht under 2.5\\baselineskip); LaTeX would ship empty columns here, which is not implemented",
+                    );
+                }
+                (columns, capped)
+            } else {
+                top_title_warning(
+                    ctx,
+                    &blocks,
+                    first,
+                    "the optional argument of \\twocolumn is taller than \\textheight; the first page's columns are not shortened by it",
+                );
+                (0, 0.0)
+            }
+        }
+    };
+    let (mut built, mut images, float_labels) = if let Some(b) = multicol::paginate(ctx, doc, &mut blocks, &params) {
         (b, Vec::new(), Vec::new())
     } else if floats.is_empty() {
-        let (short_pages, short) = top_title.as_ref().map_or((0, 0.0), |t| (columns, t.2));
+        let (short_pages, short) = (short_cols, short);
         match &insertions {
             Some(ins) => {
                 let regions = pagebuild::resolve_regions(&list, &longtables);
@@ -6984,35 +7389,41 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             }
         }
     } else {
-        if let Some((first, ..)) = &top_title {
-            let span = blocks.get(*first).and_then(|b| b.recs.iter().flatten().next().copied()).and_then(|r| match &ctx.recs[r] {
-                BoxRec::Text { clusters, .. } => clusters.first().map(|c| c.span),
-                _ => None,
-            });
-            let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
-            ctx.diagnostics.push(Diagnostic::warning(
-                "unsupported_block",
-                "\\twocolumn[\\@maketitle] with floats: the float placement does not shorten the first page's columns by the title box".to_string(),
-                src,
-            ));
-        }
         let regions = pagebuild::resolve_regions(&list, &longtables);
-        let (mut pages, images, labels, areas) = floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref());
+        let (mut pages, images, labels, areas) =
+            floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref(), short_cols, short, columns);
         if insertions.is_some() {
             footnotes::place(ctx, &mut blocks, &mut pages, areas);
         }
         (pages, images, labels)
     };
     // The `\twocolumn[...]` box sits at the top of the first page
-    // (`\@combinedblfloats`), both columns `\dbltextfloatsep` below it.
-    if let Some((first, placed, height)) = top_title.take() {
+    // (`\@combinedblfloats`), both columns `\dbltextfloatsep` below it --
+    // that is, the material's natural height below the top of the text area,
+    // which is what `\@colht` lost above. `short` is that number after
+    // `\@topnewpage`'s cap, so the shift and the shortening cannot disagree.
+    if let Some((first, placed, _)) = top_title.take() {
         if built.is_empty() {
             built.push(pagebuild::BuiltPage::default());
         }
-        let shift = if floats.is_empty() { height } else { 0.0 };
+        let shift = short;
         for bp in built.iter_mut().take(columns) {
             for l in &mut bp.lines {
                 l.baseline += shift;
+            }
+        }
+        // A float's caption lines are in `built` and move with them, but its
+        // graphics are display-list items the float placer already put in
+        // page coordinates (`floatpage::Placer::emit`). They belong to the
+        // same column box, so they take the same shift; `n` numbers the
+        // page-builder column, and the first `columns` of them are this page.
+        for (n, it) in &mut images {
+            if (*n as usize) <= columns {
+                if let display::Item::Image(img) = it {
+                    let dy = Tick::from_tex_pt(shift);
+                    img.top = Tick(img.top.0 + dy.0);
+                    img.transform[5] += dy.to_bp();
+                }
             }
         }
         let mut lines: Vec<pagebuild::Placed> = placed

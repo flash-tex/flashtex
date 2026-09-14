@@ -130,6 +130,7 @@ struct PreviewAnchorCorrection: Equatable {
 struct PreviewAnchorKeeper: NSViewRepresentable {
     let layout: PreviewPageLayout
     var follow: CaretFollowController.Request? = nil
+    var reveal: CaretFollowController.Request? = nil
     var onUserScroll: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> PreviewAnchorProbe { PreviewAnchorProbe() }
@@ -137,6 +138,7 @@ struct PreviewAnchorKeeper: NSViewRepresentable {
         view.onUserScroll = onUserScroll
         view.layoutDidChange(to: layout)
         view.follow(follow)
+        view.reveal(reveal)
     }
 }
 
@@ -166,6 +168,7 @@ final class PreviewAnchorProbe: NSView {
     /// of the last request acted on, and every decision made (evidence/tests).
     var onUserScroll: (() -> Void)?
     private(set) var followedToken: Int?
+    private(set) var revealedToken: Int?
     private(set) var followDecisions: [(token: Int, decision: CaretFollow.Decision)] = []
     /// Event trace for the acceptance harness: (ms since first event, event, visible top, document height).
     private(set) var trace: [(ms: Double, event: String, top: CGFloat, docHeight: CGFloat)] = []
@@ -285,6 +288,23 @@ final class PreviewAnchorProbe: NSView {
         settleGeneration += 1
         scrollTopDown(to: point, animated: animated)
         note(String(format: "followed r%d %.1f→%.1f%@", request.token, visible.minY, point.y, animated ? " (animated)" : ""))
+        capture()
+    }
+
+    /// Internal-destination reveal: same scroll policy as caret following,
+    /// with its own token so a click is never dropped as a stale follow.
+    func reveal(_ request: CaretFollowController.Request?) {
+        guard let request, request.token != revealedToken else { return }
+        revealedToken = request.token
+        guard let layout, let scroll = enclosingScrollView, let doc = scroll.documentView,
+              let visible = documentVisibleRectTopDown else { return }
+        let decision = CaretFollow.decide(target: request.target, layout: layout, visible: visible,
+                                          contentSize: doc.bounds.size, reduceMotion: reduceMotion())
+        guard case .scroll(let point, let animated) = decision else { return }
+        pending = nil
+        settleGeneration += 1
+        scrollTopDown(to: point, animated: animated)
+        note(String(format: "revealed r%d %.1f→%.1f%@", request.token, visible.minY, point.y, animated ? " (animated)" : ""))
         capture()
     }
 

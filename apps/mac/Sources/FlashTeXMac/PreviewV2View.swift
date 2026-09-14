@@ -262,12 +262,14 @@ extension ShellModel {
     /// whose change re-requests the current revision under auto-compile. The
     /// v1 pages of every result keep painting the product preview.
     func setLiveV2(_ on: Bool) {
-        // `display-list-v2-images` and `display-list-v2-diagnostics` ride
-        // along (accepted only with `display-list-v2`); one assignment so a
-        // switch re-requests once. Unaccepted caps are logged, never an error.
+        // `display-list-v2-images`, `-links` and `-diagnostics` ride along
+        // (each proposal: accepted only with `display-list-v2`); one
+        // assignment so a switch re-requests once. Compact (#257) is a
+        // per-request encoding, not a mode-set sibling — left untouched.
+        // Unaccepted caps are logged, never an error.
         var caps = requestedLayoutCapabilities
-        caps.removeAll { $0 == V2Live.capability || $0 == RenderingV2.imagesCapability || $0 == RenderingV2.diagnosticsCapability }
-        if on { caps += [V2Live.capability, RenderingV2.imagesCapability, RenderingV2.diagnosticsCapability] }
+        caps.removeAll { $0 == V2Live.capability || $0 == RenderingV2.imagesCapability || $0 == RenderingV2.linksCapability || $0 == RenderingV2.diagnosticsCapability }
+        if on { caps += [V2Live.capability, RenderingV2.imagesCapability, RenderingV2.linksCapability, RenderingV2.diagnosticsCapability] }
         if caps != requestedLayoutCapabilities { requestedLayoutCapabilities = caps }
     }
 
@@ -841,8 +843,11 @@ struct PreviewV2Pane: View {
         PreviewV2View(frame: frame, dark: model.darkPreview, stale: stale, caretPath: model.activePath, caretByte: model.caretByte,
                       zoom: model.previewZoom, onFitScale: { model.previewFitScale = $0 },
                       // "the pdf moves to where the changes are happening" (CaretFollow.swift)
-                      follow: model.caretFollow.request,
-                      onUserScroll: { model.caretFollow.userDidScrollPreview() }) { hit in
+                      follow: model.caretFollow.request, reveal: model.previewReveal,
+                      onUserScroll: { model.caretFollow.userDidScrollPreview() },
+                      navigation: DisplayListLinks.effective(frame.list.navigation, accepted: model.acceptedLayoutCapabilities,
+                                                            live: model.displayListV2?.source.isLive == true),
+                      onLink: { model.activatePreviewLink($0, in: frame.list) }) { hit in
             model.navigateV2(hit)
         }
     }
@@ -966,8 +971,13 @@ struct PreviewV2View: View {
     var onFitScale: ((CGFloat) -> Void)? = nil
     /// Latest caret-follow request (CaretFollow.swift); acted on once per token.
     var follow: CaretFollowController.Request? = nil
+    /// Internal-destination scroll (DisplayListLinks.swift); acted on once per token.
+    var reveal: CaretFollowController.Request? = nil
     /// Reported when the reader scrolls this pane by hand.
     var onUserScroll: (() -> Void)? = nil
+    /// Active `navigation` after capability gating (nil → no link behaviour).
+    var navigation: RenderingV2.Navigation? = nil
+    var onLink: ((RenderingV2.Navigation.Link) -> Void)? = nil
     let onSelect: (V2Geometry.Hit) -> Void
     @Environment(\.displayScale) private var displayScale
 
@@ -994,14 +1004,14 @@ struct PreviewV2View: View {
                                        dark: dark, stale: stale, scale: scale, displayScale: displayScale,
                                        // Only pages whose cluster sources can contain the caret walk their clusters.
                                        caretHighlights: caretByte.flatMap { prepared.mayContain(byte: $0, path: caretPath) ? V2Geometry.caretHighlights(containing: $0, path: caretPath, in: page) : nil } ?? [],
-                                       onSelect: onSelect)
+                                       navigation: navigation, onLink: onLink, onSelect: onSelect)
                                 .equatable()
                                 .id(page.number)
                         }
                     }
                 }
                 .padding(24)
-                .background(PreviewAnchorKeeper(layout: layout, follow: follow, onUserScroll: onUserScroll))
+                .background(PreviewAnchorKeeper(layout: layout, follow: follow, reveal: reveal, onUserScroll: onUserScroll))
             }
             .onChange(of: fit, initial: true) { _, f in onFitScale?(f) }
         }
@@ -1067,14 +1077,19 @@ private struct PageV2View: View, Equatable {
     /// Exact caret / whole cluster for text, the enclosing formula box for a
     /// caret inside math (MathCaretHighlight.swift).
     let caretHighlights: [V2Geometry.CaretHighlight]
+    var navigation: RenderingV2.Navigation? = nil
+    var onLink: ((RenderingV2.Navigation.Link) -> Void)? = nil
     let onSelect: (V2Geometry.Hit) -> Void
     @State private var hover: V2Geometry.Hit?
+    @State private var linkHover: RenderingV2.Navigation.Link?
+    @State private var linkCursorPushed = false
 
     // `stale` is not part of the equality: nothing drawn depends on it, and the
     // loaded -> stale -> loaded toggle of every keystroke re-evaluated every page.
     static func == (a: PageV2View, b: PageV2View) -> Bool {
         a.pageToken == b.pageToken && a.page.number == b.page.number
             && a.dark == b.dark && a.scale == b.scale && a.displayScale == b.displayScale && a.caretHighlights == b.caretHighlights
+            && a.navigation == b.navigation
     }
 
     var body: some View {
@@ -1103,12 +1118,30 @@ private struct PageV2View: View, Equatable {
             .contentShape(Rectangle())
             .onContinuousHover { phase in
                 switch phase {
-                case .active(let p): hover = V2Geometry.hit(page: page, atPointX: p.x / scale, y: p.y / scale)
-                case .ended: hover = nil
+                case .active(let p):
+                    let pageX = p.x / scale, pageY = p.y / scale
+                    if let nav = navigation, let link = DisplayListLinks.hit(nav, page: page.number, viewX: pageX, viewY: pageY, scale: 1) {
+                        linkHover = link
+                        hover = nil
+                        if !linkCursorPushed { NSCursor.pointingHand.push(); linkCursorPushed = true }
+                    } else {
+                        linkHover = nil
+                        hover = V2Geometry.hit(page: page, atPointX: pageX, y: pageY)
+                        if linkCursorPushed { NSCursor.pop(); linkCursorPushed = false }
+                    }
+                case .ended:
+                    hover = nil
+                    linkHover = nil
+                    if linkCursorPushed { NSCursor.pop(); linkCursorPushed = false }
                 }
             }
             .onTapGesture { location in
-                if let hit = V2Geometry.hit(page: page, atPointX: location.x / scale, y: location.y / scale) { onSelect(hit) }
+                let pageX = location.x / scale, pageY = location.y / scale
+                if let nav = navigation, let link = DisplayListLinks.hit(nav, page: page.number, viewX: pageX, viewY: pageY, scale: 1) {
+                    onLink?(link)
+                    return
+                }
+                if let hit = V2Geometry.hit(page: page, atPointX: pageX, y: pageY) { onSelect(hit) }
             }
             .overlay(alignment: .bottomTrailing) {
                 // Colored for the PAGE background (white or dark), not the window appearance.
@@ -1118,6 +1151,7 @@ private struct PageV2View: View, Equatable {
     }
 
     private var helpText: String {
+        if let link = linkHover { return DisplayListLinks.tooltip(for: link) }
         guard let h = hover else { return "" }
         let what = h.text.map { "“\($0)” → " } ?? "rule → "
         let target = h.syntheticReason.map { "generated: \($0)" } ?? h.sources.map { "\($0.path) \($0.startByte)..<\($0.endByte)" }.joined(separator: ", ")

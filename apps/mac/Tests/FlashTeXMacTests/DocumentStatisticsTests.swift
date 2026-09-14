@@ -209,38 +209,64 @@ final class DocumentStatisticsTests: XCTestCase {
     }
 }
 
-/// `WordCountModel`'s debounce/background contract: a scheduled update lands
-/// on the main actor only after `debounceInterval`, and only the most recent
-/// schedule's result survives a burst — the same shape `DocumentWatcherTests`
-/// uses for its own coalesced-delivery assertions.
+/// `WordCountModel`'s debounce/background contract: a scheduled update is
+/// published on the main actor, and only the most recent schedule's result
+/// survives a burst — the same shape `DocumentWatcherTests` uses for its own
+/// coalesced-delivery assertions. These tests inject an immediate scheduler
+/// AND a synchronous background executor, so the whole
+/// schedule→scan→publish pipeline is deterministic with no real wall-clock
+/// wait at all; production still debounces on the main queue and still scans
+/// on a background queue.
 @MainActor
 final class WordCountModelTests: XCTestCase {
-    private func settles(_ timeout: TimeInterval = 2, _ cond: () -> Bool) async -> Bool {
-        let start = Date()
-        while !cond() {
-            if Date().timeIntervalSince(start) > timeout { return false }
-            try? await Task.sleep(nanoseconds: 10_000_000)
+    /// Synchronous pipeline: the debounce fires immediately and the
+    /// background scan runs inline, so the only remaining hop is the
+    /// `Task { @MainActor }` publish inside `recompute`.
+    private func makeModel() -> WordCountModel {
+        let model = WordCountModel()
+        model.scheduleDebounce = { _, item in item.perform() }
+        model.recomputeExecutor = { work in work() }
+        return model
+    }
+
+    /// Deterministically waits on the publication itself, via
+    /// `onRecomputeSettled` — not on unstructured `Task { @MainActor }`
+    /// jobs running in enqueue order, which Swift concurrency does not
+    /// document as guaranteed. `settles` counts every `recompute` cycle
+    /// that has reached its publish decision (published or superseded), not
+    /// just successful publishes, so a caller that triggered N updates
+    /// should await exactly N settles even when only the last one publishes.
+    /// Must be called after the trigger(s) it is waiting on and before any
+    /// other `await` in the same test, so the hook is armed before the
+    /// already-enqueued Task(s) get a chance to run.
+    private func published(_ model: WordCountModel, settles: Int = 1) async {
+        var remaining = settles
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            model.onRecomputeSettled = {
+                remaining -= 1
+                if remaining <= 0 {
+                    model.onRecomputeSettled = nil
+                    continuation.resume()
+                }
+            }
         }
-        return true
     }
 
     func testScheduleUpdateEventuallyPublishesTotals() async {
-        setenv("FLASHTEX_WORDCOUNT_DEBOUNCE_MS", "20", 1)
-        defer { unsetenv("FLASHTEX_WORDCOUNT_DEBOUNCE_MS") }
-        let model = WordCountModel()
+        let model = makeModel()
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three.")])
-        let ok = await settles { model.total?.totalWords == 3 }
-        XCTAssertTrue(ok)
+        await published(model)
+        XCTAssertEqual(model.total?.totalWords, 3)
     }
 
     func testOnlyTheLastScheduledUpdateWins() async {
-        setenv("FLASHTEX_WORDCOUNT_DEBOUNCE_MS", "20", 1)
-        defer { unsetenv("FLASHTEX_WORDCOUNT_DEBOUNCE_MS") }
-        let model = WordCountModel()
+        let model = makeModel()
+        // Both updates run their scans inline before either publish lands,
+        // so only the `generation` guard — the real coalescing mechanism —
+        // decides the winner.
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One.")])
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three four.")])
-        let ok = await settles { model.total?.totalWords == 4 }
-        XCTAssertTrue(ok)
+        await published(model, settles: 2)
         XCTAssertEqual(model.total?.totalWords, 4)
     }
 }

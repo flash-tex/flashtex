@@ -412,6 +412,28 @@ final class WordCountModel {
     @ObservationIgnored private var debounce: DispatchWorkItem?
     @ObservationIgnored private var generation = 0
 
+    /// Scheduling seam: production debounces via
+    /// `DispatchQueue.main.asyncAfter` (the default below). Tests inject
+    /// `{ _, item in item.perform() }` for deterministic, immediate
+    /// execution with no real wall-clock delay. Takes the
+    /// `DispatchWorkItem` itself — not a bare closure — so
+    /// `debounce?.cancel()` still keeps a superseded scan from running.
+    @ObservationIgnored var scheduleDebounce: (TimeInterval, DispatchWorkItem) -> Void = { delay, item in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    /// Background-execution seam: production scans on a real background queue
+    /// (the default below). `DocumentStatistics.analyze` on real documents is
+    /// slow enough that running it on the main thread in production would be
+    /// a typing-latency regression, so the default must stay off-main. Tests
+    /// inject `{ work in work() }` to run the scan inline, which — paired
+    /// with a synchronous `scheduleDebounce` above and an `await`-based drain
+    /// of the `Task { @MainActor }` publish in `recompute` — makes the whole
+    /// schedule→scan→publish pipeline deterministic with no wall-clock wait.
+    @ObservationIgnored var recomputeExecutor: (@Sendable @escaping () -> Void) -> Void = { work in
+        DispatchQueue.global(qos: .userInitiated).async(execute: work)
+    }
+
     static let debounceInterval: TimeInterval = {
         if let s = ProcessInfo.processInfo.environment["FLASHTEX_WORDCOUNT_DEBOUNCE_MS"], let ms = Double(s) { return max(0, ms) / 1000 }
         return 0.3
@@ -428,16 +450,25 @@ final class WordCountModel {
         if Self.debounceInterval == 0 {
             item.perform()
         } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounceInterval, execute: item)
+            scheduleDebounce(Self.debounceInterval, item)
         }
     }
 
+    /// Fires on the main actor after every `recompute` cycle reaches its
+    /// publish decision — whether it actually published or was superseded.
+    /// Production leaves this `nil` (no cost, no behavior change). Tests use
+    /// it to wait on the real publication itself instead of assuming
+    /// unstructured `Task { @MainActor }` jobs run in enqueue order, which
+    /// is not a documented Swift concurrency guarantee.
+    @ObservationIgnored var onRecomputeSettled: (() -> Void)?
+
     private func recompute(_ documents: [(path: String, text: String)], generation gen: Int) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        recomputeExecutor { [weak self] in
             let start = DispatchTime.now()
             let result = DocumentStatistics.analyze(documents: documents)
             let ms = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
             Task { @MainActor [weak self] in
+                defer { self?.onRecomputeSettled?() }
                 guard let self, gen == self.generation else { return } // superseded by a later edit
                 self.total = result.total
                 self.sections = result.sections

@@ -39,7 +39,7 @@ use crate::display::Diagnostic;
 use crate::pagebuild::{self, Insertions, InsertArea, PageParams, Placed, VBlock, VItem};
 use crate::style::Stylesheet;
 
-use super::{drop_trailing_break, line_extents, vskips_of, BoxRec, BuiltBlock, Context, CLUB_PENALTY, WIDOW_PENALTY};
+use super::{broken_of, drop_trailing_break, line_extents, vskips_of, BoxRec, BuiltBlock, Context, CLUB_PENALTY, WIDOW_PENALTY};
 
 /// `\scriptspace` (plain TeX and LaTeX: 0.5pt).
 pub const SCRIPT_SPACE: f64 = 0.5;
@@ -274,6 +274,7 @@ impl<'a> Context<'a> {
             no_interline_after: false,
             baselineskip: Some(fp.baselineskip),
             vskip_after: vskips_of(&lines, &skips),
+            broken_penalty: broken_of(&lines),
             pre_space_after: None,
             lineskip: None,
             contributed: None,
