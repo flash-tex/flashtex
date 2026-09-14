@@ -194,6 +194,15 @@ pub enum Item {
     Footnote { number: String, mark: bool, span: Span, text: Option<Vec<Item>> },
     /// `\colorbox`/`\fcolorbox` (compiler `Inline::ColorBox`).
     ColorBox(Box<ColorBoxItem>),
+    /// LaTeX's `\llap{...}`: `items` set at their natural width and then
+    /// pulled back by exactly that width, so the line's reference point does
+    /// not move and the material hangs in the left margin.
+    ///
+    /// The first thing emitted for it is an empty `\hbox` (the same
+    /// undiscardable anchor [`Item::LeaveVmode`] is), because the pull-back
+    /// is a kern and a kern at the head of a line is discarded (TeX §879) —
+    /// which is exactly where `listings` puts one, on every numbered line.
+    Lap { items: Vec<Item> },
     /// LaTeX's `\leavevmode`: an empty zero-width `\hbox`.
     ///
     /// Emitted only in front of a verbatim blank that would otherwise open
@@ -721,7 +730,7 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
             }
         }
         match block {
-            CBlock::Verbatim { lines, span } => {
+            CBlock::Verbatim { lines, span: _ } => {
                 let mut content: Vec<Inline> = Vec::with_capacity(lines.len() * 2);
                 for (i, line) in lines.iter().enumerate() {
                     if i > 0 {
@@ -748,27 +757,11 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
                 }
                 // The text itself is now typewriter and literal (see
                 // `style_intervals`/`TextStyle::literal`), so the old
-                // "no monospaced face" limitation no longer applies. What
-                // is still missing is package-specific: `listings` key
-                // handling (`basicstyle`, `frame`, `numbers`, `caption`).
-                let env = texts
-                    .get(span.document.0)
-                    .and_then(|t| t.get(span.start..span.end))
-                    .and_then(|t| environment_name(t, t.find("\\begin").map(|b| b + 6)?))
-                    .map(|(name, _)| name)
-                    .unwrap_or("");
-                if env.starts_with("lstlisting") {
-                    limitations.push((
-                        "unsupported_block",
-                        *span,
-                        format!(
-                            "lstlisting ({} line(s)) set as a flush-left typewriter paragraph with forced line breaks: \
-                             the listings keys are not applied, so `basicstyle` (its font size), `frame`, `numbers` \
-                             and `caption` are missing",
-                            lines.len()
-                        ),
-                    ));
-                }
+                // "no monospaced face" limitation no longer applies, and an
+                // `lstlisting` gets its limitation from `crate::listings` —
+                // the pass that knows which keys it applied and which it did
+                // not. A blanket "the listings keys are not applied" here
+                // would now be false.
                 out.push(CBlock::Styled {
                     style: ParagraphStyle::FlushLeft,
                     content,
@@ -1628,7 +1621,7 @@ pub fn adapt_cached(
     // own shape (the centred `\small\bfseries` head and the `\small`
     // `quotation`) is read from the source bytes here, before the
     // `env_close` pass below derives the closing skips from the styles.
-    let superseded = crate::abstractenv::apply(texts, &mut blocks, &style);
+    let mut superseded = crate::abstractenv::apply(texts, &mut blocks, &style);
     // `\end{...}`: the last paragraph of a run of same-style paragraphs
     // closes the environment (two adjacent environments of one style are
     // read as one; the compiler does not mark the boundary).
@@ -1646,6 +1639,18 @@ pub fn adapt_cached(
             }
         }
     }
+    // `listings`: the compiler sets an `lstlisting` body as literal
+    // typewriter lines and reports its `[...]` options, so `\lstset` and the
+    // environment's keys are read from the source bytes here
+    // (`crate::listings`). It runs *after* the `env_close` pass above: an
+    // `lstlisting` is not a `\trivlist` — listings sets the body as a plain
+    // paragraph under a `\parshape` — so the listing paragraph must keep
+    // neither the opening nor the closing `\topsep`, and that pass would
+    // otherwise put the closing one back.
+    let (listing_superseded, listing_limitations) = crate::listings::apply(texts, &mut blocks, &style, labels);
+    superseded.extend(listing_superseded);
+    superseded.extend(crate::listings::lstset_spans(texts));
+    limitations.extend(listing_limitations);
     // Page-style and mark commands (and a `\maketitle`) after the last
     // material.
     for cmd in &commands[next_command..] {

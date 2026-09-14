@@ -1965,6 +1965,50 @@ impl<'a> Context<'a> {
                         }
                     }
                 }
+                AItem::Lap { items: lapped } => {
+                    // `\llap{#1}` is `\hb@xt@\z@{\hss #1}`: the material at
+                    // its natural width, ending at the reference point.
+                    let (mut list, mut lrecs, _, _) = self.hlist(lapped, size, base, style);
+                    // `hlist` ends every list it builds with TeX's paragraph
+                    // end (`\penalty10000 \parfillskip \penalty-10000`).
+                    // That belongs to a paragraph, not to the `\hbox` this
+                    // is: left in place it breaks the line after the lapped
+                    // material, which is how every numbered listing line
+                    // came out one line below its own number.
+                    if matches!(
+                        list.last_chunk::<3>(),
+                        Some([pl::Item::Penalty(_), pl::Item::Glue(_), pl::Item::Penalty(_)])
+                    ) {
+                        list.truncate(list.len() - 3);
+                        lrecs.truncate(lrecs.len().saturating_sub(3));
+                    }
+                    let width: f64 = list
+                        .iter()
+                        .map(|i| match i {
+                            pl::Item::Box(run) => run.width,
+                            pl::Item::Glue(glue) => glue.width,
+                            pl::Item::Kern(kern) => kern.width,
+                            pl::Item::Penalty(_) => 0.0,
+                        })
+                        .sum();
+                    // The anchor: a box of no size, so the pull-back kern
+                    // behind it survives a line break (see `Item::Lap`).
+                    self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    let anchor = pl::GlyphRun {
+                        font: MATH_SENTINEL,
+                        size,
+                        glyphs: Vec::new(),
+                        width: 0.0,
+                        height: 0.0,
+                        depth: 0.0,
+                        source: 0..0,
+                    };
+                    push(&mut out, &mut recs, pl::Item::Box(anchor), Some(self.recs.len() - 1));
+                    push(&mut out, &mut recs, pl::Item::kern(-width), None);
+                    for (item, rec) in list.into_iter().zip(lrecs) {
+                        push(&mut out, &mut recs, item, rec);
+                    }
+                }
                 AItem::LeaveVmode => {
                     // The empty `\hbox` `\leavevmode` starts a paragraph
                     // with; its only job is to be undiscardable so the

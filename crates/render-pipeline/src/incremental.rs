@@ -289,6 +289,10 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 11u8.hash(h);
                 format!("{b:?}").hash(h);
             }
+            Item::Lap { items } => {
+                202u8.hash(h);
+                hash_items(items, base, h);
+            }
             Item::LeaveVmode => 201u8.hash(h),
         }
     }

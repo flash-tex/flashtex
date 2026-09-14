@@ -365,7 +365,7 @@ fn abstract_name(texts: &[&str]) -> Option<String> {
 }
 
 /// The first source position a block sets material at.
-fn block_span(block: &Block) -> Option<Span> {
+pub(crate) fn block_span(block: &Block) -> Option<Span> {
     match block {
         Block::Paragraph { parts, .. } => parts.iter().find_map(part_span),
         Block::Heading { span, .. } | Block::Chapter { span, .. } | Block::Part { span, .. } | Block::Title { span, .. } | Block::Rule { span, .. } => Some(*span),
