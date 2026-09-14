@@ -188,6 +188,9 @@ private struct EditorPane: View {
                 onSelectionChange: { if model.caretLengthUTF16 != $0.length { model.caretLengthUTF16 = $0.length } }, // every keystroke reports length 0; an equal write still invalidates its readers
                 onEditApplied: { model.editApplied($0, newText: $1) },
                 onEditRefused: { model.editRefused($0, reason: $1) },
+                caretFix: model.caretFix, // the hint the editor draws, and the only thing Tab accepts
+                onAcceptCaretFix: { model.acceptCaretFix() },
+                onDismissCaretFix: { model.dismissCaretFix() },
                 autoClosePairs: EditorPreferences.shared.autoCloseBraces ? model.autoClosePairs : [] // EditorPreferences.swift gates the braces lane set
                 ,
                 syntaxHighlighting: true, // SyntaxHighlighter.swift / EditorIntelligence.swift (mac-syntax-highlight)

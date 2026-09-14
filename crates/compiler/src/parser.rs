@@ -6244,9 +6244,13 @@ impl P<'_> {
             Some(span),
             Some("skipped the command and did not typeset preamble content".into()),
         )
-        .with_help(format!(
+        // `with_optional_help` keeps help `command_error` already attached: an
+        // unknown command here is usually a typo, and its did-you-mean (with
+        // the replacement the editor can apply) is worth more than advice to
+        // move a command that does not exist. Plain `with_help` would drop it.
+        .with_optional_help(Some(format!(
             "move \\{name} after \\begin{{document}}, or remove it from the preamble"
-        )));
+        ))));
     }
 
     /// Recovery policy for a command this compiler does not implement.

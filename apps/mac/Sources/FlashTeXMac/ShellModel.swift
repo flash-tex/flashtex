@@ -488,6 +488,54 @@ final class ShellModel {
         quickFix = nil
     }
 
+    // MARK: the fix at the caret (Tab)
+
+    /// Set by Esc while a caret fix is showing, so the hint stays down until
+    /// the caret moves somewhere else. Dismissing must also hand Tab straight
+    /// back to indentation — that is the whole point of Esc here.
+    @ObservationIgnored private var dismissedCaretFix: EditorDiagnostics.CaretFix?
+
+    /// The mechanical fix offered where the caret is, or `nil`.
+    ///
+    /// This is the single source of truth for both halves of the feature: the
+    /// editor draws a hint exactly when it is non-nil, and Tab accepts a fix
+    /// exactly when it is non-nil. They cannot disagree, so Tab can never
+    /// silently do something the author was not shown.
+    var caretFix: EditorDiagnostics.CaretFix? {
+        let diagnostics = displayedDiagnostics
+        // Cheap bail-out before `caretByte`, whose UTF-16 → UTF-8 conversion is
+        // linear in the document: this is read on every keystroke, and most
+        // documents carry no mechanical fix at all.
+        guard result?.revision == editorRevision,
+              diagnostics.contains(where: { $0.help?.replacement != nil || $0.suggestion != nil })
+        else { return nil }
+        guard let caretByte, let fix = EditorDiagnostics.fixOffered(
+            at: caretByte, in: diagnostics, path: activePath,
+            currentText: activeText, compiledRevision: result?.revision,
+            editorRevision: editorRevision
+        ) else { return nil }
+        return fix == dismissedCaretFix ? nil : fix
+    }
+
+    /// Esc: take the hint down and leave Tab alone until the caret moves onto
+    /// a different fix.
+    func dismissCaretFix() {
+        guard let fix = caretFix else { return }
+        dismissedCaretFix = fix
+    }
+
+    /// Tab on a visible caret fix. Routed through `previewQuickFix` /
+    /// `applyQuickFix` rather than a second application path, so the edit
+    /// ledger, the revision counter and undo behave exactly as they do for
+    /// "Fix…" in the Problems panel — one undo step.
+    func acceptCaretFix() {
+        guard let fix = caretFix else { return }
+        previewQuickFix(diagnosticIndex: fix.diagnosticIndex)
+        guard quickFix != nil else { return } // refusal already in the footer
+        applyQuickFix()
+        dismissedCaretFix = nil
+    }
+
     /// Asks the helper once per result; the cache is read by `editorMarkReport`.
     private func fetchExplanations(for result: RuntimeV1.CompileResult, id: String, documents: [RuntimeV1.Document]) {
         guard explanations[id] == nil else { return }
