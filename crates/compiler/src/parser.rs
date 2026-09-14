@@ -1765,6 +1765,32 @@ impl P<'_> {
             "graphicspath" => {
                 let _ = self.required_group(name, span);
             }
+            // Preamble or body (GH#321: the preamble is where documents usually
+            // declare them).
+            "pagestyle" => {
+                // No header/footer rendering exists yet, so every style is
+                // accepted with the same (honest) effect: none. `empty` and
+                // `plain` both describe "no footer content beyond a page
+                // number", which is already what happens.
+                let _ = self.required_group(name, span);
+            }
+            // `\thispagestyle` differs from `\pagestyle` only in scope
+            // (current page vs. every later one); since no style ever
+            // renders anything either way, the same honest no-op covers it.
+            "thispagestyle" => {
+                let _ = self.required_group(name, span);
+            }
+            // `\pagenumbering{arabic|roman}` resets the page counter and its
+            // display style. With no footer rendering to show a number in
+            // (see `\pagestyle` above) and no separate "displayed page
+            // number" distinct from `Page::number` for `\pageref` to read,
+            // there is nothing observable left for it to change; accepted
+            // with the same honest no-op rather than faking a counter reset
+            // whose only visible effect would be through those two missing
+            // features.
+            "pagenumbering" => {
+                let _ = self.required_group(name, span);
+            }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
@@ -2241,30 +2267,6 @@ impl P<'_> {
             }
             // multicol.sty 564-567: column heights at output time.
             "raggedcolumns" | "flushcolumns" => {}
-            "pagestyle" => {
-                // No header/footer rendering exists yet, so every style is
-                // accepted with the same (honest) effect: none. `empty` and
-                // `plain` both describe "no footer content beyond a page
-                // number", which is already what happens.
-                let _ = self.required_group(name, span);
-            }
-            // `\thispagestyle` differs from `\pagestyle` only in scope
-            // (current page vs. every later one); since no style ever
-            // renders anything either way, the same honest no-op covers it.
-            "thispagestyle" => {
-                let _ = self.required_group(name, span);
-            }
-            // `\pagenumbering{arabic|roman}` resets the page counter and its
-            // display style. With no footer rendering to show a number in
-            // (see `\pagestyle` above) and no separate "displayed page
-            // number" distinct from `Page::number` for `\pageref` to read,
-            // there is nothing observable left for it to change; accepted
-            // with the same honest no-op rather than faking a counter reset
-            // whose only visible effect would be through those two missing
-            // features.
-            "pagenumbering" => {
-                let _ = self.required_group(name, span);
-            }
             // Kernel text symbols (`text_builtins::TEXT_SYMBOLS`; the
             // `text_symbol_arms_match_the_builtin_table` test keeps them equal).
             "AA" | "aa" | "AE" | "ae" | "OE" | "oe" | "O" | "o" | "L" | "l" | "ss" | "SS"
@@ -2995,10 +2997,10 @@ impl P<'_> {
     /// `\maketitle`: builds `Block::TitleBlock` from whatever `\title`/
     /// `\author`/`\date` are currently set to, mirroring how real
     /// `article.cls` reads `\@title`/`\@author`/`\@date`. Requires `\title`
-    /// and a non-empty `\author` (real LaTeX degrades to an invisible empty
-    /// box; this compiler never fabricates one — see the crate's `README.md`
-    /// boundary) and otherwise produces no block, with a diagnostic naming
-    /// what is missing.
+    /// (LaTeX's `No \title given` is an error) and otherwise produces no
+    /// block. A missing `\author` is LaTeX's `No \author given` warning and an
+    /// empty `\author{}` is silent; both set the block with no author line,
+    /// which is LaTeX's empty author box, not a fabricated placeholder.
     fn maketitle(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         self.flush_paragraph(blocks, para);
 
@@ -3010,14 +3012,16 @@ impl P<'_> {
             ));
             return;
         };
-        let Some((author_tokens, author_span)) = self.author.clone() else {
-            self.diags.push(Diagnostic::error(
-                "\\maketitle requires \\author to be set first",
+        // latex.ltx: `\def\@author{\@latex@warning@no@line{No \noexpand\author
+        // given}}`. The title block is set regardless, with an empty author box.
+        let (author_tokens, author_span) = self.author.clone().unwrap_or_else(|| {
+            self.diags.push(Diagnostic::warning(
+                "No \\author given",
                 Some(span),
-                Some("no title block was produced".into()),
+                Some("set the title block without an author line, as LaTeX does".into()),
             ));
-            return;
-        };
+            (Vec::new(), span)
+        });
 
         // `\@maketitle` sets `\@title`, `\@author`, `\@date` in that
         // order; each `\thanks` steps `footnote` there.
@@ -3048,15 +3052,9 @@ impl P<'_> {
             author_content.extend(inlines);
             wrote_author = true;
         }
-        if !wrote_author {
-            self.diags.push(Diagnostic::error(
-                "\\maketitle requires \\author to name at least one author",
-                Some(author_span),
-                Some("no title block was produced".into()),
-            ));
-            return;
-        }
-        if and_count > 0 {
+        // `\author{}` (or only blank `\and` slots) is an author that is given
+        // but empty: pdfLaTeX sets an empty author box without a warning.
+        if and_count > 0 && wrote_author {
             self.diags.push(Diagnostic::warning(
                 "multiple \\and-separated authors are typeset one per line; this compiler does not yet place them side by side in columns",
                 Some(author_span),
@@ -5919,10 +5917,9 @@ impl P<'_> {
         let skipped = self.skip_recoverable_argument(name);
         self.diags.push(Diagnostic::command_error(
             name,
-            format!(
-                "\\{} is not supported by this compiler version; unrestricted TeX math mode is not implemented",
-                name
-            ),
+            // A text-mode command: math has its own reader and diagnostics,
+            // so this message says nothing about math mode.
+            format!("\\{} is not supported by this compiler version", name),
             Some(span),
             Some(if skipped {
                 "skipped the command and its argument, which looked like a parameter rather than text".into()

@@ -255,11 +255,15 @@ pub(crate) fn shaped_width(
     span: Span,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> (f64, Span) {
-    // Symbol has no lunate epsilon (`\epsilon`, U+03F5): it is drawn with the
-    // open form, as `export::map_char` encodes it (same advance).
+    // Symbol has no lunate epsilon (`\epsilon`, U+03F5) and names its angle
+    // brackets by the deprecated U+2329/U+232A: they are drawn with the open
+    // form and `angleleft`/`angleright`, as `export::map_char` encodes them.
     let substituted;
-    let text = if font == Font::Symbol && text.contains('\u{03F5}') {
-        substituted = text.replace('\u{03F5}', "\u{03B5}");
+    let text = if font == Font::Symbol && text.contains(['\u{03F5}', '\u{27E8}', '\u{27E9}']) {
+        substituted = text
+            .replace('\u{03F5}', "\u{03B5}")
+            .replace('\u{27E8}', "\u{2329}")
+            .replace('\u{27E9}', "\u{232A}");
         substituted.as_str()
     } else {
         text
