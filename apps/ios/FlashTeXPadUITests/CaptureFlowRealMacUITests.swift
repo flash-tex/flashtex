@@ -14,8 +14,9 @@ import XCTest
 ///   TEST_RUNNER_FLASHTEX_PAD_E2E_PORT=<port>
 ///   TEST_RUNNER_FLASHTEX_PAD_E2E_BOOTSTRAP='flashtex-nearby://pair?…'
 ///
-/// The test types host/port (host already defaults to 127.0.0.1), pastes the
-/// payload, sends the bundled sample image and a finger-drawn triangle, and
+/// The test types host/port (host already defaults to 127.0.0.1), types the
+/// bootstrap URL (Paste trips a ~60s Allow Paste idle in the simulator),
+/// sends the bundled sample image and a finger-drawn triangle, and
 /// asserts both receipts. No provider call is involved on either side.
 final class CaptureFlowRealMacUITests: XCTestCase {
     private struct MacInfo: Decodable {
@@ -81,7 +82,9 @@ final class CaptureFlowRealMacUITests: XCTestCase {
         return try JSONDecoder().decode(MacInfo.self, from: data)
     }
 
-    /// Pair by typed loopback host/port + pasted bootstrap URL, then send
+    /// Pair by typed loopback host/port + typed bootstrap URL (Paste is the
+    /// product path but the simulator's Allow Paste prompt idles ~60s and can
+    /// miss the Mac's 120s code), then send
     /// sample-capture.png and a synthetic drawing. Both must show a Mac inbox
     /// receipt (provider none: durable=false, no proposal).
     func testPairByPastedBootstrapThenSendSampleAndDrawing() throws {
