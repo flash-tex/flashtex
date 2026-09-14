@@ -18,33 +18,33 @@ struct DocumentTabBar: View {
     var body: some View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
+                HStack(spacing: DS.Space.xxs) {
                     ForEach(model.chrome.listing) { doc in // throttled, change-only copy (ShellChrome.swift): `project.listing` reads `documents` per keystroke
                         DocumentTab(doc: doc, active: doc.path == model.activePath, kind: model.documentKinds.kind(of: doc.path))
                     }
                 }
-                .padding(.horizontal, 6)
+                .padding(.horizontal, DS.Space.s)
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Open documents")
             .accessibilityIdentifier(Self.identifier)
-            Spacer(minLength: 8)
+            Spacer(minLength: DS.Space.m)
             ProjectMenu()
             DocumentKindIndicator() // DocumentKinds.swift: helper-reported bibliography kind, read-only
             if let url = model.documentURL {
                 let dirty = model.project.isDirty(model.activePath)
                 Text(dirty ? "edited" : "saved")
-                    .font(.caption).foregroundStyle(dirty ? .orange : .secondary)
+                    .font(DS.Fonts.secondary).foregroundStyle(dirty ? DS.Colors.statusModified : DS.Colors.textSecondary)
                     .help(model.activePath == model.project.entryPath ? url.path : url.deletingLastPathComponent().appendingPathComponent(model.activePath).path)
             } else {
                 Text("unsaved buffer").font(.caption).foregroundStyle(.secondary)
             }
             Text("\(model.chrome.activeTextBytes) B · \(model.chrome.activeTextUTF16) u16")
-                .font(.caption).foregroundStyle(.tertiary).monospacedDigit()
+                .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
                 .help("\(model.chrome.activeTextBytes) UTF-8 bytes · \(model.chrome.activeTextUTF16) UTF-16 units")
-                .padding(.trailing, 8)
+                .padding(.trailing, DS.Space.m)
         }
-        .frame(height: 30)
+        .frame(height: DS.Row.tab)
         .background(.bar)
     }
 }
@@ -57,16 +57,16 @@ private struct DocumentTab: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: DS.Space.xs) {
             Image(systemName: kind == .bibliography ? "books.vertical" : (doc.role == .entry ? "doc.text.fill" : "doc.text"))
-                .font(.caption).foregroundStyle(active ? Color.accentColor : Color.secondary)
-            Text(doc.path).font(.callout).lineLimit(1)
-                .foregroundStyle(active ? Color.primary : Color.secondary)
+                .font(DS.Fonts.secondary).foregroundStyle(active ? DS.Colors.accentSelection : DS.Colors.textSecondary)
+            Text(doc.path).font(DS.Fonts.base).lineLimit(1)
+                .foregroundStyle(active ? DS.Colors.textPrimary : DS.Colors.textSecondary)
             if let r = doc.durableRevision {
-                Text("r\(r)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
+                Text("r\(r)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
             }
             if doc.isDirty {
-                Circle().fill(.orange).frame(width: 6, height: 6).accessibilityHidden(true)
+                Circle().fill(DS.Colors.statusModified).frame(width: DS.Size.modifiedDot, height: DS.Size.modifiedDot).accessibilityHidden(true)
             }
             if doc.role != .entry {
                 Button {
@@ -77,22 +77,22 @@ private struct DocumentTab: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "xmark").font(.caption2.bold())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 14, height: 14)
-                        .background(hovering ? Color.primary.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 3))
+                    Image(systemName: "xmark").font(DS.Fonts.header)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                        .frame(width: DS.Size.inlineIconButton, height: DS.Size.inlineIconButton)
+                        .background(hovering ? DS.Colors.textPrimary.opacity(DS.State.pressedOpacity) : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.control))
                 }
                 .buttonStyle(.plain)
-                .opacity(hovering || active ? 1 : 0.35)
+                .opacity(hovering || active ? 1 : DS.State.restingControlOpacity)
                 .help("Detach \(doc.path) for this session (" + ProjectDocuments.detachScopeNote + ")")
                 .accessibilityLabel("Detach \(doc.path)")
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 5)
-        .background(active ? Color.accentColor.opacity(0.14) : (hovering ? Color.primary.opacity(0.05) : .clear),
-                    in: RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
+        .background(active ? DS.Colors.accentSelection.opacity(DS.State.selectionTintOpacity) : (hovering ? DS.Colors.textPrimary.opacity(DS.State.hoverOpacity) : .clear),
+                    in: RoundedRectangle(cornerRadius: DS.Radius.tab))
         .overlay(alignment: .bottom) {
-            if active { Rectangle().fill(Color.accentColor).frame(height: 2).padding(.horizontal, 4) }
+            if active { Rectangle().fill(DS.Colors.accentSelection).frame(height: DS.Space.xxs).padding(.horizontal, DS.Space.xs) }
         }
         .contentShape(Rectangle())
         .onTapGesture { model.switchOrNote(doc.path) }

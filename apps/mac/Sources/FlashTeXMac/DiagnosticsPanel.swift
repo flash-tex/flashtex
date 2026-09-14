@@ -253,7 +253,8 @@ struct DiagnosticsListView: View {
     let maxHeight: CGFloat
 
     init(diagnostics: [RuntimeV1.Diagnostic], panel: DiagnosticsPanelState? = nil,
-         severityFilter: RuntimeV1.Severity? = nil, showsHeader: Bool = true, maxHeight: CGFloat = 180) {
+         severityFilter: RuntimeV1.Severity? = nil, showsHeader: Bool = true,
+         maxHeight: CGFloat = DS.Layout.diagnosticsListMaxHeight) {
         self.diagnostics = diagnostics
         self.severityFilter = severityFilter
         self.showsHeader = showsHeader
@@ -272,17 +273,17 @@ struct DiagnosticsListView: View {
         VStack(alignment: .leading, spacing: 0) {
             if showsHeader {
                 Text("Diagnostics (\(diags.count)\(groups.count < diags.count ? " in \(groups.count) groups" : "")) — the preview above is still shown; errors are not hidden")
-                    .font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 4)
+                    .font(DS.Fonts.header).padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
             }
             if let carriedLine = model.chrome.carriedLine {
                 Text("Underlines \(carriedLine); the list below is the failed result's.")
-                    .font(.caption).foregroundStyle(.orange).padding(.horizontal, 8).padding(.bottom, 4)
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning).padding(.horizontal, DS.Space.m).padding(.bottom, DS.Space.xs)
             }
             List(groups, selection: $panel.selection) { g in
                 row(g, in: diags, status: status)
             }
             .accessibilityIdentifier(Self.listIdentifier)
-            .frame(minHeight: 80, maxHeight: maxHeight)
+            .frame(minHeight: DS.Layout.diagnosticsListMinHeight, maxHeight: maxHeight)
             .onKeyPress(.return) { model.goToSelectedOccurrence(panel: panel); return .handled }
             .onKeyPress(.escape) { model.returnKeyboardToEditor(); return .handled }
             .copyable([model.diagnosticsCopyText(panel: panel)])
@@ -316,31 +317,31 @@ struct DiagnosticsListView: View {
         let secondaryHelp = EditorDiagnostics.secondaryLabelHelp(d)
         HStack(alignment: .top) {
             Image(systemName: gap ? "puzzlepiece.extension" : d.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(gap ? Color.secondary : d.severity == .error ? .red : .orange)
+                .foregroundStyle(gap ? DS.Colors.textSecondary : d.severity == .error ? DS.Colors.severityError : DS.Colors.severityWarning)
             VStack(alignment: .leading) {
                 // Title and location on one line: a 30-diagnostic TeX list is two lines per row, not three.
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
                     Text(g.title)
-                    Text(location(of: g, occurrence: k, diagnostic: d, group: group)).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                    Text(location(of: g, occurrence: k, diagnostic: d, group: group)).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textTertiary).lineLimit(1)
                 }
                 if let notes = d.notes {
                     ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
-                        Text("= note: \(note)").font(.caption).foregroundStyle(.secondary)
+                        Text("= note: \(note)").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
                     }
                 }
                 if let help = d.help?.message, !help.isEmpty {
-                    Text("= help: \(help)").font(.caption).foregroundStyle(.secondary)
+                    Text("= help: \(help)").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
                 }
                 if let line = EditorDiagnostics.recoveryLine(recovery: d.recovery, status: status) {
-                    Text("↳ \(line)").font(.caption).foregroundStyle(d.recovery == nil ? .tertiary : .secondary)
+                    Text("↳ \(line)").font(DS.Fonts.secondary).foregroundStyle(d.recovery == nil ? DS.Colors.textTertiary : DS.Colors.textSecondary)
                 }
                 if let explain = model.explanations.explanation(resultID: model.resultID, index: i)?.line {
-                    Text("↳ \(explain)").font(.caption).foregroundStyle(.secondary)
+                    Text("↳ \(explain)").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
                 }
                 if let result = model.result,
                    let id = EditorDiagnostics.identity(resultID: model.resultID, index: i, in: result),
                    model.editorMarkReport.staleIdentities.contains(id) {
-                    Text("underline withheld: span edited since the compile").font(.caption2).foregroundStyle(.orange)
+                    Text("underline withheld: span edited since the compile").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning)
                 }
             }
             Spacer()

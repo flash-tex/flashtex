@@ -21,13 +21,13 @@ struct ContentView: View {
         @Bindable var model = model
         NavigationSplitView(columnVisibility: $columns) {
             WorkspaceSidebar()
-                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 360)
+                .navigationSplitViewColumnWidth(min: DS.Layout.sidebarMinWidth, ideal: DS.Layout.sidebarIdealWidth, max: DS.Layout.sidebarMaxWidth)
         } detail: {
             GeometryReader { geo in
                 VStack(spacing: 0) {
                     HSplitView {
-                        EditorPane().frame(minWidth: 340, maxWidth: .infinity)
-                        PreviewPane().frame(minWidth: 380, maxWidth: .infinity)
+                        EditorPane().frame(minWidth: DS.Layout.editorMinWidth, maxWidth: .infinity)
+                        PreviewPane().frame(minWidth: DS.Layout.previewMinWidth, maxWidth: .infinity)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     if model.problemsVisible {
@@ -35,7 +35,7 @@ struct ContentView: View {
                         // room; the list scrolls within whatever height it has.
                         // Never more than 40 % of the window: at 1000×640 the
                         // editor keeps ~15 lines instead of 10 (daniel-fable-ui-qa #3).
-                        let panelCap = max(ProblemsPanel.minHeight, min(geo.size.height - 240, geo.size.height * 0.4))
+                        let panelCap = max(ProblemsPanel.minHeight, min(geo.size.height - DS.Layout.editorMinHeightAbovePanel, geo.size.height * DS.Layout.problemsMaxFraction))
                         PanelResizeHandle(height: $problemsHeight, range: ProblemsPanel.minHeight...panelCap)
                         ProblemsPanel().frame(height: min(problemsHeight, panelCap))
                     }
@@ -46,7 +46,7 @@ struct ContentView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .inspector(isPresented: $model.captureInboxVisible) { // Captures (CaptureInbox.swift): View > Captures, ⌘⇧I
-            CaptureInboxPanel(inbox: model.captureInbox).inspectorColumnWidth(min: 300, ideal: 360, max: 560)
+            CaptureInboxPanel(inbox: model.captureInbox).inspectorColumnWidth(min: DS.Layout.inspectorMinWidth, ideal: DS.Layout.inspectorIdealWidth, max: DS.Layout.inspectorMaxWidth)
         }
         .toolbar { WorkspaceToolbar(openWindow: openWindow) }
         .sheet(isPresented: $model.commandPaletteShown) { CommandPalette().environment(model) }
@@ -64,7 +64,7 @@ private struct PanelResizeHandle: View {
 
     var body: some View {
         Rectangle().fill(.clear)
-            .frame(height: 7)
+            .frame(height: DS.Layout.resizeHandleHeight)
             .overlay(Divider(), alignment: .center)
             .contentShape(Rectangle())
             .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
@@ -246,7 +246,7 @@ private struct CaptureBar: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DS.Space.m) {
             Button("Pin insertion point") { model.pinAnchorAtCaret() }
                 .controlSize(.small)
                 .help("Use the caret as the destination for capture proposals (⌘⌥P)")
@@ -264,7 +264,7 @@ private struct CaptureBar: View {
                 .controlSize(.small)
             }
         }
-        .padding(.horizontal, 8).padding(.vertical, 4)
+        .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
         .background(.bar)
         .accessibleCaptureBar(anchor: model.anchor.map { "\($0.id) at \($0.path) byte \($0.byteOffset), revision \($0.revision)" }, proposals: model.proposals.count) // FlashTeXAccessibility
         .sheet(item: Binding(get: { model.reviewing.map { ReviewItem(proposal: $0) } },
@@ -280,10 +280,10 @@ private struct BridgeBar: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text("bridge:").font(.caption.bold())
+        HStack(spacing: DS.Space.m) {
+            Text("bridge:").font(DS.Fonts.header)
             Text(model.bridgeStatus).font(.caption)
-                .foregroundStyle(model.bridgeAttached ? Color.secondary : Color.orange).lineLimit(1)
+                .foregroundStyle(model.bridgeAttached ? DS.Colors.textSecondary : DS.Colors.severityWarning).lineLimit(1)
             if let d = model.bridgeDestination {
                 Text("· destination \(d.destinationId) bytes \(d.startByte)..<\(d.endByte) @ rev \(d.pinnedRevision)\(d.valid ? "" : " (invalid)")")
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -298,7 +298,7 @@ private struct BridgeBar: View {
                     .help("capture_convert for the latest received capture (Edit > Convert Capture)")
             }
         }
-        .padding(.horizontal, 8).padding(.vertical, 3)
+        .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xxs)
         .background(.bar)
     }
 }
@@ -333,7 +333,7 @@ struct PreviewPane: View {
         }
         .sheet(isPresented: Binding(get: { model.quickFix != nil }, set: { if !$0 { model.quickFix = nil } })) {
             if let p = model.quickFix {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: DS.Space.m) {
                     Text("Suggested fix").font(.headline)
                     Text(p.summary).font(.caption).foregroundStyle(.secondary)
                     Text("Before").font(.caption.bold())
@@ -348,7 +348,7 @@ struct PreviewPane: View {
                         Button("Apply") { model.applyQuickFix() }.keyboardShortcut(.defaultAction)
                     }
                 }
-                .padding(16).frame(minWidth: 480)
+                .padding(DS.Space.xl).frame(minWidth: DS.Layout.sheetMinWidth)
                 .accessibilityElement(children: .contain).accessibilityLabel("Suggested fix preview")
             }
         }
@@ -366,59 +366,59 @@ struct PreviewHeader: View {
         // `editorRevision` or `inFlightRevision`: this header re-evaluated on
         // every keystroke and every reply (FT-071 main-thread sample).
         let chrome = model.chrome
-        HStack(spacing: 8) {
+        HStack(spacing: DS.Space.m) {
             sourceBadge(chrome)
             if chrome.hasResult {
                 Text(sourceName(chrome)).font(.caption).lineLimit(1)
                     .help(chrome.resultHelp)
                 if model.previewDebugStatus, let status = chrome.resultStatus {
-                    Text(status.rawValue).font(.caption.bold()).foregroundStyle(statusColor(status))
+                    Text(status.rawValue).font(DS.Fonts.header).foregroundStyle(statusColor(status))
                 }
                 if chrome.resultStatus == .recovered && model.previewDebugStatus {
-                    Text("provisional rendering").font(.caption).foregroundStyle(.orange).lineLimit(1).fixedSize()
+                    Text("provisional rendering").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning).lineLimit(1).fixedSize()
                         .help("recovered: preview shown with provisional rendering")
                 }
                 // Fixed-size slot: toggling the indicator never changes the header's layout.
-                Color.clear.frame(width: 12, height: 12)
+                Color.clear.frame(width: DS.Size.inlineStatusSlot, height: DS.Size.inlineStatusSlot)
                     .overlay { if chrome.compiling { ProgressView().controlSize(.mini) } }
                 if let historical = chrome.historicalLabel {
-                    Text(historical).font(.caption.bold()).foregroundStyle(.purple).lineLimit(1)
+                    Text(historical).font(DS.Fonts.header).foregroundStyle(DS.Colors.statusHistorical).lineLimit(1)
                         .help("A completed older snapshot is shown while the helper compiles the newer revision; navigation, caret sync, capture destinations and export return with the current preview.")
                 } else if let stale = chrome.staleText { // the reply exceeded a bound, or "editor at rN — compiling…" (ShellChrome)
                     Text(stale)
-                        .font(.caption).foregroundStyle(chrome.staleHighlighted ? .orange : .secondary).lineLimit(1) // routine "compiling…" is quiet; only bounds/no-producer are highlighted
+                        .font(DS.Fonts.secondary).foregroundStyle(chrome.staleHighlighted ? DS.Colors.severityWarning : DS.Colors.textSecondary).lineLimit(1) // routine "compiling…" is quiet; only bounds/no-producer are highlighted
                 }
             } else if let err = chrome.loadError {
-                Text(err).font(.caption).foregroundStyle(.red).lineLimit(1).help(err)
+                Text(err).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityError).lineLimit(1).help(err)
             } else {
-                Text("Preview").font(.caption.bold()).foregroundStyle(.secondary)
+                Text("Preview").font(DS.Fonts.header).foregroundStyle(DS.Colors.textSecondary)
             }
             Spacer()
             PreviewZoomControl() // PreviewZoom.swift: percentage and −/+
             ForEach(chrome.capabilityNotes, id: \.self) { note in
-                Image(systemName: "exclamationmark.circle").foregroundStyle(.orange).help(note)
+                Image(systemName: "exclamationmark.circle").foregroundStyle(DS.Colors.severityWarning).help(note)
                     .accessibilityLabel(note)
             }
             Text(chrome.acceptedCapabilities.isEmpty ? "legacy layout" : chrome.acceptedCapabilities.joined(separator: ", "))
-                .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textTertiary).lineLimit(1)
                 .help(chrome.acceptedCapabilities.isEmpty
                       ? "No layout capability accepted for this result: U+2500 fraction bars are an approximation."
                       : "Capabilities the worker accepted for this result (typed rules / explicit font hints).")
         }
-        .padding(.horizontal, 10).padding(.vertical, 5)
+        .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
         .background(.bar)
     }
 
     private func sourceBadge(_ chrome: ShellChrome) -> some View {
         let (label, color): (String, Color) = switch chrome.previewSource {
-        case .none: ("NONE", .gray)
-        case .fixture: ("FIXTURE", .orange)
-        case .worker: chrome.historicalLabel != nil ? ("HISTORICAL", .purple) : ("WORKER", .green)
+        case .none: ("NONE", DS.Colors.textTertiary)
+        case .fixture: ("FIXTURE", DS.Colors.severityWarning)
+        case .worker: chrome.historicalLabel != nil ? ("HISTORICAL", DS.Colors.statusHistorical) : ("WORKER", DS.Colors.severitySuccess)
         }
         return Text(label)
-            .font(.caption2.bold())
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(color.opacity(0.25), in: Capsule())
+            .font(DS.Fonts.header)
+            .padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs)
+            .background(color.opacity(DS.State.badgeFillOpacity), in: Capsule())
             .help(chrome.previewSource == .fixture ? "Not a real compile." : model.producerSummary)
     }
 
@@ -431,7 +431,7 @@ struct PreviewHeader: View {
     }
 
     private func statusColor(_ s: RuntimeV1.Status) -> Color {
-        switch s { case .ok: .green; case .recovered: .orange; case .failed: .red }
+        switch s { case .ok: DS.Colors.severitySuccess; case .recovered: DS.Colors.severityWarning; case .failed: DS.Colors.severityError }
     }
 }
 
@@ -447,7 +447,7 @@ struct StatusBar: View {
         // latency, route tooltip, problem counts and notes change on every
         // keystroke / reply, and this bar re-evaluated with each of them.
         let chrome = model.chrome
-        HStack(spacing: 12) {
+        HStack(spacing: DS.Space.l) {
             Label("r\(chrome.editorRevision)", systemImage: "pencil.line")
                 .help("Editor revision (increments on every edit)")
             if let durable = chrome.durableRevision {
@@ -468,16 +468,16 @@ struct StatusBar: View {
                 Button {
                     model.problemsVisible.toggle()
                 } label: {
-                    HStack(spacing: 6) {
-                        if problems.errors > 0 { Label("\(problems.errors)", systemImage: "xmark.octagon.fill").foregroundStyle(.red) }
-                        if problems.warnings > 0 { Label("\(problems.warnings)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
-                        if problems.gaps > 0 { Label("\(problems.gaps)", systemImage: "puzzlepiece.extension").foregroundStyle(.secondary) }
+                    HStack(spacing: DS.Space.s) {
+                        if problems.errors > 0 { Label("\(problems.errors)", systemImage: "xmark.octagon.fill").foregroundStyle(DS.Colors.severityError) }
+                        if problems.warnings > 0 { Label("\(problems.warnings)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(DS.Colors.severityWarning) }
+                        if problems.gaps > 0 { Label("\(problems.gaps)", systemImage: "puzzlepiece.extension").foregroundStyle(DS.Colors.textSecondary) }
                     }
                 }
                 .buttonStyle(.plain)
                 .help("Errors, warnings and not-implemented gaps of the last result — click to show or hide the Problems panel (⌘⇧M)")
             }
-            Divider().frame(height: 12)
+            Divider().frame(height: DS.Size.inlineDividerHeight)
             Text(chrome.note ?? "Click text in the preview to select its source range.")
                 .foregroundStyle(.secondary).lineLimit(1)
             Spacer()
@@ -493,9 +493,10 @@ struct StatusBar: View {
                 Text(note).foregroundStyle(.secondary).lineLimit(1).help(note)
             }
         }
-        .font(.caption)
+        .font(DS.Fonts.secondary)
         .monospacedDigit()
-        .padding(.horizontal, 12).padding(.vertical, 4)
+        .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.xs)
+        .frame(height: DS.Row.statusBar)
         .background(.bar)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status bar")
@@ -539,7 +540,7 @@ private struct ProposalReviewSheet: View {
     @StateObject private var preview = ProposalPreview(executable: ShellModel.locateCompiler()) // shadow compile (ProposalPreview.swift)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
             Text("Review capture \(proposal.captureId)").font(.headline)
             if model.isBridgeCapture(proposal.captureId) {
                 Text("Bridge capture: approval asks the bridge for a prepared edit, verifies revision, SHA-256 and removed text, then inserts once. The LaTeX must stay as proposed.")
@@ -548,18 +549,18 @@ private struct ProposalReviewSheet: View {
                     Text("Bridge destination \(d.destinationId): \(d.path) bytes \(d.startByte)..<\(d.endByte)").font(.caption).foregroundStyle(.secondary)
                 }
                 if let cr = proposal.contextRevision {
-                    Text("Context revision \(cr)\(cr == model.editorRevision ? "" : " (editor is at \(model.editorRevision))")").font(.caption).foregroundStyle(cr == model.editorRevision ? Color.secondary : Color.orange)
+                    Text("Context revision \(cr)\(cr == model.editorRevision ? "" : " (editor is at \(model.editorRevision))")").font(.caption).foregroundStyle(cr == model.editorRevision ? DS.Colors.textSecondary : DS.Colors.severityWarning)
                 }
             }
             if let a = model.anchor {
                 Text("Inserts at \(a.path) byte \(a.byteOffset) (anchor \(a.id))").font(.caption).foregroundStyle(.secondary)
             } else {
                 Label("No insertion point pinned — approve will fail until you pin one.", systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.caption).foregroundStyle(DS.Colors.severityWarning)
             }
             TextEditor(text: $latex)
                 .font(.system(.body, design: .monospaced))
-                .frame(minHeight: 140)
+                .frame(minHeight: DS.Layout.sheetTextEditorMinHeight)
                 .border(.separator)
             ProposalPreviewView(preview: preview)
             if !proposal.ambiguities.isEmpty {
@@ -571,7 +572,7 @@ private struct ProposalReviewSheet: View {
             }
             if let failure {
                 Label(failure, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout).foregroundStyle(.orange)
+                    .font(.callout).foregroundStyle(DS.Colors.severityWarning)
                     .textSelection(.enabled)
                     .accessibilityIdentifier("review.failure")
             }
@@ -599,8 +600,8 @@ private struct ProposalReviewSheet: View {
                 .disabled((model.anchor == nil && !model.isBridgeCapture(proposal.captureId)) || latex.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
-        .padding(16)
-        .frame(width: 520)
+        .padding(DS.Space.xl)
+        .frame(width: DS.Layout.sheetWidth)
         .onAppear { latex = proposal.latex; preview.update(from: model, latex: proposal.latex) }
         .onChange(of: latex) { _, new in failure = nil; preview.update(from: model, latex: new) }
         .onChange(of: model.editorRevision) { _, _ in preview.update(from: model, latex: latex) }
@@ -622,7 +623,7 @@ struct VimStatusLine: View {
     var body: some View {
         let status = VimMode.Status.shared
         if let indicator = status.indicator {
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Space.m) {
                 Text(indicator)
                     .fontWeight(.semibold)
                     .help("Vim keybindings are on (Settings, or View > Toggle Vim Keybindings ⌃⌘V)")
@@ -632,9 +633,9 @@ struct VimStatusLine: View {
                 }
                 Spacer(minLength: 0)
             }
-            .font(.caption)
+            .font(DS.Fonts.secondary)
             .monospacedDigit()
-            .padding(.horizontal, 8).padding(.vertical, 3)
+            .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xxs)
             .background(.bar)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Vim status line")

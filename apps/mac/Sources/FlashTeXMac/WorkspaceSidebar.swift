@@ -59,15 +59,15 @@ private struct ProjectSection: View {
                     model.switchOrNote(doc.path)
                 } label: {
                     Label {
-                        HStack(spacing: 4) {
+                        HStack(spacing: DS.Space.xs) {
                             Text(doc.path).lineLimit(1).truncationMode(.middle)
-                            if doc.isDirty { Circle().fill(.orange).frame(width: 6, height: 6).accessibilityLabel("edited") }
+                            if doc.isDirty { Circle().fill(DS.Colors.statusModified).frame(width: DS.Size.modifiedDot, height: DS.Size.modifiedDot).accessibilityLabel("edited") }
                             Spacer(minLength: 0)
-                            if let r = doc.durableRevision { Text("r\(r)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit() }
+                            if let r = doc.durableRevision { Text("r\(r)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary) }
                         }
                     } icon: {
                         Image(systemName: Self.icon(for: doc, kind: kinds.kind(of: doc.path)))
-                            .foregroundStyle(doc.path == model.activePath ? Color.accentColor : Color.secondary)
+                            .foregroundStyle(doc.path == model.activePath ? DS.Colors.accentSelection : DS.Colors.textSecondary)
                     }
                 }
                 .help(Self.tooltip(for: doc, kind: kinds.kind(of: doc.path)))
@@ -102,11 +102,11 @@ private struct ProjectSection: View {
                     Task { await model.project.createMissingInclude(n.reference.argument, from: n.from); model.navigationNote = model.project.status }
                 } label: {
                     Label {
-                        HStack(spacing: 4) {
-                            Text(name).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
-                            Text("missing — create").font(.caption2).foregroundStyle(.orange)
+                        HStack(spacing: DS.Space.xs) {
+                            Text(name).lineLimit(1).truncationMode(.middle).foregroundStyle(DS.Colors.textSecondary)
+                            Text("missing — create").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning)
                         }
-                    } icon: { Image(systemName: "doc.badge.plus").foregroundStyle(.orange) }
+                    } icon: { Image(systemName: "doc.badge.plus").foregroundStyle(DS.Colors.severityWarning) }
                 }
                 .help("\\\(n.reference.kind.rawValue){\(n.reference.argument)} from \(n.from) has no file — click to create \(name)")
                 .accessibilityLabel("\(name), missing, included from \(n.from); activate to create it")
@@ -115,9 +115,9 @@ private struct ProjectSection: View {
             HStack {
                 Label("Project", systemImage: "folder")
                 Spacer()
-                Text("\(listing.count)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
+                Text("\(listing.count)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
                 Button { model.scaffold.presentNewFile() } label: { Image(systemName: "plus") } // ProjectScaffoldViews.swift
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .buttonStyle(.plain).foregroundStyle(DS.Colors.textSecondary)
                     .disabled(model.project.projectRoot == nil)
                     .help("New File… (⌘N): a rooted .tex file in this project, opened in a tab")
                     .accessibilityLabel("New file")
@@ -181,7 +181,7 @@ private struct OutlineSection: View {
             CaretFollower(outline: outline, currentID: $currentID)
             if outline.isEmpty {
                 Text(stale ? "Scanning…" : "No sections, environments or labels in \(model.activePath)")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
             }
             ForEach(DocumentOutline.Kind.allCases, id: \.self) { kind in
                 let items = DocumentOutline.items(kind, in: outline)
@@ -192,13 +192,13 @@ private struct OutlineSection: View {
                             SidebarRow(selected: item.id == currentID) {
                                 model.reveal(outlineItem: item)
                             } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: Self.icon(item)).foregroundStyle(.secondary).font(.caption)
+                                HStack(spacing: DS.Space.xs) {
+                                    Image(systemName: Self.icon(item)).foregroundStyle(DS.Colors.textSecondary).font(DS.Fonts.secondary)
                                     Text(item.displayTitle.isEmpty ? "(untitled)" : item.displayTitle).lineLimit(1)
                                     Spacer(minLength: 0)
-                                    Text("\(item.line)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
+                                    Text("\(item.line)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
                                 }
-                                .padding(.leading, CGFloat(min(max(0, item.kind == .section ? item.level - topLevel : item.level), 4)) * 10)
+                                .padding(.leading, CGFloat(min(max(0, item.kind == .section ? item.level - topLevel : item.level), 4)) * DS.Space.m)
                             }
                             .help(Self.tooltip(item))
                             .accessibilityLabel(Self.spoken(item))
@@ -207,7 +207,7 @@ private struct OutlineSection: View {
                         HStack {
                             Text(kind.title)
                             Spacer()
-                            Text("\(counts[kind] ?? 0)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
+                            Text("\(counts[kind] ?? 0)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
                         }
                     }
                 }
@@ -279,13 +279,13 @@ private struct ProblemsSection: View {
         let (errors, warnings, gaps) = EditorDiagnostics.counts(diags)
         Section {
             if diags.isEmpty {
-                Label { Text("No problems").foregroundStyle(.secondary) } icon: { Image(systemName: "checkmark.circle").foregroundStyle(.green) }
-                    .font(.caption)
+                Label { Text("No problems").foregroundStyle(DS.Colors.textSecondary) } icon: { Image(systemName: "checkmark.circle").foregroundStyle(DS.Colors.severitySuccess) }
+                    .font(DS.Fonts.secondary)
             } else {
-                row("\(errors) error\(errors == 1 ? "" : "s")", icon: "xmark.octagon.fill", tint: .red, filter: .error, enabled: errors > 0)
-                row("\(warnings) warning\(warnings == 1 ? "" : "s")", icon: "exclamationmark.triangle.fill", tint: .orange, filter: .warning, enabled: warnings > 0)
-                if gaps > 0 { row("\(gaps) not implemented", icon: "puzzlepiece.extension", tint: .secondary, filter: nil, enabled: true) }
-                row("All \(diags.count)", icon: "list.bullet.rectangle", tint: .secondary, filter: nil, enabled: true)
+                row("\(errors) error\(errors == 1 ? "" : "s")", icon: "xmark.octagon.fill", tint: DS.Colors.severityError, filter: .error, enabled: errors > 0)
+                row("\(warnings) warning\(warnings == 1 ? "" : "s")", icon: "exclamationmark.triangle.fill", tint: DS.Colors.severityWarning, filter: .warning, enabled: warnings > 0)
+                if gaps > 0 { row("\(gaps) not implemented", icon: "puzzlepiece.extension", tint: DS.Colors.textSecondary, filter: nil, enabled: true) }
+                row("All \(diags.count)", icon: "list.bullet.rectangle", tint: DS.Colors.textSecondary, filter: nil, enabled: true)
             }
         } header: {
             Label("Problems", systemImage: "exclamationmark.triangle")
@@ -297,7 +297,7 @@ private struct ProblemsSection: View {
             model.problemsSeverityFilter = filter
             model.problemsVisible = true
         } label: {
-            Label { Text(title) } icon: { Image(systemName: icon).foregroundStyle(enabled ? tint : Color.secondary) }
+            Label { Text(title) } icon: { Image(systemName: icon).foregroundStyle(enabled ? tint : DS.Colors.textSecondary) }
         }
         .disabled(!enabled)
         .help("Show the Problems panel (⌘⇧M)\(filter.map { " filtered to \($0.rawValue)s" } ?? "")")
@@ -320,9 +320,9 @@ struct SidebarRow<Label: View>: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 6).padding(.vertical, 2)
-        .background(selected ? Color.accentColor.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
-        .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
+        .padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs)
+        .background(selected ? DS.Colors.accentSelection.opacity(DS.State.selectionTintOpacity) : Color.clear, in: RoundedRectangle(cornerRadius: DS.Radius.tab))
+        .listRowInsets(EdgeInsets(top: DS.Size.hairline, leading: DS.Space.xs, bottom: DS.Size.hairline, trailing: DS.Space.xs))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

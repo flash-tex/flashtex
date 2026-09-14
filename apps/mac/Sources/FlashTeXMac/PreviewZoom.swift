@@ -42,11 +42,11 @@ struct PreviewZoomControl: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: DS.Space.xxs) {
             Button { model.previewZoomOut() } label: { Image(systemName: "minus.magnifyingglass") }
                 .help("Zoom Out (⌘-)").accessibilityLabel("Zoom out preview")
             Text("\(PreviewZoom.percent(fit: model.previewFitScale, zoom: model.previewZoom)) %")
-                .font(.caption.monospacedDigit()).frame(minWidth: 40)
+                .font(DS.Fonts.monoSecondary).frame(minWidth: DS.Size.zoomReadoutMinWidth)
                 .help("Preview zoom; ⌘0 actual size, ⌘9 fit width, or pinch on the preview")
                 .accessibilityLabel("Preview zoom \(PreviewZoom.percent(fit: model.previewFitScale, zoom: model.previewZoom)) percent")
                 .onTapGesture(count: 2) { model.previewFitWidth() }

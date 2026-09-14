@@ -40,7 +40,7 @@ struct PreviewView: View {
                 // `.equatable()`: a page whose items, caret set and scale did not
                 // change keeps its display list, so a keystroke re-draws only the
                 // pages whose layout (or source offsets) actually moved.
-                VStack(spacing: 24) {
+                VStack(spacing: DS.Preview.pageSpacing) {
                     ForEach(result.pages, id: \.number) { page in
                         PageView(page: page, totalPages: result.pages.count, dark: dark, caretItems: caretItems[page.number] ?? [], scale: scale,
                                  rulesNegotiated: result.layoutCapabilities?.contains(RuntimeV1.LayoutCapabilities.rulesV1) == true,
@@ -49,7 +49,7 @@ struct PreviewView: View {
                             .id(page.number)
                     }
                 }
-                .padding(24)
+                .padding(DS.Preview.pageSpacing)
                 .background(PreviewAnchorKeeper(layout: layout, follow: follow, onUserScroll: onUserScroll))
             }
             .onChange(of: fit, initial: true) { _, f in onFitScale?(f) }
@@ -60,7 +60,7 @@ struct PreviewView: View {
             // screen, and to the item rather than the page.
         }
         }
-        .background(dark ? Color(white: 0.12) : Color(nsColor: .windowBackgroundColor))
+        .background(dark ? DS.Preview.darkGround : DS.Colors.surfaceGround)
     }
 }
 
@@ -85,11 +85,11 @@ private struct PageView: View, Equatable {
         HitTestCanvas(page: page, dark: dark, scale: scale, caretItems: caretItems, rulesNegotiated: rulesNegotiated, onSelect: onSelect)
             .frame(width: size.width, height: size.height)
             .overlay(alignment: .topLeading) { AccessibilityOverlay(page: page, totalPages: totalPages, scale: scale, fontName: { PreviewFonts.postScriptName(size: $0) }, onSelect: onSelect) } // FlashTeXAccessibility
-            .background(dark ? Color(white: 0.16) : .white)
-            .shadow(radius: 4)
+            .background(dark ? DS.Preview.darkPage : .white)
+            .shadow(radius: DS.Preview.pageShadowRadius)
             .overlay(alignment: .bottomTrailing) {
                 Text("page \(page.number)")
-                    .font(.caption2).foregroundStyle(.secondary).padding(4)
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).padding(DS.Space.xs)
             }
     }
 }
@@ -118,14 +118,14 @@ private struct HitTestCanvas: View {
         Canvas { context, _ in
             let cache = PreviewTextCache.shared
             let ink: Color = dark ? .white : .black
-            let inkCG: CGColor = dark ? CGColor(gray: 1, alpha: 1) : CGColor(gray: 0, alpha: 1)
+            let inkCG: CGColor = dark ? DS.Preview.darkInkCG : DS.Preview.lightInkCG
             for (index, item) in page.items.enumerated() {
                 if case .rule(let rule) = item {
                     // Typed rule: top-left anchored contract geometry (dark preview only recolors).
                     let rect = RuleGeometry.previewRect(rule, scale: scale)
                     context.fill(Path(rect), with: .color(ink))
                     if hover == index {
-                        context.fill(Path(rect.insetBy(dx: -2, dy: -2)), with: .color(Color.accentColor.opacity(0.25)))
+                        context.fill(Path(rect.insetBy(dx: -DS.Space.xxs, dy: -DS.Space.xxs)), with: .color(DS.Colors.accentSelection.opacity(DS.Preview.caretHighlightOpacity)))
                     }
                     continue
                 }
@@ -146,7 +146,7 @@ private struct HitTestCanvas: View {
                 if caretItems.contains(index) {
                     // Secondary (caret) highlight: subtle fill plus an underline.
                     context.fill(Path(rect.insetBy(dx: -2, dy: -1)),
-                                 with: .color(Color.accentColor.opacity(0.15)))
+                                 with: .color(DS.Colors.accentSelection.opacity(DS.Preview.occurrenceHighlightOpacity)))
                     let y = rect.maxY + 1
                     var underline = Path()
                     underline.move(to: CGPoint(x: rect.minX, y: y))
@@ -155,7 +155,7 @@ private struct HitTestCanvas: View {
                 }
                 if hover == index {
                     context.fill(Path(rect.insetBy(dx: -2, dy: -1)),
-                                 with: .color(Color.accentColor.opacity(0.25)))
+                                 with: .color(DS.Colors.accentSelection.opacity(DS.Preview.caretHighlightOpacity)))
                 }
                 context.withCGContext { cg in
                     // The canvas context is y-down; flip the text matrix so glyphs
