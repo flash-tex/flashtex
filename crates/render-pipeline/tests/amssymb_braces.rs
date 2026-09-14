@@ -19,7 +19,7 @@ fn doc(body: &str) -> String {
 
 fn runs(r: &Rendered) -> Vec<&GlyphRun> {
     r.v2.pages[0]
-        .items
+        .resident_items()
         .iter()
         .filter_map(|i| if let Item::GlyphRun(run) = i { Some(run) } else { None })
         .collect()
@@ -93,7 +93,7 @@ fn overbrace_paints_assembly_parts_and_leader_rules_with_limits() {
     // Left end, middle, right end: cmex's second middle piece paints nothing.
     assert_eq!(gs.iter().filter(|g| g.0 == "⏞").count(), 3, "{gs:?}");
     assert_eq!(gs.iter().filter(|g| g.0 == "⏟").count(), 3, "{gs:?}");
-    let rules = r.v2.pages[0].items.iter().filter(|i| matches!(i, Item::Rule(_))).count();
+    let rules = r.v2.pages[0].resident_items().iter().filter(|i| matches!(i, Item::Rule(_))).count();
     assert!(rules >= 4, "two \\leaders\\vrule fills per brace, got {rules}");
     // The limits are script size.
     assert!(gs.iter().any(|g| g.0 == "n" && g.3 < 9.0), "{gs:?}");

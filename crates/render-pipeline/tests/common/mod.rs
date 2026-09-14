@@ -77,7 +77,7 @@ pub struct Word {
 pub fn words_of(r: &Rendered) -> Vec<Word> {
     let mut words = Vec::new();
     for page in &r.v2.pages {
-        for it in &page.items {
+        for it in page.resident_items() {
             if let flashtex_render_pipeline::display::Item::GlyphRun(run) = it {
                 let Some(first) = run.glyphs.first() else { continue };
                 let last = run.glyphs.last().expect("non-empty");

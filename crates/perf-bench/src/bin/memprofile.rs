@@ -11,14 +11,22 @@
 //!   the expander's thread-local caches, the compiler's own arenas);
 //!   `RSS - live` is allocator retention and fragmentation.
 //!
-//! Usage: `memprofile <case-id> [--no-warm]`.
+//! Usage: `memprofile <case-id> [--no-warm] [--window FIRST:COUNT] [--render-only]`.
+//!
+//! `--window` materialises only that page range
+//! (`protocol/proposals/display-list-v2-window.md`); it implies `--render-only`,
+//! because `protocol::handle_line` has no window on the wire in r1. Compare a
+//! windowed run against `--render-only` WITHOUT `--window`, not against the
+//! default run: the default drives warm keystrokes through the protocol, which
+//! also builds the v1 payload and the JSON line, and those bytes are not the
+//! window's to remove.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use flashtex_perf_bench::{corpus, fontgate, sys};
 use flashtex_render_pipeline::memsize;
-use flashtex_render_pipeline::{protocol, RenderCache, RenderOptions};
+use flashtex_render_pipeline::{protocol, PageWindow, RenderCache, RenderOptions};
 
 struct Counting;
 
@@ -65,6 +73,11 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let want = args.first().cloned().unwrap_or_else(|| "synthetic-2mb".into());
     let warm = !args.iter().any(|a| a == "--no-warm");
+    let window = args.iter().position(|a| a == "--window").and_then(|i| args.get(i + 1)).map(|spec| {
+        let (f, c) = spec.split_once(':').expect("--window FIRST:COUNT");
+        PageWindow { first_page: f.parse().expect("FIRST"), page_count: c.parse().expect("COUNT") }
+    });
+    let render_only = window.is_some() || args.iter().any(|a| a == "--render-only");
 
     // crates/perf-bench -> crates -> repo root, as `main.rs` resolves it.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -91,7 +104,7 @@ fn main() {
     let before = live();
     let cache = RenderCache::new();
     let rendered =
-        flashtex_render_pipeline::render_cached(&docs, &case.entry, 1, "memprofile", &fonts, &options, Some(&cache));
+        flashtex_render_pipeline::render_windowed(&docs, &case.entry, 1, "memprofile", &fonts, &options, Some(&cache), window);
     fontgate::check_diagnostics(&rendered.v2.diagnostics).expect("zero font diagnostics");
     let after_render = live();
 
@@ -103,8 +116,17 @@ fn main() {
         let base = docs_now[entry_index].1.clone();
         for step in 0..4 {
             docs_now[entry_index].1 = format!("{base}\n% keystroke {step}\n");
-            let line = request(step + 2, &docs_now, &case.entry);
-            let _ = protocol::handle_line(&line, &fonts, &options, Some(&cache));
+            if render_only {
+                let srcs: Vec<flashtex_compiler::parser::SourceDocument<'_>> =
+                    docs_now.iter().map(|(p, t)| flashtex_compiler::parser::SourceDocument { path: p, text: t }).collect();
+                let r = flashtex_render_pipeline::render_windowed(
+                    &srcs, &case.entry, step + 2, "memprofile", &fonts, &options, Some(&cache), window,
+                );
+                std::hint::black_box(&r.v2.pages.len());
+            } else {
+                let line = request(step + 2, &docs_now, &case.entry);
+                let _ = protocol::handle_line(&line, &fonts, &options, Some(&cache));
+            }
         }
     }
 
@@ -122,6 +144,16 @@ fn main() {
     let walked = r.total();
 
     println!("case            {} ({} bytes, {} pages)", case.id, case.bytes(), rendered.v2.pages.len());
+    match rendered.v2.window {
+        Some(w) => println!(
+            "window          pages {}-{} of {} resident ({} elided); warm path: render-only",
+            w.first_page,
+            w.first_page + w.page_count - 1,
+            rendered.v2.pages.len(),
+            rendered.v2.pages.len() as u32 - w.page_count
+        ),
+        None => println!("window          none (complete compile); warm path: {}", if render_only { "render-only" } else { "protocol" }),
+    }
     println!("VmRSS           {:>10.1} MiB", mib(rss));
     println!("VmHWM (peak)    {:>10.1} MiB", mib(peak));
     println!("live (alloc)    {:>10.1} MiB", mib(live_now));

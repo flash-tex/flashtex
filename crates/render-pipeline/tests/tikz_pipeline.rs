@@ -19,13 +19,13 @@ fn tikzpicture_becomes_paths_and_glyph_runs() {
     let out = render(&docs, "main.tex", 1, "tikz", &fonts, &RenderOptions::default());
     let page = &out.v2.pages[0];
     let texts: Vec<&str> = page
-        .items
+        .resident_items()
         .iter()
         .filter_map(|i| if let Item::GlyphRun(r) = i { Some(r.text.as_str()) } else { None })
         .collect();
     assert_eq!(texts, ["Before", "text.", "hi", "box", "After", "text."], "{texts:?}");
 
-    let paths: Vec<_> = page.items.iter().filter_map(|i| if let Item::Path(p) = i { Some(p) } else { None }).collect();
+    let paths: Vec<_> = page.resident_items().iter().filter_map(|i| if let Item::Path(p) = i { Some(p) } else { None }).collect();
     let strokes = paths.iter().filter(|p| matches!(p.op, PathPaintOp::Stroke(_))).count();
     let fills = paths.iter().filter(|p| matches!(p.op, PathPaintOp::Fill { .. })).count();
     assert_eq!(strokes, 3, "shaft, arrow tip, node border");
@@ -49,9 +49,9 @@ fn tikzpicture_becomes_paths_and_glyph_runs() {
             _ => vec![],
         }
     };
-    let before_y = ys(&page.items[0])[0];
-    let after_y = *ys(page.items.iter().rev().find(|i| matches!(i, Item::GlyphRun(_))).unwrap()).last().unwrap();
-    for p in &page.items {
+    let before_y = ys(&page.resident_items()[0])[0];
+    let after_y = *ys(page.resident_items().iter().rev().find(|i| matches!(i, Item::GlyphRun(_))).unwrap()).last().unwrap();
+    for p in page.resident_items() {
         if let Item::Path(_) = p {
             for y in ys(p) {
                 assert!(y > before_y && y < after_y, "path y {y} outside ({before_y}, {after_y})");

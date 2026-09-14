@@ -124,7 +124,9 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
     c.u(p.number as usize);
     c.t(p.width);
     c.t(p.height);
-    let items: Vec<&Item> = p.items.iter().filter(|it| wire.images || !matches!(it, Item::Image(_))).collect();
+    // Unreachable for an elided page: `snapshot`/`try_delta` refuse a windowed
+    // list before any page is digested (`display-list-v2-window` §7).
+    let items: Vec<&Item> = p.items().into_iter().flatten().filter(|it| wire.images || !matches!(it, Item::Image(_))).collect();
     c.u(items.len());
     for it in items {
         match it {
@@ -389,7 +391,7 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
         return None;
     }
     let on_wire = |it: &&Item| wire.images || !matches!(it, Item::Image(_));
-    let (bi, ni): (Vec<&Item>, Vec<&Item>) = (base.items.iter().filter(on_wire).collect(), new.items.iter().filter(on_wire).collect());
+    let (bi, ni): (Vec<&Item>, Vec<&Item>) = (base.items()?.iter().filter(on_wire).collect(), new.items()?.iter().filter(on_wire).collect());
     if bi.len() != ni.len() {
         return None;
     }
@@ -452,8 +454,8 @@ pub fn relocate_page(base: &Page, relocs: &[Relocation]) -> Option<Page> {
             }
         }
     }
-    let mut items = Vec::with_capacity(base.items.len());
-    for it in &base.items {
+    let mut items = Vec::with_capacity(base.items()?.len());
+    for it in base.items()? {
         items.push(match it {
             Item::GlyphRun(r) => {
                 let mut r = r.clone();
@@ -467,7 +469,7 @@ pub fn relocate_page(base: &Page, relocs: &[Relocation]) -> Option<Page> {
             Item::Path(p) => Item::Path(display::PathItem { provenance: prov(&p.provenance, relocs)?, ..p.clone() }),
         });
     }
-    Some(Page { number: base.number, width: base.width, height: base.height, items })
+    Some(Page::resident(base.number, base.width, base.height, items))
 }
 
 // ---------------------------------------------------------------- snapshots
@@ -566,6 +568,14 @@ pub struct Sibling {
 /// objects measured `page_bytes`) as the base for the next request. Not
 /// retained when over the caps: the next request then answers full.
 pub fn note_full(state: &DeltaState, id: &str, list: &DisplayList, wire: Wire, page_bytes: Vec<usize>, line_len: usize, documents: &[(String, String)]) {
+    // A windowed list is an incomplete view, never a delta base: its
+    // `list_digest` would bind digests for pages it did not materialise
+    // (`protocol/proposals/display-list-v2-window.md` §7). No snapshot, so the
+    // next request answers full -- today's no-snapshot path exactly.
+    if list.window.is_some() {
+        state.clear();
+        return;
+    }
     if list.pages.len() > MAX_SNAPSHOT_PAGES || line_len > MAX_SNAPSHOT_BYTES || !texts_retainable(documents) {
         state.clear();
         return;
@@ -595,6 +605,10 @@ pub fn try_delta(state: &DeltaState, id: &str, list: &DisplayList, wire: Wire, b
     let snapshot = state.snapshot.borrow();
     let snap = snapshot.as_ref()?;
     if snap.acknowledgement() != *base || snap.wire != wire || snap.project_id != list.project_id {
+        return None;
+    }
+    // A window and a delta are mutually exclusive in r1 (§7).
+    if list.window.is_some() {
         return None;
     }
     if list.pages.len() > MAX_SNAPSHOT_PAGES || !texts_retainable(documents) {

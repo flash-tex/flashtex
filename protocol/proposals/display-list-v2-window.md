@@ -1,0 +1,479 @@
+# Proposal: `display-list-v2-window` — a bounded resident page window
+
+Revision **r1, 2026-09-13** (lane linux-primary, FT-070 structural half).
+Status: **PROPOSAL + producer prototype.** The wire capability is specified
+here and is **not negotiated** — `v1.rs` does not accept the name, no consumer
+sends it, and every reply on every route is byte-for-byte what it is today.
+The producer-side mechanism (`PageWindow`, `PageContent`, the split render
+cache) is implemented behind a default that reproduces today's behaviour
+exactly, so the mechanism can be measured and gated before any wire change is
+co-signed.
+
+Sibling proposals, both unchanged by this one:
+`docs/proposals/display-list-v2-delta.md` (r5) and
+`protocol/proposals/display-list-v2-only.md` (r1).
+
+## 0. Ten-line summary
+
+1. FT-070's 100 MB target is not reachable while the whole document's display
+   list is resident. 100 MB over the 2 MB corpus case's 1507 pages is ~68 KB a
+   page — less than one page of glyph data at any representation that keeps
+   per-glyph carets and source ranges (PR #232, §5).
+2. So the document stops being resident and a **window** of pages does: the
+   pages the viewer is showing, plus a bounded margin.
+3. **The window is a production bound inside the pipeline, declared at the
+   protocol boundary.** A serialisation filter at the wire would cut wire bytes
+   and leave resident memory exactly where it is, because the producer has
+   already built all 1507 pages before it decides what to send. §2 argues this.
+4. Layout still runs over the whole document, always. Page breaking, `\pageref`,
+   floats, contents lists and footnote numbering are global; a window over them
+   would change output. Only **assembly** — turning laid-out lines into glyph
+   runs, clusters and hit rects — is windowed.
+5. The recipe for re-materialising a page already exists in the pipeline:
+   `typeset::Laid::pages` holds, per page, per line, `(block index, line index,
+   baseline)` and `Laid::line_dx` the x offsets. It is ~40 bytes a line, against
+   ~180 KB a page of assembled items. Retaining it and dropping the items is the
+   whole mechanism.
+6. Re-materialising a page is therefore: for each line, take the block's
+   `CachedBlock` (layout records, already cached whole-document), assemble it,
+   place it. No re-parse, no re-shape of unrelated text, no re-break.
+7. **The completeness contract is the hard part, not the memory.** Fonts, the
+   math resource profile and the unmapped-glyph diagnostics are *derived during
+   assembly over every block*. A window that assembles only its own pages
+   silently emits a smaller font closure and fewer diagnostics. §3 specifies
+   that they stay whole, and §5.3 the streaming pass that keeps them exact.
+8. A windowed reply is **an incomplete view, not a complete compile** — the
+   ruling `display-list-v2-delta` §9 already made. It is typed as such, it
+   never authorises a source action outside its coverage, and `Page` gains an
+   explicit `Elided` state so no consumer can mistake an unmaterialised page
+   for an empty one.
+9. `-window` composes with `-only` and is **mutually exclusive with `-delta`
+   in r1** (§7): the delta's `list_digest` binds a digest for every page, and a
+   windowed producer cannot digest a page it has not materialised.
+10. Acceptance is *equality*, not a digest: for every page of every corpus case,
+    the page materialised through a window must be byte-identical to that page
+    in the unwindowed render. §9.
+
+## 1. Why (measured, not promised)
+
+PR #232 measured the 2 MB corpus case (`synthetic-2mb`, 1507 pages, 1.48 M
+glyphs) per structure after its own win. Resident 2570 MiB, live 1458 MiB:
+
+| bucket | MiB | what it is |
+|---|---:|---|
+| allocator retention + fragmentation | 1111 | ~1.48 M small allocations in ~300 k vectors |
+| `RenderCache.assembled` | ~390 | glyph-level assembly, one entry per block |
+| display list (`DisplayList.pages`) | 263 | the same glyphs again, placed |
+| `RenderCache.blocks` | ~294 | layout records (`BuiltBlock.items`, `ClusterRec`, `BoxRec`) |
+| `RenderCache.adapted` | 52 | adapter items |
+| font / expander / compiler caches | ~495 | not reachable from the display-list walk |
+
+Two of those lines — `assembled` and the display list, ~653 MiB — are
+*per-page glyph data for pages nobody is looking at*, held because the API
+returns one `DisplayList` containing every page. A third, the fragmentation,
+is largely the allocation pattern those two create.
+
+#232's arithmetic on the target stands and is the reason this proposal exists:
+at a perfect 40-byte glyph and 64-byte cluster with zero duplication the
+display list alone is ~154 MB at 1507 pages, over target before the cache, the
+box tree or the page item slots. Representation cannot close it. Residency can.
+
+What a window does **not** touch is equally important: `RenderCache.blocks`
+(~294 MiB) and the unreached caches (~495 MiB) are whole-document by
+construction here. §10 states the honest landing.
+
+## 2. Where the window belongs
+
+The task this proposal answers was posed as: the protocol already has
+`display-list-v2-delta` and `display-list-v2-only`; does the window belong at
+that boundary rather than inside the renderer? The answer is **both, in
+different senses, and neither alone**.
+
+**Not the wire alone.** `-only` and `-delta` are both *serialisation* levers:
+they choose what of an already-built `DisplayList` reaches the consumer.
+`delta::snapshot` (`crates/render-pipeline/src/delta.rs:580`) even clones the
+full `pages` vector to keep as a base. A `-window` built the same way would
+filter `assemble`'s output after `assemble` had allocated all 1507 pages and
+inserted every block into `RenderCache.assembled`. Peak RSS, which is what
+FT-070 measures, would be unchanged. The wire is downstream of the problem.
+
+**Not the renderer alone.** If the pipeline quietly returns a `DisplayList`
+whose out-of-window pages have empty `items`, then `pdf::export`,
+`v1::fallback`, `DisplayList::required_features`, `delta::page_digest` and
+`DisplayList::to_json` all keep compiling and all produce wrong output — a PDF
+missing 1491 pages, a feature list that omits `rule` because no windowed page
+had one. Every one of those reads `.items` with no way to ask whether the page
+was built. Residency is a fact about the reply, and a fact about the reply
+belongs in the contract.
+
+**So:** the window *takes effect* in the pipeline, at `typeset::assemble`
+(`crates/render-pipeline/src/typeset.rs:6594`), which is the first point where
+per-page glyph data exists. It is *declared* in the request and *echoed and
+described* in the reply, because whether a reply covers the whole document is
+something the consumer must be told rather than infer. And it is made
+unmissable in the Rust API by giving `Page` an explicit residency state, so
+that every one of the consumers listed above fails to compile until it has
+said what it does with an elided page.
+
+## 3. What stays whole
+
+A windowed reply is smaller in exactly one respect: the glyph-level content of
+pages outside the window. Everything else is the complete document's, byte for
+byte identical to the unwindowed reply.
+
+| part | windowed? | why |
+|---|---|---|
+| page count | **no** | the consumer's scroll extent; and knowing page 900 exists requires laying out 1..899 anyway |
+| every page's `number`, `width`, `height` | **no** | the page frame is decided by layout, costs ~16 bytes a page, and the consumer needs it to place the scroll view |
+| `documents` | **no** | request-wide |
+| `fonts` (the resource closure) | **no** | per face, not per glyph; and a partial closure would fail the consumer's font validation for pages it later asks for. §5.3 |
+| `diagnostics` | **no** | a diagnostic on page 900 must be reported when the window is 1–10. Silently dropping it is the failure mode this section exists to forbid |
+| `required_features` | **no** | derived over all pages, or a consumer negotiates a feature set it cannot paint the rest of the document with |
+| page **items** outside the window | **yes** | this is the whole mechanism |
+
+Layout runs over the whole document on every render. This is not a concession
+to be optimised away later: page breaking, `\pageref` resolution (which needs a
+second pass over page numbers, `lib.rs:250`), float placement, contents lists
+and footnote numbering are all global, and a window over them would change
+where page breaks fall. The window is strictly *downstream of layout*.
+
+## 4. Wire shape (additive; not negotiated in r1)
+
+- **Request.** `payload.layout_capabilities` gains `"display-list-v2-window"`.
+  It is meaningful only next to `"display-list-v2"`. When present, the request
+  carries one additive optional field:
+
+  ```json
+  "display_list_window": { "first_page": 41, "page_count": 16 }
+  ```
+
+  `first_page` is 1-based; a window running past the last page is clamped, not
+  refused. Absent field with the capability listed = the producer chooses
+  nothing and answers unwindowed (so a consumer can advertise support before it
+  knows where the viewer is).
+
+- **Reply.** When and only when accepted, the `display_list` sibling gains one
+  object and the echoed capabilities include `"display-list-v2-window"`:
+
+  ```json
+  "window": { "first_page": 41, "page_count": 16, "document_page_count": 1507 }
+  ```
+
+  `pages[]` still has `document_page_count` entries in order. Each entry
+  outside the window carries `number`, `width`, `height` and
+  `"resident": false`, and **no `items` key at all** — absent, not `[]`, so a
+  consumer that never read the flag gets a decode error rather than a blank
+  page.
+
+  Entries inside the window are today's page objects **with no marker added**.
+  A `"resident": true` on every page would change every page's bytes and so
+  every `dl2-canon-1` page digest and every committed fixture digest, for no
+  information: the `window` object already names the range, and a page object
+  without `resident` is resident. The asymmetry is deliberate and is what keeps
+  an unwindowed line — every line on the wire today — byte-for-byte unchanged.
+
+- **Declined.** The producer answers unwindowed and omits the name from the
+  echo, exactly as `display-list-v2-only` does. The echo is the consumer's only
+  signal; it never infers from the shape of `pages[]`.
+
+- **Old producers and old consumers** are unaffected: unknown capability names
+  are not accepted (`v1.rs:55`) and unknown payload keys are read with
+  `payload.get` (`protocol.rs:117`).
+
+### 4.1 What a windowed reply does not authorise
+
+Per `display-list-v2-delta` §9, a filtered view is an incomplete view. A
+windowed reply:
+
+- **is not a complete compile** and must never be digested as one, cached as a
+  delta base, or used as the source of a PDF export;
+- **never authorises a source action outside its coverage.** Caret sync, click
+  navigation and select-to-source are valid only for resident pages. A consumer
+  that wants them for page 900 requests a window containing page 900;
+- **does not change `status`.** A windowed compile that succeeded is `ok`. The
+  window is not a diagnostic and emits none.
+
+## 5. Producer API change (Rust)
+
+This is the part that needs co-signing, because it changes public types in
+`flashtex-render-pipeline` that four other crates read.
+
+### 5.1 `Page` gains a residency state
+
+```rust
+pub enum PageContent {
+    Resident(Vec<Item>),
+    /// Laid out and counted, glyph content not materialised.
+    Elided,
+}
+
+pub struct Page {
+    pub number: u32,
+    pub width: Tick,
+    pub height: Tick,
+    pub content: PageContent,
+}
+```
+
+`pub items: Vec<Item>` becomes `pub content: PageContent`. This is deliberately
+a breaking change rather than an added `resident: bool` beside a retained
+`items`, because the failure mode being designed against is precisely a
+consumer that reads `items` without checking. There is no silent path.
+
+`Page::items()` returns `Option<&[Item]>` for the common read.
+
+### 5.2 The window is a render argument, not an option
+
+```rust
+pub struct PageWindow { pub first_page: u32, pub page_count: u32 }
+
+pub fn render_windowed(
+    documents: &[SourceDocument<'_>], entry_path: &str, revision: u64,
+    project_id: &str, fonts: &FontSet, options: &RenderOptions,
+    cache: Option<&RenderCache>, window: Option<PageWindow>,
+) -> Rendered;
+```
+
+`render` and `render_cached` keep their signatures and call this with `None`,
+which is today's behaviour exactly. The window is not in `RenderOptions`
+because `RenderOptions` is cache-keyed and a window must not partition the
+block cache — two requests differing only in window must share every layout
+record.
+
+`Rendered` gains `window: Option<PageWindow>` (the clamped, effective one).
+
+### 5.3 The streaming assembly pass
+
+`typeset::assemble` today builds `assembled: Vec<Option<Rc<AssembledBlock>>>`
+over every block (`typeset.rs:6617`), then walks pages. Three document-wide
+results are harvested from that vector after the page loop:
+
+- `used` — the font closure (a `BTreeMap` keyed by `font_id`, so
+  order-independent);
+- `profiles` — `math_resource_profile` diagnostics, first occurrence in **block
+  order**;
+- `unmapped` — `math_glyph_unmapped` diagnostics, first occurrence in **block
+  order**.
+
+A window that assembles only the blocks its pages reference would change all
+three. The pass is therefore restructured to **visit every block in the same
+order and retain selectively**:
+
+1. Build a block → `[(page index, line index)]` index from `Laid::pages`. It is
+   built from data that already exists and costs one `usize` pair per placed
+   line.
+2. For each block in order: obtain its `AssembledBlock` (cache hit, or
+   `assemble_block`); harvest `faces`, `resources`, `unmapped` — unchanged
+   order, unchanged first-occurrence semantics; place its lines into whichever
+   windowed pages reference them; then drop the `Rc` unless a windowed page
+   needs it or the (windowed) assembled cache keeps it.
+3. Pages outside the window get `PageContent::Elided`.
+
+Because step 2 visits every block in the original order and harvests before it
+drops, the closure and both diagnostic lists are **bit-identical to the
+unwindowed pass by construction**, not by test. The test in §9 is there to
+prove the construction, not to substitute for it.
+
+Cost: the whole document is still assembled once per render. The window buys
+**residency, not work**. Reducing the work is §10's follow-up, and needs the
+block cache to survive a keystroke, which it already does.
+
+### 5.4 The render cache splits by lifetime
+
+`RenderCache` (`incremental.rs:73`) holds three maps, each bounded by
+`MAX_BLOCKS = 50_000` entries and cleared wholesale. They are not the same kind
+of thing and the window separates them:
+
+| map | holds | lifetime under a window |
+|---|---|---|
+| `adapted` | adapter items | **whole document** — what makes a re-layout cheap |
+| `blocks` | `CachedBlock`: layout records, rebased | **whole document** — what makes re-materialising a page cheap |
+| `assembled` | `AssembledBlock`: glyph runs, clusters | **window-scoped** — bounded by resident pages, evicted outside |
+
+`blocks` being whole-document is what makes the promise in §0.6 true:
+`CachedBlock` carries its own `recs` and `maths`, so `assemble_block` can run
+from it without `Laid`. Re-materialising page 900 after a scroll needs the
+recipe and the cached blocks its lines name — no compiler, no paragraph
+breaking.
+
+`assembled` gains a byte budget rather than an entry count, and evicts by
+distance from the window instead of clearing. (#232's follow-up 3 asks for a
+byte budget on `blocks` too; that is a separate change and not proposed here.)
+
+### 5.5 The recipe is retained, not invented
+
+```rust
+pub struct PageRecipe {
+    pub number: u32, pub width: Tick, pub height: Tick,
+    pub lines: Vec<PlacedLine>,   // (block cache key, line index, baseline, dx)
+}
+```
+
+This is a projection of `Laid::pages` + `Laid::line_dx`, both of which the
+pipeline already computes and then drops when `assemble` consumes `Laid` by
+value. Retaining the projection alongside the cache is what makes a later
+window servable without re-layout; at ~40 bytes a placed line it is ~1.5 MB for
+the 2 MB case against the ~650 MiB it replaces.
+
+### 5.6 Consumers that must be updated (all in-tree)
+
+`pdf.rs:108`, `v1.rs:192`, `display.rs:532/559/562/575/584/592/656/720`,
+`delta.rs:470/573/623/635`, `memsize.rs:203/361`. Each must state its rule:
+
+- **`pdf::export` refuses an elided page.** A PDF is a complete document; it
+  never silently omits or blanks a page. Export requests an unwindowed render.
+- **`v1::fallback` refuses**, for the same reason `display-list-v2-only`'s
+  consumer rules refuse a v1 export of an elided result.
+- **`DisplayList::to_json`** emits the §4 shape.
+- **`delta`** refuses a windowed list as a snapshot base (§7).
+- **`required_features`** is computed during the streaming pass, over every
+  block, not over `pages` (it is the one place today's code reads all items
+  purely to classify them).
+
+## 6. The edit path
+
+An edit invalidates by source range, as it does today; nothing in that changes.
+What changes is what is rebuilt after it:
+
+1. Changed documents re-parse; `adapted` entries whose blocks moved are
+   rebased, the changed ones rebuilt (today's behaviour).
+2. `blocks` entries are reused by key for unchanged blocks (today's behaviour).
+   This is the expensive cache and the window does not touch it.
+3. Layout re-runs whole-document and produces a fresh `Laid` — fresh page
+   breaks, fresh recipes. Cheap relative to assembly: it is line boxes and
+   heights, no glyphs.
+4. Only the window is assembled.
+
+So a keystroke's assembly cost goes from 1507 pages to the window, and the
+number the editor feels is bounded by the window rather than the document. That
+is a claim about work, and this proposal deliberately does not quantify it: the
+measuring box is shared and under load (§10's note), and #232 made the same
+call. Memory is reported; timings are not.
+
+**Scroll** is the new path: the viewer moves to page 900, the consumer requests
+a window there, and the producer serves it from the recipe and `blocks` without
+re-parsing or re-breaking. Whether the recipe is still valid is decided by the
+same revision check the delta uses — a recipe belongs to one revision, and a
+scroll at a stale revision is a fresh render, not a patched one.
+
+## 7. Composition
+
+**With `display-list-v2-only`: composes, and they want each other.** `-only`
+elides the runtime-v1 `pages` when a v2 sibling is present; `-window` shrinks
+the sibling. Neither reads the other's field. A request may list both.
+
+**With `display-list-v2-delta`: mutually exclusive in r1.** The delta's
+identity (`-delta` §2) binds `page_count`, a digest for **every** page, and a
+`list_digest` over all of them. A windowed producer does not have the digest of
+a page it has not materialised, and materialising every page to digest it is
+the thing this proposal exists to stop. A request listing both is answered with
+the **window**, and the echo says so; the consumer treats `-delta`'s absence
+from the echo as a decline and does not send `display_list_base`.
+
+Composing them is a real and probably desirable r2 — a delta over the window's
+pages, against a base that is itself windowed — but it needs a digest identity
+that is honest about partial coverage, and inventing one here would be
+speculation. Named as deferred, not as solved.
+
+## 8. Refusals
+
+Typed, and all on the producer side in r1 (there is no consumer yet):
+
+| condition | producer answer |
+|---|---|
+| `-window` listed without `display-list-v2` | not accepted; unwindowed reply, name absent from echo |
+| `first_page` 0, or `page_count` 0 | not accepted; unwindowed reply |
+| `first_page` past the last page | clamped to the last `page_count` pages |
+| `page_count` above `MAX_WINDOW_PAGES` | clamped, and the echoed `window` states the clamp |
+| request also lists `-delta` | window wins; `-delta` absent from echo (§7) |
+| a windowed list reaching `delta::snapshot` | refused — no snapshot taken, chain cleared, exactly as today's no-snapshot path (`-delta` §7: the full unchanged line, `status` stays `ok`, no diagnostic) |
+
+A clamp is never a diagnostic and never changes `status`. The echoed `window`
+is the authority on what was served.
+
+## 9. Acceptance — and what producers must co-sign
+
+**The gate is equality, not a digest.** For every corpus case, and for every
+page `p` of it:
+
+> the page object produced for `p` by a render windowed on `p`, serialised,
+> must be byte-identical to the page object produced for `p` by the unwindowed
+> render of the same revision.
+
+and, over the whole reply:
+
+> `documents`, `fonts`, `diagnostics` and `required_features` of a windowed
+> reply must be byte-identical to the unwindowed reply's.
+
+Equality rather than a digest, because a digest over a windowed list would
+prove only that the consumer rebuilt what the producer sent — the distinction
+`-delta` §5 already draws, and here the risk is precisely that the producer
+sends a *correct-looking smaller* closure.
+
+Then the standing gates, unchanged: amsmath 59/59 against the pdflatex oracle;
+HW1 and HW2 3 pages, 0 errors, 0 overfull, 0 font diagnostics; every
+`crates/perf-bench` fixture digest identical to a same-base control run (not to
+the committed baseline, which predates current main and differs independently
+on 50 of 90 digests — reported on #206); `cargo test -p
+flashtex-render-pipeline` no worse than the control's failing set.
+
+### Co-signers
+
+| who | what they are co-signing |
+|---|---|
+| **Mac shell / `apps/mac`** (consumer) | that the v2 pane can hold a partial frame: elided pages render as placeholders at their known size, caret sync and click-to-source are disabled on them rather than wrong, and leaving the window re-requests. Also that `File > Export PDF` refuses an elided result, as it already does for `-only`. |
+| **`crates/rendering-core`** (renderer) | that `V2Frame.prepare` and the font binding accept a frame whose font closure covers pages it was not given, and that an elided page is a painted placeholder, never a blank page of the right size (which is indistinguishable from a genuinely empty page). |
+| **`crates/preview-controller`** / **`crates/document-runtime`** (forwarding) | that the new sibling field passes through unaltered and that the window is not re-derived anywhere in the middle of the route. |
+| **`crates/render-pipeline`** (producer, this lane) | §5's type change, and the §9 equality gate in `tests/`. |
+| **Commander** | that `-window` and `-delta` are exclusive in r1 (§7), and the `docs/contracts/runtime-v1*` amendment that follows once a consumer exists. |
+
+Nothing on the wire changes until every row above has signed. The r1
+implementation is producer-internal for exactly that reason.
+
+## 10. What this buys, and what it does not
+
+Windowing removes `RenderCache.assembled` (~390 MiB) and the display list
+(~263 MiB) for pages outside the window, and should take a large share of the
+678 MiB of real fragmentation with them, since those two structures are where
+the ~1.48 M small allocations live.
+
+It does **not** remove `RenderCache.blocks` (~294 MiB), `adapted` (~52 MiB) or
+the font/expander/compiler caches (~495 MiB). Those are whole-document by
+construction in this design — `blocks` deliberately so, since it is what makes
+re-materialisation cheap.
+
+So the honest projection is a landing well under half of today's 2570 MiB at
+2 MB, and **not 100 MB**. Reaching 100 MB additionally needs the block cache
+bounded by bytes with re-layout on miss (#232 follow-up 3), the adapter items
+shared rather than copied (#232 follow-up 1), and the compiler's own parse tree
+and the expander's thread-local caches bounded — none of which are display-list
+structures and none of which this proposal touches.
+
+### Measured, r1 prototype
+
+A 16-page window, `crates/perf-bench`'s `memprofile`, against an unwindowed
+control taking the same code path (`--render-only`, so the comparison does not
+credit the window with the v1 payload and JSON line that the protocol warm path
+also builds):
+
+| | 500 KB / 385 pp | | 2 MB / 1507 pp | |
+|---|---:|---:|---:|---:|
+| | unwindowed | window 16 | unwindowed | window 16 |
+| VmRSS | 748.8 | **541.9** | 2912.3 | **2035.8** |
+| VmRSS after `malloc_trim` | 562.8 | **408.0** | 2218.5 | **1576.4** |
+| live | 363.2 | **238.1** | 1440.7 | **920.0** |
+| walked | 234.7 | **109.2** | 941.1 | **418.6** |
+| — display list | 61.7 | **2.5** | 247.5 | **2.5** |
+| — render cache | 173.1 | **106.8** | 693.6 | **416.1** |
+
+−36% of live bytes and −30% of RSS at 2 MB; −34% / −28% at 500 KB. The display
+list falls to the window's own size and stops scaling with the document, which
+is the property the design is for. What remains of the render cache is
+`RenderCache.blocks` — 160.2 MiB of `BuiltBlock.items` and 73.1 MiB of
+`ClusterRec` at 2 MB — exactly the whole-document retention §5.4 keeps on
+purpose, and exactly what #232's follow-up 3 proposes to bound next.
+
+This confirms §10's projection, including the part that says **the target is
+still not reached**: 2036 MiB is 20x the 100 MB target, and closing that needs
+the block cache, the adapter items and the compiler/expander caches, none of
+which a page window touches.

@@ -18,7 +18,7 @@ fn doc(body: &str) -> String {
 fn math_words(body: &str) -> (Vec<(String, f64)>, Vec<String>) {
     let r = render_one(&doc(body));
     let mut out = Vec::new();
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         if let Item::GlyphRun(run) = item {
             out.push((run.text.clone(), run.glyphs[0].origin_x.to_bp()));
         }
@@ -128,7 +128,7 @@ fn left_right_grows_the_delimiter_to_the_body() {
     let fenced = render_one(&doc("$\\left( \\frac{a}{b} \\right)$"));
     let width = |r: &flashtex_render_pipeline::Rendered| -> f64 {
         let mut xs: Vec<f64> = Vec::new();
-        for item in &r.v2.pages[0].items {
+        for item in r.v2.pages[0].resident_items() {
             if let Item::GlyphRun(run) = item {
                 for g in &run.glyphs {
                     xs.push(g.origin_x.to_bp());
@@ -155,7 +155,7 @@ fn math_face_glyphs(body: &str, text: &str) -> Vec<(u16, f64, f64, f64)> {
     let text_doc = doc(body);
     let r = render(&[SourceDocument { path: "main.tex", text: &text_doc }], "main.tex", 7, "test-project", &fonts, &RenderOptions::default());
     let text_baseline = r.v2.pages[0]
-        .items
+        .resident_items()
         .iter()
         .find_map(|item| match item {
             Item::GlyphRun(run) if run.role == RunRole::Text => Some(run.glyphs[0].baseline_y.to_bp()),
@@ -163,7 +163,7 @@ fn math_face_glyphs(body: &str, text: &str) -> Vec<(u16, f64, f64, f64)> {
         })
         .expect("a text word");
     let mut out = Vec::new();
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         if let Item::GlyphRun(run) = item {
             if run.role != RunRole::Math {
                 continue;
@@ -252,7 +252,7 @@ fn cm_less_symbols_are_painted_from_latin_modern_math() {
     let fonts = staged.font_set(&[], ambient_tfm_dirs());
     let r = render_one_with(&doc("A $\\mathbb{Z}\\aleph$ $\\mathbb{R}\\setminus\\mathbb{Q}$ $x\\Longrightarrow y$ $10 - x$ B"), &fonts);
     let runs: Vec<(String, u16)> = r.v2.pages[0]
-        .items
+        .resident_items()
         .iter()
         .filter_map(|it| match it {
             Item::GlyphRun(run) => Some((run.text.clone(), run.glyphs[0].gid)),
@@ -312,7 +312,7 @@ fn mathbb_paints_from_new_computer_modern_when_bundled() {
     // The face each double-struck run paints from, by its `fonts` entry.
     let bb_faces = |r: &flashtex_render_pipeline::Rendered| -> Vec<(String, String, String)> {
         r.v2.pages[0]
-            .items
+            .resident_items()
             .iter()
             .filter_map(|it| match it {
                 Item::GlyphRun(run) if run.text.chars().any(|c| matches!(c, 'ℤ' | 'ℝ' | 'ℚ' | 'ℕ')) => {
@@ -365,7 +365,7 @@ fn mathbb_paints_from_new_computer_modern_when_bundled() {
     // advances, which is the point).
     let others = |r: &flashtex_render_pipeline::Rendered| -> Vec<(String, String, u16)> {
         let mut out = Vec::new();
-        for it in &r.v2.pages[0].items {
+        for it in r.v2.pages[0].resident_items() {
             let Item::GlyphRun(run) = it else { continue };
             let ps = r.v2.fonts.iter().find(|f| f.font_id == run.font_id).map(|f| f.postscript_name.clone()).unwrap_or_default();
             for g in &run.glyphs {
@@ -430,7 +430,7 @@ fn mathcal_sets_at_cmsy_metrics_and_paints_from_new_computer_modern_when_bundled
     // size (runs split differently once the faces alternate).
     let cal_runs = |r: &flashtex_render_pipeline::Rendered| -> Vec<(String, String, String, Tick, Tick)> {
         let mut out = Vec::new();
-        for it in &r.v2.pages[0].items {
+        for it in r.v2.pages[0].resident_items() {
             let Item::GlyphRun(run) = it else { continue };
             let f = r.v2.fonts.iter().find(|f| f.font_id == run.font_id).expect("run font is a fonts entry");
             for g in &run.glyphs {
@@ -446,7 +446,7 @@ fn mathcal_sets_at_cmsy_metrics_and_paints_from_new_computer_modern_when_bundled
     // The `(` right after `\mathcal{P}`.
     let paren_x = |r: &flashtex_render_pipeline::Rendered| -> Tick {
         r.v2.pages[0]
-            .items
+            .resident_items()
             .iter()
             .find_map(|it| match it {
                 Item::GlyphRun(run) if run.text == "(" => Some(run.glyphs[0].origin_x),
@@ -544,7 +544,7 @@ fn varnothing_sets_at_msbm_width_and_paints_from_new_computer_modern_when_bundle
     // Every glyph of page 1 as `(text, painting face, sha256, origin x, size)`.
     let glyphs = |r: &flashtex_render_pipeline::Rendered| -> Vec<(String, String, String, Tick, Tick)> {
         let mut out = Vec::new();
-        for it in &r.v2.pages[0].items {
+        for it in r.v2.pages[0].resident_items() {
             let Item::GlyphRun(run) = it else { continue };
             let f = r.v2.fonts.iter().find(|f| f.font_id == run.font_id).expect("run font is a fonts entry");
             for g in &run.glyphs {
