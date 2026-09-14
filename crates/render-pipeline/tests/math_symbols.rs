@@ -107,6 +107,8 @@ fn composite_and_extra_symbols_convert_with_texbook_classes() {
 }
 
 #[test]
+// The vendored compiler needs the integration lane's re-pin before this can run.
+#[ignore = "needs the vendor/compiler re-pin past #314"]
 fn odot_is_painted_as_a_binary_math_glyph() {
     if !lm_available() {
         return;
