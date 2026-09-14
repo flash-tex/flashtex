@@ -163,7 +163,7 @@ pub enum Item {
     /// blank. It is set as an empty box one interword space wide, which is
     /// what `\leavevmode`'s `\hbox{}` plus the unstretchable typewriter
     /// space comes to, and is never a break point.
-    LiteralSpace { style: TextStyle, span: Span },
+    LiteralSpace { style: TextStyle, span: Span, visible: bool },
     Math { list: MathList, span: Span },
     /// `\\`; `skip_pt` is the optional `[<dimen>]` (LaTeX `\@xnewline`:
     /// `\vadjust{\vskip <dimen>}` after the line, or `\vskip` after the
@@ -836,7 +836,7 @@ pub fn adapt_cached(
     }
     let secnumdepth = counter(source, "secnumdepth").unwrap_or(options.default_secnumdepth);
     style.nfss = crate::nfss::Scheme::for_document(&parsed.packages, t1_encoding(source));
-    let styles: Vec<Styles> = texts.iter().map(|t| Styles::new(style_intervals(t), style.nfss)).collect();
+    let styles: Vec<Styles> = texts.iter().map(|t| Styles::new(style_intervals(t), style.nfss, visible_space_ranges(t))).collect();
     let labels_fp = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -3040,6 +3040,59 @@ fn declared_size(level: Option<flashtex_compiler::parser::FontSizeLevel>, base: 
 /// ...) to the end of the innermost group. Family, series and shape only:
 /// size declarations are read from the compiler's `TextStyle::size` (see
 /// [`declared_size`]).
+/// The byte ranges whose literal spaces pdfTeX sets as `\char32` of the
+/// typewriter font — the Cork slot-32 open box, `\textvisiblespace` — and
+/// not as a blank: the bodies of `verbatim*` and of `\verb*`.
+///
+/// `\@verbatim`'s starred form points the active space and tab at
+/// `\@xobeysp`'s visible twin (latex.ltx's `\@setupverbvisiblespace`), and
+/// `\@sverb`'s starred form does the same for `\verb*`. The glyph is the
+/// same width as the font's interword space in every typewriter design
+/// (`ectt1000`: slot 32 width 5.24872 pt = `\fontdimen2`), so only the
+/// painting differs — measured, not assumed.
+///
+/// Scanned from the source for the same reason the font commands are: the
+/// compiler's `Block::Verbatim` keeps no star, and its `VerbatimLine::text`
+/// spells the star form with U+00B7, which pdfTeX never sets.
+fn visible_space_ranges(source: &str) -> Vec<(usize, usize)> {
+    const BEGIN_VERBATIM_STAR: &str = "\\begin{verbatim*}";
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    let bytes = source.as_bytes();
+    let mut at = 0usize;
+    while let Some(k) = source[at..].find('\\') {
+        let start = at + k;
+        at = start + 1;
+        let rest = &source[start..];
+        if let Some(body) = rest.strip_prefix(BEGIN_VERBATIM_STAR) {
+            let open = start + BEGIN_VERBATIM_STAR.len();
+            // The newline right after `\begin{...}` is not part of the body.
+            let open = open + usize::from(bytes.get(open) == Some(&b'\n'));
+            let end = body.find("\\end{verbatim*}").map_or(source.len(), |e| open + e);
+            if open < end {
+                out.push((open, end));
+            }
+            at = end.max(at);
+            continue;
+        }
+        // `\verb*`: the whole construct, read exactly as
+        // `literal_command_body` reads it, so the two can never disagree
+        // about where it ends. The control word itself is inside the range
+        // because the compiler's span for a `\verb` is the control word
+        // alone, so that is the byte every character of the body is
+        // attributed to.
+        if rest.starts_with("\\verb*") {
+            let span = Span::in_document(DocumentId(0), start, start);
+            if let Some(b) = literal_command_body(source, span) {
+                if b.starred {
+                    out.push((start, b.end));
+                }
+                at = b.end.max(at);
+            }
+        }
+    }
+    out
+}
+
 fn style_intervals(source: &str) -> Vec<StyleInterval> {
     let mut out = Vec::new();
     let bytes = source.as_bytes();
@@ -3843,10 +3896,14 @@ struct Styles {
     max_end: Vec<usize>,
     ends: Vec<usize>,
     scheme: crate::nfss::Scheme,
+    /// Byte ranges of this document whose literal spaces are *visible*
+    /// ones: the bodies of `verbatim*` and of `\verb*` (see
+    /// [`visible_space_ranges`]). Sorted and disjoint.
+    visible_space: Vec<(usize, usize)>,
 }
 
 impl Styles {
-    fn new(intervals: Vec<StyleInterval>, scheme: crate::nfss::Scheme) -> Styles {
+    fn new(intervals: Vec<StyleInterval>, scheme: crate::nfss::Scheme, visible_space: Vec<(usize, usize)>) -> Styles {
         let mut max_end = Vec::with_capacity(intervals.len());
         let mut m = 0;
         for (_, end, _, _) in &intervals {
@@ -3856,7 +3913,13 @@ impl Styles {
         let mut ends: Vec<usize> = intervals.iter().filter(|i| i.3).map(|i| i.1).collect();
         ends.sort_unstable();
         let intervals = intervals.into_iter().map(|(s, e, c, _)| (s, e, c)).collect();
-        Styles { intervals, max_end, ends, scheme }
+        Styles { intervals, max_end, ends, scheme, visible_space }
+    }
+
+    /// Whether a literal space at byte `at` is `\char32` of the typewriter
+    /// font (the Cork slot-32 open box) rather than a blank.
+    fn visible_space_at(&self, at: usize) -> bool {
+        self.visible_space.iter().any(|(s, e)| (*s..*e).contains(&at))
     }
 
     /// The style in force at byte `at`: the font commands of every interval
@@ -4602,6 +4665,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                         items.push(Item::LiteralSpace {
                             style,
                             span: Span { document: src.document, start: src.start, end: src.end },
+                            visible: styles_of(src.document).visible_space_at(src.start),
                         });
                         factor = 1000;
                         continue;
@@ -4647,7 +4711,16 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 // A text symbol the compiler set from a control word (`\AA`,
                 // `\ss`, `\today`): TeX skips the blanks after the word. User
                 // macro replacements keep their own cursor (`token_gap`).
-                after_control_word = control_word_at(source, span.start, span.end).is_some() && !is_invocation_span(source, *span);
+                //
+                // Not `\verb`/`\lstinline`: TeX ate the blanks after *that*
+                // control word before `\@sverb` read the delimiter, and the
+                // reader now stands after the closing delimiter, where a
+                // blank is an ordinary interword space. Treating it as a
+                // skipped one dropped the space after every inline `\verb`
+                // and packed the line.
+                after_control_word = !literal
+                    && control_word_at(source, span.start, span.end).is_some()
+                    && !is_invocation_span(source, *span);
                 // The compiler's `\verb`/`\lstinline` span is the control
                 // word alone; the reader really stands after the closing
                 // delimiter, so the delimited body is not read as the next

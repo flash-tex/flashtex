@@ -46,6 +46,10 @@ use crate::style::Stylesheet;
 const MATH_SENTINEL: pl::FontId = pl::FontId::from_label("flashtex:math-box");
 
 /// `\hyphenpenalty` and `\exhyphenpenalty` (plain TeX and article: 50).
+/// Cork slot 32, `\textvisiblespace`: the open box `\verb*` and
+/// `verbatim*` set for each space (`\char32` of the typewriter font).
+const VISIBLE_SPACE: char = '\u{2423}';
+
 const HYPHEN_PENALTY: i32 = 50;
 const EX_HYPHEN_PENALTY: i32 = 50;
 
@@ -1838,16 +1842,33 @@ impl<'a> Context<'a> {
                         }
                     }
                 }
-                AItem::LiteralSpace { style, span } => {
+                AItem::LiteralSpace { style, span, visible } => {
                     // `\@xobeysp` = `\leavevmode\nobreak\ `: an empty box
                     // (so a line break before it cannot discard it, and the
                     // indentation of a verbatim line survives) exactly one
                     // interword space of the typewriter font wide, which
                     // has no stretch and no shrink.
+                    //
+                    // `verbatim*`/`\verb*` set `\char32` instead — Cork slot
+                    // 32, the open box — which in every typewriter design is
+                    // exactly that same width, so the star form moves nothing
+                    // and only paints.
                     let style = merge_base(*style, base);
-                    let width = self.space_glue(style, style.size_or(size), 1000).width;
-                    let (run, rec) = self.empty_box(width, style.size_or(size), *span);
-                    push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                    let size = style.size_or(size);
+                    if *visible {
+                        let seg = adapter::Segment {
+                            text: VISIBLE_SPACE.to_string(),
+                            chars: vec![adapter::CharSrc { document: span.document, start: span.start, end: span.end }],
+                            style,
+                        };
+                        for (item, rec) in self.word_items(&seg, size, false) {
+                            push(&mut out, &mut recs, item, rec);
+                        }
+                    } else {
+                        let width = self.space_glue(style, size, 1000).width;
+                        let (run, rec) = self.empty_box(width, size, *span);
+                        push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                    }
                 }
                 AItem::Space { style, factor, no_break } => {
                     let style = merge_style(base, *style);
@@ -1865,7 +1886,16 @@ impl<'a> Context<'a> {
                     }
                 }
                 AItem::LineBreak { skip_pt } => {
+                    // `\@gnewline` is `\nobreak \hfil \break`, and
+                    // `\obeylines`' `\par` inside `\@verbatim` ends the
+                    // line with TeX's own `\penalty10000 \parfillskip
+                    // \penalty-10000` (tex.web 816). The infinite penalty
+                    // matters: without it the fil glue is itself a legal
+                    // breakpoint, and a line too wide for the measure --
+                    // an overfull verbatim line -- is broken there instead
+                    // of at the forced break, leaving an empty line behind.
                     if fills {
+                        push(&mut out, &mut recs, pl::Item::penalty(pl::INFINITE_PENALTY), None);
                         push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fil()), None);
                     }
                     if *skip_pt != 0.0 {

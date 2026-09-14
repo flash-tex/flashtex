@@ -4,10 +4,17 @@
 //! PR #145, which measured them with **MacTeX 2026**
 //! (`pdfTeX 3.141592653-2.6-1.40.29`, two passes, `SOURCE_DATE_EPOCH=0
 //! FORCE_SOURCE_DATE=1`). They are committed oracle data and are never
-//! regenerated here: this machine has TeX Live 2025, not that MacTeX. Only
-//! the test material was taken from #145 — the rendering is written against
-//! main's NFSS font selection, not #145's rival `Role::Mono`/`MonoMetrics`
-//! model.
+//! regenerated here. Only the test material was taken from #145 -- the
+//! rendering is written against main's NFSS font selection, not #145's
+//! rival `Role::Mono`/`MonoMetrics` model.
+//!
+//! The two distributions were checked against each other rather than
+//! assumed to agree: this host's **TeX Live 2025** (`pdfTeX
+//! 3.141592653-2.6-1.40.27`) was run over all seventeen fixtures with
+//! `fixtures/verbatim/oracle.py` and reproduced every committed reference
+//! to **0.001 bp or better**, with identical rule sets and page counts. A
+//! number measured here can therefore be compared with these files
+//! directly.
 //!
 //! Units are bp; `y` runs down from the page top. A reference glyph must
 //! find a candidate within [`TOL`] in both x and y (Chebyshev), glyph counts
@@ -34,42 +41,43 @@ const SUBSTITUTION_CODES: [&str; 4] = [
 ];
 
 /// The fixtures this lane sets exactly as pdfLaTeX does.
-const GATED: [&str; 10] = [
+const GATED: [&str; 13] = [
     "01-verbatim-basic",
     "02-verbatim-ligatures",
     "03-verbatim-tabs",
     "04-verbatim-blank-lines",
+    "05-verbatim-star",
+    "06-verb-delimiters",
     "07-verbatim-t1",
     "08-verbatim-lmodern",
     "09-verbatim-vmode",
     "11-verbatim-11pt",
     "12-verbatim-12pt",
+    "13-verbatim-long-line",
     "14-verbatim-pagebreak",
 ];
 
 /// Committed with their references but not gated yet, each for a reason
 /// that names what is still missing. Listed here so the material is in the
 /// tree and the follow-up is visible rather than forgotten.
-const NOT_YET: [(&str, &str); 7] = [
-    ("05-verbatim-star",
-     "`verbatim*`/`\\verb*` set each space as \\char32 of the T1 typewriter font (visiblespace). \
-      The bundled OpenType Latin Modern carries no such glyph — pdfTeX draws it from the Type 1 \
-      ec font — so the shaper needs a TFM-slot-32 special case and a glyph to draw."),
-    ("06-verb-delimiters",
-     "Uses \\verb* among its delimiters, so it needs the visible space too; the line is justified, \
-      so one wrong width moves every glyph on it."),
+const NOT_YET: [(&str, &str); 4] = [
     ("10-verbatim-itemize",
-     "`\\@verbatim` inside a list sets `\\leftskip\\@totalleftmargin`; the pipeline lowers verbatim \
-      to a flush-left paragraph and does not yet read the enclosing list's margins."),
-    ("13-verbatim-long-line",
-     "A verbatim line wider than the measure: pdfTeX sets one overfull box running into the margin, \
-      the pipeline still line-breaks the paragraph it lowers to."),
+     "`\\@verbatim`'s `\\trivlist` inside a list. Measured with `\\showoutput`: pdfTeX sets \
+      `\\leftskip 25.00003` (the enclosing `\\leftmargini`) on every verbatim line and 12 pt of \
+      glue above it (`\\topsep` 8 pt + the enclosing list's `\\parsep` 4 pt, which `\\list` made \
+      `\\parskip`). The pipeline lowers verbatim to a top-level flush-left paragraph, so it sets \
+      the lines at the page margin with only `\\topsep`: 25 pt out and 4 pt up."),
     ("15-verbatim-small",
-     "`\\small` in force around the environment: the size declaration is scoped in the source, and \
-      the lowered paragraph does not pick it up for the verbatim lines."),
+     "The size declaration in force. pdfTeX sets the body in CMTT9 (per-character advance 4.7073 bp \
+      against CMTT10's 5.2303); the pipeline sets CMTT10. The compiler's `Inline::Verbatim` and \
+      `Block::Verbatim` carry no `style`, so the declaration never reaches the pipeline, and \
+      `declared_size` is explicit that the pipeline must not re-derive sizes from the source \
+      (pin `b38e1884`). It is a compiler change plus a vendor re-pin."),
     ("28-lstinline",
-     "Needs the compiler to lex `\\lstinline` as one verbatim token (the companion compiler PR); \
-      the vendored pin does not, so the delimiters are typeset as text."),
+     "The compiler typesets `\\lstset`'s argument as prose: 126 glyphs against pdfTeX's 115, the \
+      extra 11 being the characters `basicstyle=` at the head of the first line. `\\lstinline` \
+      itself is lexed correctly (PR #188, already in the vendored mirror). Needs the compiler to \
+      consume listings' setup commands, plus a vendor re-pin."),
     ("32-verbatim-microtype",
      "microtype's protrusion on the surrounding roman text; the verbatim lines themselves are \
       already excluded (the default sets are `rm*`/`sf*`)."),
@@ -232,5 +240,53 @@ fn every_committed_fixture_is_accounted_for() {
     }
     for (_, why) in NOT_YET {
         assert!(why.len() > 40, "a NOT_YET entry needs a real reason");
+    }
+}
+
+
+/// The star form moves nothing: Cork slot 32 (`visiblespace`, the open box
+/// `\verb*` and `verbatim*` set with `\char32`) is exactly as wide as the
+/// typewriter font's interword space, so painting it cannot shift a line.
+///
+/// Measured from the bundled metrics rather than assumed -- this is the
+/// invariant that lets the pipeline keep one width computation for both
+/// forms.
+#[test]
+fn the_visible_space_is_exactly_one_interword_space_wide() {
+    let Some(fonts) = bundled_fonts() else { return };
+    let mut checked = 0;
+    for file in ["ectt1000.tfm", "ectt0900.tfm", "ectt1200.tfm", "ec-lmtt10.tfm", "ec-lmtt9.tfm"] {
+        let Ok(tfm) = fonts.tfm(file) else { continue };
+        let slot32 = tfm.metrics(32).unwrap_or_else(|| panic!("{file} has no character at slot 32")).width;
+        let space = tfm.param(2).unwrap_or_else(|| panic!("{file} has no fontdimen2"));
+        assert_eq!(slot32, space, "{file}: slot 32 {slot32} vs fontdimen2 {space}");
+        assert_eq!(tfm.param(3), Some(0), "{file}: a typewriter space stretches");
+        assert_eq!(tfm.param(4), Some(0), "{file}: a typewriter space shrinks");
+        checked += 1;
+    }
+    assert!(checked >= 3, "only {checked} typewriter TFM(s) found to measure");
+}
+
+/// The glyph itself is in every bundled typewriter face, at U+2423 OPEN
+/// BOX. The CFF charset names it `uni2423`, not `visiblespace`, which is
+/// why an earlier reading of this bundle concluded the face carried no
+/// such glyph and `verbatim*` could not be set without adding a font.
+#[test]
+fn every_bundled_typewriter_face_carries_the_visible_space_glyph() {
+    let Some(fonts) = bundled_fonts() else { return };
+    for file in [
+        "lmmono8-regular.otf",
+        "lmmono9-regular.otf",
+        "lmmono10-regular.otf",
+        "lmmono12-regular.otf",
+        "lmmono10-italic.otf",
+        "lmmonoslant10-regular.otf",
+        "lmmonocaps10-regular.otf",
+        "lmmonolt10-bold.otf",
+    ] {
+        let face = fonts.otf(file).unwrap_or_else(|e| panic!("{file}: {e}"));
+        let gid = face.face().glyph_id('\u{2423}').unwrap_or_else(|| panic!("{file} has no U+2423"));
+        let bounds = face.bounds(gid, Some('\u{2423}'));
+        assert!(!bounds.empty && bounds.x_max > 0, "{file}: U+2423 is an empty outline");
     }
 }

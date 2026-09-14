@@ -223,7 +223,8 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 factor.hash(h);
                 no_break.hash(h);
             }
-            Item::LiteralSpace { style, span } => {
+            Item::LiteralSpace { style, span, visible } => {
+                visible.hash(h);
                 11u8.hash(h);
                 style.bold.hash(h);
                 style.italic.hash(h);
