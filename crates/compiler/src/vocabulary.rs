@@ -50,6 +50,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "textsuperscript", "textsubscript", "underbar", "sout", "uline", "LaTeX",
     "LaTeXe", "TeX", "dag", "ddag", "S", "P", "copyright", "pounds", "textbackslash",
     "textasciitilde", "textasciicircum", "textbar", "textless", "textgreater", "textendash",
+    "nobreakspace",
     "textemdash", "textbullet", "textperiodcentered", "textquoteleft", "textquoteright",
     "textquotedblleft", "textquotedblright", "ldots", "slash", "selectfont", "fontsize",
     "fontfamily", "usefont",

@@ -64,6 +64,27 @@ pub struct ExpandedToken {
     pub maps_to_invocation: bool,
 }
 
+impl ExpandedToken {
+    /// The token's own source bytes: the definition bytes when it was
+    /// copied out of a macro's replacement text, else its span.
+    ///
+    /// Use this, never `token.span`, for any decision about how the token
+    /// was *written*. The lexer records a control symbol's escape only in
+    /// the width of its span (`\,` is the word `,` spanning two bytes), and
+    /// `token.span` is the *invocation's* span for replacement text, whose
+    /// width says nothing about the token. Reading it there made `\,` `\;`
+    /// `\!` `\:` decay into the bare character inside every
+    /// `\newcommand` body, so `\newcommand{\x}{a\,b}` set a comma the
+    /// author never wrote. `token.span` stays the invocation span, which is
+    /// what diagnostics and incremental relayout need.
+    pub fn escape_span(&self) -> Span {
+        match self.definition {
+            Some(definition) if self.maps_to_invocation => definition,
+            _ => self.token.span,
+        }
+    }
+}
+
 impl std::borrow::Borrow<Token> for ExpandedToken {
     fn borrow(&self) -> &Token {
         &self.token
