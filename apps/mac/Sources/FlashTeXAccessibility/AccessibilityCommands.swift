@@ -209,7 +209,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          menuItem: "Go to Symbol…")
         case .goToLine:
             return Entry(command: self, title: "Go to line", shortcuts: ["⌘L"], menu: "Navigate",
-                         description: "Opens a field for a 1-based line, line:column, or +N/−N relative to the caret; out-of-range numbers clamp, invalid text shows an inline hint. Return selects the caret and centres it, Esc cancels. Typing :42 in the command palette jumps directly.",
+                         description: "Opens a field for a 1-based line, line:column, or +N/−N relative to the caret; out-of-range numbers clamp, invalid text shows an inline hint. Return selects the caret and centres it, Esc cancels. Typing :42 in the Commands list jumps directly.",
                          menuItem: "Go to Line…")
         case .selectEnvironment:
             return Entry(command: self, title: "Select environment", shortcuts: ["⌘⇧A"], menu: "Navigate",
