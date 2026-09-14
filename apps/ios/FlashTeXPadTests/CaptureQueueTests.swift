@@ -107,4 +107,71 @@ final class CaptureQueueTests: XCTestCase {
         XCTAssertEqual(code, "invalid_input")
         XCTAssertTrue(mac.captures.isEmpty)
     }
+
+    /// GH #359: `CaptureQueue.records` was a bare Array. `refreshOutcome`/`send`
+    /// resume off the main actor after `await` and mutate it while PadModel
+    /// (and other pollers) copy the array. Without a lock this crashes the
+    /// test host (EXC_BAD_ACCESS) or TSan-reports a data race.
+    func testConcurrentRefreshSendAndRecordsRead() async throws {
+        model.maxPolls = 0
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("CaptureQueueRace-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let q = CaptureQueue(link: model.link, store: CaptureStore(directory: tmp))
+        let png = Self.trianglePNG()
+        let a = q.draft(CaptureRecord(source: .pencil, png: png, instructions: "race-a"))
+        let b = q.draft(CaptureRecord(source: .sample, png: png, instructions: "race-b"))
+        await q.send(a.id)
+        await q.send(b.id)
+        XCTAssertEqual(q.records.filter { if case .received = $0.status { return true }; return false }.count, 2)
+
+        let id1 = a.id, id2 = b.id
+        let rounds = 60
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<4 {
+                group.addTask {
+                    await Task.detached {
+                        for _ in 0..<rounds {
+                            await q.refreshOutcome(id1)
+                            await q.refreshOutcome(id2)
+                        }
+                    }.value
+                }
+            }
+            for _ in 0..<2 {
+                group.addTask {
+                    await Task.detached {
+                        for _ in 0..<rounds {
+                            await q.send(id1)
+                            await q.send(id2)
+                        }
+                    }.value
+                }
+            }
+            group.addTask {
+                await Task.detached {
+                    for _ in 0..<rounds {
+                        let extra = q.draft(CaptureRecord(source: .fixture, png: png, instructions: "tmp"))
+                        q.discard(extra.id)
+                    }
+                }.value
+            }
+            for _ in 0..<4 {
+                group.addTask {
+                    await Task.detached {
+                        for _ in 0..<(rounds * 200) {
+                            let snap = q.records
+                            _ = snap.count
+                            _ = q.record(id1)
+                            _ = q.shouldPoll(id2)
+                            _ = q.lastStoreError
+                            _ = q.redeliveries
+                        }
+                    }.value
+                }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(q.records.count, 2)
+        XCTAssertNotNil(q.record(id1))
+        XCTAssertNotNil(q.record(id2))
+    }
 }
