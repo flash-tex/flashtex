@@ -1706,9 +1706,9 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
     private let docHint = NSTextField(labelWithString: "↑↓ choose · ⏎ insert · esc close")
     private let docSeparator = NSBox()
     private(set) var items: [Completion.Suggestion] = []
-    static let rowHeight: CGFloat = 24
-    static let width: CGFloat = 480
-    static let docHeight: CGFloat = 58
+    static let rowHeight: CGFloat = DS.Row.completion
+    static let width: CGFloat = DS.Layout.completionWidth
+    static let docHeight: CGFloat = DS.Layout.completionDocHeight
 
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.rowHeight * 4 + Self.docHeight),
@@ -1754,20 +1754,20 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         docSeparator.frame = NSRect(x: 0, y: Self.docHeight - 1, width: Self.width, height: 1)
         docSeparator.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docSeparator)
-        docTitle.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        docTitle.font = DS.NSFonts.header
         docTitle.textColor = .labelColor
         docTitle.lineBreakMode = .byTruncatingTail
         docTitle.frame = NSRect(x: 10, y: Self.docHeight - 20, width: Self.width - 20, height: 15)
         docTitle.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docTitle)
-        docBody.font = NSFont.systemFont(ofSize: 11)
+        docBody.font = DS.NSFonts.secondary
         docBody.textColor = .secondaryLabelColor
         docBody.maximumNumberOfLines = 2
         docBody.lineBreakMode = .byTruncatingTail
         docBody.frame = NSRect(x: 10, y: 15, width: Self.width - 20, height: 24)
         docBody.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docBody)
-        docHint.font = NSFont.systemFont(ofSize: 10)
+        docHint.font = DS.NSFonts.secondary
         docHint.textColor = .tertiaryLabelColor
         docHint.frame = NSRect(x: 10, y: 2, width: Self.width - 20, height: 13)
         docHint.autoresizingMask = [.width, .minYMargin]
@@ -1777,8 +1777,8 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         doc.setAccessibilityLabel("Completion documentation")
         contentView?.addSubview(doc)
         contentView?.wantsLayer = true
-        contentView?.layer?.cornerRadius = 8
-        contentView?.layer?.borderWidth = 1
+        contentView?.layer?.cornerRadius = DS.Radius.panel
+        contentView?.layer?.borderWidth = DS.Size.hairline
         backgroundColor = .clear
         isOpaque = false
         // The chrome colours are re-resolved on every appearance change; see
@@ -1982,14 +1982,14 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
             out.append(NSAttributedString(string: " "))
         }
         out.append(NSAttributedString(string: s.label, attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.labelColor,
+            .font: DS.NSFonts.monoCandidate, .foregroundColor: NSColor.labelColor,
         ]))
         out.append(NSAttributedString(string: "  \(s.kind.badge) · \(s.detail)", attributes: [
-            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor,
+            .font: DS.NSFonts.secondary, .foregroundColor: NSColor.secondaryLabelColor,
         ]))
         if let doc = documentation(for: s) {
             out.append(NSAttributedString(string: " — \(doc)", attributes: [
-                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.tertiaryLabelColor,
+                .font: DS.NSFonts.secondary, .foregroundColor: NSColor.tertiaryLabelColor,
             ]))
         }
         return out
@@ -2025,13 +2025,13 @@ final class CompletionRowView: NSView {
         icon.frame = NSRect(x: 8, y: 4, width: 16, height: 16)
         icon.autoresizingMask = [.maxXMargin]
         addSubview(icon)
-        label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        label.font = DS.NSFonts.monoCandidate
         label.textColor = .labelColor
         label.lineBreakMode = .byTruncatingTail
         label.frame = NSRect(x: 30, y: 4, width: 220, height: 16)
         label.autoresizingMask = [.maxXMargin]
         addSubview(label)
-        detail.font = NSFont.systemFont(ofSize: 11)
+        detail.font = DS.NSFonts.secondary
         detail.textColor = .secondaryLabelColor
         detail.alignment = .right
         detail.lineBreakMode = .byTruncatingMiddle

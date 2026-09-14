@@ -45,7 +45,10 @@ enum DS {
         static let tree: CGFloat = 24
         static let outline: CGFloat = 24
         static let problem: CGFloat = 24
-        static let completion: CGFloat = 22
+        /// 24, not the guide's 22: candidate rows carry 16pt kind icons, and
+        /// 22 crowds them against the row edges (owner: match the surface,
+        /// not the number).
+        static let completion: CGFloat = 24
         static let paletteResult: CGFloat = 28
         static let tab: CGFloat = 30
         static let statusBar: CGFloat = 24
@@ -68,6 +71,8 @@ enum DS {
         /// The palette / search field: one size up from base so the type-here
         /// surface reads as the primary element of its panel.
         static let field = Font.system(size: 15)
+        /// The pairing code: read across the room, typed on another device.
+        static let pairingCode = Font.system(size: 34, weight: .semibold, design: .monospaced)
     }
 
     // MARK: colour — semantic AppKit colours so all three appearance modes are correct
@@ -81,6 +86,9 @@ enum DS {
         static let surfaceRaised = Color(nsColor: .controlBackgroundColor)
         /// The preview column's neutral ground the page floats on.
         static let surfaceGround = Color(nsColor: .underPageBackgroundColor)
+        /// QR ground: scanners need literal white behind the code in both
+        /// appearances — the one deliberately non-semantic surface.
+        static let qrGround = Color.white
         static let separator = Color(nsColor: .separatorColor)
 
         static let textPrimary = Color(nsColor: .labelColor)
@@ -105,6 +113,23 @@ enum DS {
         static let statusHistorical = Color(nsColor: .systemPurple)
         /// Gutter marker on lines with an available fix.
         static let gutterMarker = Color(nsColor: .controlAccentColor)
+
+        /// Outline item-type identity (typed icons, IntelliJ-fashion):
+        /// colour tells the kind apart together with the glyph.
+        static let typeTable = Color(nsColor: .systemBlue)
+        static let typeFloat = Color(nsColor: .systemGreen)
+        static let typeMath = Color(nsColor: .systemPurple)
+        static let typeLabel = Color(nsColor: .systemOrange)
+    }
+
+    /// AppKit type for panels the SwiftUI `Fonts` cannot reach (the
+    /// completion popup is an NSPanel + NSTableView on purpose).
+    enum NSFonts {
+        static let base = NSFont.systemFont(ofSize: 13)
+        static let secondary = NSFont.systemFont(ofSize: 11)
+        static let header = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        /// Completion candidates: the editor's vocabulary, one step smaller.
+        static let monoCandidate = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
     }
 
     /// AppKit paint paths (gutter marks, rulers) use `NSColor` directly;
@@ -115,6 +140,8 @@ enum DS {
         static let gapDot = NSColor.tertiaryLabelColor
         static let gutterGlyph = NSColor.secondaryLabelColor
         static let gutterHairline = NSColor.separatorColor.withAlphaComponent(0.5)
+        /// Ring around a severity dot whose line carries a Tab-applicable fix.
+        static let fixRing = NSColor.controlAccentColor
     }
 
     // MARK: interaction states
@@ -155,6 +182,12 @@ enum DS {
         static let hairline: CGFloat = 1
         /// Short vertical divider between inline groups (status bar).
         static let inlineDividerHeight: CGFloat = 12
+        /// Small status dot (connection state, capture state).
+        static let statusDot: CGFloat = 7
+        /// Image thumbnails in capture rows and previews.
+        static let thumbnail: CGFloat = 72
+        /// Larger imagery: pairing QR, proposal preview images.
+        static let imageTile: CGFloat = 120
         /// Minimum width of the zoom percentage readout, so 100% → 1000%
         /// never shifts its neighbours.
         static let zoomReadoutMinWidth: CGFloat = 40
@@ -202,6 +235,22 @@ enum DS {
         /// The hover quick-info popover.
         static let quickInfoMinWidth: CGFloat = 180
         static let quickInfoMaxWidth: CGFloat = 380
+        /// The completion popup: fixed width, and a fixed-height
+        /// documentation pane that package docs can never inflate.
+        static let completionWidth: CGFloat = 480
+        static let completionDocHeight: CGFloat = 58
+        /// Secondary windows and sheets.
+        static let sheetNarrowWidth: CGFloat = 440
+        static let pickerWindowSize = CGSize(width: 560, height: 400)
+        static let historyWindowMinWidth: CGFloat = 360
+        static let historyWindowMinHeight: CGFloat = 320
+        static let nearbyWindowMinWidth: CGFloat = 460
+        static let nearbyWindowIdealWidth: CGFloat = 500
+        static let nearbyWindowMinHeight: CGFloat = 560
+        static let citationWindowMinWidth: CGFloat = 560
+        static let citationWindowMinHeight: CGFloat = 300
+        static let sheetListMaxHeight: CGFloat = 200
+        static let nearbyEventsMaxHeight: CGFloat = 120
         /// The Settings window's fixed content width.
         static let settingsWidth: CGFloat = 460
         /// Find in Project window.
@@ -249,6 +298,26 @@ enum DS {
         /// Motion — pass to `.animation(_:value:)` and the change is instant.
         @MainActor static var quick: Animation? { ReduceMotion.isEnabled ? nil : .easeOut(duration: durationQuick) }
         @MainActor static var standard: Animation? { ReduceMotion.isEnabled ? nil : .easeOut(duration: durationStandard) }
+    }
+}
+
+// MARK: - Interaction
+
+/// Button style for custom rows, tabs and rail icons: a pressed wash over
+/// whatever background the label draws, so every interactive element has a
+/// visible pressed state (design-principles §14) without each call site
+/// reinventing it.
+struct PressableStyle: ButtonStyle {
+    var cornerRadius: CGFloat = DS.Radius.tab
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .overlay {
+                if configuration.isPressed {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(DS.Colors.textPrimary.opacity(DS.State.pressedOpacity))
+                }
+            }
     }
 }
 
