@@ -53,10 +53,10 @@ pub struct CachedBlock {
 /// source byte then). Placing a line adds the baseline tick to every y
 /// and the byte delta to every source; both are exact integer moves.
 pub struct AssembledBlock {
-    pub lines: Vec<Vec<crate::display::Item>>,
+    /// The line items, shared with every page that places one of the lines
+    /// instead of cloned into it (`display::Placed`).
+    pub items: Rc<crate::display::LineItems>,
     pub faces: Vec<Rc<crate::fonts::LoadedFace>>,
-    pub base: usize,
-    pub path: Rc<str>,
     /// `(tfm font, face, exact)` resource selections made for math glyphs.
     pub resources: Vec<(String, String, bool)>,
     /// `(tfm font, code, char)` math glyphs with no outline mapping.

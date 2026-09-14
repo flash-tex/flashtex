@@ -22,7 +22,7 @@ fn doc(body: &str) -> String {
 fn render(body: &str) -> (Vec<(String, String)>, bool) {
     let r = render_one(&doc(body));
     let diags = r.v2.diagnostics.iter().map(|d| (d.code.clone(), d.message.clone())).collect();
-    let has_math_glyph = r.v2.pages.iter().flat_map(|p| p.items.iter()).any(|it| matches!(it, Item::GlyphRun(run) if run.role == flashtex_render_pipeline::display::RunRole::Math));
+    let has_math_glyph = r.v2.pages.iter().flat_map(|p| p.to_items()).any(|it| matches!(it, Item::GlyphRun(run) if run.role == flashtex_render_pipeline::display::RunRole::Math));
     (diags, has_math_glyph)
 }
 

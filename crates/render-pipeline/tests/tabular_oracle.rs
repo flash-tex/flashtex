@@ -94,7 +94,7 @@ fn tabular_fixtures_match_pdflatex() {
         }
         let mut glyphs = Vec::new();
         let mut rules = Vec::new();
-        for item in &pages[0].items {
+        for item in &pages[0].to_items() {
             match item {
                 Item::GlyphRun(run) => glyphs.extend(run.glyphs.iter().map(|g| (g.origin_x.to_bp(), g.baseline_y.to_bp()))),
                 Item::Rule(r) => rules.push([r.x.to_bp(), r.top.to_bp(), r.width.to_bp(), r.height.to_bp()]),

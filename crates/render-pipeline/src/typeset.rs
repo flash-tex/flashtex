@@ -6619,7 +6619,7 @@ pub fn assemble(
         let hit = block
             .cache_key
             .and_then(|(k, _, _)| cache.and_then(|c| c.assembled(k)))
-            .filter(|a| block.cache_key.is_some_and(|(_, d, _)| *a.path == *paths.get(d.0).map_or("", |p| &**p)));
+            .filter(|a| block.cache_key.is_some_and(|(_, d, _)| *a.items.path == *paths.get(d.0).map_or("", |p| &**p)));
         let a = match hit {
             Some(a) => a,
             None => {
@@ -6637,55 +6637,59 @@ pub fn assemble(
     }
     let mut pages = Vec::new();
     for (pi, page) in laid.pages.pages.iter().enumerate() {
-        let mut items: Vec<display::Item> = Vec::new();
+        // The page records which assembled item each slot is, plus the exact
+        // integer placement (`dy`, `dx`, `delta`) that used to be baked into
+        // a clone of it. `display::Page::items` applies the same
+        // `place_item`/`shift_x` on read, so the bytes are unchanged and the
+        // glyphs, clusters and source ranges exist once instead of twice.
+        let mut items: Vec<display::PageItem> = Vec::new();
         for (li, placed) in page.lines.iter().enumerate() {
             let block = &laid.blocks[placed.paragraph];
             let Some(a) = assembled[placed.paragraph].as_ref() else { continue };
-            let Some(line_items) = a.lines.get(placed.line) else { continue };
+            let Some(line_items) = a.items.lines.get(placed.line) else { continue };
             let dy = Tick::from_tex_pt(placed.baseline_y);
             let dx = laid.line_dx.get(pi).and_then(|d| d.get(li)).map_or(Tick(0), |d| Tick::from_tex_pt(*d));
-            let delta = block.cache_key.map_or(0, |(_, _, b)| b as isize - a.base as isize);
-            for it in line_items {
-                let mut item = incremental::place_item(it, dy, &a.path, delta);
-                if dx.0 != 0 {
-                    display::shift_x(&mut item, dx);
-                }
-                items.push(item);
+            let delta = block.cache_key.map_or(0, |(_, _, b)| b as isize - a.items.base as isize);
+            for index in 0..line_items.len() {
+                items.push(display::PageItem::Placed(display::Placed {
+                    block: Rc::clone(&a.items),
+                    line: placed.line as u32,
+                    index: index as u32,
+                    dy,
+                    dx,
+                    delta,
+                }));
             }
         }
-        items.extend(laid.images.iter().filter(|(n, _)| *n == page.number).map(|(_, it)| it.clone()));
-        if let Some(color) = default_color {
-            // Under a target model the default colour is written too.
-            for item in &mut items {
-                let paint = match item {
-                    display::Item::GlyphRun(r) => &mut r.paint,
-                    display::Item::Rule(r) => &mut r.paint,
-                    _ => continue,
-                };
-                if paint.device.is_none() {
-                    *paint = Paint::of(Some(color));
-                }
-            }
-        }
+        items.extend(
+            laid.images
+                .iter()
+                .filter(|(n, _)| *n == page.number)
+                .map(|(_, it)| display::PageItem::Owned(Box::new(it.clone()))),
+        );
         if let Some(color) = page_color {
             // pdfTeX paints `\pagecolor` before the page: `q 0 0 W H re f Q`.
+            // It carries its own device colour, so the document default
+            // colour (applied on read) never reaches it.
             items.insert(
                 0,
-                display::Item::Rule(Rule {
+                display::PageItem::Owned(Box::new(display::Item::Rule(Rule {
                     x: Tick(0),
                     top: Tick(0),
                     width: Tick::from_tex_pt(page.width),
                     height: Tick::from_tex_pt(page.height),
                     paint: Paint::of(Some(color)),
                     provenance: Provenance::Synthetic("\\pagecolor".into()),
-                }),
+                }))),
             );
         }
         pages.push(display::Page {
             number: page.number,
             width: Tick::from_tex_pt(page.width),
             height: Tick::from_tex_pt(page.height),
-            items,
+            placed: items,
+            // Under a target model the default colour is written too.
+            default_color,
         });
     }
     // Resource selection provenance: which outline resource drew each TFM
@@ -6853,7 +6857,7 @@ fn assemble_block(
                         let piece_lines = &piece.block.block.lines.lines;
                         let first = piece_lines.first().map_or(0.0, |l| l.baseline_y);
                         let dx = Tick::from_tex_pt(local.x + piece.x);
-                        for (li, line_items) in a.lines.iter().enumerate() {
+                        for (li, line_items) in a.items.lines.iter().enumerate() {
                             let dy = piece.baseline + piece_lines.get(li).map_or(0.0, |l| l.baseline_y - first);
                             let dy = Tick::from_tex_pt(dy);
                             for it in line_items {
@@ -6900,7 +6904,7 @@ fn assemble_block(
                     items.push(block_rule(x0 + r, r - cb.height, cb.width - 2.0 * r, cb.height + cb.depth - 2.0 * r, cb.fill));
                     let a = assemble_block(&cb.block, recs, maths, 0.0, source_of, paths, empty);
                     let dx = Tick::from_tex_pt(x0);
-                    for line_items in &a.lines {
+                    for line_items in &a.items.lines {
                         for it in line_items {
                             let mut item = incremental::place_item(it, Tick(0), "", 0);
                             display::shift_x(&mut item, dx);
@@ -6942,10 +6946,12 @@ fn assemble_block(
     }
     let (document, base) = block.cache_key.map_or((DocumentId(0), 0), |(_, d, b)| (d, b));
     incremental::AssembledBlock {
-        lines,
+        items: Rc::new(display::LineItems {
+            lines,
+            base,
+            path: paths.get(document.0).cloned().unwrap_or_else(|| empty.clone()),
+        }),
         faces: used.into_values().collect(),
-        base,
-        path: paths.get(document.0).cloned().unwrap_or_else(|| empty.clone()),
         resources,
         unmapped,
     }
@@ -7464,7 +7470,9 @@ impl Tick {
 pub fn documents_referenced(list: &DisplayList) -> BTreeSet<DocumentId> {
     let mut out = BTreeSet::new();
     for p in &list.pages {
-        for it in &p.items {
+        // Provenance paths are placement-invariant (a placement moves the
+        // byte offsets inside a path, never which path it is).
+        for it in p.unplaced() {
             if let display::Item::GlyphRun(r) = it {
                 for c in &r.clusters {
                     for s in c.provenance.sources() {

@@ -417,12 +417,193 @@ pub fn shift_x(item: &mut Item, dx: Tick) {
     }
 }
 
+/// The line-local display items of one assembled block, shared between the
+/// render cache that built them and every page that places one of its lines.
+///
+/// A line is placed on exactly one page, so this is not shared *between*
+/// pages. What it removes is the second copy a page used to hold of every
+/// glyph, cluster and source range the assembled block already owned: the
+/// page keeps a [`Placed`] reference and the placement is applied on read.
+#[derive(Debug, PartialEq)]
+pub struct LineItems {
+    /// Items per line, in line-local coordinates: x already absolute on the
+    /// page, y relative to the line's baseline.
+    pub lines: Vec<Vec<Item>>,
+    /// The document path these items' source offsets belong to. Only ranges
+    /// in this path are moved by a placement's `delta`.
+    pub path: std::rc::Rc<str>,
+    /// The block's first source byte as of the request that assembled it.
+    pub base: usize,
+}
+
+/// A reference to one line-local item plus the exact integer placement that
+/// used to be baked into a clone of it: `dy` on every y, `dx` on every x,
+/// `delta` on every source offset in the block's own path.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Placed {
+    pub block: std::rc::Rc<LineItems>,
+    pub line: u32,
+    pub index: u32,
+    pub dy: Tick,
+    pub dx: Tick,
+    pub delta: isize,
+}
+
+impl Placed {
+    /// The item before placement.
+    pub fn unplaced(&self) -> &Item {
+        &self.block.lines[self.line as usize][self.index as usize]
+    }
+}
+
+/// One item on a page: either built for this page, or a placed reference
+/// into an assembled block's shared items.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PageItem {
+    /// Built for this page (an image, the `\pagecolor` rule). Boxed so the
+    /// enum stays 48 bytes: almost every item is a `Placed`, and an inline
+    /// `Item` would make every slot 200.
+    Owned(Box<Item>),
+    Placed(Placed),
+}
+
+impl PageItem {
+    /// The item **before** placement. Correct for everything placement does
+    /// not change — which variant it is, its font, text, glyph ids, path op
+    /// and clips — and wrong for every coordinate and source offset. Use
+    /// [`Page::items`] when the placed values matter.
+    pub fn unplaced(&self) -> &Item {
+        match self {
+            PageItem::Owned(it) => it,
+            PageItem::Placed(p) => p.unplaced(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Page {
     pub number: u32,
     pub width: Tick,
     pub height: Tick,
-    pub items: Vec<Item>,
+    /// The page's items as placed references or owned items. Read them
+    /// through [`Page::items`] (placed) or [`Page::unplaced`] (structure).
+    pub placed: Vec<PageItem>,
+    /// The document's default colour. Applied to a glyph run's or rule's
+    /// paint on read when that paint carries none, exactly as it used to be
+    /// written into every cloned item at build time.
+    pub default_color: Option<flashtex_compiler::color::DeviceColor>,
+}
+
+impl Page {
+    /// A page of already-placed items. The items are owned, so this keeps
+    /// the pre-sharing memory cost; the pipeline builds pages out of
+    /// [`PageItem::Placed`] and this is for callers that synthesise a page
+    /// (tests, the delta relocator).
+    pub fn from_items(number: u32, width: Tick, height: Tick, items: Vec<Item>) -> Page {
+        Page {
+            number,
+            width,
+            height,
+            placed: items.into_iter().map(|it| PageItem::Owned(Box::new(it))).collect(),
+            default_color: None,
+        }
+    }
+
+    pub fn item_count(&self) -> usize {
+        self.placed.len()
+    }
+
+    /// Item `i` as it appears on the page: borrowed when it is owned,
+    /// materialised by the same `place_item` the build used when it is a
+    /// placed reference, so the bytes are identical either way.
+    pub fn item(&self, i: usize) -> Option<std::borrow::Cow<'_, Item>> {
+        let it = self.placed.get(i)?;
+        Some(self.place(it))
+    }
+
+    /// Every item as it appears on the page, in order.
+    pub fn items(&self) -> impl Iterator<Item = std::borrow::Cow<'_, Item>> + '_ {
+        self.placed.iter().map(|it| self.place(it))
+    }
+
+    /// Every item as it appears on the page, materialised into a vector.
+    /// This is the pre-sharing representation, so it costs what the page
+    /// used to: convenient for tests and callers that want a slice, not
+    /// something to hold for a whole document.
+    pub fn to_items(&self) -> Vec<Item> {
+        self.items().map(std::borrow::Cow::into_owned).collect()
+    }
+
+    /// Every item **before** placement. See [`PageItem::unplaced`]: correct
+    /// only for placement-invariant structure.
+    pub fn unplaced(&self) -> impl Iterator<Item = &Item> + '_ {
+        self.placed.iter().map(PageItem::unplaced)
+    }
+
+    /// One of this page's slots as it appears on the page. Applies the
+    /// slot's placement and the document default colour; the result is the
+    /// item the page used to store outright.
+    pub fn place<'a>(&'a self, it: &'a PageItem) -> std::borrow::Cow<'a, Item> {
+        use std::borrow::Cow;
+        match it {
+            PageItem::Owned(o) => match self.default_color {
+                Some(c) if needs_default_color(o) => {
+                    let mut item = (**o).clone();
+                    apply_default_color(&mut item, c);
+                    Cow::Owned(item)
+                }
+                _ => Cow::Borrowed(&**o),
+            },
+            PageItem::Placed(p) => {
+                let mut item = crate::incremental::place_item(p.unplaced(), p.dy, &p.block.path, p.delta);
+                if p.dx.0 != 0 {
+                    shift_x(&mut item, p.dx);
+                }
+                if let Some(c) = self.default_color {
+                    if needs_default_color(&item) {
+                        apply_default_color(&mut item, c);
+                    }
+                }
+                Cow::Owned(item)
+            }
+        }
+    }
+
+    /// Whether any paint on this page carries a device colour, counting the
+    /// document default colour that is applied on read.
+    pub fn any_device_paint(&self) -> bool {
+        self.placed.iter().any(|it| {
+            let raw = it.unplaced();
+            match raw {
+                Item::GlyphRun(r) => r.paint.device.is_some() || self.default_color.is_some(),
+                Item::Rule(r) => r.paint.device.is_some() || self.default_color.is_some(),
+                Item::Path(p) => p.paint.device.is_some(),
+                Item::Image(_) => false,
+            }
+        })
+    }
+}
+
+/// Whether the document default colour would change this item's paint: only
+/// glyph runs and rules take it, and only when they carry no colour of their
+/// own. Mirrors the loop that used to run over every built page item.
+fn needs_default_color(item: &Item) -> bool {
+    match item {
+        Item::GlyphRun(r) => r.paint.device.is_none(),
+        Item::Rule(r) => r.paint.device.is_none(),
+        _ => false,
+    }
+}
+
+fn apply_default_color(item: &mut Item, color: flashtex_compiler::color::DeviceColor) {
+    let paint = match item {
+        Item::GlyphRun(r) => &mut r.paint,
+        Item::Rule(r) => &mut r.paint,
+        _ => return,
+    };
+    if paint.device.is_none() {
+        *paint = Paint::of(Some(color));
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -531,7 +712,8 @@ impl DisplayList {
         }
         for p in &self.pages {
             n += 64;
-            for it in &p.items {
+            // Lengths only: placement moves coordinates, never sizes.
+            for it in p.unplaced() {
                 n += match it {
                     Item::GlyphRun(r) => 220 + 2 * r.text.len() + 120 * r.glyphs.len() + 280 * r.clusters.len(),
                     Item::Rule(_) => 240,
@@ -556,10 +738,12 @@ impl DisplayList {
     pub fn required_features_wire(&self, wire: Wire) -> Vec<&'static str> {
         let images = wire.images;
         let mut f = vec!["glyph_run", "rgba-srgb", "cluster-actualtext"];
-        if self.pages.iter().any(|p| p.items.iter().any(|i| matches!(i, Item::Rule(_)))) {
+        // Which variant an item is, a path's op and its clips are all
+        // placement-invariant, so these read the unplaced items.
+        if self.pages.iter().any(|p| p.unplaced().any(|i| matches!(i, Item::Rule(_)))) {
             f.insert(1, "rule");
         }
-        let paths = || self.pages.iter().flat_map(|p| p.items.iter()).filter_map(|i| if let Item::Path(p) = i { Some(p) } else { None });
+        let paths = || self.pages.iter().flat_map(|p| p.unplaced()).filter_map(|i| if let Item::Path(p) = i { Some(p) } else { None });
         if paths().any(|p| matches!(p.op, PathPaintOp::Fill { .. })) {
             f.push("path_fill");
         }
@@ -572,16 +756,10 @@ impl DisplayList {
         if self.fonts.iter().any(|r| r.format == "static-truetype") {
             f.push("static-truetype");
         }
-        if images && self.pages.iter().any(|p| p.items.iter().any(|i| matches!(i, Item::Image(_)))) {
+        if images && self.pages.iter().any(|p| p.unplaced().any(|i| matches!(i, Item::Image(_)))) {
             f.push("image");
         }
-        let device = |it: &Item| match it {
-            Item::GlyphRun(r) => r.paint.device.is_some(),
-            Item::Rule(r) => r.paint.device.is_some(),
-            Item::Path(p) => p.paint.device.is_some(),
-            Item::Image(_) => false,
-        };
-        if wire.device_color && self.pages.iter().any(|p| p.items.iter().any(device)) {
+        if wire.device_color && self.pages.iter().any(Page::any_device_paint) {
             f.push("device-color");
         }
         f
@@ -589,7 +767,7 @@ impl DisplayList {
 
     /// Whether any page carries an image item.
     pub fn has_images(&self) -> bool {
-        self.pages.iter().any(|p| p.items.iter().any(|i| matches!(i, Item::Image(_))))
+        self.pages.iter().any(|p| p.unplaced().any(|i| matches!(i, Item::Image(_))))
     }
 
     /// The `display_list` envelope of rendering-v2 as a JSON value, exactly
@@ -975,9 +1153,11 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
     o.push_str("{\"height\":");
     write_tick(o, p.height);
     o.push_str(",\"items\":[");
-    for (i, it) in p.items.iter().filter(|it| images || !matches!(it, Item::Image(_))).enumerate() {
+    // The filter reads the unplaced variant (placement never changes it) so
+    // only the items actually written are materialised.
+    for (i, it) in p.placed.iter().filter(|it| images || !matches!(it.unplaced(), Item::Image(_))).map(|it| p.place(it)).enumerate() {
         sep(o, i);
-        match it {
+        match &*it {
             Item::Image(img) => write_image(o, img),
             Item::GlyphRun(r) => {
                 o.push_str("{\"clusters\":[");
@@ -1220,10 +1400,11 @@ fn page_json(p: &Page, wire: Wire) -> Value {
     o.set(
         "items",
         Value::Arr(
-            p.items
+            p.placed
                 .iter()
-                .filter(|it| images || !matches!(it, Item::Image(_)))
-                .map(|it| match it {
+                .filter(|it| images || !matches!(it.unplaced(), Item::Image(_)))
+                .map(|it| p.place(it))
+                .map(|it| match &*it {
                     Item::GlyphRun(r) => {
                         let mut o = Value::obj();
                         o.set("kind", json::str_("glyph_run"));
@@ -1553,17 +1734,17 @@ mod tests {
                 path: Some("/x".into()),
             }],
             pages: vec![
-                Page {
-                    number: 1,
-                    width: Tick(612 << 20),
-                    height: Tick(792 << 20),
-                    items: vec![run, rule(Provenance::Source(src(7, 8))), rule(Provenance::Synthetic("frac".into()))],
-                },
-                Page {
-                    number: 3,
-                    width: Tick(612 << 20),
-                    height: Tick(792 << 20),
-                    items: vec![
+                Page::from_items(
+                    1,
+                    Tick(612 << 20),
+                    Tick(792 << 20),
+                    vec![run, rule(Provenance::Source(src(7, 8))), rule(Provenance::Synthetic("frac".into()))],
+                ),
+                Page::from_items(
+                    3,
+                    Tick(612 << 20),
+                    Tick(792 << 20),
+                    vec![
                         path(PathPaintOp::Fill { even_odd: true }, Vec::new(), Provenance::Source(src(1, 3))),
                         path(PathPaintOp::Fill { even_odd: false }, clips(), Provenance::Synthetic("tikz".into())),
                         path(PathPaintOp::Stroke(stroke(Vec::new())), Vec::new(), Provenance::Synthetic("tikz".into())),
@@ -1571,13 +1752,8 @@ mod tests {
                         path(PathPaintOp::Stroke(stroke(vec![Tick(3), Tick(-4)])), clips(), Provenance::Sources(vec![src(2, 5), src(6, 9)])),
                         image(pdf(), Provenance::Synthetic("float".into())),
                     ],
-                },
-                Page {
-                    number: 2,
-                    width: Tick(1),
-                    height: Tick(2),
-                    items: Vec::new(),
-                },
+                ),
+                Page::from_items(2, Tick(1), Tick(2), Vec::new()),
             ],
             diagnostics: vec![
                 Diagnostic::warning("overfull_hbox", "line \"3\" is 1.5pt too wide", vec![src(1, 9)]),

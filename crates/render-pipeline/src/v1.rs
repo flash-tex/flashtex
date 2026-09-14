@@ -190,9 +190,9 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
     // One hint per font resource, shared by every run that uses it.
     let hints: Vec<Option<FontHint>> = v2.fonts.iter().map(|f| caps.font_hints.then(|| hint_for(f))).collect();
     for page in &v2.pages {
-        let mut items = Vec::with_capacity(page.items.len());
-        for item in &page.items {
-            match item {
+        let mut items = Vec::with_capacity(page.item_count());
+        for item in page.items() {
+            match &*item {
                 display::Item::GlyphRun(run) => {
                     let hint = v2.fonts.iter().position(|f| f.font_id == run.font_id).and_then(|i| hints[i].as_ref());
                     let size = run.font_size.to_bp();

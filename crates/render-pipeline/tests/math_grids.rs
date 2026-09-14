@@ -18,7 +18,7 @@ fn math_glyphs(text: &str) -> (Vec<(char, f64, f64)>, Vec<flashtex_render_pipeli
     let r = render(&docs, "main.tex", 1, "p", &fonts, &RenderOptions::default());
     let mut out = Vec::new();
     for page in &r.v2.pages {
-        for it in &page.items {
+        for it in &page.to_items() {
             if let Item::GlyphRun(run) = it {
                 for g in &run.glyphs {
                     let c = &run.clusters[g.cluster as usize];

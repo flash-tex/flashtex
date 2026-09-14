@@ -24,7 +24,7 @@ fn v1_items_are_positioned_exactly_where_v2_glyph_runs_start() {
     let mut v2_origins: Vec<(f64, f64, String)> = Vec::new();
     let mut v2_rules = 0;
     for page in &r.v2.pages {
-        for item in &page.items {
+        for item in &page.to_items() {
             match item {
                 Item::GlyphRun(run) => {
                     assert!(!run.glyphs.is_empty() && !run.clusters.is_empty());
@@ -100,11 +100,11 @@ fn fraction_bars_are_explicit_rules_in_v2_and_negotiated_in_v1() {
         .v2
         .pages
         .iter()
-        .flat_map(|p| p.items.iter())
+        .flat_map(|p| p.to_items())
         .filter_map(|i| if let Item::Rule(r) = i { Some(r) } else { None })
         .collect();
     assert_eq!(rules.len(), 1);
-    let rule = rules[0];
+    let rule = &rules[0];
     // TeX: \fontdimen8 of lmex10 (= cmex10) is 0.4pt at its fixed 10pt
     // design size, the \frac rule thickness pdflatex draws (0.398bp).
     let want = Tick::from_tex_pt(flashtex_math_layout::tfm::scale(41943, 10.0));
@@ -169,7 +169,7 @@ fn page_breaks_are_deterministic_and_reach_a_second_page() {
     // Every page's content stays inside the page and pages are numbered 1..n.
     for (i, p) in a.v2.pages.iter().enumerate() {
         assert_eq!(p.number as usize, i + 1);
-        for item in &p.items {
+        for item in &p.to_items() {
             if let Item::GlyphRun(r) = item {
                 for g in &r.glyphs {
                     assert!(g.baseline_y.0 > 0 && g.baseline_y < p.height);
@@ -181,7 +181,7 @@ fn page_breaks_are_deterministic_and_reach_a_second_page() {
     // Widow/club control: the last page carries at least two lines of its paragraph.
     let last = a.v2.pages.last().unwrap();
     let baselines: std::collections::BTreeSet<i64> = last
-        .items
+        .to_items()
         .iter()
         .filter_map(|i| if let Item::GlyphRun(r) = i { Some(r.glyphs[0].baseline_y.0) } else { None })
         .collect();
@@ -252,7 +252,7 @@ fn joined_word_fragments_keep_carets_inside_their_clusters() {
     let r = render_one("\\begin{document}The AV office fixed the fi ligature: before the figure.\\end{document}");
     let mut runs = 0;
     for page in &r.v2.pages {
-        for item in &page.items {
+        for item in &page.to_items() {
             if let Item::GlyphRun(run) = item {
                 runs += 1;
                 for (ci, c) in run.clusters.iter().enumerate() {

@@ -24,7 +24,7 @@ fn runs(r: &Rendered) -> Vec<(String, Tick)> {
     r.v2
         .pages
         .iter()
-        .flat_map(|p| p.items.iter())
+        .flat_map(|p| p.to_items())
         .filter_map(|i| match i {
             Item::GlyphRun(g) => g.glyphs.first().map(|first| (g.text.clone(), first.baseline_y)),
             _ => None,

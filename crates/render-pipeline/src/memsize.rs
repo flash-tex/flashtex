@@ -190,10 +190,41 @@ pub fn walk_item(item: &Item, r: &mut Report) {
     }
 }
 
+/// The line items of one assembled block, charged once however many pages
+/// and cache entries reference it. Returns the spine bytes (the `Vec`
+/// capacities); the per-item heap goes straight onto `r`.
+fn walk_line_items(li: &std::rc::Rc<crate::display::LineItems>, r: &mut Report) -> u64 {
+    let addr = std::rc::Rc::as_ptr(li) as usize;
+    if !r.first_time(addr) {
+        return 0;
+    }
+    let mut spine = vec_cap_bytes(&li.lines);
+    for line in &li.lines {
+        spine += vec_cap_bytes(line);
+        for it in line {
+            walk_assembled_item(it, r);
+        }
+    }
+    spine
+}
+
 fn walk_page(p: &Page, r: &mut Report) {
-    r.add("Page.items vec (Item slots)", vec_cap_bytes(&p.items), p.items.len() as u64);
-    for it in &p.items {
-        walk_item(it, r);
+    r.add("Page.placed vec (PageItem slots)", vec_cap_bytes(&p.placed), p.placed.len() as u64);
+    let mut shared = 0u64;
+    for it in &p.placed {
+        match it {
+            crate::display::PageItem::Owned(o) => {
+                r.add("Page owned Item (boxed)", std::mem::size_of::<Item>() as u64, 1);
+                walk_item(o, r);
+            }
+            // A placed slot owns nothing of its own: the glyphs, clusters
+            // and source ranges live in the shared assembled block, charged
+            // once at the first slot that references it.
+            crate::display::PageItem::Placed(pl) => shared += walk_line_items(&pl.block, r),
+        }
+    }
+    if shared > 0 {
+        r.add("AssembledBlock lines spine (shared with pages)", shared, 0);
     }
 }
 
@@ -233,13 +264,7 @@ pub fn render_cache(cache: &RenderCache, r: &mut Report) {
         if !r.first_time(addr) {
             continue;
         }
-        spine += vec_cap_bytes(&rc.lines);
-        for line in &rc.lines {
-            spine += vec_cap_bytes(line);
-            for it in line {
-                walk_assembled_item(it, r);
-            }
-        }
+        spine += walk_line_items(&rc.items, r);
         spine += vec_cap_bytes(&rc.faces);
         for (a, b, _) in &rc.resources {
             spine += a.capacity() as u64 + b.capacity() as u64;
@@ -359,7 +384,8 @@ pub struct CaretAudit {
 
 pub fn audit_carets(dl: &DisplayList, a: &mut CaretAudit) {
     for p in &dl.pages {
-        for it in &p.items {
+        // Cluster counts and end-caret presence do not depend on placement.
+        for it in p.unplaced() {
             let Item::GlyphRun(run) = it else { continue };
             a.runs += 1;
             a.clusters += run.clusters.len() as u64;

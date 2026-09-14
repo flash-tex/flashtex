@@ -83,7 +83,7 @@ fn ours(r: &flashtex_render_pipeline::Rendered) -> (Vec<W>, Rules) {
         .pages
         .iter()
         .map(|p| {
-            p.items
+            p.to_items()
                 .iter()
                 .filter_map(|it| match it {
                     flashtex_render_pipeline::display::Item::Rule(rule) => Some((rule.x.to_bp(), rule.top.to_bp(), rule.width.to_bp(), rule.height.to_bp())),

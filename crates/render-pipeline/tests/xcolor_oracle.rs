@@ -90,7 +90,7 @@ fn xcolor_fixtures_match_pdflatex() {
         for (pi, (page, rp)) in pages.iter().zip(ref_pages).enumerate() {
             let mut glyphs: Vec<(f64, f64, String)> = Vec::new();
             let mut rules: Vec<([f64; 4], String)> = Vec::new();
-            for item in &page.items {
+            for item in &page.to_items() {
                 match item {
                     Item::GlyphRun(run) => {
                         let fill = fill_of(&run.paint);

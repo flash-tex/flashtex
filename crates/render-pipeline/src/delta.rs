@@ -124,10 +124,12 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
     c.u(p.number as usize);
     c.t(p.width);
     c.t(p.height);
-    let items: Vec<&Item> = p.items.iter().filter(|it| wire.images || !matches!(it, Item::Image(_))).collect();
-    c.u(items.len());
-    for it in items {
-        match it {
+    // The filter reads the unplaced variant (placement never changes which
+    // variant an item is), so only the digested items are materialised.
+    let on_wire = |it: &&display::PageItem| wire.images || !matches!(it.unplaced(), Item::Image(_));
+    c.u(p.placed.iter().filter(on_wire).count());
+    for it in p.placed.iter().filter(on_wire).map(|it| p.place(it)) {
+        match &*it {
             Item::GlyphRun(r) => {
                 c.0.push(0x01);
                 c.s(&r.font_id);
@@ -388,14 +390,17 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
     if base.number != new.number || base.width != new.width || base.height != new.height {
         return None;
     }
-    let on_wire = |it: &&Item| wire.images || !matches!(it, Item::Image(_));
-    let (bi, ni): (Vec<&Item>, Vec<&Item>) = (base.items.iter().filter(on_wire).collect(), new.items.iter().filter(on_wire).collect());
+    let on_wire = |it: &&display::PageItem| wire.images || !matches!(it.unplaced(), Item::Image(_));
+    fn materialise<'a>(p: &'a Page, on_wire: impl Fn(&&display::PageItem) -> bool) -> Vec<std::borrow::Cow<'a, Item>> {
+        p.placed.iter().filter(on_wire).map(|it| p.place(it)).collect()
+    }
+    let (bi, ni) = (materialise(base, on_wire), materialise(new, on_wire));
     if bi.len() != ni.len() {
         return None;
     }
     let mut width_delta = 0isize;
-    for (b, n) in bi.into_iter().zip(ni) {
-        let ok = match (b, n) {
+    for (b, n) in bi.iter().zip(ni.iter()) {
+        let ok = match (&**b, &**n) {
             (Item::GlyphRun(x), Item::GlyphRun(y)) => {
                 x.font_id == y.font_id
                     && x.font_size == y.font_size
@@ -452,9 +457,9 @@ pub fn relocate_page(base: &Page, relocs: &[Relocation]) -> Option<Page> {
             }
         }
     }
-    let mut items = Vec::with_capacity(base.items.len());
-    for it in &base.items {
-        items.push(match it {
+    let mut items = Vec::with_capacity(base.item_count());
+    for it in base.items() {
+        items.push(match &*it {
             Item::GlyphRun(r) => {
                 let mut r = r.clone();
                 for c in &mut r.clusters {
@@ -467,7 +472,9 @@ pub fn relocate_page(base: &Page, relocs: &[Relocation]) -> Option<Page> {
             Item::Path(p) => Item::Path(display::PathItem { provenance: prov(&p.provenance, relocs)?, ..p.clone() }),
         });
     }
-    Some(Page { number: base.number, width: base.width, height: base.height, items })
+    // `base.items()` already applied the default colour, so the relocated
+    // page carries the paints outright and needs no default of its own.
+    Some(Page::from_items(base.number, base.width, base.height, items))
 }
 
 // ---------------------------------------------------------------- snapshots

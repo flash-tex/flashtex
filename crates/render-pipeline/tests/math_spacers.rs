@@ -18,7 +18,7 @@ fn doc(body: &str) -> String {
 fn glyphs(body: &str) -> (Vec<(char, f64, f64)>, Vec<String>) {
     let r = render_one(&doc(body));
     let mut out = Vec::new();
-    for item in &r.v2.pages[0].items {
+    for item in &r.v2.pages[0].to_items() {
         if let Item::GlyphRun(run) = item {
             if run.role != flashtex_render_pipeline::display::RunRole::Math {
                 continue;
