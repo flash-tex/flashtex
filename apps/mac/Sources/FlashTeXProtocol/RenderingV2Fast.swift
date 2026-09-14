@@ -169,6 +169,7 @@ public struct RenderingV2Fast {
         var projectId: String?, revision: Int?, features: [String]?
         var documents: [RenderingV2.DocumentResource]?, fonts: [RenderingV2.FontResource]?
         var pages: [RenderingV2.Page]?, diagnostics: [RenderingV2.Diagnostic]?
+        var window: RenderingV2.PageWindow?
         try object { key, p in
             switch key {
             case "render_format": renderFormat = try p.string()
@@ -186,6 +187,7 @@ public struct RenderingV2Fast {
                 p.fontsRange = start..<p.i
             case "pages": pages = try p.pages()
             case "diagnostics": diagnostics = try p.array { try $0.diagnostic() }
+            case "window": window = try p.pageWindow()
             default: try p.skip(depth: 2)
             }
         }
@@ -193,7 +195,22 @@ public struct RenderingV2Fast {
               let features, let documents, let fonts, let pages, let diagnostics else { throw err("missing display_list field") }
         return RenderingV2.DisplayList(renderFormat: renderFormat, coordinateUnit: unit, colorSpace: colorSpace, textExtraction: extraction,
                                        projectId: projectId, revision: revision, requiredFeatures: features, documents: documents,
-                                       fonts: fonts, pages: pages, diagnostics: diagnostics)
+                                       fonts: fonts, pages: pages, diagnostics: diagnostics, window: window)
+    }
+
+    /// `display-list-v2-window` §4: `{first_page, page_count, document_page_count}`.
+    private mutating func pageWindow() throws -> RenderingV2.PageWindow {
+        var first: Int?, count: Int?, document: Int?
+        try object { key, p in
+            switch key {
+            case "first_page": first = try p.int()
+            case "page_count": count = try p.int()
+            case "document_page_count": document = try p.int()
+            default: try p.skip(depth: 3)
+            }
+        }
+        guard let first, let count, let document else { throw err("missing window field") }
+        return RenderingV2.PageWindow(firstPage: first, pageCount: count, documentPageCount: document)
     }
 
     private mutating func document() throws -> RenderingV2.DocumentResource {
@@ -251,17 +268,27 @@ public struct RenderingV2Fast {
 
     private mutating func page() throws -> RenderingV2.Page {
         var number: Int?, width: Int64?, height: Int64?, items: [RenderingV2.Item]?
+        var resident: Bool?
         try object { key, p in
             switch key {
             case "number": number = try p.int()
             case "width": width = try p.int64()
             case "height": height = try p.int64()
             case "items": items = try p.array { try $0.item() }
+            case "resident": resident = try p.bool()
             default: try p.skip(depth: 3)
             }
         }
-        guard let number, let width, let height, let items else { throw err("missing page field") }
-        return RenderingV2.Page(number: number, width: width, height: height, items: items)
+        guard let number, let width, let height else { throw err("missing page field") }
+        // Same rule as the `Codable` path (`RenderingV2.Page.init(from:)`):
+        // items present = resident; no items and `resident: false` = elided;
+        // no items and no flag = a refusal, never a silently blank page.
+        if let items {
+            guard resident != false else { throw err("page \(number) carries items but is marked resident: false") }
+            return RenderingV2.Page(number: number, width: width, height: height, items: items)
+        }
+        guard resident == false else { throw err("missing page field") }
+        return RenderingV2.Page.elided(number: number, width: width, height: height)
     }
 
     /// `pages` array: each element's byte range is recorded; with a reuse hook
@@ -638,6 +665,16 @@ public struct RenderingV2Fast {
         return try string()
     }
 
+    private mutating func bool() throws -> Bool {
+        ws()
+        guard i < b.count else { throw err("expected a boolean") }
+        switch b[i] {
+        case 0x74: try literal("true"); return true
+        case 0x66: try literal("false"); return false
+        default: throw err("expected a boolean")
+        }
+    }
+
     private mutating func literalNull() throws -> Bool {
         guard i + 4 <= b.count, b[i] == 0x6E else { return false }
         guard b[i + 1] == 0x75, b[i + 2] == 0x6C, b[i + 3] == 0x6C else { throw err("invalid literal") }
@@ -828,6 +865,7 @@ extension RenderingV2Fast {
         var projectId: String?, revision: Int?, features: [String]?
         var documents: [RenderingV2.DocumentResource]?, fonts: [RenderingV2.FontResource]?
         var pages: [RenderingV2.Page]?, diagnostics: [RenderingV2.Diagnostic]?
+        var window: RenderingV2.PageWindow?
         var lengths: [Int] = []
         try object { key, p in
             switch key {
@@ -849,6 +887,7 @@ extension RenderingV2Fast {
                     return page
                 }
             case "diagnostics": diagnostics = try p.array { try $0.diagnostic() }
+            case "window": window = try p.pageWindow()
             default: try p.skip(depth: 2)
             }
         }
@@ -857,7 +896,7 @@ extension RenderingV2Fast {
         pageBytes = lengths
         return RenderingV2.DisplayList(renderFormat: renderFormat, coordinateUnit: unit, colorSpace: colorSpace, textExtraction: extraction,
                                        projectId: projectId, revision: revision, requiredFeatures: features, documents: documents,
-                                       fonts: fonts, pages: pages, diagnostics: diagnostics)
+                                       fonts: fonts, pages: pages, diagnostics: diagnostics, window: window)
     }
 
     /// Decoded `display_list_delta` envelope. Raw byte lengths of the header

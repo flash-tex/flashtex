@@ -1165,6 +1165,41 @@ not replace, negotiate, or change the v1 path.
   Tests: `V2ImageTests` (generated PNG/JPEG/PDF fixtures, stale-hash and symlink
   refusals, rotated PDF box, cache keying, request wiring, and a `FLASHTEX_RENDER`-gated
   round trip through the real producer with `project_root`).
+- Page window (`display-list-v2-window`, `protocol/proposals/display-list-v2-window.md`,
+  consumer co-signed): a 500 KB document lays out to 385 pages and 152 MB of display
+  list, which is over the worker's 16 MiB reply limit, so it returns `status: failed`
+  with no preview at all. `setLiveV2` therefore requests `display-list-v2-window`
+  alongside `display-list-v2`, and the compile request carries
+  `display_list_window: {first_page, page_count}` — where the reader is. The producer
+  builds only those pages; every other entry of `pages[]` carries its `number`, `width`,
+  `height` and `"resident": false` and **no `items` key at all**, and the reply echoes
+  `window: {first_page, page_count, document_page_count}`.
+  - **An elided page is painted, never blank.** `RenderingV2.PageContent` mirrors the
+    producer's enum so "not built" is not representable as "empty"; a page with no
+    `items` and no `resident: false` is a *decode error* on both readers, not a blank
+    page. The pane draws an elided page at its real size as a dashed, tinted
+    placeholder labelled "Page N / not loaded yet" — it is not rasterized, has no hover
+    or tap target, and the header says "Showing pages a–b of N · k pages not loaded".
+    Scrolling and page navigation are unaffected: every page keeps its slot and its
+    geometry (`PreviewPageLayout`), because only the glyph-level content is windowed.
+  - **The window follows the viewport, with hysteresis** (`PreviewV2Window.swift`).
+    `PreviewAnchorProbe` reports the page range under the viewport, and only when it
+    changes — a scroll inside one page reports nothing. `PreviewV2Window.next` then
+    re-requests only when the reader comes within two pages of an edge of what is
+    resident (or leaves it), centring `RenderingV2.maxWindowPages` pages on the
+    viewport; the send is debounced with the compile debounce, so a flick through many
+    pages is one request. The *echoed* window is always the input, never the requested
+    one, so a window the producer narrowed to fit the reply limit (§8) does not loop.
+  - **What refuses while pages are elided.** `Export PDF (v2)`, `Export Exact PDF` and
+    the v1 `Export PDF` all refuse a windowed frame and say how many pages are missing
+    (§4.1: a windowed reply is never a PDF's source; §5.6: the v1 `pages` are a subset).
+    A windowed frame is never installed as a `display-list-v2-delta` base — `-window`
+    and `-delta` are exclusive (§7) and the request never carries both. Caret follow
+    walks resident pages only, and ⌘⇧J reports "caret sync is limited to the loaded
+    page window" rather than "inside no preview item", which is a different claim.
+  - `FLASHTEX_DISPLAY_LIST_WINDOW=0` turns the request off for a session (the shell
+    then asks for the whole document, as it does today).
+
 - TikZ paths (proposal `path-v0`, `crates/render-pipeline/src/display.rs` `PathItem`;
   producer: Kabir's tikz-min work). Whenever `display-list-v2` is negotiated — there is
   no separate capability to request, `protocol.rs` gates only `display-list-v2` and

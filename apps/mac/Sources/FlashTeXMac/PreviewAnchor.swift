@@ -131,12 +131,18 @@ struct PreviewAnchorKeeper: NSViewRepresentable {
     let layout: PreviewPageLayout
     var follow: CaretFollowController.Request? = nil
     var onUserScroll: (() -> Void)? = nil
+    /// `display-list-v2-window`: the page range the viewport currently covers,
+    /// reported whenever it changes so the shell can keep the resident window
+    /// under the reader (PreviewV2Window.swift).
+    var onVisiblePages: ((ClosedRange<Int>) -> Void)? = nil
 
     func makeNSView(context: Context) -> PreviewAnchorProbe { PreviewAnchorProbe() }
     func updateNSView(_ view: PreviewAnchorProbe, context: Context) {
         view.onUserScroll = onUserScroll
+        view.onVisiblePages = onVisiblePages
         view.layoutDidChange(to: layout)
         view.follow(follow)
+        view.reportVisiblePages()
     }
 }
 
@@ -165,6 +171,10 @@ final class PreviewAnchorProbe: NSView {
     /// Caret following (`CaretFollow.swift`): reported live scrolls, the token
     /// of the last request acted on, and every decision made (evidence/tests).
     var onUserScroll: (() -> Void)?
+    /// `display-list-v2-window` viewport reporting; the last range reported, so
+    /// a scroll within one page sends nothing.
+    var onVisiblePages: ((ClosedRange<Int>) -> Void)?
+    private(set) var reportedVisiblePages: ClosedRange<Int>?
     private(set) var followedToken: Int?
     private(set) var followDecisions: [(token: Int, decision: CaretFollow.Decision)] = []
     /// Event trace for the acceptance harness: (ms since first event, event, visible top, document height).
@@ -206,10 +216,14 @@ final class PreviewAnchorProbe: NSView {
         if let doc = scroll.documentView {
             doc.postsFrameChangedNotifications = true
             observers.append(NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: doc, queue: nil) { [weak self] _ in
-                MainActor.assumeIsolated { self?.note("docFrame"); self?.applyPending() }
+                MainActor.assumeIsolated { self?.note("docFrame"); self?.applyPending(); self?.reportVisiblePages() }
             })
         }
         capture()
+        // The first viewport must be reported without waiting for a scroll:
+        // `updateNSView` can run before this view is inside the scroll view, so
+        // there is no visible rect to read yet (display-list-v2-window).
+        reportVisiblePages()
     }
 
     /// The visible rect in document coordinates with y down, or nil when not
@@ -226,15 +240,28 @@ final class PreviewAnchorProbe: NSView {
         anchor = PreviewAnchor.capture(visible: visible, layout: layout)
     }
 
+    /// Reports the page range the viewport covers, but only when it changed:
+    /// scrolling within one page, and every re-evaluation that does not move
+    /// the viewport across a page boundary, send nothing at all.
+    func reportVisiblePages() {
+        guard let onVisiblePages, let layout, let visible = documentVisibleRectTopDown,
+              let pages = PreviewV2Window.visiblePages(in: visible, layout: layout) else { return }
+        guard pages != reportedVisiblePages else { return }
+        reportedVisiblePages = pages
+        onVisiblePages(pages)
+    }
+
     private func clipBoundsDidChange() {
         note(pending == nil ? "bounds" : "bounds(pending)")
         if pending != nil { applyPending() } else { capture() }
+        reportVisiblePages()
     }
 
     func layoutDidChange(to new: PreviewPageLayout) {
         guard let old = layout else {
             layout = new
             capture()
+            reportVisiblePages()
             return
         }
         guard old != new else { return }
@@ -262,6 +289,7 @@ final class PreviewAnchorProbe: NSView {
             }
             self.pending = nil
             self.capture()
+            self.reportVisiblePages()
         }
     }
 

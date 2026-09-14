@@ -291,9 +291,14 @@ final class V2ImageTests: XCTestCase {
     func testPaneRequestsImagesAlongsideV2AndTheCompileRequestCarriesProjectRoot() throws {
         let model = ShellModel()
         model.setLiveV2(true)
-        XCTAssertEqual(model.requestedLayoutCapabilities.suffix(2), [V2Live.capability, RenderingV2.imagesCapability])
+        // `display-list-v2-window` rides along too (display-list-v2-window §4;
+        // the name alone windows nothing — the request must also say where the
+        // viewer is), so the pane's three opt-ins are the last three entries.
+        XCTAssertEqual(model.requestedLayoutCapabilities.suffix(3),
+                       [V2Live.capability, RenderingV2.imagesCapability, RenderingV2.windowCapability])
         model.setLiveV2(false)
         XCTAssertFalse(model.requestedLayoutCapabilities.contains(RenderingV2.imagesCapability))
+        XCTAssertFalse(model.requestedLayoutCapabilities.contains(RenderingV2.windowCapability))
         let req = RuntimeV1.CompileRequest(projectId: "p", revision: 1, entryPath: "main.tex", documents: [.init(path: "main.tex", text: "x")],
                                            layoutCapabilities: ["display-list-v2", RenderingV2.imagesCapability], projectRoot: "/tmp/proj")
         let json = try JSONSerialization.jsonObject(with: try JSONEncoder().encode(req)) as! [String: Any]
