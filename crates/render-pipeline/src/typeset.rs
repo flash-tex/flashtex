@@ -1140,6 +1140,8 @@ impl<'a> Context<'a> {
         let text_italic = |sp: &Span| math_text_keeps_italic(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\limsup`/`\liminf`: `lim`, a thin space, then `sup`/`inf`.
         let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        // `\ldots`/`\cdots`: `\mathinner` of three Punct dots.
+        let ellipsis = |sp: &Span| math_ellipsis_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\quad`/`\qquad`/`\,`/`\:`/`\;`/`\!` (compiler `Space { em }`) at
         // the top level of the formula (outside `\left...\right`): math-layout
         // has no kern atom, so the formula is split there into runs laid out
@@ -1153,7 +1155,7 @@ impl<'a> Context<'a> {
         // fraction, a script, inside `\left...\right`, another grid's cell)
         // enters math-layout as a box handle (`mathtext::GridCells`).
         let segments = split_at_spaces(list, &fence, sink.font_em_ratio());
-        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_split)).collect();
+        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_split, &ellipsis)).collect();
         // Glue at a top-level grid cell's own top level is split out like
         // the formula's; only deeper glue is dropped.
         let nested_glue_em: f64 = segments
@@ -5682,7 +5684,7 @@ pub fn convert_math_fenced(list: &flashtex_compiler::math::MathList, sink: &mut 
     // No source to read, so no source-derived fact: no fence, no forced
     // class, no operator limits, and no run shown to be a whole run of math
     // characters (so no italic correction).
-    convert_math_classed(list, sink, fence, &|_| None, &|_| None, &|_| false, &|_| None)
+    convert_math_classed(list, sink, fence, &|_| None, &|_| None, &|_| false, &|_| None, &|_| None)
 }
 
 /// Maps the compiler's own atom class onto math-layout's.
@@ -5905,6 +5907,69 @@ pub fn operator_thin_space_split(text: &str, at: usize) -> Option<(&'static str,
     }
 }
 
+/// The dot that a `\ldots`/`\cdots`-family control word at `at` sets three of
+/// inside a `\mathinner`, re-read from the control word at the span like
+/// [`fence_of`].
+///
+/// Both families are `\mathinner{\dotp\dotp\dotp}` of a **punctuation** atom
+/// (plain.tex 360-361, `\mathellipsis` in `latex.ltx`), which is two separate
+/// facts about spacing that an ordinary atom does not have:
+///
+///  - Punct against Punct is a thin space, so the three dots sit 3mu apart;
+///  - `\mathinner` is the Inner class, so the group takes a thin space
+///    against the Ord on each side of it.
+///
+/// The dots differ only in which family the glyph comes from, and
+/// `flashtex_math_layout::cm::symbol_slot` already maps both the way plain
+/// TeX's `\mathcode`s do -- `.` to `letters` (math italic) slot `"3A`, the
+/// `\ldotp` glyph, and `U+22C5` to `symbols` (cmsy) slot `"01`, `\cdotp`.
+/// So this is about the atoms, not the fonts: the two periods are within
+/// 0.0001 bp of each other in width, and the whole of the difference from
+/// what the pinned compiler produces is four thin spaces.
+///
+/// Measured with TeX Live 2025 pdflatex under the harness preamble
+/// (`\showbox`):
+///
+/// ```text
+/// \setbox0=\hbox{$a\ldots b$}          \setbox0=\hbox{$a\cdots b$}
+/// .\OML/lmm/m/it/12 a                  .\OML/lmm/m/it/12 a
+/// .\glue(\thinmuskip) 1.99997          .\glue(\thinmuskip) 1.99997
+/// .\hbox(1.16666+0.0)x13.7915          .\hbox(5.33334+0.0)x13.99997
+/// ..\OML/lmm/m/it/12 :                 ..\OMS/lmsy/m/n/12 ^^A
+/// ..\glue(\thinmuskip) 1.99997         ..\glue(\thinmuskip) 1.99997
+/// ..\OML/lmm/m/it/12 :                 ..\OMS/lmsy/m/n/12 ^^A
+/// ..\glue(\thinmuskip) 1.99997         ..\glue(\thinmuskip) 1.99997
+/// ..\OML/lmm/m/it/12 :                 ..\OMS/lmsy/m/n/12 ^^A
+/// .\glue(\thinmuskip) 1.99997          .\glue(\thinmuskip) 1.99997
+/// .\OML/lmm/m/it/12 b                  .\OML/lmm/m/it/12 b
+/// ```
+///
+/// (`:` and `^^A` are how `\showbox` names slots `"3A` and `"01`.) The
+/// grouping of the eight commands is the compiler's own
+/// (`crates/compiler/src/math.rs`): amsmath's `\dotsc`/`\dotso` are low dots
+/// and `\dotsb`/`\dotsm`/`\dotsi` are centred ones. Bare `\dots` follows the
+/// kernel's `\mathellipsis` and is low, which is what the compiler already
+/// assumes; amsmath makes `\dots` guess from what follows it, and neither
+/// side models that.
+///
+/// `\vdots` and `\ddots` are deliberately **not** here. They are not runs of
+/// dots at all but vertical box constructions over *text*-font periods --
+/// `\vdots` is a `\vbox` of three `\hbox{.}` at `\baselineskip` 2.83334 over
+/// a `\kern 6.0`, and `\ddots` an Inner hbox of three `\hbox{.}` shifted
+/// -7.0/-4.0/-1.0 between kerns of 0.66666 and 1.33331 -- and math-layout has
+/// no atom that builds a vbox, so they need their own change.
+pub fn math_ellipsis_of(text: &str, at: usize) -> Option<char> {
+    let rest = text.get(at..)?.strip_prefix('\\')?;
+    let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
+    Some(match &rest[..word_len] {
+        // `\ldotp`, `\mathcode`"013A: the math italic period.
+        "ldots" | "dots" | "dotsc" | "dotso" => '.',
+        // `\cdotp`, cmsy `"01`: the centred dot.
+        "cdots" | "dotsb" | "dotsm" | "dotsi" => '\u{22C5}',
+        _ => return None,
+    })
+}
+
 /// [`convert_math_fenced`] with `class` giving the forced class of a
 /// `Group` (`\mathbin{...}`) or class-overridden symbol atom at a span, and
 /// `op_limits` the limit placement of a named operator at a span
@@ -5917,14 +5982,27 @@ pub fn convert_math_classed(
     op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
     text_italic: &dyn Fn(&Span) -> bool,
     text_split: &dyn Fn(&Span) -> Option<(&'static str, &'static str)>,
+    ellipsis: &dyn Fn(&Span) -> Option<char>,
 ) -> ml::MathList {
     use flashtex_compiler::math::{DelimiterRole, Nucleus as N};
     // Open fences: (left delimiter, atoms converted since it, its span).
     let mut stack: Vec<(Option<char>, Vec<ml::Atom>, Span)> = Vec::new();
     let mut atoms = Vec::new();
     for a in &list.atoms {
-        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits, text_italic, text_split);
+        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits, text_italic, text_split, ellipsis);
         let mut out: Vec<ml::Atom> = match &a.nucleus {
+            // `\ldots`/`\cdots` and the amsmath spellings: TeX's
+            // `\mathinner{\ldotp\ldotp\ldotp}` (`math_ellipsis_of`). The
+            // compiler flattens both to three characters with no class and no
+            // spacing -- `Nucleus::Text("...")` for the low dots and
+            // `Nucleus::Symbol("⋅⋅⋅")` for the centred ones -- so the atoms
+            // are rebuilt here: three Punct dots (3mu apart) inside one Inner
+            // atom (a thin space against each neighbour).
+            N::Text(_) | N::Symbol(_) if ellipsis(&a.span).is_some() => {
+                let dot = ellipsis(&a.span).expect("checked by the guard");
+                let dots = (0..3).map(|_| ml::Atom::new(ml::AtomClass::Punct, ml::Nucleus::Symbol(dot))).collect();
+                vec![ml::Atom::new(ml::AtomClass::Inner, ml::Nucleus::List(ml::MathList::new(dots)))]
+            }
             // `\lim`, `\sin`, `\max`, ...: TeX's `\mathop` of upright roman
             // text (`latex.ltx` 15523-15556), so an `Op` atom -- which is both
             // the thin space the Op class contributes on each side and, for
@@ -6548,12 +6626,14 @@ fn grid_pieces(
     let text_italic = &text_italic;
     let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let text_split = &text_split;
+    let ellipsis = |sp: &Span| math_ellipsis_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+    let ellipsis = &ellipsis;
     let mut pieces = Vec::new();
     for (atoms, em) in segments {
         let mut run: Vec<MathAtom> = Vec::new();
         let flush = |run: &mut Vec<MathAtom>, pieces: &mut Vec<GridPiece>, sink: &mut crate::mathtext::TextSink| {
             if !run.is_empty() {
-                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits, text_italic, text_split)));
+                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits, text_italic, text_split, ellipsis)));
             }
         };
         for (a, top) in atoms.iter().zip(top_level_grids(atoms, fence)) {
@@ -6584,7 +6664,7 @@ fn grid_pieces(
                             _ => cell,
                         };
                         let parts = split_at_spaces(cell, fence, sink.font_em_ratio());
-                        let runs = parts.iter().map(|(atoms, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits, text_italic, text_split)).collect();
+                        let runs = parts.iter().map(|(atoms, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits, text_italic, text_split, ellipsis)).collect();
                         let glue = parts.iter().map(|(_, em)| *em).collect();
                         (runs, glue)
                     };
