@@ -13,11 +13,14 @@
 use std::collections::{BTreeMap, HashMap};
 
 use flashtex_compiler::math::MathList;
-use flashtex_compiler::parser::{Block as CBlock, Inline, Parsed};
+use flashtex_compiler::parser::{Block as CBlock, FillLeader, Inline, Parsed, UnderlineGeom};
 use flashtex_compiler::text_builtins::{TextDimen, TextLogo, TextRule};
 use flashtex_compiler::{DocumentId, Span};
 
-use flashtex_class_geometry::{ClassKind, DocumentSetup, GeometryInput, PageStyle};
+use flashtex_class_geometry::{
+    ClassKind, DocumentSetup, GeometryInput, Glue, PageFrame, PageParams, PageStyle, ResolvedDocument,
+    Sp,
+};
 
 use crate::display::Diagnostic;
 use flashtex_compiler::color::DeviceColor;
@@ -194,6 +197,18 @@ pub enum Item {
     Footnote { number: String, mark: bool, span: Span, text: Option<Vec<Item>> },
     /// `\colorbox`/`\fcolorbox` (compiler `Inline::ColorBox`).
     ColorBox(Box<ColorBoxItem>),
+    /// LaTeX's `\llap{...}`: `items` set at their natural width and then
+    /// pulled back by exactly that width, so the line's reference point does
+    /// not move and the material hangs in the left margin.
+    ///
+    /// The first thing emitted for it is an empty `\hbox` (the same
+    /// undiscardable anchor [`Item::LeaveVmode`] is), because the pull-back
+    /// is a kern and a kern at the head of a line is discarded (TeX §879) —
+    /// which is exactly where `listings` puts one, on every numbered line.
+    Lap { items: Vec<Item> },
+    /// ulem `\uline`/`\sout` or kernel text `\underline` (compiler
+    /// `Inline::Underline`).
+    Underline(Box<UnderlineItem>),
     /// LaTeX's `\leavevmode`: an empty zero-width `\hbox`.
     ///
     /// Emitted only in front of a verbatim blank that would otherwise open
@@ -219,6 +234,17 @@ pub struct ColorBoxItem {
     pub frame: Option<DeviceColor>,
     pub sep_pt: f64,
     pub rule_pt: f64,
+    pub items: Vec<Item>,
+    pub span: Span,
+}
+
+/// A `\uline`/`\sout`/`\underline`: `items` set as an `\hbox`, with a
+/// `thickness_pt` rule placed by `geom` (ulem descender, TeXbook Rule 10,
+/// or a 0.55ex strike).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnderlineItem {
+    pub thickness_pt: f64,
+    pub geom: UnderlineGeom,
     pub items: Vec<Item>,
     pub span: Span,
 }
@@ -377,6 +403,12 @@ pub enum Block {
         /// The paragraph is set at a size other than `\normalsize`
         /// (`abstract`'s `\small`); see [`SizedPara`].
         sized: Option<SizedPara>,
+        /// `\baselineskip` for every line of this paragraph and for the glue
+        /// above its first one, when the `\par` that ended it ran under a
+        /// size declaration ([`ParLeading`]). `None` is the body's. Set
+        /// *instead of* the whole-paragraph resize [`SizedPara`] carries:
+        /// the runs keep their own sizes, only the leading moves.
+        leading_pt: Option<f64>,
     },
     Heading {
         level: u8,
@@ -605,6 +637,12 @@ pub struct SizedPara {
     pub close_skip: Option<crate::style::Skip>,
 }
 
+/// The size declaration in force when a paragraph's `\par` ran, which is the
+/// `\baselineskip` TeX reads in `append_to_vlist` (§679) for every one of its
+/// lines — the compiler's `parser::ParLeading`, mirrored here so the pipeline
+/// builds against a `vendor/compiler` that predates the name.
+pub type ParLeading = Option<flashtex_compiler::parser::FontSizeLevel>;
+
 /// How a paragraph-shape environment began (see [`Block::Paragraph`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnvOpen {
@@ -681,9 +719,9 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
 ///   exact `\vskip`s and `\thanks` are not.
 /// - `\vfill`: dropped (the page builder has no stretchable vertical
 ///   glue), reported on the next block.
-fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<CBlock>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>) {
+fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: bool) -> (Vec<(CBlock, ParLeading)>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>) {
     use flashtex_compiler::parser::{FontSizeLevel, ParagraphStyle, TextFamily, TextStyle as CStyle};
-    let mut out: Vec<CBlock> = Vec::with_capacity(blocks.len());
+    let mut out: Vec<(CBlock, ParLeading)> = Vec::with_capacity(blocks.len());
     let mut limitations: Vec<(&'static str, Span, String)> = Vec::new();
     let mut titles: Vec<StashedTitle> = Vec::new();
     let mut pending_vfill = 0usize;
@@ -704,7 +742,8 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
             })
             .collect()
     };
-    for block in blocks {
+    for (block, par_leading) in blocks {
+        let par_leading = *par_leading;
         let first = match block {
             CBlock::Heading { number_span, .. } => Some(*number_span),
             CBlock::Verbatim { span, .. } | CBlock::TableOfContents { span } | CBlock::Rule { span } => Some(*span),
@@ -721,7 +760,7 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
             }
         }
         match block {
-            CBlock::Verbatim { lines, span } => {
+            CBlock::Verbatim { lines, span: _ } => {
                 let mut content: Vec<Inline> = Vec::with_capacity(lines.len() * 2);
                 for (i, line) in lines.iter().enumerate() {
                     if i > 0 {
@@ -748,37 +787,29 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
                 }
                 // The text itself is now typewriter and literal (see
                 // `style_intervals`/`TextStyle::literal`), so the old
-                // "no monospaced face" limitation no longer applies. What
-                // is still missing is package-specific: `listings` key
-                // handling (`basicstyle`, `frame`, `numbers`, `caption`).
-                let env = texts
-                    .get(span.document.0)
-                    .and_then(|t| t.get(span.start..span.end))
-                    .and_then(|t| environment_name(t, t.find("\\begin").map(|b| b + 6)?))
-                    .map(|(name, _)| name)
-                    .unwrap_or("");
-                if env.starts_with("lstlisting") {
-                    limitations.push((
-                        "unsupported_block",
-                        *span,
-                        format!(
-                            "lstlisting ({} line(s)) set as a flush-left typewriter paragraph with forced line breaks: \
-                             the listings keys are not applied, so `basicstyle` (its font size), `frame`, `numbers` \
-                             and `caption` are missing",
-                            lines.len()
-                        ),
-                    ));
-                }
-                out.push(CBlock::Styled {
-                    style: ParagraphStyle::FlushLeft,
-                    content,
-                    lists: Vec::new(),
-                    line_break_before: None,
-                });
+                // "no monospaced face" limitation no longer applies, and an
+                // `lstlisting` gets its limitation from `crate::listings` —
+                // the pass that knows which keys it applied and which it did
+                // not. A blanket "the listings keys are not applied" here
+                // would now be false.
+                out.push((
+                    CBlock::Styled {
+                        style: ParagraphStyle::FlushLeft,
+                        content,
+                        lists: Vec::new(),
+                        line_break_before: None,
+                    },
+                    // No `leading_pt`: a listing's leading comes from its
+                    // `basicstyle` through `crate::listings`, which sets the
+                    // paragraph's whole `SizedPara` — size and that size's
+                    // own `\baselineskip` together — rather than a leading
+                    // on its own.
+                    None,
+                ));
             }
             // Set by `crate::toc` from the source command; the block stays
             // as the position a following `\clearpage` is measured from.
-            CBlock::TableOfContents { .. } => out.push(block.clone()),
+            CBlock::TableOfContents { .. } => out.push((block.clone(), par_leading)),
             CBlock::TitleBlock { title, authors, date } if stash_titles => titles.push((title.clone(), authors.clone(), date.clone())),
             CBlock::TitleBlock { title, authors, date } => {
                 if let Some(at) = first {
@@ -788,25 +819,40 @@ fn lower_blocks(texts: &[&str], blocks: &[CBlock], stash_titles: bool) -> (Vec<C
                         "\\maketitle set as centred paragraphs (title \\LARGE, authors/date \\large): article's exact \\@maketitle skips and \\thanks are not applied".to_string(),
                     ));
                 }
-                for (part, size) in [(Some(title), FontSizeLevel::Large3), (Some(authors), FontSizeLevel::Large1), (date.as_ref(), FontSizeLevel::Large1)] {
+                // `\@maketitle` (article.cls 172-186) puts a `\par` inside
+                // the title's and the authors' groups but *not* the date's:
+                // `{\LARGE \@title \par}`, `{\large ... \par}`, then
+                // `{\large \@date}` and only then `\end{center}`. So the
+                // date's `\par` runs after `}` has restored `\baselineskip`
+                // and its lines are the body's 13.6 pt apart, not `\large`'s
+                // 14 — measured on a wrapping `\date` under pdfTeX
+                // 3.141592653-2.6-1.40.27: title 21.918 bp, date 13.549 bp.
+                for (part, size, leading) in [
+                    (Some(title), FontSizeLevel::Large3, Some(FontSizeLevel::Large3)),
+                    (Some(authors), FontSizeLevel::Large1, Some(FontSizeLevel::Large1)),
+                    (date.as_ref(), FontSizeLevel::Large1, None),
+                ] {
                     let Some(part) = part else { continue };
                     if part.is_empty() {
                         continue;
                     }
-                    out.push(CBlock::Styled {
-                        style: ParagraphStyle::Center,
-                        content: sized(part, size),
-                        lists: Vec::new(),
-                        line_break_before: None,
-                    });
+                    out.push((
+                        CBlock::Styled {
+                            style: ParagraphStyle::Center,
+                            content: sized(part, size),
+                            lists: Vec::new(),
+                            line_break_before: None,
+                        },
+                        leading,
+                    ));
                 }
             }
             CBlock::VFill => pending_vfill += 1,
-            other => out.push(other.clone()),
+            other => out.push((other.clone(), par_leading)),
         }
     }
     if pending_vfill > 0 {
-        let at = out.iter().rev().flat_map(|b| inlines_of(b).iter().map(inline_span).last()).next().unwrap_or(Span {
+        let at = out.iter().rev().flat_map(|(b, _)| inlines_of(b).iter().map(inline_span).last()).next().unwrap_or(Span {
             document: DocumentId(0),
             start: 0,
             end: 0,
@@ -920,18 +966,22 @@ pub fn adapt_cached(
     let size = class_size(&class_options);
     // LaTeX's own \parindent (size1x.clo) applies when the document declares a
     // class; body-only input keeps the compiler's implicit 0pt.
-    let mut style = Stylesheet::from_resolved(
-        &flashtex_class_geometry::resolve(&document_setup(source, explicit_class.is_some(), &class_options)),
-        Stylesheet::family_for(&parsed.packages, t1_encoding(source)),
+    let family = Stylesheet::family_for(&parsed.packages, t1_encoding(source));
+    let setup = document_setup(
+        source,
+        explicit_class.is_some(),
+        &class_options,
     );
-    // The class's `\parindent` (`size1x.clo`: 15pt / 17pt / 1.5em; `1em` in
-    // two-column mode) comes with the resolved frame.
-    let em_ex = ec_em_ex(size, style.family);
-    style.parindent_pt = setlength_in(source, "parindent", size, em_ex).unwrap_or(if explicit_class.is_some() {
-        style.parindent_pt
-    } else {
-        options.default_parindent_pt
-    });
+    let mut resolved = flashtex_class_geometry::resolve(&setup);
+    let assigned = apply_preamble_lengths(source, &mut resolved, size, family, setup.geometry.is_some());
+    let mut style = Stylesheet::from_resolved(&resolved, family);
+    // apply_preamble_lengths is the source of truth for `\parindent` /
+    // `\parskip` (source order, including `\addtolength` and body
+    // assignments). The older `setlength_in` scan only saw `\setlength`
+    // and overwrote the accumulated value.
+    if explicit_class.is_none() && !assigned.parindent {
+        style.parindent_pt = options.default_parindent_pt;
+    }
     if let Some(pt) = setlength(source, "columnseprule", size) {
         style.columnseprule_pt = pt;
     }
@@ -959,10 +1009,16 @@ pub fn adapt_cached(
     style.cmex_designs = crate::style::cmex_designs(&parsed.packages, amsmath_cmex10);
     #[cfg(feature = "amsmath-inline")]
     let mathtools = parsed.packages.iter().any(|p| p == "mathtools");
-    // `\setlength{\parskip}{...}`: a fixed skip (no stretch) replaces
-    // article's `0pt plus 1pt`.
-    if let Some(pt) = setlength_in(source, "parskip", size, em_ex) {
-        style.parskip = crate::style::Skip::fixed(pt);
+    // `\parskip` from apply_preamble_lengths: `\addtolength` keeps class
+    // stretch; a `\setlength` with plus/minus keeps those; a plain value
+    // is a fixed skip.
+    if assigned.parskip {
+        let g = resolved.params.parskip;
+        style.parskip = crate::style::Skip::new(
+            crate::style::frame_pt(g.natural),
+            crate::style::frame_pt(g.stretch),
+            crate::style::frame_pt(g.shrink),
+        );
     }
     // `\c@secnumdepth`. LaTeX has exactly one such counter and `\@sect` reads
     // it twice: `\ifnum #2>\c@secnumdepth` suppresses the printed number, and
@@ -1018,7 +1074,23 @@ pub fn adapt_cached(
     let maketitles = commands.iter().filter(|c| matches!(c.kind, BodyKind::MakeTitle)).count();
     let title_blocks = parsed.blocks.iter().filter(|b| matches!(b, CBlock::TitleBlock { .. })).count();
     let stash_titles = style.class_geometry.is_some() && maketitles == title_blocks && maketitles > 0;
-    let (mut lowered, mut limitations, stashed) = lower_blocks(texts, &parsed.blocks, stash_titles);
+    // `Parsed::block_par_leading` is one entry per block, in `blocks` order
+    // (the compiler pushes both from the same place). Without the
+    // `par-leading` feature the pinned `vendor/compiler` has no such field
+    // and every paragraph keeps the body's `\baselineskip`, which is what
+    // the pipeline did before this existed.
+    #[cfg(feature = "par-leading")]
+    let leadings: Vec<ParLeading> = parsed.block_par_leading.clone();
+    #[cfg(not(feature = "par-leading"))]
+    let leadings: Vec<ParLeading> = vec![None; parsed.blocks.len()];
+    debug_assert_eq!(leadings.len(), parsed.blocks.len());
+    let paired: Vec<(CBlock, ParLeading)> = parsed
+        .blocks
+        .iter()
+        .cloned()
+        .zip(leadings.into_iter().chain(std::iter::repeat(None)))
+        .collect();
+    let (mut lowered, mut limitations, stashed) = lower_blocks(texts, &paired, stash_titles);
     let mut stashed = stashed.into_iter();
     let title_of = |(title, authors, date): StashedTitle, span: Span| Block::Title {
         title: items_for(&title, false),
@@ -1390,6 +1462,7 @@ pub fn adapt_cached(
                 in_theorem,
                 list,
                 run_in,
+                par_leading,
             } => {
                 for inline in inlines {
                     unsupported_inlines(inline, &mut limitations);
@@ -1614,6 +1687,7 @@ pub fn adapt_cached(
                     endlist_adjust: unit.endlist_adjust,
                     list,
                     sized: None,
+                    leading_pt: par_leading_pt(par_leading, style.base),
                 });
                 after_heading = false;
             }
@@ -1628,7 +1702,7 @@ pub fn adapt_cached(
     // own shape (the centred `\small\bfseries` head and the `\small`
     // `quotation`) is read from the source bytes here, before the
     // `env_close` pass below derives the closing skips from the styles.
-    let superseded = crate::abstractenv::apply(texts, &mut blocks, &style);
+    let mut superseded = crate::abstractenv::apply(texts, &mut blocks, &style);
     // `\end{...}`: the last paragraph of a run of same-style paragraphs
     // closes the environment (two adjacent environments of one style are
     // read as one; the compiler does not mark the boundary).
@@ -1646,6 +1720,18 @@ pub fn adapt_cached(
             }
         }
     }
+    // `listings`: the compiler sets an `lstlisting` body as literal
+    // typewriter lines and reports its `[...]` options, so `\lstset` and the
+    // environment's keys are read from the source bytes here
+    // (`crate::listings`). It runs *after* the `env_close` pass above: an
+    // `lstlisting` is not a `\trivlist` — listings sets the body as a plain
+    // paragraph under a `\parshape` — so the listing paragraph must keep
+    // neither the opening nor the closing `\topsep`, and that pass would
+    // otherwise put the closing one back.
+    let (listing_superseded, listing_limitations) = crate::listings::apply(texts, &mut blocks, &style, labels);
+    superseded.extend(listing_superseded);
+    superseded.extend(crate::listings::lstset_spans(texts));
+    limitations.extend(listing_limitations);
     // Page-style and mark commands (and a `\maketitle`) after the last
     // material.
     for cmd in &commands[next_command..] {
@@ -1699,6 +1785,7 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
                     }
                 }
                 Inline::ColorBox(b) => walk(&b.content, out),
+                Inline::Underline(u) => walk(&u.content, out),
                 _ => {}
             }
         }
@@ -1764,7 +1851,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::MathRows { span, .. }
         | Inline::Label { span, .. }
         | Inline::Reference { span, .. }
-        | Inline::HFill { span }
+        | Inline::HFill { span, .. }
         | Inline::HSpace { span, .. }
         | Inline::Footnote { span, .. }
         | Inline::Verbatim { span, .. }
@@ -1774,6 +1861,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::Kern { span, .. } => *span,
         Inline::Tabular(t) => t.span,
         Inline::ColorBox(b) => b.span,
+        Inline::Underline(u) => u.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
     }
@@ -1785,6 +1873,30 @@ fn inline_span(i: &Inline) -> Span {
 /// columns or rules) and `\verb` (body face). Footnote text is scanned too.
 fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, String)>) {
     match inline {
+        // `\hrulefill` / `\dotfill` (compiler `FillLeader`, #320). The glue
+        // itself is set exactly — LaTeX defines both as `\leaders<box>\hfill
+        // \kern\z@`, so everything after them on the line lands where
+        // pdflatex puts it — but the leader box is not painted: this pipeline
+        // has no leaders outside the table of contents' own `leader_dots`
+        // (`typeset/toc.rs`, tex.web §626), and the resolved width of one
+        // glue is not reported by `flashtex-paragraph-layout` (only
+        // `Line::ratio`, `Line::set_width` and box positions), so painting
+        // them is its own change rather than a re-pin's. Named here so the
+        // missing rule is never silent.
+        Inline::HFill { leader, span } if !matches!(leader, FillLeader::None) => {
+            let (command, ink) = match leader {
+                FillLeader::Rule => ("\\hrulefill", "a 0.4pt rule"),
+                _ => ("\\dotfill", "dots in 0.44em boxes"),
+            };
+            out.push((
+                "unsupported_inline",
+                *span,
+                format!(
+                    "{command} is set as \\hfill: the glue is exact, but {ink} filling it is not painted \
+                     (this pipeline has no leaders outside the table of contents)"
+                ),
+            ));
+        }
         Inline::Footnote { text, .. } => {
             // Set by `typeset::footnotes`; contexts it does not reach
             // (headings, captions, floats) are diagnosed there.
@@ -1915,6 +2027,8 @@ enum UnitKind<'p> {
         /// The paragraph opens with a run-in heading (`\paragraph`,
         /// `\subparagraph`); see [`RunIn`] and [`run_in_heading_at`].
         run_in: Option<RunIn>,
+        /// The leading this paragraph's `\par` selected ([`ParLeading`]).
+        par_leading: ParLeading,
     },
     Rule {
         span: Span,
@@ -1945,7 +2059,7 @@ fn gap_has_page_break(texts: &[&str], prev: Span, next: Span) -> bool {
     PAGE_BREAKS.iter().any(|c| find_command(gap, c).is_some())
 }
 
-fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, style: &Stylesheet) -> Vec<Unit<'p>> {
+fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], size: u32, style: &Stylesheet) -> Vec<Unit<'p>> {
     let theorem_envs = theorem_environments(texts);
     let mut units = Vec::new();
     let mut prev_end: Option<Span> = None;
@@ -1965,7 +2079,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
     // `tikzpicture` environments per document, and those already emitted.
     let pictures: Vec<Vec<flashtex_vector_graphics::tikz::PictureSource>> = texts.iter().map(|t| flashtex_vector_graphics::tikz::find_pictures(t)).collect();
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
-    for block in blocks {
+    for (block, par_leading) in blocks {
+        let par_leading = *par_leading;
         match block {
             CBlock::PageBreak => {
                 pending_eject = true;
@@ -2304,6 +2419,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                                     in_theorem,
                                     list: list.clone(),
                                     run_in: std::mem::take(&mut run_in),
+                                    par_leading,
                                 },
                                 eject_before: eject,
                                 vspace_before: std::mem::take(&mut vspace_before),
@@ -2328,6 +2444,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                             in_theorem,
                             list: list.clone(),
                             run_in: std::mem::take(&mut run_in),
+                            par_leading,
                         },
                         eject_before: eject,
                         vspace_before: std::mem::take(&mut vspace_before),
@@ -2579,6 +2696,658 @@ pub fn document_setup(source: &str, has_class: bool, class_options: &str) -> Doc
         None => None,
     };
     setup
+}
+
+/// Lengths the geometry package overwrites. An earlier `\setlength` of one
+/// of these is ignored when `geometry` runs later, matching LaTeX.
+const GEOMETRY_LENGTHS: &[&str] = &[
+    "paperwidth",
+    "paperheight",
+    "textwidth",
+    "textheight",
+    "oddsidemargin",
+    "evensidemargin",
+    "topmargin",
+    "headheight",
+    "headsep",
+    "footskip",
+    "marginparwidth",
+    "marginparsep",
+    "columnsep",
+];
+
+const PREAMBLE_LENGTHS: &[&str] = &[
+    "paperwidth",
+    "paperheight",
+    "textwidth",
+    "textheight",
+    "oddsidemargin",
+    "evensidemargin",
+    "topmargin",
+    "headheight",
+    "headsep",
+    "footskip",
+    "marginparwidth",
+    "marginparsep",
+    "columnsep",
+    "parindent",
+    "parskip",
+    "columnseprule",
+];
+
+struct LengthAssigns {
+    parindent: bool,
+    parskip: bool,
+}
+
+/// Apply preamble `\setlength` / `\addtolength` / `\len=<dimen>` after the
+/// class defaults and the geometry package, in source order.
+///
+/// Known limits (see ignored tests): `\input`/`\include` files are not in
+/// `source`, so their assignments are missed; `\makeatletter` `\@setlength`
+/// is missed because [`next_command`] only collects ASCII letters.
+fn apply_preamble_lengths(
+    source: &str,
+    doc: &mut ResolvedDocument,
+    size: u32,
+    family: crate::fonts::Family,
+    geometry: bool,
+) -> LengthAssigns {
+    let preamble_end = document_begin_offset(source).unwrap_or(source.len());
+    let last_geometry = last_geometry_offset(source, preamble_end);
+    let em_ex = ec_em_ex(size, family);
+    let mut assigned = LengthAssigns { parindent: false, parskip: false };
+    let mut params = doc.params;
+    let mut scan = CmdScan::new(source);
+    while let Some((at, name, depth)) = scan.next() {
+        if depth != 0 {
+            continue;
+        }
+        let after_name = at + 1 + name.len();
+        if matches!(name, "newcommand" | "renewcommand" | "providecommand" | "def" | "gdef" | "edef" | "xdef") {
+            scan.skip_to(skip_macro_definition(source, name, after_name));
+            continue;
+        }
+        if name == "setlength" || name == "addtolength" {
+            if let Some((target, raw)) = setlength_args(source, after_name) {
+                let page = GEOMETRY_LENGTHS.contains(&target.as_str());
+                if page && at >= preamble_end {
+                    continue;
+                }
+                if page && last_geometry.is_some_and(|g| at < g) {
+                    continue;
+                }
+                if let Some(v) = parse_assignment_glue(&raw, &params, size, em_ex) {
+                    assign_param(&mut params, &target, v, name == "addtolength");
+                    assigned.parindent |= target == "parindent";
+                    assigned.parskip |= target == "parskip";
+                }
+            }
+            continue;
+        }
+        if !PREAMBLE_LENGTHS.contains(&name) {
+            continue;
+        }
+        let page = GEOMETRY_LENGTHS.contains(&name);
+        if page && at >= preamble_end {
+            continue;
+        }
+        if page && last_geometry.is_some_and(|g| at < g) {
+            continue;
+        }
+        if let Some(raw) = read_assignment_dimen(source, after_name) {
+            if let Some(v) = parse_assignment_glue(&raw, &params, size, em_ex) {
+                assign_param(&mut params, name, v, false);
+                assigned.parindent |= name == "parindent";
+                assigned.parskip |= name == "parskip";
+            }
+        }
+    }
+    if assigned.parindent {
+        // \@startsection records \parindent into the heading spec at
+        // definition time; re-resolve after preamble assignments so
+        // \subparagraph sees the final indent. class-geometry is unchanged.
+        doc.headings = flashtex_class_geometry::sections::headings(
+            doc.options.kind,
+            &params,
+            doc.font,
+            doc.secnumdepth,
+        );
+    }
+    // geometry's pdftex driver copies \paperwidth/\paperheight into the
+    // MediaBox at \begin{document}. Without geometry, pdfTeX keeps the
+    // engine default even after a later \setlength of those registers.
+    let media = if geometry {
+        (params.paperwidth, params.paperheight)
+    } else {
+        (doc.frame.pdf_page_width, doc.frame.pdf_page_height)
+    };
+    doc.params = params;
+    doc.frame = PageFrame::new(&params, doc.flags, media);
+    assigned
+}
+
+fn last_geometry_offset(source: &str, preamble_end: usize) -> Option<usize> {
+    let mut last = None;
+    let mut from = 0;
+    while let Some((at, name)) = next_command(&source[..preamble_end], from) {
+        from = at + 1;
+        match name {
+            "geometry" => last = Some(at),
+            "usepackage" | "RequirePackage" => {
+                if let Some((_, arg)) = usepackage_arg(&source[..preamble_end], at + 1 + name.len()) {
+                    if arg.split(',').any(|p| p.trim() == "geometry") {
+                        last = Some(at);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    last
+}
+
+/// One linear pass over `source`: comments, escaped bytes, and `{`/`}` depth.
+struct CmdScan<'a> {
+    source: &'a str,
+    i: usize,
+    depth: i64,
+    comment: bool,
+}
+
+impl<'a> CmdScan<'a> {
+    fn new(source: &'a str) -> Self {
+        Self {
+            source,
+            i: 0,
+            depth: 0,
+            comment: false,
+        }
+    }
+
+    fn skip_to(&mut self, pos: usize) {
+        if pos > self.i {
+            self.i = pos;
+        }
+        self.comment = false;
+    }
+
+    /// Next alphabetic control word and the brace depth at its backslash.
+    fn next(&mut self) -> Option<(usize, &'a str, i64)> {
+        let bytes = self.source.as_bytes();
+        while self.i < bytes.len() {
+            let c = bytes[self.i];
+            if self.comment {
+                if c == b'\n' {
+                    self.comment = false;
+                }
+                self.i += 1;
+                continue;
+            }
+            match c {
+                b'%' => {
+                    self.comment = true;
+                    self.i += 1;
+                }
+                b'\\' => {
+                    let start = self.i + 1;
+                    let mut j = start;
+                    while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+                        j += 1;
+                    }
+                    if j > start {
+                        let at = self.i;
+                        let depth = self.depth;
+                        self.i = j;
+                        return Some((at, &self.source[start..j], depth));
+                    }
+                    self.i += 2;
+                }
+                b'{' => {
+                    self.depth += 1;
+                    self.i += 1;
+                }
+                b'}' => {
+                    self.depth = (self.depth - 1).max(0);
+                    self.i += 1;
+                }
+                _ => self.i += 1,
+            }
+        }
+        None
+    }
+}
+
+fn next_command(source: &str, from: usize) -> Option<(usize, &str)> {
+    // ASCII letters only: `\@setlength` after `\makeatletter` is a known
+    // limit (ignored test `preamble_scan_does_not_see_at_setlength`).
+    let bytes = source.as_bytes();
+    let mut i = from;
+    let mut in_comment = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_comment {
+            if c == b'\n' {
+                in_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == b'%' {
+            in_comment = true;
+            i += 1;
+            continue;
+        }
+        if c == b'\\' {
+            let start = i + 1;
+            let mut j = start;
+            while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+                j += 1;
+            }
+            if j > start {
+                return Some((i, &source[start..j]));
+            }
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    None
+}
+
+fn skip_ws(source: &str, mut i: usize) -> usize {
+    let b = source.as_bytes();
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    i
+}
+
+/// Inner of a `{...}` group, comments stripped, escapes kept.
+///
+/// Not [`matching_brace`]: that helper returns a close index and does not
+/// skip `%` comments, so `{6in%\n}` would count a `}` inside the comment and
+/// break [`tests::preamble_scan_strips_comments_inside_dimension_groups`].
+/// It also does not skip leading whitespace or yield the inner bytes.
+fn read_group(source: &str, i: &mut usize) -> Option<String> {
+    *i = skip_ws(source, *i);
+    let b = source.as_bytes();
+    if b.get(*i) != Some(&b'{') {
+        return None;
+    }
+    *i += 1;
+    let mut out = String::new();
+    let mut depth = 1i32;
+    let mut comment = false;
+    while *i < b.len() {
+        let c = b[*i];
+        if comment {
+            if c == b'\n' {
+                comment = false;
+            }
+            *i += 1;
+            continue;
+        }
+        match c {
+            b'%' => {
+                comment = true;
+                *i += 1;
+            }
+            b'\\' => {
+                out.push('\\');
+                *i += 1;
+                if *i < b.len() {
+                    out.push(b[*i] as char);
+                    *i += 1;
+                }
+            }
+            b'{' => {
+                depth += 1;
+                out.push('{');
+                *i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                *i += 1;
+                if depth == 0 {
+                    return Some(out);
+                }
+                out.push('}');
+            }
+            _ => {
+                out.push(c as char);
+                *i += 1;
+            }
+        }
+    }
+    None
+}
+
+/// Offset of `\begin{document}` / `\begin {document}`. Comments, brace
+/// groups, and `\newcommand`/`\def` bodies are skipped the same way as
+/// [`apply_preamble_lengths`].
+fn document_begin_offset(source: &str) -> Option<usize> {
+    let mut scan = CmdScan::new(source);
+    while let Some((at, name, depth)) = scan.next() {
+        if depth != 0 {
+            continue;
+        }
+        if matches!(
+            name,
+            "newcommand" | "renewcommand" | "providecommand" | "def" | "gdef" | "edef" | "xdef"
+        ) {
+            scan.skip_to(skip_macro_definition(source, name, at + 1 + name.len()));
+            continue;
+        }
+        if name != "begin" {
+            continue;
+        }
+        let mut i = skip_ws(source, at + "\\begin".len());
+        if let Some(env) = read_group(source, &mut i) {
+            if env.trim() == "document" {
+                return Some(at);
+            }
+        }
+    }
+    None
+}
+
+fn skip_macro_definition(source: &str, name: &str, mut i: usize) -> usize {
+    let b = source.as_bytes();
+    i = skip_ws(source, i);
+    if matches!(name, "newcommand" | "renewcommand" | "providecommand") {
+        if b.get(i) == Some(&b'*') {
+            i += 1;
+        }
+        i = skip_ws(source, i);
+        while b.get(i) == Some(&b'[') {
+            i += 1;
+            while i < b.len() && b[i] != b']' {
+                i += 1;
+            }
+            if i < b.len() {
+                i += 1;
+            }
+            i = skip_ws(source, i);
+        }
+        if b.get(i) == Some(&b'{') {
+            let _ = read_group(source, &mut i);
+        } else if b.get(i) == Some(&b'\\') {
+            i += 1;
+            while i < b.len() && b[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+        }
+        i = skip_ws(source, i);
+        if b.get(i) == Some(&b'{') {
+            let _ = read_group(source, &mut i);
+        }
+        return i;
+    }
+    if b.get(i) == Some(&b'\\') {
+        i += 1;
+        while i < b.len() && b[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+    }
+    while i < b.len() && b[i] != b'{' {
+        i += 1;
+    }
+    if b.get(i) == Some(&b'{') {
+        let _ = read_group(source, &mut i);
+    }
+    i
+}
+
+fn setlength_args(source: &str, mut i: usize) -> Option<(String, String)> {
+    i = skip_ws(source, i);
+    let b = source.as_bytes();
+    let target = if b.get(i) == Some(&b'{') {
+        read_group(source, &mut i)?
+            .trim()
+            .trim_start_matches('\\')
+            .to_string()
+    } else if b.get(i) == Some(&b'\\') {
+        i += 1;
+        let start = i;
+        while i < b.len() && b[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+        source[start..i].to_string()
+    } else {
+        return None;
+    };
+    let value = read_group(source, &mut i)?;
+    Some((target, value))
+}
+
+fn usepackage_arg(source: &str, mut i: usize) -> Option<(String, String)> {
+    i = skip_ws(source, i);
+    let b = source.as_bytes();
+    let opts = if b.get(i) == Some(&b'[') {
+        i += 1;
+        let start = i;
+        while i < b.len() && b[i] != b']' {
+            i += 1;
+        }
+        let o = source[start..i].to_string();
+        if i < b.len() {
+            i += 1;
+        }
+        o
+    } else {
+        String::new()
+    };
+    let arg = read_group(source, &mut i)?;
+    Some((opts, arg))
+}
+
+fn read_assignment_dimen(source: &str, mut i: usize) -> Option<String> {
+    i = skip_ws(source, i);
+    let b = source.as_bytes();
+    let start = i;
+    if b.get(i) == Some(&b'=') {
+        i += 1;
+        i = skip_ws(source, i);
+    }
+    i = read_one_dimen(source, i)?;
+    loop {
+        let j = skip_ws(source, i);
+        if let Some(rest) = keyword_at(source, j, "plus").or_else(|| keyword_at(source, j, "minus")) {
+            i = read_one_dimen(source, skip_ws(source, rest))?;
+        } else {
+            break;
+        }
+    }
+    Some(source[start..i].to_string())
+}
+
+fn read_one_dimen(source: &str, mut i: usize) -> Option<usize> {
+    let b = source.as_bytes();
+    if i < b.len() && (b[i] == b'-' || b[i] == b'+') {
+        i += 1;
+    }
+    if b.get(i) == Some(&b'\\') {
+        i += 1;
+        while i < b.len() && b[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+        return Some(i);
+    }
+    let num = i;
+    while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'.') {
+        i += 1;
+    }
+    if i == num {
+        return None;
+    }
+    if b.get(i) == Some(&b'\\') {
+        i += 1;
+        while i < b.len() && b[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+        return Some(i);
+    }
+    let unit = i;
+    while i < b.len() && b[i].is_ascii_alphabetic() {
+        i += 1;
+    }
+    if i == unit {
+        return None;
+    }
+    Some(i)
+}
+
+fn keyword_at(source: &str, i: usize, kw: &str) -> Option<usize> {
+    if source[i..].starts_with(kw) {
+        let after = i + kw.len();
+        let b = source.as_bytes();
+        if after == b.len() || b[after].is_ascii_whitespace() || matches!(b[after], b'-' | b'+' | b'.' | b'\\') || b[after].is_ascii_digit()
+        {
+            return Some(after);
+        }
+    }
+    None
+}
+
+fn parse_assignment_glue(
+    raw: &str,
+    params: &PageParams,
+    size: u32,
+    em_ex: Option<(f64, f64)>,
+) -> Option<Glue> {
+    let s = raw.trim().trim_start_matches('=').trim();
+    let (natural_s, stretch_s, shrink_s) = split_skip_spec(s);
+    let natural = parse_assignment_dimen(natural_s, params, size, em_ex)?;
+    let mut g = Glue::fixed(natural);
+    if let Some(p) = stretch_s {
+        g.stretch = parse_assignment_dimen(p, params, size, em_ex)?;
+    }
+    if let Some(m) = shrink_s {
+        g.shrink = parse_assignment_dimen(m, params, size, em_ex)?;
+    }
+    Some(g)
+}
+
+fn split_skip_spec(s: &str) -> (&str, Option<&str>, Option<&str>) {
+    let plus = skip_keyword_index(s, "plus");
+    let minus = skip_keyword_index(s, "minus");
+    let (natural_end, stretch, shrink) = match (plus, minus) {
+        (Some(p), Some(m)) if p < m => (p, Some(s[p + 4..m].trim()), Some(s[m + 5..].trim())),
+        (Some(p), Some(m)) => (m, Some(s[p + 4..].trim()), Some(s[m + 5..p].trim())),
+        (Some(p), None) => (p, Some(s[p + 4..].trim()), None),
+        (None, Some(m)) => (m, None, Some(s[m + 5..].trim())),
+        (None, None) => return (s, None, None),
+    };
+    (s[..natural_end].trim(), stretch.filter(|t| !t.is_empty()), shrink.filter(|t| !t.is_empty()))
+}
+
+fn skip_keyword_index(s: &str, kw: &str) -> Option<usize> {
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i + kw.len() <= b.len() {
+        if s[i..].starts_with(kw) {
+            let before = i == 0 || b[i - 1].is_ascii_whitespace();
+            let after = i + kw.len();
+            let after_ok = after == b.len()
+                || b[after].is_ascii_whitespace()
+                || matches!(b[after], b'-' | b'+' | b'.' | b'\\')
+                || b[after].is_ascii_digit();
+            if before && after_ok {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn parse_assignment_dimen(
+    raw: &str,
+    params: &PageParams,
+    size: u32,
+    em_ex: Option<(f64, f64)>,
+) -> Option<Sp> {
+    let s = raw.trim().trim_start_matches('=').trim();
+    if let Some(bs) = s.find('\\') {
+        let (factor, rest) = s.split_at(bs);
+        let name = rest[1..].trim();
+        let base = param_length(params, name)?;
+        let f = factor.trim();
+        if f.is_empty() || f == "+" {
+            return Some(base);
+        }
+        if f == "-" {
+            return Some(-base);
+        }
+        return base.scaled(f);
+    }
+    if let Some(v) = param_length(params, s.trim_start_matches('\\')) {
+        return Some(v);
+    }
+    if s.ends_with("em") || s.ends_with("ex") {
+        let pt = parse_dimen_in(s, size, em_ex)?;
+        return Some(Sp((pt * 65536.0).round() as i64));
+    }
+    Sp::parse(s)
+}
+
+fn param_length(p: &PageParams, name: &str) -> Option<Sp> {
+    Some(match name {
+        "paperwidth" => p.paperwidth,
+        "paperheight" => p.paperheight,
+        "textwidth" | "linewidth" | "columnwidth" | "hsize" => p.textwidth,
+        "textheight" => p.textheight,
+        "oddsidemargin" => p.oddsidemargin,
+        "evensidemargin" => p.evensidemargin,
+        "topmargin" => p.topmargin,
+        "headheight" => p.headheight,
+        "headsep" => p.headsep,
+        "footskip" => p.footskip,
+        "marginparwidth" => p.marginparwidth,
+        "marginparsep" => p.marginparsep,
+        "columnsep" => p.columnsep,
+        "parindent" => p.parindent,
+        "parskip" => p.parskip.natural,
+        "columnseprule" => p.columnseprule,
+        _ => return None,
+    })
+}
+
+fn assign_param(p: &mut PageParams, name: &str, v: Glue, add: bool) {
+    if name == "parskip" {
+        if add {
+            p.parskip.natural += v.natural;
+            p.parskip.stretch += v.stretch;
+            p.parskip.shrink += v.shrink;
+        } else {
+            p.parskip = v;
+        }
+        return;
+    }
+    let slot = match name {
+        "paperwidth" => &mut p.paperwidth,
+        "paperheight" => &mut p.paperheight,
+        "textwidth" => &mut p.textwidth,
+        "textheight" => &mut p.textheight,
+        "oddsidemargin" => &mut p.oddsidemargin,
+        "evensidemargin" => &mut p.evensidemargin,
+        "topmargin" => &mut p.topmargin,
+        "headheight" => &mut p.headheight,
+        "headsep" => &mut p.headsep,
+        "footskip" => &mut p.footskip,
+        "marginparwidth" => &mut p.marginparwidth,
+        "marginparsep" => &mut p.marginparsep,
+        "columnsep" => &mut p.columnsep,
+        "parindent" => &mut p.parindent,
+        "columnseprule" => &mut p.columnseprule,
+        _ => return,
+    };
+    if add {
+        *slot += v.natural;
+    } else {
+        *slot = v.natural;
+    }
 }
 
 /// `\documentclass[opts]{...}` options, if the source has a class line.
@@ -3656,6 +4425,34 @@ fn font_declaration(name: &str) -> Option<(&'static [crate::nfss::Command], bool
     })
 }
 
+/// The `\baselineskip` a [`ParLeading`] selects, in points: the *second*
+/// argument of the `\@setfontsize` call the declaration makes
+/// (`size1x.clo`'s table, e.g. `\small` at an 11 pt base is
+/// `\@setfontsize\small\xpt{12}`). `None` for `\normalsize`, whose leading
+/// is the stylesheet's own.
+///
+/// Only the leading is taken from here. The *glyph* size of each run already
+/// travels on `TextStyle::size_cpt` ([`declared_size`]), and TeX's two are
+/// independent: a paragraph can be set in `\small` type at the body's
+/// leading, or in body type at `\small`'s, depending only on where the
+/// `\par` fell (see [`ParLeading`]).
+fn par_leading_pt(leading: ParLeading, base: flashtex_document_style::BaseSize) -> Option<f64> {
+    use flashtex_compiler::parser::FontSizeLevel as L;
+    use flashtex_document_style::SizeName as N;
+    let name = match leading? {
+        L::Tiny => N::Tiny,
+        L::ScriptSize => N::ScriptSize,
+        L::FootnoteSize => N::FootnoteSize,
+        L::Small => N::Small,
+        L::Large1 => N::Large,
+        L::Large2 => N::LARGE2,
+        L::Large3 => N::LARGE3,
+        L::Huge1 => N::Huge,
+        L::Huge2 => N::HUGE2,
+    };
+    Some(flashtex_document_style::font_size(base, name).baselineskip.0)
+}
+
 /// The point size a `\tiny`..`\Huge` declaration selects at a class base
 /// size (size10/11/12.clo), in hundredths of a point; 0 for `\normalsize`
 /// (the paragraph's own size). The declaration in force comes from the
@@ -4457,7 +5254,7 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
 /// Drops the compiler's text for the arguments of `\markboth`,
 /// `\markright` and `\chapter` (it sets them as body text), and the
 /// paragraphs left empty.
-fn strip_command_text(blocks: &mut Vec<CBlock>, document: DocumentId, commands: &[BodyCommand]) {
+fn strip_command_text(blocks: &mut Vec<(CBlock, ParLeading)>, document: DocumentId, commands: &[BodyCommand]) {
     let ranges: Vec<(usize, usize)> = commands
         .iter()
         .filter(|c| matches!(c.kind, BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::AddContentsLine { .. } | BodyKind::Event(ChromeEvent::MarkBoth(..) | ChromeEvent::MarkRight(_) | ChromeEvent::SetPage(_) | ChromeEvent::PageNumbering(_))))
@@ -4470,13 +5267,13 @@ fn strip_command_text(blocks: &mut Vec<CBlock>, document: DocumentId, commands: 
         let s = inline_span(i);
         s.document == document && ranges.iter().any(|(a, b)| s.start >= *a && s.start < *b)
     };
-    for block in blocks.iter_mut() {
+    for (block, _) in blocks.iter_mut() {
         match block {
             CBlock::Paragraph(inlines) | CBlock::Styled { content: inlines, .. } | CBlock::ListItem { content: inlines, .. } | CBlock::FigureCaption { content: inlines } => inlines.retain(|i| !inside(i)),
             _ => {}
         }
     }
-    blocks.retain(|b| !matches!(b, CBlock::Paragraph(i) | CBlock::Styled { content: i, .. } if i.is_empty()));
+    blocks.retain(|(b, _)| !matches!(b, CBlock::Paragraph(i) | CBlock::Styled { content: i, .. } if i.is_empty()));
 }
 
 /// Body-font words of `source[start..end]` split at whitespace, every
@@ -4870,7 +5667,13 @@ fn gap_has_space(gap: &str) -> bool {
 /// letter "A." keeps 1000), which is why the update runs per character.
 pub fn space_factor(ch: char, previous: u32) -> u32 {
     let code = match ch {
-        '.' | '?' | '!' => 3000,
+        // `…` is `\textellipsis`, whose last character is a period
+        // (`.\kern\fontdimen3\font` three times), so it leaves the period's
+        // space factor behind exactly as a typed `.` does: pdflatex sets
+        // `ellipsis… here` with a 5.213 bp space at 12 pt
+        // (`\fontdimen2 + \fontdimen7`), not the 3.902 bp of `\fontdimen2`
+        // alone.
+        '.' | '?' | '!' | '\u{2026}' => 3000,
         ':' => 2000,
         ';' => 1500,
         ',' => 1250,
@@ -5029,6 +5832,10 @@ fn items_cached(
                 15u8.hash(&mut h);
                 format!("{b:?}").hash(&mut h);
             }
+            Inline::Underline(u) => {
+                18u8.hash(&mut h);
+                format!("{u:?}").hash(&mut h);
+            }
             Inline::Logo { logo, style, .. } => {
                 12u8.hash(&mut h);
                 logo.hash(&mut h);
@@ -5044,7 +5851,18 @@ fn items_cached(
                 amount.hash(&mut h);
                 style.hash(&mut h);
             }
-            Inline::HFill { .. } => 6u8.hash(&mut h),
+            // The leader is hashed: `\hfill` and `\hrulefill` differ only in
+            // it, and they carry different diagnostics, so an edit between
+            // them must not reuse the cached block.
+            Inline::HFill { leader, .. } => {
+                6u8.hash(&mut h);
+                match leader {
+                    FillLeader::None => 0u8,
+                    FillLeader::Rule => 1u8,
+                    FillLeader::Dots => 2u8,
+                }
+                .hash(&mut h);
+            }
             Inline::HSpace { pt, .. } => {
                 7u8.hash(&mut h);
                 pt.to_bits().hash(&mut h);
@@ -5238,6 +6056,24 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 prev_span = Some(span);
                 factor = 1000;
             }
+            Inline::Underline(u) => {
+                let span = u.span;
+                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
+                after_control_word = false;
+                let content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight);
+                items.push(Item::Underline(Box::new(UnderlineItem {
+                    thickness_pt: u.thickness_pt,
+                    geom: u.geom,
+                    items: content,
+                    span,
+                })));
+                prev_end = Some(span.end);
+                prev_span = Some(span);
+                factor = 1000;
+            }
             Inline::LineBreak { span } => {
                 let skip_pt = line_break_skip(text_of(span.document), span.end, size).unwrap_or(0.0);
                 items.push(Item::LineBreak { skip_pt });
@@ -5273,7 +6109,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 prev_span = Some(span);
                 factor = 1000;
             }
-            Inline::HFill { span } | Inline::HSpace { span, .. } | Inline::TextGlue { span, .. } => {
+            Inline::HFill { span, .. } | Inline::HSpace { span, .. } | Inline::TextGlue { span, .. } => {
                 // Explicit horizontal glue: the interword space read before
                 // it stays (TeX keeps both glue nodes). `TextGlue` is the
                 // compiler's text-mode `\quad`/`\qquad` (`em` ems of the
@@ -5286,6 +6122,27 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let (item, word) = match &**inline {
                     Inline::HSpace { pt, .. } => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
                     Inline::TextGlue { em, .. } => (Item::Quad { em: *em }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
+                    // `\hrulefill` and `\dotfill` (compiler `FillLeader`, #320)
+                    // are `\leavevmode\leaders<box>\hfill\kern\z@`: the glue is
+                    // exactly `\hfill`, so it is set here like any other, and
+                    // only the leader box is missing. `unsupported_inlines`
+                    // names the command for that; the glue must still be
+                    // emitted or the rest of the line lands in the wrong place,
+                    // which is what `fixtures/divergence-probes/min-hrulefill`
+                    // measured against pdflatex before the re-pin.
+                    //
+                    // The `\leavevmode` is theirs, not an invention here, and
+                    // it is load-bearing: a `\hrulefill` alone in its paragraph
+                    // (the fill-in rules of `enumitem-worksheet`) otherwise
+                    // leaves a paragraph with glue and no box, which this
+                    // pipeline drops together with the `\vspace` in front of
+                    // it — that is what took the worksheet from 3 pages to 2.
+                    // With the empty `\hbox` the paragraph is a line, as it is
+                    // in pdflatex. (A bare `\hfill` alone in a paragraph still
+                    // vanishes the same way; that is a separate pre-existing
+                    // defect, reproducible on the previous pin, not this one.)
+                    Inline::HFill { leader: FillLeader::Rule, .. } => (Item::HFill { fill: true }, "\\hrulefill"),
+                    Inline::HFill { leader: FillLeader::Dots, .. } => (Item::HFill { fill: true }, "\\dotfill"),
                     _ => {
                         let fill = !is_control_word(text_of(span.document), span.start, "hfil");
                         (Item::HFill { fill }, if fill { "\\hfill" } else { "\\hfil" })
@@ -5295,7 +6152,30 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());
                 gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 push_gap(&mut items, gap, gap_style, factor);
+                // The `\leavevmode` that opens `\hrulefill`/`\dotfill`: an
+                // empty `\hbox` in front of the glue (see the arms above).
+                let leader_fill =
+                    matches!(&**inline, Inline::HFill { leader, .. } if !matches!(leader, FillLeader::None));
+                if leader_fill {
+                    items.push(Item::LeaveVmode);
+                }
                 items.push(item);
+                // ...and the `\kern\z@` that closes them, which is doing real
+                // work: TeX ends a paragraph by deleting the final glue item
+                // (tex.web §816, `hlist`'s trailing-glue loop) before adding
+                // `\parfillskip`. A trailing bare `\hfill` is therefore eaten,
+                // which is why `Name: \hfill Date: \hfill` sets `Date:` flush
+                // right in pdflatex. The zero kern after `\hrulefill`'s fill
+                // saves it, so both fills survive and share the leftover width
+                // equally — pdflatex puts `Date:` at x 317.830 in
+                // `fixtures/divergence-probes/min-hrulefill`, not at the
+                // margin. Without this kern the pipeline set it at 511.918.
+                if leader_fill {
+                    items.push(Item::Kern {
+                        amount: flashtex_compiler::text_builtins::TextDimen::zero(),
+                        style: TextStyle::default(),
+                    });
+                }
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
                 factor = 1000;
@@ -5966,6 +6846,238 @@ mod tests {
         let doc2 = adapt(&[src2], 0, &flashtex_compiler::parser::parse(src2), &RenderOptions::default(), &Labels::default());
         assert_eq!(doc2.style.body_size_pt, 10.0);
         assert_eq!(doc2.style.parindent_pt, 15.0);
+    }
+
+    fn adapted(src: &str) -> Doc {
+        adapt(&[src], 0, &flashtex_compiler::parser::parse(src), &RenderOptions::default(), &Labels::default())
+    }
+
+    #[test]
+    fn addtolength_parindent_accumulates_after_setlength() {
+        let src = "\\documentclass{article}\n\\setlength{\\parindent}{10pt}\n\\addtolength{\\parindent}{5pt}\n\\begin{document}x\\end{document}";
+        let doc = adapted(src);
+        assert!(
+            (doc.style.parindent_pt - 15.0).abs() < 1e-6,
+            "10pt + 5pt must be 15pt, got {}",
+            doc.style.parindent_pt
+        );
+        let body = "\\documentclass{article}\\begin{document}\\setlength{\\parindent}{0pt}x\\end{document}";
+        assert!((adapted(body).style.parindent_pt).abs() < 1e-9);
+    }
+
+    #[test]
+    fn addtolength_parskip_keeps_class_stretch() {
+        let src = "\\documentclass{article}\n\\addtolength{\\parskip}{6pt}\n\\begin{document}\nOne\n\nTwo\n\\end{document}";
+        let skip = adapted(src).style.parskip;
+        assert!(
+            (skip.natural - 6.0).abs() < 1e-6,
+            "natural {}, want 6pt",
+            skip.natural
+        );
+        assert!(
+            (skip.stretch - 1.0).abs() < 1e-6,
+            "stretch {}, want class plus 1pt",
+            skip.stretch
+        );
+        let with_plus = adapted(
+            "\\documentclass{article}\\setlength{\\parskip}{6pt plus 2pt minus 1pt}\\begin{document}x\\end{document}",
+        )
+        .style
+        .parskip;
+        assert!((with_plus.natural - 6.0).abs() < 1e-6);
+        assert!((with_plus.stretch - 2.0).abs() < 1e-6);
+        assert!((with_plus.shrink - 1.0).abs() < 1e-6);
+        let plain = adapted(
+            "\\documentclass{article}\\setlength{\\parskip}{6pt}\\begin{document}x\\end{document}",
+        )
+        .style
+        .parskip;
+        assert!((plain.natural - 6.0).abs() < 1e-6);
+        assert!(plain.stretch.abs() < 1e-9, "plain setlength is a fixed skip");
+    }
+
+    #[test]
+    fn geometry_setlength_paperwidth_updates_mediabox() {
+        // pdflatex (TeX Live 2026): with geometry,
+        // `\pdfpagewidth=361.34999pt` (=5in) and `\paperwidth=361.34999pt`;
+        // without geometry, `\pdfpagewidth=614.295pt` (US Letter) while
+        // `\paperwidth=361.34999pt`.
+        let with = "\\documentclass{article}\n\\usepackage[margin=1in]{geometry}\n\\setlength{\\paperwidth}{5in}\n\\begin{document}x\\end{document}";
+        let without = "\\documentclass{article}\n\\setlength{\\paperwidth}{5in}\n\\begin{document}x\\end{document}";
+        let want = flashtex_class_geometry::Sp::parse("5in").unwrap();
+        let letter = flashtex_class_geometry::Sp::parse("8.5in").unwrap();
+        let w = adapted(with)
+            .style
+            .class_geometry
+            .as_ref()
+            .unwrap()
+            .frame
+            .pdf_page_width;
+        assert_eq!(w, want, "geometry copies paperwidth into the MediaBox");
+        let wo = adapted(without)
+            .style
+            .class_geometry
+            .as_ref()
+            .unwrap()
+            .frame
+            .pdf_page_width;
+        assert_eq!(wo, letter, "without geometry the MediaBox is unchanged");
+    }
+
+    #[test]
+    fn subparagraph_indent_follows_final_parindent() {
+        let src = "\\documentclass{article}\n\\setlength{\\parindent}{0pt}\n\\begin{document}\n\\subparagraph{Heading} body\n\\end{document}";
+        let indent = adapted(src)
+            .style
+            .class_geometry
+            .as_ref()
+            .unwrap()
+            .heading("subparagraph")
+            .unwrap()
+            .indent;
+        assert_eq!(indent, flashtex_class_geometry::Sp::ZERO);
+    }
+
+    fn article_tw() -> f64 {
+        adapted("\\documentclass{article}\\begin{document}x\\end{document}").style.text_width_pt
+    }
+
+    #[test]
+    fn preamble_scan_skips_commented_begin_document() {
+        let src = "\\documentclass{article}\n% \\begin{document}\n\\setlength{\\textwidth}{6in}\n\\begin{document}x\\end{document}";
+        assert!(
+            (adapted(src).style.text_width_pt - adapted(
+                "\\documentclass{article}\\setlength{\\textwidth}{6in}\\begin{document}x\\end{document}"
+            )
+            .style
+            .text_width_pt)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn preamble_scan_strips_comments_inside_dimension_groups() {
+        let src = "\\documentclass{article}\\setlength{\\textwidth}{6in%\n}\\begin{document}x\\end{document}";
+        assert!(
+            (adapted(src).style.text_width_pt
+                - adapted(
+                    "\\documentclass{article}\\setlength{\\textwidth}{6in}\\begin{document}x\\end{document}"
+                )
+                .style
+                .text_width_pt)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn preamble_scan_ignores_setlength_in_newcommand_body() {
+        let src = "\\documentclass{article}\n\\setlength{\\textwidth}{5in}\n\\newcommand{\\unused}{\\setlength{\\textwidth}{6in}}\n\\begin{document}x\\end{document}";
+        assert!(
+            (adapted(src).style.text_width_pt
+                - adapted(
+                    "\\documentclass{article}\\setlength{\\textwidth}{5in}\\begin{document}x\\end{document}"
+                )
+                .style
+                .text_width_pt)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn preamble_scan_does_not_leak_grouped_setlength() {
+        let src = "\\documentclass{article}\n{\\setlength{\\textwidth}{6in}}\n\\begin{document}x\\end{document}";
+        assert!(
+            (adapted(src).style.text_width_pt - article_tw()).abs() < 1e-6,
+            "grouped assignment must restore, got {}",
+            adapted(src).style.text_width_pt
+        );
+    }
+
+    #[test]
+    fn preamble_scan_finds_begin_document_with_whitespace() {
+        let pre = "\\documentclass{article}\\setlength{\\textwidth}{6in}\\begin {document}x\\end{document}";
+        let body = "\\documentclass{article}\\begin {document}\\setlength{\\textwidth}{6in}x\\end{document}";
+        assert!(
+            (adapted(pre).style.text_width_pt
+                - adapted(
+                    "\\documentclass{article}\\setlength{\\textwidth}{6in}\\begin{document}x\\end{document}"
+                )
+                .style
+                .text_width_pt)
+                .abs()
+                < 1e-6
+        );
+        assert!(
+            (adapted(body).style.text_width_pt - article_tw()).abs() < 1e-6,
+            "body page geometry after \\begin {{document}} must not apply, got {}",
+            adapted(body).style.text_width_pt
+        );
+    }
+
+    #[test]
+    fn preamble_scan_skips_begin_document_in_macro_body() {
+        let src = "\\documentclass{article}\\newcommand{\\fake}{\\begin{document}}\\setlength{\\textwidth}{6in}\\begin{document}x\\end{document}";
+        let want = adapted(
+            "\\documentclass{article}\\setlength{\\textwidth}{6in}\\begin{document}x\\end{document}",
+        )
+        .style
+        .text_width_pt;
+        assert!(
+            (adapted(src).style.text_width_pt - want).abs() < 1e-6,
+            "setlength after a fake \\begin{{document}} in a macro body must apply, got {}",
+            adapted(src).style.text_width_pt
+        );
+    }
+
+    #[test]
+    fn preamble_scan_is_linear_in_source_length() {
+        let mut src = String::with_capacity(1_200_000);
+        src.push_str("\\documentclass{article}\n");
+        while src.len() < 1_000_000 {
+            src.push_str("\\setlength{\\textwidth}{6in}\n");
+        }
+        src.push_str("\\begin{document}x\\end{document}");
+        let setup = document_setup(&src, true, "");
+        let mut resolved = flashtex_class_geometry::resolve(&setup);
+        let t0 = std::time::Instant::now();
+        apply_preamble_lengths(
+            &src,
+            &mut resolved,
+            10,
+            crate::fonts::Family::ComputerModern,
+            false,
+        );
+        let elapsed = t0.elapsed();
+        assert_eq!(
+            resolved.params.textwidth,
+            flashtex_class_geometry::Sp::parse("6in").unwrap()
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(8),
+            "preamble length scan of {} bytes took {elapsed:?} (quadratic brace_depth?)",
+            src.len()
+        );
+    }
+
+    #[test]
+    #[ignore = "known limit: \\input'd preambles are not in the adapter source string"]
+    fn preamble_scan_does_not_see_input_files() {
+        let src = "\\documentclass{article}\n\\input{layout}\n\\begin{document}x\\end{document}";
+        let _ = adapted(src);
+        panic!("not implemented: scan \\input'd preambles");
+    }
+
+    #[test]
+    #[ignore = "known limit: next_command is alphabetic, so \\@setlength is missed"]
+    fn preamble_scan_does_not_see_at_setlength() {
+        let src = "\\documentclass{article}\n\\makeatletter\n\\@setlength{\\textwidth}{6in}\n\\makeatother\n\\begin{document}x\\end{document}";
+        assert!(
+            (adapted(src).style.text_width_pt - article_tw()).abs() < 1e-6,
+            "\\@setlength is not implemented"
+        );
     }
 
     /// Shorthand for an item list: `W` word, `S` space, `F` fill, `Q` quad.

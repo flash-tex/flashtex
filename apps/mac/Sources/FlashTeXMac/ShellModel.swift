@@ -18,7 +18,9 @@ final class ShellModel {
         var token = 0 // bump so the same range re-applies
     }
 
-    var documents: [RuntimeV1.Document] = []
+    var documents: [RuntimeV1.Document] = [] {
+        didSet { refreshDocumentMirror() }
+    }
     var activePath: String = "main.tex"
     var result: RuntimeV1.CompileResult? {
         didSet {
@@ -146,6 +148,12 @@ final class ShellModel {
     private(set) var toolbarHasResult = false
     private(set) var toolbarHasV2Frame = false
     private(set) var toolbarProblemCount = 0
+    /// `result?.pages.count`, change-only, so File > Print… can refuse a failed
+    /// or empty-page result without the App scene reading `result` per reply.
+    private(set) var toolbarPageCount = 0
+    /// `!documents.isEmpty`, change-only: File > Print Source… must not read
+    /// `documents` from the App scene (a keystroke reassigns the array).
+    private(set) var toolbarHasDocument = false
     /// The producer as attached ("attached: flashtex-render"), not the
     /// per-request status line: tooltips read this instead of `workerStatus`.
     private(set) var producerSummary = "no worker attached"
@@ -191,15 +199,23 @@ final class ShellModel {
     /// Applies pending chrome changes now (tests, and the bench's paint point).
     func flushChrome() { chromeRefreshPending = false; refreshChrome() }
 
+    private func refreshDocumentMirror() {
+        let has = !documents.isEmpty
+        if toolbarHasDocument != has { toolbarHasDocument = has }
+    }
+
     private func refreshToolbarMirrors() {
         let hasResult = result != nil
         if toolbarHasResult != hasResult { toolbarHasResult = hasResult }
+        let pages = result?.pages.count ?? 0
+        if toolbarPageCount != pages { toolbarPageCount = pages }
         let hasFrame = displayListV2?.frame != nil
         if toolbarHasV2Frame != hasFrame { toolbarHasV2Frame = hasFrame }
         let diagnostics = displayedDiagnostics
         if toolbarProblemCount != diagnostics.count { toolbarProblemCount = diagnostics.count }
         if problemsList != diagnostics { problemsList = diagnostics }
         if resultStatus != result?.status { resultStatus = result?.status }
+        refreshDocumentMirror()
         let summary: String
         if controllerAttached { summary = "helper attached: \(controller?.executable.lastPathComponent ?? "flashtex-preview-controller")" }
         else if let worker, worker.isRunning { summary = "attached: \(worker.executable.lastPathComponent)" }
@@ -486,6 +502,54 @@ final class ShellModel {
                             token: nextEditToken(), revision: editorRevision)
         navigationNote = "Applied: \(preview.summary) (undo with ⌘Z)"
         quickFix = nil
+    }
+
+    // MARK: the fix at the caret (Tab)
+
+    /// Set by Esc while a caret fix is showing, so the hint stays down until
+    /// the caret moves somewhere else. Dismissing must also hand Tab straight
+    /// back to indentation — that is the whole point of Esc here.
+    @ObservationIgnored private var dismissedCaretFix: EditorDiagnostics.CaretFix?
+
+    /// The mechanical fix offered where the caret is, or `nil`.
+    ///
+    /// This is the single source of truth for both halves of the feature: the
+    /// editor draws a hint exactly when it is non-nil, and Tab accepts a fix
+    /// exactly when it is non-nil. They cannot disagree, so Tab can never
+    /// silently do something the author was not shown.
+    var caretFix: EditorDiagnostics.CaretFix? {
+        let diagnostics = displayedDiagnostics
+        // Cheap bail-out before `caretByte`, whose UTF-16 → UTF-8 conversion is
+        // linear in the document: this is read on every keystroke, and most
+        // documents carry no mechanical fix at all.
+        guard result?.revision == editorRevision,
+              diagnostics.contains(where: { $0.help?.replacement != nil || $0.suggestion != nil })
+        else { return nil }
+        guard let caretByte, let fix = EditorDiagnostics.fixOffered(
+            at: caretByte, in: diagnostics, path: activePath,
+            currentText: activeText, compiledRevision: result?.revision,
+            editorRevision: editorRevision
+        ) else { return nil }
+        return fix == dismissedCaretFix ? nil : fix
+    }
+
+    /// Esc: take the hint down and leave Tab alone until the caret moves onto
+    /// a different fix.
+    func dismissCaretFix() {
+        guard let fix = caretFix else { return }
+        dismissedCaretFix = fix
+    }
+
+    /// Tab on a visible caret fix. Routed through `previewQuickFix` /
+    /// `applyQuickFix` rather than a second application path, so the edit
+    /// ledger, the revision counter and undo behave exactly as they do for
+    /// "Fix…" in the Problems panel — one undo step.
+    func acceptCaretFix() {
+        guard let fix = caretFix else { return }
+        previewQuickFix(diagnosticIndex: fix.diagnosticIndex)
+        guard quickFix != nil else { return } // refusal already in the footer
+        applyQuickFix()
+        dismissedCaretFix = nil
     }
 
     /// Asks the helper once per result; the cache is read by `editorMarkReport`.

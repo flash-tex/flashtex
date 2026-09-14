@@ -304,6 +304,9 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
             // `\topsep`/`\partopsep` hold, which `\small` has not touched.
             close_skip: None,
         }),
+        // The head's leading travels on its `SizedPara`, which resizes the
+        // whole paragraph; nothing here is a compiler-observed `\par`.
+        leading_pt: None,
     }
 }
 
@@ -365,7 +368,7 @@ fn abstract_name(texts: &[&str]) -> Option<String> {
 }
 
 /// The first source position a block sets material at.
-fn block_span(block: &Block) -> Option<Span> {
+pub(crate) fn block_span(block: &Block) -> Option<Span> {
     match block {
         Block::Paragraph { parts, .. } => parts.iter().find_map(part_span),
         Block::Heading { span, .. } | Block::Chapter { span, .. } | Block::Part { span, .. } | Block::Title { span, .. } | Block::Rule { span, .. } => Some(*span),

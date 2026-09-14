@@ -424,7 +424,7 @@ enum EditorIntelligence {
         /// `CompletionTests.testCommandDocsNameOnlyKnownCommands`), and a
         /// name listed here must leave the list once the compiler renders it.
         static let beyondCompiler: Set<String> = [
-            "chapter", "part", "paragraph", "autoref", "cref",
+            "chapter", "part", "paragraph", "autoref",
             "def", "newline", "hline", "toprule", "midrule",
             "bottomrule", "multicolumn", "verb", "%", "$", "&", "#", "_", "{", "}",
             "geometry", "onehalfspacing", "doublespacing",
@@ -586,6 +586,12 @@ final class LineNumberGutter: NSRulerView {
     /// Hybrid relative numbering for Vim users (`EditorPreferences.relativeLineNumbers`,
     /// off by default and independent of whether Vim keybindings are on).
     var relativeLineNumbers = false { didSet { if relativeLineNumbers != oldValue { setNeedsRedraw() } } }
+    /// Line indices (0-based) that start a foldable region (EditorFolding.swift).
+    var foldableLines: Set<Int> = [] { didSet { if foldableLines != oldValue { setNeedsRedraw() } } }
+    /// Line indices that are currently folded.
+    var foldedLines: Set<Int> = [] { didSet { if foldedLines != oldValue { setNeedsRedraw() } } }
+    /// Toggle the fold whose header is this 0-based line.
+    var onToggleFold: ((Int) -> Void)?
     /// Test seam, like `CaretFollow.enabledOverride`: a hosted editor reads the
     /// shared preferences, which a test cannot inject into. Set it in `setUp`
     /// and clear it in `tearDown`.
@@ -701,6 +707,9 @@ final class LineNumberGutter: NSRulerView {
             let size = label.size(withAttributes: attrs)
             let baselineAdjust = (fragment.height - size.height) / 2
             label.draw(at: NSPoint(x: numberRight - size.width, y: inRuler.minY + baselineAdjust), withAttributes: attrs)
+            if foldableLines.contains(line) {
+                drawFoldMark(folded: foldedLines.contains(line), midY: inRuler.midY)
+            }
             if let severity = severities[line] {
                 let d: CGFloat = 7
                 let dot = NSRect(x: 6, y: inRuler.midY - d / 2, width: d, height: d)
@@ -712,6 +721,38 @@ final class LineNumberGutter: NSRulerView {
             }
             line += 1
         }
+    }
+
+    /// Disclosure triangle in the marker column: collapsed ▶ when folded, ▼ when open.
+    private func drawFoldMark(folded: Bool, midY: CGFloat) {
+        let r = NSRect(x: 3, y: midY - 4, width: 8, height: 8)
+        NSColor.secondaryLabelColor.setFill()
+        let path = NSBezierPath()
+        if folded {
+            path.move(to: NSPoint(x: r.minX + 1, y: r.minY + 1))
+            path.line(to: NSPoint(x: r.maxX - 1, y: r.midY))
+            path.line(to: NSPoint(x: r.minX + 1, y: r.maxY - 1))
+        } else {
+            path.move(to: NSPoint(x: r.minX + 1, y: r.minY + 2))
+            path.line(to: NSPoint(x: r.maxX - 1, y: r.minY + 2))
+            path.line(to: NSPoint(x: r.midX, y: r.maxY - 1))
+        }
+        path.close()
+        path.fill()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        guard p.x <= 16, let onToggleFold, let tv = textView, let lm = tv.layoutManager,
+              let container = tv.textContainer, let table = lineTable?() else {
+            super.mouseDown(with: event); return
+        }
+        let inText = convert(p, to: tv)
+        let index = tv.characterIndexForInsertion(at: NSPoint(x: tv.visibleRect.minX + 1, y: inText.y))
+        _ = (lm, container)
+        let line = table.line(at: min(index, max(0, table.length - 1)))
+        guard foldableLines.contains(line) else { super.mouseDown(with: event); return }
+        onToggleFold(line)
     }
 }
 

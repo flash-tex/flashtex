@@ -87,10 +87,12 @@ exit status: 0 rendered (ok/recovered), 1 failed (or recovered with --strict),
 environment: FLASHTEX_FONT_DIRS, FLASHTEX_TFM_DIRS, FLASHTEX_LM_DIR (colon separated)
 ";
 
-/// `flashtex --version`: crate version and the Git revision it was built
-/// from (`build.rs`).
+/// `flashtex --version`: the release version and the Git revision it was
+/// built from (both from `build.rs`). `FLASHTEX_VERSION` in the build
+/// environment is the release tag; a plain checkout falls back to the crate
+/// version.
 pub fn version_string() -> String {
-    format!("flashtex {} ({})", env!("CARGO_PKG_VERSION"), env!("FLASHTEX_GIT_SHA"))
+    format!("flashtex {} ({})", env!("FLASHTEX_VERSION"), env!("FLASHTEX_GIT_SHA"))
 }
 
 fn main() {
