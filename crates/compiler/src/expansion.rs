@@ -104,7 +104,7 @@ pub struct Expansion {
 /// defined (a `\\newlength` skip, so `\\the` can read it back). An undefined
 /// target (`\\textwidth`, `\\parindent`, `\\fboxsep`, ...) is rewritten to a
 /// host command the converter maps back, so the parser sees the original
-/// name with its argument still a control sequence — not consumed as a
+/// name with its argument still a control sequence, not consumed as a
 /// skip assignment, which would yield `\\addtolength{\\}`.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
