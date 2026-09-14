@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-vpclaude",
+  "branch": "agent/daniel-vpclaude/maketitle-no-author",
+  "gh_ref": "https://github.com/flash-tex/flashtex/issues/244",
+  "machine": "mac-m5pro-dq222",
+  "note": "maketitle without author warns like LaTeX; unsupported() text message split (Claude Pro session)",
+  "started_utc": "2026-09-14T04:38:49Z",
+  "state": "claimed",
+  "task_id": "GH-244",
+  "updated_utc": "2026-09-14T04:38:49Z"
+}
