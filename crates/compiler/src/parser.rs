@@ -1000,6 +1000,36 @@ fn is_preamble_length(name: &str) -> bool {
     PREAMBLE_LENGTHS.contains(&name)
 }
 
+fn is_length_reference(raw: &str) -> bool {
+    let s = raw.trim().trim_start_matches('=').trim();
+    s.contains('\\') || is_preamble_length(s.trim_start_matches('\\'))
+}
+
+fn length_reference_parts(raw: &str) -> Option<(f64, &str)> {
+    let s = raw.trim().trim_start_matches('=').trim();
+    if let Some(bs) = s.find('\\') {
+        let (factor, rest) = s.split_at(bs);
+        let name = rest[1..].trim();
+        if !is_preamble_length(name) && !matches!(name, "linewidth" | "columnwidth" | "hsize") {
+            return None;
+        }
+        let f = factor.trim();
+        let scale = if f.is_empty() || f == "+" {
+            1.0
+        } else if f == "-" {
+            -1.0
+        } else {
+            f.parse().ok()?
+        };
+        return Some((scale, name));
+    }
+    let stripped = s.trim_start_matches('\\');
+    if is_preamble_length(stripped) {
+        return Some((1.0, stripped));
+    }
+    None
+}
+
 /// `parse_dimen_pt` with `em`/`ex` relative to `body_pt`.
 ///
 /// Also accepts an optional leading `=`, a leading sign, and a factor times
@@ -2646,6 +2676,17 @@ impl P<'_> {
         self.apply_length_value("", name, &raw, end, false);
     }
 
+    fn resolve_known_length_ref(&self, raw: &str) -> Option<f64> {
+        let (scale, name) = length_reference_parts(raw)?;
+        let base = match name {
+            "parskip" => self.parskip_pt?,
+            "fboxsep" => self.fboxsep_pt,
+            "fboxrule" => self.fboxrule_pt,
+            _ => return None,
+        };
+        Some(scale * base)
+    }
+
     fn apply_length_value(&mut self, command: &str, target: &str, raw: &str, span: Span, add: bool) {
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
         let Some(pt) = parse_dimen_pt_at(raw, body) else {
@@ -2662,6 +2703,25 @@ impl P<'_> {
             return;
         };
         let in_preamble = self.has_document && !self.in_body;
+        let pt = if is_length_reference(raw) {
+            match self.resolve_known_length_ref(raw) {
+                Some(v) => v,
+                None if matches!(target, "parskip" | "parindent") => {
+                    // Page geometry (`\textwidth`, ...) is applied by the
+                    // pipeline; the compiler must not pretend `\parskip` is
+                    // 0pt or drop the assignment with no diagnostic.
+                    self.diags.push(Diagnostic::warning(
+                        "unsupported length expression",
+                        Some(span),
+                        Some("ignored the length assignment".into()),
+                    ));
+                    return;
+                }
+                None => pt,
+            }
+        } else {
+            pt
+        };
         match target {
             // Read by `\colorbox`/`\fcolorbox` (not group-scoped here).
             "fboxsep" => {
@@ -2674,15 +2734,11 @@ impl P<'_> {
             // pipeline's longtable layout.
             "LTleft" | "LTright" | "LTpre" | "LTpost" | "LTcapwidth" => {}
             "parskip" if in_preamble => {
-                // A length reference (`\parskip=\textwidth`) is accepted but
-                // is not a usable paragraph skip for this layout engine.
-                if !raw.contains('\\') && !is_preamble_length(raw.trim().trim_start_matches('=').trim()) {
-                    self.parskip_pt = Some(if add {
-                        self.parskip_pt.unwrap_or(0.0) + pt
-                    } else {
-                        pt
-                    });
-                }
+                self.parskip_pt = Some(if add {
+                    self.parskip_pt.unwrap_or(0.0) + pt
+                } else {
+                    pt
+                });
             }
             "parindent" if in_preamble && pt == 0.0 => {}
             "parindent" if in_preamble => self.diags.push(Diagnostic::warning(
