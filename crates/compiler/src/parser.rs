@@ -21,6 +21,7 @@ use crate::natbib;
 use crate::siunitx;
 use crate::text_builtins::{self, AccentOutcome, SymbolOutcome, TextDimen, TextLogo, TextRule};
 use crate::theorems::{self, TheoremDef, TheoremStyle};
+use crate::vocabulary;
 use crate::{DocumentId, Span};
 use flashtex_tex_text_encoding::encoding::Encoding;
 
@@ -214,6 +215,10 @@ pub enum Inline {
     },
     /// xcolor `\colorbox`/`\fcolorbox` (see [`ColorBox`]).
     ColorBox(Box<ColorBox>),
+    /// ulem `\uline`/`\sout` or kernel text-mode `\underline`: the argument
+    /// as one fragment with a rule. First step: the fragment does not
+    /// break across lines (ulem's leaders can). Geometry is [`Underline::geom`].
+    Underline(Box<Underline>),
     /// `\includegraphics` in running text: an image box (see
     /// `crate::graphics`). Figures and tables re-derive their graphics from
     /// the source instead.
@@ -221,6 +226,88 @@ pub enum Inline {
     /// `\scalebox`, `\resizebox`, `\rotatebox`, `\reflectbox` around
     /// horizontal material (see `crate::graphics`).
     Transform(Box<crate::graphics::TransformBox>),
+}
+
+/// ulem.sty `\def\ULthickness{.4pt}`.
+pub const UL_THICKNESS_PT: f64 = 0.4;
+
+/// cmex10 `\fontdimen8` (TeX `default_rule_thickness`). pdflatex shows
+/// `0.39998pt`; article 12pt still uses unscaled cmex10, so \theta is
+/// the same at 10pt and 12pt.
+pub const MATH_RULE_THETA_PT: f64 = 0.39998;
+
+/// cmr x-height / design size. pdflatex: 4.30554pt at 10pt, 5.16667pt at
+/// 12pt. Used for ulem `\sout`'s `-.55ex` (not Core 14 Times x-height).
+pub const CMR_EX_PER_EM: f64 = 0.430554;
+
+/// ulem.sty `\def\sout{\bgroup \ULdepth=-.55ex \ULset}`.
+pub const SOUT_RAISE_EX: f64 = 0.55;
+
+/// How [`Underline`] places its rule. Thickness is [`Underline::thickness_pt`].
+///
+/// Offsets are positive downward from the content baseline. Core 14 has no
+/// per-glyph TFM: `\uline` uses the cmr/lmr 0.25em `(` depth and kernel
+/// `\underline` uses hbox depth 0 (true for the no-descender test words).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum UnderlineGeom {
+    /// ulem `\uline`: rule top at `\dp` of `\hbox{{(j}}` (0.25em for cmr/lmr).
+    /// pdflatex 10pt `rule(-2.5+2.9)`; 12pt `rule(-3.0+3.4)`.
+    UlemDescender,
+    /// latex.ltx text `\underline` = `$\@@underline{\hbox{#1}}$`. TeXbook
+    /// Rule 10 / tex.web §735: kern 3\theta, rule \theta, extra depth \theta
+    /// (total depth = box depth + 5\theta). Rule top is 3\theta below the
+    /// hbox depth. \theta = [`MATH_RULE_THETA_PT`].
+    MathUnderline,
+    /// ulem `\sout`: `\UL@setULdepth` is a no-op when `\ULdepth` is not
+    /// `\maxdimen`, so `-.55ex` is kept. Leaders are
+    /// `\hrule height (0.55ex+0.4pt) depth -0.55ex`: rule bottom 0.55ex
+    /// above the baseline, thickness `\ULthickness`. pdflatex 10pt
+    /// `rule(2.76805+-2.36806)`; 12pt `rule(3.24167+-2.84167)`.
+    Strike,
+}
+
+impl UnderlineGeom {
+    /// Rule top relative to the baseline (positive down) and the extra
+    /// depth the construction adds below the baseline.
+    ///
+    /// `box_depth` is the hbox depth of the content; `descender` is `\dp`
+    /// of `\hbox{{(j}}`; `ex` is the current x-height.
+    pub fn rule_top_and_depth(
+        self,
+        thickness: f64,
+        box_depth: f64,
+        descender: f64,
+        ex: f64,
+    ) -> (f64, f64) {
+        match self {
+            Self::UlemDescender => (descender, descender + thickness),
+            Self::MathUnderline => (
+                box_depth + 3.0 * thickness,
+                box_depth + 5.0 * thickness,
+            ),
+            Self::Strike => {
+                let bottom_above = SOUT_RAISE_EX * ex;
+                (-(bottom_above + thickness), 0.0)
+            }
+        }
+    }
+}
+
+/// An underline / strike wrapper (`Inline::Underline`).
+///
+/// [`UnderlineGeom::UlemDescender`] is ulem `\uline` (`\ULthickness` 0.4pt,
+/// top at 0.25em). [`UnderlineGeom::MathUnderline`] is kernel text
+/// `\underline`. [`UnderlineGeom::Strike`] is ulem `\sout`. The fragment
+/// does not break across lines.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Underline {
+    pub content: Vec<Inline>,
+    pub thickness_pt: f64,
+    pub geom: UnderlineGeom,
+    /// From the command through the argument's closing brace.
+    pub span: Span,
+    /// See `Inline::Text::space_before`.
+    pub space_before: bool,
 }
 
 /// `\colorbox[model]{fill}{text}` or `\fcolorbox[model]{frame}{fill}{text}`
@@ -872,6 +959,9 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "k",
     "d",
     "b",
+    "uline",
+    "underline",
+    "sout",
 ];
 
 /// Parses a LaTeX dimension (`12pt`, `1.5em`, `0.5in`, `2cm`, `10mm`, `2ex`,
@@ -1134,14 +1224,17 @@ pub fn parse_project_with(
             "unmatched '{' — group never closed",
             Some(open),
             Some("treated the rest of the document as part of the group".into()),
-        ));
+        )
+        .with_help("add a closing '}'")
+        .with_label(open, "this group opens here", true));
     }
     while let Some((name, span)) = p.env_stack.pop() {
         p.diags.push(Diagnostic::error(
             format!("unterminated environment '{}' — no matching \\end", name),
             Some(span),
             Some("closed the environment at end of input".into()),
-        ));
+        )
+        .with_help(format!("add \\end{{{name}}}")));
     }
 
     let incremental_safe = p.diags.is_empty();
@@ -1487,7 +1580,8 @@ impl P<'_> {
                                 "unmatched '}' — no group is open here",
                                 Some(tok.span),
                                 Some("ignored the stray brace and continued".into()),
-                            ));
+                            )
+                            .with_help("remove this '}' or add a matching '{'"));
                         }
                     } else {
                         if let Some(style) = self.style_stack.pop() {
@@ -1523,7 +1617,8 @@ impl P<'_> {
                         "math script marker used outside math mode",
                         Some(tok.span),
                         Some("ignored the script marker and continued".into()),
-                    ));
+                    )
+                    .with_help("wrap the marked atom in math mode: \\(x^{...}\\)"));
                 }
                 TokenKind::MathShift
                 | TokenKind::DisplayMathOpen
@@ -2238,6 +2333,17 @@ impl P<'_> {
             // `text_builtins::TEXT_ACCENTS`.
             "c" | "v" | "u" | "H" | "r" | "k" | "d" | "b" => self.text_accent(name, span, para),
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
+            // ulem `\uline`/`\sout` (need the package). Kernel text-mode
+            // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
+            // Rule 10); math-mode `\underline` is in `math.rs`.
+            "uline" | "underline" | "sout" => {
+                let geom = match name {
+                    "underline" => UnderlineGeom::MathUnderline,
+                    "sout" => UnderlineGeom::Strike,
+                    _ => UnderlineGeom::UlemDescender,
+                };
+                self.text_underline_cmd(name, span, para, geom);
+            }
             "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
             | "negthickspace" | "enspace" => {
                 if let Some(amount) = text_builtins::text_kern(name, self.math_packages.amsmath) {
@@ -2255,7 +2361,9 @@ impl P<'_> {
                 format!("\\{} requires math mode", name),
                 Some(span),
                 Some("skipped the command and typeset its braced arguments as plain text".into()),
-            )),
+            )
+            .with_help(format!("wrap it in math mode: \\(\\{name}{{...}}\\)"))
+            .with_label(span, "this command", true)),
             other => self.unsupported(other, span),
         }
     }
@@ -2299,7 +2407,10 @@ impl P<'_> {
                 format!("included file not found: looked for '{requested}' and '{appended}'"),
                 Some(span),
                 Some("skipped the missing include and continued".into()),
-            ));
+            )
+            .with_help(format!(
+                "add '{requested}' or '{appended}' to the project documents, or fix the \\input path"
+            )));
             return;
         };
 
@@ -2807,6 +2918,9 @@ impl P<'_> {
             ),
             Some(span.merge(argument_span)),
             Some("continued without package-specific commands or formatting".into()),
+        )
+        .with_help(
+            "remove that \\usepackage if you do not need it; its commands are still diagnosed when used",
         ));
     }
 
@@ -2957,7 +3071,8 @@ impl P<'_> {
                 "\\maketitle requires \\title to be set first",
                 Some(span),
                 Some("no title block was produced".into()),
-            ));
+            )
+            .with_help("add \\title{...} before \\maketitle"));
             return;
         };
         // latex.ltx: `\def\@author{\@latex@warning@no@line{No \noexpand\author
@@ -2967,7 +3082,8 @@ impl P<'_> {
                 "No \\author given",
                 Some(span),
                 Some("set the title block without an author line, as LaTeX does".into()),
-            ));
+            )
+            .with_help("add \\author{...} before \\maketitle; an empty \\author{} is silent like LaTeX"));
             (Vec::new(), span)
         });
 
@@ -3303,7 +3419,8 @@ impl P<'_> {
                     ),
                     Some(span),
                     Some("typeset the body without the environment's formatting".into()),
-                ));
+                )
+                .with_optional_help(vocabulary::environment_help(&environment)));
             }
             if is_minipage(&environment) {
                 // `\@iiiminipage`: `\c@mpfootnote\z@`.
@@ -4245,7 +4362,8 @@ impl P<'_> {
                 "math group is missing its closing brace",
                 Some(group),
                 Some("closed the group at the math delimiter".into()),
-            )),
+            )
+            .with_help("add a closing '}'")),
             // One primary diagnostic at the innermost opener: closing it is
             // the next thing the author has to type.
             (false, Some(group)) => self.diags.push(Diagnostic::error(
@@ -4270,7 +4388,13 @@ impl P<'_> {
                 Some(
                     "closed math mode at the end of the paragraph and typeset its contents".into(),
                 ),
-            )),
+            )
+            .with_help(if display {
+                "add a closing \\] or $$ to end the display"
+            } else {
+                "add a closing '$' to end the formula"
+            })
+            .with_label(open, "math starts here", true)),
             (true, None) => {}
         }
         // `\[...\]` and `$$...$$` are unnumbered displays in LaTeX: they never
@@ -4358,7 +4482,8 @@ impl P<'_> {
             format!("argument to \\{} is missing its closing brace", command),
             Some(open),
             Some(recovery.into()),
-        ));
+        )
+        .with_help("add a closing '}'"));
         (
             self.t[start..stop].to_vec(),
             Span::in_document(open.document, open.start, end),
@@ -4419,7 +4544,8 @@ impl P<'_> {
                     format!("argument to \\{command} is missing its closing brace"),
                     Some(open),
                     Some("closed the argument at end of input".into()),
-                ));
+                )
+                .with_help("add a closing '}'"));
                 break pos;
             };
             let ch_len = ch.len_utf8();
@@ -4557,7 +4683,8 @@ impl P<'_> {
                 "optional argument is missing its closing ']'",
                 Some(span),
                 Some("used the text through end of input as the option".into()),
-            ));
+            )
+            .with_help("add a closing ']'"));
         }
         Some((content, span))
     }
@@ -5223,6 +5350,44 @@ impl P<'_> {
         }
         let (tokens, _) = self.required_group(name, span);
         siunitx::raw_text(tokens.iter().map(|t| &t.token))
+    }
+
+    /// `\uline`/`\sout` (ulem) or kernel text-mode `\underline`. Without
+    /// ulem, the package commands diagnose and typeset the argument as
+    /// plain text. Kernel `\underline` needs no package.
+    fn text_underline_cmd(
+        &mut self,
+        name: &str,
+        span: Span,
+        para: &mut Vec<Inline>,
+        geom: UnderlineGeom,
+    ) {
+        let space_before = self.space_precedes(self.i - 1);
+        let (tokens, argument_span) = self.required_group(name, span);
+        let full = span.merge(argument_span);
+        let needs_ulem = !matches!(geom, UnderlineGeom::MathUnderline);
+        if needs_ulem && !self.packages.iter().any(|package| package == "ulem") {
+            self.diags.push(Diagnostic::command_error(
+                name,
+                format!("\\{name} needs \\usepackage{{ulem}}"),
+                Some(full),
+                Some("typeset the argument as plain text".into()),
+            ));
+            para.extend(self.box_inlines(tokens));
+            return;
+        }
+        let content = self.box_inlines(tokens);
+        let thickness_pt = match geom {
+            UnderlineGeom::MathUnderline => MATH_RULE_THETA_PT,
+            _ => UL_THICKNESS_PT,
+        };
+        para.push(Inline::Underline(Box::new(Underline {
+            content,
+            thickness_pt,
+            geom,
+            span: full,
+            space_before,
+        })));
     }
 
     fn text_logo(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
@@ -5955,7 +6120,10 @@ impl P<'_> {
             format!("\\{} is not supported in the document preamble", name),
             Some(span),
             Some("skipped the command and did not typeset preamble content".into()),
-        ));
+        )
+        .with_help(format!(
+            "move \\{name} after \\begin{{document}}, or remove it from the preamble"
+        )));
     }
 
     /// Recovery policy for a command this compiler does not implement.
@@ -6002,7 +6170,9 @@ impl P<'_> {
             } else {
                 "skipped the command; any braced argument was typeset as plain text".into()
             }),
-        ));
+        )
+        .with_optional_help(vocabulary::command_help(name))
+        .with_label(span, "this command", true));
     }
 
     /// Commands this compiler recognises by name as taking a fixed count of
@@ -6143,6 +6313,9 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // Colour packages (crate::color) with every option replayed.
         "xcolor" => crate::color::Colors::xcolor(&options.join(","), None).1.is_empty(),
         "color" => crate::color::Colors::color_sty(&options.join(",")).1.is_empty(),
+        // `\uline` and `\sout` are implemented; `\emph` is not redefined
+        // (ulem's default `ULforem`) and `\uuline` stays unsupported if used.
+        "ulem" => options.iter().all(|option| *option == "normalem"),
         _ => false,
     }
 }
