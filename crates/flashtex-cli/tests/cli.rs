@@ -463,8 +463,11 @@ fn watch_rebuilds_when_an_included_file_changes() {
 }
 
 /// `--color never` keeps the full excerpt-and-carets shape but strips every
-/// ANSI escape; `auto` honours `NO_COLOR`, while an explicit `always` wins
-/// over it. Piped stderr is never a tty, so `auto` is uncoloured regardless.
+/// ANSI escape; an explicit `always` wins over `NO_COLOR`. (`auto` is not
+/// covered here: piped stderr is never a tty, so `auto` is uncoloured in
+/// this harness whether or not `NO_COLOR` is set — that assertion could
+/// never fail and was dropped rather than pinning a false claim about
+/// `NO_COLOR` specifically.)
 #[test]
 fn color_never_strips_ansi_and_always_overrides_no_color() {
     let dir = tmp("color");
@@ -492,9 +495,7 @@ fn color_never_strips_ansi_and_always_overrides_no_color() {
         assert!(err.contains('^'), "{err}");
         assert!(!err.contains('\x1b'), "{err}");
     }
-    // `auto` with NO_COLOR set: no escape codes on piped stderr.
-    assert!(!stderr(&check(&["--color=auto"], true)).contains('\x1b'));
-    // ...but an explicit `always` overrides NO_COLOR.
+    // An explicit `always` overrides `NO_COLOR`.
     let forced = stderr(&check(&["--color=always"], true));
     assert!(forced.contains("\x1b[1;31merror[missing_file]\x1b[0m"), "{forced}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -522,6 +523,14 @@ fn diagnostics_short_is_one_line_per_diagnostic() {
         assert!(!err.contains("-->"), "{err}");
         assert!(!err.contains(" | "), "{err}");
     }
+    // Piped stderr already defaults to this same short shape, so the two
+    // assertions above would pass even if `--diagnostics short` were parsed
+    // and ignored. Prove the flag actually does something by diffing against
+    // `--diagnostics full` on the identical input: full must show what short
+    // just proved absent.
+    let full_err = stderr(&check(&["--diagnostics=full"]));
+    assert!(full_err.contains("-->"), "{full_err}");
+    assert!(full_err.contains(" | "), "{full_err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -553,6 +562,10 @@ fn jobs_flag_is_accepted_but_ignored() {
     let missing = check(&["-j"]);
     assert_eq!(missing.status.code(), Some(2));
     assert!(stderr(&missing).contains("needs a value"), "{}", stderr(&missing));
+    // `-j` is documented for `build` too, not just `check` (main.rs's usage
+    // line lists it under `build`'s flags) -- prove it's accepted there.
+    let built = run(&["build", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "-j", "4"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -588,15 +601,31 @@ fn watch_interval_rejects_bad_values_and_clamps_to_its_floor() {
         .spawn()
         .unwrap();
     let mut err = child.stderr.take().unwrap();
+    // A plain blocking `read()` ignores the deadline entirely if the child
+    // never writes (the `while` condition is only checked BETWEEN reads):
+    // a real hang here would block the whole test run past `cargo test`'s
+    // own timeout, not fail cleanly after 30s. Read on a background thread
+    // and bound the wait with `recv_timeout` instead, so the deadline is
+    // actually enforced regardless of whether the child ever writes.
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 1024];
+        loop {
+            match err.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) if tx.send(String::from_utf8_lossy(&buf[..n]).into_owned()).is_err() => break,
+                Ok(_) => {}
+            }
+        }
+    });
     let mut seen = String::new();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    let mut buf = [0u8; 1024];
-    while !seen.contains("Ctrl-C stops") && std::time::Instant::now() < deadline {
-        let n = err.read(&mut buf).unwrap();
-        if n == 0 {
-            break;
+    while !seen.contains("Ctrl-C stops") {
+        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else { break };
+        match rx.recv_timeout(remaining) {
+            Ok(chunk) => seen.push_str(&chunk),
+            Err(_) => break,
         }
-        seen.push_str(&String::from_utf8_lossy(&buf[..n]));
     }
     let _ = child.kill();
     let _ = child.wait();
