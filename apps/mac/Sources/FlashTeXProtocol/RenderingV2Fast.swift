@@ -940,13 +940,6 @@ public struct RenderingV2Fast {
         return x
     }
 
-    private mutating func bool() throws -> Bool {
-        ws()
-        if i < b.count, b[i] == 0x74 { try literal("true"); return true }
-        if i < b.count, b[i] == 0x66 { try literal("false"); return false }
-        throw err("expected boolean")
-    }
-
     /// JSON number → Double via the standard library's correctly rounded parser.
     private mutating func double() throws -> Double {
         ws()
