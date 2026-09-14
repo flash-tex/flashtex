@@ -522,10 +522,10 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
         '\u{2240}' => (Symbol, 0x6F), // \wr 284
         '\u{221A}' => (Symbol, 0x70), // \surd 242 (\mathchar"1270, braced -> Ord)
         '\u{2A3F}' => (Symbol, 0x71), // \amalg 281
-        '\u{2294}' => (Symbol, 0x74), // \sqcup 279
-        '\u{2293}' => (Symbol, 0x75), // \sqcap 278
-        '\u{2291}' => (Symbol, 0x76), // \sqsubseteq 301
-        '\u{2292}' => (Symbol, 0x77), // \sqsupseteq 302
+        // cmsy "74-"77 (\sqcup, \sqcap, \sqsubseteq, \sqsupseteq) are already
+        // matched above, with their provenance; repeating them here was dead
+        // code the compiler could only report as `unreachable_pattern`, and
+        // editing the dead copy would have silently changed nothing.
         '\u{00A7}' => (Symbol, 0x78), // \mathsection 508
         '\u{2020}' => (Symbol, 0x79), // \dagger 277
         '\u{2021}' => (Symbol, 0x7A), // \ddagger 276

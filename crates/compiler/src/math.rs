@@ -446,6 +446,20 @@ pub struct MathPackages {
     /// provides those and nothing else. Each symbol carries which of the two
     /// files declares it (`amssymb::Provider`).
     pub amsfonts: bool,
+    /// `latexsym` is loaded, so the nine lasy10 symbols exist.
+    ///
+    /// `latexsym.sty` declares `\mho`, `\Join`, `\Box`, `\Diamond`,
+    /// `\leadsto`, `\lhd`, `\unlhd`, `\rhd` and `\unrhd` from `lasy`, and
+    /// `amsfonts.sty` 101 and 150-162 provides the same nine names from
+    /// msam/msbm when latexsym is *not* loaded. Either package makes all nine
+    /// exist, so this flag sits beside `amsfonts` on the gate; base LaTeX2e
+    /// defines none of them and pdflatex answers "Undefined control sequence".
+    ///
+    /// It does not change which glyph is drawn. `lasy` has no OpenType form
+    /// and is not bundled, so this compiler always sets the amsfonts design —
+    /// exact for six of the nine, and off by a measured amount for `\Box`,
+    /// `\Join` and `\Diamond` (see `LATEXSYM_SYMBOLS`).
+    pub latexsym: bool,
 }
 
 /// Packages that load amsmath, so that `\usepackage{X}` alone gives amsmath's
@@ -523,6 +537,86 @@ const AMSSYMB_CLASSES: &[&str] = &["acmart", "beamer"];
 /// folded in by `load_package` rather than repeated here.
 const AMSFONTS_PACKAGES: &[&str] = &["amsfonts"];
 
+/// The nine latexsym symbols, which `amsfonts.sty` provides itself whenever
+/// latexsym is not loaded: `\mho` unconditionally at 101, and `\Box`,
+/// `\Diamond`, `\leadsto`, `\lhd`, `\unlhd`, `\rhd`, `\unrhd` and `\Join`
+/// inside the `\@ifpackageloaded{latexsym}{\@tempswafalse}{\@tempswatrue}`
+/// guard at 148-162. Base LaTeX2e defines none of them.
+///
+/// This compiler draws the amsfonts design for all nine, because `lasy` has no
+/// OpenType form, the renderer has no Type 1 path, and the nearest bundled
+/// characters are further off than the amsfonts slots are (New Computer Modern
+/// Math's U+25C7 is 10.25000pt against lasy's 7.91673 for `\Diamond`, and
+/// Latin Modern Math has no U+25C7 at all). Measured against TeX Live 2025
+/// pdflatex at 10pt, `\hbox{$\sym$}` under `\usepackage{latexsym}` against
+/// `\usepackage{amssymb}`:
+///
+/// | command | lasy10 | amsfonts | delta |
+/// | --- | ---: | ---: | ---: |
+/// | `\mho` `\leadsto` `\lhd` `\unlhd` `\rhd` `\unrhd` | — | — | **+0.00000** |
+/// | `\Box` | 7.47224 | 7.77780 | +0.30556 |
+/// | `\Join` | 7.22223 | 7.88913 | +0.66690 |
+/// | `\Diamond` | 7.91673 | 6.66669 | −1.25004 |
+///
+/// All nine keep their class either way — in particular the four triangles
+/// stay `\mathbin`, because amsfonts re-declares them on the AMSa slots rather
+/// than letting them to the `\vartriangle*` relations, which are `\mathrel`
+/// on the very same slots. The ink differs on more than the three: `\Diamond`
+/// gains 1.11111pt of depth and `\Join` 0.81665pt under amsfonts.
+///
+/// A document that loads latexsym and not amssymb therefore gets the amsfonts
+/// design where pdflatex sets lasy10's. Six of the nine are identical anyway;
+/// the three above are the residual, and they are far smaller than bundling
+/// substitutes would be.
+pub(crate) const LATEXSYM_SYMBOLS: &[&str] = &[
+    "mho", "Join", "Box", "Diamond", "leadsto", "lhd", "unlhd", "rhd", "unrhd",
+];
+
+/// The seven `fontmath.ltx` pieces that exist only to be overlapped into
+/// another command, paired with the command that already draws the whole.
+///
+/// They are **not** extensible-assembly parts. `fontmath.ltx` 340, 374-377 and
+/// 447-450 declare all seven as plain `\DeclareMathSymbol` rows and they
+/// appear in no font's `MathVariants`, so the vertical-assembly machinery is
+/// not their home. Measured with TeX Live 2025 pdflatex at 10pt:
+///
+/// | command | family, slot | class | wd |
+/// | --- | --- | --- | ---: |
+/// | `\lhook` `\rhook` | `letters` (cmmi) `"2C`/`"2D` | Rel | 2.77779 |
+/// | `\mapstochar` | `symbols` (cmsy) `"37` | Rel | **0.00000** |
+/// | `\braceld` `\bracerd` `\bracelu` `\braceru` | `largesymbols` (cmex) `"7A`-`"7D` | Ord | 4.50005 |
+///
+/// Two measurements settle them. First, `fontmath.ltx` composes each whole
+/// from these pieces and the composition is exact — `\hookrightarrow` 11.11118
+/// against `\lhook\joinrel\rightarrow` 11.11118, `\hookleftarrow` 11.11118
+/// against `\leftarrow\joinrel\rhook`, `\mapsto` 10.00002 against
+/// `\mapstochar\rightarrow`, `\longmapsto` 16.11119 against
+/// `\mapstochar\longrightarrow`, every delta +0.00000 — so the whole is what a
+/// document should write. Two of the four had no row here until this change:
+/// `\hookleftarrow` and `\longmapsto` are added to `COMMAND_GLYPHS` alongside
+/// these pieces, because a diagnostic that names an unsupported command is
+/// worse than no diagnostic. Second, none of the seven pieces can be painted
+/// at pdflatex's advance from a bundled face:
+/// `\lhook`, `\rhook`, `\mapstochar`, `\bracelu` and `\braceru` have no
+/// Unicode code point at all; `\braceld`/`\bracerd` are U+23B0/U+23B1, which
+/// Latin Modern Math lacks entirely and New Computer Modern Math sets at
+/// 7.52000pt against cmex's 4.50005 (+3.01995 each); and `\mapstochar` is
+/// zero-width, which no OpenType glyph is, because the character exists to be
+/// overprinted by the arrow that follows it.
+///
+/// So they are diagnosed, not drawn. Exposing them would let a document build
+/// a construct the engine cannot set at the right metrics, when the composed
+/// command already sets correctly.
+const ASSEMBLY_PIECES: &[(&str, &str)] = &[
+    ("lhook", "\\hookrightarrow"),
+    ("rhook", "\\hookleftarrow"),
+    ("mapstochar", "\\mapsto"),
+    ("braceld", "\\overbrace or \\underbrace"),
+    ("bracerd", "\\overbrace or \\underbrace"),
+    ("bracelu", "\\overbrace or \\underbrace"),
+    ("braceru", "\\overbrace or \\underbrace"),
+];
+
 /// Classes that load `amsfonts`: the AMS classes load it (and `amsmath`) but
 /// not `amssymb`, so `\usepackage`-less `amsart` gets `\ulcorner` but not
 /// `\nleq` — measured.
@@ -535,6 +629,7 @@ impl MathPackages {
         amsmath: false,
         amssymb: false,
         amsfonts: false,
+        latexsym: false,
     };
 
     /// Folds one `\documentclass` name in.
@@ -553,6 +648,7 @@ impl MathPackages {
         // `amssymb.sty` line 8 is `\RequirePackage{amsfonts}`, so anything
         // that gives the full inventory gives the subset too.
         self.amsfonts |= amssymb || AMSFONTS_PACKAGES.contains(&package);
+        self.latexsym |= package == "latexsym";
     }
 
     /// Whether a symbol of `crate::amssymb` is defined at all: the file that
@@ -948,6 +1044,45 @@ impl MathParser<'_> {
         self.diagnostics.push(Diagnostic::command_error(
             name,
             format!("\\{name} requires \\usepackage{{{package}}}"),
+            Some(span),
+            Some("typeset the command literally and continued".into()),
+        ));
+        symbol(format!("\\{name}"), span)
+    }
+
+    /// A command two different packages each define on their own, neither of
+    /// which the document loaded (the nine latexsym symbols: `latexsym.sty`
+    /// from lasy10, `amsfonts.sty` 101 and 150-162 from msam/msbm).
+    fn missing_either_package(
+        &mut self,
+        name: &str,
+        first: &str,
+        second: &str,
+        span: Span,
+    ) -> MathAtom {
+        self.diagnostics.push(Diagnostic::command_error(
+            name,
+            format!("\\{name} requires \\usepackage{{{first}}} or \\usepackage{{{second}}}"),
+            Some(span),
+            Some("typeset the command literally and continued".into()),
+        ));
+        symbol(format!("\\{name}"), span)
+    }
+
+    /// One of the seven `fontmath.ltx` pieces that exist only to be overlapped
+    /// into a command this compiler already draws.
+    ///
+    /// These are plain `\DeclareMathSymbol` rows, not extensible-assembly
+    /// parts — they appear in no font's `MathVariants` — and not one of them
+    /// can be painted at pdflatex's advance from a bundled face, so drawing
+    /// something is worse than saying so. See `ASSEMBLY_PIECES`.
+    fn undrawable_piece(&mut self, name: &str, whole: &str, span: Span) -> MathAtom {
+        self.diagnostics.push(Diagnostic::command_error(
+            name,
+            format!(
+                "\\{name} is a font piece of {whole} and has no drawable form here; \
+                 write {whole} instead"
+            ),
             Some(span),
             Some("typeset the command literally and continued".into()),
         ));
@@ -1633,6 +1768,71 @@ impl MathParser<'_> {
                     span,
                 )
             },
+            // The seven kernel pieces of `\hookrightarrow`, `\hookleftarrow`,
+            // `\mapsto`/`\longmapsto` and `\overbrace`/`\underbrace`: every
+            // whole is already supported and already exact, and no bundled
+            // face can set any piece at pdflatex's advance (`ASSEMBLY_PIECES`).
+            // Package-independent — `fontmath.ltx` declares them, and no
+            // package this compiler knows redefines any of the seven.
+            "lhook" | "rhook" | "mapstochar" | "braceld" | "bracerd" | "bracelu" | "braceru" => {
+                let whole = ASSEMBLY_PIECES
+                    .iter()
+                    .find(|(piece, _)| *piece == name)
+                    .map(|(_, whole)| *whole)
+                    .expect("every arm name is an ASSEMBLY_PIECES row");
+                self.undrawable_piece(&name, whole, span)
+            }
+            // The nine latexsym symbols. Either package makes all nine exist,
+            // and without one pdflatex answers "Undefined control sequence".
+            _ if LATEXSYM_SYMBOLS.contains(&name.as_str())
+                && !(self.packages.amsfonts || self.packages.latexsym) =>
+            {
+                self.missing_either_package(&name, "amsfonts", "latexsym", span)
+            }
+            // `amsfonts.sty` 161-162 builds `\Join` as
+            // `\mathrel{\mathchar"0\hexnumber@\symAMSb 6F\mkern-13.8mu%
+            //   \mathchar"0\hexnumber@\symAMSb 6E}` — the msbm `\rtimes` and
+            // `\ltimes` slots overlapped by 13.8mu. It reproduces exactly:
+            // `\hbox{$\Join$}` and `\hbox{$\mathrel{\rtimes\mkern-13.8mu\ltimes}$}`
+            // are both 7.88913pt wide, 5.81665 high and 0.81665 deep, and
+            // `$a\Join b$` and the same composite in context are both
+            // 23.02210pt (TeX Live 2025, 10pt). The two slots are taken by
+            // slot, not by name: `\rtimes`/`\ltimes` are `amssymb.sty` 247-248
+            // and so need amssymb, while `\Join` needs only amsfonts.
+            //
+            // The kern is written as mu/18 em, this crate's convention for
+            // every `\mkern` (`\colon`, `\bmod`, `\pod`). pdfTeX scales mu by
+            // family 2's math quad, which is not the nominal em: measured,
+            // `\hbox{$\mkern18mu$}` is 9.99976pt at 10pt, so pdfTeX's
+            // `\mkern-13.8mu` is -7.66647 where this writes -7.66667. The
+            // 0.00020pt is the same approximation the other three carry, and
+            // it is the whole of `\Join`'s 7.88895 against pdflatex's
+            // 7.88913 — both msbm slots come straight off the TFM.
+            "Join" => {
+                let slot = |s: u8| {
+                    ams_atom(
+                        crate::amssymb::by_slot(crate::amssymb::SymbolFont::Msbm, s)
+                            .expect("generated msbm slot"),
+                        span,
+                    )
+                };
+                MathAtom {
+                    nucleus: Nucleus::Group(MathList {
+                        atoms: vec![slot(0x6F), space(-13.8 / 18.0, span), slot(0x6E)],
+                    }),
+                    class_override: Some(AtomClass::Rel),
+                    ..symbol(String::new(), span)
+                }
+            }
+            // The other eight: at least one of the two packages is loaded (the
+            // guard above took the case where neither is), so the amsfonts
+            // declaration applies. This bypasses `MathPackages::provides`,
+            // which knows only which AMS file declares a symbol and would
+            // diagnose a latexsym-only document for a command latexsym defines.
+            _ if LATEXSYM_SYMBOLS.contains(&name.as_str()) => ams_atom(
+                crate::amssymb::by_name(&name).expect("a listed latexsym symbol"),
+                span,
+            ),
             // amsfonts `\dashrightarrow` = `\mathrel{\dabar@\dabar@\mathchar"0\hexnumber@
             // \symAMSa 4B}` (`\dasharrow` its alias) and `\dashleftarrow` with the
             // "4C head first (`amsfonts.sty` 87-95).
@@ -2961,6 +3161,19 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("longleftarrow", "⟵"),
     ("Longleftarrow", "⟸"),
     ("longleftrightarrow", "⟷"),
+    // Two kernel arrows that had no row, while the arrow each mirrors did:
+    // `\hookrightarrow` and `\longrightarrow` were listed and their leftward
+    // and mapping halves were not. Added with the seven kernel pieces
+    // (`ASSEMBLY_PIECES`), because `\rhook`'s and `\mapstochar`'s diagnostics
+    // point a document at exactly these two. `fontmath.ltx` 374-377 and
+    // 447-450 build them from those pieces, and each is metrically identical
+    // to the twin already listed: measured at 10pt with TeX Live 2025,
+    // `\hookleftarrow` is 11.11118pt wide and 4.63747 high, the same box as
+    // `\hookrightarrow`, and `\longmapsto` 16.11119 / 3.66875, the same box as
+    // `\longrightarrow`. Both are Rel, both drawn from the pinned Latin Modern
+    // Math resource like the long arrows above.
+    ("hookleftarrow", "↩"),
+    ("longmapsto", "⟼"),
     // `\triangle`, also from the pinned Latin Modern Math resource.
     // `\bigtriangleup` shares this exact glyph with a forced Bin class (see
     // `command_atom`), so it is not a second row here.
@@ -4965,9 +5178,8 @@ mod unbraced_argument_tests {
     /// A document that loaded `amsfonts`: its `\mathbb`/`\mathfrak` alphabets
     /// exist. Base LaTeX2e defines neither.
     const AMSFONTS: MathPackages = MathPackages {
-        amsmath: false,
-        amssymb: false,
         amsfonts: true,
+        ..MathPackages::KERNEL
     };
 
     #[test]
@@ -5374,9 +5586,9 @@ mod spacing_tests {
     /// tests below that use those commands have to say so — see
     /// `amssymb_commands_are_diagnosed_when_the_package_is_not_loaded`.
     const AMSSYMB: MathPackages = MathPackages {
-        amsmath: false,
         amssymb: true,
         amsfonts: true,
+        ..MathPackages::KERNEL
     };
 
     fn width_with(source: &str, size: f64, packages: MathPackages) -> f64 {
@@ -5905,19 +6117,17 @@ mod package_gating_tests {
     const SIZE: f64 = 18.0;
 
     const AMSSYMB: MathPackages = MathPackages {
-        amsmath: false,
         amssymb: true,
         amsfonts: true,
+        ..MathPackages::KERNEL
     };
     const AMSFONTS: MathPackages = MathPackages {
-        amsmath: false,
-        amssymb: false,
         amsfonts: true,
+        ..MathPackages::KERNEL
     };
     const AMSMATH: MathPackages = MathPackages {
         amsmath: true,
-        amssymb: false,
-        amsfonts: false,
+        ..MathPackages::KERNEL
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
@@ -5959,22 +6169,206 @@ mod package_gating_tests {
             let source = format!("\\{name}");
             let (_, kernel) = parsed(&source, MathPackages::KERNEL);
             assert_eq!(kernel.len(), 1, "\\{name} with nothing loaded: {kernel:?}");
-            let package = match crate::amssymb::by_name(name).expect("named symbol").provider {
-                Provider::Amsfonts => "amsfonts",
-                Provider::Amssymb => "amssymb",
+            // The nine latexsym names have two independent providers, so the
+            // diagnostic names both; the rest have one.
+            let expected = if LATEXSYM_SYMBOLS.contains(&name) {
+                format!("\\{name} requires \\usepackage{{amsfonts}} or \\usepackage{{latexsym}}")
+            } else {
+                let package = match crate::amssymb::by_name(name).expect("named symbol").provider {
+                    Provider::Amsfonts => "amsfonts",
+                    Provider::Amssymb => "amssymb",
+                };
+                format!("\\{name} requires \\usepackage{{{package}}}")
             };
-            assert_eq!(
-                kernel[0].message,
-                format!("\\{name} requires \\usepackage{{{package}}}"),
-                "\\{name}"
-            );
+            assert_eq!(kernel[0].message, expected, "\\{name}");
 
             let (_, loaded) = parsed(&source, AMSSYMB);
             assert!(loaded.is_empty(), "\\{name} under amssymb: {loaded:?}");
             checked += 1;
         }
-        // 212 declarations plus the 6 `\global\let` aliases.
-        assert_eq!(checked, 218, "table command count");
+        // 217 declarations plus the 9 `\global\let` aliases. The five and
+        // three this lane added are the latexsym symbols `amsfonts.sty`
+        // provides itself (101 and 150-162).
+        assert_eq!(checked, 226, "table command count");
+    }
+
+    /// A document that loaded `latexsym` and nothing else.
+    const LATEXSYM: MathPackages = MathPackages {
+        latexsym: true,
+        ..MathPackages::KERNEL
+    };
+
+    /// pdflatex sets these at 10pt, so the widths below are read at 10pt too.
+    fn width_at_10pt(source: &str, packages: MathPackages) -> f64 {
+        let (list, diagnostics) = parsed(source, packages);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        layout(&list, 10.0, &mut Vec::new()).width
+    }
+
+    /// The nine latexsym symbols exist under `latexsym` as well as under
+    /// `amsfonts`/`amssymb`, and under none of them pdflatex answers
+    /// "Undefined control sequence" — so the diagnostic names both routes.
+    #[test]
+    fn the_nine_latexsym_symbols_take_either_package() {
+        for &name in LATEXSYM_SYMBOLS {
+            let source = format!("\\{name}");
+            let (_, kernel) = parsed(&source, MathPackages::KERNEL);
+            assert_eq!(kernel.len(), 1, "\\{name} with nothing loaded: {kernel:?}");
+            assert_eq!(
+                kernel[0].message,
+                format!("\\{name} requires \\usepackage{{amsfonts}} or \\usepackage{{latexsym}}"),
+                "\\{name}"
+            );
+            for (packages, label) in [
+                (LATEXSYM, "latexsym"),
+                (AMSFONTS, "amsfonts"),
+                (AMSSYMB, "amssymb"),
+            ] {
+                let (_, loaded) = parsed(&source, packages);
+                assert!(loaded.is_empty(), "\\{name} under {label}: {loaded:?}");
+            }
+        }
+        assert_eq!(LATEXSYM_SYMBOLS.len(), 9);
+    }
+
+    /// Advances of the amsfonts design this compiler always draws, against
+    /// `\hbox{$\sym$}` under TeX Live 2025 pdflatex at 10pt with
+    /// `\usepackage{amssymb}`. Six of the nine also equal lasy10's; the three
+    /// that do not are the reported residual (`LATEXSYM_SYMBOLS`).
+    #[test]
+    fn the_nine_latexsym_advances_are_the_amsfonts_ones() {
+        for (name, pdflatex, lasy10) in [
+            ("mho", 7.22223, Some(7.22223)),
+            ("leadsto", 10.00002, Some(10.00002)),
+            ("lhd", 7.77780, Some(7.77780)),
+            ("unlhd", 7.77780, Some(7.77780)),
+            ("rhd", 7.77780, Some(7.77780)),
+            ("unrhd", 7.77780, Some(7.77780)),
+            // Not lasy10's: \Box +0.30556, \Join +0.66690, \Diamond -1.25004.
+            ("Box", 7.77780, None),
+            ("Diamond", 6.66669, None),
+            ("Join", 7.88913, None),
+        ] {
+            let w = width_at_10pt(&format!("\\{name}"), AMSSYMB);
+            // \Join is the only one not read straight off a TFM width: it is
+            // two slots plus a mu kern this crate scales by the nominal em
+            // rather than cmsy10's math quad, which costs 0.00020pt.
+            let tolerance = if name == "Join" { 2.5e-4 } else { 1.5e-5 };
+            assert!(
+                (w - pdflatex).abs() < tolerance,
+                "\\{name}: {w} != pdflatex {pdflatex}"
+            );
+            if let Some(lasy) = lasy10 {
+                assert!((pdflatex - lasy).abs() < 1e-9, "\\{name} residual claim");
+            }
+            // Which package is loaded never changes the design, because lasy
+            // is not bundled.
+            assert!((width_at_10pt(&format!("\\{name}"), LATEXSYM) - w).abs() < 1e-9);
+        }
+    }
+
+    /// `amsfonts.sty` 157-160 re-declares latexsym's four triangles as
+    /// `\mathbin` on the same four AMSa slots `amssymb.sty` 113-116 gives the
+    /// `\vartriangle*` relations. Same glyph, one class apart: at 10pt
+    /// `$a\lhd b$` carries 4.44433pt of glue either side against `$ab$` and
+    /// `$a\vartriangleleft b$` 5.55542 — which is why aliasing the latexsym
+    /// names to the relation names would be wrong by 1.11111pt a side.
+    #[test]
+    fn the_four_triangles_are_bin_where_the_vartriangle_relations_are_rel() {
+        // 1mu = 1pt at SIZE, so \medmuskip reads 4 and \thickmuskip 5.
+        for (binary, relation) in [
+            ("lhd", "vartriangleleft"),
+            ("unlhd", "trianglelefteq"),
+            ("rhd", "vartriangleright"),
+            ("unrhd", "trianglerighteq"),
+        ] {
+            let (bin, _) = parsed(&format!("\\{binary}"), AMSSYMB);
+            let (rel, _) = parsed(&format!("\\{relation}"), AMSSYMB);
+            assert_eq!(bin.atoms[0].class_override, Some(AtomClass::Bin), "\\{binary}");
+            assert_eq!(rel.atoms[0].class_override, Some(AtomClass::Rel), "\\{relation}");
+            // Same slot of the same font, so the same glyph is painted.
+            let slot = |l: &MathList| l.atoms[0].ams_symbol.map(|s| (s.font, s.slot));
+            assert_eq!(slot(&bin), slot(&rel), "\\{binary}");
+
+            let glyph = bin.atoms[0].nucleus.clone();
+            let Nucleus::Symbol(glyph) = glyph else { panic!("\\{binary}") };
+            let b = laid_out(&format!("a\\{binary} b"), AMSSYMB);
+            let r = laid_out(&format!("a\\{relation} b"), AMSSYMB);
+            close(x(&b, &glyph) - x(&r, &glyph), -1.0);
+        }
+    }
+
+    /// `amsfonts.sty` 161-162 sets `\Join` as the msbm `\rtimes` and `\ltimes`
+    /// slots overlapped by `\mkern-13.8mu`, in one `\mathrel`. Measured under
+    /// TeX Live 2025 at 10pt, `\hbox{$\Join$}` and
+    /// `\hbox{$\mathrel{\rtimes\mkern-13.8mu\ltimes}$}` are both 7.88913pt and
+    /// `$a\Join b$` and the composite in context both 23.02210pt.
+    #[test]
+    fn join_is_the_two_msbm_slots_overlapped() {
+        let (list, diagnostics) = parsed(r"\Join", AMSFONTS);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 1);
+        assert_eq!(list.atoms[0].class_override, Some(AtomClass::Rel));
+        let Nucleus::Group(inner) = &list.atoms[0].nucleus else {
+            panic!("{:?}", list.atoms[0].nucleus)
+        };
+        let slots: Vec<_> = inner
+            .atoms
+            .iter()
+            .filter_map(|a| a.ams_symbol.map(|s| (s.name, s.slot)))
+            .collect();
+        assert_eq!(slots, [("rtimes", 0x6F), ("ltimes", 0x6E)]);
+        assert_eq!(
+            inner.atoms[1].nucleus,
+            Nucleus::Space { em: -13.8 / 18.0, font_em: false }
+        );
+        // A Rel, so `$a\Join b$` is the glyph plus two \thickmuskips.
+        let context = width_at_10pt(r"a\Join b", AMSFONTS);
+        let control = width_at_10pt("ab", AMSFONTS);
+        assert!(
+            (context - control - width_at_10pt(r"\Join", AMSFONTS) - 2.0 * 5.0 * 10.0 / 18.0)
+                .abs()
+                < 1e-9,
+            "{context}"
+        );
+    }
+
+    /// The seven `fontmath.ltx` pieces are diagnosed, never drawn: every whole
+    /// they build is already supported and already exact, and no bundled face
+    /// sets any piece at pdflatex's advance (`ASSEMBLY_PIECES`).
+    #[test]
+    fn the_seven_assembly_pieces_are_diagnosed_not_drawn() {
+        assert_eq!(ASSEMBLY_PIECES.len(), 7);
+        for &(piece, whole) in ASSEMBLY_PIECES {
+            // No package changes the answer: `fontmath.ltx` declares all seven
+            // and none of the packages this compiler models redefines any.
+            for packages in [MathPackages::KERNEL, AMSSYMB, AMSFONTS, AMSMATH, LATEXSYM] {
+                let (list, diagnostics) = parsed(&format!("\\{piece}"), packages);
+                assert_eq!(diagnostics.len(), 1, "\\{piece}: {diagnostics:?}");
+                assert_eq!(
+                    diagnostics[0].message,
+                    format!(
+                        "\\{piece} is a font piece of {whole} and has no drawable form here; \
+                         write {whole} instead"
+                    ),
+                    "\\{piece}"
+                );
+                // The recovery is the literal, so nothing is painted at a
+                // metric the engine cannot reproduce.
+                assert_eq!(list.atoms[0].nucleus, Nucleus::Symbol(format!("\\{piece}")));
+                assert!(list.atoms[0].ams_symbol.is_none(), "\\{piece}");
+            }
+        }
+        // Each whole the pieces build is supported, and none of them is.
+        for whole in [
+            r"\hookrightarrow",
+            r"\hookleftarrow",
+            r"\mapsto",
+            r"\longmapsto",
+        ] {
+            let (_, diagnostics) = parsed(whole, MathPackages::KERNEL);
+            assert!(diagnostics.is_empty(), "{whole}: {diagnostics:?}");
+        }
     }
 
     /// `amsfonts.sty` alone declares a 15-command subset of the same symbol
@@ -6002,12 +6396,25 @@ mod package_gating_tests {
                 "urcorner",
                 "llcorner",
                 "lrcorner",
+                // latexsym's nine, which amsfonts provides itself: `\mho`
+                // unconditionally at 101, the four triangles re-declared
+                // `\mathbin` at 157-160, and `\Box`/`\Diamond`/`\leadsto`
+                // `\global\let` to AMSa symbols at 150-152. (`\Join`, 161-162,
+                // is a composite and has no table row.)
+                "mho",
+                "lhd",
+                "unlhd",
+                "rhd",
+                "unrhd",
                 "yen",
                 "checkmark",
                 "circledR",
                 "maltese",
+                "Box",
+                "Diamond",
+                "leadsto",
             ],
-            "the amsfonts.sty declarations (141-147, 74-77, 64-73)"
+            "the amsfonts.sty declarations (141-147, 74-77, 64-73, 101, 150-160)"
         );
         for name in &subset {
             let (_, diagnostics) = parsed(&format!("\\{name}"), AMSFONTS);
@@ -6022,15 +6429,22 @@ mod package_gating_tests {
         }
     }
 
-    /// The `\global\let` aliases are all `amssymb.sty`'s, and each resolves to
-    /// a symbol `amssymb.sty` declares, so gating the alias on its target's
-    /// provider gates it on `amssymb` — which is what pdflatex does.
+    /// Every `\global\let` alias resolves to a declaration in the file that
+    /// also declares the alias, so gating the alias on its target's provider
+    /// gates it on the package pdflatex needs. Six are `amssymb.sty`'s; the
+    /// three latexsym names `amsfonts.sty` 150-152 lets are amsfonts', and
+    /// their targets are the amsfonts re-declarations at 141-147.
     #[test]
-    fn every_alias_resolves_to_an_amssymb_declaration() {
+    fn every_alias_resolves_to_a_declaration_in_its_own_file() {
         for (alias, target) in crate::amssymb::ALIASES {
             let symbol = crate::amssymb::by_name(alias).expect("alias resolves");
             assert_eq!(symbol.name, *target);
-            assert_eq!(symbol.provider, Provider::Amssymb, "\\{alias}");
+            let expected = if LATEXSYM_SYMBOLS.contains(alias) {
+                Provider::Amsfonts
+            } else {
+                Provider::Amssymb
+            };
+            assert_eq!(symbol.provider, expected, "\\{alias}");
         }
     }
 
@@ -6169,8 +6583,8 @@ mod package_gating_tests {
             class("amsart"),
             MathPackages {
                 amsmath: true,
-                amssymb: false,
-                amsfonts: true
+                amsfonts: true,
+                ..MathPackages::KERNEL
             }
         );
         assert_eq!(
@@ -6178,7 +6592,8 @@ mod package_gating_tests {
             MathPackages {
                 amsmath: true,
                 amssymb: true,
-                amsfonts: true
+                amsfonts: true,
+                ..MathPackages::KERNEL
             }
         );
         assert_eq!(class("article"), MathPackages::KERNEL);

@@ -18,9 +18,12 @@ Development-time extraction only (no TeX at runtime). Sources, resolved with
 * `apps/mac/Fonts/latinmodern-math.otf` / `NewCMMath-Regular.otf`: which face
   carries every character (Latin Modern Math first) and its advance.
 
-Kernel commands `amsfonts` only redefines (`\angle`, `\hbar`, `\mho`,
-`\sqsubset`, `\sqsupset`, `\rightleftharpoons`) keep their kernel glyphs and
-are not listed.
+Kernel commands `amsfonts` only redefines (`\angle`, `\hbar`,
+`\rightleftharpoons`) keep their kernel glyphs and are not listed. `\mho` used
+to sit in that list on a false premise: base LaTeX2e has no `\mho` at all (it
+is latexsym's), so there is no kernel glyph to keep and `amsfonts.sty` 101 is
+its only AMS declaration — `amssymb.sty` 239 is commented out. `\sqsubset`
+and `\sqsupset` are the same case and are left to #212, which owns that pair.
 
 Usage: python3 scripts/gen_amssymb.py > src/amssymb.rs
 """
@@ -56,6 +59,12 @@ MANUAL = {
     "ntriangleleft": ["22EA"], "ntriangleright": ["22EB"], "eth": ["00F0"], "shortmid": ["2223"],
     "shortparallel": ["2225"], "smallsetminus": ["2216"], "thicksim": ["223C"], "thickapprox": ["2248"],
     "digamma": ["03DD"], "varkappa": ["03F0"], "backepsilon": ["03F6"],
+    # latexsym's four triangles, which `amsfonts.sty` 157-160 re-declares on
+    # the same AMSa slots as `\vartriangleleft`..`\trianglerighteq` but as
+    # `\mathbin`, not `\mathrel`. unicode-math has no name for them, so the
+    # character is chosen here — the same one the relation carries, because it
+    # is the same slot of the same font.
+    "lhd": ["22B2"], "unlhd": ["22B4"], "rhd": ["22B3"], "unrhd": ["22B5"],
 }
 EXTRA = [
     ("yen", "ord", "msam", 0x55, ["00A5"], "amsfonts.sty:64"),
@@ -72,9 +81,14 @@ EXTRA = [
     ("widehat@@", "ord", "msbm", 0x5C, ["0302"], "msbm10.tfm"),
     ("widetilde@@", "ord", "msbm", 0x5E, ["0303"], "msbm10.tfm"),
 ]
-SKIP = {"angle", "hbar", "mho", "sqsubset", "sqsupset", "rightleftharpoons"}
+SKIP = {"angle", "hbar", "sqsubset", "sqsupset", "rightleftharpoons"}
+# `\global\let` aliases. The last three are `amsfonts.sty` 150-152, inside the
+# `\@ifpackageloaded{latexsym}{\@tempswafalse}{\@tempswatrue}` guard: when
+# latexsym is *not* loaded amsfonts supplies latexsym's `\Box`, `\Diamond` and
+# `\leadsto` itself, by letting them to the AMSa symbols it just declared.
 ALIASES = [("restriction", "upharpoonright"), ("Doteq", "doteqdot"), ("doublecup", "Cup"),
-           ("doublecap", "Cap"), ("llless", "lll"), ("gggtr", "ggg")]
+           ("doublecap", "Cap"), ("llless", "lll"), ("gggtr", "ggg"),
+           ("Box", "square"), ("Diamond", "lozenge"), ("leadsto", "rightsquigarrow")]
 
 
 def otf(path):
@@ -134,9 +148,19 @@ def main():
     for name, cls, font, slot, where in rows:
         if name in seen or "@" in name or name in SKIP:
             continue
-        # amsfonts.sty 141-160 repeat amssymb's `\square`..`\trianglelefteq`
-        # (and `\lhd`..`\unrhd` under latexsym compatibility).
-        if where.startswith("amsfonts") and name in ("square", "lozenge", "lhd", "unlhd", "rhd", "unrhd"):
+        # amsfonts.sty 141-147 repeat amssymb's `\square`..`\trianglelefteq`
+        # verbatim, same slot and same class, so the first row stands.
+        #
+        # `\lhd`, `\unlhd`, `\rhd` and `\unrhd` (amsfonts.sty 157-160) are
+        # deliberately *not* dropped: they are latexsym names amssymb never
+        # declares, and although they sit on the same four AMSa slots as
+        # `\vartriangleleft`..`\trianglerighteq` they are `\mathbin` where the
+        # relations are `\mathrel`. Measured at 10pt against `$ab$` (9.57755),
+        # `$a\lhd b$` puts 4.44433pt of glue either side of the glyph (two
+        # `\medmuskip`s, Bin) and `$a\vartriangleleft b$` 5.55542 (two
+        # `\thickmuskip`s, Rel) — 1.11111pt apart per pair. Aliasing them to
+        # the relations would be the same glyph at the wrong class.
+        if where.startswith("amsfonts") and name in ("square", "lozenge"):
             continue
         seen.add(name)
         cands = MANUAL.get(name) or ([um[name]] if name in um else [])
