@@ -1108,6 +1108,23 @@ final class ShellModel {
         if reviewing == nil { reviewing = proposals.first }
     }
 
+    /// Closes the review sheet without deciding anything.
+    ///
+    /// The sheet is window-modal, so while it is up every other control in
+    /// the window — including the Captures inspector's "Insert at caret" —
+    /// is unclickable. Before this existed the only ways out were Reject
+    /// (destructive) and a successful Approve, so a proposal the reviewer
+    /// wanted to insert from the inspector instead could not be reached at
+    /// all: the inspector's Insert is enabled only while the proposal is in
+    /// `proposals`, which is exactly when the blocking sheet is raised.
+    ///
+    /// The proposal stays queued and insertable; only the sheet goes away.
+    func dismissReviewWithoutDeciding() {
+        guard let p = reviewing else { return }
+        reviewing = nil
+        captureNote = "Review of \(p.captureId) closed; it is still queued — insert it from the Captures inspector (⌘⇧I)."
+    }
+
     func rejectProposal(_ proposal: RuntimeV1.CaptureProposal) {
         proposals.removeAll { $0.captureId == proposal.captureId }
         if reviewing?.captureId == proposal.captureId { reviewing = proposals.first }
@@ -1178,7 +1195,12 @@ final class ShellModel {
     func editRefused(_ edit: PendingEdit, reason: String) {
         if pendingEdit == edit { pendingEdit = nil }
         guard let refund = edit.captureRefund else {
+            // Bridge inserts build their pendingEdit without a refund, so this
+            // is the path a refused capture insertion takes. navigationNote
+            // alone only reaches the status bar, which is behind the modal
+            // review sheet — the refusal looked like a dead Insert button.
             navigationNote = "Edit not applied: \(reason)."
+            captureNote = "Nothing was inserted: \(reason)."
             return
         }
         let id = refund.proposal.captureId
