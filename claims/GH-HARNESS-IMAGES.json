@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/harness-project-root",
-  "gh_ref": "#2",
+  "gh_ref": "#344",
   "machine": "mac-m5pro-dq222",
-  "note": "measurement harnesses send no project_root; image fixtures (all [draft], files absent) error in FlashTeX but only warn in pdflatex. Fix harness + split any product gap",
+  "note": "superseded by GoKubar #344; #342 closed",
   "started_utc": "2026-09-14T07:03:06Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-HARNESS-IMAGES",
-  "updated_utc": "2026-09-14T07:03:06Z"
+  "updated_utc": "2026-09-14T07:22:33Z"
 }
