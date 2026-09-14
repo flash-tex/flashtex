@@ -78,4 +78,31 @@ final class EditorKeyHandlingTests: XCTestCase {
         XCTAssertNil(EKH.programmaticCloser(in: "\\section{}", insertedAt: 5, caretUTF16: 5 + 3), "not before a closer")
         XCTAssertNil(EKH.programmaticCloser(in: "word", insertedAt: 0, caretUTF16: 4), "caret at the very end: nothing follows")
     }
+
+    /// GH#2: which replacements carry the closer for a delimiter opened before
+    /// them, and so must swallow the editor's auto-inserted one.
+    func testSupersedesTrackedCloserRecognisesAnUnmatchedClosingBracket() {
+        // Environment templates continue the `{` of the `\begin{` the user typed.
+        XCTAssertTrue(EKH.supersedesTrackedCloser("proof}\n\n\\end{proof}", closer: "}"))
+        XCTAssertTrue(EKH.supersedesTrackedCloser(Completion.environmentSnippet("itemize", indent: "").text, closer: "}"))
+        XCTAssertTrue(EKH.supersedesTrackedCloser(Completion.environmentSnippet("figure", indent: "  ").text, closer: "}"),
+                      "the bracketed `[width=…]` and the later braces are all balanced; the leading `}` is not")
+        XCTAssertTrue(EKH.supersedesTrackedCloser("itemize}", closer: "}"), "the plain `\\end{` insertion")
+        // Balanced snippets close only what they opened.
+        XCTAssertFalse(EKH.supersedesTrackedCloser("\\frac{}{}", closer: "}"))
+        XCTAssertFalse(EKH.supersedesTrackedCloser("\\section{}", closer: "}"))
+        XCTAssertFalse(EKH.supersedesTrackedCloser("\\left( \\right)", closer: ")"))
+        XCTAssertFalse(EKH.supersedesTrackedCloser("alpha", closer: "}"), "no delimiter at all")
+        // The unmatched closer has to be the one actually sitting there.
+        XCTAssertFalse(EKH.supersedesTrackedCloser("proof}", closer: "]"))
+        XCTAssertTrue(EKH.supersedesTrackedCloser("opt]", closer: "]"))
+        // An escaped brace is a literal, not a delimiter.
+        XCTAssertFalse(EKH.supersedesTrackedCloser("\\}", closer: "}"))
+        XCTAssertTrue(EKH.supersedesTrackedCloser("\\{\\}}", closer: "}"), "the escapes are literals; the last `}` is unmatched")
+        // Self-partnered delimiters cannot be counted, so they are never eaten.
+        XCTAssertFalse(EKH.supersedesTrackedCloser("x$", closer: "$"))
+        XCTAssertFalse(EKH.supersedesTrackedCloser("x}", closer: "\\"))
+        // Crossed brackets are not a shape this understands: change nothing.
+        XCTAssertFalse(EKH.supersedesTrackedCloser("{a]", closer: "]"))
+    }
 }

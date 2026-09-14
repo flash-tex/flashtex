@@ -466,6 +466,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         "upright named operator (\\mathop); starred and withlimits forms take limits",
         true,
     ),
+    (
+        &["colon"],
+        "",
+        "function-arrow colon: punctuation (0mu/3mu) as the kernel declares it, amsmath's 2mu/6mu when amsmath is loaded",
+        true,
+    ),
     (&["bmod", "mod"], "", "upright mod", true),
     (&["pmod"], "{n}", "parenthesised (mod n)", true),
     (
@@ -925,12 +931,22 @@ pub fn inventory() -> Inventory {
             crate::amssymb::SymbolFont::Msbm => "msbm",
         };
         let class = format!("{:?}", ams.class).to_lowercase();
+        // Which `\usepackage` the document has to load: base LaTeX2e defines
+        // none of these names, and `math::command_atom` diagnoses the command
+        // when its package is absent, so the inventory has to say so.
+        let package = match ams.provider {
+            crate::amssymb::Provider::Amsfonts => "amsfonts",
+            crate::amssymb::Provider::Amssymb => "amssymb",
+        };
         commands.push(Command {
             name,
             mode: Mode::Math,
             origin: Origin::MathSymbol,
             arguments: "",
-            description: format!("symbol {} (\\math{class}, {font} \"{:02X})", ams.text, ams.slot),
+            description: format!(
+                "symbol {} (\\math{class}, {font} \"{:02X}; needs {package})",
+                ams.text, ams.slot
+            ),
             glyph: Some(ams.text),
             renders: true,
         });
@@ -1225,6 +1241,13 @@ pub fn render_coverage_markdown(inventory: &Inventory) -> String {
          package sources, each name confirmed by pdfLaTeX; TeX Live 2026). The total row counts \
          commands and environments together. Supported means handled without an unsupported \
          diagnostic, not typographic parity.\n",
+    );
+    // #254 added this caveat to `supported/coverage.md` by hand. That file is
+    // generated, so the note broke `generated_artifacts_are_current` and the
+    // next regeneration would have silently deleted it. It belongs here, where
+    // regeneration reproduces it.
+    out.push_str(
+        "\n**The denominator excludes math-mode symbol commands entirely.** `canonical-latex.tsv`'s candidates are `@findex`/`@EnvIndex` entries from the LaTeX2e reference manual plus each listed package's own source files (see `crates/compiler/scripts/canonical_latex.py`'s header); math symbols such as `\\alpha` and `\\odot` are neither in that manual's index nor in any of the nine package source lists, so they never become candidates and are absent from the table. The compiler tracks math-command support separately (`crates/compiler/src/math.rs`'s `COMMAND_GLYPHS`/`OPERATOR_NAMES`, `crates/compiler/src/supported.rs`'s `Origin::MathSymbol`/`MathOperator`/`MathStructure`; the full list is in `docs/user/compiler.md`'s math tables), but `--supported coverage` does not count them.\n",
     );
     out
 }

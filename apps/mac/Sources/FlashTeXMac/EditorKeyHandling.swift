@@ -118,6 +118,44 @@ enum EditorKeyHandling {
         guard let ch = unit.first, SourceEditorView.BraceMatcher.isCloser(ch) else { return nil }
         return caretUTF16
     }
+
+    /// Brackets whose two halves differ, so nesting can be counted. `$` (and
+    /// the `\\` of an auto-inserted `\\)`) are deliberately absent: they are
+    /// their own partner, so an unmatched one cannot be recognised.
+    private static let bracketPairs: [Character: Character] = ["{": "}", "[": "]", "(": ")"]
+
+    /// Whether `insertedText` itself closes a delimiter that was opened
+    /// *before* it: its first bracket left unmatched by the text is `closer`.
+    ///
+    /// Completion snippets are written to continue an argument the user has
+    /// already opened — accepting `proof` after `\begin{` inserts
+    /// `proof}\n…\n\end{proof}`, which supplies the `}` for that `{`. When the
+    /// editor auto-closed the same `{` the buffer already holds a `}` right
+    /// after the replaced range, and inserting leaves it stranded
+    /// (`\end{proof}}`). The caller consumes the tracked closer when this
+    /// returns true. `\frac{}{}` and friends are balanced, so nothing is eaten.
+    static func supersedesTrackedCloser(_ insertedText: String, closer: Character) -> Bool {
+        guard bracketPairs.values.contains(closer) else { return false }
+        var stack: [Character] = []
+        var i = insertedText.startIndex
+        while i < insertedText.endIndex {
+            let c = insertedText[i]
+            if c == "\\" { // `\{`, `\}`, `\$`: an escaped literal, never a delimiter (a control word is harmless to skip too)
+                i = insertedText.index(after: i)
+                if i < insertedText.endIndex { i = insertedText.index(after: i) }
+                continue
+            }
+            if let partner = bracketPairs[c] {
+                stack.append(partner)
+            } else if bracketPairs.values.contains(c) {
+                guard let expected = stack.last else { return c == closer } // unmatched: it belongs to an opener before this text
+                if expected != c { return false } // crossed brackets: not a shape we understand
+                stack.removeLast()
+            }
+            i = insertedText.index(after: i)
+        }
+        return false
+    }
 }
 
 extension SourceEditorView.Coordinator {

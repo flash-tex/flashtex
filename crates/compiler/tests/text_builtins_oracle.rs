@@ -493,7 +493,10 @@ fn text_kerns_and_glue_match_pdflatex() {
         let emitted = inlines(&parsed.blocks);
         match str_of(fixture, "kind") {
             "kern" => {
-                let amount = tb::text_kern(command).expect("kern command");
+                // No fixture in this corpus loads amsmath (which renews
+                // `\thinspace`/`\negthinspace` to `.1667em`), so the kernel
+                // definition is the one pdflatex produced for them.
+                let amount = tb::text_kern(command, false).expect("kern command");
                 let cx = DimenContext {
                     quad: font.quad(),
                     ..DimenContext::default()
