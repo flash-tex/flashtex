@@ -1,5 +1,5 @@
 use flashtex_compiler::incremental::{compile_full, LayoutConstraints};
-use flashtex_compiler::math::{MathList, Nucleus, TextPiece, TextStyle};
+use flashtex_compiler::math::{self, MathList, Nucleus, TextPiece, TextStyle, MAX_MATH_DEPTH};
 use flashtex_compiler::parser::{parse, Block, Inline};
 
 fn first_math(parsed: &flashtex_compiler::parser::Parsed) -> &MathList {
@@ -24,6 +24,38 @@ fn text_run(list: &MathList) -> &Vec<TextPiece> {
             _ => None,
         })
         .expect("text run")
+}
+
+fn eqref_text(source: &str) -> String {
+    let output = compile_full(source, LayoutConstraints::default());
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    output
+        .pages
+        .iter()
+        .flat_map(|page| page.items.iter())
+        .find_map(|item| {
+            source
+                .get(item.span.start..item.span.end)
+                .filter(|text| *text == r"\eqref{l}")
+                .map(|_| item.text.clone())
+        })
+        .expect("eqref item")
+}
+
+fn parsed_text_run_box(source: &str) -> flashtex_compiler::math::MathBox {
+    let parsed = parse(source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let atom = first_math(&parsed)
+        .atoms
+        .iter()
+        .find(|atom| matches!(atom.nucleus, Nucleus::TextRun(_)))
+        .expect("text run atom")
+        .clone();
+    let list = MathList { atoms: vec![atom] };
+    let mut diagnostics = Vec::new();
+    let result = math::layout(&list, 10.0, &mut diagnostics);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    result
 }
 
 #[test]
@@ -89,7 +121,7 @@ fn text_accepts_multiple_nested_math_spans_and_styles() {
 }
 
 #[test]
-fn tag_does_not_insert_the_old_two_quad_glue() {
+fn tag_keeps_the_interim_two_quad_gap_until_margin_placement() {
     let parsed = parse(r"\begin{equation}a=b\tag{hi}\end{equation}");
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     let list = first_math(&parsed);
@@ -97,7 +129,7 @@ fn tag_does_not_insert_the_old_two_quad_glue() {
         .atoms
         .iter()
         .any(|atom| matches!(&atom.nucleus, Nucleus::Text(text) if text == "(hi)")));
-    assert!(!list.atoms.iter().any(|atom| matches!(
+    assert!(list.atoms.iter().any(|atom| matches!(
         atom.nucleus,
         Nucleus::Space { em, font_em: true } if (em - 2.0).abs() < f64::EPSILON
     )));
@@ -121,13 +153,90 @@ fn starred_tag_omits_parentheses() {
 #[test]
 fn eqref_uses_a_custom_tag_as_the_label_value() {
     let source = r"See \eqref{e}.\begin{equation}a=b\tag{custom}\label{e}\end{equation}";
+    assert_eq!(eqref_text(&source.replace("{e}", "{l}")), "(custom)");
+}
+
+#[test]
+fn eqref_uses_rich_starred_and_plain_tag_values() {
+    let rich = r"See \eqref{l}.\begin{equation}a=b\tag{hi $x^2$}\label{l}\end{equation}";
+    assert_eq!(eqref_text(rich), "(hi x²)");
+
+    let starred = r"See \eqref{l}.\begin{equation}a=b\tag*{custom}\label{l}\end{equation}";
+    assert_eq!(eqref_text(starred), "(custom)");
+
+    let plain = r"See \eqref{l}.\begin{equation}a=b\tag{1}\label{l}\end{equation}";
+    assert_eq!(eqref_text(plain), "(1)");
+}
+
+#[test]
+fn compiler_layouts_parser_text_runs_against_the_pinned_tag_oracle() {
+    let source = r"\begin{equation}a=b\tag{hi $x^2$}\end{equation}";
     let output = compile_full(source, LayoutConstraints::default());
-    let eqref = output
-        .pages
-        .iter()
-        .flat_map(|page| page.items.iter())
-        .find(|item| item.span.start < source.len() && &source[item.span.start..item.span.end] == r"\eqref{e}")
-        .expect("eqref item");
-    assert_eq!(eqref.text, "(custom)");
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+
+    // Measured with:
+    // /Library/TeX/texbin/pdflatex -interaction=nonstopmode -halt-on-error
+    //   -output-directory=/private/tmp/flashtex-tag-oracle flashtex_tag_box.tex
+    // flashtex_tag_box.tex contains:
+    //   \setbox\flashbox=\hbox{$\text{(hi $x^2$)}$}
+    // TeX Live 2026 reported 29.64589pt for the Computer Modern hbox. The
+    // compiler route keeps its existing Core14 text/NewCM math metrics, whose
+    // parsed TextRun box is pinned here at 24.88pt; the exact TeX metric is
+    // pinned by crates/math-layout/tests/text_runs.rs.
+    let width = parsed_text_run_box(source).width;
+    assert!((width - 24.88).abs() <= 0.01, "{width}pt vs 24.88pt");
+}
+
+#[test]
+fn compiler_layouts_parser_text_sentence_and_bold_math() {
+    for source in [
+        r"\begin{equation}\text{for all $x$ in $S$}\end{equation}",
+        r"\begin{equation}\textbf{$x$}\end{equation}",
+    ] {
+        let output = compile_full(source, LayoutConstraints::default());
+        assert!(output.diagnostics.is_empty(), "{source:?}: {:?}", output.diagnostics);
+        assert!(parsed_text_run_box(source).width > 0.0, "{source:?}");
+    }
+}
+
+#[test]
+fn unbalanced_math_inside_text_is_diagnosed_through_compile() {
+    let source = r"\begin{equation}\text{broken $x}\end{equation}";
+    let output = compile_full(source, LayoutConstraints::default());
+    assert!(output
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("missing its closing delimiter")), "{:?}", output.diagnostics);
+}
+
+#[test]
+fn unsupported_math_inside_text_is_diagnosed_through_compile() {
+    let source = r"\begin{equation}\text{bad $\foo$}\end{equation}";
+    let output = compile_full(source, LayoutConstraints::default());
+    assert!(output
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains(r"\foo is not supported in math mode")), "{:?}", output.diagnostics);
+}
+
+#[test]
+fn nested_text_runs_share_the_math_depth_limit() {
+    let depth = MAX_MATH_DEPTH + 8;
+    let source = format!(
+        r"\begin{{equation}}{}x{}\end{{equation}}",
+        r"\text{".repeat(depth),
+        "}".repeat(depth)
+    );
+    let parsed = parse(&source);
+    let expected = format!("math nesting deeper than {MAX_MATH_DEPTH} levels is not supported");
+    assert_eq!(
+        parsed
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.message == expected)
+            .count(),
+        1,
+        "{:?}",
+        parsed.diagnostics
+    );
 }

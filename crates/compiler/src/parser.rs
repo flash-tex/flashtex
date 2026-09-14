@@ -3950,7 +3950,7 @@ impl P<'_> {
             }
             let text = match &atom.nucleus {
                 math::Nucleus::Text(text) => text.clone(),
-                math::Nucleus::TextRun(pieces) => math::text_run_plain_text(pieces)?,
+                math::Nucleus::TextRun(pieces) => math::text_run_reference_text(pieces),
                 _ => return None,
             };
             Some(
