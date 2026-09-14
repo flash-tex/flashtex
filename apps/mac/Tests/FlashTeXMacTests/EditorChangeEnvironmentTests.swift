@@ -246,4 +246,213 @@ final class EditorChangeEnvironmentTests: XCTestCase {
         XCTAssertEqual(CommandPaletteModel.rows(matching: "change environment").first?.id, .changeEnvironment)
         XCTAssertEqual(CommandPaletteModel.rows(matching: "⌃⌘E").first?.id, .changeEnvironment)
     }
+
+    // MARK: review blockers (fail on the unregistered-partner / covering-edit tree)
+
+    /// Begin and end names of the innermost pair around `\\item`.
+    private func pairNames(_ text: String) -> (begin: String, end: String)? {
+        let ns = text as NSString
+        let caret = ns.range(of: "\\item")
+        guard caret.location != NSNotFound, let t = CE.target(in: ns, caret: caret.location) else { return nil }
+        return (ns.substring(with: t.beginName), ns.substring(with: t.endName))
+    }
+
+    private func assertPaired(_ text: String, _ expected: String, _ message: String,
+                              file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(text, expected, message, file: file, line: line)
+        let got = pairNames(text)
+        let want = pairNames(expected)
+        XCTAssertEqual(got?.begin, want?.begin, "begin name after: \(message)", file: file, line: line)
+        XCTAssertEqual(got?.end, want?.end, "end name after: \(message)", file: file, line: line)
+        XCTAssertEqual(got?.begin, got?.end, "names must stay paired: \(message)", file: file, line: line)
+    }
+
+    private func nameRange(_ text: String, of token: String, which: String) -> NSRange {
+        let ns = text as NSString
+        if which == "begin" { return ns.range(of: token) }
+        let first = ns.range(of: token)
+        return ns.range(of: token, range: NSRange(location: NSMaxRange(first), length: ns.length - NSMaxRange(first)))
+    }
+
+    /// ⌘Z / ⌘⇧Z of a linked name edit must restore the whole document and both
+    /// names. Editing `\\end{…}` is the blocker: the partner `\\begin{…}` is
+    /// earlier, so an unregistered partner insert shifts the already-registered
+    /// keystroke and undo removes the wrong character.
+    func testUndoOfEndNameInsertRestoresBothNames() async throws {
+        try await linkedNameUndoCase(which: "end", insert: "x", asSeparateGroups: false)
+    }
+
+    func testUndoOfEndNamePasteRestoresBothNames() async throws {
+        try await linkedNameUndoCase(which: "end", insert: "xyz", asSeparateGroups: false)
+    }
+
+    func testUndoOfThreeEndNameKeystrokesRestoresEachPair() async throws {
+        try await linkedNameUndoCase(which: "end", insert: "abc", asSeparateGroups: true)
+    }
+
+    func testUndoOfBeginNameInsertRestoresBothNames() async throws {
+        try await linkedNameUndoCase(which: "begin", insert: "x", asSeparateGroups: false)
+    }
+
+    func testUndoOfBeginNamePasteRestoresBothNames() async throws {
+        try await linkedNameUndoCase(which: "begin", insert: "xyz", asSeparateGroups: false)
+    }
+
+    func testUndoOfThreeBeginNameKeystrokesRestoresEachPair() async throws {
+        try await linkedNameUndoCase(which: "begin", insert: "abc", asSeparateGroups: true)
+    }
+
+    private func linkedNameUndoCase(which: String, insert: String, asSeparateGroups: Bool) async throws {
+        let model = ShellModel()
+        let original = "\\begin{itemize}\n\\item a\n\\end{itemize}\n"
+        model.updateActiveText(original)
+        let (window, tv, _) = try await host(model)
+        defer { window.orderOut(nil) }
+        let name = nameRange(original, of: "itemize", which: which)
+        tv.setSelectedRange(NSRange(location: name.location, length: 0))
+        try await Task.sleep(nanoseconds: 30_000_000)
+        tv.undoManager?.removeAllActions()
+        if asSeparateGroups {
+            for ch in insert {
+                tv.breakUndoCoalescing()
+                let loc = tv.selectedRange().location
+                tv.insertText(String(ch), replacementRange: NSRange(location: loc, length: 0))
+                try await Task.sleep(nanoseconds: 40_000_000)
+            }
+        } else {
+            tv.insertText(insert, replacementRange: NSRange(location: name.location, length: 0))
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        var expected = original as NSString
+        expected = expected.replacingCharacters(in: nameRange(expected as String, of: "itemize", which: "end"), with: insert + "itemize") as NSString
+        expected = expected.replacingCharacters(in: nameRange(expected as String, of: "itemize", which: "begin"), with: insert + "itemize") as NSString
+        XCTAssertEqual(model.activeText, tv.string)
+        if asSeparateGroups {
+            let prefixes = (1...insert.count).map { String(insert.prefix($0)) }
+            assertPaired(tv.string, expected as String, "after typing \(insert) into the \(which) name")
+            for p in prefixes.reversed() {
+                tv.undoManager?.undo()
+                try await Task.sleep(nanoseconds: 30_000_000)
+                var step = original as NSString
+                if !p.dropLast().isEmpty {
+                    let pre = String(p.dropLast())
+                    step = step.replacingCharacters(in: nameRange(step as String, of: "itemize", which: "end"), with: pre + "itemize") as NSString
+                    step = step.replacingCharacters(in: nameRange(step as String, of: "itemize", which: "begin"), with: pre + "itemize") as NSString
+                }
+                let label = p.dropLast().isEmpty ? "original" : "after undo back to \(p.dropLast())"
+                assertPaired(tv.string, step as String, "⌘Z \(which) → \(label)")
+                XCTAssertEqual(model.activeText, tv.string)
+            }
+            for p in prefixes {
+                tv.undoManager?.redo()
+                try await Task.sleep(nanoseconds: 30_000_000)
+                var step = original as NSString
+                step = step.replacingCharacters(in: nameRange(step as String, of: "itemize", which: "end"), with: p + "itemize") as NSString
+                step = step.replacingCharacters(in: nameRange(step as String, of: "itemize", which: "begin"), with: p + "itemize") as NSString
+                assertPaired(tv.string, step as String, "⌘⇧Z \(which) → \(p)")
+                XCTAssertEqual(model.activeText, tv.string)
+            }
+        } else {
+            assertPaired(tv.string, expected as String, "after inserting \(insert) into the \(which) name")
+            tv.undoManager?.undo()
+            try await Task.sleep(nanoseconds: 30_000_000)
+            assertPaired(tv.string, original, "⌘Z of \(which) insert \(insert)")
+            XCTAssertEqual(model.activeText, tv.string)
+            tv.undoManager?.redo()
+            try await Task.sleep(nanoseconds: 30_000_000)
+            assertPaired(tv.string, expected as String, "⌘⇧Z of \(which) insert \(insert)")
+            XCTAssertEqual(model.activeText, tv.string)
+        }
+    }
+
+    /// Deletion inside a name is a replacement with "" and must mirror.
+    func testBackspaceInsideBeginNameMirrorsAndUndoes() async throws {
+        try await linkedNameDeleteCase(which: "begin", forward: false)
+    }
+
+    func testForwardDeleteInsideBeginNameMirrorsAndUndoes() async throws {
+        try await linkedNameDeleteCase(which: "begin", forward: true)
+    }
+
+    func testBackspaceInsideEndNameMirrorsAndUndoes() async throws {
+        try await linkedNameDeleteCase(which: "end", forward: false)
+    }
+
+    func testForwardDeleteInsideEndNameMirrorsAndUndoes() async throws {
+        try await linkedNameDeleteCase(which: "end", forward: true)
+    }
+
+    private func linkedNameDeleteCase(which: String, forward: Bool) async throws {
+        let model = ShellModel()
+        let original = "\\begin{itemize}\n\\item a\n\\end{itemize}\n"
+        model.updateActiveText(original)
+        let (window, tv, _) = try await host(model)
+        defer { window.orderOut(nil) }
+        let name = nameRange(original, of: "itemize", which: which)
+        // Backspace the last letter (`e`); forward-delete the first (`i`).
+        let caret = forward ? name.location : NSMaxRange(name)
+        tv.setSelectedRange(NSRange(location: caret, length: 0))
+        try await Task.sleep(nanoseconds: 30_000_000)
+        tv.undoManager?.removeAllActions()
+        tv.doCommand(by: forward ? #selector(NSResponder.deleteForward(_:)) : #selector(NSResponder.deleteBackward(_:)))
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let afterNames = forward ? "temize" : "itemiz"
+        let after = "\\begin{\(afterNames)}\n\\item a\n\\end{\(afterNames)}\n"
+        assertPaired(tv.string, after, "\(forward ? "forward-delete" : "backspace") inside the \(which) name")
+        XCTAssertEqual(model.activeText, tv.string)
+        tv.undoManager?.undo()
+        try await Task.sleep(nanoseconds: 30_000_000)
+        assertPaired(tv.string, original, "⌘Z of \(which) \(forward ? "forward-delete" : "backspace")")
+        XCTAssertEqual(model.activeText, tv.string)
+        tv.undoManager?.redo()
+        try await Task.sleep(nanoseconds: 30_000_000)
+        assertPaired(tv.string, after, "⌘⇧Z of \(which) \(forward ? "forward-delete" : "backspace")")
+    }
+
+    /// Change Environment… must replace the two name spans only. A covering
+    /// replacement from begin-name through end-name rewrites the body (marks,
+    /// folds, undo size).
+    func testApplyChangeEnvironmentDoesNotRewriteTheBody() {
+        let original = "\\begin{itemize}\n\\item UNIQUE_BODY\n\\end{itemize}"
+        let model = ShellModel()
+        model.updateActiveText(original)
+        model.caretUTF16 = (original as NSString).range(of: "UNIQUE_BODY").location
+        model.editorNavigation.changeName = "enumerate"
+        model.applyChangeEnvironment()
+        let edit = try! XCTUnwrap(model.pendingEdit)
+        let body = (original as NSString).range(of: "UNIQUE_BODY")
+        XCTAssertEqual(NSIntersectionRange(edit.nsRange, body).length, 0,
+                       "pendingEdit.nsRange must not cover the environment body")
+        XCTAssertEqual(edit.text, "enumerate",
+                       "the replacement is a name span, not a whole-environment rewrite")
+        let names = CE.replacements(in: original as NSString, caret: model.caretUTF16, newName: "enumerate")
+        XCTAssertEqual(names.count, 2)
+        for e in names {
+            XCTAssertEqual(NSIntersectionRange(e.range, body).length, 0)
+            XCTAssertEqual((original as NSString).substring(with: e.range), "itemize")
+        }
+    }
+
+    func testChangeEnvironmentThroughTheEditorLeavesTheBodyBytesAlone() async throws {
+        let model = ShellModel()
+        let original = "\\begin{itemize}\n\\item UNIQUE_BODY\n\\end{itemize}\n"
+        model.updateActiveText(original)
+        let (window, tv, _) = try await host(model)
+        defer { window.orderOut(nil) }
+        model.caretUTF16 = (original as NSString).range(of: "UNIQUE_BODY").location
+        model.editorNavigation.changeName = "enumerate"
+        model.applyChangeEnvironment()
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline, model.pendingEdit != nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        let after = tv.string
+        XCTAssertEqual(after, "\\begin{enumerate}\n\\item UNIQUE_BODY\n\\end{enumerate}\n")
+        XCTAssertEqual(model.activeText, after)
+        let beforeBody = (original as NSString).substring(with: (original as NSString).range(of: "\\item UNIQUE_BODY\n"))
+        let afterBody = (after as NSString).substring(with: (after as NSString).range(of: "\\item UNIQUE_BODY\n"))
+        XCTAssertEqual(Array(beforeBody.utf8), Array(afterBody.utf8), "body bytes must be identical")
+        tv.undoManager?.undo()
+        XCTAssertEqual(tv.string, original)
+        tv.undoManager?.redo()
+        XCTAssertEqual(tv.string, after)
+    }
 }
