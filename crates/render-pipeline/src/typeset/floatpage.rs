@@ -16,6 +16,34 @@
 //! Page positions follow `\@makecol`: top floats, `\textfloatsep`, the text
 //! box of height `\@colroom`, bottom floats ending at the text area bottom;
 //! float pages centre their floats (`\@fptop`/`\@fpsep`/`\@fpbot` fil glue).
+//!
+//! `\@colht` is not a constant. `\@topnewpage` (latex.ltx 20466-20505) lowers
+//! it by the height of `\twocolumn[<material>]`'s box for the columns of the
+//! first page, and `\@outputpage` restores `\global\@colht\textheight` when
+//! that page ships; `\@opcol`'s trailing `\@floatplacement` rereads it, so
+//! `\@toproom`, `\@botroom` and `\@fpmin` are the shortened fractions in both
+//! columns of that page. `paginate`'s `short_cols`/`short` carry that, and
+//! `Placer::set_colht` puts `\@colht` back once those columns are past.
+//!
+//! A `figure*`/`table*` of a two-column document is `\@dbflt` (17419), so
+//! `\@xdblfloat` sets its box at `\hsize\textwidth \linewidth\textwidth`
+//! and leaves the box depth at `1sp`. That depth is what `\@testwrongwidth`
+//! (21187) keys off: every column placement refuses it, and only
+//! `\@addtodblcol` (21280) takes it -- into the next page's `\@dbltoplist`,
+//! never the page it was written on. There `\@dbltoproom` is
+//! `\dbltopfraction\@colht` of the full `\textheight` (`\@outputpage` has
+//! restored it), each accepted box costs `\@colht` its height plus
+//! `\dbltextfloatsep` (the first) or `\dblfloatsep`, and
+//! `\@combinedblfloats` (21019) stacks them above both columns in exactly
+//! that order. `\dblfigrule` is `\relax` in the kernel (21579), so nothing
+//! is drawn between them and the text.
+//!
+//! Not modelled: a page whose `\@dbltoplist` is non-empty *and* whose first
+//! column `\@startcolumn` then fills with a single-column float page. LaTeX
+//! still combines the spanning boxes when that page ships; here the spanning
+//! area is attached to the next ordinary column instead. No fixture reaches
+//! it (it needs a deferred `[p]` float and a deferred `figure*` at the same
+//! page boundary), and guessing at it would be worse than saying so.
 
 use std::rc::Rc;
 
@@ -34,6 +62,13 @@ use super::{BoxRec, BuiltBlock, Context};
 pub struct FloatSpec {
     pub kind: FloatKind,
     pub number: u32,
+    /// A `figure*`/`table*` in a two-column document: `\@dbflt`, so
+    /// `\@xdblfloat` sets the box at `\hsize\textwidth
+    /// \linewidth\textwidth`, `\count\@currbox` is `\tw@` and the depth
+    /// is `1sp`, which is what `\@testwrongwidth` keys off -- the float is
+    /// refused by every column placement and only `\@addtodblcol` takes it,
+    /// into the page's spanning top area.
+    pub wide: bool,
     /// `\@xfloat` placement bits (1 h, 2 t, 4 b, 8 p, 16 = not `!`).
     pub bits: u32,
     /// The environment's source span (`\begin` .. `\end`).
@@ -63,10 +98,29 @@ pub enum FloatPart {
 pub struct PreparedGraphic {
     pub gbox: GraphicBox,
     /// `None` when the file could not be read but its size was known from
-    /// `width` and `height` (space is kept, nothing is painted).
+    /// `width` and `height` (space is kept, nothing is painted), and
+    /// whenever `placeholder` is set.
     pub resource: Option<Rc<ImageResource>>,
+    /// What graphicx draws in place of the file under `draft`/`demo`.
+    pub placeholder: Option<Placeholder>,
     pub span: Span,
 }
+
+/// The ink a graphic that was never read still puts on the page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placeholder {
+    /// `demo`: `\rule{..}{..}` fills the whole box.
+    DemoRule,
+    /// `draft`: `\Gin@setfile` sets `\hb@xt@\Gin@req@width{\vrule\hss\vbox
+    /// to \Gin@req@height{\hrule..\vss\rlap{ \ttfamily <file>}\vss\hrule}
+    /// \hss\vrule}` -- a frame of default-thickness rules around the
+    /// reserved space. The `\rlap`ped file name inside it is not set yet;
+    /// it is centred in the box and contributes no dimension.
+    DraftFrame,
+}
+
+/// TeX's default `\vrule`/`\hrule` thickness (`\p@` / 2.5), in TeX points.
+const RULE_PT: f64 = 0.4;
 
 #[derive(Clone, Copy)]
 struct Skip {
@@ -80,6 +134,12 @@ struct FloatParams {
     floatsep: Skip,
     textfloatsep: Skip,
     intextsep: Skip,
+    /// `\dblfloatsep` between two `\@dbltoplist` boxes and
+    /// `\dbltextfloatsep` between the last of them and the columns
+    /// (latex.ltx and every `size1x.clo`; only `\dblfloatsep` changes at
+    /// 12pt).
+    dblfloatsep: f64,
+    dbltextfloatsep: f64,
     fpsep: f64,
     abovecaptionskip: f64,
 }
@@ -88,9 +148,9 @@ impl FloatParams {
     fn for_size(body_pt: f64) -> FloatParams {
         let s = |n, st, sh| Skip { n, st, sh };
         if body_pt >= 11.5 {
-            FloatParams { floatsep: s(12.0, 2.0, 4.0), textfloatsep: s(20.0, 2.0, 4.0), intextsep: s(14.0, 4.0, 4.0), fpsep: 10.0, abovecaptionskip: 10.0 }
+            FloatParams { floatsep: s(12.0, 2.0, 4.0), textfloatsep: s(20.0, 2.0, 4.0), intextsep: s(14.0, 4.0, 4.0), dblfloatsep: 14.0, dbltextfloatsep: 20.0, fpsep: 10.0, abovecaptionskip: 10.0 }
         } else {
-            FloatParams { floatsep: s(12.0, 2.0, 2.0), textfloatsep: s(20.0, 2.0, 4.0), intextsep: s(12.0, 2.0, 2.0), fpsep: 8.0, abovecaptionskip: 10.0 }
+            FloatParams { floatsep: s(12.0, 2.0, 2.0), textfloatsep: s(20.0, 2.0, 4.0), intextsep: s(12.0, 2.0, 2.0), dblfloatsep: 12.0, dbltextfloatsep: 20.0, fpsep: 8.0, abovecaptionskip: 10.0 }
         }
     }
 }
@@ -98,7 +158,7 @@ impl FloatParams {
 enum Elem {
     /// A caption line: block/line in `blocks`, baseline from the box top.
     Line { block: usize, line: usize, baseline: f64, height: f64, depth: f64 },
-    Image { x: f64, baseline: f64, gbox: GraphicBox, resource: Option<Rc<ImageResource>>, provenance: Provenance },
+    Image { x: f64, baseline: f64, gbox: GraphicBox, resource: Option<Rc<ImageResource>>, placeholder: Option<Placeholder>, provenance: Provenance },
 }
 
 struct FloatBox {
@@ -205,7 +265,7 @@ fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, 
                 let w: f64 = graphics.iter().map(|g| g.gbox.width).sum();
                 let mut x = if *centered { ((tw - w) / 2.0).max(0.0) } else { 0.0 };
                 for g in graphics {
-                    elems.push(Elem::Image { x, baseline: line.baseline, gbox: g.gbox, resource: g.resource.clone(), provenance: Provenance::Source(ctx.source(g.span)) });
+                    elems.push(Elem::Image { x, baseline: line.baseline, gbox: g.gbox, resource: g.resource.clone(), placeholder: g.placeholder, provenance: Provenance::Source(ctx.source(g.span)) });
                     x += g.gbox.width;
                 }
             }
@@ -220,6 +280,55 @@ fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, 
         height = ctx.style.text_height_pt;
     }
     FloatBox { height, elems, type_bit: spec.kind.type_bit(), labels: spec.labels.clone() }
+}
+
+/// [`build_box`] for a full-width float. `Context::style` is a shared
+/// reference and the block builders take their measure from it, so the box
+/// is built in a second `Context` over a `\textwidth` stylesheet and its
+/// boxes, records and formulas are adopted here -- the route `multicol`
+/// already takes for a column's own `\hsize` (`multicol::adopt`).
+fn build_wide_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, fp: &FloatParams, p: &PageParams, wide: &crate::style::Stylesheet) -> FloatBox {
+    let mut sub = Context::with_texts(ctx.fonts, wide, ctx.paths, ctx.texts);
+    let mut sub_blocks: Vec<BuiltBlock> = Vec::new();
+    let mut fb = build_box(&mut sub, &mut sub_blocks, spec, fp, p);
+    let (rec_off, math_off, block_off) = (ctx.recs.len(), ctx.maths.len(), blocks.len());
+    let fix = |b: &mut BuiltBlock| {
+        for r in b.recs.iter_mut().flatten() {
+            *r += rec_off;
+        }
+        b.cache_key = None;
+    };
+    let mut recs = std::mem::take(&mut sub.recs);
+    for r in &mut recs {
+        match r {
+            BoxRec::Math(m) => *m += math_off,
+            BoxRec::Table(t) => {
+                let mut tr = (**t).clone();
+                for piece in &mut tr.pieces {
+                    fix(&mut piece.block);
+                }
+                *t = Rc::new(tr);
+            }
+            _ => {}
+        }
+    }
+    ctx.recs.extend(recs);
+    ctx.maths.extend(std::mem::take(&mut sub.maths));
+    for b in &mut sub_blocks {
+        fix(b);
+    }
+    blocks.append(&mut sub_blocks);
+    for e in &mut fb.elems {
+        if let Elem::Line { block, .. } = e {
+            *block += block_off;
+        }
+    }
+    for d in sub.take_diagnostics() {
+        if !ctx.diagnostics.iter().any(|x| x.code == d.code && x.message == d.message && x.sources == d.sources) {
+            ctx.diagnostics.push(d);
+        }
+    }
+    fb
 }
 
 #[derive(Clone, Copy)]
@@ -254,7 +363,26 @@ struct Placer<'b> {
     boxes: &'b [FloatBox],
     bits: Vec<u32>,
     fp: FloatParams,
+    /// `\@colht` as it stands for the column being built. `\@topnewpage`
+    /// lowers it for the columns of the page that carries a
+    /// `\twocolumn[<material>]` box and `\@outputpage` restores
+    /// `\textheight` when that page ships, so it is not a constant:
+    /// [`Placer::set_colht`] recomputes it from the column about to start.
     colht: f64,
+    /// `\textheight`: `\@colht` outside the shortened page.
+    full_colht: f64,
+    /// How many page-builder columns `\@topnewpage` shortened (both columns
+    /// of the first page, so `\col@number`), and by how much.
+    short_cols: usize,
+    short: f64,
+    /// `\col@number`: page-builder columns per page.
+    columns: usize,
+    /// Which floats are full-width (`\@dbflt`).
+    wide: Vec<bool>,
+    /// This page's `\@dbltoplist` and the `\@colht` it costs both columns
+    /// (`\@addtodblcol`); the boxes are already emitted into `pending_top`.
+    dbl_short: f64,
+    pending_top: Vec<Placed>,
     parskip: Skip,
     text_x: f64,
     text_y: f64,
@@ -281,6 +409,88 @@ fn flsetnum(n: i32, fps: u32) -> i32 {
 impl Placer<'_> {
     fn fps(&self, f: usize) -> u32 {
         self.bits[f] & 31
+    }
+
+    /// `\@colht` for the column that is about to be filled. Every column
+    /// already pushed to `pages` has been shipped, so the count decides:
+    /// while it is below `short_cols` the page carrying the
+    /// `\twocolumn[<material>]` box is still being built and `\@colht` is
+    /// `\textheight` less that box's material (`\@topnewpage`); from then on
+    /// `\@outputpage`'s `\global\@colht\textheight` is in force.
+    fn set_colht(&mut self) {
+        let title = if self.pages.len() < self.short_cols { self.short } else { 0.0 };
+        self.colht = self.full_colht - title - self.dbl_short;
+    }
+
+    /// `\@dblfloatplacement` + `\@startdblcolumn` (latex.ltx 17565, 21052,
+    /// 21280), run once per page before its first column: `\@outputpage` has
+    /// just restored `\@colht \textheight`, so `\@dbltoproom` is
+    /// `\dbltopfraction\@colht` of the *full* text height and `\@textmin`
+    /// the rest of it. Each accepted box costs `\@colht` its height plus
+    /// `\dbltextfloatsep` (the first) or `\dblfloatsep`, which is exactly
+    /// the stack `\@combinedblfloats` (21019) builds above the columns.
+    ///
+    /// `no_dbl` is `\@topnewpage`'s `\global\@dbltopnum\m@ne`: the page a
+    /// `\twocolumn[<material>]` opened takes no full-width float at all.
+    fn start_dbl_page(&mut self, no_dbl: bool) {
+        self.dbl_short = 0.0;
+        self.pending_top.clear();
+        if no_dbl || !self.deferred.iter().any(|&f| self.wide[f]) {
+            return;
+        }
+        // `\@startdblcolumn` (21052) runs `\@tryfcolumn \@deferlist` first:
+        // with `\@dblfloatplacement`'s `\@fpmin
+        // \dblfloatpagefraction\textheight`, full-width floats that fill
+        // half the text height get a page of their own before any of them is
+        // offered to this page's top area.
+        loop {
+            let goal = self.full_colht;
+            match self.try_fcolumn(0.5 * goal, true, true, goal) {
+                Some((on_page, rest)) => {
+                    self.deferred = rest;
+                    self.dbl_float_page(&on_page);
+                }
+                None => break,
+            }
+        }
+        let page = self.pages.len() as u32 + 1;
+        let mut dbltopnum = 2i32;
+        let mut dbltoproom = 0.7 * self.full_colht;
+        let textmin = self.full_colht - dbltoproom;
+        let mut tops: Vec<usize> = Vec::new();
+        let old = std::mem::take(&mut self.deferred);
+        for f in old {
+            let mut inserted = false;
+            let fps = self.fps(f);
+            let ht = self.boxes[f].height;
+            // `\@getfpsbit \tw@`: `\@addtodblcol` only ever takes a `t`
+            // float; there is no bottom or here area to span.
+            if self.wide[f] && fps & 2 != 0 {
+                let n = flsetnum(dbltopnum, fps);
+                let fits = dbltoproom > ht || (fps < 16 && dbltoproom + textmin > ht);
+                if n > 0 && fits && !has_type(self.boxes, &self.deferred, self.boxes[f].type_bit) {
+                    let sep = if tops.is_empty() { self.fp.dbltextfloatsep } else { self.fp.dblfloatsep };
+                    dbltoproom -= ht + sep;
+                    self.dbl_short += ht + sep;
+                    dbltopnum = n - 1;
+                    tops.push(f);
+                    inserted = true;
+                }
+            }
+            if !inserted {
+                self.deferred.push(f);
+            }
+        }
+        let mut y = 0.0;
+        for (k, &f) in tops.iter().enumerate() {
+            if k > 0 {
+                y += self.fp.dblfloatsep;
+            }
+            let mut lines = Vec::new();
+            self.emit(f, y, page, &mut lines);
+            self.pending_top.append(&mut lines);
+            y += self.boxes[f].height;
+        }
     }
 
     fn textmin(&self, f: usize) -> f64 {
@@ -336,6 +546,13 @@ impl Placer<'_> {
 
     /// `\@addtocurcol`. Returns the nodes to insert for a `here` float.
     fn add_to_cur_col(&mut self, f: usize, pageht: f64, vmode: bool) -> Option<Vec<N>> {
+        // `\@testwrongwidth`: `\@xdblfloat` left the box's depth at `1sp`
+        // and `\f@depth` is `\z@` here, so a full-width float fails every
+        // column placement and goes straight to `\@deferlist`.
+        if self.wide[f] {
+            self.deferred.push(f);
+            return None;
+        }
         let fps = self.fps(f);
         let ht = self.boxes[f].height;
         let ty = self.boxes[f].type_bit;
@@ -385,7 +602,7 @@ impl Placer<'_> {
         for f in old {
             let fps = self.fps(f);
             let mut inserted = false;
-            if fps != 8 && fps != 24 {
+            if !self.wide[f] && fps != 8 && fps != 24 {
                 let req = self.boxes[f].height + self.textmin(f);
                 if self.col.colroom > req {
                     let colnum = flsetnum(self.col.colnum, fps);
@@ -401,12 +618,16 @@ impl Placer<'_> {
     }
 
     /// `\@tryfcolumn` over the deferred list: `(floats on the page, rest)`.
-    fn try_fcolumn(&self, fpmin: f64, test_p: bool) -> Option<(Vec<usize>, Vec<usize>)> {
+    /// `want_wide` is `\@testwrongwidth`'s `\f@depth`: `\@startcolumn`'s
+    /// `\@tryfcolumn` takes only single-column floats, `\@startdblcolumn`'s
+    /// only full-width ones (which then get a float page of the whole
+    /// `\textwidth`). `goal` is the `\@colht` the page has to hold.
+    fn try_fcolumn(&self, fpmin: f64, test_p: bool, want_wide: bool, goal: f64) -> Option<(Vec<usize>, Vec<usize>)> {
         let list = &self.deferred;
         let mut failed: Vec<usize> = Vec::new();
         for (idx, &f) in list.iter().enumerate() {
             let b = &self.boxes[f];
-            if has_type(self.boxes, &failed, b.type_bit) || (test_p && self.fps(f) & 8 == 0) || b.height > self.colht {
+            if self.wide[f] != want_wide || has_type(self.boxes, &failed, b.type_bit) || (test_p && self.fps(f) & 8 == 0) || b.height > goal {
                 failed.push(f);
                 continue;
             }
@@ -415,8 +636,8 @@ impl Placer<'_> {
             let mut h = b.height;
             for &g in &list[idx + 1..] {
                 let gb = &self.boxes[g];
-                let blocked = has_type(self.boxes, &failed, gb.type_bit) || has_type(self.boxes, &flfail, gb.type_bit);
-                if blocked || (test_p && self.fps(g) & 8 == 0) || h + gb.height + self.fp.fpsep > self.colht {
+                let blocked = self.wide[g] != want_wide || has_type(self.boxes, &failed, gb.type_bit) || has_type(self.boxes, &flfail, gb.type_bit);
+                if blocked || (test_p && self.fps(g) & 8 == 0) || h + gb.height + self.fp.fpsep > goal {
                     flfail.push(g);
                 } else {
                     h += gb.height + self.fp.fpsep;
@@ -437,10 +658,45 @@ impl Placer<'_> {
         for e in &b.elems {
             match e {
                 Elem::Line { block, line, baseline, height, depth } => lines.push(Placed { payload: (*block, *line), baseline: top + baseline, height: *height, depth: *depth }),
-                Elem::Image { x, baseline, gbox, resource, provenance } => {
-                    let Some(resource) = resource else { continue };
+                Elem::Image { x, baseline, gbox, resource, placeholder, provenance } => {
                     let left = self.text_x + x;
                     let base = self.text_y + top + baseline;
+                    // `draft`/`demo` never read a file; what they paint is
+                    // rules. Both are laid out in the box's own axes, so a
+                    // rotated box is left as reserved space only.
+                    if let Some(kind) = placeholder {
+                        let m = gbox.matrix;
+                        if m[1] == 0.0 && m[2] == 0.0 && m[0] > 0.0 && m[3] > 0.0 {
+                            let (t, w, h) = (base - gbox.height, gbox.width, gbox.height + gbox.depth);
+                            let bars: &[(f64, f64, f64, f64)] = match kind {
+                                Placeholder::DemoRule => &[(left, t, w, h)],
+                                // `\hrule`s across the top and bottom,
+                                // `\vrule`s up the sides, which the two
+                                // `\hss`es pull inside the requested width.
+                                Placeholder::DraftFrame => &[
+                                    (left, t, w, RULE_PT),
+                                    (left, t + h - RULE_PT, w, RULE_PT),
+                                    (left, t, RULE_PT, h),
+                                    (left + w - RULE_PT, t, RULE_PT, h),
+                                ],
+                            };
+                            for (x, y, w, h) in bars.iter().copied().filter(|(_, _, w, h)| *w > 0.0 && *h > 0.0) {
+                                self.images.push((
+                                    page,
+                                    display::Item::Rule(display::Rule {
+                                        x: Tick::from_tex_pt(x),
+                                        top: Tick::from_tex_pt(y),
+                                        width: Tick::from_tex_pt(w),
+                                        height: Tick::from_tex_pt(h),
+                                        paint: display::Paint::BLACK,
+                                        provenance: provenance.clone(),
+                                    }),
+                                ));
+                            }
+                        }
+                        continue;
+                    }
+                    let Some(resource) = resource else { continue };
                     let m = gbox.matrix;
                     let k = BP_PER_PT;
                     self.images.push((
@@ -463,11 +719,14 @@ impl Placer<'_> {
         }
     }
 
-    fn float_page(&mut self, floats: &[usize]) {
+    /// `\@makefcolumn`/`\@vtryfc`: the floats centred on a page of their
+    /// own by `\@fptop`/`\@fpsep`/`\@fpbot` (`\@dblfptop` and friends, the
+    /// same lengths, for a full-width float page). `goal` is `\@colht`.
+    fn float_page_of(&mut self, floats: &[usize], goal: f64) {
         let page = self.pages.len() as u32 + 1;
         let n = floats.len() as f64;
         let natural: f64 = floats.iter().map(|f| self.boxes[*f].height).sum::<f64>() + (n - 1.0) * self.fp.fpsep;
-        let left = self.colht - natural;
+        let left = goal - natural;
         let (first, between) = if left > 0.0 { (left / (2.0 * n), self.fp.fpsep + left / n) } else { (0.0, self.fp.fpsep) };
         let mut lines = Vec::new();
         let mut y = first;
@@ -478,20 +737,53 @@ impl Placer<'_> {
         self.pages.push(BuiltPage { lines, overfull_by: 0.0 });
     }
 
+    fn float_page(&mut self, floats: &[usize]) {
+        let goal = self.colht;
+        self.float_page_of(floats, goal);
+    }
+
+    /// A full-width float page: `\@outputpage` ships the whole page, so it
+    /// takes every column slot of that page. `\@doclearpage` reaches the
+    /// double-float flush only `\if@firstcolumn`; a half-finished page is
+    /// closed with `\@emptycol`'s `\vbox{}` first.
+    fn dbl_float_page(&mut self, floats: &[usize]) {
+        let columns = self.columns.max(1);
+        while self.pages.len() % columns != 0 {
+            self.pages.push(BuiltPage::default());
+        }
+        let goal = self.full_colht;
+        self.float_page_of(floats, goal);
+        for _ in 1..columns {
+            self.pages.push(BuiltPage::default());
+        }
+    }
+
     /// A column opened by `\LT@output` (longtable.sty 513-516): it runs
     /// `\@makecol\@outputpage \global\vsize\@colroom \copy\LT@head`, never
     /// `\@opcol`/`\@startcolumn`, so no float page is tried and no deferred
     /// float is added — the whole column is the table's, and what is
     /// deferred stays deferred until the table ends.
     fn start_longtable_column(&mut self) {
+        self.set_colht();
         self.col = Col::new(self.colht);
     }
 
-    /// `\@opcol` + `\@startcolumn`.
+    /// `\@opcol` + `\@startcolumn`. `\@opcol` ends with `\@floatplacement`,
+    /// which recomputes `\@toproom`, `\@botroom` and `\@fpmin` from the
+    /// `\@colht` then in force -- shortened for the second column of a
+    /// `\@topnewpage` page too, because `\@outputdblcol` only reaches
+    /// `\@outputpage` once the second column is done.
     fn start_column(&mut self) {
+        if self.columns == 0 || self.pages.len() % self.columns == 0 {
+            // `\@outputdblcol` reached `\@outputpage` (`\global\@colht
+            // \textheight`) and then `\@dblfloatplacement\@startdblcolumn`.
+            let title_page = self.pages.len() < self.short_cols;
+            self.start_dbl_page(title_page);
+        }
         loop {
+            self.set_colht();
             self.col = Col::new(self.colht);
-            match self.try_fcolumn(0.5 * self.colht, true) {
+            match self.try_fcolumn(0.5 * self.colht, true, false, self.colht) {
                 Some((on_page, rest)) => {
                     self.deferred = rest;
                     self.float_page(&on_page);
@@ -562,6 +854,9 @@ pub fn paginate(
     regions: &[pagebuild::ResolvedRegion],
     text_blocks: usize,
     ins: Option<&Insertions>,
+    short_cols: usize,
+    short: f64,
+    columns: usize,
 ) -> (Vec<BuiltPage>, Vec<(u32, display::Item)>, Vec<(String, u32)>, Vec<Option<InsertArea>>) {
     // Marker positions, before caption blocks are appended.
     let vblocks: Vec<pagebuild::VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
@@ -609,7 +904,23 @@ pub fn paginate(
         }
     }
     let fp = FloatParams::for_size(ctx.style.body_size_pt);
-    let boxes: Vec<FloatBox> = specs.iter().map(|s| build_box(ctx, blocks, s, &fp, p)).collect();
+    // `\@xdblfloat` sets a full-width float's box at `\hsize\textwidth
+    // \linewidth\textwidth`, so its caption and body are broken to the
+    // whole text block, not to `\columnwidth`.
+    let wide_style = specs.iter().any(|s| s.wide).then(|| {
+        let mut w = ctx.style.clone();
+        if let Some(g) = ctx.style.class_geometry.as_deref() {
+            w.text_width_pt = crate::style::frame_pt(g.frame.text_width);
+        }
+        w
+    });
+    let boxes: Vec<FloatBox> = specs
+        .iter()
+        .map(|s| match (s.wide, wide_style.as_ref()) {
+            (true, Some(w)) => build_wide_box(ctx, blocks, s, &fp, p, w),
+            _ => build_box(ctx, blocks, s, &fp, p),
+        })
+        .collect();
     let mut nodes: Vec<N> = Vec::with_capacity(list.len() + 4 * specs.len());
     let mut mi = 0;
     for i in 0..=list.len() {
@@ -627,18 +938,29 @@ pub fn paginate(
         }
     }
     let s = ctx.style;
+    // `\@topnewpage` has already run `\global\@colht\textheight - <box>` and
+    // `\@floatplacement` before the first column is filled, so the first
+    // column opens against the shortened `\@colht`.
+    let colht0 = if short_cols > 0 { p.vsize - short } else { p.vsize };
     let mut pl = Placer {
         boxes: &boxes,
         bits: specs.iter().map(|s| s.bits).collect(),
         fp,
-        colht: p.vsize,
+        colht: colht0,
+        full_colht: p.vsize,
+        short_cols,
+        short,
+        columns,
+        wide: specs.iter().map(|s| s.wide).collect(),
+        dbl_short: 0.0,
+        pending_top: Vec::new(),
         parskip: Skip { n: s.parskip.natural, st: s.parskip.stretch, sh: s.parskip.shrink },
         text_x: s.text_x_pt,
         text_y: s.text_y_pt,
         pages: Vec::new(),
         images: Vec::new(),
         labels: Vec::new(),
-        col: Col::new(p.vsize),
+        col: Col::new(colht0),
         deferred: Vec::new(),
     };
     let mut processed = vec![false; specs.len()];
@@ -878,12 +1200,12 @@ pub fn paginate(
         let page_no = pl.pages.len() as u32 + 1;
         let tops = std::mem::take(&mut pl.col.top);
         let bots = std::mem::take(&mut pl.col.bot);
-        let text_off = if tops.is_empty() {
-            0.0
-        } else {
-            tops.iter().map(|f| boxes[*f].height).sum::<f64>() + (tops.len() as f64 - 1.0) * fp.floatsep.n + fp.textfloatsep.n
-        };
-        let mut lines: Vec<Placed> = Vec::new();
+        // `\@combinedblfloats`: this page's `\@dbltoplist` sits above both
+        // columns and everything in the columns is that much lower. The
+        // boxes belong to the page, so they are emitted into its first
+        // column, whose left edge is the text block's.
+        let dbl_off = pl.dbl_short;
+        let mut lines: Vec<Placed> = std::mem::take(&mut pl.pending_top);
         // `\LT@output`: a page broken inside the table ends with `\LT@foot`
         // and the next one opens with `\LT@head`. Both boxes go *inside*
         // `\box\@cclv` (longtable.sty 487-517 builds it before calling
@@ -903,141 +1225,68 @@ pub fn paginate(
                 pending_head = next_head;
             }
         }
-        let mut overfull_by = 0.0;
+        // `\@makecol`, with the default `build/column/outputbox` plug
+        // (`footnotes-floats-legacy`), over a `\box\@cclv` the longtable
+        // output routine may already have built: the notes attach to
+        // `\box\@cclv` first (`\vskip\skip\footins`, `\footnoterule`,
+        // `\unvbox\footins`) and `\@combinefloats` wraps the floats around
+        // that, so the column reads: top floats, `\textfloatsep`,
+        // [`\LT@head`], the body, [`\LT@foot`], `\skip\footins`, the
+        // `\footnoterule`, the notes, `\textfloatsep`, the bottom floats.
+        // `\@cflt`/`\@cflb` are plain `\vbox`es and only
+        // `\@make@normalcolbox` packs `\vbox to\@colht`, so one glue set
+        // ratio covers the body's glue, `\skip\footins` and both float
+        // separations together: `\@colht`, not `\@colroom`, is the size to
+        // reach. A column without notes goes through the same packing --
+        // `\@makecol` does not have two shapes -- which is what makes a
+        // `\flushbottom` column (`\if@twocolumn \sloppy\flushbottom\fi`,
+        // classes.dtx) stretch its glue to `\@colht` instead of standing at
+        // natural size. Under `\raggedbottom` the `\@textbottom` fil below
+        // everything takes the slack and the positions are the natural ones.
+        let mut body: Vec<VItem> = Vec::with_capacity(end - start + 2);
+        if let Some((h, d, payload)) = head {
+            body.push(VItem::Box { height: h, depth: d, payload });
+        }
+        for n in &nodes[start..end] {
+            match n {
+                N::FBox(f) => body.push(VItem::Box { height: boxes[*f].height, depth: 0.0, payload: (usize::MAX, *f) }),
+                N::V(j) => body.push(list[*j].clone()),
+                N::Glue(w, st, sh) => body.push(VItem::Glue { width: *w, stretch: *st, shrink: *sh, fil: false }),
+                N::Penalty(pen) => body.push(VItem::Penalty(*pen)),
+                N::Marker(_) => {}
+            }
+        }
+        if let Some((h, d, payload)) = region_foot {
+            body.push(VItem::Box { height: h, depth: d, payload });
+        }
+        // `\LT@output` builds `\box\@cclv` as `\vbox{\unvbox\@cclv
+        // \copy\LT@foot \vss}` and only then calls `\@makecol`: that
+        // `\vss` is inside the body, ahead of `\skip\footins`, so it
+        // takes the column's slack and pushes the note block to the foot
+        // of the page, leaving every finite glue at its natural size.
+        // `\@doclearpage`'s `\box\@cclv\vfil` and `\newpage`'s `\vfil` do
+        // the same for an ejected or final column.
+        let vfil = region_break || ejected || fired.is_none();
+        let colp = PageParams { vsize: pl.colht, maxdepth, ..*p };
+        let cf = column_floats(&boxes, &tops, &bots, &fp);
+        let (page, area, placed) = pagebuild::make_column(&colp, &body, false, vfil, &notes, insr, &cf);
+        let overfull_by = page.overfull_by;
+        for (&f, &y) in tops.iter().zip(&placed.tops) {
+            pl.emit(f, y + dbl_off, page_no, &mut lines);
+        }
+        for l in page.lines {
+            if l.payload.0 == usize::MAX {
+                pl.emit(l.payload.1, l.baseline - l.height + dbl_off, page_no, &mut lines);
+            } else {
+                lines.push(Placed { baseline: l.baseline + dbl_off, ..l });
+            }
+        }
+        for (&f, &y) in bots.iter().zip(&placed.bots) {
+            pl.emit(f, y + dbl_off, page_no, &mut lines);
+        }
         if notes.iter().any(|l| !l.is_empty()) {
-            // `\@makecol` with `\footins` and floats, over a `\box\@cclv`
-            // the longtable output routine may already have built. The notes
-            // attach to `\box\@cclv` first (the default
-            // `build/column/outputbox` plug is `footnotes-floats-legacy`)
-            // and `\@combinefloats` wraps the floats around that, so the
-            // column reads: top floats, `\textfloatsep`, [`\LT@head`], the
-            // body, [`\LT@foot`], `\skip\footins`, the `\footnoterule`, the
-            // notes, `\textfloatsep`, the bottom floats. `\@cflt`/`\@cflb`
-            // are plain `\vbox`es and only `\@make@normalcolbox` packs
-            // `\vbox to\@colht`, so one glue set ratio covers the body's
-            // glue, `\skip\footins` and both float separations together:
-            // `\@colht`, not `\@colroom`, is the size to reach.
-            let mut body: Vec<VItem> = Vec::with_capacity(end - start + 2);
-            if let Some((h, d, payload)) = head {
-                body.push(VItem::Box { height: h, depth: d, payload });
-            }
-            for n in &nodes[start..end] {
-                match n {
-                    N::FBox(f) => body.push(VItem::Box { height: boxes[*f].height, depth: 0.0, payload: (usize::MAX, *f) }),
-                    N::V(j) => body.push(list[*j].clone()),
-                    N::Glue(w, st, sh) => body.push(VItem::Glue { width: *w, stretch: *st, shrink: *sh, fil: false }),
-                    N::Penalty(pen) => body.push(VItem::Penalty(*pen)),
-                    N::Marker(_) => {}
-                }
-            }
-            if let Some((h, d, payload)) = region_foot {
-                body.push(VItem::Box { height: h, depth: d, payload });
-            }
-            // `\LT@output` builds `\box\@cclv` as `\vbox{\unvbox\@cclv
-            // \copy\LT@foot \vss}` and only then calls `\@makecol`: that
-            // `\vss` is inside the body, ahead of `\skip\footins`, so it
-            // takes the column's slack and pushes the note block to the foot
-            // of the page, leaving every finite glue at its natural size.
-            let vfil = region_break || ejected || fired.is_none();
-            let colp = PageParams { vsize: pl.colht, maxdepth, ..*p };
-            let cf = column_floats(&boxes, &tops, &bots, &fp);
-            let (page, area, placed) = pagebuild::make_column(&colp, &body, false, vfil, &notes, insr, &cf);
-            overfull_by = page.overfull_by;
-            for (&f, &y) in tops.iter().zip(&placed.tops) {
-                pl.emit(f, y, page_no, &mut lines);
-            }
-            for l in page.lines {
-                if l.payload.0 == usize::MAX {
-                    pl.emit(l.payload.1, l.baseline - l.height, page_no, &mut lines);
-                } else {
-                    lines.push(l);
-                }
-            }
-            for (&f, &y) in bots.iter().zip(&placed.bots) {
-                pl.emit(f, y, page_no, &mut lines);
-            }
             areas.resize(pl.pages.len(), None);
             areas.push(Some(area));
-        } else {
-            let mut y = 0.0;
-            for &f in &tops {
-                pl.emit(f, y, page_no, &mut lines);
-                y += boxes[f].height + fp.floatsep.n;
-            }
-            let (mut total, mut depth, mut has_box) = (0.0f64, 0.0f64, false);
-            let mut last_text: Option<Placed> = None;
-            // `\copy\LT@head\nobreak` opens a page continuing a longtable.
-            if let Some((h, d, payload)) = head {
-                let baseline = (p.topskip - h).max(0.0) + h;
-                total = baseline;
-                depth = d;
-                has_box = true;
-                let placed = Placed { payload, baseline: baseline + text_off, height: h, depth: d };
-                last_text = Some(placed);
-                lines.push(placed);
-            }
-            for n in &nodes[start..end] {
-                let bx = match n {
-                    N::FBox(f) => Some((boxes[*f].height, 0.0, None, Some(*f))),
-                    N::V(j) => match list[*j] {
-                        VItem::Box { height, depth, payload } => Some((height, depth, Some(payload), None)),
-                        VItem::Glue { width, .. } => {
-                            if has_box {
-                                total += depth + width;
-                                depth = 0.0;
-                            }
-                            None
-                        }
-                        VItem::Penalty(_) => None,
-                    },
-                    N::Glue(w, ..) => {
-                        if has_box {
-                            total += depth + w;
-                            depth = 0.0;
-                        }
-                        None
-                    }
-                    _ => None,
-                };
-                if let Some((h, d, payload, float)) = bx {
-                    let baseline = if has_box { total + depth + h } else { (p.topskip - h).max(0.0) + h };
-                    total = baseline;
-                    depth = d;
-                    has_box = true;
-                    if let Some(payload) = payload {
-                        let placed = Placed { payload, baseline: baseline + text_off, height: h, depth: d };
-                        last_text = Some(placed);
-                        lines.push(placed);
-                    }
-                    if let Some(f) = float {
-                        pl.emit(f, baseline - h + text_off, page_no, &mut lines);
-                    }
-                }
-            }
-            // `\copy\LT@foot` closes a page broken inside the table.
-            if let Some((h, d, payload)) = region_foot {
-                let baseline = total + depth + h;
-                total = baseline;
-                depth = d;
-                let placed = Placed { payload, baseline: baseline + text_off, height: h, depth: d };
-                last_text = Some(placed);
-                lines.push(placed);
-            }
-            let _ = (total, depth);
-            if let Some(last) = last_text {
-                let bottom = last.baseline - text_off + (last.depth - maxdepth).max(0.0);
-                if bottom > vsize + 1e-6 {
-                    overfull_by = bottom - vsize;
-                }
-            }
-            if !bots.is_empty() {
-                let span: f64 = bots.iter().map(|f| boxes[*f].height).sum::<f64>() + (bots.len() as f64 - 1.0) * fp.floatsep.n;
-                let mut y = pl.colht - span;
-                for &f in &bots {
-                    pl.emit(f, y, page_no, &mut lines);
-                    y += boxes[f].height + fp.floatsep.n;
-                }
-            }
         }
         pl.pages.push(BuiltPage { lines, overfull_by });
         pl.col.mid.clear();
@@ -1092,15 +1341,34 @@ pub fn paginate(
     rest.append(&mut pl.col.bot);
     rest.append(&mut pl.deferred);
     pl.deferred = rest;
-    while !pl.deferred.is_empty() {
-        match pl.try_fcolumn(f64::NEG_INFINITY, false) {
+    while pl.deferred.iter().any(|&f| !pl.wide[f]) {
+        let goal = pl.colht;
+        match pl.try_fcolumn(f64::NEG_INFINITY, false, false, goal) {
             Some((on_page, rest)) => {
                 pl.deferred = rest;
                 pl.float_page(&on_page);
             }
             None => {
-                let f = pl.deferred.remove(0);
+                let at = pl.deferred.iter().position(|&f| !pl.wide[f]).expect("a non-wide float is deferred");
+                let f = pl.deferred.remove(at);
                 pl.float_page(&[f]);
+            }
+        }
+    }
+    // `\@doclearpage`'s two-column branch: what is left of `\@dbltoplist`
+    // and `\@deferlist` goes back through `\@dblfloatplacement
+    // \@makefcolumn`, so every remaining full-width float gets a float page
+    // of the whole `\textwidth`.
+    while !pl.deferred.is_empty() {
+        let goal = pl.full_colht;
+        match pl.try_fcolumn(f64::NEG_INFINITY, false, true, goal) {
+            Some((on_page, rest)) => {
+                pl.deferred = rest;
+                pl.dbl_float_page(&on_page);
+            }
+            None => {
+                let f = pl.deferred.remove(0);
+                pl.dbl_float_page(&[f]);
             }
         }
     }

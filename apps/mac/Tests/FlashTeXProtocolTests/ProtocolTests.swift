@@ -82,3 +82,84 @@ final class RuleConventionTests: XCTestCase {
         XCTAssertNil(RuleConvention.rect(for: item("-")))
     }
 }
+
+final class StructuredDiagnosticTests: XCTestCase {
+    static let macFixtures: URL = {
+        var url = URL(fileURLWithPath: #filePath)
+        url.deleteLastPathComponent() // FlashTeXProtocolTests
+        url.deleteLastPathComponent() // Tests
+        return url.appendingPathComponent("FlashTeXMacTests/Fixtures")
+    }()
+
+    func testLegacyDiagnosticUnchangedWhenNewFieldsAbsent() throws {
+        let json = #"{"protocol_version":1,"id":"x","type":"compile_result","payload":{"project_id":"p","revision":1,"status":"ok","pages":[],"diagnostics":[{"severity":"error","message":"m","source":{"path":"main.tex","start_byte":0,"end_byte":1},"recovery":"skipped"}],"pdf_path":null}}"#
+        let env = try RuntimeV1.decodeCompileResult(Data(json.utf8))
+        let d = try XCTUnwrap(env.payload.diagnostics.first)
+        XCTAssertEqual(d.severity, .error)
+        XCTAssertEqual(d.message, "m")
+        XCTAssertEqual(d.source, .init(path: "main.tex", startByte: 0, endByte: 1))
+        XCTAssertEqual(d.recovery, "skipped")
+        XCTAssertNil(d.code)
+        XCTAssertNil(d.suggestion)
+        XCTAssertNil(d.labels)
+        XCTAssertNil(d.notes)
+        XCTAssertNil(d.help)
+        let encoded = try JSONEncoder().encode(d)
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertNil(obj["code"])
+        XCTAssertNil(obj["suggestion"])
+        XCTAssertNil(obj["labels"])
+        XCTAssertNil(obj["notes"])
+        XCTAssertNil(obj["help"])
+        XCTAssertEqual(obj["severity"] as? String, "error")
+        XCTAssertEqual(obj["message"] as? String, "m")
+    }
+
+    func testFixtureDecodesStructuredFieldsAndIgnoresUnknownKeys() throws {
+        let data = try Data(contentsOf: Self.macFixtures.appendingPathComponent("structured-diagnostics.json"))
+        let fast = try FastJSON.compileResultEnvelope(data)
+        let reference = try RuntimeV1.decodeCompileResultReference(data)
+        XCTAssertEqual(fast.payload, reference.payload)
+        XCTAssertEqual(fast.payload.diagnostics.count, 2)
+        let legacy = fast.payload.diagnostics[0]
+        XCTAssertNil(legacy.code)
+        XCTAssertNil(legacy.help)
+        XCTAssertNil(legacy.labels)
+        let d = fast.payload.diagnostics[1]
+        XCTAssertEqual(d.code, "unsupported_feature")
+        XCTAssertEqual(d.suggestion, "\\(...\\)")
+        XCTAssertEqual(d.labels?.count, 2)
+        XCTAssertEqual(d.labels?[0].primary, true)
+        XCTAssertEqual(d.labels?[0].text, "this command")
+        XCTAssertEqual(d.labels?[1].primary, false)
+        XCTAssertEqual(d.labels?[1].text, "in this item")
+        XCTAssertEqual(d.notes, ["\\tilde is a math accent; here it is outside math mode"])
+        XCTAssertEqual(d.help?.message, "wrap it in math: \\(\\tilde{c}_t\\)")
+        XCTAssertEqual(d.help?.replacement?.startByte, 10)
+        XCTAssertEqual(d.help?.replacement?.endByte, 16)
+        XCTAssertEqual(d.help?.replacement?.text, "\\(\\tilde{c}_t\\)")
+        XCTAssertNil(d.help?.replacement?.path)
+        XCTAssertEqual(d.path(of: try XCTUnwrap(d.help?.replacement)), "notes.tex")
+        let encoded = try JSONEncoder().encode(d)
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(obj["code"] as? String, "unsupported_feature")
+        XCTAssertNotNil(obj["help"])
+        XCTAssertNil(obj["future_extra"], "unknown keys are decode-only; they are not re-encoded")
+    }
+
+    func testHelpReplacementDecodesBareOrWithPath() throws {
+        let bare = #"{"message":"h","replacement":{"start_byte":1,"end_byte":2,"text":"x"}}"#
+        let withPath = #"{"message":"h","replacement":{"start_byte":1,"end_byte":2,"text":"x","path":"other.tex"}}"#
+        let withSource = #"{"message":"h","replacement":{"start_byte":1,"end_byte":2,"text":"x","source":{"path":"src.tex","start_byte":9,"end_byte":10}}}"#
+        let a = try JSONDecoder().decode(RuntimeV1.Diagnostic.Help.self, from: Data(bare.utf8))
+        let b = try JSONDecoder().decode(RuntimeV1.Diagnostic.Help.self, from: Data(withPath.utf8))
+        let c = try JSONDecoder().decode(RuntimeV1.Diagnostic.Help.self, from: Data(withSource.utf8))
+        XCTAssertNil(a.replacement?.path)
+        XCTAssertEqual(b.replacement?.path, "other.tex")
+        XCTAssertEqual(c.replacement?.path, "src.tex", "nested source.path is accepted as the replacement path")
+        let encoded = try JSONEncoder().encode(a)
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertNil((obj["replacement"] as? [String: Any])?["path"])
+        XCTAssertEqual((obj["replacement"] as? [String: Any])?["text"] as? String, "x")
+    }
+}

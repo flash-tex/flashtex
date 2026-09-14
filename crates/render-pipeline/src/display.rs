@@ -414,6 +414,9 @@ pub struct Diagnostic {
     pub sources: Vec<SourceRange>,
     /// The compiler's recovery note, when it produced this diagnostic.
     pub recovery: Option<String>,
+    /// Replacement text for the source range (runtime-v1 `suggestion`).
+    /// Never serialised on display-list-v2 (`additionalProperties: false`).
+    pub suggestion: Option<String>,
 }
 
 impl Diagnostic {
@@ -424,6 +427,7 @@ impl Diagnostic {
             severity: Severity::Error,
             sources,
             recovery: None,
+            suggestion: None,
         }
     }
     pub fn warning(code: &str, message: impl Into<String>, sources: Vec<SourceRange>) -> Diagnostic {
@@ -433,6 +437,7 @@ impl Diagnostic {
             severity: Severity::Warning,
             sources,
             recovery: None,
+            suggestion: None,
         }
     }
 
@@ -440,7 +445,10 @@ impl Diagnostic {
     pub fn from_compiler(d: &flashtex_compiler::diagnostics::Diagnostic, paths: &[&str]) -> Diagnostic {
         use flashtex_compiler::diagnostics::Severity as S;
         Diagnostic {
-            code: "compiler".into(),
+            // Exactly the compiler's own `code`: its constructors already apply
+            // `default_code`, and a `None` is deliberate (request validation), so
+            // re-deriving one here would disagree with the compiler's runtime-v1 reply.
+            code: d.code.map_or("compiler", |c| c.as_str()).into(),
             message: d.message.clone(),
             severity: match d.severity {
                 S::Error => Severity::Error,
@@ -457,6 +465,7 @@ impl Diagnostic {
                 })
                 .unwrap_or_default(),
             recovery: d.recovery.clone(),
+            suggestion: d.suggestion.clone(),
         }
     }
 }
@@ -1354,6 +1363,45 @@ mod tests {
         assert_eq!(Tick::from_tex_pt(72.27), Tick(72 * 1_048_576));
         assert_eq!(Tick::from_bp(612.0).0, 612 * 1_048_576);
         assert_eq!(Tick::from_tex_pt(0.0), Tick(0));
+    }
+
+    #[test]
+    fn from_compiler_forwards_code_and_suggestion() {
+        use flashtex_compiler::diagnostics::{Diagnostic as C, DiagnosticCode, Severity as CS};
+        let unknown = C {
+            severity: CS::Error,
+            message: r"\alpah is not supported by this compiler version".into(),
+            span: None,
+            recovery: None,
+            code: Some(DiagnosticCode::UnknownCommand),
+            suggestion: Some(r"\alpha".into()),
+        };
+        let out = Diagnostic::from_compiler(&unknown, &[]);
+        assert_eq!(out.code, "unknown_command");
+        assert_eq!(out.suggestion.as_deref(), Some(r"\alpha"));
+
+        let no_explicit = C {
+            severity: CS::Error,
+            message: r"\tikz is not supported by this compiler version".into(),
+            span: None,
+            recovery: None,
+            code: None,
+            suggestion: None,
+        };
+        // No code on the compiler side stays uncoded, even when the wording would
+        // match `default_code`: the compiler omitted it on purpose.
+        assert_eq!(Diagnostic::from_compiler(&no_explicit, &[]).code, "compiler");
+
+        let none = C {
+            severity: CS::Error,
+            message: "layout_capabilities must be a list".into(),
+            span: None,
+            recovery: None,
+            code: None,
+            suggestion: None,
+        };
+        assert_eq!(Diagnostic::from_compiler(&none, &[]).code, "compiler");
+        assert_eq!(Diagnostic::from_compiler(&none, &[]).suggestion, None);
     }
 
     #[test]
