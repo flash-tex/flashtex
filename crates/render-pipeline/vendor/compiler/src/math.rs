@@ -576,7 +576,8 @@ pub fn parse_tokens(
             "math group is missing its closing brace",
             Some(open),
             Some("closed the group at the math delimiter".into()),
-        ));
+        )
+        .with_help("add a closing '}'"));
     }
     list
 }
@@ -628,8 +629,13 @@ pub fn is_math_environment(name: &str) -> bool {
 /// Exceeding the bound is an explicit diagnostic, not a crash.
 // Keep ample headroom for the command parser's stack frame on the macOS Swift
 // app's worker thread as the supported command set grows. The previous 256
-// limit could exhaust that thread before the guard was reached.
-pub const MAX_MATH_DEPTH: usize = 128;
+// limit could exhaust that thread before the guard was reached. The previous
+// 128 limit still overflowed debug builds: `\frac`/`\sqrt` nesting recurses
+// through several large frames per level (`list`/`list_inner`/`atom`/
+// `command_atom`/`required_group`) and aborts around 60 levels deep in debug,
+// before the guard is ever reached. This limit sits at half that measured
+// depth, so the guard fires first on every profile.
+pub const MAX_MATH_DEPTH: usize = 32;
 
 struct MathParser<'a> {
     tokens: &'a [Token],
@@ -651,7 +657,11 @@ struct MathParser<'a> {
 
 impl MathParser<'_> {
     fn list(&mut self, stop_at_brace: bool) -> MathList {
-        if self.depth >= MAX_MATH_DEPTH {
+        // `>` (not `>=`): the outermost list occupies one depth unit, so
+        // nesting of exactly `MAX_MATH_DEPTH` still parses cleanly and the
+        // diagnostic fires first at one level past the limit — matching
+        // `required_text_group`'s `depth > MAX_MATH_DEPTH` check below.
+        if self.depth > MAX_MATH_DEPTH {
             // Consume the rest so the caller cannot loop on the same tokens.
             let span = self.tokens.get(self.i).map(|t| t.span);
             self.diagnostics.push(Diagnostic::error(
@@ -910,7 +920,11 @@ impl MathParser<'_> {
                 Some(symbol(ch.to_string(), span))
             }
             TokenKind::Command(name) => Some(self.command_atom(name, token.span)),
-            TokenKind::DisplayMathOpen | TokenKind::DisplayMathClose | TokenKind::MathShift => {
+            TokenKind::DisplayMathOpen
+            | TokenKind::DisplayMathClose
+            | TokenKind::InlineMathOpen
+            | TokenKind::InlineMathClose
+            | TokenKind::MathShift => {
                 self.diagnostics.push(Diagnostic::error(
                     "unexpected math delimiter inside math mode",
                     Some(token.span),
@@ -950,7 +964,8 @@ impl MathParser<'_> {
             format!("\\{name} requires \\usepackage{{{package}}}"),
             Some(span),
             Some("typeset the command literally and continued".into()),
-        ));
+        )
+        .with_help(format!("add \\usepackage{{{package}}} in the preamble")));
         symbol(format!("\\{name}"), span)
     }
 
@@ -1680,7 +1695,9 @@ impl MathParser<'_> {
                         format!("\\{} is not supported in math mode", name),
                         Some(span),
                         Some("typeset the command literally and continued".into()),
-                    ));
+                    )
+                    .with_optional_help(crate::vocabulary::math_mode_help(&name))
+                    .with_label(span, "this command", true));
                     symbol(format!("\\{}", name), span)
                 }
             },
@@ -1895,7 +1912,8 @@ impl MathParser<'_> {
             format!("\\{command} argument is missing its closing brace"),
             Some(open.merge(end)),
             Some("used the text up to the end of the formula".into()),
-        ));
+        )
+        .with_help("add a closing '}'"));
         (text, open.merge(end))
     }
 
@@ -1950,7 +1968,8 @@ impl MathParser<'_> {
                 "math group is missing its closing brace",
                 Some(open),
                 Some("closed the group at the math delimiter".into()),
-            ));
+            )
+            .with_help("add a closing '}'"));
         }
         list
     }
@@ -2184,6 +2203,8 @@ impl MathParser<'_> {
                 TokenKind::MathShift
                 | TokenKind::DisplayMathOpen
                 | TokenKind::DisplayMathClose
+                | TokenKind::InlineMathOpen
+                | TokenKind::InlineMathClose
                 | TokenKind::Superscript
                 | TokenKind::Subscript => {
                     self.diagnostics.push(Diagnostic::error(
@@ -2195,6 +2216,8 @@ impl MathParser<'_> {
                         TokenKind::MathShift => "$",
                         TokenKind::DisplayMathOpen => "\\[",
                         TokenKind::DisplayMathClose => "\\]",
+                        TokenKind::InlineMathOpen => "\\(",
+                        TokenKind::InlineMathClose => "\\)",
                         TokenKind::Superscript => "^",
                         TokenKind::Subscript => "_",
                         _ => unreachable!(),
@@ -2207,7 +2230,8 @@ impl MathParser<'_> {
             format!("argument to \\{command} is missing its closing brace"),
             Some(open.span),
             Some("closed the text argument at the math delimiter".into()),
-        ));
+        )
+        .with_help("add a closing '}'"));
         (text, open.span.merge(end))
     }
 
@@ -2502,7 +2526,8 @@ impl MathParser<'_> {
                 format!("\\{command} argument is missing its closing brace"),
                 Some(span),
                 Some("closed the argument at the end of the formula".into()),
-            ));
+            )
+            .with_help("add a closing '}'"));
         }
         self.i = (end + 1).min(self.tokens.len());
         let mut rows = Vec::new();
@@ -3221,13 +3246,47 @@ fn layout_list_with(
     display: bool,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> MathBox {
+    let delimiter_scales = left_right_stretch_scales(list, size, root_size, level, display);
+    layout_list_with_scales(
+        list,
+        &delimiter_scales,
+        size,
+        root_size,
+        level,
+        display,
+        diagnostics,
+    )
+}
+
+/// The atom-by-atom half of [`layout_list_with`]: lays `list` out, stretching
+/// each matched `\left`/`\right` nucleus by the corresponding entry of
+/// `delimiter_scales` (one slot per atom, as returned by
+/// [`left_right_stretch_scales`]).
+///
+/// Split out so the stretch pre-pass can measure a pair's content with the
+/// already-computed inner scales instead of re-deriving them through a fresh
+/// recursive layout, which duplicated the whole inner layout once per
+/// enclosing level (exponential in nesting depth).
+fn layout_list_with_scales(
+    list: &MathList,
+    delimiter_scales: &[Option<f64>],
+    size: f64,
+    root_size: f64,
+    level: usize,
+    display: bool,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> MathBox {
+    debug_assert_eq!(
+        delimiter_scales.len(),
+        list.atoms.len(),
+        "one stretch slot per atom"
+    );
     let mut out = MathBox {
         items: Vec::new(),
         width: 0.0,
         ascent: size,
         descent: 0.2 * size,
     };
-    let delimiter_scales = left_right_stretch_scales(list, size, root_size, level, display);
     let classes = spacing_classes(list);
     let mut previous_class = None;
     for (index, (atom, class)) in list.atoms.iter().zip(classes).enumerate() {
@@ -3341,6 +3400,15 @@ fn layout_list_with(
 /// before it ever reaches this list — is left `None` and stays at its parsed
 /// scale of 1, the same as plain TeX leaves a runaway fence alone rather than
 /// guessing a size for it.
+///
+/// Pairs are measured innermost-first in a single pass: stack matching pops
+/// the inner `\right` before the outer one, so when a pair closes, every pair
+/// nested inside it already has its final scale in `scales` (stack matching
+/// never straddles pair boundaries, so no later pair can touch those slots).
+/// The content is therefore measured with [`layout_list_with_scales`] reusing
+/// those inner scales instead of a fresh recursive [`layout_list_with`] —
+/// each atom is measured once per enclosing level (quadratic in nesting
+/// depth), not re-derived once per level (exponential).
 fn left_right_stretch_scales(
     list: &MathList,
     size: f64,
@@ -3365,8 +3433,15 @@ fn left_right_stretch_scales(
                 // once, by the atom-by-atom pass below that actually lays
                 // this list out.
                 let mut scratch = Vec::new();
-                let content_box =
-                    layout_list_with(&content, size, root_size, level, display, &mut scratch);
+                let content_box = layout_list_with_scales(
+                    &content,
+                    &scales[left + 1..index],
+                    size,
+                    root_size,
+                    level,
+                    display,
+                    &mut scratch,
+                );
                 let scale = delimiter_stretch_scale(&content_box, size);
                 scales[left] = Some(scale);
                 scales[index] = Some(scale);
