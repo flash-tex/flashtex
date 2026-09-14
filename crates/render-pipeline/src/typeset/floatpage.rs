@@ -63,10 +63,29 @@ pub enum FloatPart {
 pub struct PreparedGraphic {
     pub gbox: GraphicBox,
     /// `None` when the file could not be read but its size was known from
-    /// `width` and `height` (space is kept, nothing is painted).
+    /// `width` and `height` (space is kept, nothing is painted), and
+    /// whenever `placeholder` is set.
     pub resource: Option<Rc<ImageResource>>,
+    /// What graphicx draws in place of the file under `draft`/`demo`.
+    pub placeholder: Option<Placeholder>,
     pub span: Span,
 }
+
+/// The ink a graphic that was never read still puts on the page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placeholder {
+    /// `demo`: `\rule{..}{..}` fills the whole box.
+    DemoRule,
+    /// `draft`: `\Gin@setfile` sets `\hb@xt@\Gin@req@width{\vrule\hss\vbox
+    /// to \Gin@req@height{\hrule..\vss\rlap{ \ttfamily <file>}\vss\hrule}
+    /// \hss\vrule}` -- a frame of default-thickness rules around the
+    /// reserved space. The `\rlap`ped file name inside it is not set yet;
+    /// it is centred in the box and contributes no dimension.
+    DraftFrame,
+}
+
+/// TeX's default `\vrule`/`\hrule` thickness (`\p@` / 2.5), in TeX points.
+const RULE_PT: f64 = 0.4;
 
 #[derive(Clone, Copy)]
 struct Skip {
@@ -98,7 +117,7 @@ impl FloatParams {
 enum Elem {
     /// A caption line: block/line in `blocks`, baseline from the box top.
     Line { block: usize, line: usize, baseline: f64, height: f64, depth: f64 },
-    Image { x: f64, baseline: f64, gbox: GraphicBox, resource: Option<Rc<ImageResource>>, provenance: Provenance },
+    Image { x: f64, baseline: f64, gbox: GraphicBox, resource: Option<Rc<ImageResource>>, placeholder: Option<Placeholder>, provenance: Provenance },
 }
 
 struct FloatBox {
@@ -205,7 +224,7 @@ fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, 
                 let w: f64 = graphics.iter().map(|g| g.gbox.width).sum();
                 let mut x = if *centered { ((tw - w) / 2.0).max(0.0) } else { 0.0 };
                 for g in graphics {
-                    elems.push(Elem::Image { x, baseline: line.baseline, gbox: g.gbox, resource: g.resource.clone(), provenance: Provenance::Source(ctx.source(g.span)) });
+                    elems.push(Elem::Image { x, baseline: line.baseline, gbox: g.gbox, resource: g.resource.clone(), placeholder: g.placeholder, provenance: Provenance::Source(ctx.source(g.span)) });
                     x += g.gbox.width;
                 }
             }
@@ -437,10 +456,45 @@ impl Placer<'_> {
         for e in &b.elems {
             match e {
                 Elem::Line { block, line, baseline, height, depth } => lines.push(Placed { payload: (*block, *line), baseline: top + baseline, height: *height, depth: *depth }),
-                Elem::Image { x, baseline, gbox, resource, provenance } => {
-                    let Some(resource) = resource else { continue };
+                Elem::Image { x, baseline, gbox, resource, placeholder, provenance } => {
                     let left = self.text_x + x;
                     let base = self.text_y + top + baseline;
+                    // `draft`/`demo` never read a file; what they paint is
+                    // rules. Both are laid out in the box's own axes, so a
+                    // rotated box is left as reserved space only.
+                    if let Some(kind) = placeholder {
+                        let m = gbox.matrix;
+                        if m[1] == 0.0 && m[2] == 0.0 && m[0] > 0.0 && m[3] > 0.0 {
+                            let (t, w, h) = (base - gbox.height, gbox.width, gbox.height + gbox.depth);
+                            let bars: &[(f64, f64, f64, f64)] = match kind {
+                                Placeholder::DemoRule => &[(left, t, w, h)],
+                                // `\hrule`s across the top and bottom,
+                                // `\vrule`s up the sides, which the two
+                                // `\hss`es pull inside the requested width.
+                                Placeholder::DraftFrame => &[
+                                    (left, t, w, RULE_PT),
+                                    (left, t + h - RULE_PT, w, RULE_PT),
+                                    (left, t, RULE_PT, h),
+                                    (left + w - RULE_PT, t, RULE_PT, h),
+                                ],
+                            };
+                            for (x, y, w, h) in bars.iter().copied().filter(|(_, _, w, h)| *w > 0.0 && *h > 0.0) {
+                                self.images.push((
+                                    page,
+                                    display::Item::Rule(display::Rule {
+                                        x: Tick::from_tex_pt(x),
+                                        top: Tick::from_tex_pt(y),
+                                        width: Tick::from_tex_pt(w),
+                                        height: Tick::from_tex_pt(h),
+                                        paint: display::Paint::BLACK,
+                                        provenance: provenance.clone(),
+                                    }),
+                                ));
+                            }
+                        }
+                        continue;
+                    }
+                    let Some(resource) = resource else { continue };
                     let m = gbox.matrix;
                     let k = BP_PER_PT;
                     self.images.push((

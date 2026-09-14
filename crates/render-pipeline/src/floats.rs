@@ -429,7 +429,7 @@ use crate::adapter::{self, CharSrc, Item as AItem, Labels, ParaPart, Segment, Te
 use crate::display::{Diagnostic, ImageResource, SourceRange};
 use crate::graphics::{self, GKey, ImageInfo, LengthEnv};
 use crate::style::Stylesheet;
-use crate::typeset::floatpage::{FloatPart, FloatSpec, PreparedGraphic};
+use crate::typeset::floatpage::{FloatPart, FloatSpec, Placeholder, PreparedGraphic};
 use crate::RenderOptions;
 
 /// Largest image file read (bytes).
@@ -563,6 +563,9 @@ pub fn prepare(
     let mut diags = Vec::new();
     let (em, ex) = em_ex(style.body_size_pt);
     let env = LengthEnv { text_width: style.text_width_pt, text_height: style.text_height_pt, paper_width: style.page_width_pt, paper_height: style.page_height_pt, em, ex };
+    // `draft`/`demo` are per document, from the class options and every
+    // `\usepackage` of `graphics`/`graphicx` in the entry file.
+    let gmode = graphics::mode(texts.get(entry_index).copied().unwrap_or_default());
     for (d, doc_envs) in envs.iter().enumerate() {
         let path: Rc<str> = Rc::from(documents[d].path);
         let src = |span: Span| SourceRange { path: path.clone(), start_byte: span.start, end_byte: span.end };
@@ -625,10 +628,40 @@ pub fn prepare(
                             }
                         }
                         let page = keys.iter().find_map(|k| if let GKey::Page(p) = k { Some(*p) } else { None }).unwrap_or(1);
+                        // `demo` replaced `\Ginclude@graphics` with a rule,
+                        // so no file is looked up and the per-image `draft`
+                        // key never reaches `\Gin@setfile`'s draft branch.
+                        if gmode.demo {
+                            let gbox = graphics::demo_box(&keys);
+                            parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: None, placeholder: Some(Placeholder::DemoRule), span: *span }));
+                            continue;
+                        }
+                        let draft = keys.iter().rev().find_map(|k| if let GKey::Draft(v) = k { Some(*v) } else { None }).unwrap_or(gmode.draft);
                         match images.load(options, file, page) {
                             Ok((resource, info)) => {
                                 let gbox = graphics::size_box(info.width_bp / graphics::BP_PER_PT, info.height_bp / graphics::BP_PER_PT, &keys);
-                                parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: Some(resource), span: *span }));
+                                // Under `draft` the box is sized from the
+                                // file and the file is not embedded: the
+                                // space is the same and the ink is the
+                                // frame `\Gin@setfile` draws instead.
+                                let (resource, placeholder) = if draft { (None, Some(Placeholder::DraftFrame)) } else { (Some(resource), None) };
+                                parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource, placeholder, span: *span }));
+                            }
+                            // `pdftex.def`'s `\Gread@pdftex` leaves a file
+                            // it cannot find at the bounding box `0 0 72
+                            // 72` and, under `draft`, warns instead of
+                            // raising its package error -- so the graphic
+                            // still takes one inch square of space, scaled
+                            // by whatever the keys ask for.
+                            Err(msg) if draft => {
+                                let nat = graphics::MISSING_NATURAL_BP / graphics::BP_PER_PT;
+                                let gbox = graphics::size_box(nat, nat, &keys);
+                                diags.push(Diagnostic::warning(
+                                    "image_unavailable",
+                                    format!("{msg}; the `draft` option keeps its 1 in natural size, as pdfTeX does"),
+                                    vec![src(*span)],
+                                ));
+                                parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: None, placeholder: Some(Placeholder::DraftFrame), span: *span }));
                             }
                             Err(msg) => {
                                 let w = keys.iter().rev().find_map(|k| if let GKey::Width(v) = k { Some(*v) } else { None });
@@ -637,7 +670,7 @@ pub fn prepare(
                                     (Some(w), Some(h)) => {
                                         diags.push(Diagnostic::error("image_unavailable", format!("{msg} (its requested size is kept empty)"), vec![src(*span)]));
                                         let gbox = graphics::GraphicBox { width: w, height: h, depth: 0.0, matrix: [w, 0.0, 0.0, h, 0.0, 0.0] };
-                                        parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: None, span: *span }));
+                                        parts.push(FloatPart::Graphic(PreparedGraphic { gbox, resource: None, placeholder: None, span: *span }));
                                     }
                                     _ => diags.push(Diagnostic::error("image_unavailable", msg, vec![src(*span)])),
                                 }
