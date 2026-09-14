@@ -334,6 +334,32 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
+/// `\sbox\@tempboxa{\makelabel{#1}}`: the `\item` label's words, each at its
+/// offset from the box's left edge, and the box's own dimensions in points.
+struct LabelBox {
+    pieces: Vec<(pl::GlyphRun, usize, f64)>,
+    width: f64,
+    height: f64,
+    depth: f64,
+    /// Interword glue at natural width, the gap between consecutive pieces.
+    space: f64,
+}
+
+/// The three `\list` lengths an `\item` paragraph is set with, in points.
+#[derive(Debug, Clone, Copy)]
+struct ListBox {
+    /// `\@totalleftmargin`: the sum of the enclosing lists' `\leftmargin`s.
+    /// Every line of the item starts here (`\list`'s `\parshape`).
+    hang: f64,
+    /// The innermost list's `\labelwidth`. A label narrower than this is
+    /// right-aligned in `\hbox to\labelwidth`; a wider one keeps its own
+    /// width and pushes the text right.
+    labelwidth: f64,
+    /// The innermost list's `\itemindent`, which `\@labels` adds to the
+    /// item's first line alone.
+    itemindent: f64,
+}
+
 /// What `Block::Paragraph` carries from one block to the next.
 struct ParaState {
     /// LaTeX's `\@afterheading` is still in force (`\clubpenalty 10000`).
@@ -2703,18 +2729,30 @@ impl<'a> Context<'a> {
         // first line (`\@item`'s `\everypar`); a label wider than
         // `\labelwidth` keeps its own width and pushes the text right.
         let mut hang_pt = 0.0;
+        let mut itemindent_pt = 0.0;
         if let Some(geom) = list_geom {
-            let (hang, labelwidth) = self.list_geometry(geom, size);
-            hang_pt = hang;
+            let g = self.list_box(geom, size);
+            hang_pt = g.hang;
+            itemindent_pt = g.itemindent;
             if let Some((text, span)) = geom.label.as_ref().filter(|_| starts_paragraph) {
-                if let Some((run, rec)) = self.label_box(text, *span, size) {
+                // `\descriptionlabel` is `\hspace\labelsep\normalfont\bfseries #1`:
+                // the term is bold and opens with a `\labelsep` of its own.
+                let label_style = TextStyle { bold: geom.description, ..TextStyle::default() };
+                if let Some(label) = self.label_box(text, *span, size, label_style) {
                     let labelsep = self.style.labelsep_pt;
                     let protrude = self.item_left_protrusion(&list, &recs);
-                    let mut lead = vec![
-                        (pl::Item::kern(-(labelsep + run.width.min(labelwidth))), None),
-                        (pl::Item::Box(run), Some(rec)),
-                        (pl::Item::kern(labelsep), None),
-                    ];
+                    // `\descriptionlabel`'s leading `\hspace\labelsep` cancels
+                    // `\@item`'s `\hskip-\labelsep`, so the term sets exactly
+                    // at `\leftmargin + \itemindent`.
+                    let lead_kern = if geom.description { 0.0 } else { -(labelsep + label.width.min(g.labelwidth)) };
+                    let mut lead = vec![(pl::Item::kern(lead_kern), None)];
+                    for (i, (run, rec, _)) in label.pieces.into_iter().enumerate() {
+                        if i > 0 {
+                            lead.push((pl::Item::kern(label.space), None));
+                        }
+                        lead.push((pl::Item::Box(run), Some(rec)));
+                    }
+                    lead.push((pl::Item::kern(labelsep), None));
                     if protrude != 0.0 {
                         lead.push((pl::Item::kern(-protrude), None));
                     }
@@ -2737,10 +2775,11 @@ impl<'a> Context<'a> {
         }
         // `\itemindent`: `\@labels` opens the item's first line with
         // `\hskip\itemindent`, so that line alone starts `\leftmargin +
-        // \itemindent` in. Only natbib's author-year bibliography sets it
-        // (to `-\bibhang`), and only the line the `\item` starts.
-        if let Some(geom) = list_geom.filter(|g| g.itemindent_em != 0.0 && starts_paragraph) {
-            params.parindent += geom.itemindent_em * self.text_params(TextStyle::default(), size).quad;
+        // \itemindent` in. Two lists set it: natbib's author-year
+        // bibliography (`-\bibhang`) and `description` (`-\leftmargin`),
+        // and only on the line the `\item` starts.
+        if itemindent_pt != 0.0 && starts_paragraph {
+            params.parindent += itemindent_pt;
         }
         let lines = self.break_paragraph(&list, &params, items, Some(&recs))?;
         self.report_overfull(&lines, &list, &recs);
@@ -3194,9 +3233,17 @@ impl<'a> Context<'a> {
     /// list's label width (`\leftmargin - \labelsep` for a class margin;
     /// the widest label's own width under enumitem's `leftmargin=*`).
     fn list_geometry(&mut self, geom: &ListGeom, size: f64) -> (f64, f64) {
+        let g = self.list_box(geom, size);
+        (g.hang, g.labelwidth)
+    }
+
+    /// `\@totalleftmargin`, `\labelwidth` and `\itemindent` of an item
+    /// paragraph, in points.
+    fn list_box(&mut self, geom: &ListGeom, size: f64) -> ListBox {
         let labelsep = self.style.labelsep_pt;
         let mut hang = 0.0;
         let mut labelwidth = 0.0;
+        let mut innermost = 0.0;
         let quad = self.text_params(TextStyle::default(), size).quad;
         for margin in &geom.margins {
             let (m, w) = match margin {
@@ -3211,8 +3258,16 @@ impl<'a> Context<'a> {
             };
             hang += m;
             labelwidth = w;
+            innermost = m;
         }
-        (hang, labelwidth)
+        if geom.description {
+            // `\labelwidth\z@ \itemindent-\leftmargin`: the label is always
+            // wider than its (zero) box, so it sets at its natural width,
+            // and the first line starts back at the enclosing margin.
+            ListBox { hang, labelwidth: 0.0, itemindent: -innermost }
+        } else {
+            ListBox { hang, labelwidth, itemindent: geom.itemindent_em * quad }
+        }
     }
 
     /// Width of `text` shaped in the body font at `size`, in points.
@@ -3243,27 +3298,46 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// The `\item` label as a text box whose characters all point at the
-    /// `\item` command's bytes (article's `\labelenumi`/`\labelitemi` in
-    /// the body font).
-    fn label_box(&mut self, text: &str, span: Span, size: f64) -> Option<(pl::GlyphRun, usize)> {
-        let seg = adapter::Segment {
-            text: text.to_string(),
-            chars: text
-                .chars()
-                .map(|_| adapter::CharSrc {
-                    document: span.document,
-                    start: span.start,
-                    end: span.end,
-                })
-                .collect(),
-            style: TextStyle::default(),
-        };
-        let boxed = self.text_box(&seg, size);
-        if let Some((_, rec)) = &boxed {
-            self.label_recs.insert(*rec);
+    /// The `\item` label as `\sbox\@tempboxa{\makelabel{#1}}` sets it: an
+    /// `\hbox` at natural width whose characters all point at the `\item`
+    /// command's bytes (article's `\labelenumi`/`\labelitemi` in the body
+    /// font; `\descriptionlabel`'s term in `\bfseries`).
+    ///
+    /// Each word is its own text box and the gaps between them are TeX's
+    /// interword glue at its natural width, for the same reason
+    /// [`Self::number_box`] does it: shaping `"A much longer term"` as one
+    /// run resolves `U+0020` through the face's cmap, and in T1 that slot is
+    /// `visiblespace`, not a space — 1.91 bp per gap wider than
+    /// `\fontdimen2` on `ecbx1000`, which every multi-word label carried.
+    fn label_box(&mut self, text: &str, span: Span, size: f64, style: TextStyle) -> Option<LabelBox> {
+        let space = self.space_glue(style, size, 1000).width;
+        let mut pieces = Vec::new();
+        let (mut x, mut height, mut depth) = (0.0f64, 0.0f64, 0.0f64);
+        for word in text.split_whitespace() {
+            if !pieces.is_empty() {
+                x += space;
+            }
+            let seg = adapter::Segment {
+                text: word.to_string(),
+                chars: word
+                    .chars()
+                    .map(|_| adapter::CharSrc {
+                        document: span.document,
+                        start: span.start,
+                        end: span.end,
+                    })
+                    .collect(),
+                style,
+            };
+            let Some((run, rec)) = self.text_box(&seg, size) else { continue };
+            self.label_recs.insert(rec);
+            height = height.max(run.height);
+            depth = depth.max(run.depth);
+            let w = run.width;
+            pieces.push((run, rec, x));
+            x += w;
         }
-        boxed
+        (!pieces.is_empty()).then_some(LabelBox { pieces, width: x, height, depth, space })
     }
 
     fn heading_block(&mut self, level: u8, items: &[AItem]) -> Option<BuiltBlock> {
@@ -3339,23 +3413,34 @@ impl<'a> Context<'a> {
     fn display_opener_block(&mut self, bracket: bool, list_geom: Option<&ListGeom>) -> (BuiltBlock, f64) {
         let s = self.style;
         let size = s.body_size_pt;
-        let (hang, labelwidth) = list_geom.map_or((0.0, 0.0), |g| self.list_geometry(g, size));
+        let g = list_geom.map(|g| self.list_box(g, size));
+        let (hang, labelwidth, itemindent) = g.map_or((0.0, 0.0, 0.0), |g| (g.hang, g.labelwidth, g.itemindent));
+        let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
-        let label = list_geom.and_then(|g| g.label.as_ref()).and_then(|(text, span)| self.label_box(text, *span, size));
+        let label = list_geom.and_then(|g| g.label.as_ref()).and_then(|(text, span)| {
+            let style = TextStyle { bold: description, ..TextStyle::default() };
+            self.label_box(text, *span, size, style)
+        });
         let mut width = hang + if bracket { 0.6 * linewidth } else { 0.0 };
         let (mut runs, mut items, mut recs) = (Vec::new(), Vec::new(), Vec::new());
         let (mut height, mut depth) = (0.0, 0.0);
         match label {
-            Some((run, rec)) => {
+            Some(label) => {
                 // `\hskip-\labelwidth \hskip-\labelsep \hbox to\labelwidth
                 // {\hss <label>} \hskip\labelsep`: the label's right edge
                 // ends `\labelsep` before the text edge.
-                let x = hang - s.labelsep_pt - run.width.min(labelwidth);
-                height = run.height;
-                depth = run.depth;
-                runs.push(position_run(&run, x, run.height));
-                items.push(pl::Item::Box(run));
-                recs.push(Some(rec));
+                // `description` instead has `\labelwidth\z@
+                // \itemindent-\leftmargin` and a `\descriptionlabel` whose
+                // own `\hspace\labelsep` cancels the `\hskip-\labelsep`, so
+                // the term sets flush at `\leftmargin + \itemindent`.
+                let x = if description { hang + itemindent } else { hang - s.labelsep_pt - label.width.min(labelwidth) };
+                height = label.height;
+                depth = label.depth;
+                for (run, rec, off) in label.pieces {
+                    runs.push(position_run(&run, x + off, label.height));
+                    items.push(pl::Item::Box(run));
+                    recs.push(Some(rec));
+                }
             }
             // `\@parboxrestore` has zeroed `\parindent`, so the box a
             // display opens a paragraph with is empty in a float body.

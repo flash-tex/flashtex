@@ -491,6 +491,25 @@ pub struct ListGeom {
     /// entry's first line is flush at the margin and its continuation lines
     /// hang 1 em in.
     pub itemindent_em: f64,
+    /// The innermost list is a `description` (article.cls 1.4c lines 400-404):
+    ///
+    /// ```tex
+    /// \newenvironment{description}
+    ///   {\list{}{\labelwidth\z@ \itemindent-\leftmargin
+    ///            \let\makelabel\descriptionlabel}}{\endlist}
+    /// \newcommand*\descriptionlabel[1]{\hspace\labelsep\normalfont\bfseries #1}
+    /// ```
+    ///
+    /// Its `\leftmargin` is the class's `\leftmargin<i>`, exactly as for
+    /// `itemize`/`enumerate`, so `margins` already carries it; the three
+    /// differences are all here. `\labelwidth\z@` makes every label wider
+    /// than its box, so `\@item` sets it at its natural width instead of
+    /// right-aligning it in `\hbox to\labelwidth`. `\itemindent-\leftmargin`
+    /// pulls the first line back out to the enclosing margin, so the *term*
+    /// is flush and only the continuation lines hang at `\leftmargin`.
+    /// `\descriptionlabel` opens with its own `\hspace\labelsep`, which
+    /// cancels `\@item`'s `\hskip-\labelsep`, and sets the term `\bfseries`.
+    pub description: bool,
 }
 
 /// One list level's `\leftmargin`.
@@ -1973,6 +1992,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                     // entry's first line is flush at the margin and the rest
                     // of the entry hangs `\bibhang` in.
                     itemindent_em: if natbib_bib { -1.0 } else { 0.0 },
+                    description: env == "description",
                 });
             }
         }
@@ -2629,10 +2649,11 @@ fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Styl
     seps
 }
 
-/// Whether `rest` (starting at a `\begin`) opens `itemize`/`enumerate`.
+/// Whether `rest` (starting at a `\begin`) opens one of the `\list`
+/// environments this pipeline lays out.
 fn list_env_after_begin(rest: &str) -> bool {
     let after = rest.strip_prefix("\\begin").unwrap_or(rest).trim_start();
-    after.starts_with("{itemize}") || after.starts_with("{enumerate}") || after.starts_with("{thebibliography}")
+    LIST_ENVS.iter().any(|env| after.starts_with(&format!("{{{env}}}")))
 }
 
 /// `\endtrivlist` for every `\end{itemize}`/`\end{enumerate}` in `gap`
@@ -2648,7 +2669,7 @@ fn list_end_adjust(source: &str, gap_start: usize, gap: &str, size: u32, style: 
         let abs = from + at;
         from = abs + 1;
         let rest = gap[abs + "\\end".len()..].trim_start();
-        if !rest.starts_with("{itemize}") && !rest.starts_with("{enumerate}") && !rest.starts_with("{thebibliography}") {
+        if !LIST_ENVS.iter().any(|env| rest.starts_with(&format!("{{{env}}}"))) {
             continue;
         }
         let stack = list_stack_at(source, gap_start + abs);
@@ -2674,8 +2695,9 @@ pub(crate) fn list_end_skip(source: &str, run: &std::ops::Range<usize>, body_siz
     let text = &source[run.start..run.end];
     let Some(at) = rfind_command(text, "end") else { return 0.0 };
     let rest = text[at + "\\end".len()..].trim_start();
-    let Some(env) = ["itemize", "enumerate", "thebibliography"]
-        .into_iter()
+    let Some(env) = LIST_ENVS
+        .iter()
+        .copied()
         .find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}"))))
     else {
         return 0.0;
@@ -2709,7 +2731,7 @@ pub(crate) fn list_end_skip(source: &str, run: &std::ops::Range<usize>, body_siz
 fn gap_has_list_end(gap: &str) -> Option<&'static str> {
     let end = rfind_command(gap, "end")?;
     let rest = gap[end + "\\end".len()..].trim_start();
-    ["itemize", "enumerate", "thebibliography"].into_iter().find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}"))))
+    LIST_ENVS.iter().copied().find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}"))))
 }
 
 /// The `\setlist[<envs>]{<keys>}` calls of `source`, in order:
@@ -2752,8 +2774,16 @@ fn setlist_names(envs: &str, env: &str) -> bool {
     envs.trim().is_empty() || envs.split(',').map(str::trim).any(|e| e == env || e.parse::<u8>().is_ok())
 }
 
-/// The `itemize`/`enumerate` environments open at byte `at` of `source`,
-/// outermost first: `(environment, `\begin` optional argument)`.
+/// The `\list` environments this pipeline gives LaTeX list geometry to.
+/// `description` is one of them: article.cls builds it from the same
+/// `\list{}{...}` with the same class `\leftmargin<i>`, differing only in
+/// `\labelwidth\z@ \itemindent-\leftmargin` and `\descriptionlabel`
+/// (see [`ListGeom::description`]). Omitting it here gave a `description`
+/// item an empty margin stack, i.e. no list geometry at all.
+const LIST_ENVS: [&str; 4] = ["itemize", "enumerate", "description", "thebibliography"];
+
+/// The list environments open at byte `at` of `source`, outermost first:
+/// `(environment, `\begin` optional argument)`.
 fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str)> {
     let mut stack: Vec<(&str, &str)> = Vec::new();
     let mut from = 0;
@@ -2772,7 +2802,7 @@ fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str)> {
         let Some(inner) = rest.strip_prefix('{') else { continue };
         let Some(close) = inner.find('}') else { continue };
         let env = inner[..close].trim();
-        if !matches!(env, "itemize" | "enumerate" | "thebibliography") {
+        if !LIST_ENVS.contains(&env) {
             continue;
         }
         if is_begin {
