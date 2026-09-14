@@ -11,8 +11,9 @@ use flashtex_compiler::parser::SourceDocument;
 use flashtex_compiler::protocol::{error_envelope, PROTOCOL_VERSION};
 
 use crate::delta::{self, DeltaState};
+use crate::display::PageWindow;
 use crate::v1::Capabilities;
-use crate::{render_cached, FontSet, RenderCache, RenderOptions, Rendered};
+use crate::{render_windowed, FontSet, RenderCache, RenderOptions, Rendered};
 
 pub const MAX_LINE_BYTES: usize = flashtex_compiler::protocol::MAX_LINE_BYTES;
 /// Largest reply line the Mac reader accepts (`JSONLines.maxLineBytes`);
@@ -39,6 +40,19 @@ pub fn path_is_safe(path: &str) -> bool {
         return false;
     }
     !path.split(['/', '\\']).any(|c| c == "..")
+}
+
+/// The request's `display_list_window` (`display-list-v2-window` §4), when it
+/// is one a producer can serve. `first_page` is 1-based; the effective window
+/// is decided by the render, which clamps against the page count layout
+/// produced, and is reported back in the sibling's `window` object.
+fn window_of(payload: &Value) -> Option<PageWindow> {
+    let w = payload.get("display_list_window")?;
+    let field = |k: &str| w.get(k).and_then(|v| v.as_i64()).filter(|v| *v > 0 && *v <= i64::from(u32::MAX));
+    Some(PageWindow {
+        first_page: field("first_page")? as u32,
+        page_count: field("page_count")? as u32,
+    })
 }
 
 /// The outcome of one request line.
@@ -343,8 +357,33 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
     } else {
         options
     };
-    let rendered = render_cached(&sources, &entry_path, revision.max(0) as u64, &project_id, fonts, options, cache);
+    // display-list-v2-window (proposal §4): where the viewer is. Meaningful
+    // only next to an accepted `display-list-v2-window`; absent with the
+    // capability listed means the consumer supports a window but has not said
+    // where it wants one, and the reply is unwindowed. Per §8 an unusable
+    // window (page 0, count 0, a non-object, a missing field) is not an error:
+    // the reply is unwindowed and the name is absent from the echo, which is
+    // the consumer's only signal either way.
+    let requested_window = caps.window.then(|| window_of(payload)).flatten();
     let limit = max_reply_bytes();
+    let revision_u64 = revision.max(0) as u64;
+    let mut rendered = render_windowed(&sources, &entry_path, revision_u64, &project_id, fonts, options, cache, requested_window);
+    // A window the consumer chose can still be too wide to serialise -- a
+    // window is bounded by `MAX_WINDOW_PAGES`, which is a ceiling on what a
+    // viewer shows, not on bytes. Rather than decline the sibling (which for a
+    // long document is the `status: failed` this capability exists to fix),
+    // narrow the window to what the limit actually carries, measured on the
+    // pages just built, and serve that. The echoed `window` states what was
+    // served, so a narrowing needs no diagnostic and is not an error (§8).
+    if let Some(served) = rendered.v2.window.filter(|_| rendered.v2.estimated_json_bytes() > limit) {
+        let resident = u64::from(served.page_count).max(1);
+        let per_page = (rendered.v2.estimated_json_bytes() as u64).div_ceil(resident);
+        let centre = served.first_page + served.page_count / 2;
+        let narrowed = PageWindow::fitting(centre, rendered.v2.pages.len() as u32, per_page, limit as u64);
+        if narrowed.is_some_and(|n| n.page_count < served.page_count) {
+            rendered = render_windowed(&sources, &entry_path, revision_u64, &project_id, fonts, options, cache, narrowed);
+        }
+    }
     let mut v1 = crate::v1::fallback(&rendered.v2, caps, accepted.clone());
     // display-list-v2: the envelope is serialised first because declining it
     // (over the line limit) changes the echoed capabilities and diagnostics
@@ -409,9 +448,18 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
         } else {
             drop_cap(&mut v1, crate::v1::CAP_V2_ONLY);
         }
+        // display-list-v2-window: echoed only on a reply that actually carries
+        // a window, the way `-only` is echoed only when the pages were really
+        // elided. A consumer that listed the name and got it back knows the
+        // reply is an incomplete view and reads the sibling's `window` object
+        // for its coverage (§4.1).
+        if rendered.v2.window.is_none() || extra_lines.is_empty() {
+            drop_cap(&mut v1, crate::v1::CAP_WINDOW);
+        }
     } else {
         drop_cap(&mut v1, crate::v1::CAP_DELTA);
         drop_cap(&mut v1, crate::v1::CAP_V2_ONLY);
+        drop_cap(&mut v1, crate::v1::CAP_WINDOW);
     }
     let accepted = v1.accepted.clone();
     let line = v1.write_envelope(&id);

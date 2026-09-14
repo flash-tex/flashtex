@@ -630,6 +630,63 @@ impl Diagnostic {
     }
 }
 
+/// Which optional painting features the **whole document** needs, whether or
+/// not the page carrying them is resident.
+///
+/// `required_features` is one of the closures `display-list-v2-window` §3
+/// keeps whole: a consumer that negotiated a feature set from a windowed reply
+/// must be able to paint the rest of the document with it. Deriving it from
+/// the resident pages would quietly shrink it — a rule on page 900 would go
+/// unannounced while the window is 1..10 — which is the same failure mode as a
+/// smaller font closure, and the reason assembly harvests this over every
+/// block in the same pass that harvests the faces and the diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DocumentFeatures {
+    pub rule: bool,
+    pub path_fill: bool,
+    pub path_stroke: bool,
+    pub clip: bool,
+    pub image: bool,
+    pub device_color: bool,
+    /// Whether the document produced any paintable item at all, anywhere.
+    /// Not a wire feature: it is what `v1::fallback` asks to keep `status`
+    /// the same on a windowed reply as on an unwindowed one (§4.1), where
+    /// the resident pages alone cannot answer it.
+    pub any_items: bool,
+}
+
+impl DocumentFeatures {
+    /// Everything one item contributes.
+    pub fn note(&mut self, it: &Item) {
+        self.any_items = true;
+        match it {
+            Item::Rule(r) => {
+                self.rule = true;
+                self.device_color |= r.paint.device.is_some();
+            }
+            Item::GlyphRun(r) => self.device_color |= r.paint.device.is_some(),
+            Item::Path(p) => {
+                self.path_fill |= matches!(p.op, PathPaintOp::Fill { .. });
+                self.path_stroke |= matches!(p.op, PathPaintOp::Stroke(_));
+                self.clip |= !p.clips.is_empty();
+                self.device_color |= p.paint.device.is_some();
+            }
+            Item::Image(_) => self.image = true,
+        }
+    }
+
+    /// The same derivation over the items a list actually holds. On an
+    /// unwindowed list this is the whole document, and it is what
+    /// `required_features` has always computed.
+    pub fn scan<'a>(items: impl Iterator<Item = &'a Item>) -> DocumentFeatures {
+        let mut f = DocumentFeatures::default();
+        for it in items {
+            f.note(it);
+        }
+        f
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplayList {
     pub project_id: String,
@@ -643,6 +700,11 @@ pub struct DisplayList {
     /// the window are `PageContent::Elided`. `None` is a complete compile and
     /// is what every path in the product produces today.
     pub window: Option<PageWindow>,
+    /// What the whole document needs to be painted, harvested during assembly
+    /// over every block — including the blocks whose only pages are elided.
+    /// `None` on a list not built by `typeset::assemble_windowed`, where the
+    /// resident scan is already complete; only a windowed list reads it.
+    pub document_features: Option<DocumentFeatures>,
 }
 
 impl DisplayList {
@@ -695,36 +757,44 @@ impl DisplayList {
     /// `device-color` is listed when negotiated and some paint carries one.
     pub fn required_features_wire(&self, wire: Wire) -> Vec<&'static str> {
         let images = wire.images;
+        let d = self.document_feature_set();
         let mut f = vec!["glyph_run", "rgba-srgb", "cluster-actualtext"];
-        if self.resident_page_items().any(|i| matches!(i, Item::Rule(_))) {
+        if d.rule {
             f.insert(1, "rule");
         }
-        let paths = || self.resident_page_items().filter_map(|i| if let Item::Path(p) = i { Some(p) } else { None });
-        if paths().any(|p| matches!(p.op, PathPaintOp::Fill { .. })) {
+        if d.path_fill {
             f.push("path_fill");
         }
-        if paths().any(|p| matches!(p.op, PathPaintOp::Stroke(_))) {
+        if d.path_stroke {
             f.push("path_stroke");
         }
-        if paths().any(|p| !p.clips.is_empty()) {
+        if d.clip {
             f.push("clip");
         }
         if self.fonts.iter().any(|r| r.format == "static-truetype") {
             f.push("static-truetype");
         }
-        if images && self.resident_page_items().any(|i| matches!(i, Item::Image(_))) {
+        if images && d.image {
             f.push("image");
         }
-        let device = |it: &Item| match it {
-            Item::GlyphRun(r) => r.paint.device.is_some(),
-            Item::Rule(r) => r.paint.device.is_some(),
-            Item::Path(p) => p.paint.device.is_some(),
-            Item::Image(_) => false,
-        };
-        if wire.device_color && self.resident_page_items().any(device) {
+        if wire.device_color && d.device_color {
             f.push("device-color");
         }
         f
+    }
+
+    /// The features `required_features` is derived from.
+    ///
+    /// An unwindowed list scans its own items, which is every item in the
+    /// document and exactly what this has always done — so every reply on the
+    /// wire today is byte-for-byte unchanged by the harvest existing. Only a
+    /// windowed list, whose resident items are the window's and not the
+    /// document's, reads what assembly harvested (§3).
+    pub fn document_feature_set(&self) -> DocumentFeatures {
+        match (self.window, self.document_features) {
+            (Some(_), Some(d)) => d,
+            _ => DocumentFeatures::scan(self.resident_page_items()),
+        }
     }
 
     /// Whether any page carries an image item.
@@ -798,6 +868,16 @@ impl DisplayList {
             "diagnostics",
             Value::Arr(self.diagnostics.iter().map(diagnostic_json).collect()),
         );
+        // `display-list-v2-window` §4: present only on a windowed reply, and
+        // the authority on what was served -- the consumer never infers the
+        // coverage from the shape of `pages`.
+        if let Some(w) = self.window {
+            let mut o = Value::obj();
+            o.set("first_page", json::num(f64::from(w.first_page)));
+            o.set("page_count", json::num(f64::from(w.page_count)));
+            o.set("document_page_count", json::num(self.pages.len() as f64));
+            payload.set("window", o);
+        }
         let mut v = Value::obj();
         v.set("protocol_version", json::num(PROTOCOL_VERSION as f64));
         v.set("id", json::str_(id));
@@ -867,7 +947,20 @@ impl DisplayList {
         write_features(&mut o, self, wire);
         o.push_str(",\"revision\":");
         num(&mut o, self.revision as f64);
-        o.push_str(",\"text_extraction\":\"cluster-actualtext\"},\"protocol_version\":");
+        o.push_str(",\"text_extraction\":\"cluster-actualtext\"");
+        // Alphabetically last, and written only when the render was windowed:
+        // an unwindowed line -- every line on the wire today -- is byte-for-byte
+        // what it was, and `FULL_LINE_FRAME_BYTES` stays exact for it.
+        if let Some(w) = self.window {
+            o.push_str(",\"window\":{\"document_page_count\":");
+            num(&mut o, self.pages.len() as f64);
+            o.push_str(",\"first_page\":");
+            num(&mut o, f64::from(w.first_page));
+            o.push_str(",\"page_count\":");
+            num(&mut o, f64::from(w.page_count));
+            o.push('}');
+        }
+        o.push_str("},\"protocol_version\":");
         num(&mut o, PROTOCOL_VERSION as f64);
         o.push_str(",\"type\":\"display_list\"}");
         o
@@ -1739,6 +1832,9 @@ mod tests {
                 Diagnostic::error("compiler", "x", Vec::new()),
             ],
             window: Some(PageWindow { first_page: 1, page_count: 3 }),
+            // Not harvested here: this list is built by hand, so the resident
+            // scan is the whole of it.
+            document_features: None,
         };
         assert_eq!(list.write_json("id\"1"), json::write(&list.to_json("id\"1")));
         for images in [false, true] {
@@ -1754,6 +1850,7 @@ mod tests {
             pages: Vec::new(),
             window: None,
             diagnostics: Vec::new(),
+            document_features: None,
         };
         assert_eq!(empty.write_json(""), json::write(&empty.to_json("")));
         assert_eq!(empty.write_json_with("", true), json::write(&empty.to_json_with("", true)));

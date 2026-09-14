@@ -6737,6 +6737,16 @@ pub fn assemble_windowed(
     let mut unmapped_seen = BTreeSet::new();
     let mut unmapped_diags: Vec<Diagnostic> = Vec::new();
     let mut keep_assembled: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    // `required_features` is the third closure that must stay whole-document
+    // (§3), beside the font set and the diagnostics, and it is derived from
+    // item kinds and paints. So it is harvested here, in the same pass, from
+    // every block — including the blocks whose only pages are elided and
+    // whose items are about to be dropped.
+    let mut doc_features = display::DocumentFeatures::default();
+    // `default_color` writes a device colour into every glyph run and rule
+    // that carries none, after placement; whether the document has one to
+    // write into is therefore part of the harvest.
+    let mut any_painted_item = false;
 
     for (bi, block) in laid.blocks.iter().enumerate() {
         let hit = block
@@ -6763,6 +6773,10 @@ pub fn assemble_windowed(
         };
         for f in &a.faces {
             used.entry(f.font_id.clone()).or_insert_with(|| f.clone());
+        }
+        for it in a.lines.iter().flatten() {
+            doc_features.note(it);
+            any_painted_item |= matches!(it, display::Item::GlyphRun(_) | display::Item::Rule(_));
         }
         for (tfm, face, exact) in &a.resources {
             if !exact {
@@ -6811,6 +6825,21 @@ pub fn assemble_windowed(
         }
         // `a` drops here unless the assembled cache or another `Rc` holds it.
     }
+    // The page-level items the loop above never saw: float images belong to a
+    // page rather than to a block, and `\pagecolor` paints a rule under every
+    // page. Both are document-wide facts even when the page carrying them is
+    // elided.
+    for (_, it) in &laid.images {
+        doc_features.note(it);
+    }
+    if page_color.is_some() && !laid.pages.pages.is_empty() {
+        doc_features.rule = true;
+        doc_features.device_color = true;
+    }
+    if default_color.is_some() && any_painted_item {
+        doc_features.device_color = true;
+    }
+
     // The assembled cache is scoped to the window: a scroll through a long
     // document must not accumulate every page it passed (§5.4). `blocks` and
     // `adapted` are untouched -- they are what keeps the next window cheap.
@@ -6910,6 +6939,7 @@ pub fn assemble_windowed(
         pages,
         diagnostics,
         window,
+        document_features: Some(doc_features),
     }
 }
 

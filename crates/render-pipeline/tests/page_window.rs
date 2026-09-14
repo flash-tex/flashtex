@@ -257,3 +257,56 @@ fn a_window_is_sized_by_the_reply_limit() {
     let generous = PageWindow::fitting(500, 1507, 1, MIB16).expect("a window");
     assert_eq!(generous.page_count, display::MAX_WINDOW_PAGES);
 }
+
+/// `required_features` is one of the closures §3 keeps whole, and it is the one
+/// derived purely by classifying items — so it is the one a window could
+/// silently shrink without touching a font or a diagnostic.
+///
+/// A document whose only rule is on a late page: a window over page 1 must
+/// still announce `rule`, or a consumer would negotiate a feature set it cannot
+/// paint the rest of the document with. The test checks that the resident pages
+/// really do carry no rule, so the feature can only have come from the
+/// whole-document harvest and not from the pages that happen to be present.
+#[test]
+fn a_window_announces_a_feature_that_only_an_elided_page_uses() {
+    if !lm_available() {
+        return;
+    }
+    // Prose only: no maths, so no fraction bars, so no rule anywhere except
+    // the one placed deliberately at the end.
+    let mut text = String::from("\\documentclass[12pt]{article}\n\\begin{document}\n");
+    for i in 0..40 {
+        text.push_str(&format!(
+            "Paragraph {i} of plain prose, long enough to break over several lines of the \
+             measure so that the pages fill rather than holding one short line each. More \
+             words follow it, and then some more again, and then a few more after that.\n\n"
+        ));
+    }
+    text.push_str("\\rule{2cm}{1pt}\n\\end{document}\n");
+
+    let full = render_win(&text, None, None);
+    assert!(full.pages.len() >= 3, "need a document longer than one window: {}", full.pages.len());
+    assert!(
+        full.required_features_wire(WIRE).contains(&"rule"),
+        "the fixture is supposed to contain a rule: {:?}",
+        full.required_features_wire(WIRE)
+    );
+    let ruled = full
+        .pages
+        .iter()
+        .position(|p| p.resident_items().iter().any(|i| matches!(i, display::Item::Rule(_))))
+        .expect("some page carries the rule");
+    assert!(ruled > 0, "the rule should not be on the first page");
+
+    let windowed = render_win(&text, Some(PageWindow { first_page: 1, page_count: 1 }), None);
+    assert!(
+        !windowed.pages[0].resident_items().iter().any(|i| matches!(i, display::Item::Rule(_))),
+        "the resident page must not itself carry a rule, or this proves nothing"
+    );
+    assert_eq!(
+        windowed.required_features_wire(WIRE),
+        full.required_features_wire(WIRE),
+        "a window over page 1 dropped a feature the document needs on page {}",
+        ruled + 1
+    );
+}
