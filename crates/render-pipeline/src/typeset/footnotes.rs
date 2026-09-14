@@ -20,10 +20,16 @@
 //!   notes and sets `\skip\footins`, `\footnoterule` (`\kern-3pt \hrule
 //!   width .4\columnwidth \kern2.6pt`) and the notes at the column foot.
 //!
+//! With floats, [`crate::typeset::floatpage::paginate`] charges the same
+//! insertions against `\@colroom` and sets the notes between the text and
+//! the bottom floats.
+//!
+//! `\thanks` notes (symbol marks from the compiler) are anchored after the
+//! title's last line with `\rlap`ped marks (see `Context::title_blocks`).
+//!
 //! Not here yet: `minipage` footnotes (`\@mpfootnotetext`, alph marks, set
-//! at the minipage's end; see [`MinipageNotes`] for the hook), footnotes
-//! in documents with floats, headings, captions and table cells (reported),
-//! and `\thanks` (the compiler strips it).
+//! at the minipage's end; see [`MinipageNotes`] for the hook) and footnotes
+//! in headings, captions and table cells (reported).
 
 use flashtex_compiler::Span;
 use flashtex_paragraph_layout as pl;
@@ -104,6 +110,46 @@ pub fn script_size(size: f64) -> f64 {
     TABLE.iter().find(|(t, _)| (t - size).abs() < 0.01).map_or(0.7 * size, |(_, s)| *s)
 }
 
+/// TS1 metrics (`ts1-lmr<design>.tfm`, TeX Live 2026: width, height and
+/// depth in em) of the `\@fnsymbol` characters, by design size.
+#[rustfmt::skip]
+const TS1_SYMBOLS: [(f64, [(char, f64, f64, f64); 6]); 8] = [
+    (5.0, [('\u{2217}', 0.680399, 0.469, 0.0), ('\u{2020}', 0.666666, 0.688891, 0.194446), ('\u{2021}', 0.666666, 0.688891, 0.194446), ('\u{2016}', 0.645999, 0.500501, 0.275), ('\u{a7}', 0.666501, 0.688891, 0.194446), ('\u{b6}', 0.875, 0.688891, 0.194446)]),
+    (6.0, [('\u{2217}', 0.611112, 0.468501, 0.0), ('\u{2020}', 0.574084, 0.688889, 0.194446), ('\u{2021}', 0.574084, 0.688889, 0.194446), ('\u{2016}', 0.578667, 0.4925, 0.268001), ('\u{a7}', 0.598, 0.688889, 0.194446), ('\u{b6}', 0.768498, 0.688889, 0.194446)]),
+    (7.0, [('\u{2217}', 0.5694275, 0.474498, 0.0), ('\u{2020}', 0.52381, 0.68888, 0.194445), ('\u{2021}', 0.52381, 0.68888, 0.194445), ('\u{2016}', 0.538713, 0.492499, 0.262), ('\u{a7}', 0.560499, 0.68888, 0.194445), ('\u{b6}', 0.708333, 0.68888, 0.194445)]),
+    (8.0, [('\u{2217}', 0.531124, 0.474998, 0.0), ('\u{2020}', 0.47225, 0.694437, 0.194445), ('\u{2021}', 0.47225, 0.694437, 0.194445), ('\u{2016}', 0.501751, 0.494999, 0.257999), ('\u{a7}', 0.520124, 0.694437, 0.194445), ('\u{b6}', 0.649313, 0.694437, 0.194437)]),
+    (9.0, [('\u{2217}', 0.513777, 0.471, 0.0), ('\u{2020}', 0.456777, 0.694445, 0.194445), ('\u{2021}', 0.456777, 0.694445, 0.194445), ('\u{2016}', 0.4853325, 0.492499, 0.2560005), ('\u{a7}', 0.4985, 0.694445, 0.194445), ('\u{b6}', 0.628111, 0.694445, 0.194445)]),
+    (10.0, [('\u{2217}', 0.5, 0.467999, 0.0), ('\u{2020}', 0.44445, 0.69445, 0.194443), ('\u{2021}', 0.44445, 0.69445, 0.194443), ('\u{2016}', 0.4722, 0.492999, 0.256), ('\u{a7}', 0.483999, 0.69445, 0.194443), ('\u{b6}', 0.611099, 0.69445, 0.194443)]),
+    (12.0, [('\u{2217}', 0.489459, 0.469499, 0.0), ('\u{2020}', 0.444444, 0.694416, 0.194444), ('\u{2021}', 0.444444, 0.694416, 0.194444), ('\u{2016}', 0.462375, 0.4915, 0.252), ('\u{a7}', 0.474625, 0.694416, 0.194444), ('\u{b6}', 0.611083, 0.694416, 0.194444)]),
+    (17.0, [('\u{2217}', 0.469763, 0.473495, 0.0), ('\u{2020}', 0.444444, 0.688831, 0.2160015), ('\u{2021}', 0.444444, 0.688831, 0.194502), ('\u{2016}', 0.432494, 0.5, 0.246007), ('\u{a7}', 0.460764, 0.688831, 0.194502), ('\u{b6}', 0.611111, 0.688831, 0.194502)]),
+];
+
+/// The box (width, height, depth in points) of a `\@fnsymbol` mark at
+/// `size` in TS1 Latin Modern (`ts1lmr.fd`'s design size for `size`);
+/// `None` when `text` is not made of those symbols. The T1 metrics the
+/// text path uses have no such characters.
+pub fn ts1_mark_box(text: &str, size: f64) -> Option<(f64, f64, f64)> {
+    let design = match size {
+        s if s < 5.5 => 5.0,
+        s if s < 6.5 => 6.0,
+        s if s < 7.5 => 7.0,
+        s if s < 8.5 => 8.0,
+        s if s < 9.5 => 9.0,
+        s if s < 11.0 => 10.0,
+        s if s < 15.0 => 12.0,
+        _ => 17.0,
+    };
+    let (_, table) = TS1_SYMBOLS.iter().find(|(d, _)| *d == design)?;
+    let (mut w, mut h, mut d) = (0.0, 0.0f64, 0.0f64);
+    for c in text.chars() {
+        let &(_, cw, ch, cd) = table.iter().find(|(x, ..)| *x == c)?;
+        w += cw * size;
+        h = h.max(ch * size);
+        d = d.max(cd * size);
+    }
+    (!text.is_empty()).then_some((w, h, d))
+}
+
 /// `sup2` (fontdimen 14) of the Latin Modern symbol font LaTeX selects at
 /// `size` (`omslmsy.fd`: lmsy5..lmsy10 by size), in points.
 pub fn sup2_pt(size: f64) -> f64 {
@@ -148,10 +194,20 @@ impl<'a> Context<'a> {
             style: TextStyle { size_cpt: (sf * 100.0).round() as u16, ..TextStyle::default() },
         };
         let (mut run, rec) = self.text_box(&seg, sf)?;
+        if let Some((w, h, d)) = ts1_mark_box(number, sf) {
+            run.width = w;
+            run.height = h;
+            run.depth = d;
+            if let BoxRec::Text { height, depth, .. } = &mut self.recs[rec] {
+                *height = h;
+                *depth = d;
+            }
+        }
         // §758 with an empty nucleus (height 0): shift_up = sup2, at least
-        // the superscript's depth plus |math_x_height| * 4/5.
+        // the superscript's depth plus |math_x_height| / 4 (Appendix G
+        // rule 18c).
         let x_height = 0.430555 * size;
-        let shift = sup2_pt(size).max(run.depth + 0.8 * x_height);
+        let shift = sup2_pt(size).max(run.depth + 0.25 * x_height);
         if let BoxRec::Text { face, glyphs, height, depth, .. } = &mut self.recs[rec] {
             let units = (shift * f64::from(face.units_per_em) / sf).round() as i32;
             for g in glyphs.iter_mut() {
@@ -279,21 +335,10 @@ fn note_vlist(page: &PageParams, fp: &FootnoteParams, b: &BuiltBlock, bi: usize)
 /// Sets every anchored note and returns the insertion class for the page
 /// builder, or `None` when the document has no footnotes. Marks whose line
 /// is not in the body's vertical list (headings, captions, cells) are
-/// reported and their notes dropped. With floats the notes are reported
-/// and not placed (the float placement does not charge insertions yet).
-pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &PageParams, with_floats: bool) -> Option<Insertions> {
+/// reported and their notes dropped.
+pub(super) fn prepare(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, page: &PageParams) -> Option<Insertions> {
     let anchors = std::mem::take(&mut ctx.note_anchors);
     if anchors.is_empty() {
-        return None;
-    }
-    if with_floats {
-        let span = ctx.notes.first().map(|n| n.span);
-        let src = span.map(|s| vec![ctx.source(s)]).unwrap_or_default();
-        ctx.diagnostics.push(Diagnostic::warning(
-            "unsupported_block",
-            format!("{} footnote(s) in a document with floats: the float placement does not set footnotes yet; their text is omitted", anchors.len()),
-            src,
-        ));
         return None;
     }
     let mut line_of: std::collections::HashMap<usize, (usize, usize)> = std::collections::HashMap::new();

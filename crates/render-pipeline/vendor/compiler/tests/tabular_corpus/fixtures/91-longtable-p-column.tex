@@ -1,0 +1,21 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{longtable}
+\setlength{\parindent}{0pt}
+\begin{document}
+Text before the table.
+
+\begin{longtable}{|l|p{4cm}|}
+\hline Key & Value\\\hline
+\endfirsthead
+\hline
+\endlastfoot
+one & a fairly long value that has to be broken over two lines\\
+two & short\\
+three & another value long enough to wrap onto a second line here\\
+\end{longtable}
+
+Text after the table.
+\end{document}

@@ -7,10 +7,29 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+/// The interpreter for the fake compilers (#207): `FLASHTEX_TEST_PYTHON`, else
+/// `/usr/bin/python3` when it exists (what CI has always used), else the first
+/// `python3` on `PATH` (NixOS has no `/usr/bin/python3`).
+fn python3() -> std::path::PathBuf {
+    if let Some(path) = std::env::var_os("FLASHTEX_TEST_PYTHON") {
+        return path.into();
+    }
+    let system = std::path::PathBuf::from("/usr/bin/python3");
+    if system.is_file() {
+        return system;
+    }
+    std::env::var_os("PATH")
+        .and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join("python3"))
+                .find(|candidate| candidate.is_file())
+        })
+        .unwrap_or(system)
+}
 fn command(dir: &std::path::Path, body: &str) -> Command {
     let path = dir.join("compiler.py");
     std::fs::write(&path, body).unwrap();
-    let mut command = Command::new("/usr/bin/python3");
+    let mut command = Command::new(python3());
     command.arg(path);
     command
 }
