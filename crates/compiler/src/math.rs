@@ -1057,24 +1057,36 @@ impl MathParser<'_> {
             {
                 self.missing_package(&name, "mathtools", span)
             }
-            // `\eqqcolon` ("=:", U+2255 EQUALS COLON) is the reverse of
-            // `\coloneqq` (":=", U+2254). U+2255 is deliberately not a
-            // `COMMAND_GLYPHS` row: unlike U+2254 it is absent from
-            // `symbol_class`'s relation row, so the glyph alone would infer
-            // Ord instead of Rel. The class is forced here instead, the same
-            // fix as `\bot`/`\perp` below.
-            "eqqcolon" => MathAtom {
-                class_override: Some(AtomClass::Rel),
-                ..symbol("≕".into(), span)
-            },
-            // `\Coloneqq` ("::=") is three real glyphs — two colons followed
-            // by an equals — in one relation, and `\Eqqcolon` ("=::") mirrors
-            // it. Both use the same base `":"`/`"="` symbols this file draws
-            // elsewhere, not a precomposed lookalike.
+            // mathtools.sty 486-507 (legacycolonsymbols, `kpsewhich
+            // mathtools.sty`): every multi-glyph member of this family is
+            // built from `\vcentcolon`/`=` joined by an explicit negative
+            // `\mkern`, not by adjacency — the kern REPLACES the normal
+            // inter-atom spacing TeX would otherwise insert between two
+            // relation glyphs, it does not add to it. `mkern` below converts
+            // mu to font-relative em (`QUAD_EM` = 18mu) via the same
+            // `space(n / 18.0, span)` convention the `"colon"` arm above
+            // already uses for amsmath's measured 6mu/2mu split. A
+            // `Nucleus::Space` atom carries no class, so — like `\,`/`\quad`
+            // — layout skips normal class-pair spacing across it (see this
+            // enum's own doc comment on `Nucleus`), leaving exactly the
+            // written kern between the two glyphs, not kern-plus-Rel-Rel-gap.
+            //
+            // `\eqqcolon` ("=:") = `= \mathrel{\mkern-1.2mu} \vcentcolon`.
+            "eqqcolon" => {
+                let atoms = vec![symbol("=".into(), span), mkern(-1.2, span), vcentcolon_atom(span)];
+                MathAtom {
+                    nucleus: Nucleus::Group(MathList { atoms }),
+                    class_override: Some(AtomClass::Rel),
+                    ..symbol(String::new(), span)
+                }
+            }
+            // `\Coloneqq` ("::=") = `\dblcolon \mathrel{\mkern-1.2mu} =`.
             "Coloneqq" => {
                 let atoms = vec![
-                    symbol(":".into(), span),
-                    symbol(":".into(), span),
+                    vcentcolon_atom(span),
+                    mkern(-0.9, span),
+                    vcentcolon_atom(span),
+                    mkern(-1.2, span),
                     symbol("=".into(), span),
                 ];
                 MathAtom {
@@ -1083,11 +1095,14 @@ impl MathParser<'_> {
                     ..symbol(String::new(), span)
                 }
             }
+            // `\Eqqcolon` ("=::") = `= \mathrel{\mkern-1.2mu} \dblcolon`.
             "Eqqcolon" => {
                 let atoms = vec![
                     symbol("=".into(), span),
-                    symbol(":".into(), span),
-                    symbol(":".into(), span),
+                    mkern(-1.2, span),
+                    vcentcolon_atom(span),
+                    mkern(-0.9, span),
+                    vcentcolon_atom(span),
                 ];
                 MathAtom {
                     nucleus: Nucleus::Group(MathList { atoms }),
@@ -1102,11 +1117,10 @@ impl MathParser<'_> {
             // forced instead of Punct. NOT U+2236 RATIO, which would render a
             // visually different glyph than pdfLaTeX actually produces.
             "vcentcolon" => vcentcolon_atom(span),
-            // `\dblcolon` is literally two `\vcentcolon`s in one group
-            // (mathtools defines it exactly that way), kept as a relation.
+            // `\dblcolon` ("::") = `\vcentcolon \mathrel{\mkern-.9mu} \vcentcolon`.
             "dblcolon" => MathAtom {
                 nucleus: Nucleus::Group(MathList {
-                    atoms: vec![vcentcolon_atom(span), vcentcolon_atom(span)],
+                    atoms: vec![vcentcolon_atom(span), mkern(-0.9, span), vcentcolon_atom(span)],
                 }),
                 class_override: Some(AtomClass::Rel),
                 ..symbol(String::new(), span)
@@ -2758,6 +2772,15 @@ fn vcentcolon_atom(span: Span) -> MathAtom {
         class_override: Some(AtomClass::Rel),
         ..symbol(":".into(), span)
     }
+}
+
+/// An explicit `\mkern<mu>mu` as mathtools.sty writes it between two colon
+/// glyphs: `mu` math units, converted to the font-relative em `space` already
+/// takes (`QUAD_EM` = 18mu, the same conversion the `"colon"` arm above uses
+/// for amsmath's measured 6mu/2mu). A negative `mu` is a real, intentional
+/// mathtools value (tightening two adjacent colon glyphs), not a mistake.
+fn mkern(mu: f64, span: Span) -> MathAtom {
+    space(mu / 18.0, span)
 }
 
 /// Scales a delimiter taken by `\big`..`\Biggm`. The null delimiter (a zero
@@ -5689,30 +5712,41 @@ mod spacing_tests {
     }
 
     /// mathtools' colon-relation family are all relations: 5mu on each side,
-    /// like `\coloneqq`. `\eqqcolon` and `\vcentcolon` are single atoms;
-    /// `\Coloneqq`, `\Eqqcolon` and `\dblcolon` are one relation group each,
-    /// laid out glyph by glyph in the order mathtools defines.
+    /// like `\coloneqq`. `\vcentcolon` is a single atom. The other four are
+    /// built from real `mathtools.sty` `\mkern` arithmetic (486-507,
+    /// `kpsewhich mathtools.sty`), so their expected width is computed here
+    /// from independent glyph widths (`width(":", SIZE)`/`width("=", SIZE)`,
+    /// never the implementation's own reported width) plus the literal `.sty`
+    /// mu values, converted at `SIZE = 18.0` where 1mu = 1pt exactly:
+    /// `\eqqcolon` = `= \mkern-1.2mu \vcentcolon`;
+    /// `\Coloneqq` = `\vcentcolon \mkern-.9mu \vcentcolon \mkern-1.2mu =`;
+    /// `\Eqqcolon` = `= \mkern-1.2mu \vcentcolon \mkern-.9mu \vcentcolon`;
+    /// `\dblcolon` = `\vcentcolon \mkern-.9mu \vcentcolon`. A kern is
+    /// `Nucleus::Space`, which lays out with zero `items` (verified against
+    /// the `Nucleus::Space` layout arm), so the glyph sequence below never
+    /// includes it.
     #[test]
     fn mathtools_colon_relations_get_thick_space_like_coloneqq() {
-        for (command, glyph) in [("eqqcolon", "≕"), ("vcentcolon", ":")] {
+        let colon = width(":", SIZE);
+        let equals = width("=", SIZE);
+        for (command, glyph, own) in [("vcentcolon", ":", colon), ("eqqcolon", "=", equals - 1.2 + colon)] {
             let b = laid_out_with(&format!(r"a\{command} b"), SIZE, MATHTOOLS);
             close(x(&b, glyph), width("a", SIZE) + 5.0);
-            let own = width_with(&format!(r"\{command}"), SIZE, MATHTOOLS);
             close(x(&b, "b"), x(&b, glyph) + own + 5.0);
         }
-        for (command, glyphs) in [
-            ("Coloneqq", vec![":", ":", "="]),
-            ("Eqqcolon", vec!["=", ":", ":"]),
-            ("dblcolon", vec![":", ":"]),
+        for (command, glyphs, own) in [
+            ("Coloneqq", vec![":", ":", "="], 2.0 * colon + equals - 0.9 - 1.2),
+            ("Eqqcolon", vec!["=", ":", ":"], equals + 2.0 * colon - 1.2 - 0.9),
+            ("dblcolon", vec![":", ":"], 2.0 * colon - 0.9),
         ] {
             let b = laid_out_with(&format!(r"a\{command} b"), SIZE, MATHTOOLS);
             close(x(&b, glyphs[0]), width("a", SIZE) + 5.0);
-            let own = width_with(&format!(r"\{command}"), SIZE, MATHTOOLS);
             close(
                 b.width,
                 width("a", SIZE) + 5.0 + own + 5.0 + width("b", SIZE),
             );
-            // The group lays out exactly its atoms between the operands.
+            // The group lays out exactly its glyphs between the operands;
+            // the kerns between them contribute no items (see doc comment).
             let texts: Vec<&str> = b.items.iter().map(|i| i.text.as_str()).collect();
             let mut expected = vec!["a"];
             expected.extend(glyphs);
@@ -6297,25 +6331,25 @@ mod package_gating_tests {
     }
 
     /// With `mathtools` loaded each of the five parses to its relation
-    /// nucleus: `\eqqcolon` is one U+2255 atom with Rel forced (U+2255 is not
-    /// in `symbol_class`'s relation row, so the table alone would infer Ord),
-    /// `\vcentcolon` is the plain `":"` with Rel forced (the same glyph as
-    /// `\colon`, which is Punct), and the other three are one relation group
-    /// each over those same base glyphs.
+    /// nucleus: `\vcentcolon` is the plain `":"` with Rel forced (the same
+    /// glyph as `\colon`, which is Punct); the other four are one relation
+    /// group each, built from those same base glyphs joined by real
+    /// `mathtools.sty` `\mkern` kerns (`Nucleus::Space` atoms — see the width
+    /// test above for the exact `.sty` source), not adjacency.
     #[test]
     fn mathtools_colon_relations_parse_to_relation_nuclei() {
         let (list, _) = parsed(r"\eqqcolon", MATHTOOLS);
         assert_eq!(list.atoms.len(), 1, "\\eqqcolon");
-        assert!(
-            matches!(&list.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == "≕"),
-            "\\eqqcolon: {:?}",
-            list.atoms[0].nucleus
-        );
         assert_eq!(
             list.atoms[0].class_override,
             Some(AtomClass::Rel),
             "\\eqqcolon"
         );
+        let Nucleus::Group(eqqcolon_inner) = &list.atoms[0].nucleus else {
+            panic!("\\eqqcolon is not a group: {:?}", list.atoms[0].nucleus);
+        };
+        assert_eq!(eqqcolon_inner.atoms.len(), 3, "= <kern> : -- {eqqcolon_inner:?}");
+        assert!(matches!(&eqqcolon_inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 1.2 / 18.0).abs() < 1e-9));
 
         let (list, _) = parsed(r"\vcentcolon", MATHTOOLS);
         assert_eq!(list.atoms.len(), 1, "\\vcentcolon");
@@ -6357,25 +6391,29 @@ mod package_gating_tests {
             let Nucleus::Group(inner) = &list.atoms[0].nucleus else {
                 panic!("\\{command} is not a group: {:?}", list.atoms[0].nucleus);
             };
+            // Kerns (`Nucleus::Space`) sit between the glyphs, not real
+            // glyph atoms themselves — skip them here, same as the width
+            // test's "no items" check; a separate assertion below confirms
+            // `\dblcolon`'s specific kern is really present and correct.
             let inner_glyphs: Vec<&str> = inner
                 .atoms
                 .iter()
-                .map(|atom| match &atom.nucleus {
-                    Nucleus::Symbol(glyph) => glyph.as_str(),
+                .filter_map(|atom| match &atom.nucleus {
+                    Nucleus::Symbol(glyph) => Some(glyph.as_str()),
+                    Nucleus::Space { .. } => None,
                     other => panic!("\\{command} holds {other:?}"),
                 })
                 .collect();
             assert_eq!(inner_glyphs, glyphs, "\\{command}");
         }
-        // `\dblcolon` is two `\vcentcolon`s: each inner atom carries the same
-        // Rel-forced `":"` the `"vcentcolon"` arm resolves to.
+        // `\dblcolon` = `\vcentcolon \mkern-.9mu \vcentcolon`: exactly one
+        // kern, of exactly -0.9mu, between its two colon glyphs.
         let (list, _) = parsed(r"\dblcolon", MATHTOOLS);
         let Nucleus::Group(inner) = &list.atoms[0].nucleus else {
             panic!("\\dblcolon is not a group: {:?}", list.atoms[0].nucleus);
         };
-        for atom in &inner.atoms {
-            assert_eq!(atom.class_override, Some(AtomClass::Rel), "\\dblcolon");
-        }
+        assert_eq!(inner.atoms.len(), 3, ": <kern> : -- {inner:?}");
+        assert!(matches!(&inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 0.9 / 18.0).abs() < 1e-9));
     }
 
     /// The two math alphabets and the dashed arrows are `amsfonts.sty`'s too,
