@@ -2846,6 +2846,8 @@ impl<'a> Context<'a> {
             eject_before,
             vspace_before,
             addvspace_before,
+            addvspace_flex,
+            vspace_flex,
             endlist_adjust,
             list,
             sized,
@@ -2858,6 +2860,7 @@ impl<'a> Context<'a> {
             let mut first = true;
             let mut eject = *eject_before;
             let mut vspace = *vspace_before;
+            let mut flex = *vspace_flex;
             // `\endtrivlist`: a positive trailing skip of the previous
             // block is changed in place before `\@endparenv`'s
             // `\addvspace` compares against it.
@@ -2873,6 +2876,14 @@ impl<'a> Context<'a> {
             if *addvspace_before != 0.0 {
                 let prev_after = blocks.last().and_then(|b| b.vertical.space_after).map_or(0.0, |s| s.0);
                 vspace += (addvspace_before - prev_after).max(0.0);
+                // `\@xaddvskip` keeps whichever skip is larger *whole*: when
+                // the previous block's trailing skip wins, its own stretch
+                // and shrink are what survive, so the list skip's are not
+                // added on top of them.
+                if prev_after <= 0.0 {
+                    flex.0 += addvspace_flex.0;
+                    flex.1 += addvspace_flex.1;
+                }
             }
             // `\begin{center}`/`\begin{quote}`: `\addvspace{\topsep}` (plus
             // `\partopsep` from vertical mode) before the first paragraph;
@@ -2976,7 +2987,7 @@ impl<'a> Context<'a> {
                             if std::mem::take(&mut eject) {
                                 b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
                             }
-                            add_vspace(&mut b.vertical, std::mem::take(&mut vspace));
+                            add_skip(&mut b.vertical, std::mem::take(&mut vspace), std::mem::take(&mut flex));
                             add_skip_before(&mut b.vertical, env_before.take());
                             blocks.push(b);
                         }
@@ -3127,8 +3138,10 @@ impl<'a> Context<'a> {
             match block {
                 Block::Paragraph { .. } if minipage => {
                     let mut opened = block.clone();
-                    if let Block::Paragraph { addvspace_before, env_open, vspace_before, list, .. } = &mut opened {
+                    if let Block::Paragraph { addvspace_before, addvspace_flex, vspace_flex, env_open, vspace_before, list, .. } = &mut opened {
                         *addvspace_before = 0.0;
+                        *addvspace_flex = (0.0, 0.0);
+                        *vspace_flex = (0.0, 0.0);
                         *env_open = None;
                         // `\@item`'s `\addvspace\@topsep` and its paired
                         // `\addvspace{-\parskip}` are both suppressed.
@@ -6722,12 +6735,18 @@ fn add_skip_before(v: &mut pagebuild::VBlock, skip: Option<(f64, f64, f64)>) {
 /// Adds `pt` points of `\vspace` glue (compiler `Block::VSpace`) to the
 /// block's before-skip. Zero is a no-op so cached blocks stay identical.
 fn add_vspace(v: &mut pagebuild::VBlock, pt: f64) {
-    if pt == 0.0 {
+    add_skip(v, pt, (0.0, 0.0));
+}
+
+/// [`add_vspace`] with the skip's stretch and shrink (a list's `\topsep` /
+/// `\itemsep` / `\parsep` glue, which is not rigid).
+fn add_skip(v: &mut pagebuild::VBlock, pt: f64, flex: (f64, f64)) {
+    if pt == 0.0 && flex == (0.0, 0.0) {
         return;
     }
     v.space_before = Some(match v.space_before {
-        Some((n, s, k)) => (n + pt, s, k),
-        None => (pt, 0.0, 0.0),
+        Some((n, s, k)) => (n + pt, s + flex.0, k + flex.1),
+        None => (pt, flex.0, flex.1),
     });
 }
 

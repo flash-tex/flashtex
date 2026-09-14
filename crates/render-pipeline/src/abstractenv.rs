@@ -291,6 +291,8 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
         eject_before: false,
         vspace_before: 0.0,
         addvspace_before: 0.0,
+        addvspace_flex: (0.0, 0.0),
+        vspace_flex: (0.0, 0.0),
         endlist_adjust: 0.0,
         list: None,
         sized: Some(SizedPara {

@@ -331,6 +331,13 @@ pub enum Block {
         /// its excess over the previous block's trailing skip (a display's
         /// `\belowdisplayskip`) is added.
         addvspace_before: f64,
+        /// The stretch and shrink of `addvspace_before` and of the plain
+        /// `\vskip` part of `vspace_before`, in points. LaTeX's list skips
+        /// are glue; only their natural width fits in the two scalars above,
+        /// and a page that loses their `\@plus`/`\@minus` breaks in a
+        /// different place from pdfTeX's.
+        addvspace_flex: (f64, f64),
+        vspace_flex: (f64, f64),
         /// `\endtrivlist` of the list(s) closed between the previous block
         /// and this one: when the previous block left a positive trailing
         /// skip (a display's `\belowdisplayskip`), each closing list
@@ -1482,6 +1489,8 @@ pub fn adapt_cached(
                     eject_before,
                     vspace_before,
                     addvspace_before: unit.addvspace_before,
+                    addvspace_flex: unit.addvspace_flex,
+                    vspace_flex: unit.vspace_flex,
                     endlist_adjust: unit.endlist_adjust,
                     list,
                     sized: None,
@@ -1737,6 +1746,9 @@ struct Unit<'p> {
     vspace_before: f64,
     /// `\addvspace` glue before this unit (list skips; paragraphs only).
     addvspace_before: f64,
+    /// See [`Block::Paragraph::addvspace_flex`].
+    addvspace_flex: (f64, f64),
+    vspace_flex: (f64, f64),
     /// See [`Block::Paragraph::endlist_adjust`].
     endlist_adjust: f64,
     /// Constructs before this unit the pipeline set approximately.
@@ -1835,6 +1847,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                     eject_before: eject,
                     vspace_before: std::mem::take(&mut pending_vspace),
                     addvspace_before: 0.0,
+                    addvspace_flex: (0.0, 0.0),
+                    vspace_flex: (0.0, 0.0),
                     endlist_adjust: 0.0,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
@@ -1899,6 +1913,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
         };
         let is_heading = matches!(block, CBlock::Heading { .. });
         let mut addvspace_before = 0.0;
+        let mut addvspace_flex = (0.0f64, 0.0f64);
+        let mut vspace_flex = (0.0f64, 0.0f64);
         let mut endlist_adjust = 0.0;
         if prev_list && !is_heading {
             if let Some(gap) = first.and_then(gap_before) {
@@ -1908,6 +1924,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                     let begin_keys = stack.last().map_or("", |(e, keys)| if *e == env && *e != "thebibliography" { keys } else { "" });
                     let seps = list_seps_with(src, env, 1, size, style, begin_keys);
                     addvspace_before += seps.topsep + if list_vmode { seps.partopsep } else { 0.0 };
+                    addvspace_flex.0 += seps.topsep_skip.stretch + if list_vmode { seps.partopsep_skip.stretch } else { 0.0 };
+                    addvspace_flex.1 += seps.topsep_skip.shrink + if list_vmode { seps.partopsep_skip.shrink } else { 0.0 };
                     if let Some(p) = prev_end {
                         endlist_adjust = list_end_adjust(src, p.end, gap, size, style);
                     }
@@ -1924,10 +1942,11 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                 let seps = list_seps_with(src, env, stack.len().max(1), size, style, begin_keys);
                 // `\@outerparskip`: the `\parskip` in force when `\begin`
                 // was read — the enclosing list's `\parsep` when nested.
-                let outer_parskip = match stack.len() {
-                    n if n > 1 => list_seps(src, stack[n - 2].0, n - 1, size, style).parsep,
-                    _ => style.parskip.natural,
+                let outer_parskip_skip = match stack.len() {
+                    n if n > 1 => list_seps(src, stack[n - 2].0, n - 1, size, style).parsep_skip,
+                    _ => style.parskip,
                 };
+                let outer_parskip = outer_parskip_skip.natural;
                 if label.is_some() {
                     let opens = gap_before(at).and_then(|g| rfind_command(g, "begin").map(|b| (g, b))).or_else(|| {
                         // `\begin{thebibliography}{<widest>}` is the span of
@@ -1952,17 +1971,30 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                                 // the item paragraph's own `\parskip` (=
                                 // `\parsep`) restores the heading's gap.
                                 let nb = outer_parskip - seps.parsep;
+                                let flex = (outer_parskip_skip.stretch - seps.parsep_skip.stretch, outer_parskip_skip.shrink - seps.parsep_skip.shrink);
                                 if nb < 0.0 {
                                     vspace_before += nb;
+                                    vspace_flex.0 += flex.0;
+                                    vspace_flex.1 += flex.1;
                                 } else {
                                     addvspace_before += nb;
+                                    addvspace_flex.0 += flex.0;
+                                    addvspace_flex.1 += flex.1;
                                 }
                             } else {
                                 addvspace_before += seps.topsep + outer_parskip + if list_vmode { seps.partopsep } else { 0.0 };
+                                addvspace_flex.0 += seps.topsep_skip.stretch + outer_parskip_skip.stretch + if list_vmode { seps.partopsep_skip.stretch } else { 0.0 };
+                                addvspace_flex.1 += seps.topsep_skip.shrink + outer_parskip_skip.shrink + if list_vmode { seps.partopsep_skip.shrink } else { 0.0 };
                                 vspace_before -= seps.parsep;
+                                vspace_flex.0 -= seps.parsep_skip.stretch;
+                                vspace_flex.1 -= seps.parsep_skip.shrink;
                             }
                         }
-                        _ => addvspace_before += seps.itemsep,
+                        _ => {
+                            addvspace_before += seps.itemsep;
+                            addvspace_flex.0 += seps.itemsep_skip.stretch;
+                            addvspace_flex.1 += seps.itemsep_skip.shrink;
+                        }
                     }
                 }
                 // natbib's author-year `thebibliography`, and only when the
@@ -2059,6 +2091,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                     eject_before: eject,
                     vspace_before,
                     addvspace_before,
+                    addvspace_flex,
+                    vspace_flex,
                     endlist_adjust: 0.0,
                     limitations,
                 });
@@ -2100,6 +2134,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                                 eject_before: eject,
                                 vspace_before: std::mem::take(&mut vspace_before),
                                 addvspace_before: std::mem::take(&mut addvspace_before),
+                                addvspace_flex: std::mem::take(&mut addvspace_flex),
+                                vspace_flex: std::mem::take(&mut vspace_flex),
                                 endlist_adjust: std::mem::take(&mut endlist_adjust),
                                 limitations: std::mem::take(&mut limitations),
                             });
@@ -2125,6 +2161,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                                 eject_before: eject,
                                 vspace_before: std::mem::take(&mut vspace_before),
                                 addvspace_before: std::mem::take(&mut addvspace_before),
+                                addvspace_flex: std::mem::take(&mut addvspace_flex),
+                                vspace_flex: std::mem::take(&mut vspace_flex),
                                 endlist_adjust: std::mem::take(&mut endlist_adjust),
                                 limitations: std::mem::take(&mut limitations),
                             });
@@ -2146,6 +2184,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                         eject_before: eject,
                         vspace_before: std::mem::take(&mut vspace_before),
                         addvspace_before: std::mem::take(&mut addvspace_before),
+                        addvspace_flex: std::mem::take(&mut addvspace_flex),
+                        vspace_flex: std::mem::take(&mut vspace_flex),
                         endlist_adjust: std::mem::take(&mut endlist_adjust),
                         limitations: std::mem::take(&mut limitations),
                     });
@@ -2568,7 +2608,15 @@ struct ListSeps {
     partopsep: f64,
     itemsep: f64,
     parsep: f64,
-    /// `\parsep` with its stretch and shrink.
+    /// The same four with their stretch and shrink. LaTeX's list skips are
+    /// glue, not kerns (`\topsep 8\p@ \@plus2\p@ \@minus4\p@`,
+    /// `\parsep 4\p@ \@plus2\p@ \@minus\p@` at 10pt), and the page
+    /// builder needs that flexibility: dropping it makes every page carry
+    /// less `\pagestretch`/`\pageshrink` than pdfTeX's and the break
+    /// decisions diverge.
+    topsep_skip: crate::style::Skip,
+    partopsep_skip: crate::style::Skip,
+    itemsep_skip: crate::style::Skip,
     parsep_skip: crate::style::Skip,
 }
 
@@ -2587,12 +2635,16 @@ fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Styl
         _ => flashtex_document_style::BaseSize::Pt10,
     };
     let class = flashtex_document_style::list_level(base, depth as u8);
+    let skip = |s: flashtex_document_style::Skip| crate::style::Skip::new(s.pt, s.plus, s.minus);
     let mut seps = ListSeps {
         topsep: class.topsep.pt,
         partopsep: class.partopsep.pt,
         itemsep: class.itemsep.pt,
         parsep: class.parsep.pt,
-        parsep_skip: crate::style::Skip::new(class.parsep.pt, class.parsep.plus, class.parsep.minus),
+        topsep_skip: skip(class.topsep),
+        partopsep_skip: skip(class.partopsep),
+        itemsep_skip: skip(class.itemsep),
+        parsep_skip: skip(class.parsep),
     };
     if depth == 1 {
         // The stylesheet's level-1 values are the ones the typesetter
@@ -2600,7 +2652,11 @@ fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Styl
         seps.topsep = style.topsep.natural;
         seps.partopsep = style.partopsep.natural;
         seps.parsep = style.parsep.natural;
+        seps.topsep_skip = style.topsep;
+        seps.partopsep_skip = style.partopsep;
         seps.parsep_skip = style.parsep;
+        seps.itemsep_skip = style.parsep;
+        seps.itemsep = style.parsep.natural;
     }
     let calls = setlist_calls(source);
     let all_keys = calls.iter().filter(|(envs, _)| setlist_names(envs, env)).map(|(_, keys)| *keys).chain(std::iter::once(begin_keys));
@@ -2610,15 +2666,21 @@ fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Styl
                 seps.parsep = pt;
                 seps.parsep_skip = crate::style::Skip::fixed(pt);
             };
+            let set_itemsep = |seps: &mut ListSeps, pt: f64| {
+                seps.itemsep = pt;
+                seps.itemsep_skip = crate::style::Skip::fixed(pt);
+            };
             match key {
                 "nosep" => {
                     seps.topsep = 0.0;
+                    seps.topsep_skip = crate::style::Skip::default();
                     seps.partopsep = 0.0;
-                    seps.itemsep = 0.0;
+                    seps.partopsep_skip = crate::style::Skip::default();
+                    set_itemsep(&mut seps, 0.0);
                     set_parsep(&mut seps, 0.0);
                 }
                 "noitemsep" => {
-                    seps.itemsep = 0.0;
+                    set_itemsep(&mut seps, 0.0);
                     set_parsep(&mut seps, 0.0);
                 }
                 _ => {
@@ -2626,9 +2688,15 @@ fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Styl
                     // \setlength/\setlist lengths (hw-residuals-2).
                     let Some(pt) = parse_dimen_in(value, size, ec_em_ex(size, style.family)) else { continue };
                     match key {
-                        "topsep" => seps.topsep = pt,
-                        "partopsep" => seps.partopsep = pt,
-                        "itemsep" => seps.itemsep = pt,
+                        "topsep" => {
+                            seps.topsep = pt;
+                            seps.topsep_skip = crate::style::Skip::fixed(pt);
+                        }
+                        "partopsep" => {
+                            seps.partopsep = pt;
+                            seps.partopsep_skip = crate::style::Skip::fixed(pt);
+                        }
+                        "itemsep" => set_itemsep(&mut seps, pt),
                         "parsep" => set_parsep(&mut seps, pt),
                         _ => {}
                     }
@@ -5101,6 +5169,37 @@ mod tests {
             },
             Block::Heading { items, .. } => items.clone(),
             _ => panic!("a rule, picture, chapter or page-style block holds no items"),
+        }
+    }
+
+    /// The class's list skips are glue, not kerns: `\topsep`, `\partopsep`,
+    /// `\itemsep` and `\parsep` all carry the `\@plus`/`\@minus` of
+    /// `size1x.clo`'s `\@listI`, and the page builder needs them — a page
+    /// whose stretch is short by the 2 pt per `\itemsep` breaks in a
+    /// different place from pdfTeX's. An explicit `enumitem` value is a
+    /// dimen assignment and *is* rigid.
+    #[test]
+    fn list_skips_keep_their_stretch_and_shrink() {
+        let style = crate::style::Stylesheet::article(10, crate::fonts::Family::ComputerModern, None);
+        let src = "\\documentclass{article}\\begin{document}\\begin{itemize}\\item a\\end{itemize}\\end{document}";
+        let seps = list_seps(src, "itemize", 1, 10, &style);
+        // article/size10.clo \@listI: \topsep 8pt plus 2 minus 4,
+        // \parsep 4pt plus 2 minus 1, \itemsep \parsep, \partopsep 2pt
+        // plus 1 minus 1.
+        assert_eq!((seps.topsep_skip.natural, seps.topsep_skip.stretch, seps.topsep_skip.shrink), (8.0, 2.0, 4.0));
+        assert_eq!((seps.partopsep_skip.natural, seps.partopsep_skip.stretch, seps.partopsep_skip.shrink), (2.0, 1.0, 1.0));
+        assert_eq!((seps.parsep_skip.natural, seps.parsep_skip.stretch, seps.parsep_skip.shrink), (4.0, 2.0, 1.0));
+        assert_eq!((seps.itemsep_skip.natural, seps.itemsep_skip.stretch, seps.itemsep_skip.shrink), (4.0, 2.0, 1.0));
+
+        let rigid = "\\documentclass{article}\\usepackage{enumitem}\\setlist[itemize]{itemsep=3pt,topsep=5pt}\\begin{document}x\\end{document}";
+        let seps = list_seps(rigid, "itemize", 1, 10, &style);
+        assert_eq!((seps.itemsep_skip.natural, seps.itemsep_skip.stretch, seps.itemsep_skip.shrink), (3.0, 0.0, 0.0));
+        assert_eq!((seps.topsep_skip.natural, seps.topsep_skip.stretch, seps.topsep_skip.shrink), (5.0, 0.0, 0.0));
+        // `nosep` zeroes all four.
+        let nosep = "\\documentclass{article}\\usepackage{enumitem}\\setlist{nosep}\\begin{document}x\\end{document}";
+        let seps = list_seps(nosep, "itemize", 1, 10, &style);
+        for s in [seps.topsep_skip, seps.partopsep_skip, seps.itemsep_skip, seps.parsep_skip] {
+            assert_eq!((s.natural, s.stretch, s.shrink), (0.0, 0.0, 0.0));
         }
     }
 
