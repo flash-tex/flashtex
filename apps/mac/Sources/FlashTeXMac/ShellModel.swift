@@ -100,6 +100,13 @@ final class ShellModel {
     /// Triggers: `updateActiveText` (edit), a result or v2 frame landing
     /// (recompile), a caret move, and ⌘⇧J (explicit).
     @ObservationIgnored let caretFollow = CaretFollowController()
+    /// Clicking an internal hyperref destination: a one-shot scroll request
+    /// the v2 pane's `PreviewAnchorKeeper` acts on (token space separate from
+    /// caret following).
+    var previewReveal: CaretFollowController.Request?
+    /// Last link activation (tests); never opens a URL by itself.
+    private(set) var lastPreviewLinkAction: DisplayListLinks.Action?
+    private var previewRevealTokens = 0
     var anchor: InsertionAnchor?
     var proposals: [RuntimeV1.CaptureProposal] = []
     var reviewing: RuntimeV1.CaptureProposal?
@@ -316,6 +323,28 @@ final class ShellModel {
         if layoutDiagnostics != diagnostics { layoutDiagnostics = diagnostics }
         for note in capabilityNotes { log(note) }
         for d in layoutDiagnostics { log(d.message) }
+    }
+
+    /// Click on a v2 link: allowlisted URIs go through `NSWorkspace`;
+    /// internal destinations scroll the preview. Scheme policy is the app's
+    /// (proposal §6: writer does not filter).
+    func activatePreviewLink(_ link: RenderingV2.Navigation.Link, in list: RenderingV2.DisplayList) {
+        let destinations = list.navigation?.destinations ?? [:]
+        let action = DisplayListLinks.action(for: link, destinations: destinations)
+        lastPreviewLinkAction = action
+        switch action {
+        case .openURI(let url):
+            if DisplayListLinks.openURL(url) { navigationNote = "Opened \(url.absoluteString)" }
+            else { navigationNote = "Could not open \(url.absoluteString)" }
+        case .reveal(let dest):
+            previewRevealTokens += 1
+            previewReveal = CaretFollowController.Request(token: previewRevealTokens, target: DisplayListLinks.previewTarget(for: dest), reason: .explicit)
+            navigationNote = "Scrolled to page \(dest.page)"
+        case .rejectedScheme(let scheme):
+            navigationNote = "Blocked link scheme ‘\(scheme.isEmpty ? "none" : scheme)’ (allowed: http, https, mailto)"
+        case .unknownDestination(let name):
+            navigationNote = "Unknown destination \(name)"
+        }
     }
     var autoCompile = true
     private(set) var lastLatencyMs: Double?
@@ -865,6 +894,7 @@ final class ShellModel {
                 displayListBase = installed.acknowledgement
             }
         }
+        sent = DisplayListLinks.sent(with: sent)
         let request = RuntimeV1.CompileRequest(
             projectId: projectId,
             revision: editorRevision,
