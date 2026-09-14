@@ -31,6 +31,13 @@ pub enum TokenKind {
     /// `\[` and `\]`, the alternate display-math delimiters.
     DisplayMathOpen,
     DisplayMathClose,
+    /// `\(` and `\)`, the alternate inline-math delimiters. LaTeX defines
+    /// these as robust commands, not as catcode-3 characters, so unlike `$`
+    /// they are directional: `\)` cannot open math and `\(` cannot close it.
+    /// That is why pdfTeX answers a misplaced one with `! LaTeX Error: Bad
+    /// math environment delimiter` rather than by silently toggling mode.
+    InlineMathOpen,
+    InlineMathClose,
     Superscript,
     Subscript,
     /// `\verb` (or `\verb*`) through its matching delimiter: any character
@@ -318,6 +325,18 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                                 TokenKind::DisplayMathOpen
                             } else {
                                 TokenKind::DisplayMathClose
+                            },
+                            span: Span::in_document(document, start, j + 1),
+                        });
+                    }
+                    Some(&(j, '(')) | Some(&(j, ')')) => {
+                        let open = matches!(it.peek(), Some((_, '(')));
+                        it.next();
+                        tokens.push(Token {
+                            kind: if open {
+                                TokenKind::InlineMathOpen
+                            } else {
+                                TokenKind::InlineMathClose
                             },
                             span: Span::in_document(document, start, j + 1),
                         });
