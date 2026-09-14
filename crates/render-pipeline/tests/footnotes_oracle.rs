@@ -24,15 +24,12 @@ const RULE_TOL_BP: f64 = 0.1;
 /// Not implemented yet, measured and printed only:
 /// * `13-minipage`, `39-minipage-notes`: `minipage` footnotes (the box
 ///   layout is not on main; `footnotes::MinipageNotes` is the hook);
-/// * `15-math-note`: the formula is one rigid box in the justified line,
-///   while TeX also stretches its `\thickmuskip`/`\medmuskip` (the words
-///   after it are up to 1.7bp off; the 8pt math itself is exact);
 /// * `36-math-note-11pt`: an 11pt class's notes are 9pt, whose math fonts
 ///   (cmr9/cmmi9/cmsy9) math-layout does not embed: set with the body's;
 /// * `38-math-note-fraction`: the radical sign and `\sum` are painted from
 ///   Latin Modern Math, whose glyph origins are not lmsy8's/lmex10's (every
 ///   other glyph of the note is exact).
-const REPORTED: &[&str] = &["13-minipage", "15-math-note", "36-math-note-11pt", "38-math-note-fraction", "39-minipage-notes"];
+const REPORTED: &[&str] = &["13-minipage", "36-math-note-11pt", "38-math-note-fraction", "39-minipage-notes"];
 
 /// Need the compiler of the footnote-counters change (`\thanks` as symbol
 /// footnotes, `\chapter` counter resets, a `\long` note argument): gated
