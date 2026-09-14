@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/bigdelim-12pt-gh337",
-  "gh_ref": "https://github.com/flash-tex/flashtex/issues/337",
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/341",
   "machine": "mac-m5pro-dq222",
-  "note": "daniel-parent (Max, not daniel-vpclaude): #258 rank 10 12pt big delimiters; Codex plus",
+  "note": "already fixed by #252; test-only PR",
   "started_utc": "2026-09-14T06:28:53Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-337",
-  "updated_utc": "2026-09-14T06:28:53Z"
+  "updated_utc": "2026-09-14T06:50:18Z"
 }
