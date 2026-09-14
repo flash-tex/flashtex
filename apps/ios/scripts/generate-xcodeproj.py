@@ -268,6 +268,14 @@ def main():
       <Testables>
          <TestableReference skipped = "NO">
             <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "{unit_tid}" BuildableName = "FlashTeXPadTests.xctest" BlueprintName = "FlashTeXPadTests" ReferencedContainer = "container:FlashTeXPad.xcodeproj"/>
+            <!-- Hosted in the app: without these the production PadModel can
+                 auto-reconnect from a leftover Keychain pairing and race the
+                 XCTest PadModel (observed EXC_BAD_ACCESS in pollOutcome on
+                 Xcode 26.6 / iOS 26.5). UI tests pass their own args. -->
+            <CommandLineArguments>
+               <CommandLineArgument argument = "-flashtexpad-fresh" isEnabled = "YES"/>
+               <CommandLineArgument argument = "-flashtexpad-no-autoreconnect" isEnabled = "YES"/>
+            </CommandLineArguments>
          </TestableReference>
          <TestableReference skipped = "NO">
             <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "{ui_tid}" BuildableName = "FlashTeXPadUITests.xctest" BlueprintName = "FlashTeXPadUITests" ReferencedContainer = "container:FlashTeXPad.xcodeproj"/>

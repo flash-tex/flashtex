@@ -21,7 +21,19 @@ let package = Package(
     targets: [
         .target(name: "FlashTeXProtocol"),
         .target(name: "NearbyClient"),
-        .target(name: "FlashTeXPadKit", dependencies: ["FlashTeXProtocol", "NearbyClient"]),
+        .target(
+            name: "FlashTeXPadKit",
+            dependencies: ["FlashTeXProtocol", "NearbyClient"],
+            // Complete checking on this target only (not the Mac-owned
+            // NearbyClient / FlashTeXProtocol symlink targets). Experimental
+            // rather than .unsafeFlags: Xcode refuses unsafe flags in
+            // dependency packages. Tools 5.9; enableUpcomingFeature also
+            // exists (5.8+) but the Swift 6.3 frontend still honours this
+            // experimental spelling as -strict-concurrency=complete.
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency")
+            ]
+        ),
         // XCTest is hosted by the generated iOS project (FlashTeXPadTests).
         // Keeping a second SwiftPM test target here makes Xcode discover the
         // symlinked protocol/client sources as overlapping test sources.
