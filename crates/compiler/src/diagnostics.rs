@@ -69,8 +69,9 @@ pub struct DiagnosticLabel {
 
 /// Optional mechanical edit for `help.replacement` (issue #277).
 ///
-/// On the wire this is `{start_byte, end_byte, text}` in the diagnostic's
-/// `source.path`; `span` keeps the document id for incremental mapping.
+/// On the wire this is `{source: {path, start_byte, end_byte}, text}` —
+/// the same `source` object as `labels[].source` — so a replacement can
+/// target a different document than the diagnostic (e.g. an included file).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticReplacement {
     pub span: Span,
@@ -342,8 +343,7 @@ impl Diagnostic {
             h.set("message", str_(help.message.clone()));
             if let Some(repl) = &help.replacement {
                 let mut r = Value::obj();
-                r.set("start_byte", Value::Num(repl.span.start as f64));
-                r.set("end_byte", Value::Num(repl.span.end as f64));
+                r.set("source", source_json(repl.span, paths));
                 r.set("text", str_(repl.text.clone()));
                 h.set("replacement", r);
             }
@@ -480,7 +480,7 @@ mod tests {
         let json = crate::json::write(&with.to_json("notes.tex"));
         assert!(json.contains(r#""labels":[{"primary":true,"source":{"end_byte":6,"path":"notes.tex","start_byte":0},"text":"this command"}]"#), "{json}");
         assert!(json.contains(r#""notes":["\\tilde is a math accent"]"#), "{json}");
-        assert!(json.contains(r#""help":{"message":"wrap it in math: \\(\\tilde{c}\\)","replacement":{"end_byte":6,"start_byte":0,"text":"\\(\\tilde{c}\\)"}}"#), "{json}");
+        assert!(json.contains(r#""help":{"message":"wrap it in math: \\(\\tilde{c}\\)","replacement":{"source":{"end_byte":6,"path":"notes.tex","start_byte":0},"text":"\\(\\tilde{c}\\)"}}"#), "{json}");
         let without = Diagnostic::error("\\tilde is not supported", Some(span), Some("skipped".into()));
         let json = crate::json::write(&without.to_json("notes.tex"));
         assert!(!json.contains("\"labels\"") && !json.contains("\"notes\"") && !json.contains("\"help\""), "{json}");

@@ -25,8 +25,8 @@ apply. That needs three new optional fields on each diagnostic, and nothing else
 
 1. `labels` — extra underlined spans with caption text (primary + secondary).
 2. `notes` — extra `= note:` strings; not recovery, not the suggested fix.
-3. `help` — the suggested fix (`= help:`), with an optional byte-range
-   `replacement` the Mac Fix… button can apply.
+3. `help` — the suggested fix (`= help:`), with an optional
+   `replacement` (`source` + `text`) the Mac Fix… button can apply.
 
 `message` stays a **single line** and still contains **no recovery text**.
 Recovery remains the existing nullable `recovery` field. Old consumers that only
@@ -43,12 +43,16 @@ a different range or file (the `\begin` that does not match an `\end`; the
 `\label` nearest an undefined `\ref`) without inventing a second coordinate
 system.
 
-`help.replacement` is **not** another `source` object. It is
-`{start_byte, end_byte, text}` in the diagnostic's own `source.path`. That is
-the edit `EditorDiagnostics.QuickFix` already knows how to rebase from compiled
-bytes onto the current editor text (one path, one grouped undoable replacement).
-A cross-file fix is out of scope here; today's QuickFix refuses
-`.otherDocument`.
+`help.replacement` uses the **same `source` object** as `labels[].source`
+(`{path, start_byte, end_byte}`) plus `text`. A replacement can target a
+different document than the diagnostic's own `source` — for example an
+`\input` that should be edited in the included file, or a `\ref` whose
+fix lives next to a `\label` in another path. Emitting `path` on the
+replacement, rather than implying the diagnostic's path, is what makes
+that legal without a second coordinate system. `EditorDiagnostics.QuickFix`
+already rebases `{path, start_byte, end_byte, text}` from compiled bytes
+onto the current editor text; today's QuickFix may still refuse
+`.otherDocument` until part (4) grows a multi-file edit.
 
 The existing `suggestion` field (issue #76) stays. It is replacement **text for
 the diagnostic's entire `source` range** — currently a did-you-mean command such
@@ -79,7 +83,10 @@ nothing to say writes today's object.
   "notes": ["\\tilde is a math accent; here it is outside math mode"],
   "help": {
     "message": "wrap it in math: \\(\\tilde{c}_t\\)",
-    "replacement": {"start_byte": 1234, "end_byte": 1240, "text": "\\(\\tilde{c}_t\\)"}
+    "replacement": {
+      "source": {"path": "notes.tex", "start_byte": 1234, "end_byte": 1240},
+      "text": "\\(\\tilde{c}_t\\)"
+    }
   },
   "recovery": "the command was skipped and its argument typeset as text"
 }
@@ -137,12 +144,12 @@ Problems row.
 
 | field | type | rule |
 |---|---|---|
-| `start_byte` | number | Inclusive start, UTF-8, into the diagnostic's `source.path`. |
-| `end_byte` | number | Exclusive end. `start_byte == end_byte` is an insertion. |
+| `source` | `{path, start_byte, end_byte}` | Same meaning as diagnostic `source` and `labels[].source`. `path` is a project-relative document in the request; it **need not** equal the diagnostic's `source.path` (a replacement may edit an included file). Offsets are UTF-8, zero-based, end-exclusive. `start_byte == end_byte` is an insertion. |
 | `text` | string | The replacement (may be empty = delete). |
 
-There is no `path` on `replacement`: it always edits `source.path`. If
-`source` is null, `replacement` must be omitted (there is nowhere to apply it).
+If the diagnostic's `source` is null, `replacement` may still be present
+when it names its own `source.path`. A producer that cannot name a
+document omits `replacement`.
 
 Advice-only help (`message` without `replacement`) is valid. The Mac maps that
 to today's `QuickFix.Refusal.noEdits` ("this suggestion is advice only").
@@ -228,10 +235,11 @@ Out of this lane; specified so part (4) has a contract.
 - **Fix… / `EditorDiagnostics.QuickFix`.** Today's QuickFix prepares explanation-
   service suggestion edits (`{path, start_byte, end_byte, text}` into the
   compiled document) and rebases them onto the current text. `help.replacement`
-  is the same shape minus `path` (path = diagnostic `source.path`):
-  1. If `help.replacement` is present and `source` is non-null, `QuickFix.prepare`
-     from that one edit. Refusal cases are unchanged (overlap with a user edit,
-     bytes no longer match, not scalar-aligned, compiled text missing).
+  is the same shape (`replacement.source` supplies `path` / offsets):
+  1. If `help.replacement` is present, `QuickFix.prepare` from that one edit.
+     Refusal cases are unchanged (overlap with a user edit, bytes no longer
+     match, not scalar-aligned, compiled text missing, `.otherDocument` until
+     part (4) applies a cross-file fix).
   2. Else if `suggestion` is present, keep the existing did-you-mean
      replacement of the whole `source` range.
   3. Else the help is advice only → `.noEdits`.
