@@ -412,6 +412,16 @@ final class WordCountModel {
     @ObservationIgnored private var debounce: DispatchWorkItem?
     @ObservationIgnored private var generation = 0
 
+    /// Scheduling seam: production debounces via
+    /// `DispatchQueue.main.asyncAfter` (the default below). Tests inject
+    /// `{ _, item in item.perform() }` for deterministic, immediate
+    /// execution with no real wall-clock delay. Takes the
+    /// `DispatchWorkItem` itself — not a bare closure — so
+    /// `debounce?.cancel()` still keeps a superseded scan from running.
+    @ObservationIgnored var scheduleDebounce: (TimeInterval, DispatchWorkItem) -> Void = { delay, item in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
     static let debounceInterval: TimeInterval = {
         if let s = ProcessInfo.processInfo.environment["FLASHTEX_WORDCOUNT_DEBOUNCE_MS"], let ms = Double(s) { return max(0, ms) / 1000 }
         return 0.3
@@ -428,7 +438,7 @@ final class WordCountModel {
         if Self.debounceInterval == 0 {
             item.perform()
         } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounceInterval, execute: item)
+            scheduleDebounce(Self.debounceInterval, item)
         }
     }
 

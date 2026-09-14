@@ -200,6 +200,7 @@ private struct EditorPane: View {
                     }
                 },
                 userDefinition: { model.definitionSummary(forCommand: $0) }, // hover peek of \newcommand bodies (EditorNavigation.swift)
+                hoverContext: { model.editorHoverContext() }, // what \ref/\cite/\includegraphics resolve to (EditorHoverResolution.swift)
                 mathPreviewContext: { // inline math hover preview (MathHoverPreview.swift)
                     model.displayListV2?.frame.map {
                         MathHoverPreview.Context(path: model.activePath, frame: $0, previewIsStale: model.previewIsStale, dark: model.darkPreview)
@@ -521,6 +522,11 @@ private struct ProposalReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
     let proposal: RuntimeV1.CaptureProposal
     @State private var latex: String = ""
+    /// Why the last Approve did not insert. The model writes every refusal to
+    /// `captureNote`, but that is rendered in the status bar and the Captures
+    /// inspector — both behind this window-modal sheet. Without showing it
+    /// here, a refused approval looks exactly like a dead button.
+    @State private var failure: String?
     @StateObject private var preview = ProposalPreview(executable: ShellModel.locateCompiler()) // shadow compile (ProposalPreview.swift)
 
     var body: some View {
@@ -554,14 +560,31 @@ private struct ProposalReviewSheet: View {
             if !proposal.requiredDependencies.isEmpty {
                 Text("Required packages: " + proposal.requiredDependencies.joined(separator: ", ")).font(.caption)
             }
+            if let failure {
+                Label(failure, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout).foregroundStyle(.orange)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("review.failure")
+            }
             HStack {
                 Button("Reject", role: .destructive) { model.rejectProposal(proposal); dismiss() }
+                // Non-destructive exit: the sheet blocks the whole window, so
+                // without this the Captures inspector's Insert is unreachable
+                // for exactly the proposals it could act on.
+                Button("Close") { model.dismissReviewWithoutDeciding() }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("review.close")
                 Spacer()
                 ProposalApproveWarning(preview: preview)
                 Button("Approve and insert") {
+                    failure = nil
                     if model.isBridgeCapture(proposal.captureId) {
-                        Task { if case .inserted = await model.approveBridgeProposal(proposal, latex: latex) { dismiss() } }
+                        Task {
+                            if case .inserted = await model.approveBridgeProposal(proposal, latex: latex) { dismiss() }
+                            else { failure = model.captureNote ?? "The insertion was refused." }
+                        }
                     } else if case .inserted = model.approveProposal(proposal, latex: latex) { dismiss() }
+                    else { failure = model.captureNote ?? "The insertion was refused." }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled((model.anchor == nil && !model.isBridgeCapture(proposal.captureId)) || latex.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -570,7 +593,7 @@ private struct ProposalReviewSheet: View {
         .padding(16)
         .frame(width: 520)
         .onAppear { latex = proposal.latex; preview.update(from: model, latex: proposal.latex) }
-        .onChange(of: latex) { _, new in preview.update(from: model, latex: new) }
+        .onChange(of: latex) { _, new in failure = nil; preview.update(from: model, latex: new) }
         .onChange(of: model.editorRevision) { _, _ in preview.update(from: model, latex: latex) }
         .onChange(of: model.anchor) { _, _ in preview.update(from: model, latex: latex) }
         .onDisappear { preview.close() }

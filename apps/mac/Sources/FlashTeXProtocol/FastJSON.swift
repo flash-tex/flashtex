@@ -286,6 +286,8 @@ public struct FastJSON {
 
     private mutating func parseDiagnostic() throws -> RuntimeV1.Diagnostic {
         var severity: RuntimeV1.Severity?, message: String?, source: RuntimeV1.SourceRange?, recovery: String?
+        var code: String?, suggestion: String?, labels: [RuntimeV1.Diagnostic.Label]?, notes: [String]?
+        var help: RuntimeV1.Diagnostic.Help?
         try parseObject { key, p in
             switch key {
             case "severity":
@@ -296,12 +298,79 @@ public struct FastJSON {
             case "source":
                 if p.peekNull() { try p.parseNull() } else { source = try p.parseSourceRange() }
             case "recovery": recovery = try p.parseOptionalString()
+            case "code": code = try p.parseOptionalString()
+            case "suggestion": suggestion = try p.parseOptionalString()
+            case "labels":
+                if p.peekNull() { try p.parseNull() } else { labels = try p.parseArray { try $0.parseDiagnosticLabel() } }
+            case "notes":
+                if p.peekNull() { try p.parseNull() } else { notes = try p.parseArray { try $0.parseString() } }
+            case "help":
+                if p.peekNull() { try p.parseNull() } else { help = try p.parseDiagnosticHelp() }
             default: try p.skipValue(depth: 3)
             }
         }
         guard let severity else { throw error("diagnostic missing severity") }
         guard let message else { throw error("diagnostic missing message") }
-        return RuntimeV1.Diagnostic(severity: severity, message: message, source: source, recovery: recovery)
+        return RuntimeV1.Diagnostic(severity: severity, message: message, source: source, recovery: recovery,
+                                    code: code, suggestion: suggestion, labels: labels, notes: notes, help: help)
+    }
+
+    private mutating func parseDiagnosticLabel() throws -> RuntimeV1.Diagnostic.Label {
+        var source: RuntimeV1.SourceRange?, text: String?, primary: Bool?
+        try parseObject { key, p in
+            switch key {
+            case "source": source = try p.parseSourceRange()
+            case "text": text = try p.parseString()
+            case "primary": primary = try p.parseBool()
+            default: try p.skipValue(depth: 3)
+            }
+        }
+        guard let source else { throw error("label missing source") }
+        guard let text else { throw error("label missing text") }
+        guard let primary else { throw error("label missing primary") }
+        return .init(source: source, text: text, primary: primary)
+    }
+
+    private mutating func parseDiagnosticHelp() throws -> RuntimeV1.Diagnostic.Help {
+        var message: String?, replacement: RuntimeV1.Diagnostic.Replacement?
+        try parseObject { key, p in
+            switch key {
+            case "message": message = try p.parseString()
+            case "replacement":
+                if p.peekNull() { try p.parseNull() } else { replacement = try p.parseDiagnosticReplacement() }
+            default: try p.skipValue(depth: 3)
+            }
+        }
+        guard let message else { throw error("help missing message") }
+        return .init(message: message, replacement: replacement)
+    }
+
+    private mutating func parseDiagnosticReplacement() throws -> RuntimeV1.Diagnostic.Replacement {
+        var start: Int?, end: Int?, text: String?, path: String?
+        try parseObject { key, p in
+            switch key {
+            case "start_byte": start = try p.parseInt()
+            case "end_byte": end = try p.parseInt()
+            case "text": text = try p.parseString()
+            case "path": path = try p.parseOptionalString()
+            case "source":
+                if p.peekNull() { try p.parseNull() } else {
+                    let src = try p.parseSourceRange()
+                    if path == nil { path = src.path }
+                }
+            default: try p.skipValue(depth: 3)
+            }
+        }
+        guard let start else { throw error("replacement missing start_byte") }
+        guard let end else { throw error("replacement missing end_byte") }
+        guard let text else { throw error("replacement missing text") }
+        return .init(startByte: start, endByte: end, text: text, path: path)
+    }
+
+    private mutating func parseBool() throws -> Bool {
+        if peek(UInt8(ascii: "t")) { try expectLiteral("true"); return true }
+        if peek(UInt8(ascii: "f")) { try expectLiteral("false"); return false }
+        throw error("expected a boolean")
     }
 
     // MARK: generic

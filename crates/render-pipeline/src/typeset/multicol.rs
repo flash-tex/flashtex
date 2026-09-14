@@ -511,7 +511,7 @@ fn body_first_start(body: &[Block]) -> Option<usize> {
 /// Splits a paragraph whose lines straddle `at` (a preface that ends in
 /// the middle of a paragraph: `[...]` is blanked, not a `\par`).
 fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Block)> {
-    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, endlist_adjust, list } = b else { return None };
+    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, list, sized } = b else { return None };
     let mut before: Vec<ParaPart> = Vec::new();
     let mut after: Vec<ParaPart> = Vec::new();
     for p in parts {
@@ -556,8 +556,11 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         eject_before: *eject_before,
         vspace_before: *vspace_before,
         addvspace_before: *addvspace_before,
+        addvspace_flex: *addvspace_flex,
+        vspace_flex: *vspace_flex,
         endlist_adjust: *endlist_adjust,
         list: list.clone(),
+        sized: *sized,
     };
     let second = Block::Paragraph {
         parts: after,
@@ -568,8 +571,11 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         eject_before: false,
         vspace_before: 0.0,
         addvspace_before: 0.0,
+        addvspace_flex: (0.0, 0.0),
+        vspace_flex: (0.0, 0.0),
         endlist_adjust: 0.0,
         list: None,
+        sized: *sized,
     };
     Some((first, second))
 }
@@ -743,6 +749,7 @@ pub(super) fn outer_doc(ctx: &mut Context, doc: &Doc, floats: &[floatpage::Float
         blocks: out,
         diagnostics: Vec::new(),
         limitations: Vec::new(),
+        superseded: Vec::new(),
         secnumdepth: doc.secnumdepth,
         page_starts,
         default_color: doc.default_color,
@@ -1960,6 +1967,7 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
             blocks: body,
             diagnostics: Vec::new(),
             limitations: Vec::new(),
+            superseded: Vec::new(),
             secnumdepth: doc.secnumdepth,
             page_starts: Vec::new(),
             default_color: doc.default_color,

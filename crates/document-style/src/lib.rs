@@ -42,6 +42,6 @@ pub use geometry::{
 pub use json::{JsonError, Value};
 pub use length::{LengthError, Pt, Skip};
 pub use style::{
-    Alignment, Block, DeltaRule, InlineStyle, ListKind, ListStyle, ResolvedStyle, StyleDelta,
-    Stylesheet,
+    Alignment, Block, DeltaRule, InlineStyle, ListKind, ListNestingTooDeep, ListStyle,
+    MAX_LIST_NESTING_DEPTH, ResolvedStyle, StyleDelta, Stylesheet,
 };

@@ -94,8 +94,15 @@ public struct CaptureRecord: Identifiable, Equatable {
 /// disconnect re-send the identical payload with the same id; the Mac
 /// de-duplicates (nearby-v1 §4). Every change is written to `store` when one
 /// is attached, so a relaunch shows the same list.
-public final class CaptureQueue {
-    public private(set) var records: [CaptureRecord] = []
+/// `@unchecked Sendable`: `_records`, `_lastStoreError` and `_redeliveries`
+/// are serialized by `lock`. `link` and `store` are already `@unchecked Sendable`.
+public final class CaptureQueue: @unchecked Sendable {
+    /// Snapshot of the list. Mutations go through `update`/`draft` under `lock`
+    /// because `refreshOutcome` resumes off the main actor after `await` and
+    /// PadModel copies this array into a `@Published` property.
+    public var records: [CaptureRecord] { lock.withLock { _records } }
+    private var _records: [CaptureRecord] = []
+    private let lock = NSLock()
     public let link: MacLink
     public let store: CaptureStore?
     public static let maxInstructionBytes = 4096
@@ -105,27 +112,32 @@ public final class CaptureQueue {
     public init(link: MacLink, store: CaptureStore? = nil) {
         self.link = link
         self.store = store
-        records = store?.load() ?? []
+        _records = store?.load() ?? []
     }
 
-    public func record(_ id: String) -> CaptureRecord? { records.first { $0.id == id } }
+    public func record(_ id: String) -> CaptureRecord? { lock.withLock { _records.first { $0.id == id } } }
 
     private func update(_ id: String, _ f: (inout CaptureRecord) -> Void) {
-        guard let i = records.firstIndex(where: { $0.id == id }) else { return }
-        f(&records[i])
-        persist()
+        lock.withLock {
+            guard let i = _records.firstIndex(where: { $0.id == id }) else { return }
+            f(&_records[i])
+            persistLocked()
+        }
     }
 
-    private func persist() {
+    /// Caller must hold `lock`. `store.save` runs under that lock so a concurrent
+    /// `records` read cannot observe a torn list; CaptureStore has its own lock too.
+    private func persistLocked() {
         guard let store else { return }
-        if records.count > Self.maxRecords {
-            var kept = records
+        if _records.count > Self.maxRecords {
+            var kept = _records
             for i in stride(from: kept.count - 1, through: 0, by: -1) where kept.count > Self.maxRecords && kept[i].status.isTerminal { kept.remove(at: i) }
-            records = kept
+            _records = kept
         }
-        do { try store.save(records) } catch { lastStoreError = "\(error)" }
+        do { try store.save(_records) } catch { _lastStoreError = "\(error)" }
     }
-    public private(set) var lastStoreError: String?
+    public var lastStoreError: String? { lock.withLock { _lastStoreError } }
+    private var _lastStoreError: String?
 
     /// Client-side checks the Mac would fail anyway (`NearbyWire.checkImage`,
     /// instruction bound), before anything is queued.
@@ -137,8 +149,10 @@ public final class CaptureQueue {
 
     @discardableResult
     public func draft(_ r: CaptureRecord) -> CaptureRecord {
-        records.insert(r, at: 0)
-        persist()
+        lock.withLock {
+            _records.insert(r, at: 0)
+            persistLocked()
+        }
         return r
     }
 
@@ -237,7 +251,8 @@ public final class CaptureQueue {
 
     /// Re-sends a received capture byte-for-byte (saved destination and
     /// base_revision, not a fresh `destination_query`). Records the new receipt.
-    public private(set) var redeliveries: [String] = []
+    public var redeliveries: [String] { lock.withLock { _redeliveries } }
+    private var _redeliveries: [String] = []
     private func redeliver(_ r: CaptureRecord, session: NearbySession) async throws {
         guard let destinationId = r.destinationId, let baseRevision = r.baseRevision else {
             throw NearbyError.remote(code: "unknown_capture", message: "no saved destination to re-deliver with")
@@ -245,7 +260,7 @@ public final class CaptureQueue {
         let dest = NearbyWire.Destination(destinationId: destinationId, projectId: "", path: "", baseRevision: baseRevision)
         let submit = try session.makeCapture(captureId: r.id, image: r.png, mimeType: "image/png", instructions: r.instructions, destination: dest)
         let ack = try await session.submitCapture(submit)
-        redeliveries.append(r.id)
+        lock.withLock { _redeliveries.append(r.id) }
         update(r.id) { $0.status = .received(ack) }
     }
 

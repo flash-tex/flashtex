@@ -205,6 +205,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                     seg.style.italic.hash(h);
                     seg.style.color.hash(h);
                     (seg.style.slanted, seg.style.caps, seg.style.family, seg.style.undefined).hash(h);
+                    seg.style.literal.hash(h);
                     for c in &seg.chars {
                         (c.start.wrapping_sub(base)).hash(h);
                         (c.end.wrapping_sub(base)).hash(h);
@@ -216,6 +217,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 style.bold.hash(h);
                 style.italic.hash(h);
                 (style.slanted, style.caps, style.family, style.undefined).hash(h);
+                style.literal.hash(h);
                 factor.hash(h);
                 no_break.hash(h);
             }
@@ -287,6 +289,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 11u8.hash(h);
                 format!("{b:?}").hash(h);
             }
+            Item::LeaveVmode => 201u8.hash(h),
         }
     }
 }
