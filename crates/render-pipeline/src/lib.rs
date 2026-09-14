@@ -19,6 +19,7 @@ pub mod floats;
 pub mod fonts;
 pub mod graphics;
 pub mod ids;
+pub mod listings;
 pub mod incremental;
 pub mod mathalpha;
 pub mod mathfont;

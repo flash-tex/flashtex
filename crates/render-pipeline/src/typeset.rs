@@ -5509,6 +5509,42 @@ fn plain_vblock(lines: Vec<(f64, f64)>) -> VBlock {
     }
 }
 
+/// One `lstlisting`'s resolved metrics: everything the option list needs
+/// the `basicstyle` font to turn into points.
+struct LstMetrics {
+    /// `basicstyle` as an NFSS request, and the size it selects.
+    style: TextStyle,
+    size: f64,
+    /// `\baselineskip` `\normalbaselines` set for that size.
+    bls: f64,
+    /// `\lst@width`, the cell: `basewidth` in the `basicstyle` font.
+    cell: f64,
+    /// `\lst@outputspace`, the interword space of that font.
+    space: f64,
+    /// `\fontdimen6`/`\fontdimen5` of the `basicstyle` font, which every
+    /// `em`/`ex` in the option list is expanded against.
+    em: f64,
+    ex: f64,
+    /// The class's base size (10/11/12), for a style's size declaration.
+    class: u32,
+    xleft: f64,
+    xright: f64,
+    framerule: f64,
+    framesep: f64,
+    numbersep: f64,
+    breakindent: f64,
+    /// `\linewidth` inside the listing.
+    measure: f64,
+}
+
+/// A character placed on a code line: its x from the line's origin, the
+/// box and its record.
+struct LstGlyph {
+    x: f64,
+    run: pl::GlyphRun,
+    rec: usize,
+}
+
 /// `\null` (an empty `\hbox`) as a block with `vertical`'s skips.
 fn empty_block(vertical: VBlock) -> BuiltBlock {
     positioned_block(Vec::new(), 0.0, 0.0, 0.0, vertical)
@@ -5552,6 +5588,553 @@ fn positioned_block(runs: Vec<(pl::GlyphRun, usize, f64)>, height: f64, depth: f
         labels: Vec::new(),
         cache_key: None,
     }
+}
+
+impl Context<'_> {
+    /// One `lstlisting`: its code lines, the `numbers` gutter and the
+    /// `frame` rules, as one to three vertical blocks.
+    ///
+    /// The vertical structure is `\lst@Init`/`\lst@DeInit` exactly, and it
+    /// is *not* a `\trivlist`:
+    ///
+    /// ```text
+    /// \par \penalty-50 \vspace\lst@aboveskip \normalbaselines
+    ///     [\lst@frameInit: \vskip(ht0-\baselineskip) \vskip\lineskip
+    ///      \noindent\box0 \par \lineskiplimit\maxdimen \lineskip\z@]
+    ///     <one \strut-ed line per code line>
+    ///     [\lst@frameExit: \nointerlineskip \noindent\box0]
+    /// \par \removelastskip \penalty-50 \vspace\lst@belowskip
+    /// ```
+    ///
+    /// `ht0` is `framesep + framerule` (the height of `\lst@frameH`'s box),
+    /// so the measured above-gap `aboveskip + \lineskip + framesep +
+    /// framerule + 0.7\baselineskip` falls out of the ordinary interline
+    /// rule and does not depend on `\prevdepth` -- listings' own
+    /// `\ifdim\prevdepth<\@cclvi\p@` never fires for a real previous
+    /// depth, so the `\advance\@tempdima\prevdepth` inside it is dead.
+    /// The regime where it *does* matter (`framesep + framerule >=
+    /// \baselineskip`, so `\@tempdima` is not negative and no `\vskip` is
+    /// issued at all) is not modelled; no committed fixture is in it.
+    fn listing_blocks(&mut self, lst: &adapter::ListingBlock) -> Vec<BuiltBlock> {
+        let m = self.listing_metrics(lst);
+        let o = &lst.opts;
+        let mut out: Vec<BuiltBlock> = Vec::new();
+        // `\ht\strutbox`/`\dp\strutbox` of the size in force: every code
+        // line carries one, so the baseline step is exactly the listing's
+        // `\baselineskip`.
+        let (strut_h, strut_d) = (0.7 * m.bls, 0.3 * m.bls);
+        let frame_ink = m.framesep + m.framerule;
+
+        // Every source line becomes one or more output lines, each a list
+        // of placed characters and the indent `breaklines` gave it.
+        let mut rows: Vec<(Vec<LstGlyph>, f64, Option<String>, Span)> = Vec::new();
+        for line in &lst.lines {
+            let span = Span::in_document(lst.document, line.at.start, line.at.end);
+            let (placed, breaks, lead_lost) = self.listing_line(line, o, &m, span);
+            let indent = m.breakindent + if o.breakautoindent { lead_lost } else { 0.0 };
+            let mut number = line.number.clone();
+            for (glyphs, shift) in split_for_breaklines(placed, &breaks, o.breaklines, m.measure, indent) {
+                rows.push((glyphs, shift, number.take(), span));
+            }
+        }
+        if rows.is_empty() {
+            return out;
+        }
+
+        // ---- the code lines
+        let mut items: Vec<pl::Item> = Vec::new();
+        let mut recs: Vec<Option<usize>> = Vec::new();
+        for (i, (glyphs, shift, number, span)) in rows.iter().enumerate() {
+            if i > 0 {
+                // `\lst@NewLine`: `\par\noindent\hbox{}` -- a forced break
+                // with `\parfillskip`'s fil, never a legal break of its own.
+                items.push(pl::Item::penalty(pl::INFINITE_PENALTY));
+                recs.push(None);
+                items.push(pl::Item::Glue(pl::Glue::fil()));
+                recs.push(None);
+                items.push(pl::Item::penalty(pl::FORCED_BREAK));
+                recs.push(None);
+            }
+            let (run, rec) = self.strut_box(strut_h, strut_d, m.size, *span);
+            items.push(pl::Item::Box(run));
+            recs.push(Some(rec));
+            // `\lst@framelr` (the `EveryLine` hook): an `\llap`/`\rlap`
+            // pair of `\vrule`s, zero width, so the line's measure is the
+            // same framed or not.
+            for (dx, present) in [(-frame_ink, o.frame.left), (m.measure + m.framesep, o.frame.right)] {
+                if !present {
+                    continue;
+                }
+                let (run, rec) = self.overlay_rule(m.framerule, m.bls, -strut_d, m.size, *span);
+                items.push(pl::Item::kern(dx));
+                recs.push(None);
+                items.push(pl::Item::Box(run));
+                recs.push(Some(rec));
+                items.push(pl::Item::kern(-dx));
+                recs.push(None);
+            }
+            if let Some(number) = number {
+                for (item, rec) in self.listing_number(number, o.number_style, &m, *span) {
+                    items.push(item);
+                    recs.push(rec);
+                }
+            }
+            let mut pen = 0.0;
+            for g in glyphs {
+                let x = g.x + shift;
+                if (x - pen).abs() > 1e-12 {
+                    items.push(pl::Item::kern(x - pen));
+                    recs.push(None);
+                }
+                pen = x + g.run.width;
+                items.push(pl::Item::Box(g.run.clone()));
+                recs.push(Some(g.rec));
+            }
+        }
+        items.push(pl::Item::penalty(pl::INFINITE_PENALTY));
+        recs.push(None);
+        items.push(pl::Item::Glue(pl::Glue::fil()));
+        recs.push(None);
+        items.push(pl::Item::penalty(pl::FORCED_BREAK));
+        recs.push(None);
+
+        let mut params = self.line_params(false, m.bls, ParaStyle::FlushLeft, m.xleft);
+        params.line_width = self.style.text_width_pt - m.xright;
+        let Some(lines) = self.break_paragraph(&items, &params, &[], Some(&recs)) else {
+            return out;
+        };
+        self.report_overfull(&lines, &items, &recs);
+
+        let above = (o.aboveskip.resolve(m.em, m.ex), o.aboveskip_rubber.0, o.aboveskip_rubber.1);
+        let below = (o.belowskip.resolve(m.em, m.ex), o.belowskip_rubber.0, o.belowskip_rubber.1);
+        let extents = line_extents(&lines);
+        let code = BuiltBlock {
+            block: pl::ParagraphBlock::body(lines),
+            items,
+            recs,
+            vertical: VBlock {
+                lines: extents,
+                penalty_before: (!o.frame.top).then_some(LST_PENALTY),
+                space_before: (!o.frame.top).then_some(above),
+                parskip: None,
+                interline_penalty: 0,
+                club_penalty: 0,
+                widow_penalty: 0,
+                penalty_after: (!o.frame.bottom).then_some(LST_PENALTY),
+                space_after: (!o.frame.bottom).then_some(below),
+                no_interline_first: o.frame.top,
+                no_interline_after: false,
+                baselineskip: Some(m.bls),
+                vskip_after: Vec::new(),
+                pre_space_after: None,
+            },
+            labels: Vec::new(),
+            cache_key: None,
+        };
+
+        if o.frame.top {
+            // `\lst@frameH T`: an `\rlap`ped box of height `framesep +
+            // framerule` whose rule sits `framesep` above the baseline.
+            // `\lst@frameInit` puts `\vskip(\ht0-\baselineskip)
+            // \vskip\lineskip` in front of it, and the ordinary interline
+            // glue that follows cancels the `\prevdepth` out again.
+            let mut b = self.listing_rule_block(&m, o.frame, true, lst.span);
+            b.vertical.penalty_before = Some(LST_PENALTY);
+            b.vertical.space_before = Some((above.0 + frame_ink - m.bls + self.style.lineskip_pt, above.1, above.2));
+            b.vertical.penalty_after = Some(pagebuild::INF_PENALTY);
+            out.push(b);
+        }
+        out.push(code);
+        if o.frame.bottom {
+            let mut b = self.listing_rule_block(&m, o.frame, false, lst.span);
+            b.vertical.no_interline_first = true;
+            b.vertical.penalty_after = Some(LST_PENALTY);
+            b.vertical.space_after = Some(below);
+            out.push(b);
+        }
+        out
+    }
+
+    /// `basicstyle` and every option dimension, in points.
+    fn listing_metrics(&mut self, lst: &adapter::ListingBlock) -> LstMetrics {
+        let o = &lst.opts;
+        let body = self.style.body_size_pt;
+        let style = listing_style(o.basic, TextStyle::default(), adapter::class_size_of(body));
+        let size = style.size_or(body);
+        let bls = if (size - body).abs() < 1e-9 {
+            self.style.baselineskip_pt
+        } else {
+            crate::table::baselineskip_pt(adapter::class_size_of(body), (size * 100.0).round() as u16)
+        };
+        let p = self.text_params(style, size);
+        let (em, ex) = (p.quad, p.x_height);
+        let base = if o.columns.flexible() { o.basewidth_flexible } else { o.basewidth_fixed };
+        LstMetrics {
+            style,
+            size,
+            bls,
+            cell: base.resolve(em, ex),
+            space: p.space,
+            em,
+            ex,
+            class: adapter::class_size_of(body),
+            xleft: o.xleftmargin.resolve(em, ex),
+            xright: o.xrightmargin.resolve(em, ex),
+            framerule: o.framerule.resolve(em, ex),
+            framesep: o.framesep.resolve(em, ex),
+            numbersep: o.numbersep.resolve(em, ex),
+            breakindent: o.breakindent.resolve(em, ex),
+            measure: self.style.text_width_pt - o.xleftmargin.resolve(em, ex) - o.xrightmargin.resolve(em, ex),
+        }
+    }
+
+    /// Places one source line's characters, running `\lst@lostspace` and
+    /// the `\lst@lefthss`/`\lst@righthss` fill exactly as
+    /// `\lst@CalcLostSpaceAndOutput` does. Returns the placed characters,
+    /// the `(index, pen)` of every `breaklines` discretionary (the
+    /// `PostOutput` hook fires after every box), and the lost space the
+    /// line opened with (`breakautoindent`).
+    fn listing_line(
+        &mut self,
+        line: &crate::listings::CodeLine,
+        o: &crate::listings::Options,
+        m: &LstMetrics,
+        span: Span,
+    ) -> (Vec<LstGlyph>, Vec<(usize, f64)>, f64) {
+        use crate::listings::{Columns, Op, Pos};
+        let mut out: Vec<LstGlyph> = Vec::new();
+        let mut breaks: Vec<(usize, f64)> = Vec::new();
+        let mut pen = 0.0f64;
+        let mut lost = 0.0f64;
+        let mut at_bol = true;
+        let mut lead_lost = 0.0f64;
+        // `\lst@column@fullflexible`/`@spaceflexible` drop both inserts
+        // and only flush lost space at a newline.
+        let deferred = matches!(o.columns, Columns::FullFlexible | Columns::SpaceFlexible);
+        for op in &line.ops {
+            let (cells, pieces, is_tab) = match op {
+                Op::LostSpace => {
+                    lost += m.cell;
+                    if at_bol {
+                        lead_lost += m.cell;
+                    }
+                    continue;
+                }
+                Op::TabLost { cells } => {
+                    lost += *cells as f64 * m.cell;
+                    if at_bol {
+                        lead_lost += *cells as f64 * m.cell;
+                    }
+                    continue;
+                }
+                Op::TabBox { cells, .. } => (*cells, None, true),
+                Op::Box { cells, pieces } => (*cells, Some(pieces), false),
+            };
+            // `\lst@OutputToken`: `\lst@OutputLostSpace` before the box
+            // (`\lst@GotoTabStop` calls `\lst@CalcLostSpaceAndOutput`
+            // directly, so a tab does not flush first).
+            if !is_tab && lost > 0.0 && (!deferred || at_bol) {
+                pen += lost;
+                lost = 0.0;
+            }
+            let mut shaped: Vec<Option<(pl::GlyphRun, usize)>> = Vec::new();
+            let mut widths: Vec<f64> = Vec::new();
+            match pieces {
+                None => {
+                    // The tab's box is exactly one `\lst@outputspace` wide
+                    // and paints nothing.
+                    shaped.push(None);
+                    widths.push(m.space);
+                }
+                Some(pieces) => {
+                    for piece in pieces {
+                        let at = Span::in_document(span.document, piece.at.start, piece.at.end);
+                        match piece.ch {
+                            // `\lst@nolig` = `\leavevmode\kern\z@`.
+                            None => {
+                                shaped.push(None);
+                                widths.push(0.0);
+                            }
+                            Some(' ') if !piece.visible_space => {
+                                // `\ ` of the listing's font: blank, and
+                                // never slot 32 (the Cork visible space).
+                                shaped.push(None);
+                                widths.push(self.text_params(listing_style(tok_spec(o, piece.style), m.style, m.class), m.size).space);
+                            }
+                            Some(ch) => {
+                                let ch = if piece.visible_space { VISIBLE_SPACE } else { ch };
+                                let style = listing_style(tok_spec(o, piece.style), m.style, m.class);
+                                let seg = adapter::Segment {
+                                    text: ch.to_string(),
+                                    chars: vec![adapter::CharSrc {
+                                        document: at.document,
+                                        start: at.start,
+                                        end: at.end,
+                                    }],
+                                    style,
+                                };
+                                match self.text_box(&seg, m.size) {
+                                    Some((run, rec)) => {
+                                        widths.push(run.width);
+                                        shaped.push(Some((run, rec)));
+                                    }
+                                    None => {
+                                        shaped.push(None);
+                                        widths.push(0.0);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let natural: f64 = widths.iter().sum();
+            let boxw = if o.columns.flexible() { natural } else { cells as f64 * m.cell };
+            // `\lst@FillFixed` puts one `\hss` between consecutive items;
+            // `\lst@outputpos` decides the two on the outside. In a
+            // flexible column `\lst@hss` is `\@empty`, so nothing stretches.
+            let items = shaped.len();
+            let (hss, lead) = match o.pos {
+                Pos::Center => (items + 1, 1usize),
+                Pos::Left => (items, 0),
+                Pos::Right => (items, 1),
+            };
+            let fill = if o.columns.flexible() || hss == 0 { 0.0 } else { (boxw - natural) / hss as f64 };
+            // `\lst@CalcLostSpaceAndOutput`.
+            lost += cells as f64 * m.cell - boxw;
+            let (left_ins, right_ins) = if lost > 0.0 && !deferred {
+                let ins = match o.pos {
+                    Pos::Center => (lost / 2.0, lost / 2.0),
+                    Pos::Left => (0.0, lost),
+                    Pos::Right => (lost, 0.0),
+                };
+                lost = 0.0;
+                ins
+            } else {
+                (0.0, 0.0)
+            };
+            let start = pen + left_ins;
+            let mut acc = 0.0;
+            for (i, sh) in shaped.into_iter().enumerate() {
+                if let Some((run, rec)) = sh {
+                    out.push(LstGlyph {
+                        x: start + (i + lead) as f64 * fill + acc,
+                        run,
+                        rec,
+                    });
+                }
+                acc += widths[i];
+            }
+            pen = start + boxw + right_ins;
+            at_bol = false;
+            // `\lst@AddToHook{PostOutput}{\lst@discretionary}`.
+            breaks.push((out.len(), pen));
+        }
+        (out, breaks, lead_lost)
+    }
+
+    /// `\lst@PlaceNumber`: `\llap{\normalfont \lst@numberstyle{\thelstnumber}
+    /// \kern\lst@numbersep}` -- zero width, so the code's x is unaffected.
+    /// `\normalfont` first, so an empty `numberstyle` sets the number in
+    /// the roman face at the size in force (CMR9 under `\small`), not in
+    /// `basicstyle`'s typewriter.
+    fn listing_number(&mut self, number: &str, spec: crate::listings::StyleSpec, m: &LstMetrics, span: Span) -> Vec<(pl::Item, Option<usize>)> {
+        let style = listing_style(spec, TextStyle { size_cpt: m.style.size_cpt, ..TextStyle::default() }, m.class);
+        let size = style.size_or(m.size);
+        let mut boxes = Vec::new();
+        let mut width = 0.0;
+        for ch in number.chars() {
+            let seg = adapter::Segment {
+                text: ch.to_string(),
+                chars: vec![adapter::CharSrc {
+                    document: span.document,
+                    start: span.start,
+                    end: span.end,
+                }],
+                style,
+            };
+            if let Some((run, rec)) = self.text_box(&seg, size) {
+                width += run.width;
+                boxes.push((run, rec));
+            }
+        }
+        let mut out = vec![(pl::Item::kern(-(width + m.numbersep)), None)];
+        for (run, rec) in boxes {
+            out.push((pl::Item::Box(run), Some(rec)));
+        }
+        out.push((pl::Item::kern(m.numbersep), None));
+        out
+    }
+
+    /// The `frame=` horizontal rule above or below the code, with the
+    /// corner stubs that continue the vertical rules through it.
+    fn listing_rule_block(&mut self, m: &LstMetrics, frame: crate::listings::Frame, top: bool, span: Span) -> BuiltBlock {
+        let ink = m.framesep + m.framerule;
+        // `frame=single` widens the horizontal rules by `framesep +
+        // framerule` on each side; a `t`/`b`-only frame does not.
+        let sides = frame.left || frame.right;
+        let (x0, w) = if sides {
+            (m.xleft - ink, m.measure + 2.0 * ink)
+        } else {
+            (m.xleft, m.measure)
+        };
+        let mut runs: Vec<(pl::GlyphRun, usize, f64)> = Vec::new();
+        let bottom = if top { m.framesep } else { -ink };
+        let (run, rec) = self.overlay_rule(w, m.framerule, bottom, m.size, span);
+        runs.push((run, rec, x0));
+        for (present, dx) in [(frame.left, m.xleft - ink), (frame.right, m.xleft + m.measure + m.framesep)] {
+            if !present {
+                continue;
+            }
+            let (b, h) = if top { (0.0, ink) } else { (-ink, ink) };
+            let (run, rec) = self.overlay_rule(m.framerule, h, b, m.size, span);
+            runs.push((run, rec, dx));
+        }
+        let (height, depth) = if top { (ink, 0.0) } else { (0.0, ink) };
+        positioned_block(
+            runs,
+            height,
+            depth,
+            m.measure,
+            VBlock {
+                lines: vec![(height, depth)],
+                penalty_before: None,
+                space_before: None,
+                parskip: None,
+                interline_penalty: 0,
+                club_penalty: 0,
+                widow_penalty: 0,
+                penalty_after: None,
+                space_after: None,
+                no_interline_first: false,
+                no_interline_after: false,
+                baselineskip: Some(m.bls),
+                vskip_after: Vec::new(),
+                pre_space_after: None,
+            },
+        )
+    }
+
+    /// A `\vrule`/`\hrule` that paints `width` x `height` from `bottom`
+    /// above the baseline but advances nothing: listings' rules ride in an
+    /// `\llap`/`\rlap`, so they must not widen the line.
+    fn overlay_rule(&mut self, width: f64, height: f64, bottom: f64, size: f64, span: Span) -> (pl::GlyphRun, usize) {
+        self.recs.push(BoxRec::Rule { width, height, bottom, span });
+        let run = pl::GlyphRun {
+            font: MATH_SENTINEL,
+            size,
+            glyphs: Vec::new(),
+            width: 0.0,
+            height: 0.0,
+            depth: 0.0,
+            source: span.start..span.end,
+        };
+        (run, self.recs.len() - 1)
+    }
+
+    /// `\strut` of the size in force: an empty box with the line's height
+    /// and depth and no width.
+    fn strut_box(&mut self, height: f64, depth: f64, size: f64, span: Span) -> (pl::GlyphRun, usize) {
+        self.recs.push(BoxRec::Rule {
+            width: 0.0,
+            height: 0.0,
+            bottom: 0.0,
+            span,
+        });
+        let run = pl::GlyphRun {
+            font: MATH_SENTINEL,
+            size,
+            glyphs: Vec::new(),
+            width: 0.0,
+            height,
+            depth,
+            source: span.start..span.end,
+        };
+        (run, self.recs.len() - 1)
+    }
+}
+
+/// `\lst@Init`/`\lst@DeInit`'s `\penalty-50` around the listing.
+const LST_PENALTY: i32 = -50;
+
+/// The style declaration a token's class carries. `basicstyle` is already
+/// the base, and `identifierstyle` is empty, so an ordinary token adds
+/// nothing.
+fn tok_spec(o: &crate::listings::Options, style: crate::listings::TokStyle) -> crate::listings::StyleSpec {
+    use crate::listings::TokStyle;
+    match style {
+        TokStyle::Basic => crate::listings::StyleSpec::default(),
+        TokStyle::Keyword => o.keyword,
+        TokStyle::Comment => o.comment,
+        TokStyle::Str => o.string,
+    }
+}
+
+/// A listings style declaration on top of a base style.
+fn listing_style(spec: crate::listings::StyleSpec, base: TextStyle, class: u32) -> TextStyle {
+    let mut s = base;
+    if let Some(f) = spec.family {
+        s.family = f;
+    }
+    if spec.bold {
+        s.bold = true;
+    }
+    if spec.italic {
+        s.italic = true;
+    }
+    if spec.slanted {
+        s.slanted = true;
+    }
+    if let Some(level) = spec.size {
+        s.size_cpt = adapter::declared_size(Some(level), class);
+    }
+    // Ligatures and kerns are off throughout a listing, and every
+    // character is its own box here, so the flag only records the fact.
+    s.literal = true;
+    s
+}
+
+/// `breaklines`: cuts a placed line at the last discretionary that fits.
+/// `\rightskip\@flushglue` makes every line badness 0, so TeX's total-fit
+/// minimises the line count, which is what a greedy cut gives. Each
+/// continuation gets `\lst@breakcurrindent` (`breakindent`, plus the
+/// line's own lost space under `breakautoindent`); `prebreak`/`postbreak`
+/// are empty and the `\llap` is zero width, so no mark is set.
+fn split_for_breaklines(glyphs: Vec<LstGlyph>, breaks: &[(usize, f64)], on: bool, measure: f64, indent: f64) -> Vec<(Vec<LstGlyph>, f64)> {
+    let width = |g: &[LstGlyph]| g.last().map_or(0.0, |g| g.x + g.run.width);
+    if !on || width(&glyphs) <= measure {
+        return vec![(glyphs, 0.0)];
+    }
+    // `(first glyph of the output line, the x shift its content takes)`.
+    let mut cuts: Vec<(usize, f64)> = Vec::new();
+    let mut origin = 0.0f64;
+    let mut shift = 0.0f64;
+    let mut last: Option<(usize, f64)> = None;
+    for &(idx, pen) in breaks {
+        if pen - origin + shift > measure {
+            if let Some((bi, bpen)) = last.take() {
+                origin = bpen;
+                shift = indent;
+                cuts.push((bi, indent - bpen));
+                if pen - origin + shift <= measure {
+                    last = Some((idx, pen));
+                }
+                continue;
+            }
+        }
+        last = Some((idx, pen));
+    }
+    let mut rest = glyphs;
+    let mut tails: Vec<(Vec<LstGlyph>, f64)> = Vec::new();
+    for &(start, sh) in cuts.iter().rev() {
+        if start > rest.len() {
+            continue;
+        }
+        tails.push((rest.split_off(start), sh));
+    }
+    let mut out = vec![(rest, 0.0)];
+    out.extend(tails.into_iter().rev());
+    out
 }
 
 /// Which form of `\maketitle` [`Context::title_blocks`] sets.
@@ -6098,6 +6681,17 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 }
                 add_vspace(&mut b.vertical, *vspace_before);
                 blocks.push(b);
+                after_heading = false;
+            }
+            Block::Listing(listing) => {
+                let mut built = ctx.listing_blocks(listing);
+                if let Some(first) = built.first_mut() {
+                    if listing.eject_before {
+                        first.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                    }
+                    add_vspace(&mut first.vertical, listing.vspace_before);
+                }
+                blocks.append(&mut built);
                 after_heading = false;
             }
         }

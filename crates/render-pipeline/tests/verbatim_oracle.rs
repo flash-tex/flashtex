@@ -41,7 +41,7 @@ const SUBSTITUTION_CODES: [&str; 4] = [
 ];
 
 /// The fixtures this lane sets exactly as pdfLaTeX does.
-const GATED: [&str; 13] = [
+const GATED: [&str; 30] = [
     "01-verbatim-basic",
     "02-verbatim-ligatures",
     "03-verbatim-tabs",
@@ -55,6 +55,30 @@ const GATED: [&str; 13] = [
     "12-verbatim-12pt",
     "13-verbatim-long-line",
     "14-verbatim-pagebreak",
+    // `listings` (PR #248's material): the column algorithm, the skips,
+    // the gutter, the frames, `tabsize`/`gobble`, `xleftmargin`,
+    // `breaklines` and the language styles.
+    "16-lst-default",
+    "17-lst-tt-fixed",
+    "18-lst-tt-flexible",
+    "19-lst-fullflexible",
+    "20-lst-numbers",
+    "21-lst-frame-single",
+    "22-lst-frame-lines-numbers",
+    "23-lst-c-keywords",
+    "24-lst-python-keywords",
+    "26-lst-breaklines",
+    "27-lst-showstringspaces",
+    "28-lstinline",
+    "29-lst-tabs-gobble",
+    "30-lst-lstset-margin",
+    "31-lst-t1-lmodern-bold",
+    // Added by this lane, with their own TeX Live 2025 references, for two
+    // things #248's material left uncovered: the `[l]`/`[r]` alignments of
+    // `columns`, and the claim that listings suppresses ligatures even in a
+    // roman `basicstyle` (`office`/`affix`/`waffle` set as separate `f`s).
+    "33-lst-columns-lr",
+    "34-lst-roman-ligatures",
 ];
 
 /// Committed with their references but not gated yet, each for a reason
@@ -73,11 +97,16 @@ const NOT_YET: [(&str, &str); 4] = [
       `Block::Verbatim` carry no `style`, so the declaration never reaches the pipeline, and \
       `declared_size` is explicit that the pipeline must not re-derive sizes from the source \
       (pin `b38e1884`). It is a compiler change plus a vendor re-pin."),
-    ("28-lstinline",
-     "The compiler typesets `\\lstset`'s argument as prose: 126 glyphs against pdfTeX's 115, the \
-      extra 11 being the characters `basicstyle=` at the head of the first line. `\\lstinline` \
-      itself is lexed correctly (PR #188, already in the vendored mirror). Needs the compiler to \
-      consume listings' setup commands, plus a vendor re-pin."),
+    ("25-lst-java-roman",
+     "Two OT1 slot lookups a listing makes that the pipeline's T1/EC font model cannot address. \
+      listings sets `\"` as `\\char34` (listings.sty `\\lst@CCPutMacro`, `upquote` false) and the \
+      `showstringspaces` space as `\\verbvisiblespace`, which under pdfTeX is `\\asciispace` = \
+      `\\char32` of the *current* font. In this roman `basicstyle` those are cmr10's own slots: \
+      measured with `tftopl`, slot 34 is 0.500002 em (`quotedblright`) and slot 32 is 0.277779 em \
+      (`suppress`). The pipeline addresses characters through T1, where slot 34 is `quotedbl` and \
+      slot 32 is `visiblespace` (0.5 em in ec-lmr10), so those three glyphs land 0.62, 1.10 and \
+      0.62 bp out; the other 228 are exact. Everything listings-specific in this fixture (the \
+      Java keyword list, the `[c]fixed` grid, the skips) is already right."),
     ("32-verbatim-microtype",
      "microtype's protrusion on the surrounding roman text; the verbatim lines themselves are \
       already excluded (the default sets are `rm*`/`sf*`)."),

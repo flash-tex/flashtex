@@ -1,0 +1,16 @@
+\documentclass{article}
+\usepackage{listings}
+\begin{document}
+Some ordinary body text that runs for a little while so that the paragraph fills a line of the page.
+\begin{lstlisting}[basicstyle=\ttfamily,columns={[l]fixed}]
+int main(void) {
+    int x = 42;
+}
+\end{lstlisting}
+\begin{lstlisting}[basicstyle=\ttfamily,columns={[r]fixed}]
+int main(void) {
+    int x = 42;
+}
+\end{lstlisting}
+Text right after the environment continues the paragraph without an indent.
+\end{document}
