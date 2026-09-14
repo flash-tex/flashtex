@@ -339,6 +339,56 @@ final class EditorFoldingTests: XCTestCase {
         XCTAssertNil(weakCo, "coordinator must deallocate when the view is torn down (gutter onToggleFold must not retain it)")
     }
 
+    /// Replacing the bound text (revert, reload, another document) does not
+    /// post `textDidChange`, so the fold gutter must invalidate and rescan
+    /// for the new string — including after the highlighter table catches up
+    /// with the new length (the length-mismatch guard otherwise clears it).
+    func testTextResetRescansFoldGutterForTheNewDocument() async throws {
+        let documentA = "\\begin{itemize}\n\\item a\n\\end{itemize}\n"
+        let documentB = "% lead-in\n% more\n\\begin{enumerate}\n\\item b\n\\end{enumerate}\n"
+        func foldableLines(in text: String) -> Set<Int> {
+            let ns = text as NSString
+            var table = SyntaxHighlighter()
+            table.reset(ns)
+            return Set(EditorFolding.regions(in: ns).map { table.line(at: $0.header.location) })
+        }
+        let expectedA = foldableLines(in: documentA)
+        let expectedB = foldableLines(in: documentB)
+        XCTAssertEqual(expectedA, [0], "itemize header is line 0")
+        XCTAssertEqual(expectedB, [2], "enumerate header is line 2 after the lead-in")
+
+        var probe: FoldHostProbe? = FoldHostProbe(text: documentA)
+        HostedWindowSupport.prepare()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        var hosting: NSHostingView<FoldHost>? = NSHostingView(rootView: FoldHost(probe: probe!))
+        window.contentView = hosting
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil); hosting = nil; probe = nil }
+        var found: NSTextView?
+        let findDeadline = Date().addingTimeInterval(10)
+        while Date() < findDeadline, found == nil {
+            found = TypingBenchDriver.findTextView(in: [window.contentView!])
+            if found == nil { try await Task.sleep(nanoseconds: 10_000_000) }
+        }
+        let tv = try XCTUnwrap(found)
+        let co = try XCTUnwrap(tv.delegate as? SourceEditorView.Coordinator)
+        let gutter = try XCTUnwrap(co.gutter)
+        let installDeadline = Date().addingTimeInterval(2)
+        while Date() < installDeadline, gutter.foldableLines != expectedA {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(gutter.foldableLines, expectedA, "document A fold triangles")
+
+        probe!.text = documentB
+        hosting!.rootView = FoldHost(probe: probe!)
+        let resetDeadline = Date().addingTimeInterval(2)
+        while Date() < resetDeadline, gutter.foldableLines != expectedB {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(gutter.foldableLines, expectedB,
+                       "text reset must show B's foldable lines, not A's \(expectedA)")
+    }
+
     private final class FoldHostProbe {
         var text: String
         var marks: [EditorDiagnostics.Mark] = []
