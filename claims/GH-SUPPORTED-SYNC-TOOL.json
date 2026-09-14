@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-muse-lead/supported-sync-tool",
+  "gh_ref": "#2",
+  "machine": "mac-m5pro-dq222",
+  "note": "render_supported_latex.sh also syncs the Mac bundled copy; delegated to daniel-muse-lead",
+  "started_utc": "2026-09-14T16:09:33Z",
+  "state": "claimed",
+  "task_id": "GH-SUPPORTED-SYNC-TOOL",
+  "updated_utc": "2026-09-14T16:09:33Z"
+}
