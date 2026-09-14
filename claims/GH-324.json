@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-vpclaude",
+  "branch": "agent/daniel-vpclaude/siunitx-s-columns",
+  "gh_ref": "https://github.com/flash-tex/flashtex/issues/324",
+  "machine": "mac-m5pro-dq222",
+  "note": "siunitx S/s table columns, phase 1 (Claude Pro session)",
+  "started_utc": "2026-09-14T06:08:43Z",
+  "state": "claimed",
+  "task_id": "GH-324",
+  "updated_utc": "2026-09-14T06:08:43Z"
+}
