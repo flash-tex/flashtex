@@ -73,6 +73,72 @@ fn nested_labels_follow_article_per_kind_depth() {
 }
 
 #[test]
+fn four_itemize_levels_show_all_kernel_markers() {
+    let source = doc(
+        "\\begin{itemize}\\item A\\begin{itemize}\\item B\\begin{itemize}\\item C\\begin{itemize}\\item D\\end{itemize}\\end{itemize}\\end{itemize}\\end{itemize}",
+    );
+    assert_eq!(label_texts(&source), ["•", "–", "∗", "·"]);
+    let all = items(&source);
+    let markers = [
+        ("textbullet", false),
+        ("textendash", true),
+        ("textasteriskcentered", false),
+        ("textperiodcentered", false),
+    ];
+    assert_eq!(all.len(), markers.len());
+    for ((_, item, _), (command, bold)) in all.iter().zip(markers) {
+        assert!(
+            matches!(&item, Some(ItemLabel::Symbol { command: c, bold: b, .. }) if c == command && *b == bold),
+            "{item:?}"
+        );
+    }
+}
+
+#[test]
+fn labelitem_commands_typeset_the_kernel_markers() {
+    let source = doc("A\\labelitemi B\\labelitemii C\\labelitemiii D\\labelitemiv E");
+    let parsed = parser::parse(&source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let mut words: Vec<(String, bool)> = Vec::new();
+    for block in &parsed.blocks {
+        if let Block::Paragraph(content) = block {
+            for inline in content {
+                if let Inline::Text { text, style, .. } = inline {
+                    words.push((text.as_str().to_owned(), style.bold));
+                }
+            }
+        }
+    }
+    assert_eq!(
+        words.iter().map(|(text, _)| text.as_str()).collect::<Vec<_>>().join(" "),
+        "A • B – C ∗ D · E"
+    );
+    // Level 2 keeps its `\bfseries`; the other markers are regular.
+    assert_eq!(
+        words.iter().map(|(_, bold)| *bold).collect::<Vec<_>>(),
+        [false, false, false, true, false, false, false, false, false]
+    );
+}
+
+#[test]
+fn renewcommand_of_a_labelitem_redirects_later_uses() {
+    let source = doc("\\renewcommand{\\labelitemii}{OK}A\\labelitemii B");
+    let parsed = parser::parse(&source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let mut words = Vec::new();
+    for block in &parsed.blocks {
+        if let Block::Paragraph(content) = block {
+            for inline in content {
+                if let Inline::Text { text, .. } = inline {
+                    words.push(text.as_str().to_owned());
+                }
+            }
+        }
+    }
+    assert_eq!(words.join(" "), "A OK B");
+}
+
+#[test]
 fn explicit_labels_are_content_and_do_not_step_the_counter() {
     let source = doc(
         "\\begin{enumerate}\\item[--] One\\item Two\\item [(x)] Three\\item Four\\end{enumerate}",

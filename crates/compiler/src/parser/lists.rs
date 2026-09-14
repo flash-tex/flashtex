@@ -311,16 +311,26 @@ fn roman(mut value: i64) -> String {
     text
 }
 
+/// article.cls 344-349 `\labelitemi`..`\labelitemiv`: `\textbullet`,
+/// `\normalfont\bfseries\textendash`, `\textasteriskcentered`,
+/// `\textperiodcentered` (U+00B7, as the `*.dfu` tables declare it).
+/// Levels past 4 keep `\labelitemiv`'s marker. `default_label` and the
+/// parser's `\labelitem<i>` arms share this, so a nesting level and the
+/// command for it can never disagree.
+pub(crate) fn labelitem(level: u8) -> (&'static str, &'static str, bool) {
+    match level {
+        0 | 1 => ("•", "textbullet", false),
+        2 => ("–", "textendash", true),
+        3 => ("∗", "textasteriskcentered", false),
+        _ => ("·", "textperiodcentered", false),
+    }
+}
+
 /// article.cls's default label for `environment` at `kind_depth`.
 pub(crate) fn default_label(environment: ListEnvironment, kind_depth: u8, value: i64) -> ItemLabel {
     match environment {
         ListEnvironment::Itemize => {
-            let (text, command, bold) = match kind_depth {
-                0 | 1 => ("•", "textbullet", false),
-                2 => ("–", "textendash", true),
-                3 => ("∗", "textasteriskcentered", false),
-                _ => ("⋅", "textperiodcentered", false),
-            };
+            let (text, command, bold) = labelitem(kind_depth);
             ItemLabel::Symbol {
                 text: text.to_string(),
                 command: command.to_string(),
@@ -715,6 +725,13 @@ mod tests {
         );
         assert_eq!(default_label(ListEnvironment::Enumerate, 4, 2).text(), "B.");
         assert_eq!(default_label(ListEnvironment::Itemize, 2, 0).text(), "–");
+        assert_eq!(default_label(ListEnvironment::Itemize, 3, 0).text(), "∗");
+        assert_eq!(default_label(ListEnvironment::Itemize, 4, 0).text(), "·");
+        assert_eq!(default_label(ListEnvironment::Itemize, 9, 0).text(), "·");
+        assert_eq!(labelitem(1), ("•", "textbullet", false));
+        assert_eq!(labelitem(2), ("–", "textendash", true));
+        assert_eq!(labelitem(3), ("∗", "textasteriskcentered", false));
+        assert_eq!(labelitem(4), ("·", "textperiodcentered", false));
         assert_eq!(template_label("(\\alph*)", 2).text(), "(b)");
         assert!(matches!(
             template_label("\\arabic*.\\alph*", 1),

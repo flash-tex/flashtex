@@ -951,6 +951,12 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textgreater",
     "textbraceleft",
     "textbraceright",
+    // article.cls's `\labelitemi`..`\labelitemiv`: the kernel's default
+    // itemize markers, usable as ordinary text symbols.
+    "labelitemi",
+    "labelitemii",
+    "labelitemiii",
+    "labelitemiv",
     // `text_builtins::TEXT_ACCENTS`.
     "c",
     "v",
@@ -2345,6 +2351,12 @@ impl P<'_> {
             | "textasciitilde" | "textasciicircum" | "textunderscore" | "textbar" | "textless"
             | "textgreater" | "textbraceleft" | "textbraceright" => {
                 self.text_symbol(name, span, para)
+            }
+            // article.cls's `\labelitemi`..`\labelitemiv`
+            // (`lists::labelitem`): the kernel's default itemize markers
+            // as ordinary text symbols, level 2 bold like `\bfseries`.
+            "labelitemi" | "labelitemii" | "labelitemiii" | "labelitemiv" => {
+                self.labelitem_marker(name, span, para)
             }
             // `text_builtins::TEXT_ACCENTS`.
             "c" | "v" | "u" | "H" | "r" | "k" | "d" | "b" => self.text_accent(name, span, para),
@@ -5339,6 +5351,36 @@ impl P<'_> {
         if let Some(inline) = self.symbol_inline(name, span, style, space_before) {
             para.push(inline);
         }
+    }
+
+    /// A `\labelitem<i>` default marker in running text: the same glyph (and
+    /// level 2's `\bfseries` bold) `lists::labelitem` gives the matching
+    /// itemize level. A `\renewcommand` of one of these names expands in the
+    /// expansion pass, so the redefinition — not this arm — supplies later
+    /// uses; the itemize labels themselves always keep the kernel defaults.
+    fn labelitem_marker(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let level = match name {
+            "labelitemi" => 1,
+            "labelitemii" => 2,
+            "labelitemiii" => 3,
+            _ => 4,
+        };
+        let (text, _, bold) = lists::labelitem(level);
+        let space_before = self.space_precedes(self.i - 1);
+        let style = if bold {
+            TextStyle {
+                bold: true,
+                ..self.style
+            }
+        } else {
+            self.style
+        };
+        para.push(Inline::Text {
+            text: text.to_string(),
+            span,
+            style,
+            space_before,
+        });
     }
 
     /// A siunitx typesetting command (`crate::siunitx`): its arguments are
