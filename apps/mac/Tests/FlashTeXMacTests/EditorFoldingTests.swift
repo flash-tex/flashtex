@@ -1,5 +1,7 @@
 import AppKit
+import SwiftUI
 import XCTest
+import FlashTeXProtocol
 @testable import FlashTeXMac
 
 /// Code folding (EditorFolding.swift): region computation, range shifting,
@@ -271,6 +273,85 @@ final class EditorFoldingTests: XCTestCase {
         if let lm = tv.layoutManager, lm.numberOfGlyphs > 0 {
             let g = min(lm.glyphIndexForCharacter(at: hidden.location), lm.numberOfGlyphs - 1)
             XCTAssertFalse(lm.propertyForGlyph(at: g).contains(.null))
+        }
+    }
+
+    /// SwiftUI calls `updateNSView` for marks/diagnostics without a text
+    /// change. That path must not walk foldable regions (the 0.25 s debounce
+    /// on `textDidChange` is the only whole-buffer rescan while typing).
+    /// Also: the coordinator must not be kept alive by the gutter toggle
+    /// closure after the view is torn down.
+    func testUpdateNSViewWithoutTextChangeDoesNotRescanAndCoordinatorReleases() async throws {
+        let text = "\\begin{a}\nbody\n\\end{a}\n"
+        var probe: FoldHostProbe? = FoldHostProbe(text: text)
+        HostedWindowSupport.prepare()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        var hosting: NSHostingView<FoldHost>? = NSHostingView(rootView: FoldHost(probe: probe!))
+        window.contentView = hosting
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil) }
+        var found: NSTextView?
+        let findDeadline = Date().addingTimeInterval(10)
+        while Date() < findDeadline, found == nil {
+            found = TypingBenchDriver.findTextView(in: [window.contentView!])
+            if found == nil { try await Task.sleep(nanoseconds: 10_000_000) }
+        }
+        let tv = try XCTUnwrap(found)
+        let completing = try XCTUnwrap(tv as? CompletingTextView)
+        var co: SourceEditorView.Coordinator? = try XCTUnwrap(tv.delegate as? SourceEditorView.Coordinator)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let afterInstall = completing.folds.regionComputeCount
+
+        for i in 0..<8 {
+            probe!.marks = [SourceEditorViewTests.mark(NSRange(location: 0, length: 1), .warning, "m", index: i)]
+            hosting!.rootView = FoldHost(probe: probe!)
+        }
+        XCTAssertEqual(completing.folds.regionComputeCount, afterInstall,
+                       "updateNSView with unchanged text must not scan regions")
+
+        // After a keystroke the cache is cold; the coordinator update path is
+        // still `refreshFoldGutter(rescan: false)` (or nothing).
+        completing.folds.shiftFolds(edit: NSRange(location: 0, length: 0), replacementLength: 0)
+        XCTAssertFalse(completing.folds.cacheIsWarm)
+        let afterShift = completing.folds.regionComputeCount
+        for _ in 0..<8 {
+            co!.refreshFoldGutter(rescan: false)
+        }
+        XCTAssertEqual(completing.folds.regionComputeCount, afterShift,
+                       "rescan:false on a cold cache must not walk the buffer")
+
+        for i in 0..<8 {
+            probe!.marks = [SourceEditorViewTests.mark(NSRange(location: 0, length: 1), .error, "e", index: 100 + i)]
+            hosting!.rootView = FoldHost(probe: probe!)
+        }
+        XCTAssertEqual(completing.folds.regionComputeCount, afterShift)
+
+        weak let weakCo = co
+        XCTAssertNotNil(weakCo)
+        co = nil
+        window.contentView = nil
+        hosting = nil
+        probe = nil
+        let releaseDeadline = Date().addingTimeInterval(2)
+        while Date() < releaseDeadline, weakCo != nil {
+            try await Task.sleep(nanoseconds: 30_000_000)
+        }
+        XCTAssertNil(weakCo, "coordinator must deallocate when the view is torn down (gutter onToggleFold must not retain it)")
+    }
+
+    private final class FoldHostProbe {
+        var text: String
+        var marks: [EditorDiagnostics.Mark] = []
+        init(text: String) { self.text = text }
+    }
+
+    private struct FoldHost: View {
+        var probe: FoldHostProbe
+        var body: some View {
+            SourceEditorView(
+                text: Binding(get: { probe.text }, set: { probe.text = $0 }),
+                marks: probe.marks
+            )
         }
     }
 }

@@ -172,6 +172,10 @@ struct SourceEditorView: NSViewRepresentable {
         co.gutter?.update(marks: marks)
         co.errorLens.update(marks: marks)
         if textReset { co.refreshBraceHighlight(tv) }
+        // Fold triangles: never a whole-buffer region scan from SwiftUI's
+        // per-frame update (marks / diagnostics while typing). Text changes
+        // debounce a rescan in `textDidChange` → `scheduleFoldGutterRefresh`.
+        if textReset { co.refreshFoldGutter(rescan: false) }
         if let selection, selection.token != co.appliedToken {
             co.appliedToken = selection.token
             co.applySelection(selection, to: tv)
@@ -767,6 +771,7 @@ struct SourceEditorView: NSViewRepresentable {
         }
 
         deinit {
+            foldGutterWork?.cancel()
             if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
             if let magnifyMonitor { NSEvent.removeMonitor(magnifyMonitor) }
             deferredTimer?.invalidate()
@@ -822,16 +827,6 @@ struct SourceEditorView: NSViewRepresentable {
             errorLens.update(marks: parent.marks)
             setLineNumbers(lineNumbers, on: scroll)
             updateCurrentLine(tv)
-            if let g = gutter, let completing = tv as? CompletingTextView {
-                g.onToggleFold = { [weak completing] line in
-                    guard let completing else { return }
-                    let table = self.syntax.highlighter
-                    guard line < table.lineCount else { return }
-                    _ = completing.folds.toggleHeader(at: table.lineStarts[line], in: completing.string as NSString)
-                    completing.snapCaretOutOfFolds()
-                }
-            }
-            refreshFoldGutter(rescan: true)
         }
 
         func setLineNumbers(_ on: Bool, on scroll: NSScrollView) {
