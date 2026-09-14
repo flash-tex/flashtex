@@ -40,7 +40,8 @@ struct CaptureView: View {
                     .accessibilityIdentifier("capture.pickedImage")
             } else {
                 PencilCanvas(drawing: $drawing, size: $canvasSize, toolsVisible: $toolsVisible)
-                    .frame(minHeight: model.captures.isEmpty ? 320 : 200, maxHeight: model.captures.isEmpty ? .infinity : 200)
+                    .frame(minHeight: 320)
+                    .layoutPriority(1)
                     .background(Color.white)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(.gray.opacity(0.4)))
                     .padding(.horizontal)
