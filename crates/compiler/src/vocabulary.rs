@@ -7,7 +7,10 @@
 //! lists are deliberately modest: a real command missing from them is
 //! misreported as unknown, never the reverse.
 
-use crate::math::{COMMAND_GLYPHS, DELIMITER_COMMANDS, GRID_ENVIRONMENTS, OPERATOR_NAMES};
+use crate::math::{
+    AMS_BAR_OPERATORS, AMS_SPACED_OPERATORS, COMMAND_GLYPHS, DELIMITER_COMMANDS, GRID_ENVIRONMENTS,
+    OPERATOR_NAMES,
+};
 use crate::parser::BUILT_INS;
 
 /// Commands `math.rs` handles by name in its command dispatch, beyond the
@@ -34,6 +37,10 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 /// compiler does not implement.
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
+    // amsopn operators this crate diagnoses rather than approximates: `lim`
+    // stacked over a `\cleaders`-stretched arrow (see
+    // `math::AMS_ARROW_OPERATORS`). Real commands, so not typos.
+    "varinjlim", "varprojlim",
     // LaTeX2e document structure and front matter.
     "part", "chapter", "subsubsection", "paragraph", "subparagraph", "appendix", "maketitle",
     "title", "author", "date", "thanks", "and", "today", "tableofcontents", "listoffigures",
@@ -122,6 +129,8 @@ fn implemented_commands() -> impl Iterator<Item = &'static str> {
         .chain(COMMAND_GLYPHS.iter().map(|(name, _)| *name))
         .chain(crate::amssymb::command_names())
         .chain(OPERATOR_NAMES.iter().copied())
+        .chain(AMS_SPACED_OPERATORS.iter().map(|(name, _)| *name))
+        .chain(AMS_BAR_OPERATORS.iter().map(|(name, _)| *name))
         .chain(DELIMITER_COMMANDS.iter().copied())
 }
 

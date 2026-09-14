@@ -789,7 +789,11 @@
     {"name": "arg", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true},
     {"name": "hom", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true},
     {"name": "Pr", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true},
-    {"name": "sgn", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true}
+    {"name": "sgn", "mode": "math", "origin": "math_operator", "arguments": "", "description": "upright operator name", "renders": true},
+    {"name": "injlim", "mode": "math", "origin": "math_operator", "arguments": "", "description": "amsopn operator name `inj\\,lim` (two upright words with a 3mu thin space); limits stack in display style", "renders": true},
+    {"name": "projlim", "mode": "math", "origin": "math_operator", "arguments": "", "description": "amsopn operator name `proj\\,lim` (two upright words with a 3mu thin space); limits stack in display style", "renders": true},
+    {"name": "varliminf", "mode": "math", "origin": "math_operator", "arguments": "", "description": "amsopn operator name: upright `lim` with a rule under it; limits stack in display style", "renders": true},
+    {"name": "varlimsup", "mode": "math", "origin": "math_operator", "arguments": "", "description": "amsopn operator name: upright `lim` with a rule over it; limits stack in display style", "renders": true}
   ],
   "environments": [
     {"name": "document", "mode": "text", "description": "the typeset body; preamble content is not typeset"},
@@ -874,7 +878,7 @@
     "rows": [
       {"set": "kernel", "kind": "command", "canonical": 410, "supported": 164, "percent": 40},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 17, "percent": 56.7},
-      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 40, "percent": 39.2},
+      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 44, "percent": 43.1},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
       {"set": "amssymb", "kind": "command", "canonical": 229, "supported": 225, "percent": 98.3},
       {"set": "enumitem", "kind": "command", "canonical": 17, "supported": 1, "percent": 5.9},
@@ -887,6 +891,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 17, "percent": 7.1}
     ],
-    "total": {"canonical": 1314, "supported": 503, "percent": 38.3}
+    "total": {"canonical": 1314, "supported": 507, "percent": 38.6}
   }
 }

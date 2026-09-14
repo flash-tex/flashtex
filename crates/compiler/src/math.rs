@@ -976,6 +976,61 @@ impl MathParser<'_> {
         if let Some(operator) = OPERATOR_NAMES.iter().find(|op| **op == name) {
             return text_atom(operator.to_string(), span);
         }
+        // amsopn's `inj\,lim` / `proj\,lim`: one `\mathop` whose body is two
+        // upright words with a 3mu atom between them, so it cannot be an
+        // `OPERATOR_NAMES` row.
+        if let Some((_, words)) = AMS_SPACED_OPERATORS.iter().find(|(op, _)| *op == name) {
+            let mut atoms: Vec<MathAtom> = Vec::new();
+            for (index, word) in words.iter().enumerate() {
+                if index > 0 {
+                    atoms.push(space(3.0 / 18.0, span));
+                }
+                atoms.push(text_atom((*word).to_string(), span));
+            }
+            return MathAtom {
+                nucleus: Nucleus::Operator {
+                    body: MathList { atoms },
+                    limits: true,
+                },
+                span,
+                superscript: None,
+                subscript: None,
+                class_override: None,
+                width_em: None,
+                ams_symbol: None,
+            };
+        }
+        // amsopn's `\varliminf`/`\varlimsup`: `lim` under/over a rule, as a
+        // `\mathop`, so the forced class also gives it display limits.
+        if let Some((_, frame)) = AMS_BAR_OPERATORS.iter().find(|(op, _)| *op == name) {
+            return MathAtom {
+                nucleus: Nucleus::Framed {
+                    body: MathList {
+                        atoms: vec![text_atom("lim".to_string(), span)],
+                    },
+                    frame: *frame,
+                },
+                span,
+                superscript: None,
+                subscript: None,
+                class_override: Some(AtomClass::Op),
+                width_em: None,
+                ams_symbol: None,
+            };
+        }
+        if AMS_ARROW_OPERATORS.contains(&name.as_str()) {
+            self.diagnostics.push(Diagnostic::command_error(
+                &name,
+                format!(
+                    "\\{name} is an amsmath operator this engine cannot set: amsopn builds it \
+                     as `lim` stacked over a `\\cleaders`-stretched arrow that stays text-size \
+                     inside scripts, which this math model has no representation for"
+                ),
+                Some(span),
+                Some("typeset the operator's `lim` alone, without its arrow".into()),
+            ));
+            return text_atom("lim".to_string(), span);
+        }
         match name.as_str() {
             // Plain TeX's `\iff` and mathtools's `\implies`/`\impliedby` are
             // macros that expand to a thick space (`\;`, 5mu), the long
@@ -2985,6 +3040,62 @@ pub(crate) const OPERATOR_NAMES: &[&str] = &[
     "gcd", "deg", "dim", "ker", "arg", "hom", "Pr", "sgn",
 ];
 
+/// amsopn's predeclared operators whose operator text is more than one
+/// word, so [`OPERATOR_NAMES`] (a flat list of single words) cannot hold
+/// them: (command, the upright words, separated by `\,`).
+///
+/// `amsopn.sty` v2.04 defines both as `\qopname\relax m{...}`, and the `m`
+/// selects `\nmlimits@`, which the default `namelimits` option `\let`s to
+/// `\displaylimits` — so their scripts stack in display style and sit to
+/// the side inline, exactly like `\lim`.
+///
+/// ```text
+/// \protected\def\injlim {\qopname\relax m{inj\,lim}}
+/// \protected\def\projlim{\qopname\relax m{proj\,lim}}
+/// ```
+///
+/// The `\,` is a real atom of 3mu, not a kerned space inside one word:
+/// `\hbox{$\injlim$}` shows `inj`, `\glue 1.66663`, `lim` under pdfTeX
+/// (TeX Live 2025) at 10pt.
+pub(crate) const AMS_SPACED_OPERATORS: &[(&str, &[&str])] = &[
+    ("injlim", &["inj", "lim"]),
+    ("projlim", &["proj", "lim"]),
+];
+
+/// amsopn's `\varliminf`/`\varlimsup`: `lim` with a rule under or over it,
+/// as a `\mathop`: (command, the rule's side).
+///
+/// ```text
+/// \def\varliminf@#1{\@@underline{\vrule\@depth.2\ex@\@width\z@
+///    \hbox{$#1\m@th\operator@font lim$}}}
+/// \def\varlimsup@#1{\@@overline{\hbox{$#1\m@th\operator@font lim$}}}
+/// ```
+///
+/// `\@@overline`/`\@@underline` are the TeX primitives (`amsmath.sty` 397),
+/// so the geometry is `make_over`/`make_under`: a rule of the current
+/// family's `default_rule_thickness` with a 3-thickness gap. This crate
+/// sets every math rule from [`FRACTION_RULE_EM`] rather than from cmex's
+/// parameter, so these two inherit the same residual as `\overline` itself
+/// -- 0.6pt against pdflatex's 0.39998pt at 10pt -- which is a property of
+/// `\overline` here, not something these operators introduce.
+pub(crate) const AMS_BAR_OPERATORS: &[(&str, Frame)] =
+    &[("varliminf", Frame::Under), ("varlimsup", Frame::Over)];
+
+/// amsopn's `\varinjlim`/`\varprojlim`, which this crate does **not** set.
+///
+/// They are not log-like operators at all: `\mathop{\mathpalette\varlim@
+/// {\rightarrowfill@\textstyle}}`, a `\vtop{\ialign{...}}` stacking `lim`
+/// over an `\arrowfill@` arrow that is built from a smashed cmsy10
+/// `\relbar`, `\mkern-7mu`, a `\cleaders` run of `\mkern-2mu\relbar
+/// \mkern-2mu` boxes and a cmsy10 `\rightarrow`, stretched with `\hfill` to
+/// the column width, and pinned at `1.5\ex@` above and `-\ex@` below
+/// **independently of the math style** (the arrow stays text-size even in
+/// `\scriptstyle`). Neither [`Nucleus::Stacked`] nor [`Nucleus::ExtArrow`]
+/// can express that: both set their over/under material at script size, and
+/// neither has a `cleaders` repeat. Reported as a limitation rather than
+/// approximated, so the diagnostic says what is actually missing.
+pub(crate) const AMS_ARROW_OPERATORS: &[&str] = &["varinjlim", "varprojlim"];
+
 /// Named commands that `\left`, `\right` and `\big...` accept as fences.
 pub(crate) const DELIMITER_COMMANDS: &[&str] = &[
     "langle",
@@ -3045,13 +3156,24 @@ pub fn layout_display(list: &MathList, size: f64, diagnostics: &mut Vec<Diagnost
 }
 
 /// Operators whose display-style scripts become limits.
-fn takes_display_limits(nucleus: &Nucleus) -> bool {
-    match nucleus {
+///
+/// TeX gives every `\mathop` `\displaylimits` unless `\nolimits` follows
+/// (TeXbook Chapter 17), so a forced `Op` class is the general answer and
+/// the tables below are the cases that reach layout without one. That
+/// covers amsopn's `\qopname\relax m{...}` operators — `\operatorname*`,
+/// `\DeclareMathOperator*`, `\injlim`, `\projlim`, `\varliminf`,
+/// `\varlimsup` — which used to have their display scripts set to the side.
+fn takes_display_limits(atom: &MathAtom) -> bool {
+    if atom.class_override == Some(AtomClass::Op) {
+        return true;
+    }
+    match &atom.nucleus {
         Nucleus::Text(name) => matches!(
             name.as_str(),
             "lim" | "liminf" | "limsup" | "max" | "min" | "sup" | "inf" | "det" | "gcd" | "Pr"
         ),
         Nucleus::Symbol(glyph) => matches!(glyph.as_str(), "∑" | "∏"),
+        Nucleus::Operator { limits, .. } => *limits,
         _ => false,
     }
 }
@@ -3250,7 +3372,7 @@ fn layout_list_with(
         if display
             && level == 0
             && (atom.superscript.is_some() || atom.subscript.is_some())
-            && takes_display_limits(&atom.nucleus)
+            && takes_display_limits(atom)
         {
             let script_size = root_size * SCRIPT_SCALE;
             let sup = atom

@@ -984,6 +984,34 @@ pub fn inventory() -> Inventory {
             renders: true,
         });
     }
+    for &(name, words) in math::AMS_SPACED_OPERATORS {
+        commands.push(Command {
+            name,
+            mode: Mode::Math,
+            origin: Origin::MathOperator,
+            arguments: "",
+            description: format!(
+                "amsopn operator name `{}` (two upright words with a 3mu thin space); limits stack in display style",
+                words.join("\\,")
+            ),
+            glyph: None,
+            renders: true,
+        });
+    }
+    for &(name, frame) in math::AMS_BAR_OPERATORS {
+        commands.push(Command {
+            name,
+            mode: Mode::Math,
+            origin: Origin::MathOperator,
+            arguments: "",
+            description: format!(
+                "amsopn operator name: upright `lim` with a rule {} it; limits stack in display style",
+                if frame.is_over() { "over" } else { "under" }
+            ),
+            glyph: None,
+            renders: true,
+        });
+    }
 
     let mut environments: Vec<Environment> = TEXT_ENVIRONMENTS
         .iter()
