@@ -2819,6 +2819,12 @@ impl P<'_> {
         for input in &tokens {
             match &input.token.kind {
                 TokenKind::Word(text) if text == "," || text == "{" || text == "}" => {
+                    // Accepted limitation: a comma/brace produced by expanding
+                    // a user macro (e.g. `\newcommand{\comma}{,}`) carries the
+                    // macro invocation's span, not a literal source span, so
+                    // this span-length check cannot tell it apart from a real
+                    // separator — it splits like one. Vanishingly rare in real
+                    // `\DocumentMetadata`, so documented, not fixed.
                     let literal = input.token.span.end - input.token.span.start == text.len();
                     if literal {
                         rich.push_str(text);

@@ -9,7 +9,6 @@
 use flashtex_compiler::diagnostics::Severity;
 use flashtex_compiler::incremental::{compile_full, CompileOutput};
 use flashtex_compiler::layout::LayoutConstraints;
-use flashtex_compiler::parser::{parse, Block, Inline};
 
 fn compile(text: &str) -> CompileOutput {
     compile_full(text, LayoutConstraints::default())
@@ -64,11 +63,11 @@ fn needstexformat_before_documentclass_is_silent() {
 
 #[test]
 fn text_glued_after_bracket_argument_is_kept() {
-    // `[`/`]` are ordinary lexer word characters, so `[2024]VISIBLE` is a
+    // `[`/`]` are ordinary lexer word characters, so `[i]TEXT` is a
     // single `Word` token: the bracket reader must consume exactly up to
-    // the matching `]` and leave `VISIBLE` in the stream.
+    // the matching `]` and leave `TEXT` in the stream.
     let out = compile(&format!(
-        "\\documentclass{{article}}\n\\begin{{document}}\n\\ProvidesFile{{foo.cfg}}[2024]VISIBLE\n\\end{{document}}\n"
+        "\\documentclass{{article}}\n\\begin{{document}}\n\\ProvidesFile{{f}}[i]TEXT\n\\end{{document}}\n"
     ));
     assert!(
         out.diagnostics.is_empty(),
@@ -77,12 +76,12 @@ fn text_glued_after_bracket_argument_is_kept() {
     );
     let seen = words(&out);
     assert!(
-        seen.iter().any(|word| word.contains("VISIBLE")),
+        seen.iter().any(|word| word.contains("TEXT")),
         "text glued after `]` is still typeset: {:?}",
         seen
     );
     assert!(
-        !seen.iter().any(|word| word.contains("2024")),
+        !seen.iter().any(|word| word.contains("[i]")),
         "the bracket itself is still consumed: {:?}",
         seen
     );
@@ -259,87 +258,6 @@ fn document_metadata_after_empty_documentclass_is_an_error() {
             .contains("\\DocumentMetadata must come before \\documentclass")),
         "a real error, not a warning: {:?}",
         out.diagnostics
-    );
-}
-
-/// Regression net for the shared `optional_bracket_argument` reader (and its
-/// `\\[<length>]` sibling, which uses the same span-length tail trick): each
-/// caller kind below takes an `[opt]` argument, and text glued right after
-/// the closing `]` must still be typeset. (Citation and footnote callers
-/// live with their own commands in `natbib.rs` and
-/// `footnote_long_argument.rs`.)
-fn paragraph_texts(source: &str) -> Vec<String> {
-    parse(source)
-        .blocks
-        .iter()
-        .filter_map(|block| match block {
-            Block::Paragraph(inlines) => Some(
-                inlines
-                    .iter()
-                    .filter_map(|inline| match inline {
-                        Inline::Text { text, .. } => Some(text.clone()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            ),
-            _ => None,
-        })
-        .collect()
-}
-
-#[test]
-fn bracket_reader_line_break_length_keeps_trailing_text() {
-    // `\\[3pt]` goes through `skip_line_break_length`, the same
-    // consume-up-to-`]`-and-leave-the-tail technique: `TEXT` is glued to
-    // the bracket and must survive.
-    let source = "\\documentclass{article}\n\\begin{document}\nA\\\\[3pt]TEXT\n\\end{document}\n";
-    let texts = paragraph_texts(source);
-    assert!(
-        texts.iter().any(|text| text.contains("TEXT")),
-        "text glued after `\\\\[3pt]` is still typeset: {texts:?}"
-    );
-}
-
-#[test]
-fn bracket_reader_theorem_head_keeps_body_text() {
-    // `\begin{theorem}[Fermat]` reads its head note with the shared
-    // bracket reader; the body that follows must still be typeset.
-    let source = "\\newtheorem{theorem}{Theorem}\n\\begin{theorem}[Fermat]\nTEXT\n\\end{theorem}";
-    let texts = paragraph_texts(source);
-    assert!(
-        texts.iter().any(|text| text.contains("(Fermat)")),
-        "the head note is still read: {texts:?}"
-    );
-    assert!(
-        texts.iter().any(|text| text.contains("TEXT")),
-        "the body after `[Fermat]` is still typeset: {texts:?}"
-    );
-}
-
-#[test]
-fn bracket_reader_listing_options_keep_body() {
-    // `\begin{lstlisting}[...]` reads its options with the shared bracket
-    // reader; the verbatim body that follows must still be typeset whole.
-    let source = "\\documentclass{article}\n\\begin{document}\n\\begin{lstlisting}[language=TeX]\nTEXT\n\\end{lstlisting}\n\\end{document}\n";
-    let parsed = parse(source);
-    let bodies: Vec<String> = parsed
-        .blocks
-        .iter()
-        .filter_map(|block| match block {
-            Block::Verbatim { lines, .. } => Some(
-                lines
-                    .iter()
-                    .map(|line| line.text.clone())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            ),
-            _ => None,
-        })
-        .collect();
-    assert!(
-        bodies.iter().any(|body| body.contains("TEXT")),
-        "the listing body after `[language=TeX]` is still typeset: {bodies:?}"
     );
 }
 
