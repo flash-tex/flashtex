@@ -583,7 +583,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 span,
                 space_before: _,
             } => map_span(span, changes, deltas)?,
-            Inline::HFill { span } => map_span(span, changes, deltas)?,
+            Inline::HFill { span, .. } => map_span(span, changes, deltas)?,
             Inline::HSpace { pt: _, span } => map_span(span, changes, deltas)?,
             Inline::Footnote {
                 number: _,
@@ -798,7 +798,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::MathRows { span, .. } => *span,
         Inline::Label { span, .. } => *span,
         Inline::Reference { span, .. } => *span,
-        Inline::HFill { span } => *span,
+        Inline::HFill { span, .. } => *span,
         Inline::HSpace { span, .. } => *span,
         Inline::Footnote { span, .. } => *span,
         Inline::Tabular(table) => table.span,

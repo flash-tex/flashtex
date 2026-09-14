@@ -83,7 +83,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "leqslant", "geqslant", "approx", "cong", "equiv", "sim", "simeq", "propto", "subset", "supset",
     "subseteq", "supseteq", "subsetneq", "supsetneq", "in", "ni", "notin", "cup", "cap", "bigcup",
     "bigcap", "setminus", "wedge", "vee", "bigwedge", "bigvee", "oplus", "otimes", "bigoplus",
-    "bigotimes", "odot", "times", "div", "cdot", "circ", "bullet", "star", "ast", "pm", "mp", "sum",
+    "bigotimes", "ominus", "oslash", "odot", "bigcirc", "times", "div", "cdot", "circ", "bullet", "star", "ast", "pm", "mp", "sum",
     "prod", "coprod", "int", "oint", "to", "gets", "mapsto", "rightarrow", "leftarrow",
     "leftrightarrow", "Rightarrow", "Leftarrow", "Leftrightarrow", "longrightarrow",
     "longleftarrow", "Longrightarrow", "Longleftarrow", "longmapsto", "hookrightarrow",
