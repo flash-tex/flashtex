@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 import FlashTeXProtocol
+import HostedWindows
 @testable import FlashTeXMac
 
 /// Code folding (EditorFolding.swift): region computation, range shifting,
@@ -241,7 +242,7 @@ final class EditorFoldingTests: XCTestCase {
 
     func testHostedFoldHidesGlyphsLeavesStorageAndUnfoldsOnReveal() async throws {
         HostedWindowSupport.prepare()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled])
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -285,7 +286,7 @@ final class EditorFoldingTests: XCTestCase {
         let text = "\\begin{a}\nbody\n\\end{a}\n"
         var probe: FoldHostProbe? = FoldHostProbe(text: text)
         HostedWindowSupport.prepare()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled])
         var hosting: NSHostingView<FoldHost>? = NSHostingView(rootView: FoldHost(probe: probe!))
         window.contentView = hosting
         window.orderFrontRegardless()
@@ -359,7 +360,7 @@ final class EditorFoldingTests: XCTestCase {
 
         var probe: FoldHostProbe? = FoldHostProbe(text: documentA)
         HostedWindowSupport.prepare()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled])
         var hosting: NSHostingView<FoldHost>? = NSHostingView(rootView: FoldHost(probe: probe!))
         window.contentView = hosting
         window.orderFrontRegardless()

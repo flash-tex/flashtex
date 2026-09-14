@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 import FlashTeXProtocol
+import HostedWindows
 @testable import FlashTeXMac
 @testable import FlashTeXAccessibility
 
@@ -146,7 +147,7 @@ final class EnvironmentPairTests: XCTestCase {
 
     private func host(_ model: ShellModel) async throws -> (NSWindow, NSTextView, SourceEditorView.Coordinator) {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model))
         window.orderFrontRegardless()
         var found: NSTextView?
