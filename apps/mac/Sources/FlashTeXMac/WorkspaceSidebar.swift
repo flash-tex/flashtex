@@ -122,7 +122,7 @@ private struct ProjectSection: View {
             ForEach(Array(missing.enumerated()), id: \.offset) { _, n in
                 let name = MissingIncludeFix.path(for: n.reference.argument) ?? n.reference.argument
                 SidebarRow(selected: false) {
-                    Task { await model.project.createMissingInclude(n.reference.argument, from: n.from); model.navigationNote = model.project.status }
+                    Task { _ = await model.project.createMissingInclude(n.reference.argument, from: n.from); model.navigationNote = model.project.status }
                 } label: {
                     Label {
                         HStack(spacing: DS.Space.xs) {
