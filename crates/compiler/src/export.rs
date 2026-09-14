@@ -139,6 +139,8 @@ const SYMBOL_ENCODING: &[(char, u8)] = &[
     ('\u{2118}', 0xC3), // weierstrass
     ('\u{2329}', 0xE1), // angleleft
     ('\u{232A}', 0xF1), // angleright
+    ('\u{27E8}', 0xE1), // mathematical angle bracket (\langle): Symbol's angleleft
+    ('\u{27E9}', 0xF1), // mathematical angle bracket (\rangle): Symbol's angleright
 ];
 
 /// WinAnsiEncoding's 0x80..0x9F block, which is NOT Latin-1.
@@ -309,6 +311,20 @@ mod tests {
             reason.contains("rule item type"),
             "reason should name the contract gap: {reason}"
         );
+    }
+
+    #[test]
+    fn mathematical_angle_brackets_encode_as_symbol_angles() {
+        for (math, symbol) in [('\u{27E8}', '\u{2329}'), ('\u{27E9}', '\u{232A}')] {
+            assert_eq!(map_char(math), map_char(symbol));
+            assert!(matches!(
+                map_char(math),
+                Glyph::Encodable {
+                    font: ExportFont::Symbol,
+                    ..
+                }
+            ));
+        }
     }
 
     #[test]

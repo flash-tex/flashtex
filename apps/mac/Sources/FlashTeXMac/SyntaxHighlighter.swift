@@ -739,10 +739,14 @@ final class SyntaxPainter {
         runsPainted += count
     }
 
-    private static func shifted(_ r: NSRange, edit: NSRange, replacementLength: Int) -> NSRange {
+    /// `r` after replacing `edit` with `replacementLength` characters. An edit
+    /// that touches `r` (ends at its start or starts at its end) joins it, so
+    /// text typed at either edge of a painted range is repainted with it
+    /// (GH#280: typing at the end of the painted window stayed uncoloured).
+    static func shifted(_ r: NSRange, edit: NSRange, replacementLength: Int) -> NSRange {
         let delta = replacementLength - edit.length
-        if NSMaxRange(edit) <= r.location { return NSRange(location: r.location + delta, length: r.length) }
-        if edit.location >= NSMaxRange(r) { return r }
+        if NSMaxRange(edit) < r.location { return NSRange(location: r.location + delta, length: r.length) }
+        if edit.location > NSMaxRange(r) { return r }
         let start = min(r.location, edit.location)
         let end = max(NSMaxRange(r), NSMaxRange(edit)) + delta
         return NSRange(location: start, length: max(0, end - start))
