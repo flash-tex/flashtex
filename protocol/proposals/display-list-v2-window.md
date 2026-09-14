@@ -1,27 +1,43 @@
 # Proposal: `display-list-v2-window` — a bounded resident page window
 
-Revision **r1, 2026-09-13** (lane linux-primary, FT-070 structural half).
-Status: **PROPOSAL + producer prototype.** The wire capability is specified
-here and is **not negotiated** — `v1.rs` does not accept the name, no consumer
-sends it, and every reply on every route is byte-for-byte what it is today.
-The producer-side mechanism (`PageWindow`, `PageContent`, the split render
-cache) is implemented behind a default that reproduces today's behaviour
-exactly, so the mechanism can be measured and gated before any wire change is
-co-signed.
+Revision **r2, 2026-09-14** (lane linux-primary, FT-070 structural half).
+Status: **PROPOSAL + producer, negotiated and opt-in.** `v1.rs` accepts the
+name next to `display-list-v2`, exactly as `-only` and `-delta` — themselves
+proposals — are accepted today. **No in-tree consumer sends it**, so every
+reply on every route is byte-for-byte what it is now; a reply is windowed only
+when a request names the capability *and* says where the viewer is.
 
-**What r1 implements, precisely**, so the rest of this document is not read as
+**What changed in r2**, and why the name is on:
+
+* **`required_features` is whole-document.** r1 derived it from the resident
+  pages, so a document whose only rule sat on page 300 would have announced no
+  `rule` to a consumer windowed on page 1 — the same failure as a smaller font
+  closure, and the one §3 and §5.6 forbid. Assembly now harvests it over every
+  block in the same pass as the faces and the diagnostics. This was the reason
+  r1 left the capability unnegotiated; it is fixed, so the capability is on.
+* **`status` is window-independent** (§4.1). `v1::fallback` derived "did the
+  compile produce anything" from the pages it built, which on a windowed reply
+  are the window's; it now asks the same whole-document harvest.
+* **An over-limit window is narrowed and served, not declined** (§8).
+  `MAX_WINDOW_PAGES` bounds what a viewer shows, not bytes, so a consumer may
+  legitimately ask for more pages than a reply can carry. Declining that is the
+  `status: failed` this proposal exists to remove, so the producer measures the
+  pages it built, re-derives the window through `PageWindow::fitting`, and
+  serves that. The echoed `window` is the authority on what was served.
+
+**What is implemented, precisely**, so the rest of this document is not read as
 a description of working code:
 
-| section | r1 |
+| section | r2 |
 |---|---|
 | §5.1 `Page.content: PageContent` | **implemented** |
 | §5.2 `render_windowed` | **implemented** |
 | §5.3 streaming assembly, closure and diagnostics kept exact | **implemented** |
 | §5.4 `assembled` scoped to the window, `blocks`/`adapted` whole-document | **implemented** (retain-by-window; the byte budget is not) |
-| §5.6 pdf / v1 / delta refusals | **implemented** |
-| §4 wire shape | **serialised, not negotiated** — `write_page` emits it, `v1.rs` does not accept the capability |
-| §1.0 `PageWindow::fitting` (widest window a reply limit can carry) | **implemented** as a producer helper; nothing calls it until the capability is negotiated |
-| §5.5 `PageRecipe` retained across requests | **not implemented**: each windowed render re-runs layout and rebuilds the recipe from a fresh `Laid`. Serving a scroll without re-layout is the point of retaining it, and is r2 |
+| §5.6 pdf / delta refusals, `required_features` over every block | **implemented** (r1 had the refusals; r2 has the features) |
+| §4 wire shape | **implemented and negotiated**, producer side; no consumer sends it |
+| §1.0 `PageWindow::fitting` (widest window a reply limit can carry) | **implemented and called**: it is what narrows an over-limit window instead of declining it |
+| §5.5 `PageRecipe` retained across requests | **not implemented**: each windowed render re-runs layout and rebuilds the recipe from a fresh `Laid`. Serving a scroll without re-layout is the point of retaining it, and is the next revision |
 | §6 scroll served from a retained recipe | **not implemented**, follows §5.5 |
 
 Sibling proposals, both unchanged by this one:
@@ -199,7 +215,7 @@ second pass over page numbers, `lib.rs:250`), float placement, contents lists
 and footnote numbering are all global, and a window over them would change
 where page breaks fall. The window is strictly *downstream of layout*.
 
-## 4. Wire shape (additive; not negotiated in r1)
+## 4. Wire shape (additive; negotiated, opt-in, unused by any consumer)
 
 - **Request.** `payload.layout_capabilities` gains `"display-list-v2-window"`.
   It is meaningful only next to `"display-list-v2"`. When present, the request
@@ -240,7 +256,10 @@ where page breaks fall. The window is strictly *downstream of layout*.
 
 - **Old producers and old consumers** are unaffected: unknown capability names
   are not accepted (`v1.rs:55`) and unknown payload keys are read with
-  `payload.get` (`protocol.rs:117`).
+  `payload.get` (`protocol.rs:117`). A consumer that does not name the
+  capability cannot be given a windowed reply, and the name being accepted
+  changes nothing for it — the same relationship `-only` and `-delta` already
+  have with the installed base.
 
 ### 4.1 What a windowed reply does not authorise
 
@@ -398,13 +417,26 @@ rather than bundled in unmeasured.
 
 - **`pdf::export` refuses an elided page.** A PDF is a complete document; it
   never silently omits or blanks a page. Export requests an unwindowed render.
-- **`v1::fallback` refuses**, for the same reason `display-list-v2-only`'s
-  consumer rules refuse a v1 export of an elided result.
+- **`v1::fallback` skips an elided page** rather than sending it as an empty
+  one: there is no v1 shape for "this page was not built", and a page-shaped
+  object claiming the page is empty is the exact confusion `PageContent` exists
+  to prevent. The pages it does send carry their real `number`, so the subset
+  is unambiguous, and a windowed list reaches it only because the consumer
+  asked for a window and was told so in the echo. A consumer that needs the v1
+  payload to stand for the whole document does not negotiate this capability —
+  and at scale it composes with `-only`, which empties those pages anyway (§7).
+  `status` is derived from the whole-document harvest, not from the pages that
+  happen to be resident (§4.1).
 - **`DisplayList::to_json`** emits the §4 shape.
 - **`delta`** refuses a windowed list as a snapshot base (§7).
 - **`required_features`** is computed during the streaming pass, over every
   block, not over `pages` (it is the one place today's code reads all items
-  purely to classify them).
+  purely to classify them). `assemble_windowed` harvests a `DocumentFeatures`
+  beside the faces and the diagnostics, adding the items no block owns — float
+  images, the `\pagecolor` rule, the document default colour written into every
+  paint after placement. An **unwindowed** list still scans its own pages, so
+  every line on the wire today is byte-for-byte unchanged by the harvest
+  existing; only a windowed list reads it.
 
 ## 6. The edit path
 
@@ -465,11 +497,24 @@ Typed, and all on the producer side in r1 (there is no consumer yet):
 | `first_page` 0, or `page_count` 0 | not accepted; unwindowed reply |
 | `first_page` past the last page | clamped to the last `page_count` pages |
 | `page_count` above `MAX_WINDOW_PAGES` | clamped, and the echoed `window` states the clamp |
+| the window still does not fit the reply limit | **narrowed** around its centre to what the measured page size says fits, and served; the echoed `window` states what was served |
 | request also lists `-delta` | window wins; `-delta` absent from echo (§7) |
 | a windowed list reaching `delta::snapshot` | refused — no snapshot taken, chain cleared, exactly as today's no-snapshot path (`-delta` §7: the full unchanged line, `status` stays `ok`, no diagnostic) |
 
-A clamp is never a diagnostic and never changes `status`. The echoed `window`
-is the authority on what was served.
+A clamp or a narrowing is never a diagnostic and never changes `status`. The
+echoed `window` is the authority on what was served — the consumer never infers
+the coverage from the shape of `pages[]`.
+
+The narrowing deserves its own line, because it is what makes the capability
+worth negotiating rather than merely specifying. `MAX_WINDOW_PAGES` is a bound
+on what a viewer shows; the reply limit is a bound on bytes, and at ~426 KB a
+page the two disagree by a factor of four. A producer that declined the
+difference would hand a consumer the same `status: failed` for asking for too
+many pages as it does today for asking for the document — which is §1.0's bug
+wearing a different hat. So the producer re-derives the window from what it
+measured and serves it; one extra assembly pass over a *narrower* window,
+against a cache that is already warm, in exchange for a reply where there was
+none.
 
 ## 9. Acceptance — and what producers must co-sign
 
