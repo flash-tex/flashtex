@@ -619,6 +619,7 @@
     {"name": "leq", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ≤", "renders": true, "glyph": "≤"},
     {"name": "geq", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ≥", "renders": true, "glyph": "≥"},
     {"name": "neq", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ≠", "renders": true, "glyph": "≠"},
+    {"name": "not", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ̸", "renders": true, "glyph": "̸"},
     {"name": "approx", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ≈", "renders": true, "glyph": "≈"},
     {"name": "cdot", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⋅", "renders": true, "glyph": "⋅"},
     {"name": "infty", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ∞", "renders": true, "glyph": "∞"},
