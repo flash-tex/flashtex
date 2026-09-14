@@ -1412,12 +1412,6 @@ mod tests {
             start_byte: a,
             end_byte: b,
         };
-        let caret = |x| Caret {
-            text_byte: 3,
-            x: Tick(x),
-            top: Tick(-7),
-            height: Tick(1 << 40),
-        };
         let cluster = |provenance| Cluster {
             text_start_byte: 0,
             text_end_byte: 4,
@@ -1426,10 +1420,6 @@ mod tests {
                 top: Tick(-2),
                 width: Tick(3),
                 height: Tick(4),
-            },
-            carets: Carets {
-                first: caret(5),
-                last: Some(caret(9)),
             },
             provenance,
         };
@@ -1453,6 +1443,10 @@ mod tests {
                 cluster(Provenance::Sources(vec![src(3, 4), src(5, 6)])),
                 cluster(Provenance::Synthetic("heading number".into())),
             ],
+            // Only the run's last cluster shows it, so the two writers have
+            // to agree about which cluster that is as well as about the
+            // value.
+            end_caret: Some(EndCaret { x: Tick(9), text_byte: 3 }),
             paint: Paint {
                 r: 0.25,
                 g: 0.1,
