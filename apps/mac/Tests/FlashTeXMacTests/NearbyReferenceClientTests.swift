@@ -415,7 +415,12 @@ final class NearbyReferenceClientTests: XCTestCase {
                                             endpoints: { .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!) },
                                             onEvent: log.record)
         let session = try await reconnector.connect()
-        XCTAssertEqual(session.destination, NearbyWire.Destination(destinationId: first.destinationId, projectId: first.projectId, path: first.path, baseRevision: first.baseRevision))
+        // `caret_context` rides along additively (nearby-v1); this assertion is
+        // about the pin the reference client binds to.
+        XCTAssertEqual(session.destination?.destinationId, first.destinationId)
+        XCTAssertEqual(session.destination?.projectId, first.projectId)
+        XCTAssertEqual(session.destination?.path, first.path)
+        XCTAssertEqual(session.destination?.baseRevision, first.baseRevision)
         let stale = try session.makeCapture(captureId: "ref-stale-1", image: Self.fixturePNG, mimeType: "image/png", instructions: "stale")
 
         // Unpinned: the project is replaced, the anchor is gone.

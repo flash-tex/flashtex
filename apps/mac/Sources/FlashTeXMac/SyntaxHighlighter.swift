@@ -548,6 +548,24 @@ struct SyntaxHighlighter {
         return h.runs(in: NSRange(location: 0, length: text.length), text: text)
     }
 
+    /// Mode at `utf16` after a full lex: the stored mode at the containing
+    /// line's start, advanced by re-lexing that line up to the offset.
+    ///
+    /// The highlighter is the app's authority on what is math and what is
+    /// verbatim, so `CaretContext` — which decides how a capture is wrapped —
+    /// is checked against this rather than being a second opinion
+    /// (`CaretContextTests.testAgreesWithTheSyntaxHighlighter`).
+    func mode(at utf16: Int, text: NSString) -> Mode {
+        let clamped = max(0, min(utf16, length))
+        let index = line(at: clamped)
+        let start = lineStarts[index]
+        guard clamped > start else { return modes[index] }
+        var runs: [Run] = []
+        return withUnits(of: text, range: NSRange(location: start, length: clamped - start)) { units in
+            Self.lex(units, from: 0, to: units.count, base: start, mode: modes[index], runs: &runs, collect: false)
+        }
+    }
+
     /// Kind of the run at `utf16` after a full lex (hover/tests), or nil for plain text.
     func kind(at utf16: Int, text: NSString) -> Kind? {
         guard utf16 >= 0, utf16 < length else { return nil }

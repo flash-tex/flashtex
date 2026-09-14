@@ -1151,7 +1151,17 @@ final class ShellModel {
             captureNote = "Cannot insert \(proposal.captureId): \(why). Pin a new insertion point."
             return .needsReselection(why)
         }
-        let insert = Insertion.insertionText(latex, into: doc.text, atByte: byte)
+        // Make the proposal legal where it is actually landing before it becomes
+        // an edit: a formula recognised at a text caret is wrapped, and one
+        // recognised inside an existing `$…$` has its own delimiters removed
+        // rather than producing `$a + $x^2$ + b$` (issue #2, owner report).
+        // The bridge-attached path gets the same treatment inside the bridge.
+        let normalized = Insertion.captureInsertion(latex, into: doc.text, atByte: byte)
+        guard let insert = normalized.text else {
+            captureNote = "Cannot insert \(proposal.captureId) here: "
+                + (normalized.advisories.first ?? "the proposal is not legal LaTeX at this caret.")
+            return .needsReselection("unsafe at caret")
+        }
         guard let ns = doc.text.nsRange(utf8Bytes: .init(path: anchor.path, startByte: byte, endByte: byte)) else {
             captureNote = "Anchor offset is not a valid position."; return .needsReselection("invalid offset")
         }
@@ -1166,7 +1176,8 @@ final class ShellModel {
         // Keep the anchor after the inserted text so successive captures append in order.
         self.anchor = InsertionAnchor(id: anchor.id, path: anchor.path, byteOffset: byte + insert.utf8.count,
                                       revision: editorRevision, contextAfter: anchor.contextAfter)
-        captureNote = "Inserted \(proposal.captureId) at byte \(byte) (undo with ⌘Z)."
+        captureNote = "Inserted \(proposal.captureId) at byte \(byte) (\(normalized.caret.label); undo with ⌘Z)."
+            + (normalized.advisories.isEmpty ? "" : " " + normalized.advisories.joined(separator: " "))
         return .inserted(byteOffset: byte)
     }
 

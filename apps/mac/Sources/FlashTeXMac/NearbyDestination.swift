@@ -52,9 +52,22 @@ extension ShellModel {
     func announcedNearbyDestination(bridgeAttached: Bool, bridgeAnchor: TransferV1.Anchor?, localAnchor: InsertionAnchor?) -> NearbyV1.Destination? {
         if bridgeAttached {
             guard let a = bridgeAnchor, a.valid else { return nil }
-            return .init(destinationId: a.destinationId, projectId: a.projectId, path: a.path, baseRevision: a.pinnedRevision)
+            return .init(destinationId: a.destinationId, projectId: a.projectId, path: a.path,
+                         baseRevision: a.pinnedRevision,
+                         caretContext: caretContext(path: a.path, byte: a.startByte))
         }
         guard let anchor = localAnchor else { return nil }
-        return .init(destinationId: anchor.id, projectId: projectId, path: anchor.path, baseRevision: anchor.revision)
+        return .init(destinationId: anchor.id, projectId: projectId, path: anchor.path,
+                     baseRevision: anchor.revision,
+                     caretContext: caretContext(path: anchor.path, byte: anchor.byteOffset))
+    }
+
+    /// The caret context for an announced destination, so the companion can say
+    /// what will happen to a capture before it is sent ("display math",
+    /// "already inside $…$", "verbatim — inserted literally"). Derived from
+    /// the open document; nil when that document is not open here.
+    func caretContext(path: String, byte: Int) -> CaretContext? {
+        guard let document = documents.first(where: { $0.path == path }) else { return nil }
+        return CaretContext.derive(document.text, caretByte: byte)
     }
 }
