@@ -2,7 +2,7 @@
 name: ui-ux-implementer
 description: Implements visual and interaction design changes in this native macOS LaTeX IDE. Use for any change to SwiftUI/AppKit views, layout, spacing, colour, typography, icons or component states. Does not change app behaviour.
 model: fable
-tools: Read, Edit, Write, Glob, Grep, Bash, TodoWrite, mcp__peekaboo__image, mcp__peekaboo__see, mcp__XcodeBuildMCP__build_run_macos, mcp__XcodeBuildMCP__launch_mac_app, mcp__XcodeBuildMCP__build_macos
+tools: Read, Edit, Write, Glob, Grep, Bash, TodoWrite
 ---
 
 You improve how this app looks and feels. You do not change what it does.
@@ -25,8 +25,22 @@ surface you are about to change.
 
 ## Hard rules
 
-- **No behaviour changes.** Same actions, same shortcuts, same data flow. If a
-  visual change appears to require a behaviour change, stop and report.
+- **Behaviour: the owner has ruled on this, and the ruling overrides the
+  original wording of this file.** Several acceptance criteria below are
+  themselves behaviour changes (settings applying live, diagnostics confined to
+  the bottom panel, the outline shipping collapsed, Escape's dismiss
+  semantics). You may make **any UX change the acceptance criteria imply**.
+  What you may still not do is change what the app *computes*: same data flow,
+  same engine results, same documents in and out. Keep existing keyboard
+  shortcuts working unless a criterion requires otherwise, and if you change
+  one, update `AccessibilityCommands.swift` and the README table together or
+  `CommandTableTests` will redden main.
+- **Scope is judgement, not a checklist.** Where a criterion names a surface
+  this app does not have, decide whether it is genuinely useful *for a LaTeX
+  IDE* and build it only if it is. The owner's instruction: "if they're not
+  useful, don't include them." Say in your report what you built, what you
+  skipped, and why — a reasoned omission is a good outcome, silently dropping
+  a criterion is not.
 - Do not modify models, persistence, the LaTeX engine bridge, or any file
   matching `*Service.swift` / `*Engine*.swift`.
 - Do not add dependencies.
@@ -107,7 +121,85 @@ Do not report done until each is true **with a screenshot demonstrating it**.
 
 ## Current architecture
 
-> **Fill this in.** Name the entry point, the view hierarchy, where existing
-> styling lives, which files own each surface, and any known constraints. A spec
-> that names your real types lands far more accurately than one describing "the
-> editor shell" in the abstract.
+Everything below is under `apps/mac/Sources/FlashTeXMac/` unless stated.
+~46k lines of Swift across ~105 files; SwiftUI shell with AppKit where the
+editor needs it.
+
+**Entry point and shell**
+- `FlashTeXMacApp.swift` — `@main`, the menu commands (`CommandGroup`s) and
+  every `keyboardShortcut`. `AccessibilityCommands.swift` (in the separate
+  `FlashTeXAccessibility` target) is the single registry of command title,
+  shortcut, menu and description; `CommandTableTests` asserts the README table
+  agrees with it, so a shortcut change that skips it turns main red.
+- `ContentView.swift` — the whole layout. `NavigationSplitView` → sidebar +
+  detail; detail is a `VStack` of `HSplitView { EditorPane | PreviewPane }`,
+  then the Problems panel with its `PanelResizeHandle`, then `StatusBar`.
+  `EditorPane`, `PreviewPane`, `StatusBar`, `VimStatusLine` and `CaptureBar`
+  all live in this file.
+- `ShellModel.swift` (+ 11 `ShellModel+*.swift` extensions) — the `@Observable`
+  state every view reads. `ShellChrome.swift` is a deliberately throttled
+  mirror of the fields the status bar reads on every keystroke; keep using it
+  rather than reading `ShellModel` directly from chrome.
+
+**Surfaces and their owners**
+- Sidebar / file tree — `WorkspaceSidebar.swift`
+- Editor tabs — `DocumentTabBar.swift`
+- Source editor — `SourceEditorView.swift` (`NSViewRepresentable` over
+  `NSTextView`; TextKit 1 on purpose) with `SyntaxHighlighter.swift`,
+  `ErrorLens.swift`, `EditorFolding.swift`, `EditorIndentation.swift`,
+  `LaTeXSpellCheck.swift`, `MathCaretHighlight.swift`
+- Completion popup — `Completion.swift` (2.9k lines; `CompletingTextView` is
+  the `NSTextView` subclass and owns `keyDown`), `SignatureHelp.swift`
+- Preview — `PreviewV2View.swift` (current), `PreviewView.swift` (legacy v1),
+  `PreviewZoom.swift`, `PreviewAnchor.swift`, `DisplayListLinks.swift`
+- Problems panel — `ProblemsPanel.swift`, `DiagnosticsPanel.swift`,
+  `EditorDiagnostics.swift` (quick fixes: `previewQuickFix` / `applyQuickFix`)
+- Outline — `DocumentOutline.swift`; command palette — `CommandPalette.swift`
+- Find / replace — `EditorFind.swift`, `ProjectSearchPanel.swift`
+- Settings — `EditorPreferences.swift` (the model, `UserDefaults`-backed),
+  `ConversionPreferencesView.swift`
+- Status bar items — `WordCountStatusView.swift`, `DocumentStatistics.swift`
+- iPad companion surfaces — `CaptureInbox.swift`, `CaptureList.swift`,
+  `NearbyView.swift`, `PairingQR.swift`
+
+**Where styling lives today: nowhere.** There is no design system. Colours are
+`NSColor`/`Color` semantic names and literals inline in view bodies; spacing
+and sizes are numeric literals at their use sites. Creating
+`DesignSystem.swift` and migrating onto it is step 1 of the order of work, and
+the "no raw numeric or colour literals" criterion is measured against view
+files, not against the token file itself.
+
+**Constraints that will bite**
+- `VimMode.swift` and `Completion.swift` both intercept `keyDown` before
+  SwiftUI sees it, and `EditorKeyHandling.swift` owns Tab's precedence chain
+  (IME → snippet → completion → quick fix → indent). Any key-handling change
+  goes through those, not through a SwiftUI `.onKeyPress`.
+- `SyntaxHighlighter` paints via `NSLayoutManager` **temporary attributes**.
+  `MarkPainter` uses `.underlineStyle`/`.underlineColor`/`.toolTip`,
+  spell check uses `.spellingState`, the brace highlight uses
+  `.backgroundColor`; only the highlighter owns `.foregroundColor`. Do not add
+  a second owner of an existing key.
+- `ReduceMotion.swift` already exists — use it; do not re-read the
+  accessibility setting yourself.
+- `ProblemsPanel` height is capped at 40% of the window and the editor keeps a
+  minimum; `ContentView` enforces this and a UI QA finding drove it.
+- Tests build real `NSWindow`s through `HostedWindowSupport.window(...)` in the
+  `HostedWindows` target, which ignores the requested origin and parks windows
+  off every display. Never construct `NSWindow` directly in a test — a guard
+  test fails on it, and on-screen test windows were a real complaint from the
+  owner.
+
+**The render loop**
+- `apps/mac/Tests/DesignSnapshots/` — `SnapshotHarness.swift` gives you
+  `assertSurface(_:named:size:appearance:)` and
+  `assertSurfaceBothAppearances(...)`. PNGs land in
+  `Tests/DesignSnapshots/__Snapshots__/<TestClass>/`.
+- Run: `cd apps/mac && swift test --filter DesignSnapshots`. Record or
+  re-record with `RECORD_SNAPSHOTS=1` in front of it.
+- **This is your only way to see your work.** Peekaboo and XcodeBuildMCP are
+  not available here and macOS `screencapture` cannot reach the window server
+  over SSH, so the MCP tools named in this file's `tools:` list do not exist in
+  this environment. Ignore them; use the snapshot loop.
+- Most surfaces need a `ShellModel`. Build fixtures for them — that is part of
+  step 1, and a surface you cannot render is a surface you cannot honestly
+  claim to have finished.
