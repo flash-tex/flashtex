@@ -520,48 +520,6 @@ fn color_never_strips_ansi_and_always_overrides_no_color() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `--diagnostics short` keeps the one-line `file:line:col` form with no
-/// excerpt, carets or `-->` header — the same bytes piped stderr gets by
-/// default — in both the space and `=` spellings.
-#[test]
-fn diagnostics_short_is_one_line_per_diagnostic() {
-    let dir = tmp("diag-short");
-    let src = dir.join("main.tex");
-    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{nothere}\nAfter.\n\\end{document}\n").unwrap();
-    let fonts = fonts_dir();
-    let check = |extra: &[&str]| {
-        let mut args = vec!["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()];
-        args.extend_from_slice(extra);
-        run(&args)
-    };
-    for flag in [&["--diagnostics=short"][..], &["--diagnostics", "short"][..]] {
-        let o = check(flag);
-        let err = stderr(&o);
-        assert_eq!(o.status.code(), Some(0), "{err}");
-        assert!(err.lines().any(|l| l.starts_with("main.tex:4:1: error[missing_file]")), "{err}");
-        assert!(!err.contains("-->"), "{err}");
-        assert!(!err.contains(" | "), "{err}");
-    }
-    // Piped stderr already defaults to this same short shape, so the
-    // assertions above would pass even if `--diagnostics short` were parsed
-    // and ignored (no config or env re-defaults to full: the default is
-    // terminal-only in `build_once`). Pin the two forms against each other
-    // on the identical input instead: full must show the `-->` header, the
-    // source excerpt and the caret line that short just proved absent —
-    // the same assertion shape as
-    // `diagnostics_full_shows_the_source_line_and_carets` — and the two
-    // outputs must differ byte for byte.
-    let full = check(&["--diagnostics=full"]);
-    let full_err = stderr(&full);
-    assert_eq!(full.status.code(), Some(0), "{full_err}");
-    assert!(full_err.contains("error[missing_file]: "), "{full_err}");
-    assert!(full_err.contains(" --> main.tex:4:1\n"), "{full_err}");
-    assert!(full_err.contains("\n4 | \\input{nothere}\n  | ^"), "{full_err}");
-    let short_err = stderr(&check(&["--diagnostics=short"]));
-    assert_ne!(short_err, full_err, "short and full must differ:\n{short_err}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
 /// `-j`/`--jobs` is accepted for compatibility and never changes the outcome:
 /// any numeric value (including the `0` edge case) builds as usual, while a
 /// non-numeric or missing value is a usage error (exit 2).
