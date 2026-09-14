@@ -153,10 +153,29 @@ mod restart_capability_tests {
         }
         store
     }
+    /// The interpreter for the fake compiler (#207, as `tests/lifecycle.rs`):
+    /// `FLASHTEX_TEST_PYTHON`, else `/usr/bin/python3` when it exists, else the
+    /// first `python3` on `PATH` (NixOS has no `/usr/bin/python3`).
+    fn python3() -> std::path::PathBuf {
+        if let Some(path) = std::env::var_os("FLASHTEX_TEST_PYTHON") {
+            return path.into();
+        }
+        let system = std::path::PathBuf::from("/usr/bin/python3");
+        if system.is_file() {
+            return system;
+        }
+        std::env::var_os("PATH")
+            .and_then(|paths| {
+                std::env::split_paths(&paths)
+                    .map(|dir| dir.join("python3"))
+                    .find(|candidate| candidate.is_file())
+            })
+            .unwrap_or(system)
+    }
     fn command(dir: &std::path::Path) -> Command {
         let path = dir.join("compiler.py");
         std::fs::write(&path, "import json,sys\nfor line in sys.stdin:\n r=json.loads(line);p=r['payload']\n print(json.dumps({'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[]}}),flush=True)\n").unwrap();
-        let mut command = Command::new("/usr/bin/python3");
+        let mut command = Command::new(python3());
         command.arg(path);
         command
     }
