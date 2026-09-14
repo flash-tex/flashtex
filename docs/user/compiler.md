@@ -408,12 +408,12 @@ Canonical sources:
 | `\counterwithout` | `{counter}{parent}` | undoes \counterwithin; starred form keeps the printed form |
 | `\caption` | `{...}` | numbered "Figure N:" caption inside figure |
 | `\item` | `[label]` | entry of an itemize, enumerate or description list |
-| `\includegraphics` | `*[keys]{file}` | image box in running text (graphicx keys as written) |
-| `\scalebox` | `{x}[y]{...}` | graphics.sty scaled box of the content |
-| `\resizebox` | `*{width}{height}{...}` | graphics.sty box scaled to a width and/or height; ! keeps the aspect ratio |
-| `\rotatebox` | `[keys]{angle}{...}` | graphicx rotated box; the box is the rotated bounding box |
-| `\reflectbox` | `{...}` | graphics.sty box mirrored left to right |
-| `\graphicspath` | `{{dir/}...}` | image search directories; no material |
+| `\includegraphics` | `*[keys]{file}` | image box, in running text or inside a figure/table; graphicx keys as written, including the [llx,lly][urx,ury] bounding-box form. trim/clip/viewport size the box but the image is not cropped; EPS and PS are not read |
+| `\scalebox` | `{x}[y]{...}` | graphics.sty: the content is set UNSCALED and the limitation is reported; the display list carries no transform for text |
+| `\resizebox` | `*{width}{height}{...}` | graphics.sty: the content is set at its NATURAL SIZE and the limitation is reported; the display list carries no transform for text |
+| `\rotatebox` | `[keys]{angle}{...}` | graphicx: the content is set UNROTATED and the limitation is reported; the display list carries no transform for text |
+| `\reflectbox` | `{...}` | graphics.sty: the content is set UNMIRRORED and the limitation is reported; the display list carries no transform for text |
+| `\graphicspath` | `{{dir/}...}` | image search directories, searched after the name as written by \includegraphics; no material |
 | `\url` | `{url}` | monospaced URL text; links are not clickable |
 | `\href` | `{url}{text}` | link text; links are not clickable |
 | `\nolinkurl` | `{url}` | monospaced URL text without a link |
