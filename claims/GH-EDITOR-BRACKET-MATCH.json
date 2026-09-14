@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/editor-bracket-match",
+  "gh_ref": "#2",
+  "machine": "mac-m5pro-dq222",
+  "note": "Mac editor matching brace/bracket/begin-end highlight + jump; Cursor",
+  "started_utc": "2026-09-14T16:19:53Z",
+  "state": "claimed",
+  "task_id": "GH-EDITOR-BRACKET-MATCH",
+  "updated_utc": "2026-09-14T16:19:53Z"
+}
