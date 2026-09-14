@@ -119,10 +119,12 @@ fn renewenvironment_replaces_the_environment_expansion() {
     assert_eq!(texts(&output), ["Yo", "Bob", "?"], "{:?}", texts(&output));
 }
 
+/// Parser-level coverage for the family switch: the run asserts below read the parsed `TextStyle`s; only the font asserts check the compiled output.
 #[test]
 fn rmfamily_restores_the_roman_family() {
     let parsed = parser::parse(r"{\sffamily A\rmfamily B} C");
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    // Parser-level: the family asserts below read the parsed runs, not layout.
     let runs = text_runs(r"{\sffamily A\rmfamily B} C");
     assert_eq!(runs.len(), 3);
     assert_eq!(runs[0].1.family, TextFamily::Sans);
@@ -210,29 +212,38 @@ fn settowidth_stores_the_width_and_grows_with_the_text() {
     assert!(value(&long) > value(&short), "wider text measures wider");
 }
 
+/// Parser-level coverage for the family switch: the run asserts below read the parsed `TextStyle`s; only the font assert checks the compiled output.
 #[test]
 fn sffamily_switches_to_the_sans_family() {
     let parsed = parser::parse(r"Plain {\sffamily Sans} back");
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    // Parser-level: the family asserts below read the parsed runs, not layout.
     let runs = text_runs(r"Plain {\sffamily Sans} back");
     assert_eq!(runs[0].1.family, TextFamily::Roman);
     assert_eq!(runs[1].0, "Sans");
     assert_eq!(runs[1].1.family, TextFamily::Sans);
     let output = compile(r"Plain {\sffamily Sans} back");
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     assert_eq!(item(&output, "Sans").font, Font::Helvetica);
 }
 
+/// Parser-level coverage: asserts the parsed `TextStyle`, not laid-out/rendered output.
 #[test]
 fn slshape_selects_slanted_type() {
+    let parsed = parser::parse(r"{\slshape Slanted}");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    // Parser-level: the italic assert below reads the parsed run, not layout.
     let runs = text_runs(r"{\slshape Slanted}");
     assert_eq!(runs.len(), 1);
     assert!(runs[0].1.italic, "slshape sets italic: {:?}", runs[0].1);
 }
 
+/// Parser-level coverage: asserts the parsed block shape, not laid-out/rendered output.
 #[test]
 fn smallskip_inserts_three_points_of_vertical_space() {
     let parsed = parser::parse("A\n\n\\smallskip\n\nB");
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    // Parser-level: only the parsed `VSpace` block is asserted, not rendered gap size.
     let vspace: Vec<f64> = parsed
         .blocks
         .iter()
@@ -245,11 +256,14 @@ fn smallskip_inserts_three_points_of_vertical_space() {
     assert_eq!(vspace, [3.0]);
 }
 
+/// Verifies only the vertical stacking order of script over base; the exact size and centring of the script relative to the base are unverified.
 #[test]
 fn stackrel_stacks_its_script_over_the_base() {
     let output = compile(r"$\stackrel{top}{base}$");
     assert_supported(&output);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    // Only the vertical stacking order is verified here, not the exact
+    // size or centring of the script relative to the base.
     // Math layout emits one item per character; "top"/"base" share no
     // letters, so each character item is unambiguous.
     let mut top_y = Vec::new();
@@ -282,8 +296,12 @@ fn stepcounter_increments_and_resets_dependants() {
     assert_eq!(all, ["M", "1", "S", "0"], "{all:?}");
 }
 
+/// Parser-level coverage: asserts the parsed `TextStyle`, not laid-out/rendered output.
 #[test]
 fn textmd_selects_medium_weight_inside_bold() {
+    let parsed = parser::parse(r"{\bfseries A\textmd{B} C}");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    // Parser-level: the weight asserts below read the parsed runs, not layout.
     let runs = text_runs(r"{\bfseries A\textmd{B} C}");
     assert_eq!(runs.len(), 3);
     assert!(runs[0].1.bold, "before: {:?}", runs[0].1);
@@ -292,8 +310,12 @@ fn textmd_selects_medium_weight_inside_bold() {
     assert!(runs[2].1.bold, "group scope restored: {:?}", runs[2].1);
 }
 
+/// Parser-level coverage: asserts the parsed `TextStyle`, not laid-out/rendered output.
 #[test]
 fn textnormal_resets_every_attribute() {
+    let parsed = parser::parse(r"{\bfseries\itshape\sffamily A\textnormal{B}}");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    // Parser-level: the reset assert below reads the parsed run, not layout.
     let runs = text_runs(r"{\bfseries\itshape\sffamily A\textnormal{B}}");
     assert_eq!(runs[1].0, "B");
     assert_eq!(runs[1].1, TextStyle::default(), "fully reset: {:?}", runs[1].1);
@@ -314,10 +336,14 @@ fn textstyle_is_consumed_without_visible_output() {
     assert_eq!(items[1].font_size_pt, items[0].font_size_pt);
 }
 
+/// Parser-level coverage: asserts the parsed `TextStyle`, not laid-out/rendered output.
 #[test]
 fn upshape_cancels_slant_inside_italics() {
     // `\upshape` is a declaration, not an argument-taking command: it
     // applies to everything after it in the enclosing group.
+    let parsed = parser::parse(r"{\itshape A\upshape B}");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    // Parser-level: the italic asserts below read the parsed runs, not layout.
     let runs = text_runs(r"{\itshape A\upshape B}");
     assert_eq!(runs.len(), 2);
     assert!(runs[0].1.italic, "before: {:?}", runs[0].1);
@@ -366,5 +392,6 @@ fn quotation_reports_a_quote_block_and_indents() {
     assert_eq!(styled[0].0, ParagraphStyle::Quote);
     assert!(run_text(styled[0].1).contains("Hi"));
     let output = compile(r"\begin{quotation}Hi\end{quotation}");
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     assert!(item(&output, "Hi").x_pt > MARGIN_PT, "both margins indented");
 }
