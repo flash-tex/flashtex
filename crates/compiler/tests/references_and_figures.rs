@@ -126,6 +126,21 @@ fn figure_caption_label_and_lists_render() {
 }
 
 #[test]
+fn enumerate_ref_uses_the_counter_value_without_the_display_period() {
+    let source = r"\begin{enumerate}\item\label{item}First\end{enumerate}See \ref{item}.";
+    let result = compile_full(source, LayoutConstraints::default());
+    let reference_start = source.find(r"\ref{item}").unwrap();
+    let reference = result
+        .pages
+        .iter()
+        .flat_map(|page| &page.items)
+        .find(|item| item.span.start == reference_start)
+        .expect("enumerate reference item");
+    assert_eq!(reference.text, "1");
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+}
+
+#[test]
 fn includegraphics_is_reported_by_the_core14_layout() {
     // The parser records an image node; this layout never loads the file.
     let result = compile_full(r"\includegraphics{plot.png}", LayoutConstraints::default());

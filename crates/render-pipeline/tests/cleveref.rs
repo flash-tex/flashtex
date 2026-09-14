@@ -14,7 +14,7 @@ fn cleveref_names_render_as_text() {
         r"\section{Second}\label{s2}",
         r"\begin{equation}x\label{e1}\end{equation}",
         r"\begin{equation}y\label{e2}\end{equation}",
-        r"See \autoref{s2}; \cref{e1,e2}.",
+        r"See \Cref{s2}; \cref{e1,e2}.",
         r"\end{document}",
     );
     let rendered = common::render_one(source);

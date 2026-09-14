@@ -2221,7 +2221,6 @@ fn clever_reference_text(
     page: bool,
     range: bool,
     label_only: bool,
-    autoref: bool,
     capitalise: bool,
 ) -> (String, bool) {
     let mut items = Vec::with_capacity(keys.len());
@@ -2234,7 +2233,7 @@ fn clever_reference_text(
             Some(value) => items.push(CleverReferenceItem {
                 number: value.number.clone(),
                 page: value.page,
-                kind: value.kind.clone(),
+                kind: crate::xref::cleveref_kind(&value.kind).to_string(),
             }),
             None => unresolved = true,
         }
@@ -2257,42 +2256,18 @@ fn clever_reference_text(
             unresolved,
         );
     }
-    if autoref {
-        let text = join_with_and(
-            &items
-                .iter()
-                .map(|item| {
-                    format!(
-                        "{} {}",
-                        crate::xref::autoref_name(&item.kind),
-                        clever_number(item)
-                    )
-                })
-                .collect::<Vec<_>>(),
-        );
-        return include_unresolved(text, unresolved);
-    }
     if page {
         items.sort_by_key(|item| item.page);
         let name = crate::xref::cleveref_name(config, "page", items.len() != 1, capitalise);
         return include_unresolved(
-            format!(
-                "{} {}",
-                name,
-                join_with_and(
-                    &items
-                        .iter()
-                        .map(|item| item.page.to_string())
-                        .collect::<Vec<_>>(),
-                )
-            ),
+            format!("{} {}", name, format_page_numbers(&items)),
             unresolved,
         );
     }
     if label_only {
         items.sort_by(compare_items);
         return include_unresolved(
-            join_with_and(&items.iter().map(clever_number).collect::<Vec<_>>()),
+            format_clever_numbers(&items),
             unresolved,
         );
     }
@@ -2308,14 +2283,14 @@ fn clever_reference_text(
     for (_, group) in &mut groups {
         group.sort_by(compare_items);
     }
-    let text = groups
+    let group_text = groups
         .iter()
         .map(|(kind, group)| {
             let name = crate::xref::cleveref_name(config, kind, group.len() != 1, capitalise);
             format!("{} {}", name, format_clever_numbers(group))
         })
-        .collect::<Vec<_>>()
-        .join(" and ");
+        .collect::<Vec<_>>();
+    let text = join_group_parts(&group_text);
     include_unresolved(text, unresolved)
 }
 
@@ -2338,7 +2313,25 @@ fn format_clever_numbers(items: &[CleverReferenceItem]) -> String {
         }
         start = end + 1;
     }
-    join_with_and(&parts)
+    join_cref_parts(&parts)
+}
+
+fn format_page_numbers(items: &[CleverReferenceItem]) -> String {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while start < items.len() {
+        let mut end = start;
+        while end + 1 < items.len() && items[end].page + 1 == items[end + 1].page {
+            end += 1;
+        }
+        if end - start >= 2 {
+            parts.push(format!("{} to {}", items[start].page, items[end].page));
+        } else {
+            parts.extend(items[start..=end].iter().map(|item| item.page.to_string()));
+        }
+        start = end + 1;
+    }
+    join_cref_parts(&parts)
 }
 
 fn consecutive(first: &CleverReferenceItem, second: &CleverReferenceItem) -> bool {
@@ -2388,13 +2381,25 @@ fn clever_number(item: &CleverReferenceItem) -> String {
     }
 }
 
-fn join_with_and(parts: &[String]) -> String {
+fn join_cref_parts(parts: &[String]) -> String {
     match parts {
         [] => String::new(),
         [one] => one.clone(),
         [first, second] => format!("{first} and {second}"),
         _ => {
             let last = parts.last().expect("more than two parts");
+            format!("{} and {last}", parts[..parts.len() - 1].join(", "))
+        }
+    }
+}
+
+fn join_group_parts(parts: &[String]) -> String {
+    match parts {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, second] => format!("{first} and {second}"),
+        _ => {
+            let last = parts.last().expect("more than two groups");
             format!("{}, and {last}", parts[..parts.len() - 1].join(", "))
         }
     }
@@ -2520,7 +2525,6 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 page,
                 range,
                 label_only,
-                autoref,
                 capitalise,
                 span,
                 space_before,
@@ -2533,7 +2537,6 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     *page,
                     *range,
                     *label_only,
-                    *autoref,
                     *capitalise,
                 );
                 c.place(

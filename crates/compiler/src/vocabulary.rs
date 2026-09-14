@@ -62,7 +62,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "verb", "hyphenation", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "RequirePackage",
     "PassOptionsToPackage", "AtBeginDocument",
     // Cross-references and links.
-    "eqref", "autoref", "cref", "Cref", "nameref", "url", "href", "hyperref", "hyperlink",
+    "eqref", "autoref", "nameref", "url", "href", "hyperref", "hyperlink",
     "hypertarget", "citep", "citet", "citeauthor", "addbibresource", "printbibliography",
     // Colour and graphics packages.
     "tikz",

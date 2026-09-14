@@ -204,7 +204,6 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("cpageref", "*{key list}", "cleveref named page references"),
     ("Cpageref", "*{key list}", "capitalised cleveref named page references"),
     ("labelcref", "*{key list}", "cleveref label text without the reference name"),
-    ("autoref", "*{key}", "hyperref named reference using the label's counter type"),
     ("crefname", "{type}{singular}{plural}", "cleveref lower-case singular and plural name override"),
     ("Crefname", "{type}{singular}{plural}", "cleveref capitalised singular and plural name override"),
     ("caption", "{...}", "numbered \"Figure N:\" caption inside figure"),

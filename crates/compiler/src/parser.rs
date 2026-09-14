@@ -149,7 +149,6 @@ pub enum Inline {
         page: bool,
         range: bool,
         label_only: bool,
-        autoref: bool,
         capitalise: bool,
         linked: bool,
         span: Span,
@@ -808,7 +807,6 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "cpageref",
     "Cpageref",
     "labelcref",
-    "autoref",
     "crefname",
     "Crefname",
     "numberwithin",
@@ -1892,6 +1890,7 @@ impl P<'_> {
             // real documents put it, and in the body, where LaTeX also
             // allows it.
             "hypersetup" => self.hypersetup(span),
+            "crefname" | "Crefname" => self.cleveref_name(name, span),
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
@@ -1972,8 +1971,7 @@ impl P<'_> {
                 });
             }
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
-            | "labelcref" | "autoref" => self.clever_reference(name, span, para),
-            "crefname" | "Crefname" => self.cleveref_name(name, span),
+            | "labelcref" => self.clever_reference(name, span, para),
             "tableofcontents" => {
                 self.flush_paragraph(blocks, para);
                 self.document_global_state = true;
@@ -2993,10 +2991,7 @@ impl P<'_> {
         let range = matches!(name, "crefrange" | "Crefrange");
         let page = matches!(name, "cpageref" | "Cpageref");
         let label_only = name == "labelcref";
-        let autoref = name == "autoref";
-        let capitalise = matches!(name, "Cref" | "Crefrange" | "Cpageref")
-            || (name == "autoref" && !label_only)
-            || self.cleveref.capitalise;
+        let capitalise = matches!(name, "Cref" | "Crefrange" | "Cpageref");
         let full_span;
         let keys = if range {
             let (first, first_span) = self.required_group(name, span);
@@ -3018,7 +3013,6 @@ impl P<'_> {
             page,
             range,
             label_only,
-            autoref,
             capitalise,
             linked,
             span: full_span,
@@ -6074,7 +6068,11 @@ impl P<'_> {
             },
         };
         let item_text = item.text().to_string();
-        self.set_current_counter("item", Some(item_text.clone()));
+        let reference_value = match &item {
+            ItemLabel::Counter { value, style, .. } => style.format(*value),
+            _ => item_text.clone(),
+        };
+        self.set_current_counter("item", Some(reference_value));
         self.pending_item_label = Some((item_text, span));
         self.pending_item = Some(item);
     }

@@ -74,7 +74,6 @@
     {"name": "cpageref", "mode": "text", "origin": "text_dispatch", "arguments": "*{key list}", "description": "cleveref named page references", "renders": true},
     {"name": "Cpageref", "mode": "text", "origin": "text_dispatch", "arguments": "*{key list}", "description": "capitalised cleveref named page references", "renders": true},
     {"name": "labelcref", "mode": "text", "origin": "text_dispatch", "arguments": "*{key list}", "description": "cleveref label text without the reference name", "renders": true},
-    {"name": "autoref", "mode": "text", "origin": "text_dispatch", "arguments": "*{key}", "description": "hyperref named reference using the label's counter type", "renders": true},
     {"name": "crefname", "mode": "text", "origin": "text_dispatch", "arguments": "{type}{singular}{plural}", "description": "cleveref lower-case singular and plural name override", "renders": true},
     {"name": "Crefname", "mode": "text", "origin": "text_dispatch", "arguments": "{type}{singular}{plural}", "description": "cleveref capitalised singular and plural name override", "renders": true},
     {"name": "numberwithin", "mode": "text", "origin": "text_dispatch", "arguments": "[\\style]{counter}{parent}", "description": "amsmath: counter reset by parent and printed \\theparent.\\style{counter} (equation, figure, table; theorem counters within section)", "renders": true},
@@ -928,13 +927,13 @@
       {"set": "enumitem", "kind": "command", "canonical": 17, "supported": 1, "percent": 5.9},
       {"set": "geometry", "kind": "command", "canonical": 7, "supported": 0, "percent": 0},
       {"set": "graphicx", "kind": "command", "canonical": 8, "supported": 6, "percent": 75},
-      {"set": "hyperref", "kind": "command", "canonical": 132, "supported": 4, "percent": 3},
+      {"set": "hyperref", "kind": "command", "canonical": 132, "supported": 3, "percent": 2.3},
       {"set": "hyperref", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "tikz", "kind": "command", "canonical": 43, "supported": 0, "percent": 0},
       {"set": "tikz", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 17, "percent": 7.1}
     ],
-    "total": {"canonical": 1314, "supported": 516, "percent": 39.3}
+    "total": {"canonical": 1314, "supported": 515, "percent": 39.2}
   }
 }

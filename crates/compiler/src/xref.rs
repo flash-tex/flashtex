@@ -55,10 +55,18 @@ impl CleverefConfig {
             name.capital_singular = Some(singular.clone());
             name.capital_plural = Some(plural.clone());
             if name.singular.is_none() {
-                name.singular = Some(singular.to_lowercase());
+                name.singular = Some(if self.capitalise {
+                    singular.clone()
+                } else {
+                    singular.to_lowercase()
+                });
             }
             if name.plural.is_none() {
-                name.plural = Some(plural.to_lowercase());
+                name.plural = Some(if self.capitalise {
+                    plural.clone()
+                } else {
+                    plural.to_lowercase()
+                });
             }
         } else {
             name.singular = Some(singular.clone());
@@ -73,11 +81,11 @@ impl CleverefConfig {
     }
 }
 
-/// The default `cleveref` name for a label type. `Cref` uses the full names;
-/// lower-case `cref` uses the package's equation/figure abbreviations unless
-/// `noabbrev` was loaded.
+/// The default `cleveref` name for a label type. `capitalise` changes the
+/// initial letter; `noabbrev` selects full equation/figure names.
 pub fn cleveref_name(config: &CleverefConfig, kind: &str, plural: bool, capital: bool) -> String {
-    let full = capital || config.noabbrev;
+    let kind = cleveref_kind(kind);
+    let full = config.noabbrev;
     if let Some(name) = config.names.get(kind) {
         let override_name = match (capital, plural) {
             (true, true) => name.capital_plural.as_ref(),
@@ -94,8 +102,6 @@ pub fn cleveref_name(config: &CleverefConfig, kind: &str, plural: bool, capital:
         ("figure", false) => ("fig.", "figs."),
         ("appendix", _) => ("appendix", "appendices"),
         ("section", _) => ("section", "sections"),
-        ("subsection", _) => ("subsection", "subsections"),
-        ("subsubsection", _) => ("subsubsection", "subsubsections"),
         ("table", _) => ("table", "tables"),
         ("item", _) => ("item", "items"),
         ("footnote", _) => ("footnote", "footnotes"),
@@ -106,7 +112,7 @@ pub fn cleveref_name(config: &CleverefConfig, kind: &str, plural: bool, capital:
     let name = if plural {
         if plural_name.is_empty() {
             let fallback = format!("{singular}s");
-            return if capital {
+            return if capital || config.capitalise {
                 capitalize_first(&fallback)
             } else {
                 fallback
@@ -116,29 +122,18 @@ pub fn cleveref_name(config: &CleverefConfig, kind: &str, plural: bool, capital:
     } else {
         singular.to_string()
     };
-    if capital {
+    if capital || config.capitalise {
         capitalize_first(&name)
     } else {
         name
     }
 }
 
-/// Hyperref's `\autoref` names. Item and footnote deliberately remain lower
-/// case, matching hyperref's kernel defaults.
-pub fn autoref_name(kind: &str) -> String {
+/// `cleveref` aliases subsections to the section name by default.
+pub fn cleveref_kind(kind: &str) -> &str {
     match kind {
-        "section" => "Section".into(),
-        "subsection" => "Subsection".into(),
-        "subsubsection" => "Subsubsection".into(),
-        "equation" => "Equation".into(),
-        "figure" => "Figure".into(),
-        "table" => "Table".into(),
-        "item" => "item".into(),
-        "footnote" => "footnote".into(),
-        "appendix" => "Appendix".into(),
-        "chapter" => "Chapter".into(),
-        "part" => "Part".into(),
-        kind => capitalize_first(kind),
+        "subsection" | "subsubsection" => "section",
+        kind => kind,
     }
 }
 
