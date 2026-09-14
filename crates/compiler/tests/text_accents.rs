@@ -20,7 +20,12 @@ fn words_in(o: &CompileOutput, source: &str) -> Vec<(String, i64, i64, i64)> {
         let word_start = start == 0 || source[..start].ends_with(char::is_whitespace);
         match out.last_mut() {
             Some(last) if !word_start && last.2 == r(i.baseline_y_pt) => last.0.push_str(&i.text),
-            _ => out.push((i.text.clone(), r(i.x_pt), r(i.baseline_y_pt), r(i.font_size_pt))),
+            _ => out.push((
+                i.text.clone(),
+                r(i.x_pt),
+                r(i.baseline_y_pt),
+                r(i.font_size_pt),
+            )),
         }
     }
     out
@@ -30,7 +35,11 @@ fn words_in(o: &CompileOutput, source: &str) -> Vec<(String, i64, i64, i64)> {
 /// diagnostics (glyph coverage warnings included).
 fn same_as_typed(commands: &str, typed: &str) {
     let (a, b) = (compile(commands), compile(typed));
-    assert_eq!(words_in(&a, commands), words_in(&b, typed), "{commands:?} vs {typed:?}");
+    assert_eq!(
+        words_in(&a, commands),
+        words_in(&b, typed),
+        "{commands:?} vs {typed:?}"
+    );
     assert_eq!(messages(&a), messages(&b), "{commands:?} vs {typed:?}");
 }
 
@@ -46,7 +55,9 @@ fn accent_commands_lay_out_like_the_precomposed_characters() {
     // Only glyph coverage of the v1 Times layout may warn, never the accents.
     let out = compile(commands);
     assert!(
-        messages(&out).iter().all(|m| m.contains("has no glyph for")),
+        messages(&out)
+            .iter()
+            .all(|m| m.contains("has no glyph for")),
         "{:?}",
         messages(&out)
     );
@@ -55,8 +66,13 @@ fn accent_commands_lay_out_like_the_precomposed_characters() {
 #[test]
 fn an_unbraced_argument_is_the_next_letter_only() {
     same_as_typed("Ko\\v sice and \\c C\\v s end.\n", "Košice and Çš end.\n");
-    same_as_typed("Ko\\v sice and \\c C\\v s end.\n", "Ko\\v{s}ice and \\c{C}\\v{s} end.\n");
-    assert!(compile("Ko\\v sice and \\c C\\v s end.\n").diagnostics.is_empty());
+    same_as_typed(
+        "Ko\\v sice and \\c C\\v s end.\n",
+        "Ko\\v{s}ice and \\c{C}\\v{s} end.\n",
+    );
+    assert!(compile("Ko\\v sice and \\c C\\v s end.\n")
+        .diagnostics
+        .is_empty());
 }
 
 #[test]
@@ -81,10 +97,20 @@ fn every_accent_composes_a_declared_letter() {
 
 #[test]
 fn ogonek_needs_t1_like_latex() {
-    same_as_typed("\\usepackage[T1]{fontenc}\nx \\k{a} end\n", "\\usepackage[T1]{fontenc}\nx ą end\n");
+    same_as_typed(
+        "\\usepackage[T1]{fontenc}\nx \\k{a} end\n",
+        "\\usepackage[T1]{fontenc}\nx ą end\n",
+    );
     let ot1 = compile("x\\k{a}y end\n");
-    assert_eq!(messages(&ot1), ["LaTeX Error: Command \\k unavailable in encoding OT1."]);
-    assert_eq!(words_in(&ot1, "x\\k{a}y end\n")[0].0, "xay", "the letter is still typeset");
+    assert_eq!(
+        messages(&ot1),
+        ["LaTeX Error: Command \\k unavailable in encoding OT1."]
+    );
+    assert_eq!(
+        words_in(&ot1, "x\\k{a}y end\n")[0].0,
+        "xay",
+        "the letter is still typeset"
+    );
 }
 
 #[test]
@@ -119,4 +145,3 @@ fn a_bare_accent_warns_and_draws_nothing() {
     let out = compile(source);
     assert_eq!(messages(&out), ["\\v has no letter to accent"]);
 }
-

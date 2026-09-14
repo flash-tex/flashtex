@@ -172,7 +172,9 @@ pub fn text_accent(accent: &str, base: &str, enc: Encoding) -> Option<AccentOutc
     }
     let command = format!("\\{accent}");
     if let Resolution::Unavailable = encoding::resolve(enc, &command) {
-        return Some(AccentOutcome::Unavailable(encoding::unavailable_message(enc, &command)));
+        return Some(AccentOutcome::Unavailable(encoding::unavailable_message(
+            enc, &command,
+        )));
     }
     // The dfu files are not uniform: U+01D0 is `\v \i` but U+01F0 `\v\j`.
     // Only a control-sequence base may drop the space: `\dh` is ð, not `\d h`.

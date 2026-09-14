@@ -4633,7 +4633,10 @@ impl P<'_> {
                         None => (String::new(), usize::MAX),
                     },
                 };
-                if close != usize::MAX && close != j && matches!(kind_at(self, close), Some(TokenKind::Space)) {
+                if close != usize::MAX
+                    && close != j
+                    && matches!(kind_at(self, close), Some(TokenKind::Space))
+                {
                     close += 1;
                 }
                 if close == usize::MAX || !matches!(kind_at(self, close), Some(TokenKind::RBrace)) {
@@ -4654,12 +4657,14 @@ impl P<'_> {
                 let first = w.chars().next().expect("words are non-empty");
                 let word_span = self.t[self.i].token.span;
                 let exact = word_span.end - word_span.start == w.len();
-                let base_end = if exact { word_span.start + first.len_utf8() } else { word_span.end };
+                let base_end =
+                    if exact { word_span.start + first.len_utf8() } else { word_span.end };
                 if w.len() == first.len_utf8() {
                     self.i += 1;
                 } else if let Some(input) = self.token_mut(self.i) {
                     if exact {
-                        input.token.span = Span::in_document(word_span.document, base_end, word_span.end);
+                        input.token.span =
+                            Span::in_document(word_span.document, base_end, word_span.end);
                     }
                     input.token.kind = TokenKind::Word(w[first.len_utf8()..].to_string());
                 }
