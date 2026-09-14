@@ -8,7 +8,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case editorPreferences
     case openLaTeXFile, newProject, newFile, save, saveAs, openFixture, reloadFixture
     case attachBuiltCompiler, attachRenderPipeline, attachWorker, compile
-    case exportPDF, exportPDFViaRust, exportPDFExact
+    case exportPDF, exportPDFViaRust, exportPDFExact, printDocument, printSource
     case pinInsertionPoint, openCaptureProposal, submitSampleCapture, convertCapture, nearbyCompanion
     case restoreDiscardedBuffer
     case undo
@@ -113,6 +113,16 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          description: "Hands the loaded v2 display list to flashtex-pdf-exact from-v2: glyphs by original GID, embedded font programs, typed rules; refuses what it cannot express exactly.",
                          requires: "a loaded v2 display list and a built flashtex-pdf-exact",
                          menuItem: "Export PDF (exact, v2)…")
+        case .printDocument:
+            return Entry(command: self, title: "Print", shortcuts: ["⌘P"], menu: "File",
+                         description: "Prints the compiled document PDF (the same CoreGraphics bytes as Export PDF…) through the system print panel; page size follows the PDF.",
+                         requires: "a compile result",
+                         menuItem: "Print…")
+        case .printSource:
+            return Entry(command: self, title: "Print Source", shortcuts: ["File > Print Source…"], menu: "File",
+                         description: "Prints the editor text with line numbers in a monospaced font from a copy of the buffer, so the live editor layout is untouched.",
+                         requires: "an open document",
+                         menuItem: "Print Source…")
         case .pinInsertionPoint:
             return Entry(command: self, title: "Pin insertion point", shortcuts: ["⌘⌥P"], menu: "Edit",
                          description: "Records the caret as the destination anchor for capture proposals; the capture bar reads it back.",

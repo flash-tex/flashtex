@@ -263,6 +263,20 @@ struct FlashTeXMacApp: App {
                     .disabled(!model.workerAttached)
             }
         }
+        .commands {
+            // Separate `.commands` so this is not an 11th child of the builder
+            // above (SwiftUI's CommandsBuilder limit). Replaces the system Print
+            // that would otherwise print the editor view.
+            CommandGroup(replacing: .printItem) {
+                Button("Print…") { model.printDocument() }
+                    .keyboardShortcut("p")
+                    .disabled(!PrintController.documentEnabled(model)) // change-only mirrors (see PrintController)
+                    .help(PrintController.documentHelp(model))
+                Button("Print Source…") { model.printSource() }
+                    .disabled(!PrintController.sourceEnabled(model))
+                    .help(PrintController.sourceHelp(model))
+            }
+        }
         Window("Nearby Companion", id: "nearby") {
             NearbyView().environmentObject(nearby).environment(model)
         }
