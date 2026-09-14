@@ -26,7 +26,7 @@ final class FastJSONTests: XCTestCase {
         }
         let page = { (n: Int) in #"{"number":\#(n),"width_pt":612,"height_pt":792.0,"items":[\#(items.joined(separator: ","))]}"# }
         let pagesJSON = (1...pages).map(page).joined(separator: ",")
-        let diags = #"[{"severity":"error","message":"Undefined control sequence \\foo","source":{"path":"main.tex","start_byte":3,"end_byte":7},"recovery":"skipped"},{"severity":"warning","message":"loose","source":null,"recovery":null},{"severity":"warning","message":"no source"}]"#
+        let diags = #"[{"severity":"error","message":"Undefined control sequence \\foo","source":{"path":"main.tex","start_byte":3,"end_byte":7},"recovery":"skipped"},{"severity":"warning","message":"loose","source":null,"recovery":null},{"severity":"warning","message":"no source"},{"severity":"error","code":"unknown_command","message":"`\\foo` is unknown","source":{"path":"main.tex","start_byte":3,"end_byte":7},"suggestion":"\\alpha","labels":[{"source":{"path":"main.tex","start_byte":3,"end_byte":7},"text":"this command","primary":true},{"source":{"path":"main.tex","start_byte":0,"end_byte":1},"text":"here","primary":false}],"notes":["a note"],"help":{"message":"did you mean \\alpha","replacement":{"start_byte":3,"end_byte":7,"text":"\\alpha"}},"recovery":"skipped","extra_future":{"nested":true}}]"#
         let json = #"{"protocol_version":1,"id":"r-1","type":"compile_result","payload":{"project_id":"demo","revision":42,"status":"recovered","pages":[\#(pagesJSON)],"diagnostics":\#(diags),"pdf_path":null,"layout_capabilities":["rules-v1","font-hints-v1"]}}"#
         return Data(json.utf8)
     }
