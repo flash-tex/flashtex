@@ -2706,10 +2706,10 @@ impl P<'_> {
         let pt = if is_length_reference(raw) {
             match self.resolve_known_length_ref(raw) {
                 Some(v) => v,
-                None if matches!(target, "parskip" | "parindent") => {
-                    // Page geometry (`\textwidth`, ...) is applied by the
-                    // pipeline; the compiler must not pretend `\parskip` is
-                    // 0pt or drop the assignment with no diagnostic.
+                None => {
+                    // Page geometry (`\textwidth`, `\paperwidth`, ...) is
+                    // applied by the pipeline; the compiler must not pretend
+                    // the value is 0pt or drop the assignment with no diagnostic.
                     self.diags.push(Diagnostic::warning(
                         "unsupported length expression",
                         Some(span),
@@ -2717,7 +2717,6 @@ impl P<'_> {
                     ));
                     return;
                 }
-                None => pt,
             }
         } else {
             pt

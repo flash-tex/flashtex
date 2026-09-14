@@ -2654,15 +2654,14 @@ fn apply_preamble_lengths(
     let em_ex = ec_em_ex(size, family);
     let mut assigned = LengthAssigns { parindent: false, parskip: false };
     let mut params = doc.params;
-    let mut from = 0;
-    while let Some((at, name)) = next_command(source, from) {
-        from = at + 1;
-        if brace_depth(&source[..at]) != 0 {
+    let mut scan = CmdScan::new(source);
+    while let Some((at, name, depth)) = scan.next() {
+        if depth != 0 {
             continue;
         }
         let after_name = at + 1 + name.len();
         if matches!(name, "newcommand" | "renewcommand" | "providecommand" | "def" | "gdef" | "edef" | "xdef") {
-            from = skip_macro_definition(source, name, after_name).max(from);
+            scan.skip_to(skip_macro_definition(source, name, after_name));
             continue;
         }
         if name == "setlength" || name == "addtolength" {
@@ -2744,6 +2743,77 @@ fn last_geometry_offset(source: &str, preamble_end: usize) -> Option<usize> {
     last
 }
 
+/// One linear pass over `source`: comments, escaped bytes, and `{`/`}` depth.
+struct CmdScan<'a> {
+    source: &'a str,
+    i: usize,
+    depth: i64,
+    comment: bool,
+}
+
+impl<'a> CmdScan<'a> {
+    fn new(source: &'a str) -> Self {
+        Self {
+            source,
+            i: 0,
+            depth: 0,
+            comment: false,
+        }
+    }
+
+    fn skip_to(&mut self, pos: usize) {
+        if pos > self.i {
+            self.i = pos;
+        }
+        self.comment = false;
+    }
+
+    /// Next alphabetic control word and the brace depth at its backslash.
+    fn next(&mut self) -> Option<(usize, &'a str, i64)> {
+        let bytes = self.source.as_bytes();
+        while self.i < bytes.len() {
+            let c = bytes[self.i];
+            if self.comment {
+                if c == b'\n' {
+                    self.comment = false;
+                }
+                self.i += 1;
+                continue;
+            }
+            match c {
+                b'%' => {
+                    self.comment = true;
+                    self.i += 1;
+                }
+                b'\\' => {
+                    let start = self.i + 1;
+                    let mut j = start;
+                    while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
+                        j += 1;
+                    }
+                    if j > start {
+                        let at = self.i;
+                        let depth = self.depth;
+                        self.i = j;
+                        return Some((at, &self.source[start..j], depth));
+                    }
+                    self.i += 2;
+                }
+                b'{' => {
+                    self.depth += 1;
+                    self.i += 1;
+                }
+                b'}' => {
+                    self.depth = (self.depth - 1).max(0);
+                    self.i += 1;
+                }
+                _ => self.i += 1,
+            }
+        }
+        None
+    }
+}
+
 fn next_command(source: &str, from: usize) -> Option<(usize, &str)> {
     // ASCII letters only: `\@setlength` after `\makeatletter` is a known
     // limit (ignored test `preamble_scan_does_not_see_at_setlength`).
@@ -2789,6 +2859,12 @@ fn skip_ws(source: &str, mut i: usize) -> usize {
     i
 }
 
+/// Inner of a `{...}` group, comments stripped, escapes kept.
+///
+/// Not [`matching_brace`]: that helper returns a close index and does not
+/// skip `%` comments, so `{6in%\n}` would count a `}` inside the comment and
+/// break [`tests::preamble_scan_strips_comments_inside_dimension_groups`].
+/// It also does not skip leading whitespace or yield the inner bytes.
 fn read_group(source: &str, i: &mut usize) -> Option<String> {
     *i = skip_ws(source, *i);
     let b = source.as_bytes();
@@ -2843,19 +2919,31 @@ fn read_group(source: &str, i: &mut usize) -> Option<String> {
     None
 }
 
-/// Offset of `\begin{document}` / `\begin {document}`, comments skipped
-/// (reuses [`find_command`]).
+/// Offset of `\begin{document}` / `\begin {document}`. Comments, brace
+/// groups, and `\newcommand`/`\def` bodies are skipped the same way as
+/// [`apply_preamble_lengths`].
 fn document_begin_offset(source: &str) -> Option<usize> {
-    let mut from = 0;
-    while let Some(rel) = find_command(&source[from..], "begin") {
-        let at = from + rel;
+    let mut scan = CmdScan::new(source);
+    while let Some((at, name, depth)) = scan.next() {
+        if depth != 0 {
+            continue;
+        }
+        if matches!(
+            name,
+            "newcommand" | "renewcommand" | "providecommand" | "def" | "gdef" | "edef" | "xdef"
+        ) {
+            scan.skip_to(skip_macro_definition(source, name, at + 1 + name.len()));
+            continue;
+        }
+        if name != "begin" {
+            continue;
+        }
         let mut i = skip_ws(source, at + "\\begin".len());
-        if let Some(name) = read_group(source, &mut i) {
-            if name.trim() == "document" {
+        if let Some(env) = read_group(source, &mut i) {
+            if env.trim() == "document" {
                 return Some(at);
             }
         }
-        from = at + 1;
     }
     None
 }
