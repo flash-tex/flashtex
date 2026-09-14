@@ -22,7 +22,9 @@ python3 -m unittest discover -s tools/real-world-corpus -p 'test_*.py' -v   # 6 
    `documents[]` entry so `\input` works.
 2. **Reference**: `reference.pdf`, else `*-reference.pdf`. Missing references
    are generated with MacTeX 2026 `pdflatex` (`SOURCE_DATE_EPOCH=0
-   FORCE_SOURCE_DATE=1`, two passes, `-halt-on-error`) and recorded in
+   FORCE_SOURCE_DATE=1`, `-halt-on-error`, repeated until the PDF stops
+   changing and pdflatex stops asking for a rerun — two passes are not always
+   enough) and recorded in
    `reference.json` (SHA-256, pages, pdflatex version, argv, overfull/warning
    counts). A user-provided reference is never overwritten: `--regenerate`
    writes `reference-mactex2026.pdf` beside it and records its own SHA plus the
