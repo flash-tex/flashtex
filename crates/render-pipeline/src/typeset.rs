@@ -1128,6 +1128,11 @@ impl<'a> Context<'a> {
             let sp = &a.span;
             class_override_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start)
         };
+        // `\lim`/`\sin`/`\max`: the `\mathop` class and the limit placement
+        // the kernel declares each with, plus any `\limits`/`\nolimits`
+        // switch after it -- none of which the compiler's `Nucleus::Text`
+        // carries, so all of it is re-read from the source at the span.
+        let op_limits = |sp: &Span| operator_limits_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\quad`/`\qquad`/`\,`/`\:`/`\;`/`\!` (compiler `Space { em }`) at
         // the top level of the formula (outside `\left...\right`): math-layout
         // has no kern atom, so the formula is split there into runs laid out
@@ -1141,7 +1146,7 @@ impl<'a> Context<'a> {
         // fraction, a script, inside `\left...\right`, another grid's cell)
         // enters math-layout as a box handle (`mathtext::GridCells`).
         let segments = split_at_spaces(list, &fence, sink.font_em_ratio());
-        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class)).collect();
+        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits)).collect();
         // Glue at a top-level grid cell's own top level is split out like
         // the formula's; only deeper glue is dropped.
         let nested_glue_em: f64 = segments
@@ -1175,7 +1180,7 @@ impl<'a> Context<'a> {
         let style = leading_style_switch(list, texts).unwrap_or(default_style);
         let has_grid = segments.iter().any(|(atoms, _)| top_level_grids(atoms, &fence).into_iter().any(|top| top));
         // Every `\text` must be collected before the metrics borrow the sink.
-        let grid_pieces = if has_grid { grid_pieces(&segments, &mut sink, &fence, &class, texts) } else { Vec::new() };
+        let grid_pieces = if has_grid { grid_pieces(&segments, &mut sink, &fence, &class, &op_limits, texts) } else { Vec::new() };
         let pitch = crate::mathgrid::Pitch {
             baselineskip: self.style.baselineskip_pt,
             lineskip: self.style.lineskip_pt,
@@ -2773,6 +2778,12 @@ impl<'a> Context<'a> {
     /// `\@afterheading` (`\clubpenalty 10000`). `sized` sets the paragraph
     /// at a size other than `\normalsize` with that size's own leading and
     /// `em` (`abstract`; see [`adapter::SizedPara`]).
+    ///
+    /// `leading` is the narrower thing: `\baselineskip` alone, for a
+    /// paragraph whose `\par` ran under a size declaration
+    /// (`adapter::ParLeading`). The runs keep the sizes they were typed at —
+    /// TeX reads `\baselineskip` in `append_to_vlist` (§679) without ever
+    /// looking at the boxes it is stacking, so the two are independent.
     fn paragraph_block(
         &mut self,
         items: &[AItem],
@@ -2782,9 +2793,12 @@ impl<'a> Context<'a> {
         style: ParaStyle,
         list_geom: Option<&ListGeom>,
         sized: Option<adapter::SizedPara>,
+        leading: Option<f64>,
     ) -> Option<BuiltBlock> {
         let size = sized.map_or(self.style.body_size_pt, |s| s.size_pt);
-        let baselineskip = sized.map_or(self.style.baselineskip_pt, |s| s.baselineskip_pt);
+        let baselineskip = leading
+            .or(sized.map(|s| s.baselineskip_pt))
+            .unwrap_or(self.style.baselineskip_pt);
         let (mut list, mut recs, labels, mut skips) = self.hlist(items, size, TextStyle::default(), style);
         if !list.iter().any(|i| matches!(i, pl::Item::Box(_))) {
             return None;
@@ -2898,7 +2912,10 @@ impl<'a> Context<'a> {
             },
             no_interline_first: false,
             no_interline_after: false,
-            baselineskip: sized.map(|s| s.baselineskip_pt),
+            // Also the glue *above* the first line: `post_line_break`
+            // appends every line of the paragraph, the first included, under
+            // the same `\baselineskip`.
+            baselineskip: leading.or(sized.map(|s| s.baselineskip_pt)),
             vskip_after: vskips_of(&lines, &skips),
             broken_penalty: broken_of(&lines),
             pre_space_after: None,
@@ -2939,6 +2956,7 @@ impl<'a> Context<'a> {
             endlist_adjust,
             list,
             sized,
+            leading_pt,
         } = block
         else {
             return;
@@ -3055,9 +3073,14 @@ impl<'a> Context<'a> {
                             s.vspace_after_em.to_bits().hash(&mut h);
                             h.finish()
                         });
-                        let (key, origin) = key_for(b'P', items, &[u64::from(ind), u64::from(starts), u64::from(ah), *style as u64, list_fp, sized_fp]);
+                        let (key, origin) = key_for(
+                            b'P',
+                            items,
+                            &[u64::from(ind), u64::from(starts), u64::from(ah), *style as u64, list_fp, sized_fp, leading_pt.map_or(0, f64::to_bits)],
+                        );
                         let st = *style;
                         let sz = *sized;
+                        let lead = *leading_pt;
                         // `\label` whatsits and a space left in horizontal
                         // mode after a display (the adapter's
                         // `label_line` part): TeX's line_break still sets
@@ -3070,7 +3093,7 @@ impl<'a> Context<'a> {
                         if label_line && !first {
                             blocks.push(ctx.empty_line_block());
                             pre_display = None;
-                        } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz)) {
+                        } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz, lead)) {
                             pre_display = b.block.lines.lines.last().map(|l| l.natural_width + 2.0 * quad);
                             if std::mem::take(&mut eject) {
                                 b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
@@ -5150,7 +5173,7 @@ impl<'a> Context<'a> {
                     Some(v) => *v += before,
                     None => lead += before,
                 }
-                if let Some(b) = self.paragraph_block(&text.items, false, true, false, ParaStyle::Plain, None, None) {
+                if let Some(b) = self.paragraph_block(&text.items, false, true, false, ParaStyle::Plain, None, None, None) {
                     let offset = items.len();
                     let n = b.block.lines.lines.len();
                     for (k, mut line) in b.block.lines.lines.into_iter().enumerate() {
@@ -5693,7 +5716,7 @@ pub fn style_switch_of(text: &str, at: usize) -> Option<ml::Style> {
 /// (Appendix G Rule 19: sized to the body, `Inner` class). An unmatched
 /// fence stays a plain symbol, as the compiler already reports it.
 pub fn convert_math_fenced(list: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink, fence: &dyn Fn(&Span) -> Option<Fence>) -> ml::MathList {
-    convert_math_classed(list, sink, fence, &|_| None)
+    convert_math_classed(list, sink, fence, &|_| None, &|_| None)
 }
 
 /// Maps the compiler's own atom class onto math-layout's.
@@ -5749,22 +5772,124 @@ pub fn class_override_of(text: &str, at: usize) -> Option<ml::AtomClass> {
     })
 }
 
+/// The named operators of the LaTeX kernel's "Log-like functions"
+/// (`latex.ltx` 15523-15556), and the limit placement each is declared with.
+///
+/// The ten defined as a bare `\mathop{\operator@font ...}` -- no `\nolimits`
+/// after it -- keep TeX's default `\displaylimits`: limits over and under in
+/// display style, scripts beside in text style. The rest are declared
+/// `\mathop{...}\nolimits` and keep their scripts beside them at every style.
+/// `\sgn` is not a kernel command at all; the compiler accepts it anyway, and
+/// the amsmath spelling everyone writes for it (`\DeclareMathOperator{\sgn}`,
+/// no star) is `\nolimits`, so that is the row it gets here.
+const NAMED_OPERATORS: &[(&str, ml::Limits)] = &[
+    ("lim", ml::Limits::DisplayLimits),
+    ("liminf", ml::Limits::DisplayLimits),
+    ("limsup", ml::Limits::DisplayLimits),
+    ("max", ml::Limits::DisplayLimits),
+    ("min", ml::Limits::DisplayLimits),
+    ("sup", ml::Limits::DisplayLimits),
+    ("inf", ml::Limits::DisplayLimits),
+    ("det", ml::Limits::DisplayLimits),
+    ("gcd", ml::Limits::DisplayLimits),
+    ("Pr", ml::Limits::DisplayLimits),
+    ("sin", ml::Limits::NoLimits),
+    ("cos", ml::Limits::NoLimits),
+    ("tan", ml::Limits::NoLimits),
+    ("cot", ml::Limits::NoLimits),
+    ("sec", ml::Limits::NoLimits),
+    ("csc", ml::Limits::NoLimits),
+    ("arcsin", ml::Limits::NoLimits),
+    ("arccos", ml::Limits::NoLimits),
+    ("arctan", ml::Limits::NoLimits),
+    ("sinh", ml::Limits::NoLimits),
+    ("cosh", ml::Limits::NoLimits),
+    ("tanh", ml::Limits::NoLimits),
+    ("coth", ml::Limits::NoLimits),
+    ("log", ml::Limits::NoLimits),
+    ("ln", ml::Limits::NoLimits),
+    ("lg", ml::Limits::NoLimits),
+    ("exp", ml::Limits::NoLimits),
+    ("deg", ml::Limits::NoLimits),
+    ("dim", ml::Limits::NoLimits),
+    ("ker", ml::Limits::NoLimits),
+    ("arg", ml::Limits::NoLimits),
+    ("hom", ml::Limits::NoLimits),
+    ("sgn", ml::Limits::NoLimits),
+];
+
+/// The limit placement of the named operator (`\lim`, `\sin`, `\max`, ...)
+/// whose control word starts at `at`, or `None` when the atom at that span
+/// did not come from one.
+///
+/// The compiler turns every one of them into an upright [`Nucleus::Text`] run
+/// (`text_atom(operator, span)`) and keeps neither TeX's `\mathop` class nor
+/// the `\limits`/`\nolimits`/`\displaylimits` switch that may follow: its
+/// parser drops those switches without producing an atom, so that a following
+/// script still attaches to the operator. Both facts are therefore re-read
+/// from the source at the atom's span, exactly as [`fence_of`] and
+/// [`class_override_of`] do for the other things a pinned compiler does not
+/// carry.
+///
+/// Reading the *control word* rather than matching the letters is what keeps
+/// `\mathrm{lim}` out: it also arrives as `Nucleus::Text("lim")`, but it is an
+/// ordinary atom in TeX and its span starts at `\mathrm`.
+pub fn operator_limits_of(text: &str, at: usize) -> Option<ml::Limits> {
+    let rest = text.get(at..)?.strip_prefix('\\')?;
+    let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
+    let declared = NAMED_OPERATORS.iter().find(|(name, _)| *name == &rest[..word_len]).map(|(_, limits)| *limits)?;
+    // `\lim\limits_{n}`, `\max\nolimits_{k}`: the switch overrides the
+    // declaration (TeXbook p. 144). Only an immediately following switch
+    // counts, as in TeX, where it is read by `\mathop`'s scanner.
+    let after = rest[word_len..].trim_start_matches([' ', '\t', '\r', '\n']);
+    for (switch, limits) in [
+        ("nolimits", ml::Limits::NoLimits),
+        ("limits", ml::Limits::Limits),
+        ("displaylimits", ml::Limits::DisplayLimits),
+    ] {
+        match after.strip_prefix('\\').and_then(|a| a.strip_prefix(switch)) {
+            Some(tail) if !tail.starts_with(|c: char| c.is_ascii_alphabetic()) => return Some(limits),
+            _ => {}
+        }
+    }
+    Some(declared)
+}
+
 /// [`convert_math_fenced`] with `class` giving the forced class of a
-/// `Group` (`\mathbin{...}`) or class-overridden symbol atom at a span.
+/// `Group` (`\mathbin{...}`) or class-overridden symbol atom at a span, and
+/// `op_limits` the limit placement of a named operator at a span
+/// ([`operator_limits_of`]).
 pub fn convert_math_classed(
     list: &flashtex_compiler::math::MathList,
     sink: &mut crate::mathtext::TextSink,
     fence: &dyn Fn(&Span) -> Option<Fence>,
     class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
+    op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
 ) -> ml::MathList {
     use flashtex_compiler::math::{DelimiterRole, Nucleus as N};
     // Open fences: (left delimiter, atoms converted since it, its span).
     let mut stack: Vec<(Option<char>, Vec<ml::Atom>, Span)> = Vec::new();
     let mut atoms = Vec::new();
     for a in &list.atoms {
-        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class);
+        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits);
         let mut out: Vec<ml::Atom> = match &a.nucleus {
-            N::Text(text) => vec![sink.atom(text)],
+            // `\lim`, `\sin`, `\max`, ...: TeX's `\mathop` of upright roman
+            // text (`latex.ltx` 15523-15556), so an `Op` atom -- which is both
+            // the thin space the Op class contributes on each side and, for
+            // the ten declared without `\nolimits`, Rule 13a limits over and
+            // under the word in display style instead of scripts beside it.
+            // Every other `Nucleus::Text` (`\text{...}`, `\mathrm{K}`, a
+            // grid or `\boxed` handle) is an hbox in math, which TeX §1076
+            // makes an ordinary atom.
+            N::Text(text) => match op_limits(&a.span) {
+                Some(limits) => {
+                    let mut op = sink.atom(text);
+                    op.class = ml::AtomClass::Op;
+                    op.limits = limits;
+                    vec![op]
+                }
+                None => vec![sink.atom(text)],
+            },
             // Glue inside a sub-formula (`\operatorname*{arg\,max}`, `\;`
             // inside `\left...\right`): math-layout's `Glue` atom, which
             // takes no part in atom spacing, like TeX's glue node. Top-level
@@ -6346,6 +6471,7 @@ fn grid_pieces(
     sink: &mut crate::mathtext::TextSink,
     fence: &dyn Fn(&Span) -> Option<Fence>,
     class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
+    op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
     texts: &[&str],
 ) -> Vec<GridPiece> {
     use flashtex_compiler::math::{MathAtom, MathList as CList, Nucleus as N};
@@ -6354,7 +6480,7 @@ fn grid_pieces(
         let mut run: Vec<MathAtom> = Vec::new();
         let flush = |run: &mut Vec<MathAtom>, pieces: &mut Vec<GridPiece>, sink: &mut crate::mathtext::TextSink| {
             if !run.is_empty() {
-                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class)));
+                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits)));
             }
         };
         for (a, top) in atoms.iter().zip(top_level_grids(atoms, fence)) {
@@ -6385,7 +6511,7 @@ fn grid_pieces(
                             _ => cell,
                         };
                         let parts = split_at_spaces(cell, fence, sink.font_em_ratio());
-                        let runs = parts.iter().map(|(atoms, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class)).collect();
+                        let runs = parts.iter().map(|(atoms, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits)).collect();
                         let glue = parts.iter().map(|(_, em)| *em).collect();
                         (runs, glue)
                     };

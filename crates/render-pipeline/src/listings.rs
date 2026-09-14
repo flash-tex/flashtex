@@ -838,6 +838,10 @@ fn caption_block(texts: &[&str], labels: &Labels, listing: &Listing, s: usize, e
         ),
         endlist_adjust: 0.0,
         list: None,
+        // The caption is `\normalsize`, which is the body size already; the
+        // leading it needs comes with `sized`, not from a `leading_pt` of
+        // its own.
+        leading_pt: None,
         sized: Some(SizedPara {
             size_pt: style.body_size_pt,
             baselineskip_pt: style.baselineskip_pt,
