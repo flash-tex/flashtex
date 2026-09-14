@@ -7,6 +7,11 @@
 # editor's completion vocabulary is generated from this file, never written
 # by hand, so the two copies must be byte-identical.
 #
+# NOTE: crates/compiler/scripts/render_supported_latex.sh invokes this script
+# automatically after regenerating the inventory, so a re-render never leaves
+# the bundled copy stale; run this script directly only for a sync without a
+# re-render (its --check mode is what CI and make-app.sh use).
+#
 # Usage: apps/mac/scripts/sync-supported-latex.sh [--check] [--root <repo>]
 #   --check  do not copy; exit 1 when the bundled copy differs (CI, make-app.sh)
 #   --root   repository checkout holding crates/ (default: this repository)

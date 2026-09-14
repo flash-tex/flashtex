@@ -116,3 +116,48 @@ final class FluidCaptureTests: XCTestCase {
         XCTAssertEqual(fresh.linkStatus, "not paired")
     }
 }
+
+/// The caret context the Mac announces with its destination (nearby-v1,
+/// additive). The iPad only displays it — the Mac derives it and the bridge
+/// enforces it — but it must survive the wire, and a Mac that predates the
+/// field must still pair. See protocol/proposals/transfer-v1-caret-context.md.
+@MainActor
+final class DestinationCaretContextTests: XCTestCase {
+    let salt = Data((0..<16).map { UInt8($0 + 7) })
+    let code = "731559"
+    var mac: FakeMac!
+    var model: PadModel!
+
+    private func connect(_ destination: NearbyWire.Destination) async throws {
+        let d = NearbyCrypto.derive(code: code, salt: salt)
+        mac = try FakeMac(keys: [.init(identity: d.pairId, psk: d.psk, bootstrap: true)],
+                          macName: "Caret Mac", destination: destination)
+        mac.start()
+        let store = try PairFile(url: FileManager.default.temporaryDirectory
+            .appendingPathComponent("caret-pairs-\(UUID()).json"))
+        model = PadModel(link: MacLink(store: store))
+        await model.pair(host: "127.0.0.1", port: String(mac.port), saltHex: NearbyCrypto.hex(salt),
+                         fingerprint: NearbyCrypto.fingerprint(salt: salt), macName: "Caret Mac", code: code)
+        XCTAssertNil(model.linkError)
+    }
+
+    override func tearDown() async throws { model?.disconnect(); mac?.stop() }
+
+    func testCaretContextArrivesWithTheDestinationAndLabelsItself() async throws {
+        try await connect(NearbyWire.Destination(
+            destinationId: "mac-caret-1", projectId: "demo", path: "main.tex", baseRevision: 2,
+            caretContext: NearbyWire.CaretContext(mode: "inline_math", delimiter: "$", wrap: "already_math")))
+        let caret = try XCTUnwrap(model.destination?.caretContext)
+        XCTAssertEqual(caret.mode, "inline_math")
+        XCTAssertEqual(caret.wrap, "already_math")
+        XCTAssertEqual(caret.delimiter, "$")
+        XCTAssertTrue(caret.label.contains("no delimiters added"), caret.label)
+    }
+
+    func testAMacWithoutACaretContextStillPairs() async throws {
+        try await connect(NearbyWire.Destination(
+            destinationId: "mac-caret-2", projectId: "demo", path: "main.tex", baseRevision: 2))
+        XCTAssertEqual(model.destination?.destinationId, "mac-caret-2")
+        XCTAssertNil(model.destination?.caretContext)
+    }
+}

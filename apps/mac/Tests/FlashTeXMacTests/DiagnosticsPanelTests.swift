@@ -3,6 +3,7 @@ import AppKit
 import SwiftUI
 import FlashTeXProtocol
 import FlashTeXAccessibility
+import HostedWindows
 @testable import FlashTeXMac
 
 /// Diagnostics panel follow-up (DiagnosticsPanel.swift): grouped rows speak
@@ -213,6 +214,23 @@ final class DiagnosticsPanelTests: XCTestCase {
         ])
         XCTAssertEqual(groups.map(\.first), [2, 3, 1, 5, 0, 4], "first occurrence index in document order within each bucket")
         XCTAssertEqual(groups.map(\.occurrences), [[2], [3], [1], [5], [0], [4]])
+    }
+
+    /// Acceptance: 3 gaps, then 1 warning, then 1 error, in that source order,
+    /// must list the error first (30 gaps cannot bury the one real error).
+    func testThreeGapsThenWarningThenErrorListsTheErrorFirst() {
+        let diags: [RuntimeV1.Diagnostic] = [
+            .init(severity: .error, message: "gap a", source: nil, recovery: nil, code: "unsupported_feature"),
+            .init(severity: .error, message: "gap b", source: nil, recovery: nil, code: "unsupported_feature"),
+            .init(severity: .error, message: "gap c", source: nil, recovery: nil, code: "unsupported_feature"),
+            .init(severity: .warning, message: "Overfull line", source: nil, recovery: nil),
+            .init(severity: .error, message: "unknown command \\alpah", source: nil, recovery: nil, code: "unknown_command"),
+        ]
+        XCTAssertEqual(EditorDiagnostics.groups(of: diags).map(\.message), [
+            "unknown command \\alpah",
+            "Overfull line",
+            "gap a", "gap b", "gap c",
+        ])
     }
 
     /// Copy Diagnostics (no selection) walks groups in the same bucket order
@@ -437,7 +455,7 @@ final class DiagnosticsPanelTests: XCTestCase {
         let hostView = NSHostingView(rootView: Host(model: m, panel: panel))
         hostView.frame = NSRect(x: 0, y: 0, width: 640, height: 420)
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: hostView.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: hostView.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = hostView
         window.orderFrontRegardless() // never makeKey

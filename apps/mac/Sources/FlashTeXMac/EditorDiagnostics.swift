@@ -59,6 +59,10 @@ enum EditorDiagnostics {
         /// mark was kept from the last result that had output (`Carried`);
         /// nil for marks of the result currently shown.
         var carried: Carried? = nil
+        /// Whether the diagnostic carries a mechanical edit Tab can apply at
+        /// the caret; the gutter marks these lines (design-principles §9 —
+        /// the Tab affordance is invisible without a marker).
+        var hasFix: Bool = false
 
         var id: String { identity.key }
         var diagnosticIndex: Int { identity.index }
@@ -257,7 +261,8 @@ enum EditorDiagnostics {
             // current buffer is not drawn anywhere.
             guard let ns = currentText.clusterAlignedNSRange(utf8Start: start, utf8End: end) else { continue }
             marks.append(Mark(identity: identity, nsRange: ns, severity: diagnostic.severity,
-                              message: diagnostic.message, recovery: diagnostic.recovery, resultStatus: result.status))
+                              message: diagnostic.message, recovery: diagnostic.recovery, resultStatus: result.status,
+                              hasFix: mechanicalEdit(for: diagnostic) != nil))
         }
         return Report(marks: marks, stale: stale, edit: region)
     }
@@ -1052,17 +1057,69 @@ extension EditorDiagnostics {
         return nil
     }
 
-    /// True when `help.replacement` is in-bounds for `currentText`, targets
-    /// `path`, and the compile revision still matches the editor — the Fix…
-    /// affordance is hidden otherwise. Advice-only help and a stale buffer
-    /// never show it.
+    /// True when the diagnostic's mechanical edit is in-bounds for
+    /// `currentText`, targets `path`, and the compile revision still matches
+    /// the editor — the Fix… affordance is hidden otherwise. Advice-only help
+    /// and a stale buffer never show it.
+    ///
+    /// The edit comes from `mechanicalEdit`, so this accepts both forms: a
+    /// `help.replacement`, and the flat `suggestion` over the diagnostic's own
+    /// `source`. Gating on `help.replacement` alone made the affordance
+    /// unreachable in the shipping configuration — `ShellModel`
+    /// `locateDefaultProducer` attaches `flashtex-render`, whose
+    /// `display::Diagnostic` carries no `help` field at all, so the wire has
+    /// only `suggestion`. The compiler sets `suggestion` at exactly one site
+    /// (`Diagnostic::command_error`), where the span is the command token, so
+    /// replacing `source` with it is the same edit `help.replacement` would
+    /// have carried.
     static func canApplyHelpReplacement(_ d: RuntimeV1.Diagnostic, path: String, currentText: String,
                                         compiledRevision: Int?, editorRevision: Int) -> Bool {
         guard compiledRevision == editorRevision else { return false }
-        guard let r = d.help?.replacement else { return false }
-        guard d.path(of: r) == path else { return false }
-        guard r.startByte >= 0, r.startByte <= r.endByte else { return false }
-        return currentText.rangeOfUTF8(start: r.startByte, end: r.endByte) != nil
+        guard let edit = mechanicalEdit(for: d) else { return false }
+        guard edit.path == path else { return false }
+        guard edit.startByte >= 0, edit.startByte <= edit.endByte else { return false }
+        return currentText.rangeOfUTF8(start: edit.startByte, end: edit.endByte) != nil
+    }
+
+    /// A mechanical fix offered for the diagnostic the caret is sitting on, so
+    /// the editor can show it inline and let Tab accept it.
+    ///
+    /// The caret counts as "on" the diagnostic at both ends inclusive: an
+    /// author who has just finished typing a word leaves the caret directly
+    /// after it, and a fix that vanished there would be useless.
+    struct CaretFix: Equatable {
+        /// Index into the model's `displayedDiagnostics`, so accepting it can
+        /// reuse the Problems panel's `previewQuickFix`/`applyQuickFix` path.
+        var diagnosticIndex: Int
+        /// What the hint says Tab will do.
+        var title: String
+        /// The text Tab inserts.
+        var replacement: String
+        /// UTF-8 range the replacement covers.
+        var startByte: Int
+        var endByte: Int
+    }
+
+    /// The first diagnostic in document order whose span covers `caretByte` and
+    /// carries an applicable mechanical edit; `nil` when the caret is not on
+    /// one. `nil` must leave Tab alone — a fix the author cannot see must never
+    /// change what the key does.
+    static func fixOffered(at caretByte: Int, in diagnostics: [RuntimeV1.Diagnostic],
+                           path: String, currentText: String,
+                           compiledRevision: Int?, editorRevision: Int) -> CaretFix? {
+        for (index, d) in diagnostics.enumerated() {
+            guard let source = d.source, source.path == path else { continue }
+            guard caretByte >= source.startByte, caretByte <= source.endByte else { continue }
+            guard canApplyHelpReplacement(d, path: path, currentText: currentText,
+                                          compiledRevision: compiledRevision,
+                                          editorRevision: editorRevision),
+                  let edit = mechanicalEdit(for: d) else { continue }
+            return CaretFix(diagnosticIndex: index,
+                            title: d.help?.message ?? "Replace with \(edit.replacement)",
+                            replacement: edit.replacement,
+                            startByte: edit.startByte, endByte: edit.endByte)
+        }
+        return nil
     }
 
     /// `QuickFix.prepare` for the diagnostic's mechanical edit (same refusal

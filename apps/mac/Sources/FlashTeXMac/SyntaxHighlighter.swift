@@ -553,6 +553,11 @@ struct SyntaxHighlighter {
     /// a document and gives the right answer in the middle of `$x^2$`. `text`
     /// must be the text this model was built from; anything else answers
     /// `.text` rather than guessing from a stale line table.
+    ///
+    /// The highlighter is the app's authority on what is math and what is
+    /// verbatim, so `CaretContext` — which decides how a capture is wrapped —
+    /// is checked against this rather than being a second opinion
+    /// (`CaretContextTests.testAgreesWithTheSyntaxHighlighter`).
     func mode(at utf16: Int, text: NSString) -> Mode {
         guard text.length == length, length > 0 else { return .text }
         let clamped = max(0, min(utf16, length))

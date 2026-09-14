@@ -150,6 +150,36 @@ pub fn text_symbol(name: &str, enc: Encoding) -> Option<SymbolOutcome> {
 /// below, `\b` bar below. `\t` (a tie over two letters) is not among them.
 pub const TEXT_ACCENTS: &[&str] = &["c", "v", "u", "H", "r", "k", "d", "b"];
 
+/// LaTeX-kernel `\capital<name>` aliases for the letter-named text accents:
+/// each one is defined as exactly the same accent as its lowercase-named
+/// counterpart, for use over capital-letter bases. Only the aliases whose
+/// canonical accent this compiler implements are listed: the seven aliasing
+/// a punctuation-named accent (`\capitalacute`->`\'`, `\capitalgrave`,
+/// `\capitalcircumflex`, `\capitaldieresis`, `\capitaltilde`,
+/// `\capitalmacron`, `\capitaldotaccent`->`\.`) are deliberately absent,
+/// because those canonicals are not implemented here (the lexer emits them
+/// as escaped-literal words, so `\'{A}` typesets a literal quote followed
+/// by `A`, never Á), and `\capitaltie`/`\capitalnewtie` alias `\t`, which
+/// is not implemented either.
+pub const CAPITAL_ACCENT_ALIASES: &[(&str, &str)] = &[
+    ("capitalcaron", "v"),
+    ("capitalbreve", "u"),
+    ("capitalring", "r"),
+    ("capitalogonek", "k"),
+    ("capitalhungarumlaut", "H"),
+    ("capitalcedilla", "c"),
+];
+
+/// The [`TEXT_ACCENTS`] name `name` means, following [`CAPITAL_ACCENT_ALIASES`]
+/// for a `\capital<name>` alias and itself otherwise.
+pub fn canonical_accent_name(name: &str) -> &str {
+    CAPITAL_ACCENT_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == name)
+        .map(|(_, canonical)| *canonical)
+        .unwrap_or(name)
+}
+
 /// What a text accent over one base typesets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccentOutcome {
@@ -692,6 +722,18 @@ mod tests {
         let arm_names: Vec<&str> = arm.split('"').skip(1).step_by(2).collect();
         let table: Vec<&str> = TEXT_SYMBOLS.iter().map(|(n, _)| *n).collect();
         assert_eq!(arm_names, table);
+    }
+
+    #[test]
+    fn every_capital_alias_resolves_to_a_real_accent() {
+        for (alias, canonical) in CAPITAL_ACCENT_ALIASES {
+            assert!(
+                TEXT_ACCENTS.contains(canonical),
+                "\\{alias} aliases \\{canonical}, which is not a text accent"
+            );
+            assert_eq!(canonical_accent_name(alias), *canonical);
+        }
+        assert_eq!(canonical_accent_name("v"), "v");
     }
 
     #[test]

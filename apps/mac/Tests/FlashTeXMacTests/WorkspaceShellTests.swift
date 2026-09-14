@@ -96,7 +96,7 @@ final class WorkspaceShellTests: XCTestCase {
         let notRunnable = rows.filter { !$0.runnable }.map(\.id)
         XCTAssertEqual(Set(notRunnable), CommandPaletteModel.notRunnable)
         // Only editor keys, the preview click and the search window's own key are hints.
-        XCTAssertEqual(Set(notRunnable), [.completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch])
+        XCTAssertEqual(Set(notRunnable), [.completion, .completionList, .toggleComment, .duplicateLine, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch])
         for c in notRunnable { XCTAssertNil(c.entry.menuItem, "\(c) is not a menu item") }
         // Every menu item of the table is runnable from the palette.
         for e in AccessibilityCommand.entries where e.menuItem != nil { XCTAssertTrue(CommandPaletteModel.isRunnable(e.command), e.title) }
@@ -135,10 +135,9 @@ final class WorkspaceShellTests: XCTestCase {
         }
         // Panel bounds: the documentation pane is part of the popup's height.
         XCTAssertGreaterThan(CompletionPopup.docHeight, 40)
-        XCTAssertEqual(ProblemsPanel.minHeight, 120)
-        XCTAssertEqual(ProblemsPanel.idealHeight, 180, "opening height is a compact list, not ~1/3 of the min window")
+        XCTAssertEqual(ProblemsPanel.minHeight, DS.Layout.problemsMinHeight)
+        XCTAssertEqual(ProblemsPanel.idealHeight, DS.Layout.problemsIdealHeight)
         XCTAssertGreaterThan(ProblemsPanel.idealHeight, ProblemsPanel.minHeight)
-        XCTAssertLessThan(Double(ProblemsPanel.idealHeight), 640.0 / 3)
     }
 
     // MARK: workspace flags

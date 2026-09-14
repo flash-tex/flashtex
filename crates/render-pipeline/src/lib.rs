@@ -22,6 +22,7 @@ pub mod fonts;
 pub mod graphics;
 pub mod ids;
 pub mod incremental;
+pub mod listings;
 pub mod longtable;
 pub mod mathalpha;
 pub mod mathfont;
@@ -190,6 +191,8 @@ pub fn render_cached(
     let in_picture = |s: &flashtex_compiler::Span| picture_ranges.get(s.document.0).is_some_and(|r| r.iter().any(|(a, b)| s.start >= *a && s.start < *b));
     let mut labels = adapter::Labels::from_parsed(&parsed);
     labels.values.extend(float_label_values);
+    // `\label` given inside an `lstlisting`'s keys (`crate::listings`).
+    labels.values.extend(listings::label_values(&texts));
     // Contents lists: entry pages come from the previous pass (`toc`).
     let entry_text = texts.get(entry_index).copied().unwrap_or("");
     let has_lists = toc::has_lists(entry_text);
@@ -197,8 +200,17 @@ pub fn render_cached(
     labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>());
     // Entry titles from source bytes (`\addcontentsline`, `\chapter`,
     // `\part`, captions) are set as body text: one parse per document.
-    if has_lists {
-        let spans = toc::entry_spans(entry_text, flashtex_compiler::DocumentId(entry_index), &labels.floats);
+    // A `listings` caption may hold any body command
+    // (`caption={Generating a starter \texttt{ftxc.toml}}`), so its range
+    // is parsed the same way.
+    let has_listings = listings::present(&texts);
+    if has_lists || has_listings {
+        let mut spans = if has_lists {
+            toc::entry_spans(entry_text, flashtex_compiler::DocumentId(entry_index), &labels.floats)
+        } else {
+            Vec::new()
+        };
+        spans.extend(listings::caption_spans(&texts));
         labels.entry_items = toc::entry_items(documents, entry_index, &texts, options, &labels, &spans);
     }
     // The compiler reports the list commands, `\addcontentsline` and

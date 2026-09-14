@@ -94,7 +94,9 @@ public struct CaptureRecord: Identifiable, Equatable {
 /// disconnect re-send the identical payload with the same id; the Mac
 /// de-duplicates (nearby-v1 §4). Every change is written to `store` when one
 /// is attached, so a relaunch shows the same list.
-public final class CaptureQueue {
+/// `@unchecked Sendable`: `_records`, `_lastStoreError` and `_redeliveries`
+/// are serialized by `lock`. `link` and `store` are already `@unchecked Sendable`.
+public final class CaptureQueue: @unchecked Sendable {
     /// Snapshot of the list. Mutations go through `update`/`draft` under `lock`
     /// because `refreshOutcome` resumes off the main actor after `await` and
     /// PadModel copies this array into a `@Published` property.
