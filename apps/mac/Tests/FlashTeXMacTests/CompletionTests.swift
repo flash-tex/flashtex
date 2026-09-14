@@ -59,9 +59,13 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(dbl.first?.detail, "line break; an optional [length] is consumed")
 
         // Math commands say so and show the glyph the compiler renders.
+        // `\allowdisplaybreaks` matches `al` too and is not a symbol; it sorts
+        // ahead of the two by inventory order, which is what this asserts.
         let math = Completion.suggestions(in: "$\\al", caretUTF16: 4, result: nil)
-        XCTAssertEqual(labels(math), ["\\alpha", "\\aleph"], "inventory (math_symbol) order")
-        XCTAssertEqual(math.map(\.detail), ["math · symbol α", "math · symbol ℵ"])
+        XCTAssertEqual(labels(math), ["\\allowdisplaybreaks[0-4]", "\\alpha", "\\aleph"],
+                       "inventory (math_symbol) order")
+        XCTAssertEqual(math.map(\.detail), ["amsmath page-break permission inside displays; no material",
+                                            "math · symbol α", "math · symbol ℵ"])
         XCTAssertEqual(Completion.Vocabulary.symbols.count, Completion.Vocabulary.inventory.commands.filter { $0.origin == .mathSymbol && $0.renders }.count)
         XCTAssertGreaterThan(Completion.Vocabulary.entries.count, Completion.Vocabulary.symbols.count)
         // Math-only commands are marked once, by the `math ·` prefix of `Entry.detail`.
@@ -1308,8 +1312,16 @@ final class CompletionTests: XCTestCase {
             tv.setSelectedRange(NSRange(location: (seed as NSString).length, length: 0))
             undo.removeAllActions()
             for ch in typing { key(tv, String(ch), code: 0) } // typed, so the typing undo group is open
+            // GH#256: typing arms the automatic open (#215). Fire it now rather
+            // than racing its timer against ⌃Space and Return, then wait until
+            // every scan either lifecycle scheduled has resolved, so Return
+            // meets the settled session.
+            tv.flushAutomaticCompletion()
             key(tv, " ", code: 49, flags: .control)
-            try await waitUntil("popup for \(typing)") { tv.session != nil }
+            try await waitUntil("popup for \(typing)") {
+                let s = tv.scheduler.statistics
+                return tv.session != nil && s.delivered + s.refusedStale + s.cancelled >= s.scheduled
+            }
             key(tv, "\r", code: 36)
             XCTAssertNil(tv.session)
             XCTAssertEqual(tv.lastCloseReason, .accepted)

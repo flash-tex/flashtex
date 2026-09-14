@@ -112,7 +112,7 @@ pub fn compile(project: &Project, fonts: &FontSet, options: &RenderOptions, revi
         let source = d.sources.first();
         let path = source.map_or(project.entry.as_str(), |s| &*s.path);
         let at = source.and_then(|s| text_of(path).map(|t| line_col(t, s.start_byte)));
-        diagnostics.push(Diagnostic {
+        let mut diagnostic = Diagnostic {
             path: path.to_string(),
             line: at.map(|a| a.0),
             column: at.map(|a| a.1),
@@ -123,7 +123,20 @@ pub fn compile(project: &Project, fonts: &FontSet, options: &RenderOptions, revi
             suggestion: d.suggestion.clone(),
             message: d.message.clone(),
             recovery: d.recovery.clone(),
-        });
+        };
+        // Project discovery already reports this missing include; retain its canonical diagnostic and carry over only the compiler's recovery note.
+        // The pipeline labels every compiler diagnostic "compiler" today; once it forwards the compiler's own code this one is "recovered_input".
+        if matches!(diagnostic.code.as_str(), "compiler" | "recovered_input") && diagnostic.message.starts_with("included file not found") {
+            if let Some(existing) = diagnostics.iter_mut().find(|existing| {
+                existing.path == diagnostic.path && existing.start_byte == diagnostic.start_byte && existing.code == "missing_file"
+            }) {
+                if existing.recovery.is_none() {
+                    existing.recovery = diagnostic.recovery.take();
+                }
+                continue;
+            }
+        }
+        diagnostics.push(diagnostic);
     }
     // The runtime-v1 status rule (render-pipeline `v1::fallback`): a
     // project-closure error is an error diagnostic like the compiler's.

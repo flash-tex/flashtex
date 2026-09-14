@@ -111,7 +111,7 @@ final class VimMode {
         var linewise: Bool
     }
 
-    /// What the status bar shows (`VimModeStatusItem`, ContentView.swift).
+    /// What the editor pane's Vim status line shows (`VimStatusLine`, ContentView.swift).
     @Observable
     final class Status {
         static let shared = Status()
@@ -139,6 +139,10 @@ final class VimMode {
     private(set) var lastSearch: (pattern: String, forward: Bool)?
     private var visualAnchor = 0
     private var preferredColumn: Int?
+    /// Column kept across `gj`/`gk`, counted from the start of the *visual*
+    /// row rather than the logical line. Independent of `preferredColumn`:
+    /// mixing `j` and `gj` must not make either drift.
+    private var preferredVisualColumn: Int?
     private var insertStart: Int?
     private var replayingDot = false
     private var recording: [Key] = []
@@ -517,6 +521,19 @@ final class VimMode {
             switch ch {
             case "g":
                 let m = Motion.line(number: (n ?? 1) - 1)
+                if let op = pendingOperator { finishOperator(op, motion: m) } else { move(m) }
+            // `gj`/`gk` and `g0`/`g^`/`g$`: the visual row, which is the only
+            // way to move by what you see once a paragraph wraps — and line
+            // wrapping is on by default, so plain `j` skips whole paragraphs.
+            case "j", "k", "0", "^", "$":
+                let c = n ?? 1
+                let m: Motion = switch ch {
+                case "j": .visualDown(count: c)
+                case "k": .visualUp(count: c)
+                case "0": .rowStart
+                case "^": .rowFirstNonBlank
+                default: .rowEnd
+                }
                 if let op = pendingOperator { finishOperator(op, motion: m) } else { move(m) }
             case "J": beginRecording(.c("g")); record(key); joinLines(count: max(2, n ?? 2), spaces: false); finishRecording()
             case "v": mode = .visual; textView?.setSelectedRange(NSRange(location: caret, length: min(1, length - caret)))
@@ -897,6 +914,11 @@ final class VimMode {
 
     enum Motion: Equatable {
         case left(count: Int), right(count: Int), up(count: Int), down(count: Int)
+        /// `gj`/`gk`: one *visual* row (line fragment), which is what the user
+        /// sees when a paragraph wraps. Exclusive, like Vim's.
+        case visualDown(count: Int), visualUp(count: Int)
+        /// `g0`/`g^`/`g$`: the ends of the visual row.
+        case rowStart, rowFirstNonBlank, rowEnd
         case wordStart(count: Int, big: Bool), wordEnd(count: Int, big: Bool), wordBack(count: Int, big: Bool)
         case lineStart, firstNonBlank, lineEnd(count: Int), toLineEnd(count: Int)
         case line(number: Int), lastLine
@@ -949,8 +971,9 @@ final class VimMode {
     private func move(_ m: Motion) {
         guard let t = resolve(m) else { return }
         switch m {
-        case .up, .down: break
-        default: preferredColumn = nil
+        case .up, .down: preferredVisualColumn = nil
+        case .visualDown, .visualUp: preferredColumn = nil
+        default: preferredColumn = nil; preferredVisualColumn = nil
         }
         if mode == .visual || mode == .visualLine {
             setCaretKeepingVisual(t.position)
@@ -991,6 +1014,31 @@ final class VimMode {
             let e = lineEnd(s)
             let last = mode == .insert ? e : max(s, e - 1)
             return Target(position: min(last, s + column), linewise: true)
+        case .visualDown(let n), .visualUp(let n):
+            var down = true
+            if case .visualUp = m { down = false }
+            guard var row = visualRow(containing: c) else { return nil }
+            let column = preferredVisualColumn ?? (c - row.location)
+            preferredVisualColumn = column
+            var moved = 0
+            for _ in 0..<n {
+                guard let next = visualRow(adjacentTo: row, down: down) else { break }
+                row = next
+                moved += 1
+            }
+            guard moved > 0 else { return nil }
+            return Target(position: min(lastCaretPosition(inRow: row), row.location + column))
+        case .rowStart, .rowFirstNonBlank, .rowEnd:
+            guard let row = visualRow(containing: c) else { return nil }
+            switch m {
+            case .rowEnd: return Target(position: lastCaretPosition(inRow: row), inclusive: true)
+            case .rowFirstNonBlank:
+                var i = row.location
+                let last = lastCaretPosition(inRow: row)
+                while i < last, isBlank(text.character(at: i)) { i += 1 }
+                return Target(position: i)
+            default: return Target(position: row.location)
+            }
         case .wordStart(let n, let big):
             var p = c
             for _ in 0..<n { p = nextWordStart(from: p, big: big) }
@@ -1058,6 +1106,59 @@ final class VimMode {
         case .absolute(let p, let linewise):
             return Target(position: min(max(0, p), length), linewise: linewise)
         }
+    }
+
+    // MARK: visual rows (line fragments)
+
+    /// The character range of the line fragment `p` sits on — one *visual*
+    /// row, which is a whole logical line when nothing wraps and a slice of
+    /// one when it does. Nil when there is no laid-out text to ask (no text
+    /// view, an empty buffer, TextKit 2 without a layout manager): every
+    /// caller then treats the motion as "cannot move", never as a silent
+    /// fall-back to logical lines, which would move the caret somewhere the
+    /// user did not ask for.
+    func visualRow(containing p: Int) -> NSRange? {
+        guard let tv = textView, let lm = tv.layoutManager, tv.textContainer != nil, lm.numberOfGlyphs > 0 else { return nil }
+        let clamped = max(0, min(p, length))
+        // The empty line after a trailing newline has no glyphs at all, so the
+        // layout manager would answer with the row above it. `j` reaches that
+        // line, so the visual-row motions must see it as its own row.
+        if clamped == length, length > 0, text.character(at: length - 1) == 0x0A { return NSRange(location: length, length: 0) }
+        // A caret at the very end of the buffer has no glyph of its own.
+        let glyph = min(lm.glyphIndexForCharacter(at: clamped), lm.numberOfGlyphs - 1)
+        var fragment = NSRange()
+        _ = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: &fragment)
+        guard fragment.length > 0 else { return nil }
+        return lm.characterRange(forGlyphRange: fragment, actualGlyphRange: nil)
+    }
+
+    /// The row directly above or below `row`, or nil at the buffer's ends.
+    private func visualRow(adjacentTo row: NSRange, down: Bool) -> NSRange? {
+        guard down else {
+            let probe = row.location - 1
+            guard probe >= 0, let next = visualRow(containing: probe), next != row else { return nil }
+            return next
+        }
+        let probe = NSMaxRange(row)
+        guard probe <= length else { return nil }
+        if probe == length {
+            // The empty line after a trailing newline has no glyphs of its own,
+            // so `visualRow` cannot find it; `j` reaches it and `gj` must too.
+            guard length > 0, row.location < length, text.character(at: length - 1) == 0x0A else { return nil }
+            return NSRange(location: length, length: 0)
+        }
+        guard let next = visualRow(containing: probe), next != row else { return nil }
+        return next
+    }
+
+    /// The rightmost position the normal-mode caret may take on `row`: the
+    /// row's last character, with a trailing newline excluded. Insert mode may
+    /// sit one past it, as everywhere else here.
+    private func lastCaretPosition(inRow row: NSRange) -> Int {
+        guard row.length > 0 else { return row.location } // the empty final line
+        var end = NSMaxRange(row)
+        if end <= length, text.character(at: end - 1) == 0x0A { end -= 1 }
+        return mode == .insert ? end : max(row.location, end - 1)
     }
 
     // MARK: character classes and scanning

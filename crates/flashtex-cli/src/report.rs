@@ -130,6 +130,47 @@ pub fn render_full(d: &Diagnostic, source: Option<&str>, color: bool) -> String 
     out
 }
 
+/// Folds positionless diagnostics that differ only in a leading `name:`
+/// (one per math font, say), wherever else the message repeats that name,
+/// into one entry at the first one's place listing every name. Everything
+/// else passes through in order. Terminal presentation only: the counts,
+/// `--json` and the short form never see it.
+pub fn collapse_repeats(diags: &[Diagnostic]) -> Vec<Diagnostic> {
+    /// The leading name and the message with every occurrence of it masked.
+    fn key(d: &Diagnostic) -> Option<(&str, String)> {
+        if d.start_byte.is_some() {
+            return None;
+        }
+        let (name, rest) = d.message.split_once(": ")?;
+        (!name.is_empty() && !name.contains(char::is_whitespace)).then(|| (name, rest.replace(name, "\u{0}")))
+    }
+    let mut out: Vec<Diagnostic> = Vec::new();
+    // Per folded entry of `out`: its index, masked message and names so far.
+    let mut folds: Vec<(usize, String, Vec<String>)> = Vec::new();
+    for d in diags {
+        let Some((name, masked)) = key(d) else {
+            out.push(d.clone());
+            continue;
+        };
+        let found = folds.iter_mut().find(|(i, m, _)| {
+            let o = &out[*i];
+            *m == masked && o.path == d.path && o.code == d.code && o.error == d.error && o.recovery == d.recovery && o.suggestion == d.suggestion
+        });
+        match found {
+            Some((i, m, names)) => {
+                names.push(name.to_string());
+                let list = names.join(", ");
+                out[*i].message = format!("{list}: {}", m.replace('\u{0}', &list));
+            }
+            None => {
+                folds.push((out.len(), masked, vec![name.to_string()]));
+                out.push(d.clone());
+            }
+        }
+    }
+    out
+}
+
 /// The source line(s) with `start..end` replaced by `suggestion`, carets
 /// sized to the replacement so the renderer can draw a `+` gutter.
 fn suggestion_excerpt(text: &str, start: usize, end: usize, suggestion: &str) -> Vec<ExcerptLine> {
@@ -245,6 +286,52 @@ mod tests {
             recovery: recovery.map(str::to_string),
             suggestion: None,
         }
+    }
+
+    fn positionless(name: &str, rest: &str) -> Diagnostic {
+        Diagnostic {
+            path: "HW1.tex".into(),
+            line: None,
+            column: None,
+            start_byte: None,
+            end_byte: None,
+            error: false,
+            code: "math_resource_profile".into(),
+            message: format!("{name}: {rest}"),
+            recovery: None,
+            suggestion: None,
+        }
+    }
+
+    #[test]
+    fn repeats_differing_only_in_a_leading_name_are_folded_in_place() {
+        let rest = "glyphs drawn from latinmodern-math (one 10pt design)";
+        let text = "x\n";
+        let located = diag(text, "x", 1, None);
+        let other = positionless("lmr10", "a different message");
+        let input = vec![positionless("lmex10", rest), located.clone(), positionless("lmmi10", rest), other.clone(), positionless("lmsy10", rest)];
+        let out = collapse_repeats(&input);
+        assert_eq!(out.len(), 3, "{out:#?}");
+        assert_eq!(out[0].message, format!("lmex10, lmmi10, lmsy10: {rest}"));
+        // The name repeated inside the message does not stop the fold.
+        let own = |n: &str| positionless(n, &format!("not the reference's {n} design"));
+        let folded = collapse_repeats(&[own("lmex10"), own("lmmi8")]);
+        assert_eq!(folded.len(), 1, "{folded:#?}");
+        assert_eq!(folded[0].message, "lmex10, lmmi8: not the reference's lmex10, lmmi8 design");
+        assert_eq!(out[1], located);
+        assert_eq!(out[2], other);
+    }
+
+    #[test]
+    fn a_single_or_located_diagnostic_is_never_rewritten() {
+        let text = "a: b\n";
+        let mut located = diag(text, "a", 1, None);
+        located.message = "a: b".into();
+        let input = vec![located.clone(), located.clone(), positionless("lmex10", "once")];
+        assert_eq!(collapse_repeats(&input), input);
+        let mut spaced = positionless("two words", "same");
+        spaced.message = "two words: same".into();
+        assert_eq!(collapse_repeats(&[spaced.clone(), spaced.clone()]), vec![spaced.clone(), spaced]);
     }
 
     #[test]

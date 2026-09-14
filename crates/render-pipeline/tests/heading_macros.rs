@@ -140,3 +140,38 @@ fn line_break_dimen_adds_vertical_space_after_the_line() {
     assert!((pitch_a - (ps.baseline - pt.baseline) - bp(3.0)).abs() < 0.05, "3pt: {} vs {}", pitch_a, ps.baseline - pt.baseline);
     assert!((pitch_b - (pso.baseline - ps.baseline) - bp(7.0)).abs() < 0.05, "7pt: {} vs {}", pitch_b, pso.baseline - ps.baseline);
 }
+
+/// `\c@secnumdepth` is the class's own counter, not a flat default: article
+/// sets it to 3 (`article.cls` line 255), so `\subsubsection` is numbered
+/// `1.1.1`; report/book set 2, so the same heading carries no number. The
+/// pipeline used to assume 2 for every class, which dropped the number from
+/// every `article` `\subsubsection` — and left the contents list, which
+/// already derived the class default, writing a `\numberline` for a heading
+/// whose printed form had none.
+#[test]
+fn article_numbers_subsubsection_and_report_does_not() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let body = "\\section{One}\nBody.\n\\subsection{Two}\nBody.\n\\subsubsection{Three}\nTail.\n";
+    let art = layout(&format!("\\documentclass{{article}}\\begin{{document}}\n{body}\\end{{document}}"));
+    assert!(art.iter().any(|w| w.text == "1.1.1"), "article: no 1.1.1 in {art:?}");
+    // `\@seccntformat`: the number, a `\quad`, then the title, all flush left.
+    let (n, t) = (word(&art, "1.1.1"), word(&art, "Three"));
+    assert!((n.x - word(&art, "1").x).abs() < 0.05, "number flush with \\section's: {} vs {}", n.x, word(&art, "1").x);
+    assert!(t.x > n.x + n.width, "title after the number: {} vs {}", t.x, n.x + n.width);
+
+    // report/book stop at 2. `\thesubsection` there is
+    // `\thechapter.\arabic{section}.\arabic{subsection}`, so the *subsection*
+    // is `0.1.1` before any `\chapter`; the subsubsection would be `0.1.1.1`
+    // and must not appear at all.
+    let rep = layout(&format!("\\documentclass{{report}}\\begin{{document}}\n{body}\\end{{document}}"));
+    assert!(rep.iter().any(|w| w.text == "0.1.1"), "report still numbers \\subsection: {rep:?}");
+    assert!(!rep.iter().any(|w| w.text == "0.1.1.1"), "report secnumdepth is 2: {rep:?}");
+    assert!(rep.iter().any(|w| w.text == "Three"), "report still sets the title: {rep:?}");
+
+    // An explicit `\setcounter` still wins over the class default.
+    let off = layout(&format!("\\documentclass{{article}}\\setcounter{{secnumdepth}}{{2}}\\begin{{document}}\n{body}\\end{{document}}"));
+    assert!(!off.iter().any(|w| w.text == "1.1.1"), "\\setcounter{{secnumdepth}}{{2}}: {off:?}");
+}
