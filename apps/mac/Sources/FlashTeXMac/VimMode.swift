@@ -111,7 +111,7 @@ final class VimMode {
         var linewise: Bool
     }
 
-    /// What the status bar shows (`VimModeStatusItem`, ContentView.swift).
+    /// What the editor pane's Vim status line shows (`VimStatusLine`, ContentView.swift).
     @Observable
     final class Status {
         static let shared = Status()
@@ -1013,7 +1013,11 @@ final class VimMode {
             let s = lineStart(ofLine: target)
             let e = lineEnd(s)
             let last = mode == .insert ? e : max(s, e - 1)
-            return Target(position: min(last, s + column), linewise: true)
+            var position = min(last, s + column)
+            if let tv = textView as? CompletingTextView {
+                position = tv.folds.adjustLinewise(from: c, to: position)
+            }
+            return Target(position: position, linewise: true)
         case .visualDown(let n), .visualUp(let n):
             var down = true
             if case .visualUp = m { down = false }

@@ -105,4 +105,70 @@ final class EditorKeyHandlingTests: XCTestCase {
         // Crossed brackets are not a shape this understands: change nothing.
         XCTAssertFalse(EKH.supersedesTrackedCloser("{a]", closer: "]"))
     }
+    // MARK: duplicate line (⌥⇧↓ / ⌥⇧↑)
+
+    /// Applies the edit the way the text view does, so the test asserts on
+    /// resulting text rather than on an offset arithmetic restatement.
+    private func duplicated(_ text: String, _ range: NSRange, below: Bool) -> (text: String, selection: NSRange)? {
+        guard let (edit, selection) = EKH.duplicateLinesEdit(in: text, range: range, below: below) else { return nil }
+        let out = (text as NSString).replacingCharacters(in: edit.range, with: edit.replacement)
+        return (out, selection)
+    }
+
+    func testDuplicateLineDownCopiesTheCaretsLineAndFollowsTheCopy() {
+        let text = "\\alpha\n\\beta\n\\gamma\n"
+        // caret inside `\beta`, at the `e`
+        let r = duplicated(text, NSRange(location: 9, length: 0), below: true)
+        XCTAssertEqual(r?.text, "\\alpha\n\\beta\n\\beta\n\\gamma\n")
+        XCTAssertEqual(r?.selection, NSRange(location: 15, length: 0), "the caret keeps its column on the copy")
+    }
+
+    func testDuplicateLineUpLeavesTheCaretOnTheUpperCopy() {
+        let text = "\\alpha\n\\beta\n\\gamma\n"
+        let r = duplicated(text, NSRange(location: 9, length: 0), below: false)
+        XCTAssertEqual(r?.text, "\\alpha\n\\beta\n\\beta\n\\gamma\n",
+                       "same text either way; only which copy the caret is on differs")
+        XCTAssertEqual(r?.selection, NSRange(location: 9, length: 0),
+                       "inserting above leaves the original offsets describing the copy")
+    }
+
+    func testRepeatedDuplicateDownStacksCopies() {
+        var text = "x = 1\n"
+        var sel = NSRange(location: 2, length: 0)
+        for _ in 0..<3 {
+            guard let r = duplicated(text, sel, below: true) else { return XCTFail("no edit") }
+            text = r.text
+            sel = r.selection
+        }
+        XCTAssertEqual(text, "x = 1\nx = 1\nx = 1\nx = 1\n")
+        XCTAssertEqual(sel, NSRange(location: 20, length: 0), "still the same column, three lines down")
+    }
+
+    func testDuplicateCopiesEveryLineASelectionTouches() {
+        let text = "a\nb\nc\n"
+        // selection from the start of `a` through the start of `c`: touches a and b
+        let r = duplicated(text, NSRange(location: 0, length: 4), below: true)
+        XCTAssertEqual(r?.text, "a\nb\na\nb\nc\n")
+        XCTAssertEqual(r?.selection, NSRange(location: 4, length: 4), "the selection moves onto the copy")
+    }
+
+    func testDuplicateTheLastLineSuppliesTheNewlineItHasNot() {
+        let down = duplicated("a\nb", NSRange(location: 3, length: 0), below: true)
+        XCTAssertEqual(down?.text, "a\nb\nb")
+        XCTAssertEqual(down?.selection, NSRange(location: 5, length: 0))
+        let up = duplicated("a\nb", NSRange(location: 3, length: 0), below: false)
+        XCTAssertEqual(up?.text, "a\nb\nb")
+        XCTAssertEqual(up?.selection, NSRange(location: 3, length: 0))
+    }
+
+    func testDuplicateAnEmptyLineAndAnEmptyDocument() {
+        XCTAssertEqual(duplicated("a\n\nb\n", NSRange(location: 2, length: 0), below: true)?.text, "a\n\n\nb\n")
+        XCTAssertEqual(duplicated("", NSRange(location: 0, length: 0), below: true)?.text, "\n")
+    }
+
+    func testDuplicateRejectsARangeOutsideTheText() {
+        XCTAssertNil(EKH.duplicateLinesEdit(in: "ab", range: NSRange(location: 3, length: 0), below: true))
+        XCTAssertNil(EKH.duplicateLinesEdit(in: "ab", range: NSRange(location: 0, length: 5), below: true))
+    }
+
 }

@@ -78,8 +78,14 @@ final class NearbyErrorsTests: XCTestCase {
         let model = ShellModel()
         let local = InsertionAnchor(id: "local-1", path: "main.tex", byteOffset: 5, revision: 7, contextAfter: " Fl")
         let valid = Self.anchor(5, 5, revision: 7)
-        XCTAssertEqual(model.announcedNearbyDestination(bridgeAttached: true, bridgeAnchor: valid, localAnchor: local),
-                       .init(destinationId: "d1", projectId: "p", path: "main.tex", baseRevision: 7))
+        // The announcement now also carries the caret context so the companion
+        // can say how a capture landing there will be wrapped (nearby-v1,
+        // additive). The pin/no-pin rule this test is about is unchanged.
+        let announced = model.announcedNearbyDestination(bridgeAttached: true, bridgeAnchor: valid, localAnchor: local)
+        XCTAssertEqual(announced?.destinationId, "d1")
+        XCTAssertEqual(announced?.projectId, "p")
+        XCTAssertEqual(announced?.path, "main.tex")
+        XCTAssertEqual(announced?.baseRevision, 7)
         XCTAssertNil(model.announcedNearbyDestination(bridgeAttached: true, bridgeAnchor: Self.anchor(5, 5, valid: false), localAnchor: local),
                      "a dropped pin is announced as no destination")
         XCTAssertNil(model.announcedNearbyDestination(bridgeAttached: true, bridgeAnchor: nil, localAnchor: local),

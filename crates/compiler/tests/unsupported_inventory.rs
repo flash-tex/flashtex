@@ -20,7 +20,12 @@ struct Case {
 const CASES: &[Case] = &[
     Case {
         feature: r"\usepackage — package implementations",
-        input: "\\usepackage{amsmath}\nText.\n",
+        // Not amsmath: `parser::package_matches_layout` accepts it, because
+        // this crate parses and sets the amsmath constructs and reports the
+        // ones it does not at their own span. `fancyhdr` is modelled by
+        // neither this crate nor the render pipeline, so it is the honest
+        // example of a package that is only recognised.
+        input: "\\usepackage{fancyhdr}\nText.\n",
         consequence:
             "Any document relying on package-defined commands will report them as unsupported.",
     },

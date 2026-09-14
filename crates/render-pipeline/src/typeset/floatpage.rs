@@ -226,14 +226,14 @@ fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, 
             FloatPart::Caption { items } => {
                 flush!();
                 minipage = false;
-                let Some(mut block) = ctx.paragraph_block(items, false, true, false, ParaStyle::Plain, None, None) else { continue };
+                let Some(mut block) = ctx.paragraph_block(items, false, true, false, ParaStyle::Plain, None, None, None) else { continue };
                 let lines = &block.block.lines.lines;
                 // `\@caption` runs `\@parboxrestore` before `\@makecaption`, so
                 // `\centering` does not reach a caption set as a paragraph:
                 // only the one-line `\hbox to\hsize{\hfil...\hfil}` is centred.
                 let fits = lines.len() == 1 && lines[0].natural_width <= tw + 1e-6;
                 if fits {
-                    if let Some(b) = ctx.paragraph_block(items, false, true, false, ParaStyle::Center, None, None) {
+                    if let Some(b) = ctx.paragraph_block(items, false, true, false, ParaStyle::Center, None, None, None) {
                         block = b;
                     }
                 }
@@ -816,6 +816,8 @@ fn block_source(ctx: &Context, b: &BuiltBlock, items: impl Iterator<Item = usize
             BoxRec::Picture(p) => Some(p.span),
             BoxRec::Table(t) => Some(t.span),
             BoxRec::ColorBox(c) => Some(c.span),
+            BoxRec::Leader { .. } => None,
+            BoxRec::Underline(u) => Some(u.span),
         })
         .collect()
 }

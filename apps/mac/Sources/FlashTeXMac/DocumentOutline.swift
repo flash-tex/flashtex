@@ -60,6 +60,26 @@ enum DocumentOutline {
         return section ?? items.last { $0.kind == .environment && $0.utf16.location <= caret }
     }
 
+    /// The status bar's LaTeX-semantic breadcrumb (design-principles §5):
+    /// the enclosing sectioning chain at `caret`, outermost first —
+    /// `Chapter 2 › 2.3 Experimental Setup`. Ancestors are the nearest
+    /// preceding sections of strictly lower level; environments and labels
+    /// are left out because the lexical scan records no `\end` positions,
+    /// and a segment that may already be closed would lie.
+    static func breadcrumb(at caret: Int, in items: [Item]) -> [Item] {
+        var innermost: Item?
+        for i in items where i.utf16.location <= caret {
+            if i.kind == .section { innermost = i }
+        }
+        guard let last = innermost else { return [] }
+        var chain = [last]
+        var level = last.level
+        for i in items.reversed() where i.kind == .section && i.utf16.location < last.utf16.location {
+            if i.level < level { chain.insert(i, at: 0); level = i.level }
+        }
+        return chain
+    }
+
     /// Sectioning commands and their level (chapter 0 … paragraph 4).
     static let sectionLevels: [String: Int] = [
         "part": 0, "chapter": 0, "section": 1, "subsection": 2, "subsubsection": 3, "paragraph": 4, "subparagraph": 5,
