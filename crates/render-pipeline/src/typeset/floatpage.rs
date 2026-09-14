@@ -859,6 +859,26 @@ pub fn paginate(
                 pending_head = next_head;
             }
         }
+        // The column's body as a vertical list: `\box\@cclv` as `\@makecol`
+        // receives it, head and foot boxes included. Both branches below
+        // measure it — the notes branch hands it to `make_column`, the
+        // plain one sets its glue itself.
+        let mut body: Vec<VItem> = Vec::with_capacity(end - start + 2);
+        if let Some((h, d, payload)) = head {
+            body.push(VItem::Box { height: h, depth: d, payload });
+        }
+        for n in &nodes[start..end] {
+            match n {
+                N::FBox(f) => body.push(VItem::Box { height: boxes[*f].height, depth: 0.0, payload: (usize::MAX, *f) }),
+                N::V(j) => body.push(list[*j].clone()),
+                N::Glue(w, st, sh) => body.push(VItem::Glue { width: *w, stretch: *st, shrink: *sh, fil: false }),
+                N::Penalty(pen) => body.push(VItem::Penalty(*pen)),
+                N::Marker(_) => {}
+            }
+        }
+        if let Some((h, d, payload)) = region_foot {
+            body.push(VItem::Box { height: h, depth: d, payload });
+        }
         let mut overfull_by = 0.0;
         if notes.iter().any(|l| !l.is_empty()) {
             // `\@makecol` with `\footins` and floats, over a `\box\@cclv`
@@ -873,22 +893,6 @@ pub fn paginate(
             // `\vbox to\@colht`, so one glue set ratio covers the body's
             // glue, `\skip\footins` and both float separations together:
             // `\@colht`, not `\@colroom`, is the size to reach.
-            let mut body: Vec<VItem> = Vec::with_capacity(end - start + 2);
-            if let Some((h, d, payload)) = head {
-                body.push(VItem::Box { height: h, depth: d, payload });
-            }
-            for n in &nodes[start..end] {
-                match n {
-                    N::FBox(f) => body.push(VItem::Box { height: boxes[*f].height, depth: 0.0, payload: (usize::MAX, *f) }),
-                    N::V(j) => body.push(list[*j].clone()),
-                    N::Glue(w, st, sh) => body.push(VItem::Glue { width: *w, stretch: *st, shrink: *sh, fil: false }),
-                    N::Penalty(pen) => body.push(VItem::Penalty(*pen)),
-                    N::Marker(_) => {}
-                }
-            }
-            if let Some((h, d, payload)) = region_foot {
-                body.push(VItem::Box { height: h, depth: d, payload });
-            }
             // `\LT@output` builds `\box\@cclv` as `\vbox{\unvbox\@cclv
             // \copy\LT@foot \vss}` and only then calls `\@makecol`: that
             // `\vss` is inside the body, ahead of `\skip\footins`, so it
@@ -920,6 +924,28 @@ pub fn paginate(
                 pl.emit(f, y, page_no, &mut lines);
                 y += boxes[f].height + fp.floatsep.n;
             }
+            // `\@make@normalcolbox` packs the column `\vbox to\@colht`, so
+            // the body's glue is set here exactly as it is on the pages the
+            // plain page builder assembles (`break_pages_regions`): material
+            // taller than the column shrinks whatever the page style —
+            // `\raggedbottom`'s `\@textbottom` and `\newpage`'s `\vfil` only
+            // stretch — and a short page stretches only under `\flushbottom`
+            // at an ordinary break. Without this the page was laid out at its
+            // natural size, so every line under the first shrinkable glue on
+            // an over-full page sat low by the whole shrink.
+            //
+            // The goal is `\@colroom`: on a page with floats the separations
+            // above and below them stay at their natural size here (they are
+            // placed by this branch, not by `make_column`), so only the body
+            // takes the slack.
+            let colp = PageParams { vsize, maxdepth, ..*p };
+            let set = match pagebuild::glue_set(&colp, &body) {
+                _ if region_break => 0.0,
+                g if g < 0.0 => g,
+                g if p.flushbottom && fired.is_some() && !ejected => g,
+                _ => 0.0,
+            };
+            let set_glue = |w: f64, st: f64, sh: f64| w + if set > 0.0 { set * st } else { set * sh };
             let (mut total, mut depth, mut has_box) = (0.0f64, 0.0f64, false);
             let mut last_text: Option<Placed> = None;
             // `\copy\LT@head\nobreak` opens a page continuing a longtable.
@@ -937,18 +963,18 @@ pub fn paginate(
                     N::FBox(f) => Some((boxes[*f].height, 0.0, None, Some(*f))),
                     N::V(j) => match list[*j] {
                         VItem::Box { height, depth, payload } => Some((height, depth, Some(payload), None)),
-                        VItem::Glue { width, .. } => {
+                        VItem::Glue { width, stretch, shrink, fil } => {
                             if has_box {
-                                total += depth + width;
+                                total += depth + if fil { width } else { set_glue(width, stretch, shrink) };
                                 depth = 0.0;
                             }
                             None
                         }
                         VItem::Penalty(_) => None,
                     },
-                    N::Glue(w, ..) => {
+                    N::Glue(w, st, sh) => {
                         if has_box {
-                            total += depth + w;
+                            total += depth + set_glue(*w, *st, *sh);
                             depth = 0.0;
                         }
                         None

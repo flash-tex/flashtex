@@ -268,6 +268,7 @@ impl<'a> Context<'a> {
             interline_penalty: INTERFOOTNOTE_LINE_PENALTY,
             club_penalty: CLUB_PENALTY,
             widow_penalty: WIDOW_PENALTY,
+            broken_penalty: super::broken_penalties(&lines),
             penalty_after: None,
             space_after: None,
             no_interline_first: false,
