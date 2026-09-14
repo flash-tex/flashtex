@@ -736,11 +736,12 @@ impl DisplayList {
     /// Every item of every page that was materialised.
     ///
     /// On a complete compile (`window == None`) that is every item in the
-    /// document, which is what the feature and size scans below assume. On a
-    /// windowed list it is the window's items only: the derived feature set is
-    /// therefore the window's, and `display-list-v2-window` §3 requires the
-    /// document's. Reconciling the two is r2 work, and is why the window is
-    /// producer-internal until a consumer co-signs.
+    /// document. On a windowed list it is the window's items only, so it is
+    /// **not** the thing to derive a document-wide fact from: that is what
+    /// [`DocumentFeatures`] is harvested during assembly for
+    /// (`display-list-v2-window` §3). Use this to answer questions about what
+    /// a list actually carries — how big it serialises, whether a page has
+    /// images to write — not about what the document needs.
     pub fn resident_page_items(&self) -> impl Iterator<Item = &Item> {
         self.pages.iter().flat_map(|p| p.items().into_iter().flatten())
     }

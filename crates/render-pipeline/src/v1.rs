@@ -75,7 +75,7 @@ impl Capabilities {
     pub fn negotiate(requested: &[String]) -> (Capabilities, Vec<String>) {
         let mut caps = Capabilities::default();
         let mut accepted = Vec::new();
-        // `-window` and `-delta` are mutually exclusive in r1 and the window
+        // `-window` and `-delta` are mutually exclusive for now and the window
         // wins, so whether the window was asked for has to be known before
         // the request-order walk reaches `-delta`.
         let with_display_list = requested.iter().any(|c| c == CAP_DISPLAY_LIST);
