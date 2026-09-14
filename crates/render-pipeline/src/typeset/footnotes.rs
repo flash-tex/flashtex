@@ -219,6 +219,10 @@ impl<'a> Context<'a> {
             baselineskip: Some(fp.baselineskip),
             vskip_after: vskips_of(&lines, &skips),
             pre_space_after: None,
+            lineskip: None,
+            contributed: None,
+            line_penalty: Vec::new(),
+            depth_after: pagebuild::DepthAfter::default(),
         };
         Some(BuiltBlock { block: pl::ParagraphBlock::body(lines), items: list, recs, vertical, labels, cache_key: None })
     }

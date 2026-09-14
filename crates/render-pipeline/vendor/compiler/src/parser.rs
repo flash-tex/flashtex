@@ -665,6 +665,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "fcolorbox",
     "newcolumntype",
     "arraybackslash",
+    "arrayrulecolor",
+    "doublerulesepcolor",
     "setlist",
     "newcommand",
     "renewcommand",
@@ -1035,6 +1037,8 @@ pub fn parse_project_with(
         include_stack: vec![entry],
         counters: crate::xref::Counters::article(),
         subequations: Vec::new(),
+        table_rule_color: None,
+        table_double_rule_sep_color: None,
         footnote_counter: 0,
         current_counter: None,
         seen_labels: HashMap::new(),
@@ -1175,6 +1179,9 @@ struct P<'a> {
     /// The `\theequation` in force outside each open `subequations`
     /// environment, restored at its `\end` (amsmath's group).
     subequations: Vec<Vec<crate::xref::Piece>>,
+    /// colortbl `\arrayrulecolor`/`\doublerulesepcolor` (global assignments).
+    table_rule_color: Option<crate::tabular::ColorSpec>,
+    table_double_rule_sep_color: Option<crate::tabular::ColorSpec>,
     /// LaTeX's `footnote` counter; article never resets it.
     footnote_counter: u32,
     current_counter: Option<String>,
@@ -1511,6 +1518,22 @@ impl P<'_> {
             // array.sty 247: `\let\\\tabularnewline`; this parser already
             // ends table rows at `\\` inside `p`-column entries.
             "arraybackslash" => {}
+            // colortbl.sty 156-165: global colour of later rules and
+            // `\doublerulesep` gaps (inside a table the row scanner takes them).
+            "arrayrulecolor" | "doublerulesepcolor" => {
+                let color = self.table_color_argument(name, span);
+                if !self.colortbl() {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\{name} needs the colortbl package (or xcolor with the table option)"),
+                        Some(span),
+                        Some("ignored the colour".into()),
+                    ));
+                } else if name == "arrayrulecolor" {
+                    self.table_rule_color = Some(color);
+                } else {
+                    self.table_double_rule_sep_color = Some(color);
+                }
+            }
             "setlist" => self.set_list(span),
             // Definitions run in the expansion pass (`crate::expansion`); the
             // parser only sees their expansions, never these names.
@@ -2283,6 +2306,9 @@ impl P<'_> {
             // Read by `\colorbox`/`\fcolorbox` (not group-scoped here).
             "fboxsep" => self.fboxsep_pt = pt,
             "fboxrule" => self.fboxrule_pt = pt,
+            // longtable's lengths are read from the source by the render
+            // pipeline's longtable layout.
+            "LTleft" | "LTright" | "LTpre" | "LTpost" | "LTcapwidth" => {}
             "parskip" if in_preamble => self.parskip_pt = Some(pt),
             "parindent" if in_preamble && pt == 0.0 => {}
             "parindent" if in_preamble => self.diags.push(Diagnostic::warning(
@@ -2429,6 +2455,12 @@ impl P<'_> {
         for package in &packages {
             self.math_packages.load_package(package);
             self.load_color_package(package, &options);
+        }
+        // xcolor.sty's `table` option loads colortbl (and so array).
+        if packages.iter().any(|package| package == "xcolor")
+            && options.split(',').any(|option| option.trim() == "table")
+        {
+            self.packages.push("colortbl".into());
         }
         // multicol.sty lines 111-113: the global `twocolumn` class option
         // reaches the package's option handler.
@@ -2795,6 +2827,10 @@ impl P<'_> {
             }
             if matches!(environment.as_str(), "tabular" | "tabular*") && self.in_body {
                 self.tabular_environment(span, &environment, para);
+                return;
+            }
+            // Package environments (inventoried with their package).
+            if self.in_body && self.package_table_environment(span, &environment, blocks, para) {
                 return;
             }
             if matches!(
@@ -5511,6 +5547,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         "multicol" => options
             .iter()
             .all(|option| matches!(*option, "errorshow" | "infoshow" | "balancingshow" | "markshow" | "debugshow")),
+        // Table packages (parser/tabular.rs, crate::tabular): booktabs rules
+        // and spacing, longtable page-breaking tables, multirow entries and
+        // colortbl row/column/cell colours and rule colours.
+        "booktabs" | "longtable" | "multirow" | "colortbl" => options.is_empty(),
         // amsmath/amssymb (math typesetting: \mathbb, \forall, gather,
         // align, ...) and microtype (character protrusion/expansion kerning)
         // are genuinely unimplemented and change real output; they must keep

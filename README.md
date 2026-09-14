@@ -1,5 +1,23 @@
 # FlashTeX
 
+FlashTeX is a blazing ⚡️ fast (La)TeX engine written in Rust. 
+This project actually consists of two things:
+
+- A _complete rewrite_ of the TeX compiler from scratch
+  with modern features (incremental compilation, fancy diagnostics, etc.)
+  
+- A native, lightweight, and snappy TeX IDE with live (sub-10ms)
+  previews, which pairs with a companion iPad app (FlashTeXPad)
+  for inline LaTeX/TiKZ OCR (including diagrams).
+
+## See Also
+
+- Landing page: https://flash-tex.github.io/flashtex
+- Quickstart/setup: https://flash-tex.github.io/flashtex/download
+- Discord server: https://discord.gg/J4kHDJmTrD
+
+---
+
 **An incremental LaTeX engine with a command line, and a native macOS IDE
 built on it — no TeX distribution required.**
 
