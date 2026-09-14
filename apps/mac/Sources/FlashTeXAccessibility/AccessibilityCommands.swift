@@ -8,13 +8,13 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case editorPreferences
     case openLaTeXFile, newProject, newFile, save, saveAs, openFixture, reloadFixture
     case attachBuiltCompiler, attachRenderPipeline, attachWorker, compile
-    case exportPDF, exportPDFViaRust, exportPDFExact
+    case exportPDF, exportPDFViaRust, exportPDFExact, printDocument, printSource
     case pinInsertionPoint, openCaptureProposal, submitSampleCapture, convertCapture, nearbyCompanion
     case restoreDiscardedBuffer
     case undo
     case commandPalette, toggleProblems, toggleCaptures
     case zoomIn, zoomOut, actualSize, fitWidth, increaseEditorFontSize, decreaseEditorFontSize, resetEditorFontSize
-    case completion, completionList, toggleComment, duplicateLine, duplicateLineUp, moveLineUp, moveLineDown, deleteLine, joinLines, sortLinesAscending, sortLinesDescending, trimTrailingWhitespace, signatureHelp, toggleVimKeybindings
+    case completion, completionList, toggleComment, duplicateLine, duplicateLineUp, moveLineUp, moveLineDown, deleteLine, joinLines, sortLinesAscending, sortLinesDescending, trimTrailingWhitespace, reindentLines, reindentDocument, signatureHelp, toggleVimKeybindings
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
     case goToDefinition, goToSymbol, selectEnvironment, wrapInEnvironment, changeEnvironment, renameSymbol
     case selectPreviewItemSource
@@ -113,6 +113,16 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          description: "Hands the loaded v2 display list to flashtex-pdf-exact from-v2: glyphs by original GID, embedded font programs, typed rules; refuses what it cannot express exactly.",
                          requires: "a loaded v2 display list and a built flashtex-pdf-exact",
                          menuItem: "Export PDF (exact, v2)…")
+        case .printDocument:
+            return Entry(command: self, title: "Print", shortcuts: ["⌘P"], menu: "File",
+                         description: "Prints the compiled document PDF (the same CoreGraphics bytes as Export PDF…) through the system print panel; page size follows the PDF.",
+                         requires: "a compile result",
+                         menuItem: "Print…")
+        case .printSource:
+            return Entry(command: self, title: "Print Source", shortcuts: ["File > Print Source…"], menu: "File",
+                         description: "Prints the editor text with line numbers in a monospaced font from a copy of the buffer, so the live editor layout is untouched.",
+                         requires: "an open document",
+                         menuItem: "Print Source…")
         case .pinInsertionPoint:
             return Entry(command: self, title: "Pin insertion point", shortcuts: ["⌘⌥P"], menu: "Edit",
                          description: "Records the caret as the destination anchor for capture proposals; the capture bar reads it back.",
@@ -190,7 +200,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          description: "Shows the signature of the command whose argument the caret is in; also opens on `{`/`[` typed after a command name. `}`, Esc, or leaving the argument closes it.")
         case .toggleVimKeybindings:
             return Entry(command: self, title: "Toggle Vim keybindings", shortcuts: ["⌃⌘V"], menu: "View",
-                         description: "Switches the source editor's modal Vim emulation (normal/insert/visual modes, motions, operators, text objects, registers, marks, `/` search and `:` commands) on or off; the same as the Settings switch. The status bar shows -- NORMAL -- / -- INSERT -- / -- VISUAL --.",
+                         description: "Switches the source editor's modal Vim emulation (normal/insert/visual modes, motions, operators, text objects, registers, marks, `/` search and `:` commands) on or off; the same as the Settings switch. A Vim status line at the bottom of the editor pane shows -- NORMAL -- / -- INSERT -- / -- VISUAL -- and the `:` command line.",
                          menuItem: "Toggle Vim Keybindings")
         case .toggleComment:
             return Entry(command: self, title: "Toggle comment", shortcuts: ["⌘/"], menu: "Editor",
@@ -231,6 +241,14 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Trim Trailing Whitespace", shortcuts: ["Editor > Trim Trailing Whitespace"], menu: "Editor",
                          description: "Removes trailing spaces and tabs from every line of the document, leaving verbatim bodies and a line that is only \\\\ plus spaces unchanged.",
                          menuItem: "Trim Trailing Whitespace")
+        case .reindentLines:
+            return Entry(command: self, title: "Re-indent Lines", shortcuts: ["⌃I"], menu: "Edit",
+                         description: "Reindents the selected lines, or the caret's line when nothing is selected, with LaTeX-aware rules (environments, braces, verbatim bodies, the document exception) as one undo step. ⌃I is Xcode's re-indent and is not Tab; Vim does not bind it. ⌘⇧I remains Toggle Captures.",
+                         menuItem: "Re-indent Lines")
+        case .reindentDocument:
+            return Entry(command: self, title: "Re-indent Document", shortcuts: ["Edit > Re-indent Document"], menu: "Edit",
+                         description: "Applies the same LaTeX-aware reindent rules as Re-indent Lines to the whole buffer as one undo step.",
+                         menuItem: "Re-indent Document")
         case .goToMatching:
             return Entry(command: self, title: "Go to matching", shortcuts: ["⌘⇧D"], menu: "Navigate",
                          description: "Selects the matching \\begin/\\end or \\label/\\ref for the command under the caret; misses are explained in the footer.",

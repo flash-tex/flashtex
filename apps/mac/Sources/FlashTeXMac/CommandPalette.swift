@@ -74,6 +74,8 @@ enum CommandPaletteModel {
         case .exportPDF: model.exportPDF()
         case .exportPDFViaRust: model.exportPDFViaRust()
         case .exportPDFExact: model.exportPDFExact()
+        case .printDocument: model.printDocument()
+        case .printSource: model.printSource()
         case .pinInsertionPoint: model.pinAnchorAtCaret()
         case .openCaptureProposal: model.openProposalPanel()
         case .submitSampleCapture: model.submitSampleCapturePanel()
@@ -96,6 +98,8 @@ enum CommandPaletteModel {
         case .sortLinesAscending: EditorLineCommandAction.sortAscending()
         case .sortLinesDescending: EditorLineCommandAction.sortDescending()
         case .trimTrailingWhitespace: EditorLineCommandAction.trimTrailingWhitespace()
+        case .reindentLines: EditorIndentationAction.reindentLines()
+        case .reindentDocument: EditorIndentationAction.reindentDocument()
         case .completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch: return false
         case .goToMatching: model.goToMatching()
         case .goToDefinition: model.goToDefinition() // ShellModel+EditorNavigation.swift

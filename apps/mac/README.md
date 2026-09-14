@@ -247,7 +247,11 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   (`RuleGeometry.pdfRect`). It exports the layout the Rust compiler reported,
   not a TeX-engine PDF: no fonts beyond Latin Modern/Times, no images, no links
   or metadata. The dark toggle only changes page/text colors. Disabled when no
-  result is loaded.
+  result is loaded. `File > Print…` (⌘P) prints those same bytes through
+  PDFKit's system print panel (`PrintController.swift`); it is also disabled
+  when the compile failed or produced no pages (a blank PDF is not printed).
+  `File > Print Source…` prints the editor buffer with line numbers from a copy
+  and is disabled when no document is open.
 
 ## Capture bridge (transfer-v1)
 
@@ -952,6 +956,8 @@ explain that nothing is loaded.
 | ⌘B | Compile now (auto-compile also runs 250 ms after edits) |
 | ⌘⇧E | Export PDF… (CoreGraphics, always white) |
 | ⌘⌥E | Export PDF via Rust writer… (`flashtex-pdf --verify`, always white) |
+| ⌘P | Print… (compiled document PDF, same CoreGraphics bytes as Export PDF…; system print panel; page size follows the PDF) |
+| File > Print Source… | Print Source… (editor text with line numbers, monospaced, from a copy so the live editor is untouched) |
 | ⌘⌥P | Pin insertion point at caret (capture destination anchor) |
 | Edit > Open Capture Proposal… | Open capture proposal… file (review sheet; ⏎ approves, inserts one undoable edit; no shortcut since ⌘⇧I moved to the Captures inspector) |
 | ⌘⇧I | Toggle Captures inspector (View; also the toolbar's Captures button): captures from the paired iPad with image, instruction and state (received → converting → proposal ready → inserted), the proposed LaTeX/TikZ, Insert at caret / Edit / Review… / Reject; opening it starts advertising and attaches the bridge; Pairing code… is one click |
@@ -968,7 +974,7 @@ explain that nothing is loaded.
 | ⌘⌥- | Decrease editor font size (View): -1 pt down to 8 pt |
 | ⌘⌥0 | Reset editor font size (View): back to the default 13 pt |
 | ⌘⇧M | Toggle Problems panel (View): the grouped diagnostics list under the editor and preview with a severity filter, jump, explanations and Fix…; the sidebar's Problems rows and the status bar counts open it too |
-| ⌃⌘V | Toggle Vim keybindings (View; also the Settings switch, default off): modal editing in the source editor — the status bar shows `-- NORMAL --` / `-- INSERT --` / `-- VISUAL --`; see *Vim keybindings* below |
+| ⌃⌘V | Toggle Vim keybindings (View; also the Settings switch, default off): modal editing in the source editor — a Vim status line at the bottom of the editor pane shows `-- NORMAL --` / `-- INSERT --` / `-- VISUAL --`; see *Vim keybindings* below |
 | Edit > Durable History… | Durable History window (undo/redo on the helper's edit ledger: Refresh, Undo, Redo, Retry/Discard after an uncertain reply, retention gauge, both stacks) |
 | ⌘F | Find… (opens the source editor's find bar; AppKit's built-in incremental search) |
 | ⌘⌥F | Find and Replace… (opens the find bar already showing its Replace row; a replacement is one undoable edit, so ⌘Z undoes it and the preview recompiles) |
@@ -991,6 +997,8 @@ explain that nothing is loaded.
 | Editor > Sort Lines Ascending | Sort Lines Ascending (stable, locale-aware compare of the touched lines; no key equivalent) |
 | Editor > Sort Lines Descending | Sort Lines Descending (stable, locale-aware compare of the touched lines; no key equivalent) |
 | Editor > Trim Trailing Whitespace | Trim Trailing Whitespace of the whole document (verbatim bodies and a line that is only `\\` plus spaces are left alone) |
+| ⌃I | Re-indent Lines (selected lines, or the caret's line; LaTeX-aware; one undo step). Not Tab; Vim does not bind ⌃I; ⌘⇧I is Toggle Captures |
+| Edit > Re-indent Document | Re-indent Document (same rules over the whole buffer; one undo step; no shortcut) |
 | ⌘⇧D | Go to matching `\begin`/`\end` or `\label`/`\ref` |
 | ⌃⌘J | Go to definition of the command/environment under the caret (`\newcommand`, `\def`, `\DeclareMathOperator`, `\newenvironment`; ⌘-click does the same, hover peeks the body) |
 | ⌘⇧T | Go to symbol: fuzzy picker over every heading, environment and label of the open documents |
@@ -1029,7 +1037,11 @@ editor behavior.
 text view's `keyDown`, active only while the "Vim keybindings" preference is on
 (Settings ▸ Typing, or View ▸ Toggle Vim Keybindings ⌃⌘V; default off — with it
 off nothing is intercepted and `CompletionLatencyTests` measures the plain
-editor). The status bar shows the mode and the `:`/`/` line being typed.
+editor). The mode and the `:`/`/` line being typed show in a status line at
+the **bottom of the editor pane** (`VimStatusLine`, ContentView.swift), where
+vim puts the status line of the window being edited — not in the window's
+status bar, which the Problems panel would push two panes below the caret.
+With the preference off the line takes no space at all.
 
 - **Modes**: normal, insert (`i a I A o O s S c C`), visual `v`, visual line
   `V`, replace-one `r{char}`; Esc or ⌃[ returns to normal. A mouse selection
