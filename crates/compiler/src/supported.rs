@@ -504,6 +504,30 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         "function-arrow colon: punctuation (0mu/3mu) as the kernel declares it, amsmath's 2mu/6mu when amsmath is loaded",
         true,
     ),
+    (
+        &["eqqcolon"],
+        "",
+        "mathtools =: (reverse of \\coloneqq) as a relation; needs mathtools",
+        true,
+    ),
+    (
+        &["Coloneqq", "Eqqcolon"],
+        "",
+        "mathtools ::= and =:: (each three real glyphs) as one relation; needs mathtools",
+        true,
+    ),
+    (
+        &["vcentcolon"],
+        "",
+        "mathtools vertically centred colon: the same glyph as \\colon as a relation; needs mathtools",
+        true,
+    ),
+    (
+        &["dblcolon"],
+        "",
+        "mathtools double vertically centred colon (two \\vcentcolon) as one relation; needs mathtools",
+        true,
+    ),
     (&["bmod", "mod"], "", "upright mod", true),
     (&["pmod"], "{n}", "parenthesised (mod n)", true),
     (

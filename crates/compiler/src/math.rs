@@ -446,6 +446,15 @@ pub struct MathPackages {
     /// provides those and nothing else. Each symbol carries which of the two
     /// files declares it (`amssymb::Provider`).
     pub amsfonts: bool,
+    /// `mathtools` is loaded, so its colon-relation family exists
+    /// (`\eqqcolon`, `\Coloneqq`, `\Eqqcolon`, `\vcentcolon`, `\dblcolon`).
+    ///
+    /// Base LaTeX2e defines none of these five names (each probed with
+    /// `\ifcsname` under TeX Live 2025), so without `mathtools` pdflatex
+    /// answers "Undefined control sequence". `mathtools.sty` requires
+    /// `amsmath`, so this flag always arrives with `amsmath` set — see
+    /// `AMSMATH_PACKAGES`, which already lists `mathtools`.
+    pub mathtools: bool,
 }
 
 /// Packages that load amsmath, so that `\usepackage{X}` alone gives amsmath's
@@ -535,6 +544,7 @@ impl MathPackages {
         amsmath: false,
         amssymb: false,
         amsfonts: false,
+        mathtools: false,
     };
 
     /// Folds one `\documentclass` name in.
@@ -548,6 +558,7 @@ impl MathPackages {
     /// cumulative: no package unloads another's redefinitions.
     pub fn load_package(&mut self, package: &str) {
         self.amsmath |= AMSMATH_PACKAGES.contains(&package);
+        self.mathtools |= package == "mathtools";
         let amssymb = AMSSYMB_PACKAGES.contains(&package);
         self.amssymb |= amssymb;
         // `amssymb.sty` line 8 is `\RequirePackage{amsfonts}`, so anything
@@ -1036,6 +1047,69 @@ impl MathParser<'_> {
             "colon" => MathAtom {
                 class_override: Some(AtomClass::Punct),
                 ..symbol(":".into(), span)
+            },
+            // mathtools' colon-relation family needs `\usepackage{mathtools}`:
+            // base LaTeX2e defines none of these five names (each probed with
+            // `\ifcsname` under TeX Live 2025), so without it pdflatex answers
+            // "Undefined control sequence".
+            "eqqcolon" | "Coloneqq" | "Eqqcolon" | "vcentcolon" | "dblcolon"
+                if !self.packages.mathtools =>
+            {
+                self.missing_package(&name, "mathtools", span)
+            }
+            // `\eqqcolon` ("=:", U+2255 EQUALS COLON) is the reverse of
+            // `\coloneqq` (":=", U+2254). U+2255 is deliberately not a
+            // `COMMAND_GLYPHS` row: unlike U+2254 it is absent from
+            // `symbol_class`'s relation row, so the glyph alone would infer
+            // Ord instead of Rel. The class is forced here instead, the same
+            // fix as `\bot`/`\perp` below.
+            "eqqcolon" => MathAtom {
+                class_override: Some(AtomClass::Rel),
+                ..symbol("≕".into(), span)
+            },
+            // `\Coloneqq` ("::=") is three real glyphs — two colons followed
+            // by an equals — in one relation, and `\Eqqcolon` ("=::") mirrors
+            // it. Both use the same base `":"`/`"="` symbols this file draws
+            // elsewhere, not a precomposed lookalike.
+            "Coloneqq" => {
+                let atoms = vec![
+                    symbol(":".into(), span),
+                    symbol(":".into(), span),
+                    symbol("=".into(), span),
+                ];
+                MathAtom {
+                    nucleus: Nucleus::Group(MathList { atoms }),
+                    class_override: Some(AtomClass::Rel),
+                    ..symbol(String::new(), span)
+                }
+            }
+            "Eqqcolon" => {
+                let atoms = vec![
+                    symbol("=".into(), span),
+                    symbol(":".into(), span),
+                    symbol(":".into(), span),
+                ];
+                MathAtom {
+                    nucleus: Nucleus::Group(MathList { atoms }),
+                    class_override: Some(AtomClass::Rel),
+                    ..symbol(String::new(), span)
+                }
+            }
+            // mathtools' `\vcentcolon` is the SAME base glyph as kernel
+            // `\colon` above (the operators-family `"3A` character, plain
+            // `":"`), just given `\mathrel` spacing instead of `\mathpunct`
+            // spacing — so it is built the same structural way, with Rel
+            // forced instead of Punct. NOT U+2236 RATIO, which would render a
+            // visually different glyph than pdfLaTeX actually produces.
+            "vcentcolon" => vcentcolon_atom(span),
+            // `\dblcolon` is literally two `\vcentcolon`s in one group
+            // (mathtools defines it exactly that way), kept as a relation.
+            "dblcolon" => MathAtom {
+                nucleus: Nucleus::Group(MathList {
+                    atoms: vec![vcentcolon_atom(span), vcentcolon_atom(span)],
+                }),
+                class_override: Some(AtomClass::Rel),
+                ..symbol(String::new(), span)
             },
             // `\bot` renders the exact same Symbol glyph as `\perp`
             // (U+22A5), but is Ord where `\perp` is Rel; `symbol_class` is
@@ -2674,6 +2748,15 @@ fn symbol(text: String, span: Span) -> MathAtom {
         class_override: None,
         width_em: None,
         ams_symbol: None,
+    }
+}
+
+/// mathtools' `\vcentcolon`: the plain `":"` with `\mathrel` spacing. Shared
+/// by the `"vcentcolon"` arm and `"dblcolon"`, which is two of these atoms.
+fn vcentcolon_atom(span: Span) -> MathAtom {
+    MathAtom {
+        class_override: Some(AtomClass::Rel),
+        ..symbol(":".into(), span)
     }
 }
 
@@ -5062,6 +5145,7 @@ mod unbraced_argument_tests {
         amsmath: false,
         amssymb: false,
         amsfonts: true,
+        mathtools: false,
     };
 
     #[test]
@@ -5471,11 +5555,23 @@ mod spacing_tests {
         amsmath: false,
         amssymb: true,
         amsfonts: true,
+        mathtools: false,
     };
 
     fn width_with(source: &str, size: f64, packages: MathPackages) -> f64 {
         laid_out_with(source, size, packages).width
     }
+
+    /// A document that loaded `mathtools` (which requires `amsmath`): the
+    /// colon-relation family exists. Base LaTeX2e defines none of it, so the
+    /// tests below that use those commands have to say so — see
+    /// `package_gating_tests::mathtools_colon_relations_need_mathtools`.
+    const MATHTOOLS: MathPackages = MathPackages {
+        amsmath: true,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: true,
+    };
 
     fn x(b: &MathBox, text: &str) -> f64 {
         b.items.iter().find(|i| i.text == text).unwrap().x
@@ -5589,6 +5685,39 @@ mod spacing_tests {
             close(x(&b, glyph), width("a", SIZE) + 5.0);
             let own = width_with(&format!(r"\{command}"), SIZE, AMSSYMB);
             close(x(&b, "b"), x(&b, glyph) + own + 5.0);
+        }
+    }
+
+    /// mathtools' colon-relation family are all relations: 5mu on each side,
+    /// like `\coloneqq`. `\eqqcolon` and `\vcentcolon` are single atoms;
+    /// `\Coloneqq`, `\Eqqcolon` and `\dblcolon` are one relation group each,
+    /// laid out glyph by glyph in the order mathtools defines.
+    #[test]
+    fn mathtools_colon_relations_get_thick_space_like_coloneqq() {
+        for (command, glyph) in [("eqqcolon", "≕"), ("vcentcolon", ":")] {
+            let b = laid_out_with(&format!(r"a\{command} b"), SIZE, MATHTOOLS);
+            close(x(&b, glyph), width("a", SIZE) + 5.0);
+            let own = width_with(&format!(r"\{command}"), SIZE, MATHTOOLS);
+            close(x(&b, "b"), x(&b, glyph) + own + 5.0);
+        }
+        for (command, glyphs) in [
+            ("Coloneqq", vec![":", ":", "="]),
+            ("Eqqcolon", vec!["=", ":", ":"]),
+            ("dblcolon", vec![":", ":"]),
+        ] {
+            let b = laid_out_with(&format!(r"a\{command} b"), SIZE, MATHTOOLS);
+            close(x(&b, glyphs[0]), width("a", SIZE) + 5.0);
+            let own = width_with(&format!(r"\{command}"), SIZE, MATHTOOLS);
+            close(
+                b.width,
+                width("a", SIZE) + 5.0 + own + 5.0 + width("b", SIZE),
+            );
+            // The group lays out exactly its atoms between the operands.
+            let texts: Vec<&str> = b.items.iter().map(|i| i.text.as_str()).collect();
+            let mut expected = vec!["a"];
+            expected.extend(glyphs);
+            expected.push("b");
+            assert_eq!(texts, expected, "\\{command}");
         }
     }
 
@@ -6011,16 +6140,25 @@ mod package_gating_tests {
         amsmath: false,
         amssymb: true,
         amsfonts: true,
+        mathtools: false,
     };
     const AMSFONTS: MathPackages = MathPackages {
         amsmath: false,
         amssymb: false,
         amsfonts: true,
+        mathtools: false,
     };
     const AMSMATH: MathPackages = MathPackages {
         amsmath: true,
         amssymb: false,
         amsfonts: false,
+        mathtools: false,
+    };
+    const MATHTOOLS: MathPackages = MathPackages {
+        amsmath: true,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: true,
     };
 
     fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
@@ -6134,6 +6272,109 @@ mod package_gating_tests {
             let symbol = crate::amssymb::by_name(alias).expect("alias resolves");
             assert_eq!(symbol.name, *target);
             assert_eq!(symbol.provider, Provider::Amssymb, "\\{alias}");
+        }
+    }
+
+    /// mathtools' colon-relation family needs `\usepackage{mathtools}`: base
+    /// LaTeX2e defines none of the five, so pdflatex answers "Undefined
+    /// control sequence" there. `mathtools.sty` requires `amsmath`, so
+    /// loading it sets both flags.
+    #[test]
+    fn mathtools_colon_relations_need_mathtools() {
+        let mut packages = MathPackages::KERNEL;
+        packages.load_package("mathtools");
+        assert_eq!(packages, MATHTOOLS, "mathtools loads mathtools and amsmath");
+        for command in ["eqqcolon", "Coloneqq", "Eqqcolon", "vcentcolon", "dblcolon"] {
+            let (_, diagnostics) = parsed(&format!("\\{command}"), MathPackages::KERNEL);
+            assert_eq!(
+                diagnostics.first().map(|d| d.message.as_str()),
+                Some(format!("\\{command} requires \\usepackage{{mathtools}}").as_str()),
+                "\\{command}"
+            );
+            let (_, loaded) = parsed(&format!("\\{command}"), MATHTOOLS);
+            assert!(loaded.is_empty(), "\\{command} under mathtools: {loaded:?}");
+        }
+    }
+
+    /// With `mathtools` loaded each of the five parses to its relation
+    /// nucleus: `\eqqcolon` is one U+2255 atom with Rel forced (U+2255 is not
+    /// in `symbol_class`'s relation row, so the table alone would infer Ord),
+    /// `\vcentcolon` is the plain `":"` with Rel forced (the same glyph as
+    /// `\colon`, which is Punct), and the other three are one relation group
+    /// each over those same base glyphs.
+    #[test]
+    fn mathtools_colon_relations_parse_to_relation_nuclei() {
+        let (list, _) = parsed(r"\eqqcolon", MATHTOOLS);
+        assert_eq!(list.atoms.len(), 1, "\\eqqcolon");
+        assert!(
+            matches!(&list.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == "≕"),
+            "\\eqqcolon: {:?}",
+            list.atoms[0].nucleus
+        );
+        assert_eq!(
+            list.atoms[0].class_override,
+            Some(AtomClass::Rel),
+            "\\eqqcolon"
+        );
+
+        let (list, _) = parsed(r"\vcentcolon", MATHTOOLS);
+        assert_eq!(list.atoms.len(), 1, "\\vcentcolon");
+        assert!(
+            matches!(&list.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == ":"),
+            "\\vcentcolon: {:?}",
+            list.atoms[0].nucleus
+        );
+        assert_eq!(
+            list.atoms[0].class_override,
+            Some(AtomClass::Rel),
+            "\\vcentcolon"
+        );
+        // The same glyph as `\colon`, only the class differs.
+        let (colon, _) = parsed(r"\colon", MathPackages::KERNEL);
+        assert!(
+            matches!(&colon.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == ":"),
+            "\\colon: {:?}",
+            colon.atoms[0].nucleus
+        );
+        assert_eq!(
+            colon.atoms[0].class_override,
+            Some(AtomClass::Punct),
+            "\\colon"
+        );
+
+        for (command, glyphs) in [
+            ("Coloneqq", vec![":", ":", "="]),
+            ("Eqqcolon", vec!["=", ":", ":"]),
+            ("dblcolon", vec![":", ":"]),
+        ] {
+            let (list, _) = parsed(&format!("\\{command}"), MATHTOOLS);
+            assert_eq!(list.atoms.len(), 1, "\\{command}");
+            assert_eq!(
+                list.atoms[0].class_override,
+                Some(AtomClass::Rel),
+                "\\{command}"
+            );
+            let Nucleus::Group(inner) = &list.atoms[0].nucleus else {
+                panic!("\\{command} is not a group: {:?}", list.atoms[0].nucleus);
+            };
+            let inner_glyphs: Vec<&str> = inner
+                .atoms
+                .iter()
+                .map(|atom| match &atom.nucleus {
+                    Nucleus::Symbol(glyph) => glyph.as_str(),
+                    other => panic!("\\{command} holds {other:?}"),
+                })
+                .collect();
+            assert_eq!(inner_glyphs, glyphs, "\\{command}");
+        }
+        // `\dblcolon` is two `\vcentcolon`s: each inner atom carries the same
+        // Rel-forced `":"` the `"vcentcolon"` arm resolves to.
+        let (list, _) = parsed(r"\dblcolon", MATHTOOLS);
+        let Nucleus::Group(inner) = &list.atoms[0].nucleus else {
+            panic!("\\dblcolon is not a group: {:?}", list.atoms[0].nucleus);
+        };
+        for atom in &inner.atoms {
+            assert_eq!(atom.class_override, Some(AtomClass::Rel), "\\dblcolon");
         }
     }
 
@@ -6273,7 +6514,8 @@ mod package_gating_tests {
             MathPackages {
                 amsmath: true,
                 amssymb: false,
-                amsfonts: true
+                amsfonts: true,
+                mathtools: false
             }
         );
         assert_eq!(
@@ -6281,7 +6523,8 @@ mod package_gating_tests {
             MathPackages {
                 amsmath: true,
                 amssymb: true,
-                amsfonts: true
+                amsfonts: true,
+                mathtools: false
             }
         );
         assert_eq!(class("article"), MathPackages::KERNEL);
@@ -6299,6 +6542,7 @@ mod double_bar_tests {
         amsmath: true,
         amssymb: false,
         amsfonts: false,
+        mathtools: false,
     };
 
     /// The glyph texts a formula lays out, in order.
