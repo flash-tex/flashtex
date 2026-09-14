@@ -54,6 +54,7 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(REPO, "tools", "real-world-corpus"))
 
+import fontenv  # noqa: E402
 import pdftext  # noqa: E402
 import thumbs  # noqa: E402
 import run as corpus  # noqa: E402  (tools/real-world-corpus/run.py)
@@ -61,7 +62,6 @@ import run as corpus  # noqa: E402  (tools/real-world-corpus/run.py)
 DPI = corpus.DPI
 Q = float(2 ** 20)  # bp_2pow20 -> bp
 
-DEFAULT_RENDER_SHA = "9aaec57a"
 REFLOW_DX = 50.0  # |dx| in bp beyond which an aligned word is counted as moved to another line
 DEFAULT_TEXBIN = corpus.DEFAULT_TEXBIN
 
@@ -205,6 +205,18 @@ def geometry_page(ref_words, cand_words, diags, top_n):
         "max_delta": round(max(max(absx), max(absy)), 3),
         "within_0_01": sum(1 for d in deltas if abs(d[0]) <= 0.01 and abs(d[1]) <= 0.01),
         "within_0_5": sum(1 for d in deltas if abs(d[0]) <= 0.5 and abs(d[1]) <= 0.5),
+        # The combined figure hides which axis is wrong, and on this corpus the
+        # two are very different: horizontal placement (line breaking, glyph
+        # advances, inter-word glue) is near-exact on most documents while the
+        # vertical position of the same word drifts, because one earlier
+        # vertical-space difference moves everything below it. Reporting them
+        # apart stops a page-wide `dy` from being read as a line-breaking miss.
+        "within_0_5_x": sum(1 for d in deltas if abs(d[0]) <= 0.5),
+        "within_0_5_y": sum(1 for d in deltas if abs(d[1]) <= 0.5),
+        # `dy` measured against the page's own median vertical shift: how well
+        # the *spacing within* the page matches once a single rigid offset is
+        # taken out.
+        "within_0_5_y_derigidified": sum(1 for d in deltas if abs(d[1] - mdy) <= 0.5),
         "reflowed": sum(1 for d in deltas if abs(d[0]) > REFLOW_DX),
     })
     if abs(mdx) > 2.0 or abs(mdy) > 2.0:
@@ -299,11 +311,32 @@ def run_render(fx, render, pdf_exact, font_dirs, tfm_dirs, work, log):
     os.makedirs(fdir, exist_ok=True)
     req = {"protocol_version": 1, "id": "vo2-" + fx["id"], "type": "compile",
            "payload": {"project_id": "visual-oracle-" + fx["id"], "revision": 1, "entry_path": fx["entry"],
-                       "documents": fx["documents"]}}
+                       "documents": fx["documents"],
+                       # The directory `\includegraphics` reads image files
+                       # from. Document snapshots carry text only; without a
+                       # root the renderer answers every \includegraphics with
+                       # the hard error "no project root was supplied with the
+                       # request", which is a property of the harness and not
+                       # of the engine under test. Absolute and resolved: the
+                       # worker rejects relative or symlinked roots
+                       # (document-runtime::validate_project_root).
+                       "project_root": os.path.realpath(fx["dir"]),
+                       # Pinned civil date for \today, matching the
+                       # SOURCE_DATE_EPOCH=0 references on the other side; see
+                       # the same pin in tools/real-world-corpus/run.py.
+                       "date": corpus.EPOCH_DATE,
+                       # Image items are opt-in: without the negotiated
+                       # capability the renderer places the graphic but never
+                       # serialises it (display.rs `Wire.images`), so the PDF
+                       # the exact route exports has no image on it.
+                       "layout_capabilities": ["display-list-v2", "display-list-v2-images"]}}
     v2 = os.path.join(fdir, "render.v2.json")
     env = dict(os.environ, FLASHTEX_FONT_DIRS=font_dirs, FLASHTEX_TFM_DIRS=tfm_dirs)
     line = (json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8")
-    code, out, err, secs, to = corpus.run([render, "--v2", v2], stdin_bytes=line, env=env, timeout=180)
+    # `--images`: flashtex-render hardcoded `Wire { images: false }` for the
+    # `--v2` side output, so the display list never carried an image item even
+    # when the file resolved.
+    code, out, err, secs, to = corpus.run([render, "--v2", v2, "--images"], stdin_bytes=line, env=env, timeout=180)
     rec = {"exit": code, "timed_out": to, "seconds": round(secs, 3), "status": "no_reply", "diagnostics": [],
            "stderr_tail": err.decode("utf-8", "replace")[-600:], "pdf": None, "pdf_exit": None, "v2": None}
     for raw in out.decode("utf-8", "replace").splitlines():
@@ -320,7 +353,10 @@ def run_render(fx, render, pdf_exact, font_dirs, tfm_dirs, work, log):
     if rec["status"] in ("ok", "recovered") and os.path.isfile(v2):
         rec["v2"] = v2
         pdf = os.path.join(fdir, "render.exact.pdf")
-        argv = [pdf_exact, "from-v2", v2, "--out", pdf, "--font-dir", font_dirs]
+        # `--project-root`: the display list names image files by
+        # project-relative path and the exporter reads the bytes itself.
+        argv = [pdf_exact, "from-v2", v2, "--out", pdf, "--font-dir", font_dirs,
+                "--project-root", os.path.realpath(fx["dir"])]
         code2, out2, err2, secs2, to2 = corpus.run(argv, timeout=180)
         rec["pdf_exit"] = code2
         rec["pdf_stderr_tail"] = err2.decode("utf-8", "replace")[-400:]
@@ -494,10 +530,21 @@ def main(argv=None):
     ap.add_argument("--harness-note", default="", help="provenance note for --harness-fixtures (branch/SHA the fixtures came from)")
     ap.add_argument("--only", action="append", default=[], help="fixture id (repeatable)")
     ap.add_argument("--render", default=os.environ.get("FLASHTEX_RENDER"), required=False)
-    ap.add_argument("--render-note", default=os.environ.get("FLASHTEX_RENDER_NOTE", f"origin/agent/mac-render-pipeline/unified @ {DEFAULT_RENDER_SHA} (git-archive scratch build)"))
+    # Never a *default* provenance claim. This used to default to
+    # "origin/agent/mac-render-pipeline/unified @ 9aaec57a (git-archive scratch
+    # build)" whatever binary --render actually pointed at, so every report
+    # asserted a branch and SHA nobody had checked. The report always carries
+    # the binary's own sha256 (`meta.render_sha256`); the note is only the
+    # human sentence, and when nobody supplies one it must say so.
+    ap.add_argument("--render-note", default=os.environ.get(
+        "FLASHTEX_RENDER_NOTE", "no provenance note given (see meta.render_sha256 for what actually ran)"))
     ap.add_argument("--pdf-exact", default=os.environ.get("FLASHTEX_PDF_EXACT", os.path.join(REPO, "crates", "pdf", "target", "release", "flashtex-pdf-exact")))
-    ap.add_argument("--font-dirs", default=os.environ.get("FLASHTEX_FONT_DIRS", os.path.join(REPO, "apps", "mac", "Fonts")))
-    ap.add_argument("--tfm-dirs", default=os.environ.get("FLASHTEX_TFM_DIRS", os.path.join(REPO, "apps", "mac", "Fonts", "texmf", "fonts", "tfm", "public", "lm")))
+    ap.add_argument("--font-dirs", default=None, help="outline roots (default: $FLASHTEX_FONT_DIRS, else apps/mac/Fonts)")
+    # Not a single hardcoded metrics directory: the old default named
+    # `texmf/fonts/tfm/public/lm` alone and dropped the bundled `jknappen/ec`
+    # and `public/amsfonts/symbols` trees, so T1 fixtures were measured on
+    # substituted widths. fontenv.resolve_dirs derives them instead.
+    ap.add_argument("--tfm-dirs", default=None, help="metrics roots (default: $FLASHTEX_TFM_DIRS, else derived from --font-dirs)")
     ap.add_argument("--texbin", default=DEFAULT_TEXBIN)
     ap.add_argument("--out", default=None, help="output dir (default docs/evidence/visual-oracle-<UTC>)")
     ap.add_argument("--work", default=None, help="scratch dir for PDFs/rasters (default <out>/work, deleted unless --keep-work)")
@@ -506,6 +553,8 @@ def main(argv=None):
     ap.add_argument("--thumbs", type=int, default=10, help="thumbnail sheets for the N worst compared pages (0 = none)")
     ap.add_argument("--rasterizer", default=None)
     args = ap.parse_args(argv)
+    args.font_dirs, args.tfm_dirs = fontenv.resolve_dirs(
+        args.font_dirs, args.tfm_dirs, os.path.join(REPO, "apps", "mac", "Fonts"))
 
     if not args.render or not os.path.isfile(args.render):
         print("--render (or FLASHTEX_RENDER) must point at a flashtex-render binary", file=sys.stderr)
@@ -546,6 +595,7 @@ def main(argv=None):
 
     results = []
     all_pages = []
+    font_failures = []
     for fx in fixtures:
         log(f"{fx['id']}")
         r = {"id": fx["id"], "reference": fx["reference"], "reference_note": fx["reference_note"], "pages": []}
@@ -554,6 +604,16 @@ def main(argv=None):
             r["reference_pages"] = corpus.pdf_page_count(fx["reference"])
         pr = run_render(fx, args.render, args.pdf_exact, args.font_dirs, args.tfm_dirs, work, log)
         r["producer"] = pr
+        # A run that fell back to substituted metrics is not a measurement of
+        # this engine's geometry, so say so in the report instead of scoring it
+        # silently (tools/visual-oracle/fontenv.py). run.py already gates on
+        # this; rank.py did not, which is how a mis-set FLASHTEX_TFM_DIRS could
+        # produce a full ranked report of meaningless deltas.
+        font_bad = fontenv.font_diagnostics(pr["diagnostics"])
+        if font_bad:
+            r["font_env_failure"] = [{"code": d.get("code"), "message": d.get("message")} for d in font_bad]
+            font_failures.append((fx["id"], font_bad))
+            log(f"  FONT-ENV FAILURE {fx['id']}: {fontenv.format_font_diagnostics(font_bad)}")
         if not fx["reference"]:
             r["note"] = "no reference PDF"
             results.append(r)
@@ -624,6 +684,15 @@ def main(argv=None):
         page.pop("_cand_pgm", None)
 
     meta["uptime_end"] = corpus.uptime()
+    meta["font_env_failures"] = [{"fixture": fid, "codes": sorted({d.get("code") for d in bad})}
+                                 for fid, bad in font_failures]
+    if font_failures:
+        for fid, bad in font_failures:
+            fontenv.report_font_failure(fid, bad, env=os.environ)
+        log(f"FONT-ENV FAILURE in {len(font_failures)} fixture(s); their word positions are not a "
+            "measurement of this engine's line breaking")
+    else:
+        log("font environment: zero font-FAILURE diagnostics in every fixture")
     ranked_out = [{"rank": n, "fixture": fid, "page": p["page"], "result": p.get("result"),
                    "max_delta": (p.get("geometry") or {}).get("max_delta"), "differing": p.get("differing"),
                    "owner": ((p.get("geometry") or {}).get("top") or [{}])[0].get("owner", p.get("owner")),
