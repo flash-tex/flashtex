@@ -1680,9 +1680,10 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::Kern { span, .. } => *span,
         Inline::Tabular(t) => t.span,
         Inline::ColorBox(b) => b.span,
-        Inline::Underline(u) => u.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
+        // Inline::Underline after the re-pin: #329 owns its arm.
+        _ => Span::new(0, 0),
     }
 }
 
@@ -4662,10 +4663,6 @@ fn items_cached(
                 15u8.hash(&mut h);
                 format!("{b:?}").hash(&mut h);
             }
-            Inline::Underline(u) => {
-                18u8.hash(&mut h);
-                format!("{u:?}").hash(&mut h);
-            }
             Inline::Logo { logo, style, .. } => {
                 12u8.hash(&mut h);
                 logo.hash(&mut h);
@@ -4714,6 +4711,8 @@ fn items_cached(
                 17u8.hash(&mut h);
                 format!("{t:?}").hash(&mut h);
             }
+            // Inline::Underline after the re-pin: #329 owns its arm.
+            _ => format!("{i:?}").hash(&mut h),
         }
     }
     let key = h.finish();
@@ -4874,18 +4873,6 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     items: content,
                     span,
                 })));
-                prev_end = Some(span.end);
-                prev_span = Some(span);
-                factor = 1000;
-            }
-            Inline::Underline(u) => {
-                let span = u.span;
-                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
-                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
-                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
-                push_gap(&mut items, gap, gap_style, factor);
-                after_control_word = false;
-                items.extend(items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight));
                 prev_end = Some(span.end);
                 prev_span = Some(span);
                 factor = 1000;
@@ -5271,6 +5258,8 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
             }
+            // Inline::Underline after the re-pin: #329 renders it; merge #329 first.
+            _ => {}
         }
     }
     items
