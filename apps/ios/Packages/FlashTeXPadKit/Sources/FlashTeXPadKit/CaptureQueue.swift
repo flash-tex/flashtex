@@ -95,7 +95,12 @@ public struct CaptureRecord: Identifiable, Equatable {
 /// de-duplicates (nearby-v1 §4). Every change is written to `store` when one
 /// is attached, so a relaunch shows the same list.
 public final class CaptureQueue {
-    public private(set) var records: [CaptureRecord] = []
+    /// Snapshot of the list. Mutations go through `update`/`draft` under `lock`
+    /// because `refreshOutcome` resumes off the main actor after `await` and
+    /// PadModel copies this array into a `@Published` property.
+    public var records: [CaptureRecord] { lock.withLock { _records } }
+    private var _records: [CaptureRecord] = []
+    private let lock = NSLock()
     public let link: MacLink
     public let store: CaptureStore?
     public static let maxInstructionBytes = 4096
@@ -105,25 +110,27 @@ public final class CaptureQueue {
     public init(link: MacLink, store: CaptureStore? = nil) {
         self.link = link
         self.store = store
-        records = store?.load() ?? []
+        _records = store?.load() ?? []
     }
 
-    public func record(_ id: String) -> CaptureRecord? { records.first { $0.id == id } }
+    public func record(_ id: String) -> CaptureRecord? { lock.withLock { _records.first { $0.id == id } } }
 
     private func update(_ id: String, _ f: (inout CaptureRecord) -> Void) {
-        guard let i = records.firstIndex(where: { $0.id == id }) else { return }
-        f(&records[i])
-        persist()
+        lock.withLock {
+            guard let i = _records.firstIndex(where: { $0.id == id }) else { return }
+            f(&_records[i])
+            persistLocked()
+        }
     }
 
-    private func persist() {
+    private func persistLocked() {
         guard let store else { return }
-        if records.count > Self.maxRecords {
-            var kept = records
+        if _records.count > Self.maxRecords {
+            var kept = _records
             for i in stride(from: kept.count - 1, through: 0, by: -1) where kept.count > Self.maxRecords && kept[i].status.isTerminal { kept.remove(at: i) }
-            records = kept
+            _records = kept
         }
-        do { try store.save(records) } catch { lastStoreError = "\(error)" }
+        do { try store.save(_records) } catch { lastStoreError = "\(error)" }
     }
     public private(set) var lastStoreError: String?
 
@@ -137,8 +144,10 @@ public final class CaptureQueue {
 
     @discardableResult
     public func draft(_ r: CaptureRecord) -> CaptureRecord {
-        records.insert(r, at: 0)
-        persist()
+        lock.withLock {
+            _records.insert(r, at: 0)
+            persistLocked()
+        }
         return r
     }
 

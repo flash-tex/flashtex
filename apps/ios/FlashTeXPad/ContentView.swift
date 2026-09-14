@@ -359,7 +359,7 @@ struct MacLinkPanel: View {
                 TextField("flashtex-nearby://pair?v=1&code=…&salt=…&fp=…&name=…", text: $qrText, axis: .vertical)
                     .font(.caption.monospaced()).accessibilityIdentifier("pair.qr.text")
                 HStack {
-                    Button("Paste") { if let t = UIPasteboard.general.string { qrText = t } }.buttonStyle(.bordered)
+                    Button("Paste") { if let t = UIPasteboard.general.string { qrText = t } }.buttonStyle(.bordered).accessibilityIdentifier("pair.qr.paste")
                     Button("Pair from payload") { Task { await model.pair(bootstrapText: qrText, host: host, port: port) } }
                         .buttonStyle(.borderedProminent).disabled(qrText.isEmpty).accessibilityIdentifier("pair.qr.go")
                 }

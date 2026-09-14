@@ -87,6 +87,10 @@
 			isa = PBXBuildFile;
 			productRef = 58EED07B157162499BC602AE /* FlashTeXProtocol */;
 		};
+		578D97340F0ACA306E1FEFD2 /* CaptureFlowRealMacUITests.swift in Sources */ = {
+			isa = PBXBuildFile;
+			fileRef = DA47D6461AFA4DDD78A13236;
+		};
 		C7C127377FB47913308A63AC /* CaptureFlowUITests.swift in Sources */ = {
 			isa = PBXBuildFile;
 			fileRef = 350C61371C77C7DF6188D8F9;
@@ -227,6 +231,12 @@
 			path = "FlashTeXPadTests.xctest";
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
+		DA47D6461AFA4DDD78A13236 /* CaptureFlowRealMacUITests.swift */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "CaptureFlowRealMacUITests.swift";
+			sourceTree = "<group>";
+		};
 		350C61371C77C7DF6188D8F9 /* CaptureFlowUITests.swift */ = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -324,6 +334,7 @@
 		F6DACFB5EF322A77BC9A2FCB /* FlashTeXPadUITests */ = {
 			isa = PBXGroup;
 			children = (
+				DA47D6461AFA4DDD78A13236,
 				350C61371C77C7DF6188D8F9,
 				52C5885AA93684C7DAB7FFF8,
 				7ED15C813756AF08F402B731,
@@ -518,6 +529,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				578D97340F0ACA306E1FEFD2,
 				C7C127377FB47913308A63AC,
 				B8893983D5B15983E38B2BD0,
 				3D8DF49128A8BFCD6B6033DF,

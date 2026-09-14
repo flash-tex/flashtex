@@ -62,7 +62,10 @@ final class PadModel: ObservableObject {
     /// both so a run never sees a previous run's captures or pairing.
     init(link: MacLink? = nil, captureStore: CaptureStore? = nil) {
         let fresh = ProcessInfo.processInfo.arguments.contains("-flashtexpad-fresh")
-        let production = link == nil
+        // Hosted XCTest (TEST_HOST) constructs its own PadModel; the app's
+        // @StateObject must not load Keychain/disk or poll leftover captures.
+        let hostedUnitTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        let production = link == nil && !hostedUnitTests
         let link = link ?? {
             let keychain = KeychainPairStore()
             if fresh { try? keychain.removeAll() }
@@ -257,17 +260,28 @@ final class PadModel: ObservableObject {
 
     func pollOutcome(_ id: String) {
         pollers[id]?.cancel()
-        pollers[id] = Task { [weak self] in
-            guard let self else { return }
+        pollers[id] = Task { @MainActor [weak self] in
             var n = 0
-            while !Task.isCancelled, n < self.maxPolls, self.queue.shouldPoll(id) {
-                n += 1
-                await self.queue.refreshOutcome(id)
-                self.captures = self.queue.records
-                if !self.queue.shouldPoll(id) { break }
-                try? await Task.sleep(nanoseconds: UInt64(self.pollInterval * 1_000_000_000))
+            while !Task.isCancelled {
+                let interval: TimeInterval
+                do {
+                    guard let self else { return }
+                    if n >= self.maxPolls || !self.queue.shouldPoll(id) {
+                        self.pollers[id] = nil
+                        return
+                    }
+                    n += 1
+                    interval = self.pollInterval
+                    await self.queue.refreshOutcome(id)
+                }
+                do {
+                    guard let self else { return }
+                    self.captures = self.queue.records
+                    if !self.queue.shouldPoll(id) { break }
+                }
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
             }
-            self.pollers[id] = nil
+            self?.pollers[id] = nil
         }
     }
 
