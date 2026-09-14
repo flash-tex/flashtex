@@ -67,6 +67,7 @@ final class PadModel: ObservableObject {
         let hostedUnitTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         let production = link == nil && !hostedUnitTests
         let link = link ?? {
+            if hostedUnitTests { return MacLink(store: nil) }
             let keychain = KeychainPairStore()
             if fresh { try? keychain.removeAll() }
             return MacLink(store: keychain)
@@ -257,6 +258,7 @@ final class PadModel: ObservableObject {
     var pollInterval: TimeInterval = 2
     var maxPolls = 150
     private var pollers: [String: Task<Void, Never>] = [:]
+    var isPollingOutcomes: Bool { !pollers.isEmpty }
 
     func pollOutcome(_ id: String) {
         pollers[id]?.cancel()

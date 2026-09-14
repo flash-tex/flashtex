@@ -123,6 +123,8 @@ public final class CaptureQueue {
         }
     }
 
+    /// Caller must hold `lock`. `store.save` runs under that lock so a concurrent
+    /// `records` read cannot observe a torn list; CaptureStore has its own lock too.
     private func persistLocked() {
         guard let store else { return }
         if _records.count > Self.maxRecords {
@@ -130,9 +132,10 @@ public final class CaptureQueue {
             for i in stride(from: kept.count - 1, through: 0, by: -1) where kept.count > Self.maxRecords && kept[i].status.isTerminal { kept.remove(at: i) }
             _records = kept
         }
-        do { try store.save(_records) } catch { lastStoreError = "\(error)" }
+        do { try store.save(_records) } catch { _lastStoreError = "\(error)" }
     }
-    public private(set) var lastStoreError: String?
+    public var lastStoreError: String? { lock.withLock { _lastStoreError } }
+    private var _lastStoreError: String?
 
     /// Client-side checks the Mac would fail anyway (`NearbyWire.checkImage`,
     /// instruction bound), before anything is queued.
@@ -246,7 +249,8 @@ public final class CaptureQueue {
 
     /// Re-sends a received capture byte-for-byte (saved destination and
     /// base_revision, not a fresh `destination_query`). Records the new receipt.
-    public private(set) var redeliveries: [String] = []
+    public var redeliveries: [String] { lock.withLock { _redeliveries } }
+    private var _redeliveries: [String] = []
     private func redeliver(_ r: CaptureRecord, session: NearbySession) async throws {
         guard let destinationId = r.destinationId, let baseRevision = r.baseRevision else {
             throw NearbyError.remote(code: "unknown_capture", message: "no saved destination to re-deliver with")
@@ -254,7 +258,7 @@ public final class CaptureQueue {
         let dest = NearbyWire.Destination(destinationId: destinationId, projectId: "", path: "", baseRevision: baseRevision)
         let submit = try session.makeCapture(captureId: r.id, image: r.png, mimeType: "image/png", instructions: r.instructions, destination: dest)
         let ack = try await session.submitCapture(submit)
-        redeliveries.append(r.id)
+        lock.withLock { _redeliveries.append(r.id) }
         update(r.id) { $0.status = .received(ack) }
     }
 
