@@ -2551,6 +2551,10 @@ struct LengthAssigns {
 
 /// Apply preamble `\setlength` / `\addtolength` / `\len=<dimen>` after the
 /// class defaults and the geometry package, in source order.
+///
+/// Known limits (see ignored tests): `\input`/`\include` files are not in
+/// `source`, so their assignments are missed; `\makeatletter` `\@setlength`
+/// is missed because [`next_command`] only collects ASCII letters.
 fn apply_preamble_lengths(
     source: &str,
     doc: &mut ResolvedDocument,
@@ -2558,7 +2562,7 @@ fn apply_preamble_lengths(
     family: crate::fonts::Family,
     geometry: bool,
 ) -> LengthAssigns {
-    let preamble_end = source.find("\\begin{document}").unwrap_or(source.len());
+    let preamble_end = document_begin_offset(source).unwrap_or(source.len());
     let last_geometry = last_geometry_offset(source, preamble_end);
     let em_ex = ec_em_ex(size, family);
     let mut assigned = LengthAssigns { parindent: false, parskip: false };
@@ -2566,7 +2570,14 @@ fn apply_preamble_lengths(
     let mut from = 0;
     while let Some((at, name)) = next_command(source, from) {
         from = at + 1;
+        if brace_depth(&source[..at]) != 0 {
+            continue;
+        }
         let after_name = at + 1 + name.len();
+        if matches!(name, "newcommand" | "renewcommand" | "providecommand" | "def" | "gdef" | "edef" | "xdef") {
+            from = skip_macro_definition(source, name, after_name).max(from);
+            continue;
+        }
         if name == "setlength" || name == "addtolength" {
             if let Some((target, raw)) = setlength_args(source, after_name) {
                 let page = GEOMETRY_LENGTHS.contains(&target.as_str());
@@ -2696,25 +2707,115 @@ fn read_group(source: &str, i: &mut usize) -> Option<String> {
         return None;
     }
     *i += 1;
-    let start = *i;
+    let mut out = String::new();
     let mut depth = 1i32;
+    let mut comment = false;
     while *i < b.len() {
-        match b[*i] {
-            b'\\' => *i += 1,
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    let inner = source[start..*i].to_string();
+        let c = b[*i];
+        if comment {
+            if c == b'\n' {
+                comment = false;
+            }
+            *i += 1;
+            continue;
+        }
+        match c {
+            b'%' => {
+                comment = true;
+                *i += 1;
+            }
+            b'\\' => {
+                out.push('\\');
+                *i += 1;
+                if *i < b.len() {
+                    out.push(b[*i] as char);
                     *i += 1;
-                    return Some(inner);
                 }
             }
-            _ => {}
+            b'{' => {
+                depth += 1;
+                out.push('{');
+                *i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                *i += 1;
+                if depth == 0 {
+                    return Some(out);
+                }
+                out.push('}');
+            }
+            _ => {
+                out.push(c as char);
+                *i += 1;
+            }
         }
-        *i += 1;
     }
     None
+}
+
+/// Offset of `\begin{document}` / `\begin {document}`, comments skipped
+/// (reuses [`find_command`]).
+fn document_begin_offset(source: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(rel) = find_command(&source[from..], "begin") {
+        let at = from + rel;
+        let mut i = skip_ws(source, at + "\\begin".len());
+        if let Some(name) = read_group(source, &mut i) {
+            if name.trim() == "document" {
+                return Some(at);
+            }
+        }
+        from = at + 1;
+    }
+    None
+}
+
+fn skip_macro_definition(source: &str, name: &str, mut i: usize) -> usize {
+    let b = source.as_bytes();
+    i = skip_ws(source, i);
+    if matches!(name, "newcommand" | "renewcommand" | "providecommand") {
+        if b.get(i) == Some(&b'*') {
+            i += 1;
+        }
+        i = skip_ws(source, i);
+        while b.get(i) == Some(&b'[') {
+            i += 1;
+            while i < b.len() && b[i] != b']' {
+                i += 1;
+            }
+            if i < b.len() {
+                i += 1;
+            }
+            i = skip_ws(source, i);
+        }
+        if b.get(i) == Some(&b'{') {
+            let _ = read_group(source, &mut i);
+        } else if b.get(i) == Some(&b'\\') {
+            i += 1;
+            while i < b.len() && b[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+        }
+        i = skip_ws(source, i);
+        if b.get(i) == Some(&b'{') {
+            let _ = read_group(source, &mut i);
+        }
+        return i;
+    }
+    if b.get(i) == Some(&b'\\') {
+        i += 1;
+        while i < b.len() && b[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+    }
+    while i < b.len() && b[i] != b'{' {
+        i += 1;
+    }
+    if b.get(i) == Some(&b'{') {
+        let _ = read_group(source, &mut i);
+    }
+    i
 }
 
 fn setlength_args(source: &str, mut i: usize) -> Option<(String, String)> {
