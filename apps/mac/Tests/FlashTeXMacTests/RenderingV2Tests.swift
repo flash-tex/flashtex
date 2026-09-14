@@ -313,7 +313,7 @@ final class RenderingV2Tests: XCTestCase {
     /// real fixture and for escapes, and refuses to guess: anything it does
     /// not accept goes to `JSONDecoder`, whose diagnostics stand.
     func testFastReaderMatchesCodableAndFallsBack() throws {
-        for name in ["display-list-v2-text.json", "display-list-v2-math.json", "display-list-v2-math-rules.json"] {
+        for name in ["display-list-v2-text.json", "display-list-v2-math.json", "display-list-v2-math-rules.json", "display-list-v2-diagnostics.json"] {
             let data = try Self.fixture(name)
             XCTAssertEqual(try RenderingV2Fast.envelope(data), try JSONDecoder().decode(RenderingV2.Envelope.self, from: data), name)
         }
@@ -347,6 +347,42 @@ final class RenderingV2Tests: XCTestCase {
         // Whitespace and key order do not matter.
         let reordered = Data("{ \"payload\": \(String(decoding: Self.data(o["payload"] as! [String: Any]), as: UTF8.self)) , \"type\":\"display_list\", \"id\":\"r1\", \"protocol_version\" : 2 }".utf8)
         XCTAssertEqual(try RenderingV2Fast.envelope(reordered), fast)
+    }
+
+    /// GH-277: `display-list-v2-diagnostics` optional keys round-trip on both
+    /// readers; a diagnostic that omits them stays the frozen four-key object.
+    func testDisplayListV2DiagnosticsFixtureKeepsStructuredFields() throws {
+        let data = try Self.fixture("display-list-v2-diagnostics.json")
+        let env = try RenderingV2.decode(data)
+        XCTAssertEqual(env.payload.diagnostics.count, 2)
+        let plain = env.payload.diagnostics[0]
+        XCTAssertNil(plain.suggestion)
+        XCTAssertNil(plain.labels)
+        XCTAssertNil(plain.notes)
+        XCTAssertNil(plain.help)
+        let d = env.payload.diagnostics[1]
+        XCTAssertEqual(d.suggestion, "\\alpha")
+        XCTAssertEqual(d.notes, ["\\alpah looks like a misspelling of \\alpha"])
+        XCTAssertEqual(d.labels?.count, 2)
+        XCTAssertEqual(d.labels?[0].text, "this command")
+        XCTAssertEqual(d.labels?[0].primary, true)
+        XCTAssertEqual(d.help?.message, "did you mean \\alpha?")
+        XCTAssertEqual(d.help?.replacement?.text, "\\alpha")
+        XCTAssertEqual(d.help?.replacement?.source, .init(path: "notes.tex", startByte: 0, endByte: 6))
+        let v1 = d.asRuntimeV1
+        XCTAssertEqual(v1.code, "unknown_command")
+        XCTAssertEqual(v1.suggestion, "\\alpha")
+        XCTAssertEqual(v1.notes, d.notes)
+        XCTAssertEqual(v1.help?.message, d.help?.message)
+        XCTAssertEqual(v1.help?.replacement?.text, "\\alpha")
+        XCTAssertEqual(v1.help?.replacement?.path, "notes.tex")
+        XCTAssertEqual(v1.help?.replacement?.startByte, 0)
+        XCTAssertEqual(v1.help?.replacement?.endByte, 6)
+        XCTAssertEqual(v1.source, d.sources.first)
+        let fast = try RenderingV2Fast.envelope(data)
+        XCTAssertEqual(fast, try JSONDecoder().decode(RenderingV2.Envelope.self, from: data))
+        XCTAssertEqual(fast.payload.diagnostics[1].suggestion, d.suggestion)
+        XCTAssertEqual(fast.payload.diagnostics[1].help, d.help)
     }
 
     func testValidationErrorCarriesADiagnostic() {

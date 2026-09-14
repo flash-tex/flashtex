@@ -94,6 +94,10 @@ public enum RenderingV2 {
     /// Layout capability that lets the `display_list` line carry `image`
     /// items (accepted only alongside `display-list-v2`).
     public static let imagesCapability = "display-list-v2-images"
+    /// Layout capability that lets each diagnostic carry optional
+    /// `suggestion` / `labels` / `notes` / `help` (proposal
+    /// `display-list-v2-diagnostics`; accepted only alongside `display-list-v2`).
+    public static let diagnosticsCapability = "display-list-v2-diagnostics"
     /// Image formats the consumer can paint (proposal §3).
     public static let imageFormats: Set<String> = ["png", "jpeg", "pdf"]
     /// Upper bound on an image resource's byte length (bytes are read from
@@ -444,10 +448,107 @@ public enum RenderingV2 {
         public var message: String
         public var severity: Severity
         public var sources: [SourceRange]
-        public init(code: String, message: String, severity: Severity, sources: [SourceRange]) { self.code = code; self.message = message; self.severity = severity; self.sources = sources }
+        /// Replacement text for `sources[0]` (`display-list-v2-diagnostics`).
+        public var suggestion: String?
+        public var labels: [Label]?
+        public var notes: [String]?
+        public var help: Help?
+
+        /// Extra underlined span (`labels[]`); same three fields as runtime-v1.
+        public struct Label: Codable, Equatable {
+            public var source: SourceRange
+            public var text: String
+            public var primary: Bool
+            public init(source: SourceRange, text: String, primary: Bool) {
+                self.source = source; self.text = text; self.primary = primary
+            }
+        }
+
+        /// `= help:` on the v2 line. `replacement.source` is `#/$defs/source`.
+        public struct Help: Codable, Equatable {
+            public var message: String
+            public var replacement: Replacement?
+            enum CodingKeys: String, CodingKey { case message, replacement }
+            public init(message: String, replacement: Replacement? = nil) {
+                self.message = message; self.replacement = replacement
+            }
+            public init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                message = try c.decode(String.self, forKey: .message)
+                replacement = try c.decodeIfPresent(Replacement.self, forKey: .replacement)
+            }
+            public func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(message, forKey: .message)
+                if let replacement { try c.encode(replacement, forKey: .replacement) }
+            }
+            public struct Replacement: Codable, Equatable {
+                public var source: SourceRange
+                public var text: String
+                public init(source: SourceRange, text: String) { self.source = source; self.text = text }
+            }
+        }
+
+        enum CodingKeys: String, CodingKey { case code, message, severity, sources, suggestion, labels, notes, help }
+
+        public init(code: String, message: String, severity: Severity, sources: [SourceRange],
+                    suggestion: String? = nil, labels: [Label]? = nil, notes: [String]? = nil, help: Help? = nil) {
+            self.code = code; self.message = message; self.severity = severity; self.sources = sources
+            self.suggestion = Self.emptyToNil(suggestion)
+            self.labels = Self.emptyToNil(labels); self.notes = Self.emptyToNil(notes); self.help = help
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            code = try c.decode(String.self, forKey: .code)
+            message = try c.decode(String.self, forKey: .message)
+            severity = try c.decode(Severity.self, forKey: .severity)
+            sources = try c.decode([SourceRange].self, forKey: .sources)
+            suggestion = Self.emptyToNil(try c.decodeIfPresent(String.self, forKey: .suggestion))
+            labels = Self.emptyToNil(try c.decodeIfPresent([Label].self, forKey: .labels))
+            notes = Self.emptyToNil(try c.decodeIfPresent([String].self, forKey: .notes))
+            help = try c.decodeIfPresent(Help.self, forKey: .help)
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(code, forKey: .code)
+            try c.encode(message, forKey: .message)
+            try c.encode(severity, forKey: .severity)
+            try c.encode(sources, forKey: .sources)
+            if let suggestion { try c.encode(suggestion, forKey: .suggestion) }
+            if let labels { try c.encode(labels, forKey: .labels) }
+            if let notes { try c.encode(notes, forKey: .notes) }
+            if let help { try c.encode(help, forKey: .help) }
+        }
+
         /// The runtime-v1 shape the shell's diagnostics list already renders.
         public var asRuntimeV1: RuntimeV1.Diagnostic {
-            RuntimeV1.Diagnostic(severity: severity == .error ? .error : .warning, message: "[\(code)] \(message)", source: sources.first, recovery: nil)
+            let v1Help: RuntimeV1.Diagnostic.Help? = help.map { h in
+                RuntimeV1.Diagnostic.Help(message: h.message, replacement: h.replacement.map { r in
+                    RuntimeV1.Diagnostic.Replacement(startByte: r.source.startByte, endByte: r.source.endByte,
+                                                     text: r.text, path: r.source.path)
+                })
+            }
+            return RuntimeV1.Diagnostic(
+                severity: severity == .error ? .error : .warning,
+                message: message,
+                source: sources.first,
+                recovery: nil,
+                code: code,
+                suggestion: suggestion,
+                labels: labels?.map { RuntimeV1.Diagnostic.Label(source: $0.source, text: $0.text, primary: $0.primary) },
+                notes: notes,
+                help: v1Help)
+        }
+
+        private static func emptyToNil(_ s: String?) -> String? {
+            guard let s, !s.isEmpty else { return nil }
+            return s
+        }
+        private static func emptyToNil<T>(_ a: [T]?) -> [T]? {
+            guard let a, !a.isEmpty else { return nil }
+            return a
         }
     }
 

@@ -1115,6 +1115,31 @@ mod project_root_tests {
         )
         .is_err());
     }
+    #[test]
+    fn diagnostics_capability_is_accepted_only_when_requested_with_display_list() {
+        let r = request();
+        let reply = |caps: Value| {
+            serde_json::json!({"protocol_version":1,"id":"r1","type":"compile_result",
+                "payload":{"project_id":"p","revision":1,"status":"ok","pages":[],
+                "diagnostics":[],"layout_capabilities":caps}})
+        };
+        let both: Vec<String> = vec![
+            "display-list-v2".into(),
+            "display-list-v2-diagnostics".into(),
+        ];
+        assert!(validate_reply_value(reply(serde_json::json!(both)), &r, &both).is_ok());
+        assert!(
+            validate_reply_value(reply(serde_json::json!(["display-list-v2"])), &r, &both).is_ok()
+        );
+        let plain: Vec<String> = vec!["display-list-v2".into()];
+        assert!(validate_reply_value(reply(serde_json::json!(both)), &r, &plain).is_err());
+        assert!(validate_reply_value(
+            reply(serde_json::json!(["display-list-v2-diagnostics"])),
+            &r,
+            &both
+        )
+        .is_err());
+    }
 }
 
 #[cfg(all(test, unix))]
