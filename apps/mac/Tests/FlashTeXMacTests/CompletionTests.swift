@@ -932,7 +932,7 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(delivered.count, 1)
         XCTAssertEqual(delivered[0].generation, g3)
         XCTAssertEqual(delivered[0].items.map(\.label),
-                       ["\\subsection{...}", "\\subsubsection{...}", "\\substack{a \\\\ b}", "\\subset", "\\subseteq",
+                       ["\\subsection{...}", "\\subsubsection{...}", "\\subparagraph{...}", "\\substack{a \\\\ b}", "\\subset", "\\subseteq",
                         "\\subseteqq", "\\subsetneqq", "\\subsetneq"])
         XCTAssertEqual(delivered[0].range, NSRange(location: 2, length: 4))
         XCTAssertEqual(delivered[0].caretUTF16, 6)
@@ -1234,8 +1234,8 @@ final class CompletionTests: XCTestCase {
         try await waitUntil("popup") { tv.session != nil }
         let items = try XCTUnwrap(tv.session?.items)
         let labels = items.map(\.label)
-        XCTAssertEqual(labels, ["\\subsection{...}", "\\subsubsection{...}", "\\substack{a \\\\ b}", "\\sup", "\\subset", "\\subseteq",
-                                "\\supset", "\\supseteq", "\\sum", "\\succsim", "\\succcurlyeq", "\\subseteqq"])
+        XCTAssertEqual(labels, ["\\subsection{...}", "\\subsubsection{...}", "\\subparagraph{...}", "\\substack{a \\\\ b}", "\\sup", "\\subset", "\\subseteq",
+                                "\\supset", "\\supseteq", "\\sum", "\\succsim", "\\succcurlyeq"])
         let back = labels.count - 2 // where two ⇧Tab from the top land
         let popup = tv.completionPopup
         let table = popup.accessibilityTable

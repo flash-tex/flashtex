@@ -81,15 +81,23 @@ fn page_texts(source: &str) -> Vec<String> {
         .collect()
 }
 
-#[ignore = "bug: AtBeginDocument hook text is spliced before \\begin{document} and dropped as preamble"]
+/// Bug (GH issue not yet filed): `\AtBeginDocument` hook text is spliced
+/// before the `\begin{document}` marker and dropped as preamble instead of
+/// being typeset ahead of the body. The expansion layer is fine — its
+/// oracle `atbegindocument_in_body` (setup `\AtBeginDocument{BODY}`,
+/// `latex-render`) expects `BODY` in the render stream — so the loss
+/// happens in the compiler pipeline.
+/// Minimal repro: `\AtBeginDocument{HOOKA}\begin{document}Body\end{document}`
+/// Expected: `["HOOKABody"]`, mirroring `\AtEndDocument`, whose test below
+/// asserts the hook is appended (`["BodyTAILZ"]`).
+/// Actual: `["Body"]` — the hook text is lost with no diagnostic.
+#[ignore = "bug: AtBeginDocument hook text dropped as preamble; see GH issue (not yet filed): `\\AtBeginDocument{HOOKA}\\begin{document}Body\\end{document}` should typeset [\"HOOKABody\"] but yields [\"Body\"]"]
 #[test]
-fn at_begin_document_hook_is_silently_dropped() {
-    // Actual behavior: the engine runs `\@begindocumenthook` ahead of the
-    // `\begin{document}` marker, so the parser discards HOOKA as preamble.
-    // Real LaTeX typesets it; only Body survives here, with no diagnostic.
-    let parsed = parse("\\AtBeginDocument{HOOKA}\\begin{document}Body\\end{document}");
+fn at_begin_document_hook_content_is_typeset_before_the_body() {
+    let source = "\\AtBeginDocument{HOOKA}\\begin{document}Body\\end{document}";
+    let parsed = parse(source);
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
-    assert_eq!(paragraphs("\\AtBeginDocument{HOOKA}\\begin{document}Body\\end{document}"), ["Body"]);
+    assert_eq!(paragraphs(source), ["HOOKABody"]);
 }
 
 #[test]
@@ -192,12 +200,31 @@ fn fboxrule_sets_the_fcolorbox_frame_thickness() {
 
 #[test]
 fn hsize_is_a_text_width_relative_length_in_tabular_widths() {
-    let half_hsize = "\\begin{document}\\begin{tabular*}{0.5\\hsize}{l}a\\end{tabular*}\\end{document}";
-    let half_textwidth = "\\begin{document}\\begin{tabular*}{0.5\\textwidth}{l}a\\end{tabular*}\\end{document}";
-    assert!(messages(half_hsize).is_empty(), "{:?}", messages(half_hsize));
-    for (source, label) in [(half_hsize, "hsize"), (half_textwidth, "textwidth")] {
-        assert!(blocks_debug(source).contains("width: Some(TextWidth(0.5))"), "{label}: {}", blocks_debug(source));
-    }
+    // A single-column `tabular*` stretches nothing observable into layout,
+    // so use a fill table: `\extracolsep{\fill}` pushes the trailing
+    // column's right edge out to the resolved target width, and its `x`
+    // pins that width in the laid-out result.
+    let table = |width: &str| {
+        format!(
+            "\\begin{{document}}\\begin{{tabular*}}{{{width}}}{{@{{\\extracolsep{{\\fill}}}}lr}}A & B\\end{{tabular*}}\\end{{document}}"
+        )
+    };
+    let trailing_x = |width: &str| {
+        let source = table(width);
+        assert!(messages(&source).is_empty(), "{:?}", messages(&source));
+        compile(&source).pages[0]
+            .items
+            .iter()
+            .find(|item| item.text == "B")
+            .map(|item| item.x_pt)
+            .expect("trailing cell")
+    };
+    let from_hsize = trailing_x("0.5\\hsize");
+    // `\hsize` resolves exactly like `\textwidth` ...
+    assert_eq!(from_hsize, trailing_x("0.5\\textwidth"));
+    // ... and to half the text measure in laid-out points.
+    let half_measure_pt = format!("{}pt", 0.5 * LayoutConstraints::default().measure_pt);
+    assert_eq!(from_hsize, trailing_x(&half_measure_pt));
 }
 
 #[test]

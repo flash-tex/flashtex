@@ -136,15 +136,14 @@ fn composite_and_extra_symbols_convert_with_texbook_classes() {
 }
 
 #[test]
-// The vendored compiler needs the integration lane's re-pin before this can run.
-#[ignore = "needs the vendor/compiler re-pin past #314"]
 fn odot_is_painted_as_a_binary_math_glyph() {
     if !lm_available() {
         return;
     }
     let (words, diags) = math_words(r"$a \odot b$");
     assert!(
-        words.iter().any(|(text, _)| text == "⊙"),
+        // Math atoms on one baseline group into one word ("a⊙b"); the glyph must be in it.
+        words.iter().any(|(text, _)| text.contains('⊙')),
         "odot glyph was not drawn: words={words:?}, diagnostics={diags:?}"
     );
     assert!(

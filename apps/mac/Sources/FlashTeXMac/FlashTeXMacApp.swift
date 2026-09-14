@@ -102,7 +102,7 @@ struct FlashTeXMacApp: App {
             ContentView()
                 .environment(model)
                 .environmentObject(nearby) // Captures inspector: status pill, pairing code (CaptureInbox.swift)
-                .frame(minWidth: 1200, minHeight: 640) // sidebar + editor + preview + Problems panel
+                .frame(minWidth: DS.Layout.windowMinWidth, minHeight: DS.Layout.windowMinHeight) // usable from ~900pt: below three columns the preview collapses to a toggle
                 .onAppear {
                     appDelegate.model = model; nearby.attach(sink: model, destinations: model); TypingBench.shared.install(model: model)
                     // A paired iPad reconnects at launch without opening any window (mac-capture-fluid).
@@ -173,6 +173,8 @@ struct FlashTeXMacApp: App {
                     .keyboardShortcut("0")
                 Button("Fit Width") { model.previewFitWidth() }
                     .keyboardShortcut("9")
+                Button("Fit Page") { model.previewFitPage() }
+                    .keyboardShortcut("9", modifiers: [.command, .shift])
                 Divider()
                 // Editor text size: EditorPreferences.fontSize (8…36 pt).
                 Button("Increase Editor Font Size") { model.increaseEditorFontSize() }
@@ -287,7 +289,7 @@ struct FlashTeXMacApp: App {
         Window("Accessibility Help", id: AccessibilityHelpView.windowID) {
             AccessibilityHelpView() // FlashTeXAccessibility: focus order, VoiceOver notes, command table
         }
-        Settings { EditorPreferencesView() } // EditorPreferences.swift (⌘,)
+        Settings { SettingsRootView() } // EditorPreferences.swift (⌘,): Editor and Conversion tabs, applying live
         ProjectSearchWindow(model: model) // ProjectSearchPanel.swift: Find in Project (⌘⇧F)
         CitationRenameWindow(model: model) // CitationRename.swift: Rename Citation (reviewed plan_citation_rename → apply_group)
     }

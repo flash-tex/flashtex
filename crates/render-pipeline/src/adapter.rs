@@ -172,7 +172,7 @@ pub enum Item {
     /// is the `\hfill` order (it beats `\parfillskip`'s `fil`); the
     /// compiler does not distinguish the two, so the order is re-read from
     /// the source bytes (`\hfill` when they are not `\hfil`).
-    HFill { fill: bool },
+    HFill { fill: bool, leader: FillLeader },
     /// Explicit horizontal glue in points: `\hspace{<dimen>}` (compiler
     /// `Inline::HSpace`, rigid) or an amsthm theorem head's own separator
     /// (`\hskip\thm@headsep`, `5pt plus 1pt minus 1pt`; `crate::amsthm`).
@@ -1873,30 +1873,6 @@ fn inline_span(i: &Inline) -> Span {
 /// columns or rules) and `\verb` (body face). Footnote text is scanned too.
 fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, String)>) {
     match inline {
-        // `\hrulefill` / `\dotfill` (compiler `FillLeader`, #320). The glue
-        // itself is set exactly — LaTeX defines both as `\leaders<box>\hfill
-        // \kern\z@`, so everything after them on the line lands where
-        // pdflatex puts it — but the leader box is not painted: this pipeline
-        // has no leaders outside the table of contents' own `leader_dots`
-        // (`typeset/toc.rs`, tex.web §626), and the resolved width of one
-        // glue is not reported by `flashtex-paragraph-layout` (only
-        // `Line::ratio`, `Line::set_width` and box positions), so painting
-        // them is its own change rather than a re-pin's. Named here so the
-        // missing rule is never silent.
-        Inline::HFill { leader, span } if !matches!(leader, FillLeader::None) => {
-            let (command, ink) = match leader {
-                FillLeader::Rule => ("\\hrulefill", "a 0.4pt rule"),
-                _ => ("\\dotfill", "dots in 0.44em boxes"),
-            };
-            out.push((
-                "unsupported_inline",
-                *span,
-                format!(
-                    "{command} is set as \\hfill: the glue is exact, but {ink} filling it is not painted \
-                     (this pipeline has no leaders outside the table of contents)"
-                ),
-            ));
-        }
         Inline::Footnote { text, .. } => {
             // Set by `typeset::footnotes`; contexts it does not reach
             // (headings, captions, floats) are diagnosed there.
@@ -6125,11 +6101,11 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     // `\hrulefill` and `\dotfill` (compiler `FillLeader`, #320)
                     // are `\leavevmode\leaders<box>\hfill\kern\z@`: the glue is
                     // exactly `\hfill`, so it is set here like any other, and
-                    // only the leader box is missing. `unsupported_inlines`
-                    // names the command for that; the glue must still be
-                    // emitted or the rest of the line lands in the wrong place,
-                    // which is what `fixtures/divergence-probes/min-hrulefill`
-                    // measured against pdflatex before the re-pin.
+                    // its leader box is carried through for painting after line
+                    // breaking. The glue must still be emitted or the rest of
+                    // the line lands in the wrong place, which is what
+                    // `fixtures/divergence-probes/min-hrulefill` measured
+                    // against pdflatex before the re-pin.
                     //
                     // The `\leavevmode` is theirs, not an invention here, and
                     // it is load-bearing: a `\hrulefill` alone in its paragraph
@@ -6141,12 +6117,17 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     // in pdflatex. (A bare `\hfill` alone in a paragraph still
                     // vanishes the same way; that is a separate pre-existing
                     // defect, reproducible on the previous pin, not this one.)
-                    Inline::HFill { leader: FillLeader::Rule, .. } => (Item::HFill { fill: true }, "\\hrulefill"),
-                    Inline::HFill { leader: FillLeader::Dots, .. } => (Item::HFill { fill: true }, "\\dotfill"),
-                    _ => {
-                        let fill = !is_control_word(text_of(span.document), span.start, "hfil");
-                        (Item::HFill { fill }, if fill { "\\hfill" } else { "\\hfil" })
+                    Inline::HFill { leader: FillLeader::Rule, .. } => {
+                        (Item::HFill { fill: true, leader: FillLeader::Rule }, "\\hrulefill")
                     }
+                    Inline::HFill { leader: FillLeader::Dots, .. } => {
+                        (Item::HFill { fill: true, leader: FillLeader::Dots }, "\\dotfill")
+                    }
+                    Inline::HFill { leader: FillLeader::None, .. } => {
+                        let fill = !is_control_word(text_of(span.document), span.start, "hfil");
+                        (Item::HFill { fill, leader: FillLeader::None }, if fill { "\\hfill" } else { "\\hfil" })
+                    }
+                    _ => unreachable!(),
                 };
                 let gap = space_between(prev_end, prev_span, *span, Some(word), after_control_word);
                 let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());

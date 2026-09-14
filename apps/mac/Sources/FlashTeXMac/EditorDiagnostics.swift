@@ -59,6 +59,10 @@ enum EditorDiagnostics {
         /// mark was kept from the last result that had output (`Carried`);
         /// nil for marks of the result currently shown.
         var carried: Carried? = nil
+        /// Whether the diagnostic carries a mechanical edit Tab can apply at
+        /// the caret; the gutter marks these lines (design-principles §9 —
+        /// the Tab affordance is invisible without a marker).
+        var hasFix: Bool = false
 
         var id: String { identity.key }
         var diagnosticIndex: Int { identity.index }
@@ -238,7 +242,8 @@ enum EditorDiagnostics {
             // current buffer is not drawn anywhere.
             guard let ns = currentText.clusterAlignedNSRange(utf8Start: start, utf8End: end) else { continue }
             marks.append(Mark(identity: identity, nsRange: ns, severity: diagnostic.severity,
-                              message: diagnostic.message, recovery: diagnostic.recovery, resultStatus: result.status))
+                              message: diagnostic.message, recovery: diagnostic.recovery, resultStatus: result.status,
+                              hasFix: mechanicalEdit(for: diagnostic) != nil))
         }
         return Report(marks: marks, stale: stale, edit: region)
     }
