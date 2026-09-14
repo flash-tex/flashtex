@@ -20,7 +20,7 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-use flashtex_compiler::parser::SourceDocument;
+use flashtex_compiler::parser::{FillLeader, SourceDocument};
 use flashtex_compiler::{DocumentId, Span};
 use flashtex_font_engine::sha256;
 use flashtex_math_layout as ml;
@@ -109,6 +109,13 @@ pub enum BoxRec {
     /// `\rule` boxes set `bottom` (the painted part's bottom above the
     /// baseline); nothing is painted when `width` or `height` is not positive.
     Rule { width: f64, height: f64, bottom: f64, span: Span },
+    /// A leader attached to horizontal fill glue. It is painted after line
+    /// breaking, when the glue's final width is known.
+    Leader {
+        leader: FillLeader,
+        box_width: f64,
+        dot: Option<(Rc<LoadedFace>, pl::GlyphRun)>,
+    },
     /// A `tikzpicture`: its bounding box sits on the baseline (depth 0).
     Picture(Rc<PictureRec>),
     /// A `tabular` (`table.rs`): its cell lines and rules, set as one box
@@ -2072,7 +2079,7 @@ impl<'a> Context<'a> {
                     let quad = self.text_params(base, size).quad;
                     push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(em * quad)), None);
                 }
-                AItem::HFill { fill } => {
+                AItem::HFill { fill, leader } => {
                     // `\hfill` is second-order glue: it beats the line's
                     // `\parfillskip` (`\hfil`), as in a `\section` title
                     // set as `Problem 1 \hfill [4 points]`.
@@ -2080,7 +2087,39 @@ impl<'a> Context<'a> {
                     if *fill {
                         glue.stretch_order = pl::GlueOrder::Fill;
                     }
-                    push(&mut out, &mut recs, pl::Item::Glue(glue), None)
+                    let (box_width, dot) = match leader {
+                        FillLeader::Dots => {
+                            let face = self.face(base, size, Span::new(0, 0));
+                            let shaped = self.shaper.shape(&face, ".");
+                            let glyphs = shaped
+                                .clusters
+                                .iter()
+                                .flat_map(|c| c.glyphs.iter().map(|g| pl::ShapedGlyph {
+                                    gid: u32::from(g.gid.0),
+                                    advance_units: i64::from(g.advance),
+                                    cluster: c.text_range.clone(),
+                                }))
+                                .collect::<Vec<_>>();
+                            let run = pl::GlyphRun::from_shaped(
+                                face.layout_id(),
+                                size,
+                                shaped.units_per_em as f64,
+                                f64::from(shaped.height_units),
+                                -f64::from(shaped.depth_units),
+                                &glyphs,
+                                0..1,
+                            );
+                            (0.44 * self.text_params(base, size).quad, Some((face, run)))
+                        }
+                        _ => (0.0, None),
+                    };
+                    let rec = if *leader == FillLeader::None {
+                        None
+                    } else {
+                        self.recs.push(BoxRec::Leader { leader: *leader, box_width, dot });
+                        Some(self.recs.len() - 1)
+                    };
+                    push(&mut out, &mut recs, pl::Item::Glue(glue), rec)
                 }
                 AItem::HSpace { pt, stretch_pt, shrink_pt } => push(
                     &mut out,
@@ -5429,10 +5468,24 @@ impl<'a> Context<'a> {
             no_interline_first: false,
             no_interline_after: false,
             baselineskip: Some(normal + JOT),
+            // `\openup\jot` (amsmath `\displ@y@`) advances `\lineskip` as
+            // well as `\baselineskip` — `\openup` is `\advance` on all three
+            // of `\lineskip`, `\baselineskip` and `\lineskiplimit`. Leaving
+            // this `None` used the page's 1pt `\lineskip`, so every row gap
+            // that fell into lineskip mode was one `\jot` = 3pt short, and
+            // it only falls into lineskip mode when a row is tall enough
+            // that `\baselineskip - prevdepth - height < \lineskiplimit`.
+            // Short-row alignments (`a &= b \\ c &= d`) stay in baselineskip
+            // mode and were always right, which is why every pinned
+            // display-placement align fixture passed while the tall
+            // integral/fraction rows of a real problem set drifted 3pt per
+            // row. pdfLaTeX's own `\showoutput` for
+            // `fixtures/real-world/ps-calculus` prints `\glue(\lineskip) 4.0`
+            // between the rows of both of its alignments.
+            lineskip: Some(self.style.lineskip_pt + JOT),
             vskip_after: vskips,
             broken_penalty: Vec::new(),
             pre_space_after: None,
-            lineskip: None,
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
@@ -5488,6 +5541,7 @@ impl<'a> Context<'a> {
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
                 })
                 .next();
@@ -7938,6 +7992,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
             });
         let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
@@ -8427,6 +8482,7 @@ pub fn assemble(
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
                     BoxRec::Text { .. } => None,
                 });
@@ -8670,6 +8726,7 @@ fn assemble_block(
                         }));
                     }
                 }
+                BoxRec::Leader { .. } => {}
                 BoxRec::Rule { width, height, bottom, span } => {
                     // Line-local like text: the rule's bottom is `bottom`
                     // above the baseline (0 for `\hrule`); a strut paints
@@ -8688,6 +8745,7 @@ fn assemble_block(
                 }
             }
         }
+        append_leaders(block, line, recs, text_x, &mut items, &mut used);
         lines.push(items);
     }
     let (document, base) = block.cache_key.map_or((DocumentId(0), 0), |(_, d, b)| (d, b));
@@ -8699,6 +8757,153 @@ fn assemble_block(
         resources,
         unmapped,
     }
+}
+
+fn line_stretch_order(items: &[pl::Item], range: Range<usize>) -> Option<pl::GlueOrder> {
+    let mut order = None;
+    for i in range {
+        let Some(pl::Item::Glue(g)) = items.get(i) else { continue };
+        if g.stretch > 0.0 {
+            order = Some(order.map_or(g.stretch_order, |o: pl::GlueOrder| o.max(g.stretch_order)));
+        }
+    }
+    order
+}
+
+fn line_glue_width(g: &pl::Glue, line: &pl::Line, order: Option<pl::GlueOrder>) -> f64 {
+    if line.ratio >= 0.0 {
+        if order == Some(g.stretch_order) && line.ratio.is_finite() {
+            g.width + line.ratio * g.stretch
+        } else {
+            g.width
+        }
+    } else {
+        g.width + line.ratio * g.shrink
+    }
+}
+
+fn append_leaders(
+    block: &BuiltBlock,
+    line: &pl::Line,
+    recs: &[BoxRec],
+    text_x: f64,
+    items: &mut Vec<display::Item>,
+    used: &mut BTreeMap<Rc<str>, Rc<LoadedFace>>,
+) {
+    let Some(first_box) = line.items.clone().find(|i| matches!(block.items.get(*i), Some(pl::Item::Box(_)))) else { return };
+    let Some(first_run) = line.runs.iter().position(|r| !r.is_hyphen) else { return };
+    let order = line_stretch_order(&block.items, line.items.clone());
+    let prefix = line.items.start..first_box;
+    let prefix_width: f64 = prefix
+        .filter_map(|i| block.items.get(i))
+        .map(|item| match item {
+            pl::Item::Glue(g) => line_glue_width(g, line, order),
+            pl::Item::Kern(k) => k.width,
+            _ => 0.0,
+        })
+        .sum();
+    let pre_break_width: f64 = line.runs[..first_run].iter().filter(|r| r.is_hyphen).map(|r| r.width).sum();
+    let Some(run) = line.runs.get(first_run) else { return };
+    let mut x = run.x - prefix_width - pre_break_width;
+    let mut run_i = first_run;
+    for i in line.items.clone() {
+        let Some(item) = block.items.get(i) else { continue };
+        match item {
+            pl::Item::Box(_) => {
+                while line.runs.get(run_i).is_some_and(|r| r.is_hyphen) {
+                    run_i += 1;
+                }
+                if let Some(run) = line.runs.get(run_i) {
+                    x = run.x + run.width;
+                    run_i += 1;
+                }
+            }
+            pl::Item::Glue(g) => {
+                let width = line_glue_width(g, line, order);
+                if let Some(BoxRec::Leader { leader, box_width, dot }) = block
+                    .recs
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .and_then(|r| recs.get(r))
+                {
+                    match leader {
+                        FillLeader::Rule if width > 0.0 => items.push(display::Item::Rule(Rule {
+                            x: Tick::from_tex_pt(text_x + x),
+                            top: Tick::from_tex_pt(-0.4),
+                            width: Tick::from_tex_pt(width).max(Tick(1)),
+                            height: Tick::from_tex_pt(0.4).max(Tick(1)),
+                            paint: Paint::BLACK,
+                            provenance: Provenance::Synthetic("\\hrulefill".into()),
+                        })),
+                        FillLeader::Dots if width >= *box_width && *box_width > 0.0 => {
+                            if let Some((face, dot_run)) = dot {
+                                if let Some(item) = dots_item(text_x + x, width, *box_width, face, dot_run) {
+                                    used.entry(face.font_id.clone()).or_insert_with(|| face.clone());
+                                    items.push(item);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                x += width;
+            }
+            pl::Item::Kern(k) => x += k.width,
+            pl::Item::Penalty(_) => {}
+        }
+    }
+}
+
+fn dots_item(x: f64, glue_width: f64, box_width: f64, face: &Rc<LoadedFace>, dot: &pl::GlyphRun) -> Option<display::Item> {
+    let count = (glue_width / box_width).floor() as usize;
+    if count == 0 || dot.glyphs.is_empty() {
+        return None;
+    }
+    let leftover = glue_width - count as f64 * box_width;
+    let top = Tick::from_tex_pt(-dot.height);
+    let height = Tick::from_tex_pt(dot.height + dot.depth);
+    let mut glyphs = Vec::with_capacity(count * dot.glyphs.len());
+    let mut clusters = Vec::with_capacity(count);
+    let mut text = String::with_capacity(count);
+    for i in 0..count {
+        let dot_x = x + leftover / 2.0 + i as f64 * box_width + (box_width - dot.width) / 2.0;
+        let cluster = i as u32;
+        text.push('.');
+        for g in &dot.glyphs {
+            if g.gid != 0 {
+                glyphs.push(Glyph {
+                    gid: g.gid as u16,
+                    origin_x: Tick::from_tex_pt(dot_x),
+                    baseline_y: Tick(0),
+                    advance_x: Tick::from_tex_pt(g.advance),
+                    advance_y: Tick(0),
+                    cluster,
+                });
+            }
+        }
+        let x0 = Tick::from_tex_pt(dot_x);
+        let x1 = Tick::from_tex_pt(dot_x + dot.width);
+        clusters.push(Cluster {
+            text_start_byte: i,
+            text_end_byte: i + 1,
+            hit_rect: Rect { x: x0, top, width: Tick(x1.0 - x0.0), height },
+            carets: display::Carets {
+                first: Caret { text_byte: i, x: x0, top, height },
+                last: (i + 1 == count).then(|| Caret { text_byte: i + 1, x: x1, top, height }),
+            },
+            provenance: Provenance::Synthetic("\\dotfill".into()),
+        });
+    }
+    (!glyphs.is_empty()).then_some(display::Item::GlyphRun(GlyphRun {
+        font_id: face.font_id.clone(),
+        font_size: Tick::from_tex_pt(dot.size),
+        text,
+        glyphs,
+        clusters,
+        paint: Paint::BLACK,
+        role: display::RunRole::Text,
+    }))
 }
 
 /// A picture's paths and node text in line-local coordinates: the picture's
