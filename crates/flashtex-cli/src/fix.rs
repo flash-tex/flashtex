@@ -197,7 +197,10 @@ fn apply_edits_back_to_front(original: &str, edits: &[Edit]) -> Option<String> {
     let mut ordered = edits.to_vec();
     ordered.sort_by_key(|e| std::cmp::Reverse(e.start));
     for e in &ordered {
-        if e.end < e.start || e.end > bytes.len() {
+        if e.end < e.start || e.end > original.len() {
+            return None;
+        }
+        if !original.is_char_boundary(e.start) || !original.is_char_boundary(e.end) {
             return None;
         }
         bytes.splice(e.start..e.end, e.replacement.as_bytes().iter().copied());
@@ -210,21 +213,25 @@ fn resolve_writable(project: &Project, rel: &str) -> Result<PathBuf, Skip> {
     if rel_path.is_absolute() || rel.split('/').any(|c| c == ".." || c.is_empty()) {
         return Err(Skip::OutsideRoot { path: rel.to_string() });
     }
-    let dest = project.root.join(rel);
-    let parent = dest.parent().unwrap_or(project.root.as_path());
-    let parent_canon = fs::canonicalize(parent).map_err(|e| Skip::Unreadable { path: rel.to_string(), detail: e.to_string() })?;
-    let root = fs::canonicalize(&project.root).unwrap_or_else(|_| project.root.clone());
-    if parent_canon != root && parent_canon.strip_prefix(&root).is_err() {
-        return Err(Skip::OutsideRoot { path: rel.to_string() });
+    let mut cur = project.root.clone();
+    let mut leaf_meta = None;
+    for component in rel_path.components() {
+        match component {
+            std::path::Component::Normal(name) => cur.push(name),
+            std::path::Component::CurDir => continue,
+            _ => return Err(Skip::OutsideRoot { path: rel.to_string() }),
+        }
+        let meta = fs::symlink_metadata(&cur).map_err(|e| Skip::Unreadable { path: rel.to_string(), detail: e.to_string() })?;
+        if meta.file_type().is_symlink() {
+            return Err(Skip::Symlink { path: rel.to_string() });
+        }
+        leaf_meta = Some(meta);
     }
-    let meta = fs::symlink_metadata(&dest).map_err(|e| Skip::Unreadable { path: rel.to_string(), detail: e.to_string() })?;
-    if meta.file_type().is_symlink() {
-        return Err(Skip::Symlink { path: rel.to_string() });
-    }
+    let meta = leaf_meta.ok_or_else(|| Skip::OutsideRoot { path: rel.to_string() })?;
     if !meta.is_file() {
         return Err(Skip::Unreadable { path: rel.to_string(), detail: "not a regular file".into() });
     }
-    Ok(dest)
+    Ok(cur)
 }
 
 fn write_atomic_preserving_mode(path: &Path, bytes: &[u8]) -> Result<(), String> {
