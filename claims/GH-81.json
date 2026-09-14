@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": null,
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/issues/81",
   "machine": "Overpriced-Hardware",
   "note": "Re-measure PDF kerning via exact route, measurement-only, done directly (not Muse) per fixture/PDF sandbox rule",
   "started_utc": "2026-09-14T11:11:55Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-81",
-  "updated_utc": "2026-09-14T11:11:55Z"
+  "updated_utc": "2026-09-14T11:14:31Z"
 }
