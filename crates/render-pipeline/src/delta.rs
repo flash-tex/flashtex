@@ -277,10 +277,8 @@ pub fn header_digest(l: &DisplayList, wire: Wire) -> [u8; 32] {
             Severity::Error => "error",
         });
         c.ranges(&d.sources);
-        if wire.diagnostics {
-            if let Some(s) = &d.suggestion {
-                c.s(s);
-            }
+        if let Some(s) = d.wire_suggestion(wire) {
+            c.s(s);
         }
     }
     c.sha()

@@ -421,12 +421,21 @@ pub struct Diagnostic {
     pub recovery: Option<String>,
     /// Replacement text for the source range (runtime-v1 `suggestion`).
     /// Serialised on display-list-v2 only when `Wire.diagnostics` is set
-    /// (`protocol/proposals/display-list-v2-diagnostics.md`); omitted from
-    /// the frozen four-key object otherwise.
+    /// (`protocol/proposals/display-list-v2-diagnostics.md`) and the text
+    /// is non-empty; omitted from the frozen four-key object otherwise.
     pub suggestion: Option<String>,
 }
 
 impl Diagnostic {
+    /// `suggestion` as it appears on the wire: only when the diagnostics
+    /// capability is on and the text is non-empty (omitted, never `""`).
+    pub(crate) fn wire_suggestion(&self, wire: Wire) -> Option<&str> {
+        if !wire.diagnostics {
+            return None;
+        }
+        self.suggestion.as_deref().filter(|s| !s.is_empty())
+    }
+
     pub fn error(code: &str, message: impl Into<String>, sources: Vec<SourceRange>) -> Diagnostic {
         Diagnostic {
             code: code.into(),
@@ -501,8 +510,10 @@ impl DisplayList {
     pub fn estimated_json_bytes_for(&self, wire: Wire) -> usize {
         let mut n = 512 + self.fonts.len() * 400 + self.documents.len() * 200;
         for d in &self.diagnostics {
-            n += 160 + d.message.len() + d.sources.len() * 80 + d.suggestion.as_ref().map(|s| s.len() + 20).unwrap_or(0);
-            let _ = wire;
+            n += 160 + d.message.len() + d.sources.len() * 80;
+            if let Some(s) = d.wire_suggestion(wire) {
+                n += s.len() + 20;
+            }
         }
         for p in &self.pages {
             n += 64;
@@ -740,11 +751,9 @@ pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic], wire
         });
         o.push_str(",\"sources\":");
         write_sources(o, &d.sources);
-        if wire.diagnostics {
-            if let Some(s) = &d.suggestion {
-                o.push_str(",\"suggestion\":");
-                json::write_string_into(s, o);
-            }
+        if let Some(s) = d.wire_suggestion(wire) {
+            o.push_str(",\"suggestion\":");
+            json::write_string_into(s, o);
         }
         o.push('}');
     }
@@ -1182,7 +1191,7 @@ pub fn diagnostic_json(d: &Diagnostic) -> Value {
 }
 
 /// [`diagnostic_json`](diagnostic_json) with negotiated proposals: `suggestion`
-/// is present only when `wire.diagnostics` is set and the value is `Some`.
+/// is present only when `wire.diagnostics` is set and the value is a non-empty `Some`.
 pub fn diagnostic_json_wire(d: &Diagnostic, wire: Wire) -> Value {
     let mut o = Value::obj();
     o.set("code", json::str_(d.code.clone()));
@@ -1195,10 +1204,8 @@ pub fn diagnostic_json_wire(d: &Diagnostic, wire: Wire) -> Value {
         }),
     );
     o.set("sources", Value::Arr(d.sources.iter().map(source_json).collect()));
-    if wire.diagnostics {
-        if let Some(s) = &d.suggestion {
-            o.set("suggestion", json::str_(s.clone()));
-        }
+    if let Some(s) = d.wire_suggestion(wire) {
+        o.set("suggestion", json::str_(s.to_string()));
     }
     o
 }

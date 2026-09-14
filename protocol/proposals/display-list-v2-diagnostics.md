@@ -34,7 +34,9 @@ rendering-v2 `display_list` line, gated because `$defs/diagnostic` is
    byte-identical to today, including when a diagnostic's in-memory
    `suggestion` is `Some`. The delta hash (`dl2-canon-1` header digest)
    includes a field only when that field is serialised, so a suggestion
-   change produces a delta if and only if the capability is on.
+   change produces a delta if and only if the capability is on. Empty
+   strings are omitted the same way as unset (`Some("")` is not on the wire
+   and is not hashed).
 5. The runtime-v1 `compile_result` is unchanged by this capability (PR #354
    already emits `suggestion` there without a flag).
 
@@ -240,10 +242,10 @@ Negotiation copies `display-list-v2-images` / `display-list-v2-device-color`:
 `CAP_DIAGNOSTICS` in `crates/render-pipeline/src/v1.rs`, accepted only with
 `display-list-v2`; `display::Wire { diagnostics: bool }` set from that flag;
 `write_diagnostics` (full line and delta) and the JSON-tree writer emit
-`suggestion` when the capability is on and the value is `Some`.
+`suggestion` when the capability is on and the value is a non-empty `Some`.
 
 `dl2-canon-1` `header_digest` includes `suggestion` only when it is
-serialised (`Wire.diagnostics && suggestion.is_some()`). A suggestion-only
+serialised (`Wire.diagnostics && suggestion` is a non-empty string). A suggestion-only
 edit therefore changes the list digest — and produces a delta — exactly when
 the consumer asked for the fields.
 
