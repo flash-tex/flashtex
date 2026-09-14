@@ -216,6 +216,32 @@ fn declining_display_list_also_drops_dependent_diagnostics_capability() {
 }
 
 #[test]
+fn declining_display_list_also_drops_images_and_device_color() {
+    require_lm();
+    let _limit = REPLY_LIMIT.lock().unwrap();
+    let _restore = ReplyBytesGuard(std::env::var("FLASHTEX_MAX_REPLY_BYTES").ok());
+    std::env::set_var("FLASHTEX_MAX_REPLY_BYTES", "6000");
+    let fonts = FontSet::with_default_dirs(&[]);
+    let options = RenderOptions::default();
+    let text = "\\begin{document}Hello $\\frac{1}{2}$ wörld.\\end{document}";
+    let reply = handle_line(
+        &compile_line(
+            "big",
+            text,
+            &["display-list-v2", "display-list-v2-images", "display-list-v2-device-color"],
+        ),
+        &fonts,
+        &options,
+        None,
+    );
+    assert!(reply.extra_lines.is_empty(), "no display-list sibling: {:?}", reply.extra_lines.len());
+    let caps = echoed_caps(&reply.line);
+    assert!(!caps.iter().any(|c| c == "display-list-v2"), "{caps:?}");
+    assert!(!caps.iter().any(|c| c == "display-list-v2-images"), "dependent -images must drop with display-list-v2: {caps:?}");
+    assert!(!caps.iter().any(|c| c == "display-list-v2-device-color"), "dependent -device-color must drop with display-list-v2: {caps:?}");
+}
+
+#[test]
 fn unimplemented_tikz_is_unsupported_feature() {
     require_lm();
     let r = render_one(&doc(r"Text \tikz here."));
