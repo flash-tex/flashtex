@@ -216,6 +216,11 @@ private struct EditorPane: View {
                     }
                 }
             )
+            // Vim's status line belongs to the window being edited, so it sits
+            // directly under the source text — not in the window's status bar,
+            // which the Problems panel pushes two panes away from the caret
+            // (owner report). Takes no space at all while Vim is off.
+            VimStatusLine()
             CaptureBar()
             // The bridge line is lifecycle telemetry: shown once a bridge is
             // attached or a capture exists, not as a permanent orange
@@ -453,7 +458,8 @@ private struct StatusBar: View {
             Label(route(chrome), systemImage: routeIcon(chrome))
                 .help(chrome.routeHelp)
             WordCountStatusItem() // GH68: live word count + breakdown popover (WordCountStatusView.swift)
-            VimModeStatusItem() // -- NORMAL -- / -- INSERT -- / -- VISUAL -- and the `:` line while Vim keybindings are on (VimMode.swift)
+            // The Vim mode indicator is NOT here: it is `VimStatusLine`, at the
+            // bottom of the editor pane where vim puts a window's status line.
             let problems = chrome.problems
             if !problems.isEmpty {
                 Button {
@@ -600,19 +606,35 @@ private struct ProposalReviewSheet: View {
     }
 }
 
-/// Status-bar mode indicator for Vim keybindings (VimMode.swift): hidden
-/// while the preference is off.
-struct VimModeStatusItem: View {
+/// Vim's status line (VimMode.swift): `-- NORMAL --` / `-- INSERT --` /
+/// `-- VISUAL --` and the `:`/`/` command line, at the bottom of the editor
+/// pane. Vim puts the status line at the bottom of the window being edited,
+/// so it stays with the text even when the Problems panel is open below or
+/// the preview is beside it; the global status bar would put it two panes
+/// away from the caret it describes.
+///
+/// While the preference is off `VimMode.Status.shared.indicator` is nil and
+/// the body produces no view at all — the editor gains no empty strip.
+struct VimStatusLine: View {
     var body: some View {
         let status = VimMode.Status.shared
         if let indicator = status.indicator {
-            Text(indicator)
-                .fontWeight(.semibold)
-                .help("Vim keybindings are on (Settings, or View > Toggle Vim Keybindings ⌃⌘V)")
-                .accessibilityIdentifier("status.vimMode")
-            if let line = status.commandLine, !line.isEmpty {
-                Text(line).lineLimit(1).accessibilityIdentifier("status.vimCommandLine")
+            HStack(spacing: 8) {
+                Text(indicator)
+                    .fontWeight(.semibold)
+                    .help("Vim keybindings are on (Settings, or View > Toggle Vim Keybindings ⌃⌘V)")
+                    .accessibilityIdentifier("status.vimMode")
+                if let line = status.commandLine, !line.isEmpty {
+                    Text(line).lineLimit(1).accessibilityIdentifier("status.vimCommandLine")
+                }
+                Spacer(minLength: 0)
             }
+            .font(.caption)
+            .monospacedDigit()
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(.bar)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Vim status line")
         }
     }
 }
