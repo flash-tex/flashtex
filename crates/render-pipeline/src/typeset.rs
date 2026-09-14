@@ -20,7 +20,7 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-use flashtex_compiler::parser::SourceDocument;
+use flashtex_compiler::parser::{FillLeader, SourceDocument};
 use flashtex_compiler::{DocumentId, Span};
 use flashtex_font_engine::sha256;
 use flashtex_math_layout as ml;
@@ -109,6 +109,13 @@ pub enum BoxRec {
     /// `\rule` boxes set `bottom` (the painted part's bottom above the
     /// baseline); nothing is painted when `width` or `height` is not positive.
     Rule { width: f64, height: f64, bottom: f64, span: Span },
+    /// A leader attached to horizontal fill glue. It is painted after line
+    /// breaking, when the glue's final width is known.
+    Leader {
+        leader: FillLeader,
+        box_width: f64,
+        dot: Option<(Rc<LoadedFace>, pl::GlyphRun)>,
+    },
     /// A `tikzpicture`: its bounding box sits on the baseline (depth 0).
     Picture(Rc<PictureRec>),
     /// A `tabular` (`table.rs`): its cell lines and rules, set as one box
@@ -116,6 +123,8 @@ pub enum BoxRec {
     Table(Rc<TableRec>),
     /// `\colorbox`/`\fcolorbox` (`Context::color_box`).
     ColorBox(Rc<ColorBoxRec>),
+    /// ulem `\uline` (`Context::underline_box`).
+    Underline(Rc<UnderlineRec>),
 }
 
 /// A laid-out `\colorbox`/`\fcolorbox`: the content as one line whose
@@ -130,6 +139,21 @@ pub struct ColorBoxRec {
     pub rule: f64,
     pub fill: flashtex_compiler::color::DeviceColor,
     pub frame: Option<flashtex_compiler::color::DeviceColor>,
+    pub span: Span,
+}
+
+/// A laid-out `\uline`/`\sout`/`\underline`: the content as one line, plus
+/// a `thickness` rule whose top is `ul_depth` from the baseline (positive
+/// down). ulem `\uline`: `\dp` of `\hbox{{(j}}`; kernel `\underline`:
+/// box depth + 3θ; `\sout`: −(0.55ex + thickness).
+#[derive(Clone)]
+pub struct UnderlineRec {
+    pub block: BuiltBlock,
+    pub width: f64,
+    pub height: f64,
+    pub depth: f64,
+    pub thickness: f64,
+    pub ul_depth: f64,
     pub span: Span,
 }
 
@@ -1133,6 +1157,15 @@ impl<'a> Context<'a> {
         // switch after it -- none of which the compiler's `Nucleus::Text`
         // carries, so all of it is re-read from the source at the span.
         let op_limits = |sp: &Span| operator_limits_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        // `\lim`/`\mathrm{...}`/`\bmod` against `\text{...}`/`\tag{...}` and
+        // against a one-character siunitx unit run: the compiler spells all
+        // of them `Nucleus::Text`, but only a *whole* run of math characters
+        // keeps the italic correction of its last character (§752).
+        let text_italic = |sp: &Span| math_text_keeps_italic(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        // `\limsup`/`\liminf`: `lim`, a thin space, then `sup`/`inf`.
+        let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        // `\ldots`/`\cdots`: `\mathinner` of three Punct dots.
+        let ellipsis = |sp: &Span| math_ellipsis_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\quad`/`\qquad`/`\,`/`\:`/`\;`/`\!` (compiler `Space { em }`) at
         // the top level of the formula (outside `\left...\right`): math-layout
         // has no kern atom, so the formula is split there into runs laid out
@@ -1146,7 +1179,7 @@ impl<'a> Context<'a> {
         // fraction, a script, inside `\left...\right`, another grid's cell)
         // enters math-layout as a box handle (`mathtext::GridCells`).
         let segments = split_at_spaces(list, &fence, sink.font_em_ratio());
-        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits)).collect();
+        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_split, &ellipsis)).collect();
         // Glue at a top-level grid cell's own top level is split out like
         // the formula's; only deeper glue is dropped.
         let nested_glue_em: f64 = segments
@@ -1197,7 +1230,7 @@ impl<'a> Context<'a> {
             })
             .collect();
         let frames = sink.frames.clone();
-        let text_metrics = crate::mathtext::TextRunMetrics::new(fonts.metrics(), self.fonts, self.shaper, self.style.family, &sink.texts, &sink.keys)
+        let text_metrics = crate::mathtext::TextRunMetrics::new(fonts.metrics(), self.fonts, self.shaper, self.style.family, &sink.texts, &sink.keys, &sink.italics)
             .with_grids(&nested)
             .with_frames(&frames);
         let mut laid = if has_grid {
@@ -1970,6 +2003,50 @@ impl<'a> Context<'a> {
                         }
                     }
                 }
+                AItem::Lap { items: lapped } => {
+                    // `\llap{#1}` is `\hb@xt@\z@{\hss #1}`: the material at
+                    // its natural width, ending at the reference point.
+                    let (mut list, mut lrecs, _, _) = self.hlist(lapped, size, base, style);
+                    // `hlist` ends every list it builds with TeX's paragraph
+                    // end (`\penalty10000 \parfillskip \penalty-10000`).
+                    // That belongs to a paragraph, not to the `\hbox` this
+                    // is: left in place it breaks the line after the lapped
+                    // material, which is how every numbered listing line
+                    // came out one line below its own number.
+                    if matches!(
+                        list.last_chunk::<3>(),
+                        Some([pl::Item::Penalty(_), pl::Item::Glue(_), pl::Item::Penalty(_)])
+                    ) {
+                        list.truncate(list.len() - 3);
+                        lrecs.truncate(lrecs.len().saturating_sub(3));
+                    }
+                    let width: f64 = list
+                        .iter()
+                        .map(|i| match i {
+                            pl::Item::Box(run) => run.width,
+                            pl::Item::Glue(glue) => glue.width,
+                            pl::Item::Kern(kern) => kern.width,
+                            pl::Item::Penalty(_) => 0.0,
+                        })
+                        .sum();
+                    // The anchor: a box of no size, so the pull-back kern
+                    // behind it survives a line break (see `Item::Lap`).
+                    self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    let anchor = pl::GlyphRun {
+                        font: MATH_SENTINEL,
+                        size,
+                        glyphs: Vec::new(),
+                        width: 0.0,
+                        height: 0.0,
+                        depth: 0.0,
+                        source: 0..0,
+                    };
+                    push(&mut out, &mut recs, pl::Item::Box(anchor), Some(self.recs.len() - 1));
+                    push(&mut out, &mut recs, pl::Item::kern(-width), None);
+                    for (item, rec) in list.into_iter().zip(lrecs) {
+                        push(&mut out, &mut recs, item, rec);
+                    }
+                }
                 AItem::LeaveVmode => {
                     // The empty `\hbox` `\leavevmode` starts a paragraph
                     // with; its only job is to be undiscardable so the
@@ -2002,7 +2079,7 @@ impl<'a> Context<'a> {
                     let quad = self.text_params(base, size).quad;
                     push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(em * quad)), None);
                 }
-                AItem::HFill { fill } => {
+                AItem::HFill { fill, leader } => {
                     // `\hfill` is second-order glue: it beats the line's
                     // `\parfillskip` (`\hfil`), as in a `\section` title
                     // set as `Problem 1 \hfill [4 points]`.
@@ -2010,7 +2087,39 @@ impl<'a> Context<'a> {
                     if *fill {
                         glue.stretch_order = pl::GlueOrder::Fill;
                     }
-                    push(&mut out, &mut recs, pl::Item::Glue(glue), None)
+                    let (box_width, dot) = match leader {
+                        FillLeader::Dots => {
+                            let face = self.face(base, size, Span::new(0, 0));
+                            let shaped = self.shaper.shape(&face, ".");
+                            let glyphs = shaped
+                                .clusters
+                                .iter()
+                                .flat_map(|c| c.glyphs.iter().map(|g| pl::ShapedGlyph {
+                                    gid: u32::from(g.gid.0),
+                                    advance_units: i64::from(g.advance),
+                                    cluster: c.text_range.clone(),
+                                }))
+                                .collect::<Vec<_>>();
+                            let run = pl::GlyphRun::from_shaped(
+                                face.layout_id(),
+                                size,
+                                shaped.units_per_em as f64,
+                                f64::from(shaped.height_units),
+                                -f64::from(shaped.depth_units),
+                                &glyphs,
+                                0..1,
+                            );
+                            (0.44 * self.text_params(base, size).quad, Some((face, run)))
+                        }
+                        _ => (0.0, None),
+                    };
+                    let rec = if *leader == FillLeader::None {
+                        None
+                    } else {
+                        self.recs.push(BoxRec::Leader { leader: *leader, box_width, dot });
+                        Some(self.recs.len() - 1)
+                    };
+                    push(&mut out, &mut recs, pl::Item::Glue(glue), rec)
                 }
                 AItem::HSpace { pt, stretch_pt, shrink_pt } => push(
                     &mut out,
@@ -2037,6 +2146,10 @@ impl<'a> Context<'a> {
                 }
                 AItem::ColorBox(cb) => {
                     let (run, rec) = self.color_box(cb, size);
+                    push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                }
+                AItem::Underline(ul) => {
+                    let (run, rec) = self.underline_box(ul, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
                 AItem::Kern { amount, style } => {
@@ -4192,6 +4305,118 @@ impl<'a> Context<'a> {
         (run, self.recs.len() - 1)
     }
 
+    /// ulem `\uline`/`\sout` or kernel `\underline`: content as an `\hbox`,
+    /// rule placed by `ul.geom`. `\uline` keeps the 0.25em-top / 0.4pt path.
+    fn underline_box(&mut self, ul: &adapter::UnderlineItem, size: f64) -> (pl::GlyphRun, usize) {
+        let (placed, width) = self.hbox_runs(&ul.items, size);
+        let (mut ht, mut dp) = (0.0f64, 0.0f64);
+        let mut runs = Vec::with_capacity(placed.len());
+        let mut items = Vec::with_capacity(placed.len());
+        let mut recs = Vec::with_capacity(placed.len());
+        for (run, rec, x) in placed {
+            ht = ht.max(run.height);
+            dp = dp.max(run.depth);
+            runs.push(position_run(&run, x, 0.0));
+            items.push(pl::Item::Box(run));
+            recs.push(Some(rec));
+        }
+        let n = items.len();
+        let lines = pl::Lines {
+            lines: vec![pl::Line {
+                index: 0,
+                runs,
+                baseline_y: ht,
+                height: ht,
+                depth: dp,
+                natural_width: width,
+                set_width: width,
+                ratio: 0.0,
+                badness: 0.0,
+                items: 0..n,
+                hyphenated: false,
+            }],
+            breaks: Vec::new(),
+            stats: one_line_stats(),
+            diagnostics: Vec::new(),
+            height: ht + dp,
+        };
+        let block = BuiltBlock {
+            block: pl::ParagraphBlock::body(lines),
+            items,
+            recs,
+            vertical: VBlock {
+                lines: vec![(ht, dp)],
+                penalty_before: None,
+                space_before: None,
+                parskip: None,
+                interline_penalty: 0,
+                club_penalty: 0,
+                widow_penalty: 0,
+                penalty_after: None,
+                space_after: None,
+                no_interline_first: true,
+                no_interline_after: true,
+                baselineskip: None,
+                vskip_after: Vec::new(),
+                pre_space_after: None,
+                lineskip: None,
+                contributed: None,
+                line_penalty: Vec::new(),
+                // TeX §890 `\brokenpenalty` follows a discretionary-broken
+                // line; the underlined fragment is one unbreakable line
+                // (`hyphenated: false`), so there is never one to follow.
+                broken_penalty: Vec::new(),
+                depth_after: pagebuild::DepthAfter::default(),
+            },
+            labels: Vec::new(),
+            cache_key: None,
+        };
+        let descender = self.uline_depth(size);
+        let ex = self.text_params(TextStyle::default(), size).x_height;
+        let (top, extra_depth) =
+            ul.geom
+                .rule_top_and_depth(ul.thickness_pt, dp, descender, ex);
+        let depth = dp.max(extra_depth);
+        self.recs.push(BoxRec::Underline(Rc::new(UnderlineRec {
+            block,
+            width,
+            height: ht,
+            depth,
+            thickness: ul.thickness_pt,
+            ul_depth: top,
+            span: ul.span,
+        })));
+        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height: ht, depth, source: ul.span.start..ul.span.end };
+        (run, self.recs.len() - 1)
+    }
+
+    /// ulem `\UL@setULdepth`: `\dp` of `\hbox{{(j}}` — max depth of `(`
+    /// and `j` in the current text font. For cmr/lmr that is `(` at
+    /// 0.25em (pdflatex 10pt 2.5pt, 12pt 3.0pt). Fallback 0.25em when
+    /// the face has no TFM.
+    fn uline_depth(&self, size: f64) -> f64 {
+        use crate::ids::{Encoding, EncodingCode};
+        let r = self.fonts.resolve(
+            self.style.family,
+            crate::fonts::Role::Text { bold: false, italic: false },
+            size,
+        );
+        if let (None, Some(tfm)) = (&r.substituted, &r.face.tfm) {
+            let depth = |ch: char| {
+                EncodingCode::for_char(ch, Encoding::T1)
+                    .and_then(|c| tfm.metrics(c.0))
+                    .map(|m| crate::tfm::Tfm::pt(m.depth, size))
+            };
+            match (depth('('), depth('j')) {
+                (Some(a), Some(b)) => return a.max(b),
+                (Some(a), None) => return a,
+                (None, Some(b)) => return b,
+                (None, None) => {}
+            }
+        }
+        0.25 * size
+    }
+
     /// A header or footer line,`\hb@xt@\textwidth{<left>\hfil <center>\hfil
     /// <right>}` in the `\normalsize` body font: each slot is `(text,
     /// \slshape)`; `\thepage` is upright, marks slanted. Words are separated
@@ -5243,10 +5468,24 @@ impl<'a> Context<'a> {
             no_interline_first: false,
             no_interline_after: false,
             baselineskip: Some(normal + JOT),
+            // `\openup\jot` (amsmath `\displ@y@`) advances `\lineskip` as
+            // well as `\baselineskip` — `\openup` is `\advance` on all three
+            // of `\lineskip`, `\baselineskip` and `\lineskiplimit`. Leaving
+            // this `None` used the page's 1pt `\lineskip`, so every row gap
+            // that fell into lineskip mode was one `\jot` = 3pt short, and
+            // it only falls into lineskip mode when a row is tall enough
+            // that `\baselineskip - prevdepth - height < \lineskiplimit`.
+            // Short-row alignments (`a &= b \\ c &= d`) stay in baselineskip
+            // mode and were always right, which is why every pinned
+            // display-placement align fixture passed while the tall
+            // integral/fraction rows of a real problem set drifted 3pt per
+            // row. pdfLaTeX's own `\showoutput` for
+            // `fixtures/real-world/ps-calculus` prints `\glue(\lineskip) 4.0`
+            // between the rows of both of its alignments.
+            lineskip: Some(self.style.lineskip_pt + JOT),
             vskip_after: vskips,
             broken_penalty: Vec::new(),
             pre_space_after: None,
-            lineskip: None,
             contributed: None,
             line_penalty: Vec::new(),
             depth_after: pagebuild::DepthAfter::default(),
@@ -5302,6 +5541,8 @@ impl<'a> Context<'a> {
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Leader { .. } => None,
+                    BoxRec::Underline(u) => Some(u.span),
                 })
                 .next();
             let _ = list;
@@ -5672,7 +5913,10 @@ pub fn style_switch_of(text: &str, at: usize) -> Option<ml::Style> {
 /// (Appendix G Rule 19: sized to the body, `Inner` class). An unmatched
 /// fence stays a plain symbol, as the compiler already reports it.
 pub fn convert_math_fenced(list: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink, fence: &dyn Fn(&Span) -> Option<Fence>) -> ml::MathList {
-    convert_math_classed(list, sink, fence, &|_| None, &|_| None)
+    // No source to read, so no source-derived fact: no fence, no forced
+    // class, no operator limits, and no run shown to be a whole run of math
+    // characters (so no italic correction).
+    convert_math_classed(list, sink, fence, &|_| None, &|_| None, &|_| false, &|_| None, &|_| None)
 }
 
 /// Maps the compiler's own atom class onto math-layout's.
@@ -5811,6 +6055,153 @@ pub fn operator_limits_of(text: &str, at: usize) -> Option<ml::Limits> {
     Some(declared)
 }
 
+/// Whether the `Nucleus::Text` atom whose span starts at `at` is a *complete*
+/// run of math characters, and so keeps the italic correction of its last
+/// character (tex.web §752), re-read from the control word at the span like
+/// [`fence_of`].
+///
+/// The compiler spells three different things `Nucleus::Text`, and only one
+/// of them takes the correction:
+///
+///  1. **A whole run of math characters.** `\lim` and the rest of the
+///     log-like functions, `\mathrm{...}`, `\bmod`/`\mod`, and `\pmod`'s
+///     `(mod` and `)`. These are `\operator@font` characters of the
+///     `operators` family and the run ends where the atom ends, so §752
+///     leaves the last character its `delta`: `$\lim$` and `$\mathrm{lim}$`
+///     are 16.3773 pt where `$\text{lim}$` is 16.31999 pt.
+///
+///  2. **An `\hbox`.** amsmath's `\text`, and its `\tag`, whose label is
+///     `\maketag@@@#1 -> \hbox{\m@th\normalfont#1}` (amsmath.sty 1211). An
+///     hbox is not a run of math characters and never had a correction.
+///
+///  3. **A *fragment* of a longer run**, which is the case worth stating
+///     because it looks exactly like (1) and must behave like (2). The
+///     pinned compiler emits a multi-character siunitx unit as one
+///     `Nucleus::Text` per character (`siunitx.rs` `upright`: "One character
+///     is one upright run; several are a boxed group of one-character
+///     runs"), so `\unit{\katal}` arrives as three runs `k`, `a`, `t` where
+///     TeX has a single `\mathrm{kat}`. Correcting each of them would add an
+///     italic correction *inside* a word, which is precisely what §752's
+///     `math_text_char` rule exists to prevent -- and it is measurable:
+///     `12-unit-derived-c.tex` moved 1.255 bp when this function was written
+///     the other way round, as an exclusion list that let every unit through.
+///
+/// So this is a whitelist of the control words that produce a whole run, not
+/// a blacklist of the ones that do not. A construct that reaches
+/// `Nucleus::Text` by some other route keeps today's uncorrected geometry
+/// rather than silently acquiring a correction that may be wrong; the known
+/// under-application is a `\operatorname{...}` body, whose runs are built
+/// from the individual characters and so carry no control word at their span.
+pub fn math_text_keeps_italic(text: &str, at: usize) -> bool {
+    let Some(rest) = text.get(at..).and_then(|r| r.strip_prefix('\\')) else {
+        return false;
+    };
+    let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
+    let word = &rest[..word_len];
+    // `\mathrm{lim}` is one `text_atom` of all the letters, so it is whole;
+    // `\bmod`/`\mod`/`\pmod` likewise put `mod` (and `(mod`, `)`) in runs of
+    // their own. Every log-like function is a whole word by construction.
+    matches!(word, "mathrm" | "bmod" | "mod" | "pmod") || NAMED_OPERATORS.iter().any(|(name, _)| *name == word)
+}
+
+/// The two log-like functions the kernel defines with a thin space inside
+/// them, split at it, re-read from the control word at the span like
+/// [`fence_of`].
+///
+/// ```text
+/// \DeclareRobustCommand\limsup{\mathop{\operator@font lim\,sup}}   % latex.ltx 15528
+/// \DeclareRobustCommand\liminf{\mathop{\operator@font lim\,inf}}   % latex.ltx 15529
+/// ```
+///
+/// Every other one of the thirty-odd log-like functions is a single word, so
+/// this is the whole list rather than a sample of it. The compiler has no
+/// glue inside a named operator and emits one `Nucleus::Text("limsup")`, so
+/// the space is re-derived here and the operator becomes a three-atom list.
+///
+/// Two consequences follow from the split, both of them TeX's:
+///
+///  - `lim` ends a run of math characters (the next node is glue, not a math
+///    char of the same family, so §753's `make_ord` never demotes its `m` to
+///    a `math_text_char`), which means it keeps its own italic correction as
+///    well. pdfTeX's `\limsup` box is
+///    `l i m \kern0.05731 \glue 1.99997 s u p`, so the gap between `m` and
+///    `s` is 2.05728 pt and not the 1.99997 pt of the glue alone.
+///  - `sup` and `inf` likewise end runs, so `\liminf` takes `f`'s 0.84708 pt
+///    correction at the end -- pdfTeX's box is 32.60657 pt and closes with
+///    `\kern0.84708`.
+pub fn operator_thin_space_split(text: &str, at: usize) -> Option<(&'static str, &'static str)> {
+    let rest = text.get(at..)?.strip_prefix('\\')?;
+    let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
+    match &rest[..word_len] {
+        "limsup" => Some(("lim", "sup")),
+        "liminf" => Some(("lim", "inf")),
+        _ => None,
+    }
+}
+
+/// The dot that a `\ldots`/`\cdots`-family control word at `at` sets three of
+/// inside a `\mathinner`, re-read from the control word at the span like
+/// [`fence_of`].
+///
+/// Both families are `\mathinner{\dotp\dotp\dotp}` of a **punctuation** atom
+/// (plain.tex 360-361, `\mathellipsis` in `latex.ltx`), which is two separate
+/// facts about spacing that an ordinary atom does not have:
+///
+///  - Punct against Punct is a thin space, so the three dots sit 3mu apart;
+///  - `\mathinner` is the Inner class, so the group takes a thin space
+///    against the Ord on each side of it.
+///
+/// The dots differ only in which family the glyph comes from, and
+/// `flashtex_math_layout::cm::symbol_slot` already maps both the way plain
+/// TeX's `\mathcode`s do -- `.` to `letters` (math italic) slot `"3A`, the
+/// `\ldotp` glyph, and `U+22C5` to `symbols` (cmsy) slot `"01`, `\cdotp`.
+/// So this is about the atoms, not the fonts: the two periods are within
+/// 0.0001 bp of each other in width, and the whole of the difference from
+/// what the pinned compiler produces is four thin spaces.
+///
+/// Measured with TeX Live 2025 pdflatex under the harness preamble
+/// (`\showbox`):
+///
+/// ```text
+/// \setbox0=\hbox{$a\ldots b$}          \setbox0=\hbox{$a\cdots b$}
+/// .\OML/lmm/m/it/12 a                  .\OML/lmm/m/it/12 a
+/// .\glue(\thinmuskip) 1.99997          .\glue(\thinmuskip) 1.99997
+/// .\hbox(1.16666+0.0)x13.7915          .\hbox(5.33334+0.0)x13.99997
+/// ..\OML/lmm/m/it/12 :                 ..\OMS/lmsy/m/n/12 ^^A
+/// ..\glue(\thinmuskip) 1.99997         ..\glue(\thinmuskip) 1.99997
+/// ..\OML/lmm/m/it/12 :                 ..\OMS/lmsy/m/n/12 ^^A
+/// ..\glue(\thinmuskip) 1.99997         ..\glue(\thinmuskip) 1.99997
+/// ..\OML/lmm/m/it/12 :                 ..\OMS/lmsy/m/n/12 ^^A
+/// .\glue(\thinmuskip) 1.99997          .\glue(\thinmuskip) 1.99997
+/// .\OML/lmm/m/it/12 b                  .\OML/lmm/m/it/12 b
+/// ```
+///
+/// (`:` and `^^A` are how `\showbox` names slots `"3A` and `"01`.) The
+/// grouping of the eight commands is the compiler's own
+/// (`crates/compiler/src/math.rs`): amsmath's `\dotsc`/`\dotso` are low dots
+/// and `\dotsb`/`\dotsm`/`\dotsi` are centred ones. Bare `\dots` follows the
+/// kernel's `\mathellipsis` and is low, which is what the compiler already
+/// assumes; amsmath makes `\dots` guess from what follows it, and neither
+/// side models that.
+///
+/// `\vdots` and `\ddots` are deliberately **not** here. They are not runs of
+/// dots at all but vertical box constructions over *text*-font periods --
+/// `\vdots` is a `\vbox` of three `\hbox{.}` at `\baselineskip` 2.83334 over
+/// a `\kern 6.0`, and `\ddots` an Inner hbox of three `\hbox{.}` shifted
+/// -7.0/-4.0/-1.0 between kerns of 0.66666 and 1.33331 -- and math-layout has
+/// no atom that builds a vbox, so they need their own change.
+pub fn math_ellipsis_of(text: &str, at: usize) -> Option<char> {
+    let rest = text.get(at..)?.strip_prefix('\\')?;
+    let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
+    Some(match &rest[..word_len] {
+        // `\ldotp`, `\mathcode`"013A: the math italic period.
+        "ldots" | "dots" | "dotsc" | "dotso" => '.',
+        // `\cdotp`, cmsy `"01`: the centred dot.
+        "cdots" | "dotsb" | "dotsm" | "dotsi" => '\u{22C5}',
+        _ => return None,
+    })
+}
+
 /// [`convert_math_fenced`] with `class` giving the forced class of a
 /// `Group` (`\mathbin{...}`) or class-overridden symbol atom at a span, and
 /// `op_limits` the limit placement of a named operator at a span
@@ -5821,14 +6212,29 @@ pub fn convert_math_classed(
     fence: &dyn Fn(&Span) -> Option<Fence>,
     class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
     op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
+    text_italic: &dyn Fn(&Span) -> bool,
+    text_split: &dyn Fn(&Span) -> Option<(&'static str, &'static str)>,
+    ellipsis: &dyn Fn(&Span) -> Option<char>,
 ) -> ml::MathList {
     use flashtex_compiler::math::{DelimiterRole, Nucleus as N};
     // Open fences: (left delimiter, atoms converted since it, its span).
     let mut stack: Vec<(Option<char>, Vec<ml::Atom>, Span)> = Vec::new();
     let mut atoms = Vec::new();
     for a in &list.atoms {
-        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits);
+        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits, text_italic, text_split, ellipsis);
         let mut out: Vec<ml::Atom> = match &a.nucleus {
+            // `\ldots`/`\cdots` and the amsmath spellings: TeX's
+            // `\mathinner{\ldotp\ldotp\ldotp}` (`math_ellipsis_of`). The
+            // compiler flattens both to three characters with no class and no
+            // spacing -- `Nucleus::Text("...")` for the low dots and
+            // `Nucleus::Symbol("⋅⋅⋅")` for the centred ones -- so the atoms
+            // are rebuilt here: three Punct dots (3mu apart) inside one Inner
+            // atom (a thin space against each neighbour).
+            N::Text(_) | N::Symbol(_) if ellipsis(&a.span).is_some() => {
+                let dot = ellipsis(&a.span).expect("checked by the guard");
+                let dots = (0..3).map(|_| ml::Atom::new(ml::AtomClass::Punct, ml::Nucleus::Symbol(dot))).collect();
+                vec![ml::Atom::new(ml::AtomClass::Inner, ml::Nucleus::List(ml::MathList::new(dots)))]
+            }
             // `\lim`, `\sin`, `\max`, ...: TeX's `\mathop` of upright roman
             // text (`latex.ltx` 15523-15556), so an `Op` atom -- which is both
             // the thin space the Op class contributes on each side and, for
@@ -5837,15 +6243,30 @@ pub fn convert_math_classed(
             // Every other `Nucleus::Text` (`\text{...}`, `\mathrm{K}`, a
             // grid or `\boxed` handle) is an hbox in math, which TeX §1076
             // makes an ordinary atom.
-            N::Text(text) => match op_limits(&a.span) {
-                Some(limits) => {
-                    let mut op = sink.atom(text);
-                    op.class = ml::AtomClass::Op;
-                    op.limits = limits;
-                    vec![op]
+            //
+            // Whether the run is a whole run of math characters is a second,
+            // independent fact the compiler's `Nucleus::Text` does not carry
+            // (`math_text_keeps_italic`), and it decides the italic
+            // correction of the run's last character: `$\lim$` and
+            // `$\mathrm{lim}$` are 16.3773 pt, `$\text{lim}$` 16.31999 pt.
+            N::Text(text) => {
+                // `\limsup`/`\liminf` are `lim\,sup` and `lim\,inf`: one
+                // operator whose nucleus is a list of two math-character runs
+                // with 3mu between them (`operator_thin_space_split`).
+                let mut atom = match text_split(&a.span) {
+                    Some((head, tail)) => {
+                        let parts = vec![sink.atom_corrected(head), ml::Atom::glue(3.0, 0.0), sink.atom_corrected(tail)];
+                        ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(ml::MathList::new(parts)))
+                    }
+                    None if text_italic(&a.span) => sink.atom_corrected(text),
+                    None => sink.atom(text),
+                };
+                if let Some(limits) = op_limits(&a.span) {
+                    atom.class = ml::AtomClass::Op;
+                    atom.limits = limits;
                 }
-                None => vec![sink.atom(text)],
-            },
+                vec![atom]
+            }
             // Glue inside a sub-formula (`\operatorname*{arg\,max}`, `\;`
             // inside `\left...\right`): math-layout's `Glue` atom, which
             // takes no part in atom spacing, like TeX's glue node. Top-level
@@ -6431,12 +6852,20 @@ fn grid_pieces(
     texts: &[&str],
 ) -> Vec<GridPiece> {
     use flashtex_compiler::math::{MathAtom, MathList as CList, Nucleus as N};
+    // As in `math_box`: which `Nucleus::Text` atoms are whole runs of math
+    // characters, re-read from the control word at the span.
+    let text_italic = |sp: &Span| math_text_keeps_italic(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+    let text_italic = &text_italic;
+    let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+    let text_split = &text_split;
+    let ellipsis = |sp: &Span| math_ellipsis_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+    let ellipsis = &ellipsis;
     let mut pieces = Vec::new();
     for (atoms, em) in segments {
         let mut run: Vec<MathAtom> = Vec::new();
         let flush = |run: &mut Vec<MathAtom>, pieces: &mut Vec<GridPiece>, sink: &mut crate::mathtext::TextSink| {
             if !run.is_empty() {
-                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits)));
+                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits, text_italic, text_split, ellipsis)));
             }
         };
         for (a, top) in atoms.iter().zip(top_level_grids(atoms, fence)) {
@@ -6467,7 +6896,7 @@ fn grid_pieces(
                             _ => cell,
                         };
                         let parts = split_at_spaces(cell, fence, sink.font_em_ratio());
-                        let runs = parts.iter().map(|(atoms, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits)).collect();
+                        let runs = parts.iter().map(|(atoms, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits, text_italic, text_split, ellipsis)).collect();
                         let glue = parts.iter().map(|(_, em)| *em).collect();
                         (runs, glue)
                     };
@@ -7563,6 +7992,8 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Leader { .. } => None,
+                    BoxRec::Underline(u) => Some(u.span),
             });
         let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
         ctx.diagnostics.push(Diagnostic::warning(
@@ -8051,6 +8482,8 @@ pub fn assemble(
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Leader { .. } => None,
+                    BoxRec::Underline(u) => Some(u.span),
                     BoxRec::Text { .. } => None,
                 });
                 diagnostics.push(Diagnostic::warning(
@@ -8266,6 +8699,34 @@ fn assemble_block(
                         items.push(block_rule(x0, cb.depth - r, cb.width, r, frame));
                     }
                 }
+                BoxRec::Underline(ul) => {
+                    let x0 = local.x;
+                    let a = assemble_block(&ul.block, recs, maths, 0.0, source_of, paths, empty);
+                    let dx = Tick::from_tex_pt(x0);
+                    for line_items in &a.lines {
+                        for it in line_items {
+                            let mut item = incremental::place_item(it, Tick(0), "", 0);
+                            display::shift_x(&mut item, dx);
+                            items.push(item);
+                        }
+                    }
+                    for f in a.faces {
+                        used.entry(f.font_id.clone()).or_insert(f);
+                    }
+                    resources.extend(a.resources);
+                    unmapped.extend(a.unmapped);
+                    if ul.width > 0.0 && ul.thickness > 0.0 {
+                        items.push(display::Item::Rule(Rule {
+                            x: Tick::from_tex_pt(x0),
+                            top: Tick::from_tex_pt(ul.ul_depth),
+                            width: Tick::from_tex_pt(ul.width).max(Tick(1)),
+                            height: Tick::from_tex_pt(ul.thickness).max(Tick(1)),
+                            paint: Paint::BLACK,
+                            provenance: Provenance::Source(source_of(ul.span)),
+                        }));
+                    }
+                }
+                BoxRec::Leader { .. } => {}
                 BoxRec::Rule { width, height, bottom, span } => {
                     // Line-local like text: the rule's bottom is `bottom`
                     // above the baseline (0 for `\hrule`); a strut paints
@@ -8284,6 +8745,7 @@ fn assemble_block(
                 }
             }
         }
+        append_leaders(block, line, recs, text_x, &mut items, &mut used);
         lines.push(items);
     }
     let (document, base) = block.cache_key.map_or((DocumentId(0), 0), |(_, d, b)| (d, b));
@@ -8295,6 +8757,153 @@ fn assemble_block(
         resources,
         unmapped,
     }
+}
+
+fn line_stretch_order(items: &[pl::Item], range: Range<usize>) -> Option<pl::GlueOrder> {
+    let mut order = None;
+    for i in range {
+        let Some(pl::Item::Glue(g)) = items.get(i) else { continue };
+        if g.stretch > 0.0 {
+            order = Some(order.map_or(g.stretch_order, |o: pl::GlueOrder| o.max(g.stretch_order)));
+        }
+    }
+    order
+}
+
+fn line_glue_width(g: &pl::Glue, line: &pl::Line, order: Option<pl::GlueOrder>) -> f64 {
+    if line.ratio >= 0.0 {
+        if order == Some(g.stretch_order) && line.ratio.is_finite() {
+            g.width + line.ratio * g.stretch
+        } else {
+            g.width
+        }
+    } else {
+        g.width + line.ratio * g.shrink
+    }
+}
+
+fn append_leaders(
+    block: &BuiltBlock,
+    line: &pl::Line,
+    recs: &[BoxRec],
+    text_x: f64,
+    items: &mut Vec<display::Item>,
+    used: &mut BTreeMap<Rc<str>, Rc<LoadedFace>>,
+) {
+    let Some(first_box) = line.items.clone().find(|i| matches!(block.items.get(*i), Some(pl::Item::Box(_)))) else { return };
+    let Some(first_run) = line.runs.iter().position(|r| !r.is_hyphen) else { return };
+    let order = line_stretch_order(&block.items, line.items.clone());
+    let prefix = line.items.start..first_box;
+    let prefix_width: f64 = prefix
+        .filter_map(|i| block.items.get(i))
+        .map(|item| match item {
+            pl::Item::Glue(g) => line_glue_width(g, line, order),
+            pl::Item::Kern(k) => k.width,
+            _ => 0.0,
+        })
+        .sum();
+    let pre_break_width: f64 = line.runs[..first_run].iter().filter(|r| r.is_hyphen).map(|r| r.width).sum();
+    let Some(run) = line.runs.get(first_run) else { return };
+    let mut x = run.x - prefix_width - pre_break_width;
+    let mut run_i = first_run;
+    for i in line.items.clone() {
+        let Some(item) = block.items.get(i) else { continue };
+        match item {
+            pl::Item::Box(_) => {
+                while line.runs.get(run_i).is_some_and(|r| r.is_hyphen) {
+                    run_i += 1;
+                }
+                if let Some(run) = line.runs.get(run_i) {
+                    x = run.x + run.width;
+                    run_i += 1;
+                }
+            }
+            pl::Item::Glue(g) => {
+                let width = line_glue_width(g, line, order);
+                if let Some(BoxRec::Leader { leader, box_width, dot }) = block
+                    .recs
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .and_then(|r| recs.get(r))
+                {
+                    match leader {
+                        FillLeader::Rule if width > 0.0 => items.push(display::Item::Rule(Rule {
+                            x: Tick::from_tex_pt(text_x + x),
+                            top: Tick::from_tex_pt(-0.4),
+                            width: Tick::from_tex_pt(width).max(Tick(1)),
+                            height: Tick::from_tex_pt(0.4).max(Tick(1)),
+                            paint: Paint::BLACK,
+                            provenance: Provenance::Synthetic("\\hrulefill".into()),
+                        })),
+                        FillLeader::Dots if width >= *box_width && *box_width > 0.0 => {
+                            if let Some((face, dot_run)) = dot {
+                                if let Some(item) = dots_item(text_x + x, width, *box_width, face, dot_run) {
+                                    used.entry(face.font_id.clone()).or_insert_with(|| face.clone());
+                                    items.push(item);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                x += width;
+            }
+            pl::Item::Kern(k) => x += k.width,
+            pl::Item::Penalty(_) => {}
+        }
+    }
+}
+
+fn dots_item(x: f64, glue_width: f64, box_width: f64, face: &Rc<LoadedFace>, dot: &pl::GlyphRun) -> Option<display::Item> {
+    let count = (glue_width / box_width).floor() as usize;
+    if count == 0 || dot.glyphs.is_empty() {
+        return None;
+    }
+    let leftover = glue_width - count as f64 * box_width;
+    let top = Tick::from_tex_pt(-dot.height);
+    let height = Tick::from_tex_pt(dot.height + dot.depth);
+    let mut glyphs = Vec::with_capacity(count * dot.glyphs.len());
+    let mut clusters = Vec::with_capacity(count);
+    let mut text = String::with_capacity(count);
+    for i in 0..count {
+        let dot_x = x + leftover / 2.0 + i as f64 * box_width + (box_width - dot.width) / 2.0;
+        let cluster = i as u32;
+        text.push('.');
+        for g in &dot.glyphs {
+            if g.gid != 0 {
+                glyphs.push(Glyph {
+                    gid: g.gid as u16,
+                    origin_x: Tick::from_tex_pt(dot_x),
+                    baseline_y: Tick(0),
+                    advance_x: Tick::from_tex_pt(g.advance),
+                    advance_y: Tick(0),
+                    cluster,
+                });
+            }
+        }
+        let x0 = Tick::from_tex_pt(dot_x);
+        let x1 = Tick::from_tex_pt(dot_x + dot.width);
+        clusters.push(Cluster {
+            text_start_byte: i,
+            text_end_byte: i + 1,
+            hit_rect: Rect { x: x0, top, width: Tick(x1.0 - x0.0), height },
+            carets: display::Carets {
+                first: Caret { text_byte: i, x: x0, top, height },
+                last: (i + 1 == count).then(|| Caret { text_byte: i + 1, x: x1, top, height }),
+            },
+            provenance: Provenance::Synthetic("\\dotfill".into()),
+        });
+    }
+    (!glyphs.is_empty()).then_some(display::Item::GlyphRun(GlyphRun {
+        font_id: face.font_id.clone(),
+        font_size: Tick::from_tex_pt(dot.size),
+        text,
+        glyphs,
+        clusters,
+        paint: Paint::BLACK,
+        role: display::RunRole::Text,
+    }))
 }
 
 /// A picture's paths and node text in line-local coordinates: the picture's

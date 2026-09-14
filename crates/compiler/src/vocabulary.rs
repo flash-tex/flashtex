@@ -35,7 +35,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // LaTeX2e document structure and front matter.
-    "part", "chapter", "subsubsection", "paragraph", "subparagraph", "appendix", "maketitle",
+    "part", "chapter", "subsubsection", "appendix", "maketitle",
     "title", "author", "date", "thanks", "and", "today", "tableofcontents", "listoffigures",
     "listoftables", "abstractname", "footnote", "footnotemark", "footnotetext", "marginpar",
     "index", "glossary", "bibliography", "bibliographystyle", "bibitem", "cite", "nocite",
@@ -58,11 +58,11 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "newtheorem", "newcounter", "setcounter", "addtocounter", "stepcounter", "refstepcounter",
     "value", "arabic", "roman", "Roman", "alph", "Alph", "fnsymbol", "the", "makeatletter",
     "makeatother", "ifthenelse", "newif", "relax", "expandafter", "csname", "endcsname",
-    "newlength", "addtolength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
-    "verb", "hyphenation", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "RequirePackage",
+    "newlength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
+    "verb", "hyphenation", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
     "PassOptionsToPackage", "AtBeginDocument",
     // Cross-references and links.
-    "eqref", "autoref", "cref", "Cref", "nameref", "url", "href", "hyperref", "hyperlink",
+    "eqref", "autoref", "nameref", "url", "href", "hyperref", "hyperlink",
     "hypertarget", "citep", "citet", "citeauthor", "addbibresource", "printbibliography",
     // Colour and graphics packages.
     "tikz",
@@ -71,7 +71,8 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // amsmath and amssymb.
     "intertext", "shortintertext", "substack", "sideset", "xrightarrow", "xleftarrow", "overbrace",
     "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",
-    "limits", "nolimits", "displaylimits", "colon", "vdots", "ddots", "iff", "implies", "impliedby",
+    "limits", "nolimits", "displaylimits", "colon", "eqqcolon", "Coloneqq", "Eqqcolon",
+    "vcentcolon", "dblcolon", "vdots", "ddots", "iff", "implies", "impliedby",
     "genfrac", "operatornamewithlimits", "dddot", "ddddot", "cancel", "bcancel", "xcancel",
     "cancelto", "numberwithin", "allowdisplaybreaks", "mathring", "lvert", "rvert", "lVert",
     "rVert", "varepsilon", "vartheta", "varphi", "varrho", "varsigma", "varpi", "digamma",
@@ -245,13 +246,14 @@ pub fn command_package(name: &str) -> Option<&'static str> {
         "tikz" | "usetikzlibrary" | "draw" | "node" | "fill" | "path" => Some("tikz"),
         "includegraphics" | "graphicspath" | "scalebox" | "resizebox" | "rotatebox"
         | "reflectbox" => Some("graphicx"),
-        "lstinline" | "listoflistings" => Some("listings"),
+        "lstinline" | "listoflistings" | "lstset" => Some("listings"),
         "mintinline" => Some("minted"),
         "citep" | "citet" | "citeauthor" => Some("natbib"),
         "addbibresource" | "printbibliography" => Some("biblatex"),
         "eqref" | "intertext" | "shortintertext" | "substack" | "DeclareMathOperator"
         | "numberwithin" | "allowdisplaybreaks" => Some("amsmath"),
-        "cref" | "Cref" => Some("cleveref"),
+        "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
+        | "labelcref" | "crefname" | "Crefname" => Some("cleveref"),
         "autoref" | "nameref" | "url" | "href" | "hyperref" | "hyperlink" | "hypertarget"
         | "hypersetup" => Some("hyperref"),
         "geometry" => Some("geometry"),
