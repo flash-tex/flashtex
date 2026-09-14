@@ -691,11 +691,6 @@ pub fn substitute_grids(root: &mut ml::MathBox, grids: &[GridBox]) {
     substitute_math_boxes(root, grids, &[]);
 }
 
-/// Replaces every framed-box placeholder in `root` by its framed box.
-pub fn substitute_frames(root: &mut ml::MathBox, frames: &[FrameBox]) {
-    substitute_math_boxes(root, &[], frames);
-}
-
 /// Replaces every placeholder glyph box in `root` by its shaped hbox.
 pub fn substitute(root: &mut ml::MathBox, runs: &[TextRun]) {
     match &mut root.kind {
