@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/cli-multifile-test",
+  "gh_ref": "https://github.com/flash-tex/flashtex/issues/2",
+  "machine": "mac-m5pro-dq222",
+  "note": "daniel-parent (Max 20x, not daniel-vpclaude): crates/flashtex-cli tests/cli.rs multi_file_project_resolves_inputs_from_the_project_root fails on main 9bd4b025 (no diagnostic under sections/). Diagnose; fix test or engine regression. Test-only unless root cause is elsewhere (then report, not fix).",
+  "started_utc": "2026-09-14T04:57:57Z",
+  "state": "claimed",
+  "task_id": "GH-CLI-MULTIFILE-TEST",
+  "updated_utc": "2026-09-14T04:57:57Z"
+}
