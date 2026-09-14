@@ -141,6 +141,74 @@ mod project_root_tests {
         }
     }
 }
+#[cfg(all(test, unix))]
+mod restart_capability_tests {
+    use super::*;
+    fn store(dir: &std::path::Path) -> Store {
+        let mut store = Store::open(dir.join("source")).unwrap();
+        if store.document().unwrap().is_none() {
+            store
+                .initialize(Document::new("p".into(), "main.tex".into(), 1, "x".into()).unwrap())
+                .unwrap();
+        }
+        store
+    }
+    /// The interpreter for the fake compiler (#207, as `tests/lifecycle.rs`):
+    /// `FLASHTEX_TEST_PYTHON`, else `/usr/bin/python3` when it exists, else the
+    /// first `python3` on `PATH` (NixOS has no `/usr/bin/python3`).
+    fn python3() -> std::path::PathBuf {
+        if let Some(path) = std::env::var_os("FLASHTEX_TEST_PYTHON") {
+            return path.into();
+        }
+        let system = std::path::PathBuf::from("/usr/bin/python3");
+        if system.is_file() {
+            return system;
+        }
+        std::env::var_os("PATH")
+            .and_then(|paths| {
+                std::env::split_paths(&paths)
+                    .map(|dir| dir.join("python3"))
+                    .find(|candidate| candidate.is_file())
+            })
+            .unwrap_or(system)
+    }
+    fn command(dir: &std::path::Path) -> Command {
+        let path = dir.join("compiler.py");
+        std::fs::write(&path, "import json,sys\nfor line in sys.stdin:\n r=json.loads(line);p=r['payload']\n print(json.dumps({'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[]}}),flush=True)\n").unwrap();
+        let mut command = Command::new(python3());
+        command.arg(path);
+        command
+    }
+    #[test]
+    fn restart_drops_display_list_v2_and_its_dependent_capabilities() {
+        // PROPOSAL display-list-v2-window: restart must strip
+        // display-list-v2-images and display-list-v2-window alongside
+        // display-list-v2, or a later compile requests an extension whose
+        // base capability was silently dropped by a prior restart.
+        let dir = tempfile::tempdir().unwrap();
+        let mut controller = Controller::new(
+            "p".into(),
+            "main.tex".into(),
+            vec![store(dir.path())],
+            command(dir.path()),
+            Limits::default(),
+        )
+        .unwrap();
+        controller.configure_display_candidates(true).unwrap();
+        controller
+            .configure_layout(vec![
+                "display-list-v2".into(),
+                "display-list-v2-images".into(),
+                "display-list-v2-window".into(),
+            ])
+            .unwrap();
+        assert_eq!(controller.layout_capabilities.len(), 3);
+        controller
+            .restart(command(dir.path()), Limits::default())
+            .unwrap();
+        assert!(controller.layout_capabilities.is_empty());
+    }
+}
 impl Controller {
     /// Forward `root` (validated by [`canonical_project_root`]) as
     /// `payload.project_root` on every later compile request, including
@@ -688,8 +756,15 @@ impl Controller {
             Session::spawn_command(command, limits)?
         };
         self.display_enabled = false;
-        self.layout_capabilities
-            .retain(|cap| cap != "display-list-v2");
+        // Restart drops display-list-v2 (no more display candidates), so also
+        // drop its dependents (display-list-v2-images, PROPOSAL
+        // display-list-v2-window) — neither is meaningful without it.
+        self.layout_capabilities.retain(|cap| {
+            !matches!(
+                cap.as_str(),
+                "display-list-v2" | "display-list-v2-images" | "display-list-v2-window"
+            )
+        });
         runtime.set_completed_snapshots_enabled(self.historical.enabled)?;
         runtime.set_project_root(self.project_root.clone())?;
         self.replace_membership(&expected, &documents, None)?;

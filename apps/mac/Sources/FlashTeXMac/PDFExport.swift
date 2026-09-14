@@ -84,6 +84,14 @@ extension ShellModel {
             captureNote = "Nothing to export: no compile result loaded."
             return
         }
+        // display-list-v2-window §5.6: `v1::fallback` *skips* an elided page
+        // rather than sending it as an empty one, so a windowed reply's v1
+        // `pages` are a subset of the document. Exporting that would silently
+        // drop the rest.
+        if let window = displayListV2?.frame?.window, window.elidedCount > 0 {
+            captureNote = "Export refused: the preview is a \(window.pageCount)-page window over a \(window.documentPageCount)-page document, so this result carries only part of it. Turn the page window off and recompile."
+            return
+        }
         if result.pages.isEmpty, v1PagesElided {
             captureNote = "The v1 layout pages were elided for the v2 pane (display-list-v2-only); use Export Exact PDF, or switch the v2 pane off and recompile."
             return

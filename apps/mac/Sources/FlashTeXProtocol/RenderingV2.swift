@@ -94,6 +94,18 @@ public enum RenderingV2 {
     /// Layout capability that lets the `display_list` line carry `image`
     /// items (accepted only alongside `display-list-v2`).
     public static let imagesCapability = "display-list-v2-images"
+    /// Layout capability that lets the producer answer with a bounded window of
+    /// resident pages, every other page elided to its frame
+    /// (`protocol/proposals/display-list-v2-window.md`; accepted only alongside
+    /// `display-list-v2`). Sent only when the pane can paint an elided page as
+    /// a placeholder — a blank page of the right size is indistinguishable from
+    /// a genuinely empty one, which is the confusion the capability exists to
+    /// prevent (proposal §9, the `apps/mac` co-signer row).
+    public static let windowCapability = "display-list-v2-window"
+    /// Most resident pages this consumer asks for at once. The producer may
+    /// narrow it to fit the reply limit and says so in the echoed `window`,
+    /// which is the authority on what was served (proposal §8).
+    public static let maxWindowPages = 24
     /// Image formats the consumer can paint (proposal §3).
     public static let imageFormats: Set<String> = ["png", "jpeg", "pdf"]
     /// Upper bound on an image resource's byte length (bytes are read from
@@ -400,12 +412,74 @@ public enum RenderingV2 {
         }
     }
 
-    public struct Page: Codable, Equatable {
+    /// The resident page window a windowed reply echoes
+    /// (`display-list-v2-window` §4). Present only when the producer accepted
+    /// the capability *and* the request said where the viewer was; the echoed
+    /// object is the authority on what was actually served, never the request.
+    public struct PageWindow: Codable, Equatable {
+        /// 1-based number of the first resident page.
+        public var firstPage: Int
+        /// How many pages are resident. May be fewer than the request asked
+        /// for: the producer narrows an over-limit window rather than declining.
+        public var pageCount: Int
+        /// Pages in the whole document — `pages[]` still has this many entries.
+        public var documentPageCount: Int
+        enum CodingKeys: String, CodingKey {
+            case firstPage = "first_page", pageCount = "page_count", documentPageCount = "document_page_count"
+        }
+        public init(firstPage: Int, pageCount: Int, documentPageCount: Int) {
+            self.firstPage = firstPage; self.pageCount = pageCount; self.documentPageCount = documentPageCount
+        }
+        /// The resident page numbers, empty when `pageCount` is 0.
+        public var pages: Range<Int> { firstPage..<(firstPage + max(0, pageCount)) }
+        public func contains(page: Int) -> Bool { pages.contains(page) }
+        /// Pages the reply did not build; the count the pane reports.
+        public var elidedCount: Int { max(0, documentPageCount - max(0, pageCount)) }
+    }
+
+    /// Residency of one page of a windowed list (`display-list-v2-window` §4).
+    ///
+    /// The producer's `PageContent` has exactly these two states and this type
+    /// mirrors it deliberately: "the page was not built" must never be
+    /// representable as "the page is empty". An `.elided` page carries its
+    /// frame (`number`, `width`, `height`) and nothing else, so the pane can
+    /// place it in the scroll column and paint a placeholder over it.
+    public enum PageContent: Equatable {
+        case resident([Item])
+        case elided
+
+        public var items: [Item] { if case .resident(let i) = self { return i }; return [] }
+        public var isResident: Bool { if case .resident = self { return true }; return false }
+    }
+
+    public struct Page: Equatable {
         public var number: Int
         public var width: Int64
         public var height: Int64
-        public var items: [Item]
-        public init(number: Int, width: Int64, height: Int64, items: [Item]) { self.number = number; self.width = width; self.height = height; self.items = items }
+        /// Residency. `items` reads through it, so unwindowed call sites are
+        /// unchanged; anything that can be reached by a windowed list must ask
+        /// `isResident` first, because an elided page has no items *and no
+        /// claim that it has none*.
+        public var content: PageContent
+        public init(number: Int, width: Int64, height: Int64, items: [Item]) {
+            self.init(number: number, width: width, height: height, content: .resident(items))
+        }
+        public init(number: Int, width: Int64, height: Int64, content: PageContent) {
+            self.number = number; self.width = width; self.height = height; self.content = content
+        }
+        /// Elided page of a windowed list: its frame, no content.
+        public static func elided(number: Int, width: Int64, height: Int64) -> Page {
+            Page(number: number, width: width, height: height, content: .elided)
+        }
+        /// Items of a resident page; **empty for an elided one**, which is why
+        /// everything reachable by a windowed list asks `isResident` first.
+        /// Assigning items makes the page resident, which is the only thing
+        /// "this page now has content" can mean.
+        public var items: [Item] {
+            get { content.items }
+            set { content = .resident(newValue) }
+        }
+        public var isResident: Bool { content.isResident }
         public var widthPt: Double { RenderingV2.points(width) }
         public var heightPt: Double { RenderingV2.points(height) }
     }
@@ -463,19 +537,33 @@ public enum RenderingV2 {
         public var fonts: [FontResource]
         public var pages: [Page]
         public var diagnostics: [Diagnostic]
+        /// `display-list-v2-window`: the resident window the producer served.
+        /// Nil on every reply on the wire today — absent means every page is
+        /// resident and this is a complete list. Omitted from the encoding when
+        /// nil, so an unwindowed list's bytes are unchanged.
+        public var window: PageWindow?
         enum CodingKeys: String, CodingKey {
             case renderFormat = "render_format", coordinateUnit = "coordinate_unit", colorSpace = "color_space", textExtraction = "text_extraction"
-            case projectId = "project_id", revision, requiredFeatures = "required_features", documents, fonts, pages, diagnostics
+            case projectId = "project_id", revision, requiredFeatures = "required_features", documents, fonts, pages, diagnostics, window
         }
         public init(renderFormat: String = RenderingV2.renderFormat, coordinateUnit: String = RenderingV2.coordinateUnit,
                     colorSpace: String = RenderingV2.colorSpace, textExtraction: String = RenderingV2.textExtraction,
                     projectId: String, revision: Int, requiredFeatures: [String], documents: [DocumentResource],
-                    fonts: [FontResource], pages: [Page], diagnostics: [Diagnostic]) {
+                    fonts: [FontResource], pages: [Page], diagnostics: [Diagnostic], window: PageWindow? = nil) {
             self.renderFormat = renderFormat; self.coordinateUnit = coordinateUnit; self.colorSpace = colorSpace; self.textExtraction = textExtraction
             self.projectId = projectId; self.revision = revision; self.requiredFeatures = requiredFeatures; self.documents = documents
-            self.fonts = fonts; self.pages = pages; self.diagnostics = diagnostics
+            self.fonts = fonts; self.pages = pages; self.diagnostics = diagnostics; self.window = window
         }
         public func font(id: String) -> FontResource? { fonts.first { $0.fontId == id } }
+        /// Whether this reply is a bounded window over a larger document.
+        /// `window == nil` is the complete list every route sends today.
+        public var isWindowed: Bool { window != nil }
+        /// Whether page `number` carries content. Unwindowed: always true.
+        public func isResident(page number: Int) -> Bool {
+            pages.first { $0.number == number }?.isResident ?? false
+        }
+        /// Page numbers the producer did not build, in order.
+        public var elidedPageNumbers: [Int] { pages.filter { !$0.isResident }.map(\.number) }
     }
 
     public struct Envelope: Codable, Equatable {
@@ -629,11 +717,36 @@ public enum RenderingV2 {
         // derived from glyph runs: the pipeline declares it only for TrueType
         // resources and paints Latin Modern as `opentype-cff` (documented deviation).
         var usedFeatures: Set<String> = ["rgba-srgb", "cluster-actualtext"]
+        // `display-list-v2-window` §4: the echoed `window` is the authority on
+        // what was served, and residency must agree with it exactly. An elided
+        // page outside a windowed reply, or a resident page outside the window,
+        // is a protocol violation — never a page silently treated as empty.
+        if let w = list.window {
+            guard w.documentPageCount == list.pages.count else {
+                throw fail("invalid_display_list", "window document_page_count \(w.documentPageCount) does not match the \(list.pages.count) page entries")
+            }
+            guard w.pageCount >= 0, w.pageCount <= w.documentPageCount else {
+                throw fail("invalid_display_list", "window page_count \(w.pageCount) is outside 0...\(w.documentPageCount)")
+            }
+            guard w.firstPage >= 1, w.pageCount == 0 || w.firstPage + w.pageCount - 1 <= w.documentPageCount else {
+                throw fail("invalid_display_list", "window \(w.firstPage)...\(w.firstPage + w.pageCount - 1) runs past the \(w.documentPageCount)-page document")
+            }
+            for page in list.pages where page.isResident != w.contains(page: page.number) {
+                throw fail("invalid_display_list", page.isResident
+                    ? "page \(page.number) carries items but is outside the served window \(w.firstPage)..<\(w.firstPage + w.pageCount)"
+                    : "page \(page.number) is elided but inside the served window \(w.firstPage)..<\(w.firstPage + w.pageCount)")
+            }
+        } else if let elided = list.pages.first(where: { !$0.isResident }) {
+            throw fail("invalid_display_list", "page \(elided.number) is elided but the list declares no window; an unwindowed list is complete (display-list-v2-window §4)")
+        }
         var lastPage = 0
         for page in list.pages {
             guard page.number == lastPage + 1 else { throw fail("invalid_display_list", "page numbers must be contiguous from 1 (found \(page.number) after \(lastPage))") }
             lastPage = page.number
+            // An elided page is still a real page frame: the consumer places it
+            // in the scroll column at its known size and paints a placeholder.
             guard isPositiveTick(page.width), isPositiveTick(page.height) else { throw fail("invalid_display_list", "page \(page.number) must have positive exact width and height") }
+            guard page.isResident else { continue }
             guard Bounds.pageItems.contains(page.items.count) else { throw fail("invalid_display_list", "page \(page.number) has \(page.items.count) items (limit \(Bounds.pageItems.upperBound))") }
             for (index, item) in page.items.enumerated() {
                 let at = "page \(page.number) item \(index)"
@@ -852,6 +965,52 @@ public enum RenderingV2 {
         case (.some(let ranges), nil):
             guard Bounds.sourceRanges.contains(ranges.count) else { throw ValidationError(code: "invalid_display_list", message: "\(at): sources must list 1...\(Bounds.sourceRanges.upperBound) ranges (found \(ranges.count))") }
             for s in ranges { try validateSource(s, documents: documents, at) }
+        }
+    }
+}
+
+extension RenderingV2.Page: Codable {
+    enum CodingKeys: String, CodingKey { case number, width, height, items, resident }
+
+    /// `display-list-v2-window` §4. A resident page is today's object exactly:
+    /// `items` present, no `resident` key. An elided page carries
+    /// `"resident": false` and **no `items` key at all** — absent, not `[]`.
+    ///
+    /// The asymmetry is the fail-closed part: a page with neither `items` nor
+    /// `resident: false` is a decode error, so a consumer that never learned
+    /// about windows gets a refusal instead of a page that paints as blank.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        number = try c.decode(Int.self, forKey: .number)
+        width = try c.decode(Int64.self, forKey: .width)
+        height = try c.decode(Int64.self, forKey: .height)
+        let resident = try c.decodeIfPresent(Bool.self, forKey: .resident)
+        if let items = try c.decodeIfPresent([RenderingV2.Item].self, forKey: .items) {
+            guard resident != false else {
+                throw DecodingError.dataCorruptedError(forKey: .items, in: c,
+                    debugDescription: "page \(number) carries items but is marked resident: false")
+            }
+            content = .resident(items)
+        } else {
+            guard resident == false else {
+                throw DecodingError.keyNotFound(CodingKeys.items, .init(codingPath: decoder.codingPath,
+                    debugDescription: "page \(number) has no items and is not marked resident: false; a page with no content must say so (display-list-v2-window §4)"))
+            }
+            content = .elided
+        }
+    }
+
+    /// A resident page encodes exactly as it did before this capability
+    /// existed — no `resident` key — so every unwindowed line is byte-for-byte
+    /// unchanged (the producer's §4 asymmetry, mirrored).
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(number, forKey: .number)
+        try c.encode(width, forKey: .width)
+        try c.encode(height, forKey: .height)
+        switch content {
+        case .resident(let items): try c.encode(items, forKey: .items)
+        case .elided: try c.encode(false, forKey: .resident)
         }
     }
 }

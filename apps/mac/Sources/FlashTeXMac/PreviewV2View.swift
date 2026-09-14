@@ -195,6 +195,9 @@ enum V2Loader {
     static func preraster(_ frame: V2Frame, pixelsPerPoint: Double, dark: Bool, skipping cached: Set<String> = []) -> Prerastered {
         var images: [(token: String, image: CGImage)] = []
         for (index, page) in frame.prepared.enumerated() {
+            // An elided page has no content; the pane paints its placeholder
+            // from the frame alone and never asks for a bitmap.
+            if !page.isResident { continue }
             let token = frame.pageToken(at: index)
             if cached.contains(token) { continue }
             if let image = GlyphRunRenderer.rasterize(page, scale: pixelsPerPoint, dark: dark) { images.append((token, image)) }
@@ -264,10 +267,25 @@ extension ShellModel {
     func setLiveV2(_ on: Bool) {
         // `display-list-v2-images` rides along (proposal §1: accepted only
         // with `display-list-v2`); one assignment so a switch re-requests once.
+        //
+        // `display-list-v2-window` rides along too, now that the pane paints an
+        // elided page as a placeholder rather than as nothing — the condition
+        // the producer's co-signer row puts on sending the name at all. The
+        // name on its own changes no reply: a windowed reply needs the request
+        // to *also* carry `display_list_window`, which only happens for a
+        // document with more pages than one window holds, or after a compile
+        // that failed because the whole document would not fit (§1.0, §4).
+        // `FLASHTEX_DISPLAY_LIST_WINDOW=0` keeps it off for a session.
         var caps = requestedLayoutCapabilities
-        caps.removeAll { $0 == V2Live.capability || $0 == RenderingV2.imagesCapability }
-        if on { caps += [V2Live.capability, RenderingV2.imagesCapability] }
-        if caps != requestedLayoutCapabilities { requestedLayoutCapabilities = caps }
+        caps.removeAll { $0 == V2Live.capability || $0 == RenderingV2.imagesCapability || $0 == RenderingV2.windowCapability }
+        if on {
+            caps += [V2Live.capability, RenderingV2.imagesCapability]
+            if ProcessInfo.processInfo.environment["FLASHTEX_DISPLAY_LIST_WINDOW"] != "0" { caps.append(RenderingV2.windowCapability) }
+        }
+        if caps != requestedLayoutCapabilities {
+            requestedLayoutCapabilities = caps
+            if !on { v2WindowReset() }
+        }
     }
 
     /// Whether the applied result negotiated the live route.
@@ -349,7 +367,11 @@ extension ShellModel {
                     V2Live.note(sourceMismatch: true)
                     return .failed(refusal)
                 }
-                if !isDelta, DisplayListDelta.enabled, frame.installedBase == nil, let pageBytes = frame.pageBytes {
+                // A windowed frame is not a complete compile and must never be
+                // a delta base (display-list-v2-window §4.1/§7: `-window` and
+                // `-delta` are exclusive). The request side never asks for both;
+                // this is the belt to that braces.
+                if !isDelta, !frame.isWindowed, DisplayListDelta.enabled, frame.installedBase == nil, let pageBytes = frame.pageBytes {
                     let envelope = RenderingV2.Envelope(protocolVersion: RenderingV2.protocolVersion, id: frame.id, type: RenderingV2.messageType, payload: frame.list)
                     frame.installedBase = DisplayListDelta.installed(from: envelope, pageBytes: pageBytes, lineBytes: line.count)
                 }
@@ -540,6 +562,13 @@ extension ShellModel {
     func exportPDFV2() {
         guard case .loaded(let frame, _)? = displayListV2 else {
             captureNote = displayListV2?.isLoading == true ? "Nothing to export yet: a display list is still loading." : "Nothing to export: no display list loaded."
+            return
+        }
+        // display-list-v2-window §4.1: a windowed reply is not a complete
+        // compile and is never the source of a PDF export. Writing it would
+        // silently drop every elided page, which is far worse than refusing.
+        if let window = frame.window, window.elidedCount > 0 {
+            captureNote = "Export refused: this preview is a \(window.pageCount)-page window over a \(window.documentPageCount)-page document (\(window.elidedCount) page\(window.elidedCount == 1 ? "" : "s") not loaded). A PDF must be the whole document — use Export Exact PDF, or turn the page window off and recompile."
             return
         }
         let panel = NSSavePanel()
@@ -841,7 +870,9 @@ struct PreviewV2Pane: View {
                       zoom: model.previewZoom, onFitScale: { model.previewFitScale = $0 },
                       // "the pdf moves to where the changes are happening" (CaretFollow.swift)
                       follow: model.caretFollow.request,
-                      onUserScroll: { model.caretFollow.userDidScrollPreview() }) { hit in
+                      onUserScroll: { model.caretFollow.userDidScrollPreview() },
+                      // display-list-v2-window: keep the resident pages under the reader.
+                      onVisiblePages: { model.v2ViewportDidShow(pages: $0) }) { hit in
             model.navigateV2(hit)
         }
     }
@@ -931,7 +962,22 @@ private struct V2PaneHeader: View {
                 Spacer()
                 Button("Open…") { model.openDisplayListV2Panel() }.controlSize(.small).fixedSize()
                 Button("Export PDF (v2)…") { model.exportPDFV2() }.controlSize(.small).fixedSize()
-                    .disabled({ if case .loaded = model.displayListV2 { false } else { true } }())
+                    .disabled({
+                        guard case .loaded(let frame, _) = model.displayListV2 else { return true }
+                        // display-list-v2-window §4.1: a windowed frame is not a
+                        // complete compile and is never a PDF's source.
+                        return frame.isWindowed
+                    }())
+                    .help(model.displayListV2?.frame?.isWindowed == true
+                          ? "Unavailable while the preview is a page window: a PDF must be the whole document (display-list-v2-window §4.1)."
+                          : "Export the v2 display list as PDF through the preview's draw routine.")
+            }
+            if let window = model.displayListV2?.frame?.window, window.elidedCount > 0 {
+                // Never silent: the reader is looking at part of a document and
+                // the pane says so, with the range it actually holds.
+                Text("Showing pages \(window.firstPage)–\(window.firstPage + window.pageCount - 1) of \(window.documentPageCount) · \(window.elidedCount) page\(window.elidedCount == 1 ? "" : "s") not loaded · caret sync and PDF export are off for them")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    .accessibilityIdentifier("v2-window")
             }
             if let notices = model.displayListV2?.frame?.imageNotices, !notices.isEmpty {
                 // display-list-v2-images: refused image bytes (stale hash, symlink,
@@ -967,6 +1013,9 @@ struct PreviewV2View: View {
     var follow: CaretFollowController.Request? = nil
     /// Reported when the reader scrolls this pane by hand.
     var onUserScroll: (() -> Void)? = nil
+    /// `display-list-v2-window`: the page range the viewport covers, reported
+    /// when it changes so the resident window can follow the reader.
+    var onVisiblePages: ((ClosedRange<Int>) -> Void)? = nil
     let onSelect: (V2Geometry.Hit) -> Void
     @Environment(\.displayScale) private var displayScale
 
@@ -1000,7 +1049,7 @@ struct PreviewV2View: View {
                     }
                 }
                 .padding(24)
-                .background(PreviewAnchorKeeper(layout: layout, follow: follow, onUserScroll: onUserScroll))
+                .background(PreviewAnchorKeeper(layout: layout, follow: follow, onUserScroll: onUserScroll, onVisiblePages: onVisiblePages))
             }
             .onChange(of: fit, initial: true) { _, f in onFitScale?(f) }
         }
@@ -1072,12 +1121,54 @@ private struct PageV2View: View, Equatable {
     // `stale` is not part of the equality: nothing drawn depends on it, and the
     // loaded -> stale -> loaded toggle of every keystroke re-evaluated every page.
     static func == (a: PageV2View, b: PageV2View) -> Bool {
-        a.pageToken == b.pageToken && a.page.number == b.page.number
+        a.pageToken == b.pageToken && a.page.number == b.page.number && a.page.isResident == b.page.isResident
             && a.dark == b.dark && a.scale == b.scale && a.displayScale == b.displayScale && a.caretHighlights == b.caretHighlights
     }
 
     var body: some View {
         let size = CGSize(width: page.widthPt * scale, height: page.heightPt * scale)
+        // display-list-v2-window: an elided page was never built, so there is
+        // nothing to rasterize and nothing to hit-test. It must not be drawn as
+        // a blank page of the right size — that is indistinguishable from a
+        // genuinely empty page, the exact confusion the capability exists to
+        // prevent. It gets its frame, a visibly provisional fill, and a label
+        // that says the page is not loaded rather than that it is empty.
+        if !page.isResident { return AnyView(placeholder(size: size)) }
+        return AnyView(resident(size: size))
+    }
+
+    /// A page the window did not cover: same geometry, unmistakably unpainted.
+    private func placeholder(size: CGSize) -> some View {
+        let ink: Color = dark ? Color(white: 0.42) : Color(white: 0.52)
+        let fill: Color = dark ? Color(white: 0.205) : Color(white: 0.925)
+        return Rectangle()
+            .fill(fill)
+            .frame(width: size.width, height: size.height)
+            // Dashed, not solid: a reader scrolling past sees at a glance that
+            // this page is a stand-in and the one above it was real.
+            .overlay {
+                Rectangle().strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [6, 4])).foregroundStyle(ink.opacity(0.85))
+            }
+            .overlay {
+                VStack(spacing: 4) {
+                    Image(systemName: "doc.plaintext").font(.system(size: min(34, max(14, size.height * 0.06)))).foregroundStyle(ink)
+                    Text("Page \(page.number)").font(.callout.weight(.medium)).foregroundStyle(ink)
+                    Text("not loaded yet").font(.caption).foregroundStyle(ink.opacity(0.9))
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Page \(page.number), not loaded yet. Scroll here to load it.")
+            }
+            .shadow(radius: 2)
+            // No `contentShape`/`onTapGesture`/`onContinuousHover`: there is no
+            // provenance on this page, so click-to-source would have to guess.
+            .overlay(alignment: .bottomTrailing) {
+                Text("page \(page.number) · v2 · outside window").font(.caption2)
+                    .foregroundStyle(ink).padding(4)
+            }
+            .help("This page is outside the loaded page window; scroll to it and it is requested.")
+    }
+
+    private func resident(size: CGSize) -> some View {
         // Reading the slot through `image(for:)` subscribes this page to its bitmap's arrival.
         let bitmap = V2PageRasterizer.shared.image(for: prepared, pageToken: pageToken, pixelsPerPoint: Double(scale * displayScale), dark: dark)
         // A stale page keeps its label and colour: the previous frame stays on screen
@@ -1098,7 +1189,7 @@ private struct PageV2View: View, Equatable {
                     PageV2Marks(scale: scale, caretHighlights: caretHighlights, hover: hover).equatable().allowsHitTesting(false)
                 }
             }
-        canvas
+        return canvas
             .contentShape(Rectangle())
             .onContinuousHover { phase in
                 switch phase {

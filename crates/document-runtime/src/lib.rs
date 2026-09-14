@@ -251,6 +251,17 @@ pub struct Session {
     /// `payload.project_root` on every compile request. `None` keeps the
     /// frozen runtime-v1 request bytes unchanged.
     project_root: Option<String>,
+    /// PROPOSAL (display-list-v2-window): sent as `payload.display_list_window`
+    /// on every compile request. `None` keeps the frozen runtime-v1 request
+    /// bytes unchanged.
+    display_list_window: Option<DisplayListWindow>,
+}
+/// PROPOSAL (display-list-v2-window): the requested page window, forwarded
+/// verbatim as `payload.display_list_window`.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct DisplayListWindow {
+    pub first_page: u32,
+    pub page_count: u32,
 }
 impl Session {
     pub fn spawn(executable: impl AsRef<Path>, limits: Limits) -> Result<Self, String> {
@@ -295,6 +306,7 @@ impl Session {
             completed_snapshots_enabled: false,
             completed_snapshot: None,
             project_root: None,
+            display_list_window: None,
         })
     }
     /// Directory the producer reads `\includegraphics` files from, forwarded
@@ -310,6 +322,15 @@ impl Session {
     }
     pub fn project_root(&self) -> Option<&str> {
         self.project_root.as_deref()
+    }
+    /// PROPOSAL (display-list-v2-window): requested window forwarded per
+    /// request as `payload.display_list_window`. Applies to requests
+    /// submitted after this call.
+    pub fn set_display_list_window(&mut self, window: Option<DisplayListWindow>) {
+        self.display_list_window = window;
+    }
+    pub fn display_list_window(&self) -> Option<DisplayListWindow> {
+        self.display_list_window
     }
     pub fn submit(&mut self, request: Request) -> Result<(), String> {
         self.submit_with_capabilities(request, Vec::new())
@@ -411,6 +432,7 @@ impl Session {
             self.limits.max_frame,
             &capabilities,
             self.project_root.as_deref(),
+            self.display_list_window,
         )?;
         let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
         if self.latest.values().any(|(_, id)| id == &request.id)
@@ -777,13 +799,14 @@ pub fn validate_project_root(root: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 fn encode(r: &Request, limit: usize, capabilities: &[String]) -> Result<Vec<u8>, String> {
-    encode_rooted(r, limit, capabilities, None)
+    encode_rooted(r, limit, capabilities, None, None)
 }
 fn encode_rooted(
     r: &Request,
     limit: usize,
     capabilities: &[String],
     project_root: Option<&str>,
+    display_list_window: Option<DisplayListWindow>,
 ) -> Result<Vec<u8>, String> {
     if r.id.is_empty()
         || r.id.len() > 128
@@ -815,6 +838,9 @@ fn encode_rooted(
         layout_capabilities: &'a [String],
         #[serde(skip_serializing_if = "Option::is_none")]
         project_root: Option<&'a str>,
+        /// PROPOSAL (display-list-v2-window): requested page window.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        display_list_window: Option<DisplayListWindow>,
     }
     #[derive(Serialize)]
     struct Envelope<'a> {
@@ -835,6 +861,7 @@ fn encode_rooted(
             documents: &r.documents,
             layout_capabilities: capabilities,
             project_root,
+            display_list_window,
         },
     };
     let mut bytes = serde_json::to_vec(&envelope).map_err(|e| e.to_string())?;
@@ -907,7 +934,13 @@ fn validate_reply_value(v: Value, r: &Request, requested: &[String]) -> Result<V
         !requested.contains(cap)
             || !matches!(
                 cap.as_str(),
-                "rules-v1" | "font-hints-v1" | "display-list-v2" | "display-list-v2-images"
+                "rules-v1"
+                    | "font-hints-v1"
+                    | "display-list-v2"
+                    | "display-list-v2-images"
+                    // PROPOSAL display-list-v2-window: allow the worker to echo
+                    // acceptance of the windowed layout capability.
+                    | "display-list-v2-window"
             )
     }) {
         return Err("compiler accepted unknown or unrequested capability".into());
@@ -918,6 +951,13 @@ fn validate_reply_value(v: Value, r: &Request, requested: &[String]) -> Result<V
         && !accepted.iter().any(|cap| cap == "display-list-v2")
     {
         return Err("compiler accepted display-list-v2-images without display-list-v2".into());
+    }
+    // PROPOSAL display-list-v2-window §2: honoured only together with
+    // `display-list-v2`; the window shrinks the v2 sibling's `pages`.
+    if accepted.iter().any(|cap| cap == "display-list-v2-window")
+        && !accepted.iter().any(|cap| cap == "display-list-v2")
+    {
+        return Err("compiler accepted display-list-v2-window without display-list-v2".into());
     }
 
     if !matches!(p["status"].as_str(), Some("ok" | "recovered" | "failed"))
@@ -963,8 +1003,21 @@ fn validate_reply_value(v: Value, r: &Request, requested: &[String]) -> Result<V
         }
         span(&diagnostic["source"])?;
     }
+    // PROPOSAL display-list-v2-window: the producer's v1 fallback skips
+    // elided pages, so a windowed reply's `pages` numbers are only
+    // contiguous-from-1 when the window starts at page 1; otherwise require
+    // strictly increasing page numbers instead of `index + 1`.
+    let windowed = accepted.iter().any(|cap| cap == "display-list-v2-window");
+    let mut previous_page_number: Option<u64> = None;
     for (index, page) in p["pages"].as_array().unwrap().iter().enumerate() {
-        if page["number"].as_u64() != Some(index as u64 + 1)
+        let page_number = page["number"].as_u64();
+        let number_ok = if windowed {
+            page_number.is_some_and(|n| previous_page_number.is_none_or(|prev| n > prev))
+        } else {
+            page_number == Some(index as u64 + 1)
+        };
+        previous_page_number = page_number;
+        if !number_ok
             || !["width_pt", "height_pt"].iter().all(|key| {
                 page[*key]
                     .as_f64()
@@ -1078,10 +1131,10 @@ mod project_root_tests {
     fn absent_root_keeps_legacy_request_bytes_and_present_root_is_forwarded() {
         let r = request();
         let legacy = encode(&r, 1 << 20, &[]).unwrap();
-        assert_eq!(encode_rooted(&r, 1 << 20, &[], None).unwrap(), legacy);
+        assert_eq!(encode_rooted(&r, 1 << 20, &[], None, None).unwrap(), legacy);
         assert!(!String::from_utf8_lossy(&legacy).contains("project_root"));
         let caps = vec!["display-list-v2-images".to_string()];
-        let rooted = encode_rooted(&r, 1 << 20, &caps, Some("/tmp/proj")).unwrap();
+        let rooted = encode_rooted(&r, 1 << 20, &caps, Some("/tmp/proj"), None).unwrap();
         let v: Value = serde_json::from_slice(&rooted).unwrap();
         assert_eq!(v["payload"]["project_root"], "/tmp/proj");
         assert_eq!(
@@ -1089,6 +1142,24 @@ mod project_root_tests {
             "display-list-v2-images"
         );
         assert_eq!(v["payload"]["entry_path"], "main.tex");
+    }
+    #[test]
+    fn absent_window_keeps_legacy_request_bytes_and_present_window_is_forwarded() {
+        // PROPOSAL display-list-v2-window: payload.display_list_window is
+        // omitted entirely when unset, and forwarded verbatim when set.
+        let r = request();
+        let legacy = encode(&r, 1 << 20, &[]).unwrap();
+        assert_eq!(encode_rooted(&r, 1 << 20, &[], None, None).unwrap(), legacy);
+        assert!(!String::from_utf8_lossy(&legacy).contains("display_list_window"));
+        let caps = vec!["display-list-v2-window".to_string()];
+        let window = DisplayListWindow {
+            first_page: 3,
+            page_count: 2,
+        };
+        let windowed = encode_rooted(&r, 1 << 20, &caps, None, Some(window)).unwrap();
+        let v: Value = serde_json::from_slice(&windowed).unwrap();
+        assert_eq!(v["payload"]["display_list_window"]["first_page"], 3);
+        assert_eq!(v["payload"]["display_list_window"]["page_count"], 2);
     }
     #[test]
     fn image_capability_is_accepted_only_when_requested_with_display_list() {
@@ -1112,6 +1183,68 @@ mod project_root_tests {
             reply(serde_json::json!(["display-list-v2-images"])),
             &r,
             &both
+        )
+        .is_err());
+    }
+    #[test]
+    fn window_capability_is_accepted_only_when_requested_with_display_list() {
+        // PROPOSAL display-list-v2-window: same shape as the images guard above.
+        let r = request();
+        let reply = |caps: Value| {
+            serde_json::json!({"protocol_version":1,"id":"r1","type":"compile_result",
+                "payload":{"project_id":"p","revision":1,"status":"ok","pages":[],
+                "diagnostics":[],"layout_capabilities":caps}})
+        };
+        let both: Vec<String> = vec!["display-list-v2".into(), "display-list-v2-window".into()];
+        assert!(validate_reply_value(reply(serde_json::json!(both)), &r, &both).is_ok());
+        // Not requested: refused.
+        let plain: Vec<String> = vec!["display-list-v2".into()];
+        assert!(validate_reply_value(reply(serde_json::json!(both)), &r, &plain).is_err());
+        // Window echoed without display-list-v2: refused.
+        assert!(validate_reply_value(
+            reply(serde_json::json!(["display-list-v2-window"])),
+            &r,
+            &both
+        )
+        .is_err());
+    }
+    #[test]
+    fn windowed_v1_pages_require_only_strictly_increasing_numbers() {
+        // PROPOSAL display-list-v2-window: the v1 `pages` subset skips elided
+        // pages, so a window starting after page 1 is not contiguous-from-1.
+        let r = request();
+        let windowed_caps: Vec<String> =
+            vec!["display-list-v2".into(), "display-list-v2-window".into()];
+        let plain_caps: Vec<String> = vec!["display-list-v2".into()];
+        let page = |n: u64| {
+            serde_json::json!({"number":n,"width_pt":612.0,"height_pt":792.0,"items":[]})
+        };
+        let reply = |pages: Value, caps: &[String]| {
+            serde_json::json!({"protocol_version":1,"id":"r1","type":"compile_result",
+                "payload":{"project_id":"p","revision":1,"status":"ok","pages":pages,
+                "diagnostics":[],"layout_capabilities":caps}})
+        };
+        // Window starting at page 3: pages [3, 4] are strictly increasing but
+        // not contiguous from 1 — accepted only because the reply is windowed.
+        assert!(validate_reply_value(
+            reply(serde_json::json!([page(3), page(4)]), &windowed_caps),
+            &r,
+            &windowed_caps
+        )
+        .is_ok());
+        // Non-increasing (duplicate/out-of-order) page numbers stay refused.
+        assert!(validate_reply_value(
+            reply(serde_json::json!([page(3), page(3)]), &windowed_caps),
+            &r,
+            &windowed_caps
+        )
+        .is_err());
+        // Without the window capability, the original contiguous-from-1 rule
+        // still applies and a page-3-first reply is refused.
+        assert!(validate_reply_value(
+            reply(serde_json::json!([page(3), page(4)]), &plain_caps),
+            &r,
+            &plain_caps
         )
         .is_err());
     }
