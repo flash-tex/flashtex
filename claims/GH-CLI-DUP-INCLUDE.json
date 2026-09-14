@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/cli-dedupe-missing-include",
-  "gh_ref": "https://github.com/flash-tex/flashtex/issues/2",
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/313",
   "machine": "mac-m5pro-dq222",
-  "note": "daniel-parent (Max 20x, not daniel-vpclaude): flashtex CLI reports a missing \\input twice (project missing_file + compiler 'included file not found' at the same byte). Dedupe in crates/flashtex-cli/src/compile.rs only. Implementation delegated to Codex (cx slot plus, gpt-5.6-luna), independent review by cursor-agent grok; daniel-parent verifies and publishes.",
+  "note": "PR opened",
   "started_utc": "2026-09-14T05:19:02Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-CLI-DUP-INCLUDE",
-  "updated_utc": "2026-09-14T05:19:02Z"
+  "updated_utc": "2026-09-14T05:25:13Z"
 }
