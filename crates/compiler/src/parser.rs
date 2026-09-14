@@ -127,6 +127,8 @@ pub enum Inline {
     Label {
         key: String,
         value: String,
+        /// cleveref's label type (`section`, `equation`, `figure`, ...).
+        kind: String,
         span: Span,
     },
     Reference {
@@ -134,6 +136,21 @@ pub enum Inline {
         page: bool,
         /// amsmath `\eqref`: the value is typeset in parentheses.
         equation: bool,
+        span: Span,
+        /// See `Inline::Text::space_before`.
+        space_before: bool,
+    },
+    /// A `cleveref`/`hyperref` reference whose label names are resolved after
+    /// the document has been laid out. The compiler has no link backend yet;
+    /// `linked` preserves whether the source used the starred no-link form
+    /// for the future pipeline consumer.
+    CleverReference {
+        keys: Vec<String>,
+        page: bool,
+        range: bool,
+        label_only: bool,
+        capitalise: bool,
+        linked: bool,
         span: Span,
         /// See `Inline::Text::space_before`.
         space_before: bool,
@@ -721,6 +738,8 @@ pub struct Parsed {
     pub incremental_safe: bool,
     /// True when counters or the label table make layout document-global.
     pub document_global_state: bool,
+    /// `cleveref` naming options and `\crefname` overrides.
+    pub cleveref: crate::xref::CleverefConfig,
     /// `\pagecolor`: the page background, document-wide (`None`: none).
     pub page_color: Option<DeviceColor>,
     /// The default text colour when xcolor converts to a target model
@@ -810,6 +829,15 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "ref",
     "pageref",
     "eqref",
+    "cref",
+    "Cref",
+    "crefrange",
+    "Crefrange",
+    "cpageref",
+    "Cpageref",
+    "labelcref",
+    "crefname",
+    "Crefname",
     "numberwithin",
     "counterwithin",
     "counterwithout",
@@ -1216,6 +1244,7 @@ pub fn parse_project_with(
         mpfootnote_counter: 0,
         chapter_class: false,
         current_counter: None,
+        current_counter_kind: None,
         seen_labels: HashMap::new(),
         list_stack: Vec::new(),
         list_frames: Vec::new(),
@@ -1227,6 +1256,7 @@ pub fn parse_project_with(
         pending_line_break: None,
         paragraph_styles: Vec::new(),
         document_global_state: false,
+        cleveref: crate::xref::CleverefConfig::default(),
         style: TextStyle::default(),
         style_stack: Vec::new(),
         env_styles: Vec::new(),
@@ -1295,6 +1325,7 @@ pub fn parse_project_with(
         preamble_source,
         incremental_safe,
         document_global_state: p.document_global_state,
+        cleveref: p.cleveref,
         page_color: p.page_color,
         default_color: p.colors.as_ref().and_then(|c| c.default_color()),
         expansions,
@@ -1381,6 +1412,7 @@ struct P<'a> {
     /// sections, figures and equations within it.
     chapter_class: bool,
     current_counter: Option<String>,
+    current_counter_kind: Option<String>,
     seen_labels: HashMap<String, Span>,
     /// Environment name, item count, an enumitem label template if given,
     /// the `\setlist` spacing resolved when this list's `\begin` ran, and the
@@ -1409,6 +1441,7 @@ struct P<'a> {
     pending_line_break: Option<LineBreakBefore>,
     paragraph_styles: Vec<ParagraphStyle>,
     document_global_state: bool,
+    cleveref: crate::xref::CleverefConfig,
     /// Every `\bibitem`'s resolved citation label, built once by
     /// `bib::prescan` before this parse starts — see that module's doc
     /// comment for why `\cite` does not need a page-aware two-pass pass.
@@ -1499,6 +1532,8 @@ struct OpenList {
     label_star: Option<String>,
     /// The label text of the latest counted `\item` (for `label*` below).
     current_label: String,
+    /// The latest enumerate counter value, without its display punctuation.
+    current_reference: String,
     /// `series=<name>`: the counter is also saved under `series@<name>`.
     series: Option<String>,
     /// The `\begin` keys (saved for `resume*`).
@@ -1903,6 +1938,7 @@ impl P<'_> {
             // real documents put it, and in the body, where LaTeX also
             // allows it.
             "hypersetup" => self.hypersetup(span),
+            "crefname" | "Crefname" => self.cleveref_name(name, span),
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
@@ -1925,7 +1961,7 @@ impl P<'_> {
                     self.counters.step(name).unwrap_or_default()
                 };
                 if !starred {
-                    self.current_counter = Some(number.clone());
+                    self.set_current_counter(name, Some(number.clone()));
                 }
                 let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
                 if content.is_empty() {
@@ -1964,6 +2000,7 @@ impl P<'_> {
                     para.push(Inline::Label {
                         key,
                         value: self.current_counter.clone().unwrap_or_default(),
+                        kind: self.current_counter_kind.clone().unwrap_or_default(),
                         span,
                     });
                 }
@@ -1981,6 +2018,8 @@ impl P<'_> {
                     space_before,
                 });
             }
+            "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
+            | "labelcref" => self.clever_reference(name, span, para),
             "tableofcontents" => {
                 self.flush_paragraph(blocks, para);
                 self.document_global_state = true;
@@ -2078,7 +2117,7 @@ impl P<'_> {
                 } else {
                     self.flush_paragraph(blocks, para);
                     let number = self.counters.step("figure").unwrap_or_default();
-                    self.current_counter = Some(number.clone());
+                    self.set_current_counter("figure", Some(number.clone()));
                     let mut content = vec![Inline::Text {
                         text: format!("Figure {number}:"),
                         span,
@@ -2917,6 +2956,11 @@ impl P<'_> {
         ));
     }
 
+    fn set_current_counter(&mut self, kind: &str, value: Option<String>) {
+        self.current_counter_kind = value.as_ref().map(|_| kind.to_string());
+        self.current_counter = value;
+    }
+
     fn use_package(&mut self, span: Span) {
         // siunitx keys keep their braces (`output-decimal-marker={,}`).
         let raw_options = {
@@ -2948,6 +2992,9 @@ impl P<'_> {
         for package in &packages {
             self.math_packages.load_package(package);
             self.load_color_package(package, &options);
+            if package == "cleveref" {
+                self.cleveref.set_options(&options);
+            }
         }
         // xcolor.sty's `table` option loads colortbl (and so array).
         if packages.iter().any(|package| package == "xcolor")
@@ -2990,6 +3037,56 @@ impl P<'_> {
         .with_help(
             "remove that \\usepackage if you do not need it; its commands are still diagnosed when used",
         ));
+    }
+
+    fn clever_reference(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let linked = !self.take_optional_star();
+        let space_before = self.space_precedes(self.i - 1);
+        let range = matches!(name, "crefrange" | "Crefrange");
+        let page = matches!(name, "cpageref" | "Cpageref");
+        let label_only = name == "labelcref";
+        let capitalise = matches!(name, "Cref" | "Crefrange" | "Cpageref");
+        let full_span;
+        let keys = if range {
+            let (first, first_span) = self.required_group(name, span);
+            let (second, second_span) = self.required_group(name, span);
+            full_span = span.merge(first_span).merge(second_span);
+            vec![token_text(&first).trim().to_string(), token_text(&second).trim().to_string()]
+        } else {
+            let (tokens, argument_span) = self.required_group(name, span);
+            full_span = span.merge(argument_span);
+            token_text(&tokens)
+                .split(',')
+                .map(str::trim)
+                .map(str::to_string)
+                .collect()
+        };
+        self.document_global_state = true;
+        para.push(Inline::CleverReference {
+            keys,
+            page,
+            range,
+            label_only,
+            capitalise,
+            linked,
+            span: full_span,
+            space_before,
+        });
+    }
+
+    fn cleveref_name(&mut self, name: &str, span: Span) {
+        let (kind, kind_span) = self.required_group(name, span);
+        let (singular, singular_span) = self.required_group(name, span);
+        let (plural, plural_span) = self.required_group(name, span);
+        self.cleveref.set_name(
+            token_text(&kind).trim().to_string(),
+            token_text(&singular).to_string(),
+            token_text(&plural).to_string(),
+            name == "Crefname",
+        );
+        self.document_global_state = true;
+        self.current_dependencies.clear();
+        let _ = kind_span.merge(singular_span).merge(plural_span);
     }
 
     /// `\begin{multicols}{<n>}[<preface>][<premulticols>]` and `multicols*`
@@ -3340,7 +3437,7 @@ impl P<'_> {
             // zeroing here; `footnote` is not in the counter table yet.
             let number = self.counters.step("chapter").unwrap_or_default();
             self.footnote_counter = 0;
-            self.current_counter = Some(number);
+            self.set_current_counter("chapter", Some(number));
         }
         let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
         if content.is_empty() {
@@ -3468,6 +3565,7 @@ impl P<'_> {
                     counter: 0,
                     label_star: None,
                     current_label: String::new(),
+                    current_reference: String::new(),
                     series: None,
                     begin_options: Vec::new(),
                 });
@@ -3499,7 +3597,7 @@ impl P<'_> {
             self.env_styles.push(self.style);
             if self.in_body {
                 if let Some(theorem) = self.theorems.get(&environment).cloned() {
-                    self.begin_theorem(&theorem, span, para);
+                    self.begin_theorem(&theorem, &environment, span, para);
                 } else if environment == "proof" {
                     self.begin_proof(span, para);
                 }
@@ -3759,7 +3857,13 @@ impl P<'_> {
     /// glue, `\T1/cmr/m/n/10.95 (Divides)`, then `\T1/cmr/bx/n/10.95 .`;
     /// a numbered `remark` traces as italic `Remark`, italic glue,
     /// `\OT1/cmr/m/n/10.95 1`, italic `.`.
-    fn begin_theorem(&mut self, def: &TheoremDef, span: Span, para: &mut Vec<Inline>) {
+    fn begin_theorem(
+        &mut self,
+        def: &TheoremDef,
+        kind: &str,
+        span: Span,
+        para: &mut Vec<Inline>,
+    ) {
         let note = self.optional_bracket_argument();
         let head_style = def.style.head_style();
         // `\thmnumber{...\@upn{#2}}`: the number is `\textup`, so a
@@ -3783,7 +3887,7 @@ impl P<'_> {
             } else {
                 n.to_string()
             };
-            self.current_counter = Some(value.clone());
+            self.set_current_counter(kind, Some(value.clone()));
             // `\@ifnotempty{#1}{ }` sits outside `\@upn`, so the space token
             // between the name and the number is read in the head font
             // either way; the number only needs a run of its own where
@@ -3963,7 +4067,7 @@ impl P<'_> {
         let numbered = name == "equation";
         let number = if numbered {
             let number = self.counters.step("equation").unwrap_or_default();
-            self.current_counter = Some(number.clone());
+            self.set_current_counter("equation", Some(number.clone()));
             number
         } else {
             self.counters.the("equation").unwrap_or_default()
@@ -4000,6 +4104,7 @@ impl P<'_> {
                     labels.push(Inline::Label {
                         key,
                         value: number.clone(),
+                        kind: "equation".into(),
                         span: label_span,
                     });
                 }
@@ -4222,7 +4327,7 @@ impl P<'_> {
                 .unwrap_or(open);
             let number = (numbered && !unnumbered).then(|| {
                 let number = self.counters.step("equation").unwrap_or_default();
-                self.current_counter = Some(number.clone());
+                self.set_current_counter("equation", Some(number.clone()));
                 number
             });
             for (key, label_span) in row_labels {
@@ -4239,6 +4344,7 @@ impl P<'_> {
                     value: number
                         .clone()
                         .unwrap_or_else(|| self.counters.the("equation").unwrap_or_default()),
+                    kind: "equation".into(),
                     span: label_span,
                 });
             }
@@ -5616,6 +5722,7 @@ impl P<'_> {
         } else {
             value.to_string()
         };
+        self.set_current_counter("footnote", Some(number.clone()));
         let text = if name == "footnotemark" {
             None
         } else {
@@ -6005,6 +6112,13 @@ impl P<'_> {
             .find(|list| list.kind == "enumerate")
             .map(|list| list.current_label.clone())
             .unwrap_or_default();
+        let enclosing_references = self
+            .list_stack
+            .iter()
+            .take(self.list_stack.len().saturating_sub(1))
+            .filter(|list| list.kind == "enumerate")
+            .map(|list| list.current_reference.clone())
+            .collect::<Vec<_>>();
         let Some(list) = self.list_stack.last_mut() else {
             return;
         };
@@ -6039,8 +6153,37 @@ impl P<'_> {
                 _ => lists::default_label(environment, kind_depth, 0),
             },
         };
-        self.pending_item_label = Some((item.text().to_string(), span));
+        let item_text = item.text().to_string();
+        let item_reference = match &item {
+            ItemLabel::Counter { value, style, .. } => style.format(*value),
+            _ => item_text.clone(),
+        };
+        list.current_reference = item_reference.clone();
+        let reference_value = if environment == ListEnvironment::Enumerate {
+            Self::enumerate_reference_value(&enclosing_references, item_reference)
+        } else {
+            item_reference
+        };
+        self.set_current_counter("item", Some(reference_value));
+        self.pending_item_label = Some((item_text, span));
         self.pending_item = Some(item);
+    }
+
+    fn enumerate_reference_value(prefixes: &[String], current: String) -> String {
+        let mut values = prefixes.to_vec();
+        values.push(current);
+        match values.as_slice() {
+            [] => String::new(),
+            [value] => value.clone(),
+            [outer, inner] => format!("{outer}{inner}"),
+            [outer, inner, rest @ ..] => {
+                let mut value = format!("{outer}({inner})");
+                for part in rest {
+                    value.push_str(part);
+                }
+                value
+            }
+        }
     }
 
     fn push_list_frame(&mut self, environment: ListEnvironment, options: Vec<ListOption>, begin_span: Span) {
@@ -6138,6 +6281,7 @@ impl P<'_> {
             counter,
             label_star,
             current_label: String::new(),
+            current_reference: String::new(),
             series,
             begin_options,
         });
@@ -6224,7 +6368,7 @@ impl P<'_> {
     fn begin_subequations(&mut self) {
         use crate::xref::{NumberStyle, Piece};
         let parent = self.counters.step("equation").unwrap_or_default();
-        self.current_counter = Some(parent.clone());
+        self.set_current_counter("equation", Some(parent.clone()));
         let value = self.counters.value("equation").unwrap_or(0);
         self.counters.set_value("parentequation", value);
         self.counters.set_value("equation", 0);
@@ -6457,6 +6601,9 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // `note_links_unclickable`, so a second "not implemented" line here
         // would only suggest the *text* is wrong, which it is not.
         "hyperref" => options.iter().all(|option| hyperref_option_is_layout_neutral(option)),
+        // cleveref's unknown package options are intentionally ignored by
+        // the package, so loading it is silent for every option here.
+        "cleveref" => true,
         // Colour packages (crate::color) with every option replayed.
         "xcolor" => crate::color::Colors::xcolor(&options.join(","), None).1.is_empty(),
         "color" => crate::color::Colors::color_sty(&options.join(",")).1.is_empty(),
