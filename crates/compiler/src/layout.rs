@@ -14,6 +14,7 @@ use crate::export::{self, ExportFont};
 use crate::math::{self, MathBox};
 use crate::parser::{
     Block, FontSizeLevel, Inline, ListLeftMargin, MathRow, ParagraphStyle, TextFamily, TextStyle,
+    CMR_EX_PER_EM,
 };
 use crate::Span;
 use flashtex_font_engine::core14::Core14;
@@ -2296,14 +2297,19 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 emit(c, &u.content, size, font);
                 let width = c.content_end - start_x;
                 let baseline = c.y;
-                // ulem.sty `\UL@setULdepth`: `\dp` of `\hbox{{(j}}` is the
-                // max of `(` and `j`. For cmr/lmr that is `(` at 0.25em.
-                // Core 14 has no per-glyph TFM, so this layout uses 0.25em.
-                // The rule is `\hrule height -0.25em depth (0.25em+0.4pt)`:
-                // top at 0.25em below the baseline (pdflatex 10pt
-                // `rule(-2.5+2.9)`; 12pt `rule(-3.0+3.4)`).
-                let ul_depth = 0.25 * size;
-                c.ensure_extents(0.0, ul_depth + u.thickness_pt);
+                // Core 14 has no per-glyph TFM: `\uline` uses the cmr/lmr
+                // 0.25em `(` depth; kernel `\underline` uses hbox depth 0
+                // (true for no-descender words). `\sout` uses cmr ex, not
+                // Times x-height, so 0.55ex matches pdflatex within 0.01pt.
+                let descender = 0.25 * size;
+                let ex = CMR_EX_PER_EM * size;
+                let (top, extra_depth) = u.geom.rule_top_and_depth(
+                    u.thickness_pt,
+                    0.0,
+                    descender,
+                    ex,
+                );
+                c.ensure_extents(0.0, extra_depth.max(0.0));
                 if width > 0.0 && u.thickness_pt > 0.0 {
                     c.pages
                         .last_mut()
@@ -2317,7 +2323,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                             span: u.span,
                             font,
                             rule: Some(RuleGeometry {
-                                y_pt: round2(baseline + ul_depth),
+                                y_pt: round2(baseline + top),
                                 width_pt: round2(width),
                                 height_pt: round2(u.thickness_pt),
                             }),
