@@ -105,8 +105,7 @@ pub struct Expansion {
 /// target (`\\textwidth`, `\\parindent`, `\\fboxsep`, ...) is rewritten to a
 /// host command the converter maps back, so the parser sees the original
 /// name with its argument still a control sequence, not consumed as a
-/// skip assignment, which would yield `\\addtolength{\\}`. Class lengths
-/// are not real registers here: `0.5\\textwidth` is diagnosed, not guessed.
+/// skip assignment, which would yield `\\addtolength{\\}`.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
@@ -1063,9 +1062,7 @@ pub fn expand_project_with_cache(
     }
     let masked: &str = prepared[entry].text.as_ref();
     let reusable = cache.as_ref().is_some_and(|c| {
-        !c.lent
-            && c.entry_path == document.path
-            && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
+        !c.lent && c.entry_path == document.path && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
     });
     let expansion = if reusable {
         update_cache(cache.as_mut().expect("checked"), documents, entry, &prepared)

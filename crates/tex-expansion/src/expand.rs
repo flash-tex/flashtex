@@ -156,12 +156,6 @@ pub(crate) struct State {
     pub in_csname: u32,
     /// Host option, see `Engine::set_emit_unbalanced_close`.
     pub emit_unbalanced_close: bool,
-    /// Class lengths left undefined so they pass through to the typesetter
-    /// (`\textwidth` and friends). Empty unless a host fills it.
-    pub pass_through_dimens: Rc<HashMap<String, i64>>,
-    /// False when the host's table is only an approximation: `scan_dimen`
-    /// then warns on use.
-    pub pass_through_exact: bool,
 }
 
 impl State {
@@ -199,8 +193,6 @@ impl State {
             edef_depth,
             in_csname,
             emit_unbalanced_close,
-            pass_through_dimens,
-            pass_through_exact,
         } = self;
         conditionals == &new.conditionals
             && *pending_global == new.pending_global
@@ -218,9 +210,6 @@ impl State {
             && *edef_depth == new.edef_depth
             && *in_csname == new.in_csname
             && *emit_unbalanced_close == new.emit_unbalanced_close
-            && *pass_through_exact == new.pass_through_exact
-            && (Rc::ptr_eq(pass_through_dimens, &new.pass_through_dimens)
-                || pass_through_dimens == &new.pass_through_dimens)
             && match (after_assignment, &new.after_assignment) {
                 (None, None) => true,
                 (Some(a), Some(b)) => crate::scopes::token_eq_mapped(a, b, f),
@@ -409,10 +398,6 @@ pub struct Engine {
     /// Span of the last token read from source text (the document or an
     /// `\input` file; preludes run in engines of their own).
     last_text_span: Option<Span>,
-    /// Set by `scan_dimen`/`scan_glue` when a scaled class length or a
-    /// calc-style expression is rejected, so the pending register
-    /// assignment leaves the target unchanged.
-    dimen_rejected: bool,
 }
 
 impl Engine {
@@ -453,7 +438,6 @@ impl Engine {
             opened_files: Vec::new(),
             last_origin: None,
             last_text_span: None,
-            dimen_rejected: false,
         }
     }
 
@@ -519,22 +503,6 @@ impl Engine {
     /// recover from it at its own position. The error is still recorded.
     pub fn set_emit_unbalanced_close(&mut self, emit: bool) {
         self.st.emit_unbalanced_close = emit;
-    }
-
-    /// Class lengths this engine leaves undefined (`\textwidth` and
-    /// friends) so the typesetter still sees them. A host that knows
-    /// their values can supply them as `<internal dimen>`; the default
-    /// table is empty so a factor times an undefined class length is
-    /// diagnosed rather than guessed.
-    pub fn set_pass_through_dimens(&mut self, dimens: HashMap<String, i64>, exact: bool) {
-        self.st.pass_through_dimens = Rc::new(dimens);
-        self.st.pass_through_exact = exact;
-    }
-
-    /// Keep the current pass-through table but mark it approximated
-    /// (non-standard class) or exact.
-    pub fn set_pass_through_exact(&mut self, exact: bool) {
-        self.st.pass_through_exact = exact;
     }
 
     /// Start reading `text` before the rest of the current input, as a
@@ -3147,18 +3115,12 @@ impl Engine {
                 self.st.scopes.set_count(idx, v, global);
             }
             RegisterKind::Dimen => {
-                self.dimen_rejected = false;
                 let v = self.scan_dimen();
-                if !self.dimen_rejected {
-                    self.st.scopes.set_dimen(idx, v, global);
-                }
+                self.st.scopes.set_dimen(idx, v, global);
             }
             RegisterKind::Skip => {
-                self.dimen_rejected = false;
                 let v = self.scan_glue();
-                if !self.dimen_rejected {
-                    self.st.scopes.set_skip(idx, v, global);
-                }
+                self.st.scopes.set_skip(idx, v, global);
             }
             RegisterKind::Toks => {
                 // `\toks0={...}` or `\toks0=\toks1` / `\toks0=\the\toks1`.
@@ -3304,18 +3266,11 @@ impl Engine {
                     self.st.scopes.set_count(idx, self.st.scopes.count(idx) + d, global);
                 }
                 RegisterKind::Dimen => {
-                    self.dimen_rejected = false;
                     let d = self.scan_dimen();
-                    if !self.dimen_rejected {
-                        self.st.scopes.set_dimen(idx, self.st.scopes.dimen(idx) + d, global);
-                    }
+                    self.st.scopes.set_dimen(idx, self.st.scopes.dimen(idx) + d, global);
                 }
                 RegisterKind::Skip => {
-                    self.dimen_rejected = false;
                     let d = self.scan_glue();
-                    if self.dimen_rejected {
-                        return;
-                    }
                     let mut g = self.st.scopes.skip(idx);
                     g.value += d.value;
                     if d.stretch_fil == g.stretch_fil {
@@ -3603,17 +3558,11 @@ impl Engine {
                 match self.meaning_of_token(&t) {
                     Meaning::RegisterAlias(RegisterKind::Dimen, idx) => {
                         self.next_raw_token();
-                        if self.reject_calc_if_binop(t.span) {
-                            return 0;
-                        }
                         let v = self.st.scopes.dimen(idx);
                         return if neg { -v } else { v };
                     }
                     Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
                         self.next_raw_token();
-                        if self.reject_calc_if_binop(t.span) {
-                            return 0;
-                        }
                         let v = self.st.scopes.skip(idx).value;
                         return if neg { -v } else { v };
                     }
@@ -3639,11 +3588,6 @@ impl Engine {
                         let v = scale_decimal(n, "", per);
                         self.skip_one_optional_space();
                         return if neg { -v } else { v };
-                    }
-                    Meaning::Undefined => {
-                        if let Some(v) = self.take_undefined_dimen(&t, neg) {
-                            return v;
-                        }
                     }
                     _ => {}
                 }
@@ -3692,16 +3636,10 @@ impl Engine {
                 let v = match self.meaning_of_token(&t) {
                     Meaning::RegisterAlias(RegisterKind::Dimen, idx) => {
                         self.next_raw_token();
-                        if self.reject_calc_if_binop(t.span) {
-                            return 0;
-                        }
                         Some(self.st.scopes.dimen(idx))
                     }
                     Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
                         self.next_raw_token();
-                        if self.reject_calc_if_binop(t.span) {
-                            return 0;
-                        }
                         Some(self.st.scopes.skip(idx).value)
                     }
                     Meaning::Primitive(Primitive::Dimen) => {
@@ -3717,17 +3655,6 @@ impl Engine {
                     Meaning::Primitive(Primitive::Dimexpr) => {
                         self.next_raw_token();
                         Some(self.scan_expr(true))
-                    }
-                    Meaning::Undefined => {
-                        match self.take_undefined_factor_dimen(&t, &int_part, &frac, neg) {
-                            Some(v) => Some(v),
-                            None if self.dimen_rejected => return 0,
-                            None => {
-                                let n: i64 = int_part.parse().unwrap_or(0);
-                                let sp = scale_decimal(n, &frac, 65536.0);
-                                return if neg { -sp } else { sp };
-                            }
-                        }
                     }
                     _ => None,
                 };
@@ -3749,142 +3676,6 @@ impl Engine {
         } else {
             sp
         }
-    }
-
-    /// An undefined control sequence used as a dimen with no leading factor:
-    /// host-supplied pass-through value, calc, a named class-length gap, or
-    /// "not a known length".
-    fn take_undefined_dimen(&mut self, t: &Token, neg: bool) -> Option<i64> {
-        let name = token_cs_name(t)?;
-        self.next_raw_token();
-        if is_calc_cs(name) {
-            self.reject_calc(t.span);
-            return Some(0);
-        }
-        if self.reject_calc_if_binop(t.span) {
-            return Some(0);
-        }
-        if let Some(v) = self.lookup_pass_through_dimen(name, t.span) {
-            return Some(if neg { -v } else { v });
-        }
-        self.err(
-            format!("{} is not a known length", self.cs_display(t)),
-            t.span,
-        );
-        Some(0)
-    }
-
-    /// `<factor>` times an undefined cs: host-supplied pass-through, a
-    /// scaled class-length diagnostic, calc, or "not a known length".
-    fn take_undefined_factor_dimen(
-        &mut self,
-        t: &Token,
-        int_part: &str,
-        frac: &str,
-        neg: bool,
-    ) -> Option<i64> {
-        let name = token_cs_name(t)?;
-        self.next_raw_token();
-        if is_calc_cs(name) {
-            self.reject_calc(t.span);
-            return None;
-        }
-        if self.reject_calc_if_binop(t.span) {
-            return None;
-        }
-        if let Some(v) = self.lookup_pass_through_dimen(name, t.span) {
-            return Some(v);
-        }
-        if is_class_length_name(name) {
-            let expr = format_factor_cs(neg, int_part, frac, &self.cs_display(t));
-            self.reject_scaled_class(&expr, t.span);
-            return None;
-        }
-        self.err(
-            format!("{} is not a known length", self.cs_display(t)),
-            t.span,
-        );
-        None
-    }
-
-    fn peek_adjacent_plus_or_minus(&mut self) -> bool {
-        match self.peek_one_expanding() {
-            Some(t) => matches!(t.kind, TokenKind::Char('+', _) | TokenKind::Char('-', _)),
-            None => false,
-        }
-    }
-
-    fn reject_calc_if_binop(&mut self, span: Span) -> bool {
-        if !self.peek_adjacent_plus_or_minus() {
-            return false;
-        }
-        self.reject_calc(span);
-        true
-    }
-
-    fn reject_calc(&mut self, span: Span) {
-        self.warn("calc-style length expressions are not supported", span);
-        self.dimen_rejected = true;
-        self.consume_calc_tail();
-    }
-
-    fn reject_scaled_class(&mut self, expr: &str, span: Span) {
-        self.warn(
-            format!(
-                "scaled class lengths like {expr} are not supported yet; the length is left unchanged"
-            ),
-            span,
-        );
-        self.dimen_rejected = true;
-    }
-
-    /// Eat the rest of a calc term (`-2cm`, `+1pt`, `{Hello}` after
-    /// `\widthof`) without consuming `\relax` or a grouping closer.
-    fn consume_calc_tail(&mut self) {
-        loop {
-            match self.peek_one_expanding() {
-                None => break,
-                Some(t) => match &t.kind {
-                    TokenKind::ControlSequence(name) if name == "relax" => break,
-                    TokenKind::Char(_, CatCode::EndGroup) => break,
-                    TokenKind::Char(_, CatCode::BeginGroup) => {
-                        let _ = self.scan_braced_group(false);
-                    }
-                    TokenKind::Char('+', _) | TokenKind::Char('-', _) => {
-                        self.next_raw_token();
-                    }
-                    TokenKind::Char(c, _) if c.is_ascii_digit() || *c == '.' || *c == ',' => {
-                        self.next_raw_token();
-                    }
-                    TokenKind::Char(_, CatCode::Letter) => {
-                        self.next_raw_token();
-                    }
-                    TokenKind::ControlSequence(name) if is_class_length_name(name) || is_calc_cs(name) => {
-                        self.next_raw_token();
-                    }
-                    TokenKind::ControlSequence(_) => match self.meaning_of_token(&t) {
-                        Meaning::RegisterAlias(RegisterKind::Dimen | RegisterKind::Skip, _) => {
-                            self.next_raw_token();
-                        }
-                        _ => break,
-                    },
-                    _ => break,
-                },
-            }
-        }
-    }
-
-    /// A still-undefined class length the host (or the article 10pt
-    /// default table) supplied as an `<internal dimen>`.
-    fn lookup_pass_through_dimen(&mut self, name: &str, span: Span) -> Option<i64> {
-        let v = *self.st.pass_through_dimens.get(name)?;
-        if !self.st.pass_through_exact {
-            self.warn(
-                format!("\\{name} value is approximated (not a standard class)"),
-                span,
-            );
-        }
-        Some(v)
     }
 
     fn unit_sp(&mut self, unit: &str) -> f64 {
@@ -3928,17 +3719,11 @@ impl Engine {
             if let TokenKind::ControlSequence(_) = t.kind {
                 if let Meaning::RegisterAlias(RegisterKind::Skip, idx) = self.meaning_of_token(&t) {
                     self.next_raw_token();
-                    if self.reject_calc_if_binop(t.span) {
-                        return Glue::fixed(0);
-                    }
                     return self.st.scopes.skip(idx);
                 }
             }
         }
         let value = self.scan_dimen();
-        if self.dimen_rejected {
-            return Glue::fixed(0);
-        }
         let mut g = Glue::fixed(value);
         self.skip_spaces();
         if self.maybe_consume_keyword("plus") {
@@ -4874,53 +4659,6 @@ fn round_decimals(digits: &str) -> i64 {
     (a + 1) / 2
 }
 
-fn token_cs_name(t: &Token) -> Option<&str> {
-    match &t.kind {
-        TokenKind::ControlSequence(name) => Some(name.as_str()),
-        _ => None,
-    }
-}
-
-/// Class / page lengths this engine leaves undefined so the typesetter
-/// still sees them. A host may supply values through
-/// `Engine::set_pass_through_dimens`; without that, a factor times one
-/// of these names is diagnosed rather than guessed.
-fn is_class_length_name(name: &str) -> bool {
-    matches!(
-        name,
-        "textwidth"
-            | "textheight"
-            | "paperwidth"
-            | "paperheight"
-            | "parindent"
-            | "linewidth"
-            | "columnwidth"
-            | "hsize"
-    )
-}
-
-fn is_calc_cs(name: &str) -> bool {
-    matches!(name, "widthof" | "heightof" | "depthof")
-}
-
-fn format_factor_cs(neg: bool, int_part: &str, frac: &str, cs: &str) -> String {
-    let mut s = String::new();
-    if neg {
-        s.push('-');
-    }
-    s.push_str(int_part);
-    if !frac.is_empty() {
-        s.push('.');
-        s.push_str(frac);
-    }
-    s.push_str(cs);
-    s
-}
-
-fn default_pass_through_dimens() -> HashMap<String, i64> {
-    HashMap::new()
-}
-
 /// tex.web §107 `xn_over_d`: x*n/d truncated toward zero.
 fn xn_over_d(x: i64, n: i64, d: i64) -> i64 {
     let r = (x.abs() as i128 * n as i128) / d as i128;
@@ -5336,8 +5074,6 @@ fn base_state(tex_only: bool) -> State {
         edef_depth: 0,
         in_csname: 0,
         emit_unbalanced_close: false,
-        pass_through_dimens: Rc::new(default_pass_through_dimens()),
-        pass_through_exact: true,
     }
 }
 

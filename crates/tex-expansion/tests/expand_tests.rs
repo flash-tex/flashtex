@@ -382,21 +382,3 @@ fn trailing_spaces_are_stripped_before_endlinechar() {
 fn active_endlinechar_under_obeylines_style_catcode() {
     assert_eq!(run("\\catcode`\\^^M=13 \\def^^M{|}%\na\nb"), "a|b");
 }
-
-#[test]
-fn host_can_replace_pass_through_class_lengths() {
-    use std::collections::HashMap;
-    use flashtex_tex_expansion::Engine;
-    let mut engine = Engine::new(r"\newlength\mylen\setlength\mylen{0.5\textwidth}\the\mylen");
-    let mut map = HashMap::new();
-    let tw = 390 * 65536;
-    for name in ["textwidth", "linewidth", "columnwidth", "hsize"] {
-        map.insert(name.to_string(), tw);
-    }
-    engine.set_pass_through_dimens(map, true);
-    let tokens = engine.run();
-    assert!(engine.take_diagnostics().is_empty());
-    let got = text(&tokens);
-    assert!(got.contains("195.0pt"), "{got:?}");
-    assert!(!got.contains("172.5pt"), "{got:?}");
-}

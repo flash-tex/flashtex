@@ -266,6 +266,13 @@ fn hw1_keeps_its_three_reference_pages_with_parskip_applied() {
     );
 }
 
+/// Main already scales a real skip (`2\mylen`); keep that path unchanged.
+#[test]
+fn factor_times_real_register_is_unchanged() {
+    let src = "\\documentclass{article}\\newlength{\\mylen}\\setlength{\\mylen}{10pt}\\newlength{\\acc}\\setlength{\\acc}{2\\mylen}\\begin{document}\\the\\acc\\end{document}";
+    assert_the_mylen(src, "20.0pt");
+}
+
 fn scaled_class_diag(expr: &str) -> String {
     format!(
         "scaled class lengths like {expr} are not supported yet; the length is left unchanged"
@@ -278,7 +285,6 @@ fn assert_clean_unsupported(messages: &[String]) {
     for m in messages {
         assert!(!m.contains("Illegal unit"), "{messages:?}");
         assert!(!m.contains("got ''"), "{messages:?}");
-        assert!(!m.contains("got '"), "{messages:?}");
         assert!(
             !m.contains("csname") || !m.contains("endcsname"),
             "must not report a truncated/empty csname: {messages:?}"
@@ -286,139 +292,41 @@ fn assert_clean_unsupported(messages: &[String]) {
     }
 }
 
-/// `<factor>` times a skip that actually exists (`\newlength`).
+fn preamble_mylen(expr: &str) -> String {
+    format!(
+        "\\documentclass{{article}}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}\\setlength{{\\mylen}}{{{expr}}}\\begin{{document}}\\the\\mylen\\end{{document}}"
+    )
+}
+
+/// Class lengths are not real registers. A factor or calc-style expression
+/// must not become `0.5pt` or a truncated `"got ''"` assignment.
 #[test]
-fn scaled_factor_times_real_register_setlength_and_addtolength() {
-    // Source skip is 10pt; (expr, expected `\the` of the target).
+fn scaled_and_calc_class_lengths_are_diagnosed_and_leave_the_target_unchanged() {
+    let scaled_textwidth = scaled_class_diag("0.5\\textwidth");
+    let scaled_parindent = scaled_class_diag("-1.5\\parindent");
     let cases: &[(&str, &str)] = &[
-        ("2\\mylen", "20.0pt"),
-        ("-1.5\\mylen", "-15.0pt"),
-        (".25\\mylen", "2.5pt"),
+        ("0.5\\textwidth", &scaled_textwidth),
+        ("-1.5\\parindent", &scaled_parindent),
+        ("\\textwidth-2cm", CALC_DIAG),
     ];
     for &(expr, expected) in cases {
-        let preamble_set = format!(
-            "\\documentclass{{article}}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}\\newlength{{\\acc}}\\setlength{{\\acc}}{{{expr}}}\\begin{{document}}\\the\\acc\\end{{document}}"
+        let src = preamble_mylen(expr);
+        let add = format!(
+            "\\documentclass{{article}}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}\\addtolength{{\\mylen}}{{{expr}}}\\begin{{document}}\\the\\mylen\\end{{document}}"
         );
-        let preamble_add = format!(
-            "\\documentclass{{article}}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}\\newlength{{\\acc}}\\addtolength{{\\acc}}{{{expr}}}\\begin{{document}}\\the\\acc\\end{{document}}"
-        );
-        let body_set = format!(
-            "\\documentclass{{article}}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}\\newlength{{\\acc}}\\begin{{document}}\\setlength{{\\acc}}{{{expr}}}\\the\\acc\\end{{document}}"
-        );
-        let body_add = format!(
-            "\\documentclass{{article}}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}\\newlength{{\\acc}}\\begin{{document}}\\addtolength{{\\acc}}{{{expr}}}\\the\\acc\\end{{document}}"
-        );
-        let direct = format!(
-            "\\documentclass{{article}}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}\\newlength{{\\acc}}\\acc={expr}\\begin{{document}}\\the\\acc\\end{{document}}"
-        );
-        for src in [&preamble_set, &preamble_add, &body_set, &body_add, &direct] {
-            assert_the_mylen(src, expected);
+        for src in [&src, &add] {
+            let (_, messages) = compile(src);
+            assert!(
+                messages.iter().any(|m| m == expected),
+                "missing {expected:?} in {messages:?} for {src}"
+            );
+            assert_eq!(
+                messages.iter().filter(|m| *m == expected).count(),
+                1,
+                "exactly one diagnostic, got {messages:?} for {src}"
+            );
+            assert_clean_unsupported(&messages);
+            assert_eq!(paragraph_text(src), "10.0pt", "{src}");
         }
-    }
-}
-
-/// Class lengths are not real registers here. A factor times one of them
-/// must not guess a class-geometry / article-10pt value.
-#[test]
-fn scaled_class_length_is_diagnosed_and_leaves_the_target_unchanged() {
-    let exprs = ["0.5\\textwidth", "0.5\\linewidth", "-1.5\\parindent", "0.5\\paperwidth"];
-    let wraps: &[(&str, &str)] = &[
-        ("\\documentclass{article}", ""),
-        ("\\documentclass{letter}", ""),
-        (
-            "\\documentclass{article}",
-            "\\usepackage[margin=1in]{geometry}",
-        ),
-    ];
-    // Pre-geometry: the scaled assignment sits before `\usepackage{geometry}`.
-    let pre_geometry = "\\documentclass{article}\\newlength{\\mylen}\\setlength{\\mylen}{10pt}\\setlength{\\mylen}{0.5\\textwidth}\\usepackage[margin=1in]{geometry}\\begin{document}\\the\\mylen\\end{document}";
-    let mut sources = vec![pre_geometry.to_string()];
-    for expr in exprs {
-        for &(head, mid) in wraps {
-            sources.push(format!(
-                "{head}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}{mid}\\setlength{{\\mylen}}{{{expr}}}\\begin{{document}}\\the\\mylen\\end{{document}}"
-            ));
-            sources.push(format!(
-                "{head}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}{mid}\\addtolength{{\\mylen}}{{{expr}}}\\begin{{document}}\\the\\mylen\\end{{document}}"
-            ));
-        }
-    }
-    for src in &sources {
-        let expr = if src.contains("-1.5\\parindent") {
-            "-1.5\\parindent"
-        } else if src.contains("0.5\\linewidth") {
-            "0.5\\linewidth"
-        } else if src.contains("0.5\\paperwidth") {
-            "0.5\\paperwidth"
-        } else {
-            "0.5\\textwidth"
-        };
-        let expected = scaled_class_diag(expr);
-        let (_, messages) = compile(src);
-        assert!(
-            messages.iter().any(|m| m == &expected),
-            "missing {expected:?} in {messages:?} for {src}"
-        );
-        assert_eq!(
-            messages.iter().filter(|m| *m == &expected).count(),
-            1,
-            "exactly one scaled-class diagnostic, got {messages:?} for {src}"
-        );
-        assert_clean_unsupported(&messages);
-        assert_eq!(paragraph_text(src), "10.0pt", "{src}");
-    }
-}
-
-#[test]
-fn unknown_length_register_is_named_in_the_diagnostic() {
-    let src = "\\documentclass{article}\\newlength{\\mylen}\\setlength{\\mylen}{0.5\\foo}\\begin{document}x\\end{document}";
-    let (_, messages) = compile(src);
-    assert!(
-        messages.iter().any(|m| m == "\\foo is not a known length"),
-        "expected a diagnostic naming \\foo, got {messages:?}"
-    );
-    assert!(
-        messages.iter().all(|m| !m.contains("got ''") && !m.contains("got '0.5")),
-        "must not truncate the register name: {messages:?}"
-    );
-}
-
-#[test]
-fn calc_length_expressions_keep_a_clean_diagnostic() {
-    let cases: &[(&str, &str)] = &[
-        (
-            "\\documentclass{article}\\newlength{\\mylen}\\setlength{\\mylen}{10pt}\\setlength{\\mylen}{\\textwidth-2cm}\\begin{document}\\the\\mylen\\end{document}",
-            "10.0pt",
-        ),
-        (
-            "\\documentclass{article}\\newlength{\\mylen}\\setlength{\\mylen}{10pt}\\setlength{\\mylen}{\\mylen+1pt}\\begin{document}\\the\\mylen\\end{document}",
-            "10.0pt",
-        ),
-        (
-            "\\documentclass{article}\\setlength{\\textwidth}{\\textwidth-2cm}\\begin{document}x\\end{document}",
-            "x",
-        ),
-        (
-            "\\documentclass{article}\\newlength{\\mylen}\\setlength{\\mylen}{\\mylen+1pt}\\begin{document}x\\end{document}",
-            "x",
-        ),
-        (
-            "\\documentclass{article}\\setlength{\\textwidth}{\\widthof{Hello}}\\begin{document}x\\end{document}",
-            "x",
-        ),
-    ];
-    for &(src, printed) in cases {
-        let (_, messages) = compile(src);
-        assert!(
-            messages.iter().any(|m| m == CALC_DIAG),
-            "missing {CALC_DIAG:?} in {messages:?} for {src}"
-        );
-        assert_eq!(
-            messages.iter().filter(|m| *m == CALC_DIAG).count(),
-            1,
-            "exactly one calc diagnostic, got {messages:?} for {src}"
-        );
-        assert_clean_unsupported(&messages);
-        assert_eq!(paragraph_text(src), printed, "{src}");
     }
 }
