@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/problems-panel-structured",
-  "gh_ref": "#277",
+  "gh_ref": "#345",
   "machine": "mac-m5pro-dq222",
-  "note": "part (4): Mac Problems panel decodes code/labels/notes/help; categories off code; Fix... applies help.replacement",
+  "note": "published as #345; review follow-ups on the PR",
   "started_utc": "2026-09-14T07:09:46Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-277-mac",
-  "updated_utc": "2026-09-14T07:18:09Z"
+  "updated_utc": "2026-09-14T08:36:05Z"
 }
