@@ -11,6 +11,7 @@
 
 pub mod date;
 pub use date::TodayDate;
+pub mod abstractenv;
 pub mod adapter;
 pub(crate) mod amsthm;
 pub mod cff;
@@ -222,6 +223,15 @@ pub fn render_cached(
                 Some(d)
             })
             .collect();
+        // `abstract`: the pipeline sets what the compiler reported as an
+        // unimplemented environment (`adapter::Doc::superseded`).
+        diagnostics.retain(|d| {
+            !doc.superseded.iter().any(|s| {
+                d.sources.iter().any(|r| {
+                    r.start_byte == s.start && paths.get(s.document.0).copied() == Some(&*r.path)
+                })
+            })
+        });
         diagnostics.extend(doc.diagnostics.iter().cloned());
         diagnostics.extend(doc.limitations.iter().map(|(code, span, message)| {
             display::Diagnostic::warning(

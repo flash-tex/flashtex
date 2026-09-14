@@ -341,6 +341,9 @@ pub enum Block {
         /// The paragraph is (part of) an `itemize`/`enumerate` `\item`
         /// (compiler `Block::ListItem`): LaTeX's `\list` geometry applies.
         list: Option<ListGeom>,
+        /// The paragraph is set at a size other than `\normalsize`
+        /// (`abstract`'s `\small`); see [`SizedPara`].
+        sized: Option<SizedPara>,
     },
     Heading {
         level: u8,
@@ -480,6 +483,14 @@ pub struct ListGeom {
     /// the glue every paragraph of the item adds. Article's `\@list<i>`
     /// value for the nesting level, or an enumitem `parsep=` key.
     pub parsep: crate::style::Skip,
+    /// The innermost list's `\itemindent`, in `em` of the body font: the
+    /// first line of an item starts `\leftmargin + \itemindent` in. Zero for
+    /// every list the classes set; natbib's author-year `\thebibliography`
+    /// is the one that is not — `\NAT@bibsetup` (natbib.sty line 642) sets
+    /// `\leftmargin\bibhang` (1 em) and `\itemindent-\leftmargin`, so each
+    /// entry's first line is flush at the margin and its continuation lines
+    /// hang 1 em in.
+    pub itemindent_em: f64,
 }
 
 /// One list level's `\leftmargin`.
@@ -494,6 +505,12 @@ pub enum ListMargin {
     /// for `\alph`/`\Alph`/`\roman`/`\Roman`/`\arabic`), set in the
     /// body font.
     Widest(String),
+    /// A `\leftmargin` stated in `em` of the body font, which is where
+    /// natbib's `\bibhang` (`1em`, natbib.sty line 638) comes from. Kept as
+    /// `em` rather than points so it is resolved against the font's own
+    /// `\fontdimen6` at typeset time (cmr10 at 11 pt: 10.95003 pt), which is
+    /// what `\setlength{\bibhang}{1em}` measured.
+    Em(f64),
 }
 
 /// Body commands that decide the header and footer (latex.ltx
@@ -510,6 +527,40 @@ pub enum ChromeEvent {
     PageNumbering(flashtex_class_geometry::Numbering),
     /// `\setcounter{page}{n}`.
     SetPage(i64),
+}
+
+/// A paragraph set at a size other than `\normalsize`, with everything
+/// `\@setfontsize` changes for it: the size itself, *that size's own*
+/// `\baselineskip`, and any length the environment resolves in the new
+/// size's `em` (`\fontdimen6` of the face its own words are set in, which
+/// only the typesetter can measure).
+///
+/// The one producer today is `abstract` (article.cls 377-387): the centred
+/// `\small\bfseries` head and the `\small` `quotation` body.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SizedPara {
+    /// `\@setfontsize`'s first argument, in points.
+    pub size_pt: f64,
+    /// The `\baselineskip` that size selects (`size1x.clo`'s table), in
+    /// force for every line of this paragraph.
+    pub baselineskip_pt: f64,
+    /// `\parindent` in `em` of this size, replacing the class's
+    /// (`quotation`'s `\listparindent 1.5em`, which `\list` copies into
+    /// `\parindent` and `\@item` re-adds as `\itemindent` on the first
+    /// line). `None` keeps the class's `\parindent`.
+    pub parindent_em: Option<f64>,
+    /// `\vspace` after the paragraph, in `em` of the font its *last word*
+    /// is set in — the abstract head's `\vspace{-.5em}`, which sits inside
+    /// the `{\bfseries ...}` group, so it is half a `\bfseries` quad.
+    /// Added to whatever `\@endparenv` puts there (`\addvspace` cannot
+    /// absorb it: it is emitted through `\vadjust`, before the penalty and
+    /// the closing skip).
+    pub vspace_after_em: f64,
+    /// The closing `\@endparenv` skip of the environment this paragraph
+    /// ends, when the size redefined `\@list i` (`\small`'s own `\topsep`,
+    /// 4pt at a 10pt base rather than `\normalsize`'s 8pt). `None` keeps
+    /// the class's.
+    pub close_skip: Option<crate::style::Skip>,
 }
 
 /// How a paragraph-shape environment began (see [`Block::Paragraph`]).
@@ -540,6 +591,10 @@ pub struct Doc {
     /// Indices of the blocks after a `\clearpage`/`\cleardoublepage` (see
     /// `clear_page_blocks`).
     pub page_starts: Vec<usize>,
+    /// `\begin` commands the compiler reported as unimplemented that the
+    /// pipeline sets itself (`abstract`): its diagnostic is dropped, the
+    /// way `toc::superseded_commands` drops the contents-list ones.
+    pub superseded: Vec<Span>,
 }
 
 /// Label values (`\ref`) and the pages they fell on in a previous layout
@@ -1420,6 +1475,7 @@ pub fn adapt_cached(
                     addvspace_before: unit.addvspace_before,
                     endlist_adjust: unit.endlist_adjust,
                     list,
+                    sized: None,
                 });
                 after_heading = false;
             }
@@ -1430,6 +1486,11 @@ pub fn adapt_cached(
         let list = crate::toc::list_blocks(kind, span, eject, &toc_settings, &toc_records, labels, &chapter_starts);
         blocks.splice(at..at, list);
     }
+    // `abstract`: the compiler sets its body as plain text, so the class's
+    // own shape (the centred `\small\bfseries` head and the `\small`
+    // `quotation`) is read from the source bytes here, before the
+    // `env_close` pass below derives the closing skips from the styles.
+    let superseded = crate::abstractenv::apply(texts, &mut blocks, &style);
     // `\end{...}`: the last paragraph of a run of same-style paragraphs
     // closes the environment (two adjacent environments of one style are
     // read as one; the compiler does not mark the boundary).
@@ -1478,6 +1539,7 @@ pub fn adapt_cached(
         default_color: parsed.default_color,
         math_colors: math_colors(&parsed.blocks),
         page_starts,
+        superseded,
     }
 }
 
@@ -1894,11 +1956,23 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                         _ => addvspace_before += seps.itemsep,
                     }
                 }
+                // natbib's author-year `thebibliography`, and only when the
+                // compiler really did drop the entry's marker (`\@biblabel`
+                // is `\hfill`): a build whose compiler still numbers the
+                // entries keeps the class's label-width geometry, so this
+                // never draws a `[1]` on top of the hanging indent.
+                let natbib_bib = env == "thebibliography"
+                    && natbib_author_year(src)
+                    && label.as_ref().is_none_or(|(text, _)| text.is_empty());
                 list = Some(ListGeom {
                     level: *level,
-                    margins: list_margins(src, at.start, size),
+                    margins: list_margins(src, at.start, size, natbib_bib),
                     label: label.clone(),
                     parsep: seps.parsep_skip,
+                    // `\NAT@bibsetup`: `\itemindent-\leftmargin`, so the
+                    // entry's first line is flush at the margin and the rest
+                    // of the entry hangs `\bibhang` in.
+                    itemindent_em: if natbib_bib { -1.0 } else { 0.0 },
                 });
             }
         }
@@ -2719,6 +2793,100 @@ fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str)> {
     stack
 }
 
+/// Whether the text at `span` was generated by a `\cite`-family command
+/// rather than copied from the source.
+///
+/// Every run of a citation carries the whole command's span, and the
+/// generated text can coincidentally be exactly as long as the command:
+/// `\citet{knuthplass1981}` is 22 bytes and sets the 22 characters of
+/// "Knuth and Plass (1981)". A blank in *generated* text stands for a space
+/// token — interword glue of `\fontdimen2` — while a blank in the source's
+/// own bytes is kept as a character, so that coincidence would set the
+/// citation's spaces as blank glyphs (LMRoman10's 0.5 em instead of cmr10's
+/// 0.33333 em: 1.825 pt too wide per space at 11 pt, and cumulative).
+fn generated_citation(source: &str, span: Span) -> bool {
+    let Some(text) = source.get(span.start..span.end) else {
+        return false;
+    };
+    let Some(rest) = text.strip_prefix('\\') else {
+        return false;
+    };
+    let end = rest
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(rest.len());
+    // natbib's `\Citet`/`\Citep`/... uppercase the author list, not the name
+    // of the command family.
+    let name = match rest[..end].strip_prefix("Cite") {
+        Some(tail) => format!("cite{tail}"),
+        None => rest[..end].to_string(),
+    };
+    matches!(
+        name.as_str(),
+        "cite"
+            | "citet"
+            | "citep"
+            | "citealt"
+            | "citealp"
+            | "citeauthor"
+            | "citefullauthor"
+            | "citeyear"
+            | "citeyearpar"
+            | "citenum"
+            | "citetext"
+    )
+}
+
+/// Whether the document loads natbib in its author-year mode, which is the
+/// only natbib setting that changes `thebibliography`'s own geometry: its
+/// `\@biblabel` is `\hfill` (no label at all) and `\@bibsetup` is
+/// `\NAT@bibsetup` (`\leftmargin\bibhang`, `\itemindent-\leftmargin`).
+/// `numbers`/`super` keep the class's `[n]` label and label-width margin.
+///
+/// The options are read the way natbib resolves them: `\ProcessOptions`
+/// executes them in *declaration* order, and `numbers`/`super` come before
+/// `authoryear`, so `[authoryear,numbers]` and `[numbers,authoryear]` are
+/// both author-year — `authoryear` is declared last of the three and wins.
+pub(crate) fn natbib_author_year(source: &str) -> bool {
+    let Some(options) = natbib_options(source) else {
+        return false;
+    };
+    let given: Vec<&str> = options.split(',').map(str::trim).collect();
+    if given.contains(&"authoryear") {
+        return true;
+    }
+    !given.contains(&"numbers") && !given.contains(&"super")
+}
+
+/// The `[...]` of the `\usepackage` that loads natbib, or `None` when the
+/// document does not load it.
+fn natbib_options(source: &str) -> Option<String> {
+    let mut from = 0;
+    while let Some(at) = find_command(&source[from..], "usepackage").map(|i| from + i) {
+        let rest = &source[at + "\\usepackage".len()..];
+        let rest = rest.trim_start();
+        let (options, rest) = match rest.strip_prefix('[') {
+            Some(inner) => match inner.find(']') {
+                Some(close) => (inner[..close].to_string(), inner[close + 1..].trim_start()),
+                None => (String::new(), rest),
+            },
+            None => (String::new(), rest),
+        };
+        if let Some(inner) = rest.strip_prefix('{') {
+            if let Some(close) = inner.find('}') {
+                if inner[..close]
+                    .split(',')
+                    .map(str::trim)
+                    .any(|package| package == "natbib")
+                {
+                    return Some(options);
+                }
+            }
+        }
+        from = at + "\\usepackage".len();
+    }
+    None
+}
+
 /// article's `\leftmargin<i>` for nesting `depth` (1-based), in em of
 /// the body font (`\leftmarginv`/`vi` are 1em).
 fn article_leftmargin_em(depth: usize) -> f64 {
@@ -2770,7 +2938,7 @@ fn widest_label(env: &str, depth: usize, label_key: Option<&str>, template: Opti
 /// class's `\leftmargin<i>` unless a `\setlist` naming the environment or
 /// the `\begin` options set enumitem's `leftmargin` (`*` = the widest
 /// label's width plus `\labelsep`; a `<dimen>` as given).
-fn list_margins(source: &str, at: usize, size: u32) -> Vec<ListMargin> {
+fn list_margins(source: &str, at: usize, size: u32, natbib_bib: bool) -> Vec<ListMargin> {
     let calls = setlist_calls(source);
     let class_margin = |depth: usize| ListMargin::Fixed(parse_dimen(&format!("{}em", article_leftmargin_em(depth)), size).unwrap_or(0.0));
     list_stack_at(source, at)
@@ -2779,6 +2947,14 @@ fn list_margins(source: &str, at: usize, size: u32) -> Vec<ListMargin> {
         .map(|(i, (env, options))| {
             let depth = i + 1;
             if *env == "thebibliography" {
+                // natbib's author-year `\@bibsetup` (`\NAT@bibsetup`,
+                // natbib.sty line 642) replaces the class's label-width
+                // geometry with `\leftmargin\bibhang`; its `\@biblabel` is
+                // `\hfill`, so there is no label to measure. Under `numbers`
+                // natbib keeps `\NAT@bibsetnum`, which is the class rule.
+                if natbib_bib {
+                    return ListMargin::Em(1.0);
+                }
                 // latex.ltx/article.cls `\thebibliography`:
                 // `\settowidth\labelwidth{\@biblabel{#1}}`,
                 // `\leftmargin\labelwidth \advance\leftmargin\labelsep`.
@@ -2812,7 +2988,7 @@ fn list_margins(source: &str, at: usize, size: u32) -> Vec<ListMargin> {
 }
 
 /// Byte offset of `\name` (as a whole control word, outside comments).
-fn find_command(source: &str, name: &str) -> Option<usize> {
+pub(crate) fn find_command(source: &str, name: &str) -> Option<usize> {
     let needle = format!("\\{name}");
     let bytes = source.as_bytes();
     let mut i = 0;
@@ -3013,6 +3189,57 @@ fn has_blank_line(source: &str) -> bool {
 /// its end (see [`Styles::closes_at`]).
 type StyleInterval = (usize, usize, crate::nfss::Command, bool);
 
+/// `\url{...}` and `\nolinkurl{...}` (`url.sty`, which `hyperref` loads):
+/// their argument is read as *raw source bytes*, and the URL is set in the
+/// typewriter family.
+///
+/// Two things follow for [`style_intervals`], and both are why these are not
+/// ordinary [`text_font_command`] entries:
+///
+/// 1. The argument is **opaque**. url.sty makes every character of a URL
+///    "other" before it is read, so `%`, `#`, `_`, `&` and `\` inside it are
+///    literal (the compiler does the same in `parser::url_argument`). The
+///    style scan must not treat a `%` in `\url{.../a%20b}` as a comment, or
+///    everything to the end of that line — including a following `\textbf{}`
+///    — silently loses its style.
+/// 2. The interval covers the **whole command**, from the backslash through
+///    the closing brace, not just the braced argument. The compiler gives
+///    every run it splits a URL into the span of the entire `\url{...}`
+///    (`parser::push_url_text`), and the style is looked up at `span.start`,
+///    which is the backslash.
+fn url_command(name: &str) -> bool {
+    matches!(name, "url" | "nolinkurl")
+}
+
+/// The end of a `\url`/`\nolinkurl` argument that starts at the `{` at
+/// `open`: the matching `}`, counting nested braces and reading `\{` / `\}`
+/// as literal characters rather than grouping. This mirrors
+/// `compiler::parser::url_argument` byte for byte, so the interval this
+/// produces covers exactly the bytes that compiler put in the URL's span.
+/// `None` when the argument is never closed.
+fn url_argument_end(bytes: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut i = open + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if matches!(bytes.get(i + 1), Some(b'{' | b'}')) => i += 2,
+            b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    None
+}
+
 /// The NFSS commands of a text font command with a braced argument
 /// (latex.ltx 14213-14222 `\DeclareTextFontCommand`, and `\emph`).
 fn text_font_command(name: &str) -> Option<&'static [crate::nfss::Command]> {
@@ -3147,6 +3374,25 @@ fn style_intervals(source: &str) -> Vec<StyleInterval> {
                 // The control word's letters.
                 let word_end = i + 1 + rest[1..].bytes().take_while(u8::is_ascii_alphabetic).count();
                 let name = &source[i + 1..word_end];
+                if url_command(name) {
+                    // `\url{...}`: typewriter over the whole command, and the
+                    // argument's bytes are skipped rather than scanned (see
+                    // `url_command`).
+                    let mut j = word_end;
+                    while j < bytes.len() && (bytes[j] as char).is_whitespace() {
+                        j += 1;
+                    }
+                    if j < bytes.len() && bytes[j] == b'{' {
+                        if let Some(close) = url_argument_end(bytes, j) {
+                            use crate::nfss::{Command as C, FamilyKind as F};
+                            out.push((i, close + 1, C::Family(F::Tt), false));
+                            i = close + 1;
+                            continue;
+                        }
+                    }
+                    i = word_end;
+                    continue;
+                }
                 if let Some(commands) = text_font_command(name) {
                     let mut j = word_end;
                     while j < bytes.len() && (bytes[j] as char).is_whitespace() {
@@ -4569,7 +4815,10 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 }
                 // Per-character sources. Macro replacement text shares the
                 // invocation span; keep that attribution for every char.
-                let exact = span.end - span.start == text.len() && !reference_spans.contains(span);
+                let citation = generated_citation(source, *span);
+                let exact = span.end - span.start == text.len()
+                    && !reference_spans.contains(span)
+                    && !citation;
                 let mut chars: Vec<(char, CharSrc)> = Vec::new();
                 for (offset, ch) in text.char_indices() {
                     let src = if exact {
@@ -4624,7 +4873,17 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     // bytes, verbatim included -- keeps a literal blank.
                     if ch == ' ' && !exact {
                         flush(&mut run, &mut items, &mut factor);
-                        items.push(Item::Space { style, factor, no_break: false });
+                        // natbib writes every space of its own as
+                        // `\NAT@spacechar` (`\ `, natbib.sty line 596) and
+                        // the note's own gap is normally a tie (`p.~7`): both
+                        // are control spaces, which ignore the space factor.
+                        // So "et al. (1990)" and "p. 7" keep `\fontdimen2`
+                        // where a space *token* after a `.` would also add
+                        // `\fontdimen7` — 1.2167 pt at 11 pt, and abbreviated
+                        // author lists and page notes are exactly where a `.`
+                        // sits in front of a space.
+                        let space_factor = if citation { 1000 } else { factor };
+                        items.push(Item::Space { style, factor: space_factor, no_break: false });
                         factor = 1000;
                         continue;
                     }
@@ -4826,6 +5085,60 @@ mod tests {
         }
     }
 
+    /// natbib's `\ProcessOptions` (not the starred form) executes options in
+    /// *declaration* order, and `numbers`/`super` are declared before
+    /// `authoryear`, so the last of the three to be declared decides.
+    #[test]
+    fn natbib_author_year_is_the_default_and_numbers_turns_it_off() {
+        let load = |options: &str| {
+            format!("\\documentclass{{article}}\\usepackage[{options}]{{natbib}}\\begin{{document}}x\\end{{document}}")
+        };
+        assert!(natbib_author_year(&load("")));
+        assert!(natbib_author_year(&load("round")));
+        assert!(natbib_author_year(&load("authoryear,round")));
+        assert!(natbib_author_year(&load("numbers,authoryear")));
+        assert!(natbib_author_year(&load("authoryear,numbers")));
+        assert!(!natbib_author_year(&load("numbers")));
+        assert!(!natbib_author_year(&load("super")));
+        assert!(!natbib_author_year(&load("numbers,square")));
+        // A document that never loads natbib keeps the class geometry.
+        assert!(!natbib_author_year(
+            "\\documentclass{article}\\begin{document}x\\end{document}"
+        ));
+        // natbib among several packages in one `\usepackage`.
+        assert!(natbib_author_year(
+            "\\usepackage{amsmath, natbib}\\begin{document}x\\end{document}"
+        ));
+        assert!(!natbib_author_year(
+            "\\usepackage{amsmath}\\usepackage{nameref}\\begin{document}x"
+        ));
+    }
+
+    /// A citation's runs all carry the command's own span, and the text they
+    /// set can be exactly as long as it — `\citet{knuthplass1981}` is 22
+    /// bytes and sets 22 characters — so the length test alone would treat
+    /// generated text as the source's own bytes and keep its blanks as
+    /// glyphs instead of interword glue.
+    #[test]
+    fn citation_text_is_never_the_source_s_own_bytes() {
+        let span = |source: &str| Span::new(0, source.len());
+        for source in [
+            "\\citet{knuthplass1981}",
+            "\\citep[see][p.~7]{k}",
+            "\\cite{k}",
+            "\\citealp{k}",
+            "\\citeyearpar{k}",
+            "\\Citet{k}",
+            "\\Citeauthor{k}",
+            "\\citetext{cf.}",
+        ] {
+            assert!(generated_citation(source, span(source)), "{source}");
+        }
+        for source in ["\\citation{k}", "\\emph{k}", "plain words", "\\ref{k}"] {
+            assert!(!generated_citation(source, span(source)), "{source}");
+        }
+    }
+
     #[test]
     fn text_symbols_logos_rules_kerns_and_control_space_become_items() {
         let src = "\\AA ngstr \\LaTeX{} and \\TeX\\ x \\S\\,4 \\rule[-1pt]{2pt}{3pt} y";
@@ -4980,5 +5293,77 @@ mod tests {
         // "A." and "B;" stay 1000 (§1034: a code above 1000 after an uppercase
         // letter), ")" keeps the factor of the "." before it.
         assert_eq!(factors, vec![3000, 1250, 2000, 1000, 1000, 3000]);
+    }
+
+    /// The family every character of an item carries, as one string of
+    /// `r`/`t`/`s` per word (`\rmfamily`/`\ttfamily`/`\sffamily`).
+    fn families(items: &[Item]) -> String {
+        use crate::nfss::FamilyKind;
+        items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Word(w) => Some(w.segments.iter().map(|s| match s.style.family {
+                    FamilyKind::Rm => 'r',
+                    FamilyKind::Tt => 't',
+                    FamilyKind::Sf => 's',
+                })),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    /// url.sty sets a URL in `\UrlFont`, whose default is `\ttfamily`
+    /// (url.sty 4.3 `\def\Url@FormatString`), and hyperref keeps that font.
+    /// Measured against pdflatex (TeX Live 2025, 11pt `article`, T1): the
+    /// `\hbox` of `\url{https://example.org/flashtex/glossary}` is
+    /// 209.35973pt, the same as `\texttt` of the same string, where the
+    /// roman setting this used to produce is 32pt narrower.
+    #[test]
+    fn url_and_nolinkurl_are_set_in_the_typewriter_family() {
+        let it = items("A \\url{https://example.org/x} B");
+        assert_eq!(families(&it), "rtr", "{it:?}");
+        let it = items("A \\nolinkurl{https://example.org/x} B");
+        assert_eq!(families(&it), "rtr", "{it:?}");
+        // `\href` typesets only its second argument, in the ambient family.
+        let it = items("A \\href{https://example.org/x}{link text} B");
+        assert_eq!(families(&it), "rrrr", "{it:?}");
+    }
+
+    /// A URL's argument is read as raw source bytes (url.sty makes every
+    /// character "other"; the compiler does the same in
+    /// `parser::url_argument`), so the style scan must not interpret what is
+    /// inside it. A `%` used to start a comment and swallow the rest of the
+    /// line, losing the style of everything after the URL.
+    #[test]
+    fn a_percent_or_brace_inside_a_url_does_not_disturb_a_later_font_command() {
+        let it = items("A \\url{https://e.org/a%20b} \\textbf{bold} C");
+        assert_eq!(families(&it), "rtrr", "{it:?}");
+        let Item::Word(bold) = it.iter().filter(|i| matches!(i, Item::Word(_))).nth(2).unwrap() else {
+            panic!()
+        };
+        assert_eq!(bold.text(), "bold");
+        assert!(bold.segments[0].style.bold, "the \\textbf after the URL is still bold: {bold:?}");
+        // A brace pair inside the URL is balanced, not a group.
+        let it = items("A \\url{https://e.org/{x}} \\textbf{bold} C");
+        assert_eq!(families(&it), "rtrr", "{it:?}");
+    }
+
+    /// The typewriter family covers the whole `\url{...}`, not just its
+    /// braced argument: the compiler gives every run it splits the URL into
+    /// the span of the entire command (`parser::push_url_text`), and the
+    /// style is read at that span's first byte, the backslash.
+    #[test]
+    fn the_url_style_interval_starts_at_the_backslash_and_ends_at_the_brace() {
+        let src = "x \\url{ab} y";
+        let intervals = style_intervals(src);
+        let url = intervals
+            .iter()
+            .find(|(_, _, c, _)| matches!(c, crate::nfss::Command::Family(crate::nfss::FamilyKind::Tt)))
+            .expect("the URL contributes a typewriter interval");
+        assert_eq!(&src[url.0..url.1], "\\url{ab}", "{intervals:?}");
+        // The text after the URL is outside it.
+        assert_eq!(Styles::new(intervals, crate::nfss::Scheme::LmT1).at(src.find('y').unwrap()).family,
+                   crate::nfss::FamilyKind::Rm);
     }
 }
