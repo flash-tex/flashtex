@@ -18,7 +18,9 @@ final class ShellModel {
         var token = 0 // bump so the same range re-applies
     }
 
-    var documents: [RuntimeV1.Document] = []
+    var documents: [RuntimeV1.Document] = [] {
+        didSet { refreshDocumentMirror() }
+    }
     var activePath: String = "main.tex"
     var result: RuntimeV1.CompileResult? {
         didSet {
@@ -39,6 +41,12 @@ final class ShellModel {
     // The panel state is shared with the palette so Next/Previous
     // Occurrence work from there too (DiagnosticsPanel.swift).
     var problemsVisible = true
+    /// Below the width where editor and preview both fit, the preview
+    /// collapses to a toggle instead of being crushed (design-principles §4).
+    /// `narrowLayout` mirrors the split's available width; the toggle picks
+    /// which column the narrow window shows.
+    var narrowLayout = false
+    var narrowPreviewShown = false
     var problemsSeverityFilter: RuntimeV1.Severity?
     var commandPaletteShown = false
     /// Rename Symbol / Wrap in Environment / Go to Symbol sheets (ShellModel+EditorNavigation.swift).
@@ -70,6 +78,9 @@ final class ShellModel {
     }
     /// Fit-to-width scale the preview pane last laid out with (written by the pane; drives Actual Size and the percentage).
     var previewFitScale: CGFloat = 1
+    /// Zoom multiplier that fits the tallest page's height to the pane
+    /// (PreviewView reports it with the pane geometry; View > Fit Page).
+    var previewFitPageZoom: CGFloat = 1
     var displayListV2: V2PreviewState? {
         didSet {
             refreshToolbarMirrors()
@@ -146,6 +157,12 @@ final class ShellModel {
     private(set) var toolbarHasResult = false
     private(set) var toolbarHasV2Frame = false
     private(set) var toolbarProblemCount = 0
+    /// `result?.pages.count`, change-only, so File > Print… can refuse a failed
+    /// or empty-page result without the App scene reading `result` per reply.
+    private(set) var toolbarPageCount = 0
+    /// `!documents.isEmpty`, change-only: File > Print Source… must not read
+    /// `documents` from the App scene (a keystroke reassigns the array).
+    private(set) var toolbarHasDocument = false
     /// The producer as attached ("attached: flashtex-render"), not the
     /// per-request status line: tooltips read this instead of `workerStatus`.
     private(set) var producerSummary = "no worker attached"
@@ -191,15 +208,23 @@ final class ShellModel {
     /// Applies pending chrome changes now (tests, and the bench's paint point).
     func flushChrome() { chromeRefreshPending = false; refreshChrome() }
 
+    private func refreshDocumentMirror() {
+        let has = !documents.isEmpty
+        if toolbarHasDocument != has { toolbarHasDocument = has }
+    }
+
     private func refreshToolbarMirrors() {
         let hasResult = result != nil
         if toolbarHasResult != hasResult { toolbarHasResult = hasResult }
+        let pages = result?.pages.count ?? 0
+        if toolbarPageCount != pages { toolbarPageCount = pages }
         let hasFrame = displayListV2?.frame != nil
         if toolbarHasV2Frame != hasFrame { toolbarHasV2Frame = hasFrame }
         let diagnostics = displayedDiagnostics
         if toolbarProblemCount != diagnostics.count { toolbarProblemCount = diagnostics.count }
         if problemsList != diagnostics { problemsList = diagnostics }
         if resultStatus != result?.status { resultStatus = result?.status }
+        refreshDocumentMirror()
         let summary: String
         if controllerAttached { summary = "helper attached: \(controller?.executable.lastPathComponent ?? "flashtex-preview-controller")" }
         else if let worker, worker.isRunning { summary = "attached: \(worker.executable.lastPathComponent)" }
@@ -486,6 +511,54 @@ final class ShellModel {
                             token: nextEditToken(), revision: editorRevision)
         navigationNote = "Applied: \(preview.summary) (undo with ⌘Z)"
         quickFix = nil
+    }
+
+    // MARK: the fix at the caret (Tab)
+
+    /// Set by Esc while a caret fix is showing, so the hint stays down until
+    /// the caret moves somewhere else. Dismissing must also hand Tab straight
+    /// back to indentation — that is the whole point of Esc here.
+    @ObservationIgnored private var dismissedCaretFix: EditorDiagnostics.CaretFix?
+
+    /// The mechanical fix offered where the caret is, or `nil`.
+    ///
+    /// This is the single source of truth for both halves of the feature: the
+    /// editor draws a hint exactly when it is non-nil, and Tab accepts a fix
+    /// exactly when it is non-nil. They cannot disagree, so Tab can never
+    /// silently do something the author was not shown.
+    var caretFix: EditorDiagnostics.CaretFix? {
+        let diagnostics = displayedDiagnostics
+        // Cheap bail-out before `caretByte`, whose UTF-16 → UTF-8 conversion is
+        // linear in the document: this is read on every keystroke, and most
+        // documents carry no mechanical fix at all.
+        guard result?.revision == editorRevision,
+              diagnostics.contains(where: { $0.help?.replacement != nil || $0.suggestion != nil })
+        else { return nil }
+        guard let caretByte, let fix = EditorDiagnostics.fixOffered(
+            at: caretByte, in: diagnostics, path: activePath,
+            currentText: activeText, compiledRevision: result?.revision,
+            editorRevision: editorRevision
+        ) else { return nil }
+        return fix == dismissedCaretFix ? nil : fix
+    }
+
+    /// Esc: take the hint down and leave Tab alone until the caret moves onto
+    /// a different fix.
+    func dismissCaretFix() {
+        guard let fix = caretFix else { return }
+        dismissedCaretFix = fix
+    }
+
+    /// Tab on a visible caret fix. Routed through `previewQuickFix` /
+    /// `applyQuickFix` rather than a second application path, so the edit
+    /// ledger, the revision counter and undo behave exactly as they do for
+    /// "Fix…" in the Problems panel — one undo step.
+    func acceptCaretFix() {
+        guard let fix = caretFix else { return }
+        previewQuickFix(diagnosticIndex: fix.diagnosticIndex)
+        guard quickFix != nil else { return } // refusal already in the footer
+        applyQuickFix()
+        dismissedCaretFix = nil
     }
 
     /// Asks the helper once per result; the cache is read by `editorMarkReport`.
@@ -1210,7 +1283,17 @@ final class ShellModel {
             captureNote = "Cannot insert \(proposal.captureId): \(why). Pin a new insertion point."
             return .needsReselection(why)
         }
-        let insert = Insertion.insertionText(latex, into: doc.text, atByte: byte)
+        // Make the proposal legal where it is actually landing before it becomes
+        // an edit: a formula recognised at a text caret is wrapped, and one
+        // recognised inside an existing `$…$` has its own delimiters removed
+        // rather than producing `$a + $x^2$ + b$` (issue #2, owner report).
+        // The bridge-attached path gets the same treatment inside the bridge.
+        let normalized = Insertion.captureInsertion(latex, into: doc.text, atByte: byte)
+        guard let insert = normalized.text else {
+            captureNote = "Cannot insert \(proposal.captureId) here: "
+                + (normalized.advisories.first ?? "the proposal is not legal LaTeX at this caret.")
+            return .needsReselection("unsafe at caret")
+        }
         guard let ns = doc.text.nsRange(utf8Bytes: .init(path: anchor.path, startByte: byte, endByte: byte)) else {
             captureNote = "Anchor offset is not a valid position."; return .needsReselection("invalid offset")
         }
@@ -1225,7 +1308,8 @@ final class ShellModel {
         // Keep the anchor after the inserted text so successive captures append in order.
         self.anchor = InsertionAnchor(id: anchor.id, path: anchor.path, byteOffset: byte + insert.utf8.count,
                                       revision: editorRevision, contextAfter: anchor.contextAfter)
-        captureNote = "Inserted \(proposal.captureId) at byte \(byte) (undo with ⌘Z)."
+        captureNote = "Inserted \(proposal.captureId) at byte \(byte) (\(normalized.caret.label); undo with ⌘Z)."
+            + (normalized.advisories.isEmpty ? "" : " " + normalized.advisories.joined(separator: " "))
         return .inserted(byteOffset: byte)
     }
 

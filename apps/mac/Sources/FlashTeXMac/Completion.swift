@@ -1709,9 +1709,9 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
     private let docHint = NSTextField(labelWithString: "↑↓ choose · ⏎ insert · esc close")
     private let docSeparator = NSBox()
     private(set) var items: [Completion.Suggestion] = []
-    static let rowHeight: CGFloat = 24
-    static let width: CGFloat = 480
-    static let docHeight: CGFloat = 58
+    static let rowHeight: CGFloat = DS.Row.completion
+    static let width: CGFloat = DS.Layout.completionWidth
+    static let docHeight: CGFloat = DS.Layout.completionDocHeight
 
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.rowHeight * 4 + Self.docHeight),
@@ -1757,20 +1757,20 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         docSeparator.frame = NSRect(x: 0, y: Self.docHeight - 1, width: Self.width, height: 1)
         docSeparator.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docSeparator)
-        docTitle.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        docTitle.font = DS.NSFonts.header
         docTitle.textColor = .labelColor
         docTitle.lineBreakMode = .byTruncatingTail
         docTitle.frame = NSRect(x: 10, y: Self.docHeight - 20, width: Self.width - 20, height: 15)
         docTitle.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docTitle)
-        docBody.font = NSFont.systemFont(ofSize: 11)
+        docBody.font = DS.NSFonts.secondary
         docBody.textColor = .secondaryLabelColor
         docBody.maximumNumberOfLines = 2
         docBody.lineBreakMode = .byTruncatingTail
         docBody.frame = NSRect(x: 10, y: 15, width: Self.width - 20, height: 24)
         docBody.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docBody)
-        docHint.font = NSFont.systemFont(ofSize: 10)
+        docHint.font = DS.NSFonts.secondary
         docHint.textColor = .tertiaryLabelColor
         docHint.frame = NSRect(x: 10, y: 2, width: Self.width - 20, height: 13)
         docHint.autoresizingMask = [.width, .minYMargin]
@@ -1780,8 +1780,8 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         doc.setAccessibilityLabel("Completion documentation")
         contentView?.addSubview(doc)
         contentView?.wantsLayer = true
-        contentView?.layer?.cornerRadius = 8
-        contentView?.layer?.borderWidth = 1
+        contentView?.layer?.cornerRadius = DS.Radius.panel
+        contentView?.layer?.borderWidth = DS.Size.hairline
         backgroundColor = .clear
         isOpaque = false
         // The chrome colours are re-resolved on every appearance change; see
@@ -1985,14 +1985,14 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
             out.append(NSAttributedString(string: " "))
         }
         out.append(NSAttributedString(string: s.label, attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.labelColor,
+            .font: DS.NSFonts.monoCandidate, .foregroundColor: NSColor.labelColor,
         ]))
         out.append(NSAttributedString(string: "  \(s.kind.badge) · \(s.detail)", attributes: [
-            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor,
+            .font: DS.NSFonts.secondary, .foregroundColor: NSColor.secondaryLabelColor,
         ]))
         if let doc = documentation(for: s) {
             out.append(NSAttributedString(string: " — \(doc)", attributes: [
-                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.tertiaryLabelColor,
+                .font: DS.NSFonts.secondary, .foregroundColor: NSColor.tertiaryLabelColor,
             ]))
         }
         return out
@@ -2028,13 +2028,13 @@ final class CompletionRowView: NSView {
         icon.frame = NSRect(x: 8, y: 4, width: 16, height: 16)
         icon.autoresizingMask = [.maxXMargin]
         addSubview(icon)
-        label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        label.font = DS.NSFonts.monoCandidate
         label.textColor = .labelColor
         label.lineBreakMode = .byTruncatingTail
         label.frame = NSRect(x: 30, y: 4, width: 220, height: 16)
         label.autoresizingMask = [.maxXMargin]
         addSubview(label)
-        detail.font = NSFont.systemFont(ofSize: 11)
+        detail.font = DS.NSFonts.secondary
         detail.textColor = .secondaryLabelColor
         detail.alignment = .right
         detail.lineBreakMode = .byTruncatingMiddle
@@ -2137,6 +2137,16 @@ final class CompletingTextView: NSTextView {
     /// line's lexing. Unwired — a bare text view in a test — it says no, and
     /// the list keeps the plain text-mode order.
     var mathModeAtCaret: (Int) -> Bool = { _ in false }
+    /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
+    let folds = EditorFoldStore()
+
+    /// Whether a mechanical fix hint is showing at the caret (the owner
+    /// answers from `ShellModel.caretFix`). Only Esc is handled here; Tab
+    /// accepts the fix in `SourceEditorView.handleTab`, after this view has
+    /// had its say on completion and snippet placeholders. Unwired — a bare
+    /// text view in a test — it says no and Esc keeps its old meaning.
+    var caretFixVisible: () -> Bool = { false }
+    var dismissCaretFix: () -> Void = {}
 
     // MARK: snippet tab stops (Snippets: Tab / ⇧Tab between placeholders, Esc leaves)
 
@@ -2237,6 +2247,20 @@ final class CompletingTextView: NSTextView {
     // MARK: ⌘/ line comment
 
     /// Toggles `% ` on every line the selection touches (one undo step).
+    /// ⌥⇧↓ / ⌥⇧↑: copy the line (or every line the selection touches) below or
+    /// above itself, leaving the caret on the copy. One undo step, like
+    /// `toggleLineComment`.
+    func duplicateLines(below: Bool) {
+        guard !hasMarkedText() else { return }
+        let sel = selectedRange()
+        guard let (edit, selection) = EditorKeyHandling.duplicateLinesEdit(in: string, range: sel, below: below) else { return }
+        breakUndoCoalescing()
+        insertText(edit.replacement, replacementRange: edit.range)
+        setSelectedRange(selection)
+        undoManager?.setActionName(selection.length > 0 || sel.length > 0 ? "Duplicate Lines" : "Duplicate Line")
+        breakUndoCoalescing()
+    }
+
     func toggleLineComment() {
         guard !hasMarkedText() else { return }
         let text = string as NSString
@@ -2439,6 +2463,7 @@ final class CompletingTextView: NSTextView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         foregroundDecorator?(dirtyRect)
+        folds.drawPlaceholders(in: dirtyRect, textView: self)
     }
 
     /// Scroll view + text view pair, like `NSTextView.scrollableTextView()`
@@ -2744,6 +2769,14 @@ final class CompletingTextView: NSTextView {
             toggleLineComment()
             return
         }
+        // ⌥⇧↓ / ⌥⇧↑: duplicate the line(s) down/up (the Overleaf shortcut).
+        // This takes the key from AppKit's extend-selection-by-paragraph
+        // binding, which no LaTeX editor's users reach for and which ⇧↓ and
+        // ⌥↓ still cover between them.
+        if modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 {
+            duplicateLines(below: event.keyCode == 125)
+            return
+        }
         guard session != nil else {
             let plain = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
             if plain, event.keyCode == 48, isSnippetActive { // Tab / ⇧Tab between snippet placeholders
@@ -2753,6 +2786,12 @@ final class CompletingTextView: NSTextView {
             if plain, event.keyCode == 53, isSnippetActive || isSignatureHelpVisible { // Esc leaves the snippet / closes the help
                 endSnippet()
                 hideSignatureHelp()
+                return
+            }
+            // Esc takes the caret-fix hint down (and with it Tab's claim on the
+            // key) before Esc's other meaning, opening the completion list.
+            if plain, event.keyCode == 53, caretFixVisible() {
+                dismissCaretFix()
                 return
             }
             // Esc opens the list (AppKit's own `cancelOperation:` → `complete:`

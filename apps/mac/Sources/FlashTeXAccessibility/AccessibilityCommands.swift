@@ -8,13 +8,14 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case editorPreferences
     case openLaTeXFile, newProject, newFile, save, saveAs, openFixture, reloadFixture
     case attachBuiltCompiler, attachRenderPipeline, attachWorker, compile
-    case exportPDF, exportPDFViaRust, exportPDFExact
+    case exportPDF, exportPDFViaRust, exportPDFExact, printDocument, printSource
     case pinInsertionPoint, openCaptureProposal, submitSampleCapture, convertCapture, nearbyCompanion
     case restoreDiscardedBuffer
     case undo
     case commandPalette, toggleProblems, toggleCaptures
-    case zoomIn, zoomOut, actualSize, fitWidth, increaseEditorFontSize, decreaseEditorFontSize, resetEditorFontSize
-    case completion, completionList, toggleComment, signatureHelp, toggleVimKeybindings
+    case zoomIn, zoomOut, actualSize, fitWidth, fitPage, increaseEditorFontSize, decreaseEditorFontSize, resetEditorFontSize
+    case completion, completionList, toggleComment, duplicateLine, reindentLines, reindentDocument, signatureHelp, toggleVimKeybindings
+    case fold, unfold, foldAll, unfoldAll
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
     case goToDefinition, goToSymbol, selectEnvironment, wrapInEnvironment, renameSymbol
     case selectPreviewItemSource
@@ -113,6 +114,16 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          description: "Hands the loaded v2 display list to flashtex-pdf-exact from-v2: glyphs by original GID, embedded font programs, typed rules; refuses what it cannot express exactly.",
                          requires: "a loaded v2 display list and a built flashtex-pdf-exact",
                          menuItem: "Export PDF (exact, v2)…")
+        case .printDocument:
+            return Entry(command: self, title: "Print", shortcuts: ["⌘P"], menu: "File",
+                         description: "Prints the compiled document PDF (the same CoreGraphics bytes as Export PDF…) through the system print panel; page size follows the PDF.",
+                         requires: "a compile result",
+                         menuItem: "Print…")
+        case .printSource:
+            return Entry(command: self, title: "Print Source", shortcuts: ["File > Print Source…"], menu: "File",
+                         description: "Prints the editor text with line numbers in a monospaced font from a copy of the buffer, so the live editor layout is untouched.",
+                         requires: "an open document",
+                         menuItem: "Print Source…")
         case .pinInsertionPoint:
             return Entry(command: self, title: "Pin insertion point", shortcuts: ["⌘⌥P"], menu: "Edit",
                          description: "Records the caret as the destination anchor for capture proposals; the capture bar reads it back.",
@@ -144,11 +155,11 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          description: "Undoes the last edit, including an approved capture insertion.")
         case .commandPalette:
             return Entry(command: self, title: "Command palette", shortcuts: ["⌘⇧P"], menu: "View",
-                         description: "Opens a searchable list of every command in this table with its menu and shortcut; type to filter, ↑/↓ choose, Return runs it, Esc closes. Editor keys and the preview click are listed as hints only.",
+                         description: "Opens the palette: scope tabs for Files, Sections, Labels, Citations and every command in this table with its menu and shortcut; type to filter, Tab cycles scopes, ↑/↓ choose, Return opens or runs, Esc closes. Editor keys and the preview click are listed as hints only.",
                          menuItem: "Command Palette…")
         case .toggleProblems:
             return Entry(command: self, title: "Toggle Problems panel", shortcuts: ["⌘⇧M"], menu: "View",
-                         description: "Shows or hides the Problems panel under the editor and preview: the grouped diagnostics list with a severity filter, jump, explanation lines and Fix…; the sidebar's Problems rows and the status bar counts open it too.",
+                         description: "Shows or hides the Problems panel under the editor and preview: the grouped diagnostics list with a severity filter, jump, in-row detail and Fix…; the rail's Problems toggle and the status bar counts open it too.",
                          menuItem: "Toggle Problems")
         case .zoomIn:
             return Entry(command: self, title: "Zoom in preview", shortcuts: ["⌘="], menu: "View",
@@ -166,6 +177,10 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Fit width preview", shortcuts: ["⌘9"], menu: "View",
                          description: "Resets the preview zoom to 1x so the widest page fits the pane width (the default); double-clicking the header percentage does the same.",
                          menuItem: "Fit Width")
+        case .fitPage:
+            return Entry(command: self, title: "Fit page preview", shortcuts: ["⌘⇧9"], menu: "View",
+                         description: "Zooms so the tallest page's full height fits the pane (within the 0.25x…4x bounds); also in the preview header on hover.",
+                         menuItem: "Fit Page")
         case .increaseEditorFontSize:
             return Entry(command: self, title: "Increase editor font size", shortcuts: ["⌘⌥="], menu: "View",
                          description: "Grows the editor font by 1 pt (up to 36 pt); the gutter and highlighting follow. The size is the Settings font-size preference, so it persists. Pinching over the editor does the same.",
@@ -190,11 +205,38 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          description: "Shows the signature of the command whose argument the caret is in; also opens on `{`/`[` typed after a command name. `}`, Esc, or leaving the argument closes it.")
         case .toggleVimKeybindings:
             return Entry(command: self, title: "Toggle Vim keybindings", shortcuts: ["⌃⌘V"], menu: "View",
-                         description: "Switches the source editor's modal Vim emulation (normal/insert/visual modes, motions, operators, text objects, registers, marks, `/` search and `:` commands) on or off; the same as the Settings switch. The status bar shows -- NORMAL -- / -- INSERT -- / -- VISUAL --.",
+                         description: "Switches the source editor's modal Vim emulation (normal/insert/visual modes, motions, operators, text objects, registers, marks, `/` search and `:` commands) on or off; the same as the Settings switch. A Vim status line at the bottom of the editor pane shows -- NORMAL -- / -- INSERT -- / -- VISUAL -- and the `:` command line.",
                          menuItem: "Toggle Vim Keybindings")
+        case .duplicateLine:
+            return Entry(command: self, title: "Duplicate line", shortcuts: ["⌥⇧↓", "⌥⇧↑"], menu: "Editor",
+                         description: "Copies the line the caret is on — or every line the selection touches — below (⌥⇧↓) or above (⌥⇧↑) itself, leaving the caret on the copy so the key repeats; one undo step per press.")
         case .toggleComment:
             return Entry(command: self, title: "Toggle comment", shortcuts: ["⌘/"], menu: "Editor",
                          description: "Toggles a `% ` line comment on every line the selection touches: all commented lines are uncommented, otherwise the non-blank lines are commented; one undo step.")
+        case .reindentLines:
+            return Entry(command: self, title: "Re-indent Lines", shortcuts: ["⌃I"], menu: "Edit",
+                         description: "Reindents the selected lines, or the caret's line when nothing is selected, with LaTeX-aware rules (environments, braces, verbatim bodies, the document exception) as one undo step. ⌃I is Xcode's re-indent and is not Tab; Vim does not bind it. ⌘⇧I remains Toggle Captures.",
+                         menuItem: "Re-indent Lines")
+        case .reindentDocument:
+            return Entry(command: self, title: "Re-indent Document", shortcuts: ["Edit > Re-indent Document"], menu: "Edit",
+                         description: "Applies the same LaTeX-aware reindent rules as Re-indent Lines to the whole buffer as one undo step.",
+                         menuItem: "Re-indent Document")
+        case .fold:
+            return Entry(command: self, title: "Fold", shortcuts: ["⌘⌥←"], menu: "Editor",
+                         description: "Folds the innermost \\begin{…}…\\end{…} environment or sectioning block at the caret: the first line stays visible with an inline … placeholder; the hidden characters stay in the buffer.",
+                         menuItem: "Fold")
+        case .unfold:
+            return Entry(command: self, title: "Unfold", shortcuts: ["⌘⌥→"], menu: "Editor",
+                         description: "Unfolds the innermost folded region at the caret.",
+                         menuItem: "Unfold")
+        case .foldAll:
+            return Entry(command: self, title: "Fold All", shortcuts: ["⌘⌥⇧←"], menu: "Editor",
+                         description: "Folds every foldable environment and sectioning block in the buffer.",
+                         menuItem: "Fold All")
+        case .unfoldAll:
+            return Entry(command: self, title: "Unfold All", shortcuts: ["⌘⌥⇧→"], menu: "Editor",
+                         description: "Unfolds every folded region in the buffer.",
+                         menuItem: "Unfold All")
         case .goToMatching:
             return Entry(command: self, title: "Go to matching", shortcuts: ["⌘⇧D"], menu: "Navigate",
                          description: "Selects the matching \\begin/\\end or \\label/\\ref for the command under the caret; misses are explained in the footer.",
@@ -279,7 +321,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          requires: "a search with matches")
         case .renameCitation:
             return Entry(command: self, title: "Rename citation window", shortcuts: ["Edit > Rename Citation…"], menu: "Edit",
-                         description: "Opens the reviewed citation rename: the helper plans every \\cite occurrence across the project (plan_citation_rename), the plan is shown for review, and Apply sends one apply_group; also in the toolbar.",
+                         description: "Opens the reviewed citation rename: the helper plans every \\cite occurrence across the project (plan_citation_rename), the plan is shown for review, and Apply sends one apply_group.",
                          menuItem: "Rename Citation…")
         case .find:
             return Entry(command: self, title: "Find", shortcuts: ["⌘F"], menu: "Edit",
@@ -348,9 +390,13 @@ public enum FocusOrder {
     }
 
     public static let panes: [Pane] = [
+        Pane(name: "Tool rail",
+             contents: "One toggle per tool window: Project, Outline, and — in the bottom group — Problems (⌘⇧M). Each reads its name and selected state; toggling shows or hides that tool window.",
+             rationale: "Leads the window because it decides what the window shows; it is the keyboard path to every tool window, so no panel is reachable only by mouse.",
+             container: "ContentView", sourceMarker: "ToolRail("),
         Pane(name: "Sidebar",
-             contents: "Project: every open member as a row (“main.tex, entry, edited, active”; bibliography members say so) plus not-yet-open \\input/\\include targets (“chapter1.tex, not open, included from main.tex; activate to open”); Outline: Sections, Environments and Labels of the active buffer as disclosure groups, each row “section Title, line n” and activation selects it in the editor; Problems: error/warning counts whose activation shows the Problems panel filtered to that severity.",
-             rationale: "Leads the window because it answers “where am I in the project” before editing; every row is a button that drives an existing operation (switch, open include, select, show problems) so nothing is reachable only by mouse.",
+             contents: "The tool column. Project: every open member as a row (“main.tex, entry, edited, active”; bibliography members say so) plus not-yet-open \\input/\\include targets (“chapter1.tex, not open, included from main.tex; activate to open”). Stacked under it when shown (it ships collapsed), Outline: Sections, Environments and Labels of the active buffer as disclosure groups, each row “section Title, line n” and activation selects it in the editor. Problems counts moved to the status bar; the list is the bottom panel.",
+             rationale: "Answers “where am I in the project” before editing; every row is a button that drives an existing operation (switch, open include, select) so nothing is reachable only by mouse.",
              container: "WorkspaceSidebar", sourceMarker: "ProjectSection()", sourceFile: "WorkspaceSidebar.swift"),
         Pane(name: "Tabs",
              contents: "One tab per open document (“main.tex, entry, edited”), the active one selected; a Detach button on non-entry members; then the Project menu (open \\input/\\include targets, save or detach a member, bibliography kinds), the kind indicator and the byte/UTF-16 counts.",
@@ -361,7 +407,7 @@ public enum FocusOrder {
              rationale: "Editing is the primary task; the caret drives caret sync, diagnostics at caret, and every Navigate command.",
              container: "EditorPane", sourceMarker: "SourceEditorView("),
         Pane(name: "Capture bar",
-             contents: "Pin insertion point, the pinned anchor, and the review button for queued proposals; one group whose value reads the anchor and proposal count.",
+             contents: "Pin insertion point, the pinned anchor, and the review button for queued proposals; one group whose value reads the anchor and proposal count. Present once the capture flow is in play (an anchor pinned, proposals queued, or the Captures inspector open); absent at rest.",
              rationale: "Directly under the editor because pinning starts from the caret; the bar's value is what a capture proposal will insert against.",
              container: "EditorPane", sourceMarker: "CaptureBar()"),
         Pane(name: "Bridge bar",
@@ -381,8 +427,8 @@ public enum FocusOrder {
     /// Non-focusable status text around the panes, in view order, so the help
     /// can say what VoiceOver reads when it walks the whole window.
     public static let statusLines: [String] = [
-        "Toolbar: Compile (⌘B), the Producer menu (attach the built compiler ⌘⇧K, the Latin Modern render pipeline ⌘⇧R, any executable ⌘K, auto-compile, detach), v2 pane and Dark preview switches, Find in Project (⌘⇧F), Rename Citation, Durable History, the Export menu (⌘⇧E, ⌘⌥E, exact v2), Nearby (⌘⇧N), the Problems toggle with its count (⌘⇧M) and Commands (the palette, ⌘⇧P); every tooltip names the menu shortcut.",
-        "Preview header: preview source badge, compile status, whether the editor is ahead of the preview, and the accepted layout capabilities.",
+        "Toolbar: three chips — Compile (⌘B; its menu attaches the built compiler ⌘⇧K, the Latin Modern render pipeline ⌘⇧R, any executable ⌘K, toggles auto-compile, detaches), the Export menu (⌘⇧E, ⌘⌥E, exact v2) and Commands (the palette, ⌘⇧P) — plus the Captures inspector toggle. Everything else lives in its menu, its shortcut and the palette; the v2 pane and Dark preview switches are in the preview header. Every tooltip names the menu shortcut.",
+        "Preview header: the page indicator and zoom percentage (always visible, dimmed); a quiet compile spinner, a FIXTURE or HISTORICAL badge, staleness and capability warnings when they apply; on pointer-over, zoom −/+, Fit Width (⌘9), Fit Page (⌘⇧9) and the v2/dark switches. Producer and layout-capability detail are in the header tooltip.",
         "Status bar (bottom): editor revision, the active document's durable revision, compile latency, the route (fixture / worker / controller), error and warning counts (a button that shows the Problems panel), then the last navigation note, the stale-diagnostics note, or the preview-click hint; capture notes and the exact-export progress on the right.",
     ]
 

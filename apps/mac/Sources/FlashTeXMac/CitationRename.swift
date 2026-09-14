@@ -426,7 +426,7 @@ struct CitationRenamePanel: View {
                 }
             }
         }
-        .frame(minWidth: 560, minHeight: 300)
+        .frame(minWidth: DS.Layout.citationWindowMinWidth, minHeight: DS.Layout.citationWindowMinHeight)
         .onAppear { newKeyFocused = true }
         .background {
             Button("Close") { dismissWindow(id: Self.windowID) }
@@ -443,7 +443,7 @@ private struct CitationRenameBody: View {
     private var canPlan: Bool { client.helperAvailable && !client.isPlanning && !client.isApplying && !client.newName.isEmpty && (client.keySpan != nil || !client.oldName.isEmpty) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
             HStack {
                 TextField("Citation key to rename", text: $client.oldName)
                     .textFieldStyle(.roundedBorder)
@@ -477,19 +477,19 @@ private struct CitationRenameBody: View {
             }
             if !client.helperAvailable {
                 Label(CitationRename.noHelperMessage, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(DS.Colors.severityWarning)
                     .accessibilityLabel(CitationRename.noHelperMessage)
             }
             if !client.previews.isEmpty {
                 List {
                     ForEach(Array(client.previews.enumerated()), id: \.element.id) { (index: Int, preview: ProjectSearch.ReplacementPreview) in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
                             Text(preview.line > 0 ? "\(preview.edit.path):\(preview.line)" : preview.edit.path)
                                 .font(.caption.monospaced()).foregroundStyle(.secondary)
-                                .frame(width: 140, alignment: .leading).lineLimit(1)
+                                .frame(width: DS.Layout.searchPathColumnWidth, alignment: .leading).lineLimit(1)
                             Text(client.kind(of: preview.edit.path)?.rawValue ?? "kind?")
-                                .font(.caption2).padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(Color.secondary.opacity(0.15), in: Capsule())
+                                .font(DS.Fonts.secondary).padding(.horizontal, DS.Space.xs).padding(.vertical, DS.Size.hairline)
+                                .background(DS.Colors.textSecondary.opacity(DS.State.hairlineOpacity), in: Capsule())
                             if let b = preview.before, let a = preview.after {
                                 (Text(b.before) + Text(b.match).strikethrough().foregroundColor(.red) + Text(" → ") + Text(a.match).bold().foregroundColor(.accentColor) + Text(a.after))
                                     .font(.body.monospaced()).lineLimit(1)
@@ -502,13 +502,13 @@ private struct CitationRenameBody: View {
                         .accessibilityLabel(CitationRename.accessibilityLabel(index: index, count: client.previews.count, preview: preview, kind: client.kind(of: preview.edit.path)))
                     }
                 }
-                .frame(minHeight: 80)
+                .frame(minHeight: DS.Layout.diagnosticsListMinHeight)
                 .accessibilityLabel("Rename proposal, \(client.plan?.summary ?? "")")
             } else {
                 Spacer()
             }
             ForEach(client.outcomes) { outcome in
-                HStack(spacing: 6) {
+                HStack(spacing: DS.Space.s) {
                     Text(outcome.description).font(.caption)
                         .foregroundStyle({ () -> Color in if case .applied = outcome.state { return .secondary } else { return .orange } }())
                     if case .uncertain(_, let id) = outcome.state {
@@ -525,7 +525,7 @@ private struct CitationRenameBody: View {
                 .textSelection(.enabled)
                 .accessibilityLabel("Rename status: \(client.status)")
         }
-        .padding(12)
+        .padding(DS.Space.l)
     }
 }
 

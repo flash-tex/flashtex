@@ -58,4 +58,32 @@ final class OutlineStructureTests: XCTestCase {
         XCTAssertEqual(DocumentOutline.current(at: 35, in: envOnly)?.title, "enumerate")
         XCTAssertEqual(DocumentOutline.current(at: 3, in: envOnly)?.title, "itemize")
     }
+
+    /// The status bar's breadcrumb chain: enclosing sections only, outermost
+    /// first, ancestors being the nearest preceding lower level.
+    func testBreadcrumbChain() {
+        let text = """
+        preamble text
+        \\chapter{One}
+        \\section{Setup}
+        \\subsection{Detail}
+        \\section{Results}
+        tail text
+        """
+        let items = DocumentOutline.scan(text)
+        let ns = text as NSString
+        func caretAfter(_ needle: String) -> Int {
+            let r = ns.range(of: needle)
+            return r.location + r.length
+        }
+        // Inside \subsection{Detail}: chapter › section › subsection.
+        XCTAssertEqual(DocumentOutline.breadcrumb(at: caretAfter("Detail}"), in: items).map(\.title),
+                       ["One", "Setup", "Detail"])
+        // After \section{Results}: the subsection is closed by the new section.
+        XCTAssertEqual(DocumentOutline.breadcrumb(at: ns.length, in: items).map(\.title),
+                       ["One", "Results"])
+        // Before any section (in the preamble): empty.
+        XCTAssertEqual(DocumentOutline.breadcrumb(at: 0, in: items), [])
+        XCTAssertEqual(DocumentOutline.breadcrumb(at: caretAfter("preamble"), in: items), [])
+    }
 }
