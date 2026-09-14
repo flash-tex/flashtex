@@ -341,6 +341,9 @@ pub enum Block {
         /// The paragraph is (part of) an `itemize`/`enumerate` `\item`
         /// (compiler `Block::ListItem`): LaTeX's `\list` geometry applies.
         list: Option<ListGeom>,
+        /// The paragraph is set at a size other than `\normalsize`
+        /// (`abstract`'s `\small`); see [`SizedPara`].
+        sized: Option<SizedPara>,
     },
     Heading {
         level: u8,
@@ -512,6 +515,40 @@ pub enum ChromeEvent {
     SetPage(i64),
 }
 
+/// A paragraph set at a size other than `\normalsize`, with everything
+/// `\@setfontsize` changes for it: the size itself, *that size's own*
+/// `\baselineskip`, and any length the environment resolves in the new
+/// size's `em` (`\fontdimen6` of the face its own words are set in, which
+/// only the typesetter can measure).
+///
+/// The one producer today is `abstract` (article.cls 377-387): the centred
+/// `\small\bfseries` head and the `\small` `quotation` body.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SizedPara {
+    /// `\@setfontsize`'s first argument, in points.
+    pub size_pt: f64,
+    /// The `\baselineskip` that size selects (`size1x.clo`'s table), in
+    /// force for every line of this paragraph.
+    pub baselineskip_pt: f64,
+    /// `\parindent` in `em` of this size, replacing the class's
+    /// (`quotation`'s `\listparindent 1.5em`, which `\list` copies into
+    /// `\parindent` and `\@item` re-adds as `\itemindent` on the first
+    /// line). `None` keeps the class's `\parindent`.
+    pub parindent_em: Option<f64>,
+    /// `\vspace` after the paragraph, in `em` of the font its *last word*
+    /// is set in — the abstract head's `\vspace{-.5em}`, which sits inside
+    /// the `{\bfseries ...}` group, so it is half a `\bfseries` quad.
+    /// Added to whatever `\@endparenv` puts there (`\addvspace` cannot
+    /// absorb it: it is emitted through `\vadjust`, before the penalty and
+    /// the closing skip).
+    pub vspace_after_em: f64,
+    /// The closing `\@endparenv` skip of the environment this paragraph
+    /// ends, when the size redefined `\@list i` (`\small`'s own `\topsep`,
+    /// 4pt at a 10pt base rather than `\normalsize`'s 8pt). `None` keeps
+    /// the class's.
+    pub close_skip: Option<crate::style::Skip>,
+}
+
 /// How a paragraph-shape environment began (see [`Block::Paragraph`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnvOpen {
@@ -540,6 +577,10 @@ pub struct Doc {
     /// Indices of the blocks after a `\clearpage`/`\cleardoublepage` (see
     /// `clear_page_blocks`).
     pub page_starts: Vec<usize>,
+    /// `\begin` commands the compiler reported as unimplemented that the
+    /// pipeline sets itself (`abstract`): its diagnostic is dropped, the
+    /// way `toc::superseded_commands` drops the contents-list ones.
+    pub superseded: Vec<Span>,
 }
 
 /// Label values (`\ref`) and the pages they fell on in a previous layout
@@ -1420,6 +1461,7 @@ pub fn adapt_cached(
                     addvspace_before: unit.addvspace_before,
                     endlist_adjust: unit.endlist_adjust,
                     list,
+                    sized: None,
                 });
                 after_heading = false;
             }
@@ -1430,6 +1472,11 @@ pub fn adapt_cached(
         let list = crate::toc::list_blocks(kind, span, eject, &toc_settings, &toc_records, labels, &chapter_starts);
         blocks.splice(at..at, list);
     }
+    // `abstract`: the compiler sets its body as plain text, so the class's
+    // own shape (the centred `\small\bfseries` head and the `\small`
+    // `quotation`) is read from the source bytes here, before the
+    // `env_close` pass below derives the closing skips from the styles.
+    let superseded = crate::abstractenv::apply(texts, &mut blocks, &style);
     // `\end{...}`: the last paragraph of a run of same-style paragraphs
     // closes the environment (two adjacent environments of one style are
     // read as one; the compiler does not mark the boundary).
@@ -1478,6 +1525,7 @@ pub fn adapt_cached(
         default_color: parsed.default_color,
         math_colors: math_colors(&parsed.blocks),
         page_starts,
+        superseded,
     }
 }
 
@@ -2588,6 +2636,50 @@ fn list_end_adjust(source: &str, gap_start: usize, gap: &str, size: u32, style: 
 }
 
 /// The environment of the last `\end{itemize}`/`\end{enumerate}` in `gap`.
+/// The `\endtrivlist` glue (`\addvspace\@topsepadd`) of the list that
+/// `run` closes at its very end, in points; 0 when it closes none.
+///
+/// [`adapt`] gives this skip to the block that *follows* the list, which is
+/// how LaTeX contributes it. A float body's last content run has no block
+/// after it -- `\caption` is set by `\@makecaption` and the box then ends
+/// -- so `crate::floats` asks for it here rather than re-deriving the list
+/// parameters of a second copy.
+pub(crate) fn list_end_skip(source: &str, run: &std::ops::Range<usize>, body_size_pt: f64, style: &Stylesheet) -> f64 {
+    let text = &source[run.start..run.end];
+    let Some(at) = rfind_command(text, "end") else { return 0.0 };
+    let rest = text[at + "\\end".len()..].trim_start();
+    let Some(env) = ["itemize", "enumerate", "thebibliography"]
+        .into_iter()
+        .find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}"))))
+    else {
+        return 0.0;
+    };
+    // Only when the `\end` is the last thing in the run: material after it
+    // is a block of its own, and the adapter has already given it the skip.
+    if !rest["{}".len() + env.len()..].trim().is_empty() {
+        return 0.0;
+    }
+    // `\@topsepadd` is what `\@trivlist` computed when the list opened:
+    // `\topsep`, plus `\partopsep` when its own `\begin` was read in
+    // vertical mode (the run's start, or after a blank line or `\par`).
+    // An alignment declaration sets no material, so it does not leave
+    // vertical mode.
+    let opened = text[..at].rfind(&format!("\\begin{{{env}}}")).unwrap_or(0);
+    let before = text[..opened].replace("\\centering", "").replace("\\raggedright", "").replace("\\raggedleft", "");
+    let vmode = before.trim().is_empty() || has_blank_line(&before) || find_command(&before, "par").is_some();
+    let stack = list_stack_at(source, run.start + at);
+    let begin_keys = stack.last().map_or("", |(e, keys)| if *e == env && *e != "thebibliography" { keys } else { "" });
+    let size = if body_size_pt >= 11.5 {
+        12
+    } else if body_size_pt >= 10.5 {
+        11
+    } else {
+        10
+    };
+    let seps = list_seps_with(source, env, 1, size, style, begin_keys);
+    seps.topsep + if vmode { seps.partopsep } else { 0.0 }
+}
+
 fn gap_has_list_end(gap: &str) -> Option<&'static str> {
     let end = rfind_command(gap, "end")?;
     let rest = gap[end + "\\end".len()..].trim_start();
@@ -2768,7 +2860,7 @@ fn list_margins(source: &str, at: usize, size: u32) -> Vec<ListMargin> {
 }
 
 /// Byte offset of `\name` (as a whole control word, outside comments).
-fn find_command(source: &str, name: &str) -> Option<usize> {
+pub(crate) fn find_command(source: &str, name: &str) -> Option<usize> {
     let needle = format!("\\{name}");
     let bytes = source.as_bytes();
     let mut i = 0;
