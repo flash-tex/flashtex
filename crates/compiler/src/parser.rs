@@ -11,7 +11,7 @@ use std::rc::Rc;
 use crate::bib;
 use crate::date::TodayDate;
 use crate::color::{Colors, DeviceColor};
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::expansion::{self, ExpansionSite};
 use crate::lexer::{apply_text_ligatures, tokenize_document, Token, TokenKind};
 #[cfg(test)]
@@ -1017,6 +1017,8 @@ pub fn parse_project_with(
         brace_stack: Vec::new(),
         env_stack: Vec::new(),
         arraystretch: expanded.arraystretch,
+        restricted_hbox: 0,
+        paragraph_forced: false,
         has_document,
         in_body: !has_document,
         document_ended: false,
@@ -1146,6 +1148,19 @@ struct P<'a> {
     env_stack: Vec<(String, Span)>,
     /// `\arraystretch` at each `\begin{tabular}`, from the expansion pass.
     arraystretch: HashMap<(usize, usize), String>,
+    /// How many restricted-horizontal-mode boxes enclose the token being
+    /// parsed: a table entry, or the box `\caption` measures its text in.
+    /// TeX cannot start a display inside one, so `\[...\]` there is an error
+    /// (`! Missing $ inserted`), verified against pdflatex. A `\section`
+    /// title and a `\footnote` are deliberately *not* counted: both set their
+    /// argument as a paragraph, and pdflatex accepts display math in either.
+    restricted_hbox: usize,
+    /// A paragraph has been started explicitly, with no text set yet:
+    /// `\noindent` and `\indent` both leave TeX in horizontal mode, so a `\\`
+    /// after either has a line to end even though nothing is typeset. Without
+    /// this, `\noindent \\ text` — which pdflatex accepts — would be reported
+    /// as an error.
+    paragraph_forced: bool,
     has_document: bool,
     in_body: bool,
     document_ended: bool,
@@ -1382,6 +1397,22 @@ impl P<'_> {
                     let space_before = self.space_precedes(self.i);
                     self.i += 1;
                     if render {
+                        if let Some(at) = bare_alignment_tab(&word, tok.span) {
+                            // Every alignment consumes its own `&` before this
+                            // dispatcher runs — `tabular`/`array` split entries
+                            // on it, and so does amsmath's row splitting — so
+                            // one that reaches here is outside any alignment.
+                            // pdflatex: `! Misplaced alignment tab character &`.
+                            self.diags.push(
+                                Diagnostic::error(
+                                    "misplaced alignment tab character &: \
+                                     no alignment is open here (write \\& for a literal &)",
+                                    Some(at),
+                                    Some("typeset the & literally and continued".into()),
+                                )
+                                .with_code(DiagnosticCode::SyntaxError),
+                            );
+                        }
                         para.push(Inline::Text {
                             text: apply_text_ligatures(&word),
                             span: tok.span,
@@ -1392,6 +1423,23 @@ impl P<'_> {
                 }
                 TokenKind::LineBreak => {
                     self.i += 1;
+                    // `\\` ends the current line, so there has to be one:
+                    // in vertical mode LaTeX answers `! LaTeX Error: There's
+                    // no line here to end`. A table row's `\\` never reaches
+                    // here (the alignment consumes it), and `\noindent` /
+                    // `\indent` start a paragraph without typesetting
+                    // anything, which is why `paragraph_forced` exists.
+                    if render && para.is_empty() && !self.paragraph_forced {
+                        self.diags.push(
+                            Diagnostic::error(
+                                "there's no line here to end: \\\\ needs text before it \
+                                 (for vertical space use \\vspace)",
+                                Some(tok.span),
+                                Some("ignored the line break and continued".into()),
+                            )
+                            .with_code(DiagnosticCode::SyntaxError),
+                        );
+                    }
                     // article.cls 390 `verse`: `\let\\\@centercr`, which ends
                     // the paragraph (latex.ltx `\@centercr`: `\par`, then
                     // `\@xcentercr` `\addvspace{-\parskip}` and `\@icentercr`
@@ -1450,12 +1498,21 @@ impl P<'_> {
                 }
                 TokenKind::MathShift if render => self.dollar_math(tok.span, para),
                 TokenKind::DisplayMathOpen if render => self.bracket_math(tok.span, para),
+                TokenKind::InlineMathOpen if render => self.paren_math(tok.span, para),
                 TokenKind::DisplayMathClose if render => {
                     self.i += 1;
                     self.diags.push(Diagnostic::error(
                         "stray \\] has no matching \\[",
                         Some(tok.span),
                         Some("ignored the stray display-math delimiter".into()),
+                    ));
+                }
+                TokenKind::InlineMathClose if render => {
+                    self.i += 1;
+                    self.diags.push(Diagnostic::error(
+                        "stray \\) has no matching \\(",
+                        Some(tok.span),
+                        Some("ignored the stray inline-math delimiter".into()),
                     ));
                 }
                 TokenKind::Superscript | TokenKind::Subscript if render => {
@@ -1469,6 +1526,8 @@ impl P<'_> {
                 TokenKind::MathShift
                 | TokenKind::DisplayMathOpen
                 | TokenKind::DisplayMathClose
+                | TokenKind::InlineMathOpen
+                | TokenKind::InlineMathClose
                 | TokenKind::Superscript
                 | TokenKind::Subscript => self.i += 1,
                 TokenKind::Command(name) => {
@@ -1791,6 +1850,12 @@ impl P<'_> {
             }
             "caption" => {
                 let (tokens, _) = self.required_group(name, span);
+                // `\caption` measures its text in an `\sbox` first (latex.ltx
+                // `\@caption` -> `\@makecaption` -> `\sbox\@tempboxa`), so the
+                // argument is restricted horizontal mode and cannot start a
+                // display — verified against pdflatex, unlike a `\section`
+                // title or a `\footnote`, which both accept one.
+                self.restricted_hbox += 1;
                 if self.env_stack.last().map(|(name, _)| name.as_str()) != Some("figure") {
                     self.diags.push(Diagnostic::error(
                         "\\caption is only supported inside a figure environment",
@@ -1813,6 +1878,7 @@ impl P<'_> {
                     blocks.push(Block::FigureCaption { content });
                     self.finish_block_dependencies();
                 }
+                self.restricted_hbox -= 1;
             }
             "item" => {
                 let gap_before = self
@@ -1982,17 +2048,22 @@ impl P<'_> {
             // No paragraph is ever given a first-line indent in this layout
             // model, so there is nothing for \noindent to suppress: an honest
             // no-op rather than a fabricated indent to cancel.
-            "noindent" => {}
+            // ... but it does start the paragraph, which is what decides
+            // whether a following `\\` has a line to end.
+            "noindent" => self.paragraph_forced = true,
             // The opposite request: unlike \noindent above, this one is not a
             // coincidental match with real LaTeX's output — \indent asks for
             // a first-line indent that this layout has no way to draw (see
             // `set_length`'s `\parindent` handling), so it is named honestly
             // via a diagnostic rather than silently accepted.
-            "indent" => self.diags.push(Diagnostic::warning(
-                "\\indent is recognised but paragraph indentation is not implemented",
-                Some(span),
-                Some("the paragraph was not given a first-line indent".into()),
-            )),
+            "indent" => {
+                self.paragraph_forced = true;
+                self.diags.push(Diagnostic::warning(
+                    "\\indent is recognised but paragraph indentation is not implemented",
+                    Some(span),
+                    Some("the paragraph was not given a first-line indent".into()),
+                ));
+            }
             // Text-mode horizontal glue. `\quad`/`\qquad` are also implemented
             // in math mode (`src/math.rs`); this arm covers the same commands
             // used directly in running text, 1em/2em of the body text size.
@@ -3475,6 +3546,25 @@ impl P<'_> {
         blocks: &mut Vec<Block>,
         para: &mut Vec<Inline>,
     ) {
+        // Same rule as `\[...\]` in `finish_math`, reached by the other road:
+        // `equation` and friends are displays, and a display cannot start in
+        // restricted horizontal mode. The generic "block-level content in a
+        // table entry" warning below is a warning because a stray heading or
+        // list there is recoverable; this is an error because pdflatex makes
+        // it one (`! Missing $ inserted`).
+        if self.restricted_hbox > 0 {
+            self.diags.push(
+                Diagnostic::error(
+                    format!(
+                        "\\begin{{{name}}} is display math, which a table entry and a \
+                         \\caption cannot start: they are restricted horizontal mode"
+                    ),
+                    Some(open),
+                    Some("set the formula as inline math and continued".into()),
+                )
+                .with_code(DiagnosticCode::SyntaxError),
+            );
+        }
         self.flush_paragraph(blocks, para);
         let numbered = name == "equation";
         let number = if numbered {
@@ -3821,28 +3911,42 @@ impl P<'_> {
             close_end,
             found,
             display,
+            if display { "$$" } else { "$" },
             space_before,
             para,
         );
     }
 
     fn bracket_math(&mut self, open: Span, para: &mut Vec<Inline>) {
+        self.delimited_math(open, TokenKind::DisplayMathClose, true, "\\]", para)
+    }
+
+    /// `\(...\)`: inline math in LaTeX's own spelling. Identical machinery to
+    /// `\[...\]` — one directional closer, scanned for to the end of the
+    /// paragraph — differing only in that the result is inline, not a display.
+    fn paren_math(&mut self, open: Span, para: &mut Vec<Inline>) {
+        self.delimited_math(open, TokenKind::InlineMathClose, false, "\\)", para)
+    }
+
+    fn delimited_math(
+        &mut self,
+        open: Span,
+        close: TokenKind,
+        display: bool,
+        closer: &'static str,
+        para: &mut Vec<Inline>,
+    ) {
         let space_before = self.space_precedes(self.i);
         self.i += 1;
         let content_start = self.i;
         while self.i < self.t.len() {
-            if self.t[self.i].token.kind == TokenKind::DisplayMathClose
-                || paragraph_boundary_at(&self.t, self.i)
-            {
+            if self.t[self.i].token.kind == close || paragraph_boundary_at(&self.t, self.i) {
                 break;
             }
             self.i += 1;
         }
         let content_end = self.i;
-        let found = matches!(
-            self.t.get(self.i).map(|input| &input.token.kind),
-            Some(TokenKind::DisplayMathClose)
-        );
+        let found = self.t.get(self.i).map(|input| &input.token.kind) == Some(&close);
         let close_end = if found {
             let end = self.t[self.i].token.span.end;
             self.i += 1;
@@ -3856,7 +3960,8 @@ impl P<'_> {
             content_end,
             close_end,
             found,
-            true,
+            display,
+            closer,
             space_before,
             para,
         );
@@ -3870,10 +3975,29 @@ impl P<'_> {
         content_end: usize,
         close_end: usize,
         found: bool,
-        display: bool,
+        mut display: bool,
+        // How the author has to close this math, quoted in the "missing its
+        // closing" diagnostic: the next thing they have to type.
+        closer: &'static str,
         space_before: bool,
         para: &mut Vec<Inline>,
     ) {
+        // A display cannot start in restricted horizontal mode. pdflatex
+        // answers `\[` in a table entry or a `\caption` with `! Missing $
+        // inserted` and sets the formula inline; do the same, so the error is
+        // reported *and* the preview still shows the formula.
+        if display && self.restricted_hbox > 0 {
+            self.diags.push(
+                Diagnostic::error(
+                    "display math is not allowed here: a table entry and a \\caption \
+                     are restricted horizontal mode, which cannot start a display",
+                    Some(open),
+                    Some("set the formula as inline math and continued".into()),
+                )
+                .with_code(DiagnosticCode::SyntaxError),
+            );
+            display = false;
+        }
         // Unterminated math inside an expansion can report a content end past the
         // token stream: the closing token the caller expected was never produced.
         // Clamp rather than slice out of range — the diagnostic for the unclosed
@@ -3928,9 +4052,9 @@ impl P<'_> {
             )),
             (false, None) => self.diags.push(Diagnostic::error(
                 if display {
-                    "display math is missing its closing delimiter"
+                    "display math is missing its closing delimiter".to_string()
                 } else {
-                    "inline math is missing its closing '$'"
+                    format!("inline math is missing its closing '{closer}'")
                 },
                 Some(open),
                 Some(
@@ -4647,6 +4771,21 @@ impl P<'_> {
                     style,
                     space_before,
                 }),
+                // A `\caption`'s text is measured in an `\sbox`, so a display
+                // cannot start in it: pdflatex answers `! Missing $ inserted`.
+                // Headings are not restricted — pdflatex sets a display in a
+                // `\section` title happily — so they are left alone here; this
+                // pass drops their `\[...\]` silently, which is a rendering
+                // gap, not invalid input.
+                TokenKind::DisplayMathOpen if self.restricted_hbox > 0 => self.diags.push(
+                    Diagnostic::error(
+                        "display math is not allowed here: a table entry and a \\caption \
+                         are restricted horizontal mode, which cannot start a display",
+                        Some(input.token.span),
+                        Some("dropped the display and continued".into()),
+                    )
+                    .with_code(DiagnosticCode::SyntaxError),
+                ),
                 _ => {}
             }
         }
@@ -4955,6 +5094,7 @@ impl P<'_> {
     }
 
     fn flush_paragraph(&mut self, blocks: &mut Vec<Block>, paragraph: &mut Vec<Inline>) {
+        self.paragraph_forced = false;
         self.flush_list_item(blocks, paragraph, 0.0, 0.0);
     }
 
@@ -6123,6 +6263,27 @@ fn environment_name_at(tokens: &[InputToken], index: usize) -> Option<&str> {
         (TokenKind::LBrace, TokenKind::Word(name), TokenKind::RBrace) => Some(name),
         _ => None,
     }
+}
+
+/// The span of a literal `&` inside a word token, if it carries one.
+///
+/// `\&` lexes as the same one-character word as a bare `&`, so the text alone
+/// cannot tell them apart; the span can, because an escaped one covers its
+/// backslash too. A word whose span is wider than its own bytes either came
+/// through an escape or was produced by macro expansion (whose span points at
+/// the invocation, not at this text) — neither is a misplaced alignment tab,
+/// so both are left alone. Erring towards silence here is deliberate: a false
+/// "misplaced &" on a document that compiles is worse than missing one.
+fn bare_alignment_tab(word: &str, span: Span) -> Option<Span> {
+    let offset = word.find('&')?;
+    if span.end.checked_sub(span.start) != Some(word.len()) {
+        return None;
+    }
+    Some(Span::in_document(
+        span.document,
+        span.start + offset,
+        span.start + offset + 1,
+    ))
 }
 
 /// Whether the token at `index` ends the paragraph for error recovery, the

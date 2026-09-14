@@ -1475,7 +1475,11 @@ impl P<'_> {
 
         let mut blocks = Vec::new();
         let mut para = Vec::new();
+        // A table entry is restricted horizontal mode: `\[...\]` inside one is
+        // `! Missing $ inserted` in pdflatex, not a display.
+        self.restricted_hbox += 1;
         self.parse_stream(&mut blocks, &mut para);
+        self.restricted_hbox -= 1;
 
         while self.brace_stack.len() > brace_depth {
             let open = self.brace_stack.pop().expect("length checked");

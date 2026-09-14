@@ -910,7 +910,11 @@ impl MathParser<'_> {
                 Some(symbol(ch.to_string(), span))
             }
             TokenKind::Command(name) => Some(self.command_atom(name, token.span)),
-            TokenKind::DisplayMathOpen | TokenKind::DisplayMathClose | TokenKind::MathShift => {
+            TokenKind::DisplayMathOpen
+            | TokenKind::DisplayMathClose
+            | TokenKind::InlineMathOpen
+            | TokenKind::InlineMathClose
+            | TokenKind::MathShift => {
                 self.diagnostics.push(Diagnostic::error(
                     "unexpected math delimiter inside math mode",
                     Some(token.span),
@@ -1499,6 +1503,19 @@ impl MathParser<'_> {
             }
             "text" => {
                 let (text, argument_span) = self.required_text_group("text", span);
+                // `\text` is amsmath's, not the kernel's: without the package
+                // pdflatex answers `! Undefined control sequence`. Report the
+                // missing `\usepackage` — the actionable half — but still set
+                // the argument as a text box, because a preview that drops the
+                // author's words is a worse answer than one that shows them.
+                if !self.packages.amsmath {
+                    self.diagnostics.push(Diagnostic::command_error(
+                        "text",
+                        "\\text requires \\usepackage{amsmath}",
+                        Some(span),
+                        Some("set the argument as a text box anyway".into()),
+                    ));
+                }
                 MathAtom {
                     nucleus: Nucleus::Text(text),
                     span: span.merge(argument_span),
@@ -2184,6 +2201,8 @@ impl MathParser<'_> {
                 TokenKind::MathShift
                 | TokenKind::DisplayMathOpen
                 | TokenKind::DisplayMathClose
+                | TokenKind::InlineMathOpen
+                | TokenKind::InlineMathClose
                 | TokenKind::Superscript
                 | TokenKind::Subscript => {
                     self.diagnostics.push(Diagnostic::error(
@@ -2195,6 +2214,8 @@ impl MathParser<'_> {
                         TokenKind::MathShift => "$",
                         TokenKind::DisplayMathOpen => "\\[",
                         TokenKind::DisplayMathClose => "\\]",
+                        TokenKind::InlineMathOpen => "\\(",
+                        TokenKind::InlineMathClose => "\\)",
                         TokenKind::Superscript => "^",
                         TokenKind::Subscript => "_",
                         _ => unreachable!(),
@@ -4228,6 +4249,9 @@ fn shift(span: Span, delta: isize) -> Span {
 mod parse_tests {
     use super::*;
 
+    /// amsmath loaded — what `\text` needs to be defined at all.
+    const AMSMATH: MathPackages = MathPackages { amsmath: true, amssymb: false, amsfonts: false };
+
     #[test]
     fn primes_mathrm_and_epsilons_follow_latex() {
         let parse = |src: &str| {
@@ -4738,7 +4762,10 @@ mod parse_tests {
     fn quad_text_and_qquad_have_distinct_semantics() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\quad\text{two words}\qquad");
-        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+        // amsmath, because this is about `\text`'s spacing semantics, not
+        // about whether `\text` is defined: without the package it is not,
+        // and the missing-`\usepackage` diagnostic would mask the assertion.
+        let list = parse_tokens(&tokens, AMSMATH, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert!(matches!(list.atoms[0].nucleus, Nucleus::Space { em, .. } if em == 1.0));
         assert!(matches!(&list.atoms[1].nucleus, Nucleus::Text(text) if text == "two words"));
@@ -4764,7 +4791,7 @@ mod parse_tests {
         for source in [r"\bigl", r"\text"] {
             let mut diagnostics = Vec::new();
             let tokens = crate::lexer::tokenize(source);
-            let _ = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            let _ = parse_tokens(&tokens, AMSMATH, &mut diagnostics);
             assert!(!diagnostics.is_empty(), "{source:?} must remain diagnostic");
         }
 
@@ -4773,7 +4800,7 @@ mod parse_tests {
         // ordinary math symbols rather than erroring or being swallowed.
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\text x");
-        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+        let list = parse_tokens(&tokens, AMSMATH, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(list.atoms.len(), 1, "{:?}", list.atoms);
         assert!(matches!(list.atoms[0].nucleus, Nucleus::Text(ref text) if text == "x"));
@@ -4787,6 +4814,9 @@ mod parse_tests {
 #[cfg(test)]
 mod unbraced_argument_tests {
     use super::*;
+
+    /// amsmath loaded — what `\text` needs to be defined at all.
+    const AMSMATH: MathPackages = MathPackages { amsmath: true, amssymb: false, amsfonts: false };
 
     #[test]
     fn unbraced_accent_takes_only_the_next_character() {
@@ -5115,7 +5145,7 @@ mod unbraced_argument_tests {
     fn unbraced_text_takes_one_character_leaving_the_rest_as_math() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\text nR");
-        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+        let list = parse_tokens(&tokens, AMSMATH, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(list.atoms.len(), 2, "{:?}", list.atoms);
         assert!(matches!(&list.atoms[0].nucleus, Nucleus::Text(text) if text == "n"));
