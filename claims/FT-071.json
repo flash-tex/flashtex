@@ -1,11 +1,11 @@
 {
   "actor": "mac-claude-a",
-  "branch": "agent/mac-claude-a/mac-shell",
+  "branch": "agent/mac-render-pipeline/perf-4-compact",
   "gh_ref": "https://github.com/flash-tex/flashtex/issues/2",
   "machine": "mac-m1max-a",
-  "note": "producer/IDE hot path (standing)",
+  "note": "lane mac-perf-4: display-list-v2-compact producer+consumer",
   "started_utc": "2026-09-13T18:36:32Z",
   "state": "claimed",
   "task_id": "FT-071",
-  "updated_utc": "2026-09-13T21:40:11Z"
+  "updated_utc": "2026-09-14T00:30:31Z"
 }
