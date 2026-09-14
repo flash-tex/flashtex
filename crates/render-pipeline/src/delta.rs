@@ -146,6 +146,11 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
                 for cl in &r.clusters {
                     c.u(cl.text_start_byte);
                     c.u(cl.text_end_byte);
+                    // `dl2-canon-1` covers the wire's `hit_rects` (the box).
+                    // A negotiated `ink_rect`
+                    // (`protocol/proposals/display-list-v2-ink-rect.md`) is
+                    // not in this encoding, so it would need `dl2-canon-2`
+                    // before a delta may carry it.
                     let rects = cl.hit_rects();
                     c.u(rects.len());
                     for h in rects {
@@ -405,7 +410,8 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
                     && x.clusters.iter().zip(&y.clusters).all(|(c, d)| {
                         c.text_start_byte == d.text_start_byte
                             && c.text_end_byte == d.text_end_byte
-                            && c.hit_rect == d.hit_rect
+                            && c.box_rect == d.box_rect
+                            && c.ink_rect == d.ink_rect
                             && c.carets == d.carets
                             && provenance_matches(&c.provenance, &d.provenance, relocs, &mut width_delta)
                     })

@@ -485,6 +485,21 @@ pub struct PositionedGlyph {
     /// (plus the italic correction where `char_box` adds it, as for
     /// delimiters), which is what pdfTeX records as the glyph's `/Widths`.
     pub width: f64,
+    /// The glyph box's height and depth in pt, above and below `baseline_y`:
+    /// the TFM character metrics `char_box` selected, which is what pdfTeX's
+    /// `\showbox` reports for the atom.
+    ///
+    /// They travel with the width because a renderer that has only the width
+    /// has no honest way to answer "how tall is this box?", and the tempting
+    /// substitute — the bounding box of the outline it paints — is a
+    /// different measurement that disagrees in both directions. Latin Modern
+    /// Math's `(` variants stop short of their box (`\Bigg(` paints 29.90 pt
+    /// of ink inside an exact 30.00029 pt box) and a cmex extension piece is
+    /// drawn past its own so that stacked copies overlap. Three lanes
+    /// reported engine defects against delimiter boxes that were exact
+    /// before `render-pipeline` stopped making that substitution.
+    pub height: f64,
+    pub depth: f64,
     /// The source span and attribute of the atom that produced the glyph.
     pub tag: SourceTag,
 }
@@ -534,6 +549,8 @@ fn walk(b: &MathBox, x: f64, baseline: f64, out: &mut PositionedRuns) {
             baseline_y: baseline,
             size: *size,
             width: b.width,
+            height: b.height,
+            depth: b.depth,
             tag: b.tag,
         }),
         BoxKind::Rule => out.rules.push(PositionedRule {

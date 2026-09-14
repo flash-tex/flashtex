@@ -41,6 +41,12 @@ pub const CAP_DELTA: &str = crate::delta::CAP;
 /// and the echoed capabilities stay). Negotiated only next to
 /// `display-list-v2`; echoed only when the pages were actually elided.
 pub const CAP_V2_ONLY: &str = "display-list-v2-only";
+/// PROPOSAL (`protocol/proposals/display-list-v2-ink-rect.md`): a cluster
+/// additionally carries `ink_rect`, the tight bounding box of the outline
+/// actually painted, next to the laid-out TeX box `hit_rects` already ship.
+/// Accepted only together with `display-list-v2`; without it the cluster
+/// object is byte-identical to today's.
+pub const CAP_INK_RECT: &str = "display-list-v2-ink-rect";
 
 /// Capabilities the producer accepted for one request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -52,6 +58,7 @@ pub struct Capabilities {
     pub device_color: bool,
     pub delta: bool,
     pub v2_only: bool,
+    pub ink_rects: bool,
 }
 
 impl Capabilities {
@@ -89,6 +96,17 @@ impl Capabilities {
                 }
                 CAP_V2_ONLY if !caps.v2_only && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
                     caps.v2_only = true;
+                    accepted.push(r.clone());
+                }
+                // `dl2-canon-1` does not cover `ink_rect`, so a delta could
+                // reuse a page whose ink moved while its boxes did not. The
+                // two are refused together until `dl2-canon-2` exists.
+                CAP_INK_RECT
+                    if !caps.ink_rects
+                        && requested.iter().any(|c| c == CAP_DISPLAY_LIST)
+                        && !requested.iter().any(|c| c == CAP_DELTA) =>
+                {
+                    caps.ink_rects = true;
                     accepted.push(r.clone());
                 }
                 _ => {}
@@ -655,6 +673,18 @@ mod tests {
         let (c, acc) = Capabilities::negotiate(&["unknown".into()]);
         assert_eq!(c, Capabilities::default());
         assert!(acc.is_empty());
+        // `ink_rect` rides on `display-list-v2` like the other proposals.
+        let (c, acc) = Capabilities::negotiate(&[CAP_INK_RECT.into()]);
+        assert!(!c.ink_rects);
+        assert!(acc.is_empty());
+        let (c, acc) = Capabilities::negotiate(&[CAP_DISPLAY_LIST.into(), CAP_INK_RECT.into()]);
+        assert!(c.ink_rects);
+        assert_eq!(acc, vec![CAP_DISPLAY_LIST.to_string(), CAP_INK_RECT.to_string()]);
+        // ... but not next to a delta: `dl2-canon-1` does not cover the
+        // field, so a reused page could keep a stale ink rectangle.
+        let (c, acc) = Capabilities::negotiate(&[CAP_DISPLAY_LIST.into(), CAP_INK_RECT.into(), CAP_DELTA.into()]);
+        assert!(!c.ink_rects && c.delta);
+        assert_eq!(acc, vec![CAP_DISPLAY_LIST.to_string(), CAP_DELTA.to_string()]);
     }
 
     #[test]

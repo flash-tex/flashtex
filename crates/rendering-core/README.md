@@ -45,7 +45,13 @@ or visual correctness evidence. Fixtures retain the experimental schema provenan
 from commit `41cacfc`; no image, network provider, or external TeX engine is run.
 
 `hit_test::PageIndex` builds a per-page spatial index from declared hit rectangles
-and rules. Queries require the matching project/revision, use exact half-open
+and rules. A cluster's `hit_rects` are its **laid-out TeX boxes** — the advance
+TeX positions the next atom from, and the box's height plus depth — not the
+extent of the outlines painted inside them, so a space stays selectable and a
+full stop is not a one-point-tall target. Measuring a delimiter reads the same
+rectangles; the painted extent is the separate, negotiated `ink_rect`
+(`protocol/proposals/display-list-v2-ink-rect.md`), which this crate does not
+accept yet. Queries require the matching project/revision, use exact half-open
 fixed-point rectangles clipped to page bounds, and resolve overlaps in paint order.
 Caret selection uses only supplied caret positions; absent carets return a whole
 logical cluster. TeX source ranges and synthetic provenance remain unchanged. Shared

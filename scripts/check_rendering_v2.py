@@ -161,8 +161,14 @@ def validate(message, *, offer=None, documents=None, font_bytes=None):
                 require(start == cursor and start < end and start in boundary and end in boundary, 'Clusters must partition logical UTF-8 text')
                 cursor = end
                 provenance(cluster)
+                # The laid-out TeX box. `ink_rect`, when the negotiated
+                # `display-list-v2-ink-rect` proposal put one there, is the
+                # painted outline's extent and is deliberately allowed to
+                # fall outside it.
                 for hit in cluster['hit_rects']:
                     rect(hit)
+                if 'ink_rect' in cluster:
+                    rect(cluster['ink_rect'])
                 for caret in cluster['carets']:
                     require(start <= caret['text_byte'] <= end and caret['text_byte'] in boundary, 'Invalid UTF-8 caret')
                     checked_sum(caret['top'], caret['height'])

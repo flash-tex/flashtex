@@ -4,8 +4,14 @@
 //! Coordinates are `bp_2pow20` ticks (integer, 1 048 576 per PDF point,
 //! y downward from the page's top-left corner). Every glyph carries its
 //! ORIGINAL glyph id and a cluster index; every cluster carries its byte
-//! range inside the run's `text` (the ActualText), exact hit rectangles
-//! and source ranges with the document path. Rules are explicit rectangles.
+//! range inside the run's `text` (the ActualText), its laid-out TeX box
+//! ([`Cluster::box_rect`], the wire's `hit_rects`) and source ranges with the
+//! document path. Rules are explicit rectangles.
+//!
+//! A cluster's rectangle is the **box**, never the ink of the outline painted
+//! inside it; [`Cluster::ink_rect`] carries the ink under its own name. The
+//! two are different measurements and conflating them is what made three
+//! lanes report engine defects against delimiter boxes that were exact.
 //! Deviations from the schema are listed in `docs/proposals/rendering-abi.md`
 //! and in the README, never hidden: this pipeline emits
 //! `format: "opentype-cff"` for Latin Modern and `core14-afm` (no bytes) for
@@ -82,15 +88,28 @@ impl Paint {
     }
 }
 
-/// Negotiated display-list proposals: image items (FT-063) and device
-/// colours (`display-list-v2-device-color`).
+/// Negotiated display-list proposals: image items (FT-063), device colours
+/// (`display-list-v2-device-color`) and cluster ink boxes
+/// (`display-list-v2-ink-rect`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Wire {
     pub images: bool,
     pub device_color: bool,
+    /// PROPOSAL (`protocol/proposals/display-list-v2-ink-rect.md`): a
+    /// cluster additionally carries `ink_rect`, the painted outline's tight
+    /// bounding box, alongside the box `hit_rects` already ship. Off unless
+    /// negotiated, so the default wire shape is unchanged.
+    pub ink_rects: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// An axis-aligned rectangle in ticks, top-left anchored with y downward.
+///
+/// A `Rect` carries no unit of meaning on its own: a cluster's
+/// [`Cluster::box_rect`] is its laid-out TeX box and its
+/// [`Cluster::ink_rect`] is the painted outline's extent, and the two are
+/// different measurements of the same glyph. Whichever field holds it says
+/// which one it is; never copy a rect from one to the other.
 pub struct Rect {
     pub x: Tick,
     pub top: Tick,
@@ -152,16 +171,43 @@ impl Carets {
 pub struct Cluster {
     pub text_start_byte: usize,
     pub text_end_byte: usize,
-    /// The cluster's hit rectangle (the wire format is a list; this
-    /// pipeline emits exactly one per cluster).
-    pub hit_rect: Rect,
+    /// The cluster's **laid-out TeX box**, never the extent of the outline
+    /// painted inside it: `width` is the advance TeX positions the next atom
+    /// from (the TFM width, pdfTeX's `/Widths`), `top` is `baseline - box
+    /// height`, and `height` is `box height + box depth`. This is the number
+    /// a lane measuring a delimiter against pdfTeX's `\showbox` must read.
+    ///
+    /// The one path with no TeX box to report is the OpenType text fallback
+    /// (`shape::shape_otf`, used when a font's TFM metrics are unresolvable):
+    /// there the run's height and depth are derived from ink because nothing
+    /// else exists, and the font-resource diagnostics say so.
+    pub box_rect: Rect,
+    /// The tight bounding box of the outline actually painted, when the
+    /// painter knows it; `None` when nothing computed it (every text run).
+    ///
+    /// This is **not** a measurement of the box and the two routinely
+    /// disagree in both directions. Latin Modern Math's `(` variants stop
+    /// short of their box — `\Bigg(` paints 29.90 pt of ink inside an exact
+    /// 30.00029 pt box — while a cmex extension piece is drawn past its box
+    /// so that stacked copies overlap. Read this only to frame what is on
+    /// the page (a formula outline, a hover crop), never to report a size.
+    pub ink_rect: Option<Rect>,
     pub carets: Carets,
     pub provenance: Provenance,
 }
 
 impl Cluster {
+    /// The wire's `hit_rects`: the cluster's [`Cluster::box_rect`]. The wire
+    /// shape is a list (a cluster broken across lines would carry several);
+    /// this pipeline emits exactly one per cluster.
+    ///
+    /// The hit target is the box on every path — text, one math glyph, and a
+    /// stacked extensible delimiter alike — because a pointer target and a
+    /// caret highlight want the box: ink makes a space unclickable and a `.`
+    /// a one-point-tall target, and leaves the highlight shorter than the
+    /// caret bar drawn beside it.
     pub fn hit_rects(&self) -> &[Rect] {
-        std::slice::from_ref(&self.hit_rect)
+        std::slice::from_ref(&self.box_rect)
     }
 }
 
@@ -343,7 +389,10 @@ pub fn shift_x(item: &mut Item, dx: Tick) {
                 g.origin_x = add(g.origin_x);
             }
             for c in &mut r.clusters {
-                c.hit_rect.x = add(c.hit_rect.x);
+                c.box_rect.x = add(c.box_rect.x);
+                if let Some(ink) = &mut c.ink_rect {
+                    ink.x = add(ink.x);
+                }
                 c.carets.first.x = add(c.carets.first.x);
                 if let Some(l) = &mut c.carets.last {
                     l.x = add(l.x);
@@ -501,7 +550,7 @@ impl DisplayList {
 
     /// `images`: whether image items are serialised (adds `image`).
     pub fn required_features_with(&self, images: bool) -> Vec<&'static str> {
-        self.required_features_wire(Wire { images, device_color: false })
+        self.required_features_wire(Wire { images, device_color: false, ink_rects: false })
     }
 
     /// `device-color` is listed when negotiated and some paint carries one.
@@ -536,6 +585,13 @@ impl DisplayList {
         if wire.device_color && self.pages.iter().any(|p| p.items.iter().any(device)) {
             f.push("device-color");
         }
+        let inked = |it: &Item| match it {
+            Item::GlyphRun(r) => r.clusters.iter().any(|c| c.ink_rect.is_some()),
+            _ => false,
+        };
+        if wire.ink_rects && self.pages.iter().any(|p| p.items.iter().any(inked)) {
+            f.push("ink-rect");
+        }
         f
     }
 
@@ -553,7 +609,7 @@ impl DisplayList {
     /// [`to_json`](Self::to_json); `images` also serialises image items
     /// and lists the `image` feature (negotiated `display-list-v2-images`).
     pub fn to_json_with(&self, id: &str, images: bool) -> Value {
-        self.to_json_wire(id, Wire { images, device_color: false })
+        self.to_json_wire(id, Wire { images, device_color: false, ink_rects: false })
     }
 
     /// [`to_json_with`](Self::to_json_with) with every negotiated proposal.
@@ -630,7 +686,7 @@ impl DisplayList {
     /// `json::write(&self.to_json_with(id, images))` written directly:
     /// `images` also serialises image items and lists the `image` feature.
     pub fn write_json_with(&self, id: &str, images: bool) -> String {
-        self.write_json_wire(id, Wire { images, device_color: false })
+        self.write_json_wire(id, Wire { images, device_color: false, ink_rects: false })
     }
 
     /// [`write_json_with`](Self::write_json_with) with every negotiated proposal.
@@ -786,6 +842,19 @@ fn num(o: &mut String, n: f64) {
 
 fn write_tick(o: &mut String, t: Tick) {
     num(o, t.0 as f64);
+}
+
+/// One rectangle, keys in the fixed order the value-tree writer produces.
+fn write_rect(o: &mut String, rect: &Rect) {
+    o.push_str("{\"height\":");
+    write_tick(o, rect.height);
+    o.push_str(",\"top\":");
+    write_tick(o, rect.top);
+    o.push_str(",\"width\":");
+    write_tick(o, rect.width);
+    o.push_str(",\"x\":");
+    write_tick(o, rect.x);
+    o.push('}');
 }
 
 fn write_sources(o: &mut String, sources: &[SourceRange]) {
@@ -951,17 +1020,13 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
                     o.push_str("],\"hit_rects\":[");
                     for (k, rect) in c.hit_rects().iter().enumerate() {
                         sep(o, k);
-                        o.push_str("{\"height\":");
-                        write_tick(o, rect.height);
-                        o.push_str(",\"top\":");
-                        write_tick(o, rect.top);
-                        o.push_str(",\"width\":");
-                        write_tick(o, rect.width);
-                        o.push_str(",\"x\":");
-                        write_tick(o, rect.x);
-                        o.push('}');
+                        write_rect(o, rect);
                     }
                     o.push(']');
+                    if let (true, Some(ink)) = (wire.ink_rects, &c.ink_rect) {
+                        o.push_str(",\"ink_rect\":");
+                        write_rect(o, ink);
+                    }
                     write_provenance(o, &c.provenance);
                     o.push_str(",\"text_end_byte\":");
                     num(o, c.text_end_byte as f64);
@@ -1210,6 +1275,9 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                                         o.set("text_start_byte", json::num(c.text_start_byte as f64));
                                         o.set("text_end_byte", json::num(c.text_end_byte as f64));
                                         o.set("hit_rects", Value::Arr(c.hit_rects().iter().map(rect_json).collect()));
+                                        if let (true, Some(ink)) = (wire.ink_rects, &c.ink_rect) {
+                                            o.set("ink_rect", rect_json(ink));
+                                        }
                                         o.set(
                                             "carets",
                                             Value::Arr(
@@ -1372,12 +1440,18 @@ mod tests {
         let cluster = |provenance| Cluster {
             text_start_byte: 0,
             text_end_byte: 4,
-            hit_rect: Rect {
+            box_rect: Rect {
                 x: Tick(1),
                 top: Tick(-2),
                 width: Tick(3),
                 height: Tick(4),
             },
+            ink_rect: Some(Rect {
+                x: Tick(11),
+                top: Tick(-12),
+                width: Tick(13),
+                height: Tick(14),
+            }),
             carets: Carets {
                 first: caret(5),
                 last: Some(caret(9)),
@@ -1547,6 +1621,15 @@ mod tests {
         }
         assert!(!list.write_json("i").contains("\"image\""));
         assert!(list.write_json_with("i", true).contains("\"kind\":\"image\""));
+        // The negotiated ink rectangle: both writers agree, and the default
+        // wire shape still carries only the box `hit_rects`.
+        for (images, device_color, ink_rects) in [(false, false, true), (true, true, true), (false, true, false)] {
+            let wire = Wire { images, device_color, ink_rects };
+            assert_eq!(list.write_json_wire("id\"1", wire), json::write(&list.to_json_wire("id\"1", wire)));
+        }
+        let ink = Wire { images: false, device_color: false, ink_rects: true };
+        assert!(!list.write_json("i").contains("\"ink_rect\""));
+        assert!(list.write_json_wire("i", ink).contains("\"ink_rect\":{\"height\":14,\"top\":-12,\"width\":13,\"x\":11}"));
         let empty = DisplayList {
             project_id: String::new(),
             revision: 0,
