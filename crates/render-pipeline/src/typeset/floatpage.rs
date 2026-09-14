@@ -21,11 +21,11 @@ use std::rc::Rc;
 
 use flashtex_compiler::Span;
 
-use crate::adapter::{Item as AItem, ParaStyle};
+use crate::adapter::{self, Item as AItem, ParaStyle};
 use crate::display::{self, Diagnostic, ImageResource, Provenance, Tick};
-use crate::floats::FloatKind;
+use crate::floats::{Align, FloatKind};
 use crate::graphics::{GraphicBox, BP_PER_PT};
-use crate::pagebuild::{self, badness, BuiltPage, InsertArea, InsertState, Insertions, PageIns, PageParams, Placed, VItem, AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY};
+use crate::pagebuild::{self, badness, BuiltPage, InsertArea, InsertState, Insertions, PageIns, PageParams, Placed, VBlock, VItem, AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY};
 
 use super::{BoxRec, BuiltBlock, Context};
 
@@ -45,9 +45,16 @@ pub struct FloatSpec {
 
 #[derive(Debug, Clone)]
 pub enum FloatPart {
-    Centering,
+    /// `\centering`/`\raggedright`/`\raggedleft`: the line a run of
+    /// graphics is set on follows it (the body's own paragraphs carry the
+    /// declaration through the compiler instead).
+    Align(Align),
     ParBreak,
     Graphic(PreparedGraphic),
+    /// Body material as ordinary blocks, set by `Context::box_blocks`;
+    /// `end_skip` is the `\endtrivlist` glue of a list the run closes
+    /// (`adapter::list_end_skip`), which LaTeX contributes after it.
+    Content { blocks: Vec<adapter::Block>, end_skip: f64 },
     /// The caption paragraph's items, `Figure~N: ` prefix included.
     Caption { items: Vec<AItem> },
 }
@@ -101,79 +108,116 @@ struct FloatBox {
     labels: Vec<String>,
 }
 
-/// Sets the float's box (see the module docs).
-fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, fp: &FloatParams) -> FloatBox {
-    let s = ctx.style;
-    let (bs, ls, lsl, tw) = (s.baselineskip_pt, s.lineskip_pt, s.lineskiplimit_pt, s.text_width_pt);
-    let mut y = 0.0;
-    let mut prev_depth: Option<f64> = None;
-    let mut elems = Vec::new();
+/// One entry of the float box's vertical list: either a block set through
+/// the ordinary block path (indexed into the page's `blocks`), or a line of
+/// graphics set side by side.
+enum BoxEntry {
+    Block(usize),
+    Images { graphics: Vec<PreparedGraphic>, centered: bool },
+}
+
+/// Sets the float's box (see the module docs): `\@xfloat` opens a `\vbox` of
+/// `\hsize\columnwidth` under `\@parboxrestore`, the body contributes to its
+/// vertical list, and `\@makecaption` adds the caption. The list is the
+/// page builder's own (`pagebuild::vlist`) laid out at natural size, so
+/// interline glue, `\parskip`, `\topsep` and a display's skips inside a
+/// float follow the same rules as on the page.
+fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, fp: &FloatParams, p: &PageParams) -> FloatBox {
+    let tw = ctx.style.text_width_pt;
+    let mut entries: Vec<BoxEntry> = Vec::new();
+    let mut vblocks: Vec<VBlock> = Vec::new();
     let mut centered = false;
-    let mut pending: Vec<&PreparedGraphic> = Vec::new();
-    let add_box = |h: f64, d: f64, y: &mut f64, prev: &mut Option<f64>| -> f64 {
-        if let Some(pd) = *prev {
-            let mut g = bs - pd - h;
-            if g < lsl {
-                g = ls;
+    let mut pending: Vec<PreparedGraphic> = Vec::new();
+    // `\@setminipage`: `\addvspace` is suppressed until the box's first
+    // paragraph has begun (a graphics line and a caption are paragraphs too).
+    let mut minipage = true;
+    // A run of graphics with no paragraph break between them is one line.
+    macro_rules! flush {
+        () => {
+            if !pending.is_empty() {
+                minipage = false;
+                let h = pending.iter().map(|g| g.gbox.height).fold(0.0, f64::max);
+                let d = pending.iter().map(|g| g.gbox.depth).fold(0.0, f64::max);
+                vblocks.push(super::plain_vblock(vec![(h, d)]));
+                entries.push(BoxEntry::Images { graphics: std::mem::take(&mut pending), centered });
             }
-            *y += g;
-        }
-        let b = *y + h;
-        *y = b + d;
-        *prev = Some(d);
-        b
-    };
-    let flush = |pending: &mut Vec<&PreparedGraphic>, centered: bool, y: &mut f64, prev: &mut Option<f64>, elems: &mut Vec<Elem>, ctx: &Context| {
-        if pending.is_empty() {
-            return;
-        }
-        let w: f64 = pending.iter().map(|g| g.gbox.width).sum();
-        let h = pending.iter().map(|g| g.gbox.height).fold(0.0, f64::max);
-        let d = pending.iter().map(|g| g.gbox.depth).fold(0.0, f64::max);
-        let mut x = if centered { ((tw - w) / 2.0).max(0.0) } else { 0.0 };
-        let b = add_box(h, d, y, prev);
-        for g in pending.drain(..) {
-            elems.push(Elem::Image { x, baseline: b, gbox: g.gbox, resource: g.resource.clone(), provenance: Provenance::Source(ctx.source(g.span)) });
-            x += g.gbox.width;
-        }
-    };
+        };
+    }
     for part in &spec.parts {
         match part {
-            FloatPart::Centering => centered = true,
-            FloatPart::Graphic(g) => pending.push(g),
-            FloatPart::ParBreak => flush(&mut pending, centered, &mut y, &mut prev_depth, &mut elems, ctx),
+            FloatPart::Align(a) => centered = matches!(a, Align::Center),
+            FloatPart::Graphic(g) => pending.push(g.clone()),
+            FloatPart::ParBreak => flush!(),
+            FloatPart::Content { blocks: body, end_skip } => {
+                flush!();
+                let range = ctx.box_blocks(body, blocks, spec.span, minipage);
+                minipage = minipage && range.is_empty();
+                if *end_skip != 0.0 {
+                    if let Some(last) = range.clone().last().and_then(|i| blocks.get_mut(i)) {
+                        let s = last.vertical.space_after.unwrap_or((0.0, 0.0, 0.0));
+                        last.vertical.space_after = Some((s.0 + end_skip, s.1, s.2));
+                    }
+                }
+                for i in range {
+                    vblocks.push(blocks[i].vertical.clone());
+                    entries.push(BoxEntry::Block(i));
+                }
+            }
             FloatPart::Caption { items } => {
-                flush(&mut pending, centered, &mut y, &mut prev_depth, &mut elems, ctx);
-                y += fp.abovecaptionskip;
-                let Some(mut block) = ctx.paragraph_block(items, false, true, false, ParaStyle::Plain, None) else { continue };
+                flush!();
+                minipage = false;
+                let Some(mut block) = ctx.paragraph_block(items, false, true, false, ParaStyle::Plain, None, None) else { continue };
                 let lines = &block.block.lines.lines;
                 // `\@caption` runs `\@parboxrestore` before `\@makecaption`, so
                 // `\centering` does not reach a caption set as a paragraph:
                 // only the one-line `\hbox to\hsize{\hfil...\hfil}` is centred.
                 let fits = lines.len() == 1 && lines[0].natural_width <= tw + 1e-6;
                 if fits {
-                    if let Some(b) = ctx.paragraph_block(items, false, true, false, ParaStyle::Center, None) {
+                    if let Some(b) = ctx.paragraph_block(items, false, true, false, ParaStyle::Center, None, None) {
                         block = b;
                     }
                 }
-                let bi = blocks.len();
-                for (li, line) in block.block.lines.lines.iter().enumerate() {
-                    let b = add_box(line.height, line.depth, &mut y, &mut prev_depth);
-                    elems.push(Elem::Line { block: bi, line: li, baseline: b, height: line.height, depth: line.depth });
-                }
+                // `\@makecaption`: `\vskip\abovecaptionskip`, the caption,
+                // `\vskip\belowcaptionskip` (0pt in the standard classes).
+                // `\parskip` is 0 inside the float's `\@parboxrestore`.
+                block.vertical.space_before = Some((fp.abovecaptionskip, 0.0, 0.0));
+                block.vertical.parskip = None;
+                vblocks.push(block.vertical.clone());
+                entries.push(BoxEntry::Block(blocks.len()));
                 blocks.push(block);
             }
         }
     }
-    flush(&mut pending, centered, &mut y, &mut prev_depth, &mut elems, ctx);
-    let mut height = y;
-    if height > s.text_height_pt {
+    flush!();
+    let list = pagebuild::vlist(p, &vblocks);
+    let (placed, mut height) = pagebuild::natural_layout(p, &list, false);
+    // `\vbox`: the depth of the last box is the box's depth unless glue
+    // follows it, and the float is placed by its height *and* depth.
+    if matches!(list.iter().rev().find(|i| !matches!(i, VItem::Penalty(_))), Some(VItem::Box { .. })) {
+        height += placed.last().map_or(0.0, |l| l.depth);
+    }
+    let mut elems = Vec::new();
+    for line in &placed {
+        let (entry, li) = line.payload;
+        match &entries[entry] {
+            BoxEntry::Block(bi) => elems.push(Elem::Line { block: *bi, line: li, baseline: line.baseline, height: line.height, depth: line.depth }),
+            BoxEntry::Images { graphics, centered } => {
+                let w: f64 = graphics.iter().map(|g| g.gbox.width).sum();
+                let mut x = if *centered { ((tw - w) / 2.0).max(0.0) } else { 0.0 };
+                for g in graphics {
+                    elems.push(Elem::Image { x, baseline: line.baseline, gbox: g.gbox, resource: g.resource.clone(), provenance: Provenance::Source(ctx.source(g.span)) });
+                    x += g.gbox.width;
+                }
+            }
+        }
+    }
+    if height > ctx.style.text_height_pt {
         ctx.diagnostics.push(Diagnostic::warning(
             "float_too_large",
-            format!("{} {} is {:.2}pt taller than the text area", spec.kind.name(), spec.number, height - s.text_height_pt),
+            format!("{} {} is {:.2}pt taller than the text area", spec.kind.name(), spec.number, height - ctx.style.text_height_pt),
             vec![ctx.source(spec.span)],
         ));
-        height = s.text_height_pt;
+        height = ctx.style.text_height_pt;
     }
     FloatBox { height, elems, type_bit: spec.kind.type_bit(), labels: spec.labels.clone() }
 }
@@ -565,7 +609,7 @@ pub fn paginate(
         }
     }
     let fp = FloatParams::for_size(ctx.style.body_size_pt);
-    let boxes: Vec<FloatBox> = specs.iter().map(|s| build_box(ctx, blocks, s, &fp)).collect();
+    let boxes: Vec<FloatBox> = specs.iter().map(|s| build_box(ctx, blocks, s, &fp, p)).collect();
     let mut nodes: Vec<N> = Vec::with_capacity(list.len() + 4 * specs.len());
     let mut mi = 0;
     for i in 0..=list.len() {
