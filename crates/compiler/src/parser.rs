@@ -74,6 +74,13 @@ pub enum FillLeader {
     Dots,
 }
 
+/// An amsthm proof-end marker. Consumers that draw the marker can use the
+/// source span without depending on a particular fallback glyph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProofEnd {
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inline {
     Text {
@@ -116,6 +123,13 @@ pub enum Inline {
         /// `\textcolor`, merged per colour in source order; an atom takes
         /// the colour of the range containing its span, else `color`.
         color_ranges: Vec<(Span, DeviceColor)>,
+        /// `\qedhere` belongs on this display's line rather than after it.
+        proof_end: Option<ProofEnd>,
+    },
+    /// An amsthm `\openbox` marker. The compiler layout emits a text fallback;
+    /// render-pipeline consumers can draw the rule box directly.
+    ProofEnd {
+        span: Span,
     },
     /// A multi-row amsmath display (`gather`, `align` and their starred forms).
     /// `aligned` cells alternate right/left alignment around shared tab stops.
@@ -334,6 +348,8 @@ pub struct MathRow {
     pub cells: Vec<MathList>,
     pub number: Option<String>,
     pub span: Span,
+    /// `\qedhere` attached to this row of an `align`/`gather` display.
+    pub proof_end: Option<ProofEnd>,
     /// `\intertext`/`\shortintertext` paragraphs set between the previous
     /// row and this one, in order.
     pub intertext: Vec<Intertext>,
@@ -804,6 +820,9 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "newcommand",
     "renewcommand",
     "DeclareMathOperator",
+    "qed",
+    "qedsymbol",
+    "qedhere",
     "input",
     "include",
     "label",
@@ -1180,6 +1199,7 @@ pub fn parse_project_with(
         diags: Vec::new(),
         brace_stack: Vec::new(),
         env_stack: Vec::new(),
+        proof_qedhere: Vec::new(),
         arraystretch: expanded.arraystretch,
         has_document,
         in_body: !has_document,
@@ -1317,6 +1337,8 @@ struct P<'a> {
     diags: Vec<Diagnostic>,
     brace_stack: Vec<Span>,
     env_stack: Vec<(String, Span)>,
+    /// Whether each open proof has already consumed its one `\qedhere`.
+    proof_qedhere: Vec<bool>,
     /// `\arraystretch` at each `\begin{tabular}`, from the expansion pass.
     arraystretch: HashMap<(usize, usize), String>,
     has_document: bool,
@@ -2208,6 +2230,15 @@ impl P<'_> {
                 }
             }
             _ if style_declaration(name) => self.style = apply_style(self.style, name),
+            "qed" => {
+                para.push(Inline::HFill {
+                    span,
+                    leader: FillLeader::None,
+                });
+                para.push(Inline::ProofEnd { span });
+            }
+            "qedsymbol" => para.push(Inline::ProofEnd { span }),
+            "qedhere" => self.push_qedhere(span, para),
             "hfill" | "hfil" => para.push(Inline::HFill { span, leader: FillLeader::None }),
             "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule }),
             "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots }),
@@ -3488,6 +3519,7 @@ impl P<'_> {
                 if let Some(theorem) = self.theorems.get(&environment).cloned() {
                     self.begin_theorem(&theorem, span, para);
                 } else if environment == "proof" {
+                    self.proof_qedhere.push(false);
                     self.begin_proof(span, para);
                 }
             }
@@ -3495,6 +3527,10 @@ impl P<'_> {
         }
 
         let popped = self.env_stack.pop();
+        let closed_proof = popped
+            .as_ref()
+            .is_some_and(|(open, _)| open == "proof");
+        let matching_proof = closed_proof && environment == "proof";
         let had_open_environment = popped.is_some();
         match popped {
             Some((open, _)) if open == environment => {}
@@ -3596,15 +3632,21 @@ impl P<'_> {
             self.flush_paragraph(blocks, para);
         } else if environment == "figure" || self.theorems.contains_key(&environment) {
             self.flush_paragraph(blocks, para);
-        } else if environment == "proof" {
-            para.push(Inline::HFill { span, leader: FillLeader::None });
-            para.push(Inline::Text {
-                text: "∎".to_string(),
-                span,
-                style: TextStyle::default(),
-                space_before: false,
-            });
+        } else if matching_proof {
+            let proof_end_span = span.merge(argument_span);
+            let had_qedhere = self.proof_qedhere.pop().unwrap_or(false);
+            if !had_qedhere {
+                para.push(Inline::HFill {
+                    span: proof_end_span,
+                    leader: FillLeader::None,
+                });
+                para.push(Inline::ProofEnd {
+                    span: proof_end_span,
+                });
+            }
             self.flush_paragraph(blocks, para);
+        } else if closed_proof {
+            self.proof_qedhere.pop();
         }
         if environment == "document" && self.has_document {
             self.flush_paragraph(blocks, para);
@@ -3837,7 +3879,7 @@ impl P<'_> {
     }
 
     /// `proof`'s italic "Proof." head (or a custom `[...]` heading, still
-    /// period-terminated) and upright body. The closing "∎" is appended by
+    /// period-terminated) and upright body. The closing marker is appended by
     /// `environment`'s `\end` handling, once the body's last paragraph is
     /// known.
     fn begin_proof(&mut self, span: Span, para: &mut Vec<Inline>) {
@@ -3856,6 +3898,25 @@ impl P<'_> {
             space_before: true,
         });
         self.style = TextStyle::default();
+    }
+
+    fn accept_qedhere(&mut self, span: Span) -> Option<ProofEnd> {
+        let used = self.proof_qedhere.last_mut()?;
+        if *used {
+            return None;
+        }
+        *used = true;
+        Some(ProofEnd { span })
+    }
+
+    fn push_qedhere(&mut self, span: Span, para: &mut Vec<Inline>) {
+        if let Some(marker) = self.accept_qedhere(span) {
+            para.push(Inline::HFill {
+                span,
+                leader: FillLeader::None,
+            });
+            para.push(Inline::ProofEnd { span: marker.span });
+        }
     }
 
     /// `verbatim`, `verbatim*`, and basic `lstlisting`. The body is not read
@@ -3957,6 +4018,7 @@ impl P<'_> {
         };
         let mut raw = Vec::new();
         let mut labels = Vec::new();
+        let mut proof_end = None;
         let mut end = open.end;
         let mut found_end = false;
 
@@ -3969,6 +4031,14 @@ impl P<'_> {
             }
             if paragraph_boundary_at(&self.t, self.i) {
                 break;
+            }
+            if matches!(&self.t[self.i].token.kind, TokenKind::Command(command) if command == "qedhere") {
+                let qed_span = self.t[self.i].token.span;
+                self.i += 1;
+                if proof_end.is_none() {
+                    proof_end = self.accept_qedhere(qed_span);
+                }
+                continue;
             }
             if matches!(&self.t[self.i].token.kind, TokenKind::Command(name) if name == "label") {
                 let label_span = self.t[self.i].token.span;
@@ -4023,6 +4093,7 @@ impl P<'_> {
             // Always its own line (see `layout::LayoutCursor::display_math`),
             // so whether real source whitespace preceded it is moot.
             space_before: true,
+            proof_end,
         });
         para.extend(labels);
         self.flush_paragraph(blocks, para);
@@ -4046,9 +4117,21 @@ impl P<'_> {
             let _ = self.required_group("alignat", open);
         }
         // Per row: (cells of raw tokens, unnumbered flag, labels, intertext
-        // set before the row).
-        type RawRow = (Vec<Vec<Token>>, bool, Vec<(String, Span)>, Vec<Intertext>);
-        let mut rows: Vec<RawRow> = vec![(vec![Vec::new()], false, Vec::new(), Vec::new())];
+        // set before the row, optional `\qedhere`).
+        type RawRow = (
+            Vec<Vec<Token>>,
+            bool,
+            Vec<(String, Span)>,
+            Vec<Intertext>,
+            Option<ProofEnd>,
+        );
+        let mut rows: Vec<RawRow> = vec![(
+            vec![Vec::new()],
+            false,
+            Vec::new(),
+            Vec::new(),
+            None,
+        )];
         let mut depth = 0usize;
         let mut end = open.end;
         let mut found_end = false;
@@ -4066,8 +4149,16 @@ impl P<'_> {
                 break;
             }
             let token = self.t[self.i].token.clone();
-            let row = rows.last_mut().expect("at least one row");
             match &token.kind {
+                TokenKind::Command(command) if command == "qedhere" => {
+                    self.i += 1;
+                    let marker = self.accept_qedhere(token.span);
+                    let row = rows.last_mut().expect("at least one row");
+                    if row.4.is_none() {
+                        row.4 = marker;
+                    }
+                    continue;
+                }
                 TokenKind::Command(command) if command == "label" => {
                     self.i += 1;
                     let (tokens, argument_span) = self.required_group("label", token.span);
@@ -4097,7 +4188,13 @@ impl P<'_> {
                         row.0.len() > 1 || row.0.iter().flatten().any(|t| !blank(t))
                     };
                     if started {
-                        rows.push((vec![Vec::new()], false, Vec::new(), Vec::new()));
+                        rows.push((
+                            vec![Vec::new()],
+                            false,
+                            Vec::new(),
+                            Vec::new(),
+                            None,
+                        ));
                     }
                     rows.last_mut()
                         .expect("at least one row")
@@ -4110,12 +4207,20 @@ impl P<'_> {
                     continue;
                 }
                 TokenKind::Command(command) if command == "nonumber" || command == "notag" => {
+                    let row = rows.last_mut().expect("at least one row");
                     row.1 = true;
                 }
                 TokenKind::LineBreak if depth == 0 => {
-                    rows.push((vec![Vec::new()], false, Vec::new(), Vec::new()));
+                    rows.push((
+                        vec![Vec::new()],
+                        false,
+                        Vec::new(),
+                        Vec::new(),
+                        None,
+                    ));
                 }
                 TokenKind::Word(word) if depth == 0 && word.contains('&') => {
+                    let row = rows.last_mut().expect("at least one row");
                     let exact = token.span.end - token.span.start == word.len();
                     for (index, piece) in word.split('&').enumerate() {
                         if index > 0 {
@@ -4152,6 +4257,7 @@ impl P<'_> {
                         }
                         _ => {}
                     }
+                    let row = rows.last_mut().expect("at least one row");
                     row.0
                         .last_mut()
                         .expect("at least one cell")
@@ -4177,9 +4283,10 @@ impl P<'_> {
         }
         // A trailing `\\` before `\end` does not start a real row.
         if rows.len() > 1
-            && rows.last().is_some_and(|(cells, _, labels, intertext)| {
+            && rows.last().is_some_and(|(cells, _, labels, intertext, proof_end)| {
                 labels.is_empty()
                     && intertext.is_empty()
+                    && proof_end.is_none()
                     && cells.iter().flatten().all(|t| {
                         matches!(
                             t.kind,
@@ -4200,7 +4307,7 @@ impl P<'_> {
 
         let mut math_rows = Vec::new();
         let mut labels = Vec::new();
-        for (cells, unnumbered, row_labels, intertext) in rows {
+        for (cells, unnumbered, row_labels, intertext, proof_end) in rows {
             let span = cells
                 .iter()
                 .flatten()
@@ -4239,6 +4346,7 @@ impl P<'_> {
                 number,
                 span,
                 intertext,
+                proof_end,
             });
         }
         para.push(Inline::MathRows {
@@ -4390,7 +4498,19 @@ impl P<'_> {
         let content_start = content_start.min(self.t.len());
         let content_end = content_end.clamp(content_start, self.t.len());
         let mut raw = Vec::new();
+        let qed_span = display.then(|| {
+            self.t[content_start..content_end]
+                .iter()
+                .find_map(|input| match &input.token.kind {
+                    TokenKind::Command(name) if name == "qedhere" => Some(input.token.span),
+                    _ => None,
+                })
+        });
+        let proof_end = qed_span.flatten().and_then(|span| self.accept_qedhere(span));
         for input in &self.t[content_start..content_end] {
+            if matches!(&input.token.kind, TokenKind::Command(name) if name == "qedhere") {
+                continue;
+            }
             if input.maps_to_invocation {
                 if let TokenKind::Word(word) = &input.token.kind {
                     for ch in word.chars() {
@@ -4467,6 +4587,7 @@ impl P<'_> {
             number_span: None,
             span: Span::in_document(open.document, open.start, end),
             space_before,
+            proof_end,
         });
     }
 
@@ -5111,6 +5232,7 @@ impl P<'_> {
                             number_span: None,
                             span,
                             space_before,
+                            proof_end: None,
                         });
                     }
                 }
@@ -5178,6 +5300,29 @@ impl P<'_> {
                         span: input.token.span,
                         leader: FillLeader::None,
                     })
+                }
+                TokenKind::Command(name) if name == "qed" => {
+                    content.push(Inline::HFill {
+                        span: input.token.span,
+                        leader: FillLeader::None,
+                    });
+                    content.push(Inline::ProofEnd {
+                        span: input.token.span,
+                    });
+                }
+                TokenKind::Command(name) if name == "qedsymbol" => {
+                    content.push(Inline::ProofEnd {
+                        span: input.token.span,
+                    });
+                }
+                TokenKind::Command(name) if name == "qedhere" => {
+                    if let Some(marker) = self.accept_qedhere(input.token.span) {
+                        content.push(Inline::HFill {
+                            span: input.token.span,
+                            leader: FillLeader::None,
+                        });
+                        content.push(Inline::ProofEnd { span: marker.span });
+                    }
                 }
                 TokenKind::Command(name) if name == "hrulefill" || name == "dotfill" => {
                     content.push(Inline::HFill {
@@ -5430,6 +5575,7 @@ impl P<'_> {
             number_span: None,
             span: full,
             space_before,
+            proof_end: None,
         });
     }
 

@@ -538,6 +538,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 space_before: _,
                 color: _,
                 color_ranges,
+                proof_end,
             } => {
                 shift_math_list(list, changes, deltas)?;
                 for (range, _) in color_ranges.iter_mut() {
@@ -545,6 +546,9 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 }
                 if let Some(number_span) = number_span {
                     map_span(number_span, changes, deltas)?;
+                }
+                if let Some(marker) = proof_end {
+                    map_span(&mut marker.span, changes, deltas)?;
                 }
                 map_span(span, changes, deltas)?;
             }
@@ -558,12 +562,16 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                     number: _,
                     span,
                     intertext,
+                    proof_end,
                 } in rows
                 {
                     for cell in cells {
                         shift_math_list(cell, changes, deltas)?;
                     }
                     map_span(span, changes, deltas)?;
+                    if let Some(marker) = proof_end {
+                        map_span(&mut marker.span, changes, deltas)?;
+                    }
                     for text in intertext {
                         shift_inlines(&mut text.content, changes, deltas)?;
                         map_span(&mut text.span, changes, deltas)?;
@@ -584,6 +592,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 space_before: _,
             } => map_span(span, changes, deltas)?,
             Inline::HFill { span, .. } => map_span(span, changes, deltas)?,
+            Inline::ProofEnd { span } => map_span(span, changes, deltas)?,
             Inline::HSpace { pt: _, span } => map_span(span, changes, deltas)?,
             Inline::Footnote {
                 number: _,
@@ -809,6 +818,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::Text { span, .. } => *span,
         Inline::LineBreak { span } => *span,
         Inline::TextGlue { span, .. } => *span,
+        Inline::ProofEnd { span } => *span,
         Inline::Math { span, .. } => *span,
         Inline::MathRows { span, .. } => *span,
         Inline::Label { span, .. } => *span,

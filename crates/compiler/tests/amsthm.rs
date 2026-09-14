@@ -333,6 +333,14 @@ fn proof_end_count(blocks: &[Block]) -> usize {
         .count()
 }
 
+// pdflatex oracle (TeX Live 2026, article + amsthm): an instrumented
+// `\openbox` put `\pdfsavepos` at the box's left edge and logged at shipout.
+// The article right edge was 479.000000pt; x was 471.492126pt, so every box
+// was 7.507874pt from the right margin. Baselines from the lower page edge:
+// text proof auto marker 659.700000pt (last text line), display auto marker
+// 615.700000pt (its own line after the display), and display `\qedhere`
+// 637.700000pt (the display line).
+
 fn proof_display(blocks: &[Block]) -> &[Inline] {
     for block in blocks {
         let Block::Paragraph(inlines) = block else {
@@ -457,6 +465,26 @@ This follows directly.\qedhere
         matches!(pair[0], Inline::HFill { .. }) && matches!(pair[1], Inline::ProofEnd { .. })
     }));
     assert_eq!(proof_end_count(&parsed.blocks), 1);
+}
+
+#[test]
+fn qedhere_is_one_shot_and_ignored_outside_proof() {
+    let source = r"Outside \qedhere.
+\begin{proof}
+This follows.\qedhere\qedhere
+\end{proof}";
+    let parsed = parser::parse(source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(proof_end_count(&parsed.blocks), 1);
+    let marker_span = parsed.blocks.iter().find_map(|block| match block {
+        Block::Paragraph(inlines) => inlines.iter().find_map(|inline| match inline {
+            Inline::ProofEnd { span } => Some(*span),
+            _ => None,
+        }),
+        _ => None,
+    });
+    let marker_span = marker_span.expect("proof qedhere marker");
+    assert_eq!(&source[marker_span.start..marker_span.end], r"\qedhere");
 }
 
 #[test]

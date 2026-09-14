@@ -7,8 +7,8 @@
 //! upright (remark, note); `plain` is the default in force before the first
 //! `\theoremstyle`. `proof` is a fixed environment (not registered through
 //! `\newtheorem`) handled the same way in `parser.rs`: an italic "Proof."
-//! head, an upright body, and a right-flushed "∎" placed with the existing
-//! `\hfill` glue.
+//! head, an upright body, and a right-flushed proof-end marker placed with the
+//! existing `\hfill` glue.
 //!
 //! Numbering advances a per-environment counter unless the environment
 //! shares another's (`\newtheorem{name}[shared]{Title}`), and resets on

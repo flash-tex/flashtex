@@ -13,7 +13,7 @@ use crate::diagnostics::Diagnostic;
 use crate::export::{self, ExportFont};
 use crate::math::{self, MathBox};
 use crate::parser::{FillLeader, 
-    Block, FontSizeLevel, Inline, ListLeftMargin, MathRow, ParagraphStyle, TextFamily, TextStyle,
+    Block, FontSizeLevel, Inline, ListLeftMargin, MathRow, ParagraphStyle, ProofEnd, TextFamily, TextStyle,
     CMR_EX_PER_EM,
 };
 use crate::Span;
@@ -1025,7 +1025,13 @@ impl LayoutCursor {
         self.x += b.width + word_space(size, Font::TimesRoman);
     }
 
-    fn display_math(&mut self, b: MathBox, size: f64, number: Option<(&str, Span)>) {
+    fn display_math(
+        &mut self,
+        b: MathBox,
+        size: f64,
+        number: Option<(&str, Span)>,
+        proof_end: Option<&ProofEnd>,
+    ) {
         // Displays centre themselves; line alignment must not move them again.
         let style = self.style.take();
         let justify = std::mem::replace(&mut self.justify, false);
@@ -1050,6 +1056,9 @@ impl LayoutCursor {
         self.place_math(b, size, true);
         if let Some((number, span)) = number {
             self.place_equation_number(number, span, size);
+        }
+        if let Some(marker) = proof_end {
+            self.place_proof_end(marker, size);
         }
         self.newline(self.constraints.font_size_pt);
         self.vertical_gap(below);
@@ -1222,6 +1231,24 @@ impl LayoutCursor {
         });
     }
 
+    /// The legacy compiler layout has no rule-box primitive yet. Keep the
+    /// marker visible as the old text glyph at the right edge until the
+    /// render pipeline consumes `ProofEnd` directly.
+    fn place_proof_end(&mut self, marker: &ProofEnd, size: f64) {
+        let text = "∎";
+        let width = glyph_width(text, size, Font::TimesRoman);
+        self.ensure_extents(size, size * (LINE_SPACING - 1.0));
+        self.push_item(
+            text.to_string(),
+            self.right_edge() - width,
+            size,
+            marker.span,
+            Font::TimesRoman,
+        );
+        self.x = self.right_edge();
+        self.content_end = self.x;
+    }
+
     /// Multi-row display (`gather`/`align`). `gather` rows are centred one by
     /// one; `align` cells alternate right/left alignment against column widths
     /// shared by every row, and the whole block is centred.
@@ -1289,6 +1316,9 @@ impl LayoutCursor {
             }
             if let Some(number) = &row.number {
                 self.place_equation_number(number, row.span, size);
+            }
+            if let Some(marker) = &row.proof_end {
+                self.place_proof_end(marker, size);
             }
         }
         self.newline(self.constraints.font_size_pt);
@@ -2220,6 +2250,13 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     *space_before,
                 )
             }
+            Inline::ProofEnd { span } => c.place(
+                "∎".to_string(),
+                size,
+                *span,
+                font,
+                false,
+            ),
             Inline::LineBreak { .. } => c.newline(size),
             Inline::TextGlue { em, .. } => c.text_glue(*em, size),
             Inline::Math {
@@ -2229,6 +2266,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 number_span,
                 span,
                 space_before,
+                proof_end,
                 ..
             } => {
                 let b = if *display {
@@ -2244,6 +2282,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                             .as_deref()
                             .zip(*number_span)
                             .or_else(|| number.as_deref().map(|number| (number, *span))),
+                        proof_end.as_ref(),
                     );
                 } else {
                     c.place_math(b, size, *space_before);
