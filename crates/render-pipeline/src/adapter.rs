@@ -931,15 +931,13 @@ pub fn adapt_cached(
     ));
     let assigned = apply_preamble_lengths(source, &mut resolved, size, family);
     let mut style = Stylesheet::from_resolved(&resolved, family);
-    // The class's `\parindent` (`size1x.clo`: 15pt / 17pt / 1.5em; `1em` in
-    // two-column mode) comes with the resolved frame; a later `\setlength`
-    // still wins (body assignments included).
-    let em_ex = ec_em_ex(size, style.family);
-    style.parindent_pt = setlength_in(source, "parindent", size, em_ex).unwrap_or(if explicit_class.is_some() || assigned.parindent {
-        style.parindent_pt
-    } else {
-        options.default_parindent_pt
-    });
+    // apply_preamble_lengths is the source of truth for `\parindent` /
+    // `\parskip` (source order, including `\addtolength` and body
+    // assignments). The older `setlength_in` scan only saw `\setlength`
+    // and overwrote the accumulated value.
+    if explicit_class.is_none() && !assigned.parindent {
+        style.parindent_pt = options.default_parindent_pt;
+    }
     if let Some(pt) = setlength(source, "columnseprule", size) {
         style.columnseprule_pt = pt;
     }
@@ -967,11 +965,9 @@ pub fn adapt_cached(
     style.cmex_designs = crate::style::cmex_designs(&parsed.packages, amsmath_cmex10);
     #[cfg(feature = "amsmath-inline")]
     let mathtools = parsed.packages.iter().any(|p| p == "mathtools");
-    // `\setlength{\parskip}{...}` / `\parskip=...`: a fixed skip (no stretch)
-    // replaces article's `0pt plus 1pt`.
-    if let Some(pt) = setlength_in(source, "parskip", size, em_ex) {
-        style.parskip = crate::style::Skip::fixed(pt);
-    } else if assigned.parskip {
+    // `\parskip` from apply_preamble_lengths (source order). Stretch is
+    // copied in the follow-up glue fix; a plain `\setlength` stays rigid.
+    if assigned.parskip {
         style.parskip = crate::style::Skip::fixed(crate::style::frame_pt(resolved.params.parskip.natural));
     }
     let secnumdepth = counter(source, "secnumdepth").unwrap_or(options.default_secnumdepth);
