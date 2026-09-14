@@ -101,18 +101,30 @@ pub struct Expansion {
 /// before redefining it as a math space) are removed, so they pass through.
 ///
 /// `\\setlength`/`\\addtolength` keep the kernel meaning when `#1` is already
-/// defined (a `\\newlength` skip, so `\\the` can read it back). An undefined
-/// target (`\\textwidth`, `\\parindent`, `\\fboxsep`, ...) is rewritten to a
-/// host command the converter maps back, so the parser sees the original
-/// name with its argument still a control sequence, not consumed as a
-/// skip assignment, which would yield `\\addtolength{\\}`.
+/// defined (a `\\newlength` skip, so `\\the` can read it back) and `#2` is a
+/// real dimen (`10pt`, `2\\mylen`). An undefined control sequence in `#2`
+/// (`0.5\\textwidth`, `\\textwidth-2cm`) is not scanned as a skip: that
+/// would insert `pt` and leave a leftover `\\textwidth` assignment. Those
+/// values go to a host command the converter maps back. A defined target
+/// is `\\let` to undefined for that call so `{#1}` does not start a skip
+/// assignment, then restored so `\\the` still reads the previous value.
+/// An undefined target (`\\textwidth`, `\\parindent`, `\\fboxsep`, ...) is
+/// rewritten the same way, so the parser sees the original name with its
+/// argument still a control sequence, not consumed as a skip assignment,
+/// which would yield `\\addtolength{\\}`.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
 \\let\\counterwithin\\flashtexundefined
 \\let\\counterwithout\\flashtexundefined
-\\def\\setlength#1#2{\\ifdefined#1#1 #2\\relax\\else\\flashtexsetlength{#1}{#2}\\fi}%
-\\def\\addtolength#1#2{\\ifdefined#1\\advance#1 #2\\relax\\else\\flashtexaddtolength{#1}{#2}\\fi}%
+\\def\\flashtexendlen{\\flashtexendlen}%
+\\def\\flashtexwalklen#1{\\ifx#1\\flashtexendlen\\else\\ifdefined#1\\else\\def\\flashtexbadlen{1}\\fi\\expandafter\\flashtexwalklen\\fi}%
+\\def\\flashtextryset#1#2{\\ifdefined#1#1 #2\\relax\\else\\flashtexsetlength{#1}{#2}\\fi}%
+\\def\\flashtextryadd#1#2{\\ifdefined#1\\advance#1 #2\\relax\\else\\flashtexaddtolength{#1}{#2}\\fi}%
+\\def\\flashtexsend#1#2{\\let\\flashtexsv#1\\let#1\\flashtexundefined\\flashtexsetlength{#1}{#2}\\let#1\\flashtexsv}%
+\\def\\flashtexaddhost#1#2{\\let\\flashtexsv#1\\let#1\\flashtexundefined\\flashtexaddtolength{#1}{#2}\\let#1\\flashtexsv}%
+\\def\\setlength#1#2{\\def\\flashtexbadlen{0}\\flashtexwalklen#2\\flashtexendlen\\if1\\flashtexbadlen\\flashtexsend{#1}{#2}\\else\\flashtextryset{#1}{#2}\\fi}%
+\\def\\addtolength#1#2{\\def\\flashtexbadlen{0}\\flashtexwalklen#2\\flashtexendlen\\if1\\flashtexbadlen\\flashtexaddhost{#1}{#2}\\else\\flashtextryadd{#1}{#2}\\fi}%
 \\long\\def\\flashtexdeclaremathop#1#2#3{\\newcommand#2{\\operatorname#1{#3}}}%
 \\expandafter\\def\\expandafter\\DeclareMathOperator\\expandafter{\\csname @ifstar\\endcsname{\\flashtexdeclaremathop*}{\\flashtexdeclaremathop{}}}%
 \\def\\arraystretch{1}%

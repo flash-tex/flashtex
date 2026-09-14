@@ -1067,67 +1067,6 @@ fn is_preamble_length(name: &str) -> bool {
     PREAMBLE_LENGTHS.contains(&name)
 }
 
-fn is_page_or_line_width(name: &str) -> bool {
-    is_preamble_length(name) || matches!(name, "linewidth" | "columnwidth" | "hsize")
-}
-
-/// When a dimen is `0.5\foo` (or `\foo`) and `\foo` is not a known length,
-/// name the register instead of `"got '0.5foo'"` / `"got ''"`. Calc
-/// (`\textwidth-2cm`, `\widthof{...}`) keeps the recognised-dimension form.
-fn unknown_length_dimension_message(who: &str, raw: &str) -> String {
-    let s = raw.trim().trim_start_matches('=').trim();
-    if let Some(bs) = s.find('\\') {
-        let factor = s[..bs].trim();
-        let name = s[bs + 1..].trim();
-        let factor_ok = factor.is_empty()
-            || factor == "+"
-            || factor == "-"
-            || factor.parse::<f64>().is_ok();
-        let name_ok = !name.is_empty()
-            && name
-                .chars()
-                .all(|c| c.is_ascii_alphabetic() || c == '@');
-        if factor_ok && name_ok && !is_page_or_line_width(name) {
-            return format!("\\{name} is not a known length");
-        }
-    }
-    format!("{who} requires a recognised dimension, got '{}'", raw.trim())
-}
-
-fn is_calc_length_raw(raw: &str) -> bool {
-    let s = raw.trim().trim_start_matches('=').trim();
-    if s.contains("\\widthof") || s.contains("\\heightof") || s.contains("\\depthof") {
-        return true;
-    }
-    let Some(bs) = s.find('\\') else {
-        return false;
-    };
-    let name_len = s[bs + 1..]
-        .chars()
-        .take_while(|c| c.is_ascii_alphabetic() || *c == '@')
-        .count();
-    let rest = s[bs + 1 + name_len..].trim_start();
-    rest.starts_with('+') || rest.starts_with('-')
-}
-
-fn scaled_class_length_raw(raw: &str) -> Option<&str> {
-    if is_calc_length_raw(raw) {
-        return None;
-    }
-    let s = raw.trim().trim_start_matches('=').trim();
-    let bs = s.find('\\')?;
-    let factor = s[..bs].trim();
-    if factor.is_empty() || factor == "+" {
-        return None;
-    }
-    let name = s[bs + 1..].trim();
-    if is_page_or_line_width(name) {
-        Some(s)
-    } else {
-        None
-    }
-}
-
 fn is_length_reference(raw: &str) -> bool {
     let s = raw.trim().trim_start_matches('=').trim();
     s.contains('\\') || is_preamble_length(s.trim_start_matches('\\'))
@@ -1156,6 +1095,38 @@ fn length_reference_parts(raw: &str) -> Option<(f64, &str)> {
         return Some((1.0, stripped));
     }
     None
+}
+
+fn is_calc_length_raw(raw: &str) -> bool {
+    let s = raw.trim().trim_start_matches('=').trim();
+    if s.contains("\\widthof") || s.contains("\\heightof") || s.contains("\\depthof") {
+        return true;
+    }
+    let Some(bs) = s.find('\\') else {
+        return false;
+    };
+    let name_len = s[bs + 1..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic() || *c == '@')
+        .count();
+    let rest = s[bs + 1 + name_len..].trim_start();
+    rest.starts_with('+') || rest.starts_with('-')
+}
+
+/// `<factor>` times a name from [`PREAMBLE_LENGTHS`] (or the existing
+/// linewidth aliases already accepted by [`length_reference_parts`]).
+fn scaled_class_length_raw(raw: &str) -> Option<&str> {
+    if is_calc_length_raw(raw) {
+        return None;
+    }
+    let s = raw.trim().trim_start_matches('=').trim();
+    let bs = s.find('\\')?;
+    let factor = s[..bs].trim();
+    if factor.is_empty() || factor == "+" {
+        return None;
+    }
+    length_reference_parts(s)?;
+    Some(s)
 }
 
 /// `parse_dimen_pt` with `em`/`ex` relative to `body_pt`.
@@ -2912,7 +2883,7 @@ impl P<'_> {
                 format!("\\{command}")
             };
             self.diags.push(Diagnostic::error(
-                unknown_length_dimension_message(&who, raw),
+                format!("{who} requires a recognised dimension, got '{}'", raw.trim()),
                 Some(span),
                 Some("ignored the length assignment".into()),
             ));
