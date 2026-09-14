@@ -511,6 +511,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["lvert", "rvert", "lVert", "rVert", "vert", "Vert"],
+        "",
+        "single and double vertical bars: amsmath's l/r pairs are \\mathopen and \\mathclose, the kernel's \\vert and \\Vert are \\mathord, and none of them is \\mid's \\mathrel",
+        true,
+    ),
+    (
         &[
             "mathbin",
             "mathrel",

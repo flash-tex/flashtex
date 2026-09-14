@@ -809,6 +809,7 @@ impl Context<'_> {
                 None => out.push(self.atom(Nucleus::Space {
                     em: 1.0 / 6.0,
                     font_em: true,
+                    nonscript: false,
                 })),
             }
             out.extend(unit);
