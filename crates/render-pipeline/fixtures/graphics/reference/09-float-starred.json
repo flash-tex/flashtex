@@ -1,0 +1,46 @@
+{
+ "fixture": "09-float-starred.tex",
+ "reference_engine": "TeX Live 2025",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/nixos.org)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 234.0,
+   "top": 129.119,
+   "width": 144.0,
+   "height": 96.01,
+   "depth": 0.0,
+   "baseline": 225.129
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "top": 323.095,
+   "width": 54.0,
+   "height": 108.0,
+   "depth": 0.0,
+   "baseline": 431.094
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 83.955,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 277.931,
+   "source_byte": 553
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 483.896,
+   "source_byte": 892
+  }
+ ]
+}

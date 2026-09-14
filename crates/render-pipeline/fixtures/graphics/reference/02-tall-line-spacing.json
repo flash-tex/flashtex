@@ -1,0 +1,52 @@
+{
+ "fixture": "02-tall-line-spacing.tex",
+ "reference_engine": "TeX Live 2025",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/nixos.org)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 273.375,
+   "top": 101.722,
+   "width": 9.196,
+   "height": 39.851,
+   "depth": 0.0,
+   "baseline": 141.572
+  },
+  {
+   "page": 1,
+   "x": 139.908,
+   "top": 207.824,
+   "width": 11.953,
+   "height": 5.978,
+   "depth": 0.0,
+   "baseline": 213.802
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 83.955,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 184.91,
+   "source_byte": 700
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 213.802,
+   "source_byte": 860
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 257.139,
+   "source_byte": 1140
+  }
+ ]
+}

@@ -1,0 +1,46 @@
+{
+ "fixture": "10-float-two-bracket.tex",
+ "reference_engine": "TeX Live 2025",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/nixos.org)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 231.0,
+   "top": 129.119,
+   "width": 150.0,
+   "height": 90.0,
+   "depth": 0.0,
+   "baseline": 219.119
+  },
+  {
+   "page": 1,
+   "x": 234.0,
+   "top": 317.085,
+   "width": 144.0,
+   "height": 52.366,
+   "depth": 0.0,
+   "baseline": 369.451
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 83.955,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 271.921,
+   "source_byte": 566
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 422.253,
+   "source_byte": 926
+  }
+ ]
+}

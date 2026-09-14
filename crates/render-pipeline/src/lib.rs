@@ -173,7 +173,8 @@ pub fn render_cached(
     #[cfg(not(feature = "request-date"))]
     let parsed = flashtex_compiler::parser::parse_project(&parse_docs, entry_path);
     let (float_numbers, float_label_values) = floats::number(&float_envs);
-    let mut image_cache = floats::ImageCache::default();
+    let image_cache = std::cell::RefCell::new(floats::ImageCache::default());
+    image_cache.borrow_mut().set_search_dirs(graphics::search_dirs(&texts));
     let paths: Vec<&str> = documents.iter().map(|d| d.path).collect();
     let entry_index = documents.iter().position(|d| d.path == entry_path).unwrap_or(0);
     // The compiler does not know `tikzpicture`: it reports the environment
@@ -226,7 +227,7 @@ pub fn render_cached(
             )
         }));
         let (mut float_specs, float_diagnostics) = if any_floats {
-            floats::prepare(&float_envs, &float_numbers, documents, entry_index, &texts, &doc.style, options, &labels, &mut image_cache)
+            floats::prepare(&float_envs, &float_numbers, documents, entry_index, &texts, &doc.style, options, &labels, &mut image_cache.borrow_mut())
         } else {
             (Vec::new(), Vec::new())
         };
@@ -241,6 +242,7 @@ pub fn render_cached(
         diagnostics.extend(float_diagnostics);
         let mut ctx = typeset::Context::with_texts(fonts, &doc.style, &paths, &texts);
         ctx.set_math_colors(doc.math_colors.clone());
+        ctx.set_images(options, &image_cache);
         typeset::multicol::attach(&mut ctx, &multicol_scans);
         let laid = typeset::build_with_floats(&mut ctx, &doc, cache, &float_specs);
         diagnostics.extend(ctx.take_diagnostics());

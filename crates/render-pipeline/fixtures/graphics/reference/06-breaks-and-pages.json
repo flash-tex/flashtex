@@ -1,0 +1,34 @@
+{
+ "fixture": "06-breaks-and-pages.tex",
+ "reference_engine": "TeX Live 2025",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/nixos.org)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 344.307,
+   "top": 147.218,
+   "width": 17.933,
+   "height": 8.966,
+   "depth": 0.0,
+   "baseline": 156.184
+  },
+  {
+   "page": 1,
+   "x": 437.724,
+   "top": 450.25,
+   "width": 13.948,
+   "height": 9.297,
+   "depth": 0.0,
+   "baseline": 459.547
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 83.955,
+   "source_byte": 196
+  }
+ ]
+}

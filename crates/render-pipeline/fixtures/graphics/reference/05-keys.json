@@ -1,0 +1,85 @@
+{
+ "fixture": "05-keys.tex",
+ "reference_engine": "TeX Live 2025",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/nixos.org)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 108.128,
+   "top": 72.0,
+   "width": 93.599,
+   "height": 56.16,
+   "depth": 0.0,
+   "baseline": 128.16
+  },
+  {
+   "page": 1,
+   "x": 106.963,
+   "top": 145.097,
+   "width": 17.933,
+   "height": 11.955,
+   "depth": 0.0,
+   "baseline": 157.052
+  },
+  {
+   "page": 1,
+   "x": 112.359,
+   "top": 174.818,
+   "width": 3.677,
+   "height": 15.94,
+   "depth": 0.0,
+   "baseline": 190.759
+  },
+  {
+   "page": 1,
+   "x": 104.282,
+   "top": 208.525,
+   "width": 24.905,
+   "height": 34.924,
+   "depth": 0.0,
+   "baseline": 243.45
+  },
+  {
+   "page": 1,
+   "x": 100.754,
+   "top": 261.775,
+   "width": 31.7,
+   "height": 31.7,
+   "depth": 21.134,
+   "baseline": 272.341
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 128.16,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 157.052,
+   "source_byte": 404
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 190.759,
+   "source_byte": 629
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 243.45,
+   "source_byte": 850
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 272.341,
+   "source_byte": 1066
+  }
+ ]
+}
