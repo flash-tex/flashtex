@@ -690,6 +690,13 @@ pub struct Labels {
     pub floats: Vec<crate::toc::FloatEntry>,
     /// Entry titles taken from source bytes, set as body text.
     pub entry_items: crate::toc::EntryItems,
+    /// cleveref's label type per key (`section`, `equation`, `figure`, ...),
+    /// from the compiler's `Inline::Label::kind`. Only `\cref` and friends
+    /// read it; `\ref` needs the value alone.
+    pub kinds: BTreeMap<String, String>,
+    /// The document's cleveref naming options and `\crefname` overrides
+    /// (`Parsed::cleveref`), so `\cref` can name the type it refers to.
+    pub cleveref: flashtex_compiler::xref::CleverefConfig,
 }
 
 fn inlines_of(block: &CBlock) -> &[Inline] {
@@ -921,13 +928,17 @@ impl Labels {
     /// The `\ref` values of every `\label` in the parse (known before layout).
     pub fn from_parsed(parsed: &Parsed) -> Labels {
         let mut values = BTreeMap::new();
+        let mut kinds = BTreeMap::new();
         for inline in parsed.blocks.iter().flat_map(inlines_of) {
-            if let Inline::Label { key, value, .. } = inline {
+            if let Inline::Label { key, value, kind, .. } = inline {
                 values.insert(key.clone(), value.clone());
+                kinds.insert(key.clone(), kind.clone());
             }
         }
         Labels {
             values,
+            kinds,
+            cleveref: parsed.cleveref.clone(),
             ..Labels::default()
         }
     }
@@ -938,7 +949,12 @@ impl Labels {
             .blocks
             .iter()
             .flat_map(inlines_of)
-            .any(|i| matches!(i, Inline::Reference { page: true, .. }))
+            .any(|i| {
+                matches!(
+                    i,
+                    Inline::Reference { page: true, .. } | Inline::CleverReference { page: true, .. }
+                )
+            })
     }
 }
 
@@ -1851,6 +1867,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::MathRows { span, .. }
         | Inline::Label { span, .. }
         | Inline::Reference { span, .. }
+        | Inline::CleverReference { span, .. }
         | Inline::HFill { span, .. }
         | Inline::HSpace { span, .. }
         | Inline::Footnote { span, .. }
@@ -1938,6 +1955,18 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
                 space_before: true,
             }));
         }
+        Inline::CleverReference { keys, page, range, label_only, capitalise, span, .. } => {
+            let text = clever_reference_text(keys, labels, *page, *range, *label_only, *capitalise);
+            reference_spans.push(*span);
+            out.push(std::borrow::Cow::Owned(Inline::Text {
+                text,
+                span: *span,
+                style: Default::default(),
+                // As for `Reference`: the gap comes from the source bytes
+                // between spans, not the compiler's flag.
+                space_before: true,
+            }));
+        }
         Inline::Verbatim { text, span, space_before } => {
             reference_spans.push(*span);
             out.push(std::borrow::Cow::Owned(Inline::Text {
@@ -1951,6 +1980,221 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
             }));
         }
         other => out.push(std::borrow::Cow::Borrowed(other)),
+    }
+}
+
+/// One label a `\cref` group refers to, resolved from [`Labels`].
+struct CleverItem {
+    number: String,
+    page: u32,
+    /// The cleveref *class* (the compiler's `xref::cleveref_kind`): the kind
+    /// several raw kinds collapse onto for grouping.
+    kind: String,
+    /// The label's own kind, which names the reference.
+    raw_kind: String,
+}
+
+/// The text of a `cleveref` reference (`\cref`, `\Cref`, `\crefrange`,
+/// `\cpageref`, `\labelcref` and their starred forms).
+///
+/// This mirrors `flashtex_compiler::layout`'s private `clever_reference_text`
+/// (grouping by kind, consecutive-number ranges, `and`/`, and` joining,
+/// parenthesised equation numbers) because the compiler's own resolver is not
+/// public and the pipeline, not the compiler, lays this document out. The
+/// naming itself is *not* duplicated: `xref::cleveref_name`/`cleveref_kind`
+/// are public and are called here, so `\crefname` overrides and the
+/// `capitalise`/`noabbrev` package options stay owned by the compiler.
+///
+/// An unresolved key contributes `??`, exactly as `\ref` does.
+fn clever_reference_text(
+    keys: &[String],
+    labels: &Labels,
+    page: bool,
+    range: bool,
+    label_only: bool,
+    capitalise: bool,
+) -> String {
+    use flashtex_compiler::xref::{cleveref_kind, cleveref_name};
+    let config = &labels.cleveref;
+    let mut items: Vec<CleverItem> = Vec::with_capacity(keys.len());
+    let mut unresolved = false;
+    for key in keys.iter().filter(|k| !k.is_empty()) {
+        match labels.values.get(key) {
+            Some(number) => {
+                let raw_kind = labels.kinds.get(key).cloned().unwrap_or_default();
+                items.push(CleverItem {
+                    number: number.clone(),
+                    // A key whose page is unknown (no previous pass) sorts
+                    // first and prints `??`, as `\pageref` does.
+                    page: labels.pages.get(key).copied().unwrap_or(0),
+                    kind: cleveref_kind(&raw_kind).to_string(),
+                    raw_kind,
+                });
+            }
+            None => unresolved = true,
+        }
+    }
+    if items.is_empty() {
+        return "??".into();
+    }
+    let with_unresolved = |text: String| {
+        if unresolved {
+            format!("{text} and ??")
+        } else {
+            text
+        }
+    };
+    if range {
+        // `\crefrange` needs exactly two labels of one kind; anything else is
+        // what cleveref itself reports as an error.
+        if items.len() != 2 || items[0].kind != items[1].kind {
+            return "??".into();
+        }
+        let name = cleveref_name(config, &items[0].raw_kind, true, capitalise);
+        return with_unresolved(format!(
+            "{name} {} to {}",
+            clever_number(&items[0]),
+            clever_number(&items[1])
+        ));
+    }
+    if page {
+        items.sort_by_key(|item| item.page);
+        let name = cleveref_name(config, "page", items.len() != 1, capitalise);
+        return with_unresolved(format!("{name} {}", format_clever_pages(&items)));
+    }
+    if label_only {
+        items.sort_by(compare_clever_items);
+        return with_unresolved(format_clever_numbers(&items));
+    }
+    let mut groups: Vec<(String, Vec<CleverItem>)> = Vec::new();
+    for item in items {
+        if let Some((_, group)) = groups.iter_mut().find(|(kind, _)| kind == &item.kind) {
+            group.push(item);
+        } else {
+            groups.push((item.kind.clone(), vec![item]));
+        }
+    }
+    let parts = groups
+        .iter_mut()
+        .map(|(_, group)| {
+            group.sort_by(compare_clever_items);
+            let name = cleveref_name(config, &group[0].raw_kind, group.len() != 1, capitalise);
+            format!("{name} {}", format_clever_numbers(group))
+        })
+        .collect::<Vec<_>>();
+    // Groups take the Oxford comma (`A 1, B 2, and C 3`); the numbers inside
+    // one group do not (`Sections 1, 2 and 3`), as cleveref sets them.
+    with_unresolved(join_clever(&parts, true))
+}
+
+/// `\ref` numbers, collapsing three or more consecutive ones into a range.
+fn format_clever_numbers(items: &[CleverItem]) -> String {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while start < items.len() {
+        let mut end = start;
+        while end + 1 < items.len() && clever_consecutive(&items[end], &items[end + 1]) {
+            end += 1;
+        }
+        if end - start >= 2 {
+            parts.push(format!(
+                "{} to {}",
+                clever_number(&items[start]),
+                clever_number(&items[end])
+            ));
+        } else {
+            parts.extend(items[start..=end].iter().map(clever_number));
+        }
+        start = end + 1;
+    }
+    join_clever(&parts, false)
+}
+
+/// The same collapsing for `\cpageref`'s page numbers.
+fn format_clever_pages(items: &[CleverItem]) -> String {
+    let page_text = |item: &CleverItem| {
+        if item.page == 0 {
+            "??".to_string()
+        } else {
+            item.page.to_string()
+        }
+    };
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while start < items.len() {
+        let mut end = start;
+        while end + 1 < items.len()
+            && items[end].page != 0
+            && items[end].page + 1 == items[end + 1].page
+        {
+            end += 1;
+        }
+        if end - start >= 2 {
+            parts.push(format!(
+                "{} to {}",
+                page_text(&items[start]),
+                page_text(&items[end])
+            ));
+        } else {
+            parts.extend(items[start..=end].iter().map(page_text));
+        }
+        start = end + 1;
+    }
+    join_clever(&parts, false)
+}
+
+/// Whether `second`'s number is `first`'s plus one, comparing only the last
+/// dotted component and requiring the same prefix (`2.3` then `2.4`, never
+/// `2.9` then `3.1`).
+fn clever_consecutive(first: &CleverItem, second: &CleverItem) -> bool {
+    let next_of = |text: &str| text.parse::<u32>().ok().and_then(|v| v.checked_add(1));
+    match (first.number.rsplit_once('.'), second.number.rsplit_once('.')) {
+        (None, None) => {
+            let next = next_of(&first.number);
+            next.is_some() && next == second.number.parse::<u32>().ok()
+        }
+        (Some((prefix, value)), Some((second_prefix, second_value))) => {
+            let next = next_of(value);
+            prefix == second_prefix && next.is_some() && next == second_value.parse::<u32>().ok()
+        }
+        _ => false,
+    }
+}
+
+/// Dotted numbers sort component-wise (`1.9` before `1.10`); anything not
+/// all-numeric falls back to a plain string compare.
+fn compare_clever_items(first: &CleverItem, second: &CleverItem) -> std::cmp::Ordering {
+    let parts =
+        |text: &str| text.split('.').map(str::parse::<u32>).collect::<Result<Vec<_>, _>>();
+    match (parts(&first.number), parts(&second.number)) {
+        (Ok(a), Ok(b)) => a.cmp(&b),
+        _ => first.number.cmp(&second.number),
+    }
+}
+
+/// Equation numbers are parenthesised; every other kind is bare.
+fn clever_number(item: &CleverItem) -> String {
+    if item.kind == "equation" {
+        format!("({})", item.number)
+    } else {
+        item.number.clone()
+    }
+}
+
+fn join_clever(parts: &[String], oxford: bool) -> String {
+    match parts {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, second] => format!("{first} and {second}"),
+        _ => {
+            let last = &parts[parts.len() - 1];
+            let head = parts[..parts.len() - 1].join(", ");
+            if oxford {
+                format!("{head}, and {last}")
+            } else {
+                format!("{head} and {last}")
+            }
+        }
     }
 }
 
@@ -5868,6 +6112,13 @@ fn items_cached(
                 17u8.hash(&mut h);
                 format!("{t:?}").hash(&mut h);
             }
+            // Lowered by `lower_inline` like `Reference`, so every field
+            // that selects its text is part of the key.
+            Inline::CleverReference { keys, page, range, label_only, capitalise, linked, .. } => {
+                19u8.hash(&mut h);
+                keys.hash(&mut h);
+                (page, range, label_only, capitalise, linked).hash(&mut h);
+            }
         }
     }
     let key = h.finish();
@@ -5965,7 +6216,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
         }
         match &**inline {
             Inline::Label { key, .. } => items.push(Item::Label { key: key.clone() }),
-            Inline::Reference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
+            Inline::Reference { .. } | Inline::CleverReference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
             Inline::Footnote { number, span, mark, text, .. } => {
                 // `\@footnotemark` keeps the space factor; the space before
                 // the command is an ordinary interword space. The command's

@@ -27,7 +27,7 @@ path = "src/bin/flashtex-render.rs"
 # (`hash_math`/`shift_math`/`math_grids`/`math_glue_em`/`convert_math_classed`)
 # fail to build. `--no-default-features` still builds against a pinned vendor
 # older than this without the new variants.
-default = ["amsmath-inline", "request-date", "compiler-package-gating", "par-leading"]
+default = ["amsmath-inline", "request-date", "compiler-package-gating", "par-leading", "math-class-override"]
 # The compiler's `Nucleus::Text` (`\text{...}` in math) is an isolated
 # candidate (crates/preview-controller/docs/handoffs/hw1-text-candidate/
 # candidate.patch on compiler base 1c02a2bc, not on main nor in
@@ -75,8 +75,14 @@ math-glyph-spans = []
 # re-derived by matching the control word at its span
 # (`typeset::class_override_of`). Needed for `\colon`, whose class depends on
 # whether amsmath is loaded and so cannot be recovered from the source text at
-# all; the re-derivation stays as the fallback. Builds only against a
-# vendor/compiler that carries the public field; off until vendor/ is re-pinned.
+# all; the re-derivation stays as the fallback. Its precondition is met as of
+# the 6a47ed49 re-pin -- `vendor/compiler/src/math.rs` declares `pub
+# class_override: Option<AtomClass>` and `pub enum AtomClass` -- so, exactly as
+# `amsmath-inline` and `par-leading` did once theirs were, it is a default
+# feature. Without it #472's mathtools colon relations are merged but inert
+# here: every `\colon` is re-derived from the same five source characters and
+# so takes one class whether or not amsmath is loaded.
+# `--no-default-features` still builds against an older pinned vendor.
 math-class-override = []
 # A paragraph's `\baselineskip` follows the size declaration in force when its
 # `\par` ran (`\begin{quote}\small ...\end{quote}`, `{\small ...\par}`),

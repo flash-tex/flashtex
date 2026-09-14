@@ -411,7 +411,8 @@ impl P<'_> {
             // `table` is one of the class body counters (`crate::xref`), so
             // `\thetable` carries report/book's `\thechapter.` prefix and any
             // `\numberwithin`/`\setcounter` in force.
-            self.current_counter = self.counters.step("table");
+            let number = self.counters.step("table");
+            self.set_current_counter("table", number);
         }
         let rule_color = self.table_rule_color.clone();
         let double_rule_sep_color = self.table_double_rule_sep_color.clone();
