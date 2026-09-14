@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/left-right-exponential",
-  "gh_ref": "#368",
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/371",
   "machine": "Overpriced-Hardware",
   "note": "Exponential nested \\left\\right compile time, crates/compiler only",
   "started_utc": "2026-09-14T09:05:28Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-368",
-  "updated_utc": "2026-09-14T09:05:28Z"
+  "updated_utc": "2026-09-14T09:23:16Z"
 }
