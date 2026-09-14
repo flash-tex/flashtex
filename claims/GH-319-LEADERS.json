@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/fill-leaders",
-  "gh_ref": "#2",
+  "gh_ref": "414",
   "machine": "mac-m5pro-dq222",
   "note": "render-pipeline paints hrulefill rule and dotfill dots from Inline::HFill leader (#319/#320 pipeline half), stacked on #402, draft until re-pin; Codex",
   "started_utc": "2026-09-14T16:09:30Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-319-LEADERS",
-  "updated_utc": "2026-09-14T21:57:39Z"
+  "updated_utc": "2026-09-14T22:50:28Z"
 }
