@@ -18,7 +18,7 @@ use crate::lexer::{apply_text_ligatures, tokenize_document, Token, TokenKind};
 use crate::lexer::tokenize;
 use crate::math::{self, MathList};
 use crate::siunitx;
-use crate::text_builtins::{self, SymbolOutcome, TextDimen, TextLogo, TextRule};
+use crate::text_builtins::{self, AccentOutcome, SymbolOutcome, TextDimen, TextLogo, TextRule};
 use crate::theorems::{self, TheoremDef, TheoremStyle};
 use crate::{DocumentId, Span};
 use flashtex_tex_text_encoding::encoding::Encoding;
@@ -827,6 +827,15 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textgreater",
     "textbraceleft",
     "textbraceright",
+    // `text_builtins::TEXT_ACCENTS`.
+    "c",
+    "v",
+    "u",
+    "H",
+    "r",
+    "k",
+    "d",
+    "b",
 ];
 
 /// Parses a LaTeX dimension (`12pt`, `1.5em`, `0.5in`, `2cm`, `10mm`, `2ex`,
@@ -2112,6 +2121,8 @@ impl P<'_> {
             | "textgreater" | "textbraceleft" | "textbraceright" => {
                 self.text_symbol(name, span, para)
             }
+            // `text_builtins::TEXT_ACCENTS`.
+            "c" | "v" | "u" | "H" | "r" | "k" | "d" | "b" => self.text_accent(name, span, para),
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
             "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
             | "negthickspace" | "enspace" => {
@@ -4592,6 +4603,122 @@ impl P<'_> {
             style,
             space_before,
         })
+    }
+
+    /// A kernel text accent (`text_builtins::TEXT_ACCENTS`): `\c{c}`,
+    /// `\v{\i}`, `\k{}`, or unbraced `\v s`, where TeX reads one token so
+    /// `\v sice` accents only the `s`. One text inline spans the command and
+    /// its argument and holds the character the dfu tables declare for it.
+    fn text_accent(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let style = self.style;
+        self.skip_spaces();
+        let dotless = |kind: Option<&TokenKind>| match kind {
+            Some(TokenKind::Command(c)) if c == "i" || c == "j" => Some(format!("\\{c}")),
+            _ => None,
+        };
+        fn kind_at<'a>(p: &'a P<'_>, j: usize) -> Option<&'a TokenKind> {
+            p.t.get(j).map(|t| &t.token.kind)
+        }
+        // A macro's argument can come from another document than its body.
+        let join = |a: Span, b: Span| if a.document == b.document { a.merge(b) } else { a };
+        let (base, full) = match kind_at(self, self.i) {
+            Some(TokenKind::LBrace) => {
+                let j = self.i + 1;
+                let (base, mut close) = match kind_at(self, j) {
+                    Some(TokenKind::RBrace) => (String::new(), j),
+                    Some(TokenKind::Word(w)) if w.chars().count() == 1 => (w.clone(), j + 1),
+                    kind => match dotless(kind) {
+                        Some(base) => (base, j + 1),
+                        None => (String::new(), usize::MAX),
+                    },
+                };
+                if close != usize::MAX && close != j && matches!(kind_at(self, close), Some(TokenKind::Space)) {
+                    close += 1;
+                }
+                if close == usize::MAX || !matches!(kind_at(self, close), Some(TokenKind::RBrace)) {
+                    // `\v{\textbf{s}}`, `\c{cc}`: typeset the group as text.
+                    self.diags.push(Diagnostic::warning(
+                        format!("the argument to \\{name} is not a single letter, \\i or \\j; the accent is not drawn"),
+                        Some(span),
+                        Some("typeset the argument without the accent".into()),
+                    ));
+                    return;
+                }
+                let end = self.t[close].token.span;
+                self.i = close + 1;
+                (base, join(span, end))
+            }
+            Some(TokenKind::Word(w)) => {
+                let w = w.clone();
+                let first = w.chars().next().expect("words are non-empty");
+                let word_span = self.t[self.i].token.span;
+                let exact = word_span.end - word_span.start == w.len();
+                let base_end = if exact { word_span.start + first.len_utf8() } else { word_span.end };
+                if w.len() == first.len_utf8() {
+                    self.i += 1;
+                } else if let Some(input) = self.token_mut(self.i) {
+                    if exact {
+                        input.token.span = Span::in_document(word_span.document, base_end, word_span.end);
+                    }
+                    input.token.kind = TokenKind::Word(w[first.len_utf8()..].to_string());
+                }
+                let base_span = Span::in_document(word_span.document, word_span.start, base_end);
+                (first.to_string(), join(span, base_span))
+            }
+            kind => match dotless(kind) {
+                Some(base) => {
+                    let end = self.t[self.i].token.span;
+                    self.i += 1;
+                    (base, join(span, end))
+                }
+                None => {
+                    self.diags.push(Diagnostic::warning(
+                        format!("\\{name} has no letter to accent"),
+                        Some(span),
+                        Some("typeset nothing for the accent".into()),
+                    ));
+                    return;
+                }
+            },
+        };
+        let enc = self.font_encoding;
+        let bare = || match base.strip_prefix('\\') {
+            Some(dotless) => match text_builtins::text_symbol(dotless, enc) {
+                Some(SymbolOutcome::Char(ch)) => ch.to_string(),
+                _ => String::new(),
+            },
+            None => base.clone(),
+        };
+        let text = match text_builtins::text_accent(name, &base, enc) {
+            Some(AccentOutcome::Char(ch)) => ch.to_string(),
+            Some(AccentOutcome::NoComposite) => {
+                self.diags.push(Diagnostic::warning(
+                    format!("\\{name}{{{base}}} has no precomposed character and \\accent is not implemented; the accent is not drawn"),
+                    Some(full),
+                    Some("typeset the letter without the accent".into()),
+                ));
+                bare()
+            }
+            Some(AccentOutcome::Unavailable(message)) => {
+                self.diags.push(Diagnostic::error(
+                    message,
+                    Some(span),
+                    Some("typeset the letter without the accent".into()),
+                ));
+                bare()
+            }
+            None => return,
+        };
+        if text.is_empty() {
+            return;
+        }
+        para.push(Inline::Text {
+            text,
+            span: full,
+            style,
+            space_before,
+        });
     }
 
     fn text_symbol(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
