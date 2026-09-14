@@ -137,6 +137,22 @@ fn unimplemented_lengths_are_reported_not_silently_ignored() {
 }
 
 #[test]
+fn preamble_parskip_length_reference_is_not_silently_ignored() {
+    let src = "\\documentclass{article}\n\\setlength{\\parskip}{\\textwidth}\n\\begin{document}\nOne\n\nTwo\n\\end{document}";
+    let parsed = parse(src);
+    assert_ne!(
+        parsed.parskip_pt,
+        Some(0.0),
+        "must not apply a length reference as 0pt"
+    );
+    let (_, messages) = compile(src);
+    assert!(
+        messages.iter().any(|m| m.contains("unsupported length expression")),
+        "missing unsupported length expression in {messages:?}"
+    );
+}
+
+#[test]
 fn preamble_parskip_one_bp_is_tex_big_point_not_pt() {
     let parsed = parse(
         "\\documentclass{article}\n\\setlength{\\parskip}{1bp}\n\\begin{document}x\\end{document}",
