@@ -422,6 +422,18 @@ final class ShellModel {
     /// "Fix…" on a diagnostics row: prepare the suggestion against the current
     /// buffer and show the preview; refusals go to the footer.
     func previewQuickFix(diagnosticIndex: Int, suggestion: Int = 0) {
+        let diags = displayedDiagnostics
+        if diags.indices.contains(diagnosticIndex) {
+            let d = diags[diagnosticIndex]
+            if EditorDiagnostics.canApplyHelpReplacement(d, path: activePath, currentText: activeText,
+                                                         compiledRevision: result?.revision, editorRevision: editorRevision) {
+                let compiled = compiledDocuments[activePath] ?? activeText
+                switch EditorDiagnostics.prepareHelpReplacement(d, path: activePath, in: activeText, compiledText: compiled) {
+                case .success(let preview): quickFix = preview; quickFixIndex = diagnosticIndex; navigationNote = nil; return
+                case .failure(let why): quickFix = nil; navigationNote = "Fix not applied: " + why.text; return
+                }
+            }
+        }
         guard let x = explanations.explanation(resultID: resultID, index: diagnosticIndex) else {
             navigationNote = "No explanation for this diagnostic yet."; return
         }

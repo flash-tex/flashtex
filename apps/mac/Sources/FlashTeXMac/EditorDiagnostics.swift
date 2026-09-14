@@ -156,10 +156,22 @@ enum EditorDiagnostics {
     /// `environment 'x' is not implemented`, `\includegraphics is unsupported`).
     /// Gaps are listed and marked, but counted apart from errors and warnings
     /// so an all-gap document such as HW1 reads "0 errors, 30 not implemented"
-    /// instead of "24 errors". A message heuristic until runtime-v1 carries a
-    /// category; the strings are the compiler's own (crates/compiler).
+    /// instead of "24 errors". When `code` is present, `unsupported_feature` is
+    /// a gap and the other issue-#76 codes are not; unknown codes and a missing
+    /// `code` fall back to the message phrases (the compiler's own wording).
     static func isGap(_ message: String) -> Bool {
         gapPhrases.contains { message.contains($0) }
+    }
+    static func isGap(_ diagnostic: RuntimeV1.Diagnostic) -> Bool {
+        if let code = diagnostic.code, !code.isEmpty {
+            switch code {
+            case "unsupported_feature": return true
+            case "unknown_command", "syntax_error", "export_limitation", "fidelity_note", "recovered_input":
+                return false
+            default: return isGap(diagnostic.message)
+            }
+        }
+        return isGap(diagnostic.message)
     }
     private static let gapPhrases = ["not implemented", "not supported by this compiler version",
                                      "not supported in math mode", "not supported in the document preamble", "is unsupported"]
@@ -168,7 +180,7 @@ enum EditorDiagnostics {
     static func counts(_ diagnostics: [RuntimeV1.Diagnostic]) -> (errors: Int, warnings: Int, gaps: Int) {
         var errors = 0, warnings = 0, gaps = 0
         for d in diagnostics {
-            if isGap(d.message) { gaps += 1 } else if d.severity == .error { errors += 1 } else { warnings += 1 }
+            if isGap(d) { gaps += 1 } else if d.severity == .error { errors += 1 } else { warnings += 1 }
         }
         return (errors, warnings, gaps)
     }
@@ -319,6 +331,9 @@ extension EditorDiagnostics {
     struct Group: Equatable, Identifiable {
         let severity: RuntimeV1.Severity
         let message: String
+        /// Snake_case `code` when every occurrence has the same one; nil when
+        /// the group was keyed off message text (no code, or mixed).
+        let code: String?
         /// The recovery note when every occurrence has the same one, else nil.
         let recovery: String?
         let occurrences: [Int]
@@ -326,7 +341,10 @@ extension EditorDiagnostics {
         var count: Int { occurrences.count }
         /// Index of the first occurrence (document order); the row's explanation and quick fix use it.
         var first: Int { occurrences[0] }
-        var id: String { "\(severity.rawValue):\(message)" }
+        var id: String {
+            if let code, !code.isEmpty { return "\(severity.rawValue):\(code):\(message)" }
+            return "\(severity.rawValue):\(message)"
+        }
         /// "12× \in is not supported in math mode", or just the message for one.
         var title: String { count > 1 ? "\(count)× " + message : message }
     }
@@ -344,7 +362,7 @@ extension EditorDiagnostics {
         var order: [String] = []
         var members: [String: [Int]] = [:]
         for (i, d) in diagnostics.enumerated() {
-            let key = "\(d.severity.rawValue):\(d.message)"
+            let key = groupKey(d)
             if members[key] == nil { order.append(key); members[key] = [] }
             members[key]!.append(i)
         }
@@ -361,7 +379,9 @@ extension EditorDiagnostics {
         var groups: [Group] = order.map { key in
             let sorted = members[key]!.sorted(by: before)
             let recoveries = Set(sorted.map { diagnostics[$0].recovery })
+            let codes = Set(sorted.map { diagnostics[$0].code ?? "" })
             return Group(severity: diagnostics[sorted[0]].severity, message: diagnostics[sorted[0]].message,
+                         code: (codes.count == 1 && !codes.contains("")) ? diagnostics[sorted[0]].code : nil,
                          recovery: recoveries.count == 1 ? diagnostics[sorted[0]].recovery : nil, occurrences: sorted)
         }
         groups.sort { before($0.first, $1.first) }
@@ -404,6 +424,14 @@ extension EditorDiagnostics {
         var line = 1
         for b in text.utf8.prefix(offset) where b == 0x0A { line += 1 }
         return line
+    }
+
+    /// Grouping key: `(severity, code, message)` when `code` is present, else
+    /// today's `(severity, message)`. Same-code diagnostics with different
+    /// messages stay separate rows.
+    static func groupKey(_ d: RuntimeV1.Diagnostic) -> String {
+        if let code = d.code, !code.isEmpty { return "\(d.severity.rawValue):\(code):\(d.message)" }
+        return "\(d.severity.rawValue):\(d.message)"
     }
 }
 
@@ -982,5 +1010,46 @@ extension EditorDiagnostics {
                                   before: beforeSnippet, after: afterSnippet, grouped: group, apply: { group })
             return .success(preview)
         }
+    }
+
+    /// Mechanical Fix… from `help.replacement` (preferred) or `suggestion`
+    /// over the diagnostic `source`. Feeds the same `QuickFix.prepare` path
+    /// as explanation-service edits — one grouped undoable replacement.
+    static func mechanicalEdit(for d: RuntimeV1.Diagnostic) -> Explanation.Edit? {
+        if let r = d.help?.replacement {
+            guard let path = d.path(of: r) else { return nil }
+            guard r.startByte <= r.endByte else { return nil }
+            return .init(path: path, startByte: r.startByte, endByte: r.endByte, replacement: r.text)
+        }
+        if let suggestion = d.suggestion, let source = d.source {
+            return .init(path: source.path, startByte: source.startByte, endByte: source.endByte, replacement: suggestion)
+        }
+        return nil
+    }
+
+    /// True when `help.replacement` is in-bounds for `currentText`, targets
+    /// `path`, and the compile revision still matches the editor — the Fix…
+    /// affordance is hidden otherwise. Advice-only help and a stale buffer
+    /// never show it.
+    static func canApplyHelpReplacement(_ d: RuntimeV1.Diagnostic, path: String, currentText: String,
+                                        compiledRevision: Int?, editorRevision: Int) -> Bool {
+        guard compiledRevision == editorRevision else { return false }
+        guard let r = d.help?.replacement else { return false }
+        guard d.path(of: r) == path else { return false }
+        guard r.startByte >= 0, r.startByte <= r.endByte else { return false }
+        return currentText.rangeOfUTF8(start: r.startByte, end: r.endByte) != nil
+    }
+
+    /// `QuickFix.prepare` for the diagnostic's mechanical edit (same refusal
+    /// cases as an explanation suggestion).
+    static func prepareHelpReplacement(_ d: RuntimeV1.Diagnostic, path: String,
+                                       in currentText: String, compiledText: String?) -> Result<QuickFix.Preview, QuickFix.Refusal> {
+        guard let edit = mechanicalEdit(for: d) else { return .failure(.noEdits) }
+        let text = d.help?.message ?? d.suggestion ?? "Apply suggested fix"
+        let explanation = Explanation(
+            catalogID: d.code, title: text, category: d.code ?? "diagnostic",
+            severity: d.severity.rawValue, message: d.message, why: text, whatHappened: d.recovery ?? "",
+            suggestions: [.init(text: text, confidence: "high", edits: [edit])], context: nil)
+        return QuickFix.prepare(explanation, path: path, in: currentText, compiledText: compiledText)
     }
 }
