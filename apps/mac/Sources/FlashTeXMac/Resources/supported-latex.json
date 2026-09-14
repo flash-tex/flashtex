@@ -88,6 +88,7 @@
     {"name": "reflectbox", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "graphics.sty box mirrored left to right", "renders": true},
     {"name": "graphicspath", "mode": "text", "origin": "text_dispatch", "arguments": "{{dir/}...}", "description": "image search directories; no material", "renders": true},
     {"name": "hypersetup", "mode": "text", "origin": "text_dispatch", "arguments": "{key=value,...}", "description": "hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them", "renders": true},
+    {"name": "lstset", "mode": "text", "origin": "text_dispatch", "arguments": "{key=value,...}", "description": "listings defaults, global from that point on; the key names are checked and nothing is typeset here", "renders": true},
     {"name": "allowdisplaybreaks", "mode": "text", "origin": "text_dispatch", "arguments": "[0-4]", "description": "amsmath page-break permission inside displays; no material", "renders": true},
     {"name": "url", "mode": "text", "origin": "text_dispatch", "arguments": "{url}", "description": "monospaced URL text, breaking as url.sty does; links are not clickable", "renders": true},
     {"name": "href", "mode": "text", "origin": "text_dispatch", "arguments": "{url}{text}", "description": "link text; links are not clickable", "renders": true},

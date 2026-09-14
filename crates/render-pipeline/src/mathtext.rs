@@ -80,6 +80,25 @@ pub struct TextSink {
     /// NFSS shape of a math alphabet run (`\mathbf`, `\mathsf`, ...; see
     /// `crate::mathalpha`).
     pub keys: Vec<Option<crate::nfss::FontKey>>,
+    /// Per text: whether this run ends a *maximal* run of math characters,
+    /// and so keeps the italic correction of its last character.
+    ///
+    /// tex.web §752 leaves the last `math_char` of a run its `delta`; the
+    /// interior characters are `math_text_char`s of a font with a nonzero
+    /// space and lose it (§753 `make_ord` demotes a character whose next noad
+    /// is a math char of the *same family*). So pdfTeX's `\lim` box is
+    /// `l i m \kern0.05731`, 16.3773 pt against the 16.31999 pt of
+    /// `\text{lim}`, whose `\hbox` has no correction at all.
+    ///
+    /// Two different things make this false. An `\hbox` -- `\text{...}`,
+    /// `\tag{...}`, a grid or `\boxed` handle -- is not a run of math
+    /// characters and never had a correction. And a run that is only a
+    /// *fragment* of a longer one must not take the correction either: the
+    /// pinned compiler emits a multi-character siunitx unit as one
+    /// `Nucleus::Text` per character (`siunitx.rs` `upright`), so `\katal`'s
+    /// `k`, `a` and `t` arrive as three runs where TeX has one, and only the
+    /// real last character may be corrected.
+    pub italics: Vec<bool>,
     /// Arguments beyond [`MAX_TEXT_ATOMS`], in order: refused before any
     /// state changed, reported by the caller as `math_text_overflow`.
     pub refused: Vec<String>,
@@ -195,6 +214,8 @@ impl TextSink {
                 });
                 self.texts.push(String::new());
                 self.keys.push(None);
+                // A grid box is an hbox, not a run of math characters.
+                self.italics.push(false);
                 ml::Atom::new(class, ml::Nucleus::Text(handle.to_string()))
             }
             None => {
@@ -213,6 +234,8 @@ impl TextSink {
                 self.frames.push(FrameBoxSpec { handle: index, body, tag });
                 self.texts.push(String::new());
                 self.keys.push(None);
+                // A `\boxed` frame is an hbox, not a run of math characters.
+                self.italics.push(false);
                 ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Text(handle.to_string()))
             }
             None => {
@@ -224,22 +247,39 @@ impl TextSink {
 
     /// An `Ord` atom for `text` (TeX §1076: an hbox in math is an Ord); an
     /// empty Ord (scripts still attach) once the handle space is exhausted.
+    /// The run takes no italic correction -- use
+    /// [`TextSink::atom_corrected`] for one that ends a run of math
+    /// characters.
     pub fn atom(&mut self, text: &str) -> ml::Atom {
-        self.atom_keyed(text, None)
+        self.atom_keyed(text, None, false)
+    }
+
+    /// An `Ord` atom for a complete run of upright math characters in the
+    /// `operators` family (`\operator@font`): the letters of `\lim`,
+    /// `\mathrm{...}`, `\bmod`. It keeps the italic correction of its last
+    /// character (§752).
+    ///
+    /// Class and limits are the caller's to set. "Complete" is the whole of
+    /// the condition: a run that another math-character run of the same
+    /// family follows is not the end of anything and must use
+    /// [`TextSink::atom`] instead.
+    pub fn atom_corrected(&mut self, text: &str) -> ml::Atom {
+        self.atom_keyed(text, None, true)
     }
 
     /// An `Ord` atom for a run of math-alphabet characters set in the text
     /// font `key` (TeX §752: consecutive characters of one text font are
     /// kerned and ligatured, with the last one's italic correction).
     pub fn atom_in(&mut self, text: &str, key: crate::nfss::FontKey) -> ml::Atom {
-        self.atom_keyed(text, Some(key))
+        self.atom_keyed(text, Some(key), true)
     }
 
-    fn atom_keyed(&mut self, text: &str, key: Option<crate::nfss::FontKey>) -> ml::Atom {
+    fn atom_keyed(&mut self, text: &str, key: Option<crate::nfss::FontKey>, italic: bool) -> ml::Atom {
         match handle_char(self.texts.len()) {
             Some(handle) => {
                 self.texts.push(text.to_string());
                 self.keys.push(key);
+                self.italics.push(italic);
                 ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Text(handle.to_string()))
             }
             None => {
@@ -282,9 +322,15 @@ pub struct TextRun {
     pub tfm_metrics: bool,
     /// The math-alphabet shape of the run, `None` for `\text`.
     pub key: Option<crate::nfss::FontKey>,
-    /// The italic correction of the run's last character (pt) for a math
-    /// alphabet run, which math-layout applies as the nucleus' δ; 0 for
-    /// `\text` (an hbox has none).
+    /// Whether this run keeps the italic correction of its last character
+    /// ([`TextSink::italics`]). Part of the run's identity: the same letters
+    /// at the same size in the same face are still two different runs when
+    /// one is `$\lim$` and the other `$\text{lim}$`, because only the first
+    /// carries the correction.
+    pub corrected: bool,
+    /// The italic correction of the run's last character (pt), which
+    /// math-layout appends to the run's box as a kern (`make_text`, tex.web
+    /// §752); 0 for an `\hbox` run, which has none.
     pub italic: f64,
 }
 
@@ -343,6 +389,9 @@ pub struct TextRunMetrics<'a> {
     family: Family,
     texts: &'a [String],
     keys: &'a [Option<crate::nfss::FontKey>],
+    /// Parallels `texts` ([`TextSink::italics`]): whether each run keeps the
+    /// italic correction of its last character.
+    italics: &'a [bool],
     runs: RefCell<Vec<TextRun>>,
     notices: RefCell<Vec<Notice>>,
     grids: &'a [NestedGrid],
@@ -354,8 +403,9 @@ pub struct TextRunMetrics<'a> {
 }
 
 impl<'a> TextRunMetrics<'a> {
-    /// `keys` parallels `texts` ([`TextSink::keys`]); a missing entry is a
-    /// `\text` run.
+    /// `keys` and `italics` parallel `texts` ([`TextSink::keys`],
+    /// [`TextSink::italics`]); a missing entry is a `\text` run, which has
+    /// the document's text font and no italic correction.
     pub fn new(
         inner: &'a dyn MathFontMetrics,
         fonts: &'a FontSet,
@@ -363,6 +413,7 @@ impl<'a> TextRunMetrics<'a> {
         family: Family,
         texts: &'a [String],
         keys: &'a [Option<crate::nfss::FontKey>],
+        italics: &'a [bool],
     ) -> TextRunMetrics<'a> {
         TextRunMetrics {
             inner,
@@ -371,6 +422,7 @@ impl<'a> TextRunMetrics<'a> {
             family,
             texts,
             keys,
+            italics,
             runs: RefCell::new(Vec::new()),
             notices: RefCell::new(Vec::new()),
             grids: &[],
@@ -499,14 +551,18 @@ impl<'a> TextRunMetrics<'a> {
     fn run_for(&self, text_index: usize, size: f64) -> Option<usize> {
         let text = self.texts.get(text_index)?;
         let key = self.keys.get(text_index).copied().flatten();
-        if let Some(i) = self.runs.borrow().iter().position(|r| r.text == *text && r.size == size && r.key == key) {
+        // An unrecorded handle only happens in tests that build a sink by
+        // hand; take the uncorrected reading, which is what every run was
+        // before the italic correction was split out.
+        let corrected = self.italics.get(text_index).copied().unwrap_or(false);
+        if let Some(i) = self.runs.borrow().iter().position(|r| r.text == *text && r.size == size && r.key == key && r.corrected == corrected) {
             return Some(i);
         }
         let (index, first_slot) = {
             let runs = self.runs.borrow();
             (runs.len(), runs.last().map_or(0, |r| r.first_slot + r.slots()))
         };
-        let run = shape_run(self.fonts, self.shaper, self.family, key, text, size, first_slot, &mut self.notices.borrow_mut())?;
+        let run = shape_run(self.fonts, self.shaper, self.family, key, corrected, text, size, first_slot, &mut self.notices.borrow_mut())?;
         self.runs.borrow_mut().push(run);
         Some(index)
     }
@@ -741,6 +797,7 @@ fn shape_run(
     shaper: &Shaper,
     family: Family,
     key: Option<crate::nfss::FontKey>,
+    corrected: bool,
     text: &str,
     size: f64,
     first_slot: usize,
@@ -838,8 +895,15 @@ fn shape_run(
     // font-engine clusters map one char to at most one glyph per char).
     debug_assert!(glyphs.len() <= max_entries.max(1));
     let hbox = ml::MathBox::hlist(boxes);
-    let italic = if key.is_some() { last_italic } else { 0.0 };
-    Some(TextRun { text: text.to_string(), size, face, first_slot, glyphs, hbox, tfm_metrics, key, italic })
+    // tex.web §752: the last character of a run of math characters keeps its
+    // italic correction (the interior ones are `math_text_char`s of a font
+    // with a nonzero space, whose correction is dropped as "dubious"). The
+    // caller decides whether this run is such a run and ends one; the gate is
+    // the *construct*, not the font, since `\lim` and `\mathrm{lim}` are set
+    // in the same face as `\text{lim}` and still measure 16.3773 pt against
+    // its 16.31999 pt.
+    let italic = if corrected { last_italic } else { 0.0 };
+    Some(TextRun { text: text.to_string(), size, face, first_slot, glyphs, hbox, tfm_metrics, key, corrected, italic })
 }
 
 #[cfg(test)]
@@ -890,7 +954,7 @@ mod tests {
             .resolve(Family::Times, Role::Text { bold: false, italic: false }, 10.0)
             .face;
         let glyphs: Vec<RunGlyph> = (0..(2 * SLOT_GLYPHS + 2)).map(|i| RunGlyph { gid: GlyphId(i as u16), ch: 'x', text: i.to_string() }).collect();
-        let run = TextRun { text: String::new(), size: 10.0, face, first_slot: 3, glyphs, hbox: ml::MathBox::empty(), tfm_metrics: false, key: None, italic: 0.0 };
+        let run = TextRun { text: String::new(), size: 10.0, face, first_slot: 3, glyphs, hbox: ml::MathBox::empty(), tfm_metrics: false, key: None, corrected: false, italic: 0.0 };
         assert_eq!(run.slots(), 3);
         let at = |entry: usize| {
             let slot = 3 + entry / SLOT_GLYPHS;

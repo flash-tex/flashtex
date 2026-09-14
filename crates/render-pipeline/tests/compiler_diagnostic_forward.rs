@@ -257,3 +257,55 @@ fn unimplemented_tikz_is_unsupported_feature() {
     assert_eq!(field(&v2j, "code"), Some("unsupported_feature"));
     assert!(v2j.get("suggestion").is_none(), "{v2j:?}");
 }
+
+/// The `[help: …]` clause this crate appends to a compiler message (its
+/// structured `help`/`notes`, which display-list-v2 has no field for) must not
+/// stop `packages::supersede_message` recognising the message it is appended
+/// to. It did: that function ends its match with `strip_suffix(" are
+/// recognised but not implemented")`, so a clause on the end made every
+/// superseded `\usepackage` diagnostic leak into the render output —
+/// `amsmath`, `microtype`, `geometry` and the rest alike, each telling the
+/// reader this pipeline does not implement something it does.
+///
+/// The unit tests in `packages` cover the splitting; this covers the whole
+/// render path, which is where the clause actually gets appended.
+#[test]
+fn packages_this_crate_sets_stay_superseded_once_a_help_clause_is_appended() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let r = render_one(
+        "\\documentclass{article}\\usepackage{amsmath}\\usepackage{amssymb}\
+         \\usepackage{microtype}\\usepackage{geometry}\\usepackage{graphicx}\
+         \\begin{document}Body $x$.\\end{document}",
+    );
+    let leaked: Vec<&display::Diagnostic> = r
+        .v2
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("are recognised but not implemented"))
+        .collect();
+    assert!(leaked.is_empty(), "every one of these packages is set by this crate: {leaked:?}");
+}
+
+/// The mixed case: packages this crate does *not* set stay reported, and the
+/// ones it does are trimmed out of the list — rather than the whole message
+/// being passed through because a clause defeated the match.
+#[test]
+fn a_mixed_package_list_is_trimmed_to_the_ones_this_crate_does_not_set() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let r = render_one(
+        "\\documentclass{article}\\usepackage{amsmath,cite}\
+         \\begin{document}Body $x$.\\end{document}",
+    );
+    let d = by_needle(&r, "are recognised but not implemented");
+    assert!(
+        d.message.starts_with("packages cite are recognised but not implemented"),
+        "{d:?}"
+    );
+    assert!(!d.message.contains("amsmath"), "amsmath is set by this crate: {d:?}");
+}
