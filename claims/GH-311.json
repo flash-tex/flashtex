@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/boxed-gh311",
+  "gh_ref": "https://github.com/flash-tex/flashtex/issues/311",
+  "machine": "mac-m5pro-dq222",
+  "note": "daniel-parent (Max, not daniel-vpclaude) lane; implementation delegated to Codex gpt-5.6-luna max via cx; daniel-parent reviews/publishes",
+  "started_utc": "2026-09-14T05:22:54Z",
+  "state": "claimed",
+  "task_id": "GH-311",
+  "updated_utc": "2026-09-14T05:22:54Z"
+}
