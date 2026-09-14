@@ -388,10 +388,13 @@ struct Converter<'d> {
     diagnostics: Vec<Diagnostic>,
     arraystretch: HashMap<(usize, usize), String>,
     /// Names from a preamble `\includeonly{...}` (`None`: never used).
-    /// Recorded once like other preamble-scoped kernel state and read by
+    /// Replaced wholesale by each call, so the last call wins, and read by
     /// [`include`]; each entry is kept trimmed and, when suffixed, stripped
     /// of one trailing `.tex`, mirroring `\include`'s own lookup.
     includeonly: Option<HashSet<String>>,
+    /// Set once the converter emits `\begin{document}` (see [`push`]): what
+    /// [`in_preamble`] reads to gate preamble-only `\includeonly`.
+    document_begun: bool,
     /// Characters of the word being assembled, with its provenance.
     word: Option<PendingWord>,
     last_span: Span,
@@ -479,8 +482,29 @@ impl<'d> Converter<'d> {
         }
     }
 
+    /// True when the output tail is `\begin{document` awaiting its closing
+    /// brace — `Command("begin")`, `LBrace`, `Word("document")`, skipping
+    /// spaces — the same shape the parser's own `document_begin_end`
+    /// matches. This covers both the pass-through token sequence and
+    /// [`push_environment`]'s fused emission, which funnels its closing
+    /// brace through [`push`].
+    fn closes_document_begin(&self) -> bool {
+        let mut tail = self
+            .out
+            .iter()
+            .rev()
+            .filter(|t| !matches!(t.token.kind, TokenKind::Space))
+            .map(|t| &t.token.kind);
+        matches!(tail.next(), Some(TokenKind::Word(name)) if name == "document")
+            && matches!(tail.next(), Some(TokenKind::LBrace))
+            && matches!(tail.next(), Some(TokenKind::Command(name)) if name == "begin")
+    }
+
     fn push(&mut self, kind: TokenKind, at: Placement) {
         self.flush_word();
+        if matches!(kind, TokenKind::RBrace) && self.closes_document_begin() {
+            self.document_begun = true;
+        }
         self.last_span = at.span;
         // Whitespace runs collapse the way the parser's own tokenizer
         // produces them: one `Space`, or one `ParBreak` if the run holds a
@@ -636,6 +660,7 @@ impl<'d> Converter<'d> {
             documents,
             document_by_path: documents.iter().enumerate().map(|(i, d)| (d.path, i)).collect(),
             includeonly: None,
+            document_begun: false,
             source_documents: HashMap::from([(0, Some(entry))]),
             entry,
             out: Vec::new(),
@@ -1339,35 +1364,27 @@ fn read_braced_argument(engine: &mut Engine) -> (Vec<(tex::Token, Option<tex::Sp
     (taken, path, ok)
 }
 
-/// True when `span` sits in the entry document before `\begin{document}`.
-/// Fragments without a document environment have no preamble/body split, so
-/// every position counts as preamble there.
-fn in_preamble(conv: &Converter<'_>, span: Span) -> bool {
-    if span.document.0 != conv.entry {
-        return false;
-    }
-    match conv.documents.get(conv.entry).map(|d| d.text).unwrap_or("").find("\\begin{document}") {
-        Some(body) => span.start < body,
-        None => true,
-    }
+/// True while `\begin{document}` has not been emitted yet: `\includeonly`
+/// is a preamble-only command (real LaTeX's `\@onlypreamble`), and
+/// expansion runs in document order, so the converter's own flag is the
+/// boundary — no raw-text scan. Fragments without a document environment
+/// never set the flag, so every position counts as preamble there. An
+/// `\includeonly` in an `\input`-ed preamble config file counts (it is
+/// processed before the boundary), and a commented `% \begin{document}`
+/// emits nothing, so it cannot end the preamble early.
+fn in_preamble(conv: &Converter<'_>) -> bool {
+    !conv.document_begun
 }
 
 /// Record a preamble `\includeonly{...}` list for [`include`]: comma-split
 /// and trimmed (real LaTeX allows spaces after commas), each entry kept both
 /// as written and stripped of one trailing `.tex`, mirroring [`include`]'s
-/// exact-then-`+.tex` lookup. Real LaTeX errors on a second or post-preamble
-/// use; `diagnostics.rs` carries no preamble-only pattern to reuse, so the
-/// simplification is a warning that keeps the first preamble list.
+/// exact-then-`+.tex` lookup. Like real LaTeX's `\let\@partlist\@empty`
+/// reset, each call completely replaces the recorded set, so the last call
+/// wins. A post-preamble use warns and is ignored (`diagnostics.rs` carries
+/// no preamble-only pattern to reuse).
 fn record_includeonly(conv: &mut Converter<'_>, list: &str, span: Span) {
-    if conv.includeonly.is_some() {
-        conv.diagnostics.push(Diagnostic::warning(
-            "\\includeonly given more than once; kept the first list and continued",
-            Some(span),
-            Some("ignored the later \\includeonly and continued".into()),
-        ));
-        return;
-    }
-    if !in_preamble(conv, span) {
+    if !in_preamble(conv) {
         conv.diagnostics.push(Diagnostic::warning(
             "\\includeonly must appear in the preamble; ignored this use and continued",
             Some(span),
@@ -1429,14 +1446,19 @@ fn include(
             "skipped the unsafe include and continued",
         );
     }
-    // A recorded, non-empty `\includeonly` list selects which files are read:
-    // any other file is a pure no-op. (`\include` has no page-break or
-    // paragraph-flush side effect of its own, so there is nothing to replay
-    // for the skipped file.) With no `\includeonly`, or an empty list, every
-    // `\include` behaves exactly as before.
-    if let Some(allowed) = conv.includeonly.as_ref() {
-        if !allowed.is_empty() && !include_allowed(allowed, requested) {
-            return;
+    // A recorded, non-empty `\includeonly` list selects which `\include`d
+    // files are read: any other file is a pure no-op. (`\include` has no
+    // page-break or paragraph-flush side effect of its own, so there is
+    // nothing to replay for the skipped file.) `\input` never consults the
+    // list — real LaTeX tests `\@partlist` only in `\@include`. With no
+    // `\includeonly` at all (`None`), every `\include` behaves exactly as
+    // before; a recorded list — even an empty one from `\includeonly{}`,
+    // which switches `\@partsw` on with an empty `\@partlist` — selects.
+    if command == "include" {
+        if let Some(allowed) = conv.includeonly.as_ref() {
+            if !include_allowed(allowed, requested) {
+                return;
+            }
         }
     }
     let appended = format!("{requested}.tex");
