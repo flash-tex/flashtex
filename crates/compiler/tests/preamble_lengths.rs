@@ -266,103 +266,107 @@ fn hw1_keeps_its_three_reference_pages_with_parskip_applied() {
     );
 }
 
-/// Article 10pt class defaults used as `<internal dimen>` in scaled
-/// `\setlength`/`\addtolength` values (letter paper, oneside, onecolumn):
-/// - `\textwidth` 345pt — size10.clo lines 107–127 (`345\p@` when
-///   `\paperwidth-2in` is larger, which it is for letter)
-/// - `\parindent` 15pt — size10.clo lines 87–91
-/// - `\linewidth` equals `\hsize`/`\textwidth` in the main text (latex.ltx)
-/// - `\paperwidth` 8.5in = 614.295pt — article.cls `letterpaper` (default)
-///
-/// `0.5\paperwidth` prints as `307.14749pt` (`print_scaled` of 0.5 × 8.5in
-/// in sp, matching class-geometry's `Sp::parse("8.5in")`).
+fn scaled_class_diag(expr: &str) -> String {
+    format!(
+        "scaled class lengths like {expr} are not supported yet; the length is left unchanged"
+    )
+}
+
+const CALC_DIAG: &str = "calc-style length expressions are not supported";
+
+fn assert_clean_unsupported(messages: &[String]) {
+    for m in messages {
+        assert!(!m.contains("Illegal unit"), "{messages:?}");
+        assert!(!m.contains("got ''"), "{messages:?}");
+        assert!(!m.contains("got '"), "{messages:?}");
+        assert!(
+            !m.contains("csname") || !m.contains("endcsname"),
+            "must not report a truncated/empty csname: {messages:?}"
+        );
+    }
+}
+
+/// `<factor>` times a skip that actually exists (`\newlength`).
 #[test]
-fn scaled_factor_times_internal_dimen_setlength_and_addtolength() {
-    // (value, expected `\the` of a skip that starts at 0pt, extra preamble
-    // that runs before the assignment — used for `2\mylen` so the source
-    // skip already has a known value)
-    let cases: &[(&str, &str, &str)] = &[
-        ("0.5\\textwidth", "172.5pt", ""),
-        ("-1.5\\parindent", "-22.5pt", ""),
-        ("2\\mylen", "20.0pt", "\\setlength{\\mylen}{10pt}\\newlength{\\acc}"),
-        (".25\\linewidth", "86.25pt", ""),
-        ("0.5\\paperwidth", "307.14749pt", ""),
+fn scaled_factor_times_real_register_setlength_and_addtolength() {
+    // Source skip is 10pt; (expr, expected `\the` of the target).
+    let cases: &[(&str, &str)] = &[
+        ("2\\mylen", "20.0pt"),
+        ("-1.5\\mylen", "-15.0pt"),
+        (".25\\mylen", "2.5pt"),
     ];
-    for &(expr, expected, extra) in cases {
-        let target = if extra.contains("\\acc") { "acc" } else { "mylen" };
+    for &(expr, expected) in cases {
         let preamble_set = format!(
-            "\\documentclass{{article}}\\newlength{{\\mylen}}{extra}\\setlength{{\\{target}}}{{{expr}}}\\begin{{document}}\\the\\{target}\\end{{document}}"
+            "\\documentclass{{article}}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}\\newlength{{\\acc}}\\setlength{{\\acc}}{{{expr}}}\\begin{{document}}\\the\\acc\\end{{document}}"
         );
         let preamble_add = format!(
-            "\\documentclass{{article}}\\newlength{{\\mylen}}{extra}\\addtolength{{\\{target}}}{{{expr}}}\\begin{{document}}\\the\\{target}\\end{{document}}"
+            "\\documentclass{{article}}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}\\newlength{{\\acc}}\\addtolength{{\\acc}}{{{expr}}}\\begin{{document}}\\the\\acc\\end{{document}}"
         );
         let body_set = format!(
-            "\\documentclass{{article}}\\newlength{{\\mylen}}{extra}\\begin{{document}}\\setlength{{\\{target}}}{{{expr}}}\\the\\{target}\\end{{document}}"
+            "\\documentclass{{article}}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}\\newlength{{\\acc}}\\begin{{document}}\\setlength{{\\acc}}{{{expr}}}\\the\\acc\\end{{document}}"
         );
         let body_add = format!(
-            "\\documentclass{{article}}\\newlength{{\\mylen}}{extra}\\begin{{document}}\\addtolength{{\\{target}}}{{{expr}}}\\the\\{target}\\end{{document}}"
+            "\\documentclass{{article}}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}\\newlength{{\\acc}}\\begin{{document}}\\addtolength{{\\acc}}{{{expr}}}\\the\\acc\\end{{document}}"
         );
-        for src in [&preamble_set, &preamble_add, &body_set, &body_add] {
+        let direct = format!(
+            "\\documentclass{{article}}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}\\newlength{{\\acc}}\\acc={expr}\\begin{{document}}\\the\\acc\\end{{document}}"
+        );
+        for src in [&preamble_set, &preamble_add, &body_set, &body_add, &direct] {
             assert_the_mylen(src, expected);
         }
     }
 }
 
-/// Class / paper / size combinations where the article-10pt-letter table is
-/// the wrong number. Expected `\the` strings are `\the\dimexpr0.5<len>\relax`
-/// from `/Library/TeX/texbin/pdflatex` (TeX Live 2026) on this machine, and
-/// match `flashtex-class-geometry`'s oracle (`crates/class-geometry/tests/data/oracle.txt`).
+/// Class lengths are not real registers here. A factor times one of them
+/// must not guess a class-geometry / article-10pt value.
 #[test]
-fn scaled_factor_follows_class_size_paper_and_standard_classes() {
-    // (documentclass, expr, expected `\the\mylen`)
-    let cases: &[(&str, &str, &str)] = &[
-        ("[12pt]{article}", "0.5\\textwidth", "195.0pt"),
-        ("[11pt]{article}", "0.5\\textwidth", "180.0pt"),
-        ("[12pt]{article}", "0.5\\textheight", "274.25pt"),
-        ("[12pt]{article}", "-1.5\\parindent", "-26.43723pt"),
-        ("[a4paper]{article}", "0.5\\paperwidth", "298.75394pt"),
-        ("[a4paper]{article}", "0.5\\textheight", "299.0pt"),
-        ("[a4paper,12pt]{article}", "0.5\\textwidth", "195.0pt"),
-        ("[a4paper,12pt]{article}", "0.5\\paperheight", "422.52342pt"),
-        ("[11pt]{report}", "0.5\\textwidth", "180.0pt"),
-        ("[12pt]{book}", "0.5\\textwidth", "195.0pt"),
-        ("[12pt]{book}", "-1.5\\parindent", "-26.43723pt"),
+fn scaled_class_length_is_diagnosed_and_leaves_the_target_unchanged() {
+    let exprs = ["0.5\\textwidth", "0.5\\linewidth", "-1.5\\parindent", "0.5\\paperwidth"];
+    let wraps: &[(&str, &str)] = &[
+        ("\\documentclass{article}", ""),
+        ("\\documentclass{letter}", ""),
+        (
+            "\\documentclass{article}",
+            "\\usepackage[margin=1in]{geometry}",
+        ),
     ];
-    for &(class, expr, expected) in cases {
-        let src = format!(
-            "\\documentclass{class}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{{expr}}}\\begin{{document}}\\the\\mylen\\end{{document}}"
-        );
-        assert_the_mylen(&src, expected);
+    // Pre-geometry: the scaled assignment sits before `\usepackage{geometry}`.
+    let pre_geometry = "\\documentclass{article}\\newlength{\\mylen}\\setlength{\\mylen}{10pt}\\setlength{\\mylen}{0.5\\textwidth}\\usepackage[margin=1in]{geometry}\\begin{document}\\the\\mylen\\end{document}";
+    let mut sources = vec![pre_geometry.to_string()];
+    for expr in exprs {
+        for &(head, mid) in wraps {
+            sources.push(format!(
+                "{head}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}{mid}\\setlength{{\\mylen}}{{{expr}}}\\begin{{document}}\\the\\mylen\\end{{document}}"
+            ));
+            sources.push(format!(
+                "{head}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{10pt}}{mid}\\addtolength{{\\mylen}}{{{expr}}}\\begin{{document}}\\the\\mylen\\end{{document}}"
+            ));
+        }
     }
-}
-
-/// geometry `margin=1in` (the option this compiler already accepts without a
-/// package warning) changes `\textwidth` from 345pt to 469.75502pt.
-#[test]
-fn scaled_factor_follows_geometry_package() {
-    let src = "\\documentclass{article}\\usepackage[margin=1in]{geometry}\\newlength{\\mylen}\\setlength{\\mylen}{0.5\\textwidth}\\begin{document}\\the\\mylen\\end{document}";
-    assert_the_mylen(src, "234.8775pt");
-}
-
-/// A preamble assignment to a class length must be what a later
-/// `0.5\textwidth` reads, not the class default.
-#[test]
-fn scaled_factor_honours_preamble_textwidth_assignment() {
-    let src = "\\documentclass{article}\\setlength{\\textwidth}{6in}\\newlength{\\mylen}\\setlength{\\mylen}{0.5\\textwidth}\\begin{document}\\the\\mylen\\end{document}";
-    assert_the_mylen(src, "216.81pt");
-}
-
-/// Non-standard classes are not in class-geometry. Using `\textwidth` as a
-/// factor must not silently return the article 10pt letterpaper number.
-#[test]
-fn scaled_factor_warns_for_nonstandard_class() {
-    let src = "\\documentclass{beamer}\\newlength{\\mylen}\\setlength{\\mylen}{0.5\\textwidth}\\begin{document}\\the\\mylen\\end{document}";
-    let (_, messages) = compile(src);
-    assert!(
-        messages.iter().any(|m| m.contains("textwidth")
-            && (m.contains("approximated") || m.contains("unknown"))),
-        "non-standard class must not silently use article 10pt \\textwidth, got {messages:?}"
-    );
+    for src in &sources {
+        let expr = if src.contains("-1.5\\parindent") {
+            "-1.5\\parindent"
+        } else if src.contains("0.5\\linewidth") {
+            "0.5\\linewidth"
+        } else if src.contains("0.5\\paperwidth") {
+            "0.5\\paperwidth"
+        } else {
+            "0.5\\textwidth"
+        };
+        let expected = scaled_class_diag(expr);
+        let (_, messages) = compile(src);
+        assert!(
+            messages.iter().any(|m| m == &expected),
+            "missing {expected:?} in {messages:?} for {src}"
+        );
+        assert_eq!(
+            messages.iter().filter(|m| *m == &expected).count(),
+            1,
+            "exactly one scaled-class diagnostic, got {messages:?} for {src}"
+        );
+        assert_clean_unsupported(&messages);
+        assert_eq!(paragraph_text(src), "10.0pt", "{src}");
+    }
 }
 
 #[test]
@@ -381,26 +385,40 @@ fn unknown_length_register_is_named_in_the_diagnostic() {
 
 #[test]
 fn calc_length_expressions_keep_a_clean_diagnostic() {
-    let minus = "\\documentclass{article}\\setlength{\\textwidth}{\\textwidth-2cm}\\begin{document}x\\end{document}";
-    let (_, messages) = compile(minus);
-    assert!(
-        messages.iter().any(|m| m.contains("textwidth-2cm")
-            || m.contains("unsupported length expression")
-            || m.contains("recognised dimension")),
-        "calc minus must stay a clean diagnostic, got {messages:?}"
-    );
-    assert!(
-        messages.iter().all(|m| !m.contains("got ''")),
-        "calc minus must not report an empty name: {messages:?}"
-    );
-    let widthof = "\\documentclass{article}\\setlength{\\textwidth}{\\widthof{Hello}}\\begin{document}x\\end{document}";
-    let (_, messages) = compile(widthof);
-    assert!(
-        messages.iter().any(|m| m.contains("widthof")),
-        "\\widthof must be named, got {messages:?}"
-    );
-    assert!(
-        messages.iter().all(|m| !m.contains("got ''")),
-        "\\widthof must not report an empty name: {messages:?}"
-    );
+    let cases: &[(&str, &str)] = &[
+        (
+            "\\documentclass{article}\\newlength{\\mylen}\\setlength{\\mylen}{10pt}\\setlength{\\mylen}{\\textwidth-2cm}\\begin{document}\\the\\mylen\\end{document}",
+            "10.0pt",
+        ),
+        (
+            "\\documentclass{article}\\newlength{\\mylen}\\setlength{\\mylen}{10pt}\\setlength{\\mylen}{\\mylen+1pt}\\begin{document}\\the\\mylen\\end{document}",
+            "10.0pt",
+        ),
+        (
+            "\\documentclass{article}\\setlength{\\textwidth}{\\textwidth-2cm}\\begin{document}x\\end{document}",
+            "x",
+        ),
+        (
+            "\\documentclass{article}\\newlength{\\mylen}\\setlength{\\mylen}{\\mylen+1pt}\\begin{document}x\\end{document}",
+            "x",
+        ),
+        (
+            "\\documentclass{article}\\setlength{\\textwidth}{\\widthof{Hello}}\\begin{document}x\\end{document}",
+            "x",
+        ),
+    ];
+    for &(src, printed) in cases {
+        let (_, messages) = compile(src);
+        assert!(
+            messages.iter().any(|m| m == CALC_DIAG),
+            "missing {CALC_DIAG:?} in {messages:?} for {src}"
+        );
+        assert_eq!(
+            messages.iter().filter(|m| *m == CALC_DIAG).count(),
+            1,
+            "exactly one calc diagnostic, got {messages:?} for {src}"
+        );
+        assert_clean_unsupported(&messages);
+        assert_eq!(paragraph_text(src), printed, "{src}");
+    }
 }
