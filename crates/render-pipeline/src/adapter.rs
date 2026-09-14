@@ -824,6 +824,11 @@ pub fn adapt_cached(
     if let Some(pt) = setlength_in(source, "parskip", size, em_ex) {
         style.parskip = crate::style::Skip::fixed(pt);
     }
+    // `\renewcommand{\baselinestretch}{f}` / `\linespread{f}`: every
+    // `\@setfontsize` multiplies its size's `\baselineskip` by `f`.
+    if let Some(f) = baselinestretch(source) {
+        style.set_baselinestretch(f);
+    }
     // `\c@secnumdepth`: the class's own `\setcounter{secnumdepth}{...}`
     // (article.cls line 255 `{3}`, report.cls/book.cls `{2}`), which
     // `class-geometry` resolves as `ResolvedDocument::secnumdepth`. A
@@ -2331,6 +2336,60 @@ pub fn parindent(source: &str, size: u32) -> Option<f64> {
 /// in the class's `\normalsize`).
 pub fn parskip(source: &str, size: u32) -> Option<f64> {
     setlength(source, "parskip", size)
+}
+
+/// `\baselinestretch` as the source last set it, or `None` for the kernel's
+/// `\def\baselinestretch{1}`.
+///
+/// latex.ltx defines the macro and `\@setfontsize` ends with
+/// `\baselineskip\baselinestretch\baselineskip`, so the value in force at a
+/// size selection multiplies that size's leading. The source can set it as
+/// `\renewcommand{\baselinestretch}{<f>}` (braced or unbraced first
+/// argument, `*`-form included), `\def\baselinestretch{<f>}`, or
+/// `\linespread{<f>}`, which latex.ltx defines as exactly the first of
+/// those. The last one in the source wins, as for `\setlength`.
+pub fn baselinestretch(source: &str) -> Option<f64> {
+    let factor = |text: &str| text.trim().parse::<f64>().ok().filter(|f| f.is_finite() && *f > 0.0);
+    fn braced(rest: &str) -> Option<&str> {
+        let r = rest.trim_start().strip_prefix('{')?;
+        let end = r.find('}')?;
+        Some(&r[..end])
+    }
+    let mut found = None;
+    for name in ["renewcommand", "newcommand", "providecommand", "def", "linespread"] {
+        let mut from = 0;
+        while let Some(at) = find_command(&source[from..], name) {
+            let abs = from + at;
+            from = abs + 1;
+            let rest = &source[abs + 1 + name.len()..];
+            let rest = rest.strip_prefix('*').unwrap_or(rest);
+            let value = if name == "linespread" {
+                braced(rest)
+            } else {
+                // `\renewcommand\baselinestretch{f}` and
+                // `\renewcommand{\baselinestretch}{f}` are the same call.
+                let rest = rest.trim_start();
+                let rest = match rest.strip_prefix('{') {
+                    Some(r) => r.trim_start().strip_prefix("\\baselinestretch").and_then(|r| r.trim_start().strip_prefix('}')),
+                    None => rest.strip_prefix("\\baselinestretch"),
+                }?;
+                // Skip `[<n>]`/`[<n>][<default>]`, which a sane source will
+                // not write here but `\newcommand` allows.
+                let mut rest = rest.trim_start();
+                while let Some(r) = rest.strip_prefix('[') {
+                    let Some(end) = r.find(']') else { break };
+                    rest = r[end + 1..].trim_start();
+                }
+                braced(rest)
+            };
+            if let Some(f) = value.and_then(factor) {
+                if found.is_none_or(|(prev, _): (usize, f64)| prev < abs) {
+                    found = Some((abs, f));
+                }
+            }
+        }
+    }
+    found.map(|(_, f)| f)
 }
 
 /// The last `\setlength{\<name>}{<dimen>}` of the source, in points.

@@ -1967,7 +1967,8 @@ impl<'a> Context<'a> {
         let bskip = if (size - body_size).abs() < 1e-9 {
             self.style.baselineskip_pt
         } else {
-            tb::baselineskip_pt(adapter::class_size_of(body_size), (size * 100.0).round() as u16)
+            // Another `\@setfontsize`, so `\baselinestretch` applies here too.
+            self.style.stretched(tb::baselineskip_pt(adapter::class_size_of(body_size), (size * 100.0).round() as u16))
         };
         // `\@arstrutbox` (array.sty 207 adds `\extrarowheight` to the height).
         let plain_strut_height = tb::sp(0.7 * bskip);
@@ -2632,9 +2633,12 @@ impl<'a> Context<'a> {
             labels: Vec::new(),
             cache_key: None,
         }];
+        // Each of these sizes is selected with `\@setfontsize`, so
+        // `\baselinestretch` multiplies its leading.
+        let stretch = self.style.baselinestretch;
         let metrics = |size: flashtex_class_geometry::FontSize| {
             let (s, b) = size.metrics(base);
-            (frame_pt(s), frame_pt(b))
+            (frame_pt(s), frame_pt(b) * stretch)
         };
         if let Some(n) = number {
             let (size, bs) = metrics(spec.number_size);
@@ -2658,9 +2662,12 @@ impl<'a> Context<'a> {
     /// `\nobreak \vskip 3ex`.
     fn part_flow_blocks(&mut self, number: Option<&str>, title: &[AItem], span: Span, spec: &flashtex_class_geometry::PartSpec, base: flashtex_class_geometry::BaseSize) -> Vec<BuiltBlock> {
         use crate::style::frame_pt;
+        // Each of these sizes is selected with `\@setfontsize`, so
+        // `\baselinestretch` multiplies its leading.
+        let stretch = self.style.baselinestretch;
         let metrics = |size: flashtex_class_geometry::FontSize| {
             let (s, b) = size.metrics(base);
-            (frame_pt(s), frame_pt(b))
+            (frame_pt(s), frame_pt(b) * stretch)
         };
         let mut out = Vec::new();
         if let Some(n) = number {
@@ -2683,9 +2690,12 @@ impl<'a> Context<'a> {
     /// share what the page leaves, one before the title and two after.
     fn part_page_blocks(&mut self, number: Option<&str>, title: &[AItem], span: Span, spec: &flashtex_class_geometry::PartSpec, base: flashtex_class_geometry::BaseSize, width: f64) -> Vec<BuiltBlock> {
         use crate::style::frame_pt;
+        // Each of these sizes is selected with `\@setfontsize`, so
+        // `\baselinestretch` multiplies its leading.
+        let stretch = self.style.baselinestretch;
         let metrics = |size: flashtex_class_geometry::FontSize| {
             let (s, b) = size.metrics(base);
-            (frame_pt(s), frame_pt(b))
+            (frame_pt(s), frame_pt(b) * stretch)
         };
         let mut null = plain_vblock(vec![(0.0, 0.0)]);
         null.penalty_before = Some(pagebuild::EJECT_PENALTY);
@@ -2787,9 +2797,10 @@ impl<'a> Context<'a> {
         use crate::style::frame_pt;
         use flashtex_class_geometry::FontSize;
         let s = self.style;
+        let stretch = s.baselinestretch;
         let metrics = |size: FontSize| {
             let (a, b) = size.metrics(g.options.size);
-            (frame_pt(a), frame_pt(b))
+            (frame_pt(a), frame_pt(b) * stretch)
         };
         let (title_size, title_bs) = metrics(FontSize::LARGE);
         let (large_size, large_bs) = metrics(FontSize::Large);

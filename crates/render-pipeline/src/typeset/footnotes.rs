@@ -71,11 +71,17 @@ pub struct FootnoteParams {
 impl FootnoteParams {
     pub fn of(style: &Stylesheet) -> FootnoteParams {
         use flashtex_document_style::BaseSize;
-        match style.base {
+        let mut p = match style.base {
             BaseSize::Pt10 => FootnoteParams { size: 8.0, baselineskip: 9.5, sep: 6.65, skip: (9.0, 4.0, 2.0) },
             BaseSize::Pt11 => FootnoteParams { size: 9.0, baselineskip: 11.0, sep: 7.7, skip: (10.0, 4.0, 2.0) },
             BaseSize::Pt12 => FootnoteParams { size: 10.0, baselineskip: 12.0, sep: 8.4, skip: (10.8, 4.0, 2.0) },
-        }
+        };
+        // `\footnotesize` is a `\@setfontsize`, so `\baselinestretch`
+        // multiplies its leading (and with it `\dp\strutbox`) exactly as it
+        // does the body's. `\footnotesep` and `\skip\footins` are fixed
+        // `\setlength`s of size1x.clo and are not stretched.
+        p.baselineskip = style.stretched(p.baselineskip);
+        p
     }
 
     /// `\dp\strutbox` at `\footnotesize` (`.3\baselineskip`).

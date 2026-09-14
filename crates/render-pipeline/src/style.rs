@@ -86,6 +86,16 @@ pub struct Stylesheet {
     pub text_height_pt: f64,
     pub body_size_pt: f64,
     pub baselineskip_pt: f64,
+    /// `\baselinestretch` (latex.ltx `\def\baselinestretch{1}`;
+    /// `\linespread{f}` is `\renewcommand{\baselinestretch}{f}`).
+    /// `\@setfontsize` ends with `\baselineskip\baselinestretch\baselineskip`,
+    /// so *every* size selection multiplies that size's own leading by it --
+    /// the body, the headings, the footnotes, `\maketitle`, `\chapter`. It
+    /// does not touch `\lineskip`/`\lineskiplimit`, which the `.clo`s set
+    /// once as `\normallineskip`. Already applied to `baselineskip_pt` and
+    /// to the heading leadings; kept here for the leadings derived later
+    /// from their own size tables.
+    pub baselinestretch: f64,
     pub lineskip_pt: f64,
     pub lineskiplimit_pt: f64,
     pub topskip_pt: f64,
@@ -210,6 +220,7 @@ impl Stylesheet {
             text_height_pt: page.text_area.height.0,
             body_size_pt: body_size,
             baselineskip_pt: body.baselineskip.0,
+            baselinestretch: 1.0,
             lineskip_pt: 1.0,
             lineskiplimit_pt: 0.0,
             topskip_pt: page.top_skip.0,
@@ -317,6 +328,30 @@ impl Stylesheet {
 
     pub fn heading(&self, level: u8) -> HeadingStyle {
         self.headings[usize::from(level.clamp(1, 3) - 1)]
+    }
+
+    /// Set `\baselinestretch` and apply it to every leading this stylesheet
+    /// already holds (`\@setfontsize`'s
+    /// `\baselineskip\baselinestretch\baselineskip`, run once per size
+    /// selection). Leadings derived later from their own size tables --
+    /// footnotes, `\maketitle`, `\chapter`, `\part`, `p{}` cells -- read
+    /// [`Stylesheet::baselinestretch`] and scale themselves.
+    pub fn set_baselinestretch(&mut self, factor: f64) {
+        if !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        let scale = factor / self.baselinestretch;
+        self.baselineskip_pt *= scale;
+        for h in &mut self.headings {
+            h.baselineskip_pt *= scale;
+        }
+        self.baselinestretch = factor;
+    }
+
+    /// `size`'s own `\baselineskip` after `\baselinestretch`, for the
+    /// leadings that come from a size table of their own.
+    pub fn stretched(&self, baselineskip_pt: f64) -> f64 {
+        baselineskip_pt * self.baselinestretch
     }
 }
 
