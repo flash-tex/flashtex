@@ -78,6 +78,16 @@ fn main() {
         PageWindow { first_page: f.parse().expect("FIRST"), page_count: c.parse().expect("COUNT") }
     });
     let render_only = window.is_some() || args.iter().any(|a| a == "--render-only");
+    // `--scroll N`: after the warm keystrokes, move the window across the
+    // document in N steps through the SAME cache -- a viewer scrolling. This
+    // is what proves the window is bounded over a session rather than only at
+    // the first render.
+    let scroll: u32 = args
+        .iter()
+        .position(|a| a == "--scroll")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
 
     // crates/perf-bench -> crates -> repo root, as `main.rs` resolves it.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -128,6 +138,28 @@ fn main() {
                 let _ = protocol::handle_line(&line, &fonts, &options, Some(&cache));
             }
         }
+    }
+
+    if scroll > 0 {
+        let pages = rendered.v2.pages.len() as u32;
+        let w = window.expect("--scroll needs --window");
+        let srcs: Vec<flashtex_compiler::parser::SourceDocument<'_>> =
+            owned.iter().map(|(p, t)| flashtex_compiler::parser::SourceDocument { path: p, text: t }).collect();
+        for step in 1..=scroll {
+            let first = 1 + (pages.saturating_sub(w.page_count) * step) / scroll.max(1);
+            let r = flashtex_render_pipeline::render_windowed(
+                &srcs,
+                &case.entry,
+                1,
+                "memprofile",
+                &fonts,
+                &options,
+                Some(&cache),
+                Some(PageWindow { first_page: first, page_count: w.page_count }),
+            );
+            std::hint::black_box(&r.v2.pages.len());
+        }
+        println!("(scrolled the window across the document in {scroll} steps through one cache)");
     }
 
     let mut audit = memsize::CaretAudit::default();

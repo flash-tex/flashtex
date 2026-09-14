@@ -9,6 +9,20 @@ cache) is implemented behind a default that reproduces today's behaviour
 exactly, so the mechanism can be measured and gated before any wire change is
 co-signed.
 
+**What r1 implements, precisely**, so the rest of this document is not read as
+a description of working code:
+
+| section | r1 |
+|---|---|
+| §5.1 `Page.content: PageContent` | **implemented** |
+| §5.2 `render_windowed` | **implemented** |
+| §5.3 streaming assembly, closure and diagnostics kept exact | **implemented** |
+| §5.4 `assembled` scoped to the window, `blocks`/`adapted` whole-document | **implemented** (retain-by-window; the byte budget is not) |
+| §5.6 pdf / v1 / delta refusals | **implemented** |
+| §4 wire shape | **serialised, not negotiated** — `write_page` emits it, `v1.rs` does not accept the capability |
+| §5.5 `PageRecipe` retained across requests | **not implemented**: each windowed render re-runs layout and rebuilds the recipe from a fresh `Laid`. Serving a scroll without re-layout is the point of retaining it, and is r2 |
+| §6 scroll served from a retained recipe | **not implemented**, follows §5.5 |
+
 Sibling proposals, both unchanged by this one:
 `docs/proposals/display-list-v2-delta.md` (r5) and
 `protocol/proposals/display-list-v2-only.md` (r1).
@@ -296,9 +310,17 @@ from it without `Laid`. Re-materialising page 900 after a scroll needs the
 recipe and the cached blocks its lines name — no compiler, no paragraph
 breaking.
 
-`assembled` gains a byte budget rather than an entry count, and evicts by
-distance from the window instead of clearing. (#232's follow-up 3 asks for a
-byte budget on `blocks` too; that is a separate change and not proposed here.)
+In r1 a windowed render ends by retaining in `assembled` exactly the blocks its
+resident pages used (`RenderCache::retain_assembled`). Without that the cache is
+append-only and a viewer scrolling a long document accumulates every page it
+passed, so the window would buy nothing beyond the first render. A byte budget
+and eviction by distance from the window — which would keep a margin of recently
+left pages rather than dropping them at once — are the obvious refinement and are
+not in r1. (#232's follow-up 3 asks for a byte budget on `blocks` too; that is a
+separate change and not proposed here.)
+
+An unwindowed render never calls `retain_assembled` and treats every block as
+wanted, so a complete compile's cache behaviour is exactly what it was.
 
 ### 5.5 The recipe is retained, not invented
 
@@ -314,6 +336,12 @@ pipeline already computes and then drops when `assemble` consumes `Laid` by
 value. Retaining the projection alongside the cache is what makes a later
 window servable without re-layout; at ~40 bytes a placed line it is ~1.5 MB for
 the 2 MB case against the ~650 MiB it replaces.
+
+**Not in r1.** r1 re-runs layout for every window, which is correct but pays
+whole-document layout on a scroll. The memory this proposal measures does not
+depend on the recipe being retained — the retention that matters is the
+`assembled` and `Page.items` bytes — so the recipe is separated out as r2
+rather than bundled in unmeasured.
 
 ### 5.6 Consumers that must be updated (all in-tree)
 

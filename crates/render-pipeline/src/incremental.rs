@@ -129,6 +129,22 @@ impl RenderCache {
         rc
     }
 
+    /// Drops every assembled block whose key is not in `keep`.
+    ///
+    /// The window's materialisation cache
+    /// (`protocol/proposals/display-list-v2-window.md` §5.4): `blocks` and
+    /// `adapted` stay whole-document, because they are what makes
+    /// re-materialising a page cheap, but the glyph-level `assembled` entries
+    /// are the bulk of the bytes and only the resident pages' are worth
+    /// holding. Without this a viewer scrolling a long document accumulates
+    /// every page it has passed and the window buys nothing over a session.
+    ///
+    /// Never called on an unwindowed render: a complete compile keeps
+    /// everything it built, exactly as before.
+    pub fn retain_assembled(&self, keep: &std::collections::HashSet<u64>) {
+        self.assembled.borrow_mut().retain(|k, _| keep.contains(k));
+    }
+
     pub fn len(&self) -> usize {
         self.blocks.borrow().len()
     }

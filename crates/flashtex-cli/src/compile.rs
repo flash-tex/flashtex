@@ -121,7 +121,9 @@ pub fn compile(project: &Project, fonts: &FontSet, options: &RenderOptions, revi
     }
     // The runtime-v1 status rule (render-pipeline `v1::fallback`): a
     // project-closure error is an error diagnostic like the compiler's.
-    let has_content = rendered.v2.pages.iter().any(|p| !p.items.is_empty());
+    // The CLI always renders unwindowed (`render`, above), so every page is
+    // resident; an elided page would not count as content either way.
+    let has_content = rendered.v2.pages.iter().any(|p| p.items().is_some_and(|it| !it.is_empty()));
     let has_error = diagnostics.iter().any(|d| d.error);
     let status = if diagnostics.is_empty() {
         "ok"

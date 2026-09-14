@@ -6682,13 +6682,17 @@ pub fn assemble_windowed(
     let mut profiles: BTreeMap<String, String> = BTreeMap::new();
     let mut unmapped_seen = BTreeSet::new();
     let mut unmapped_diags: Vec<Diagnostic> = Vec::new();
+    let mut keep_assembled: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
     for (bi, block) in laid.blocks.iter().enumerate() {
         let hit = block
             .cache_key
             .and_then(|(k, _, _)| cache.and_then(|c| c.assembled(k)))
             .filter(|a| block.cache_key.is_some_and(|(_, d, _)| *a.path == *paths.get(d.0).map_or("", |p| &**p)));
-        let wanted = !lands[bi].is_empty();
+        // Unwindowed, every block is wanted whether or not a page placed it,
+        // so the cache behaves exactly as it did before this change. Windowed,
+        // a block reaching no resident page is harvested and dropped.
+        let wanted = window.is_none() || !lands[bi].is_empty();
         let a = match hit {
             Some(a) => a,
             None => {
@@ -6746,7 +6750,20 @@ pub fn assemble_windowed(
                 slot.push(item);
             }
         }
+        if wanted {
+            if let Some((k, _, _)) = block.cache_key {
+                keep_assembled.insert(k);
+            }
+        }
         // `a` drops here unless the assembled cache or another `Rc` holds it.
+    }
+    // The assembled cache is scoped to the window: a scroll through a long
+    // document must not accumulate every page it passed (§5.4). `blocks` and
+    // `adapted` are untouched -- they are what keeps the next window cheap.
+    if window.is_some() {
+        if let Some(c) = cache {
+            c.retain_assembled(&keep_assembled);
+        }
     }
 
     let mut pages = Vec::new();
