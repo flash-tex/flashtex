@@ -189,6 +189,38 @@ enum EditorChangeEnvironment {
     private static func containsCaret(_ caret: Int, _ range: NSRange) -> Bool {
         NSLocationInRange(caret, range) || caret == NSMaxRange(range)
     }
+
+    /// True when `caret` sits in (or at the end of) the `{name}` of `\begin` /
+    /// `\end` on its line. O(line), no document pair scan — ordinary typing
+    /// next to `\end{document}` must not pay `environmentPairs`.
+    static func isOnEnvironmentName(in text: NSString, at caret: Int) -> Bool {
+        guard text.length > 0 else { return false }
+        let i = min(max(0, caret), text.length)
+        var j = i
+        var open = -1
+        while j > 0 {
+            let c = text.character(at: j - 1)
+            if c == 0x0A { break }
+            if c == 0x7D { return false }
+            if c == 0x7B { open = j - 1; break }
+            j -= 1
+        }
+        guard open >= 0 else { return false }
+        var close = open + 1
+        while close < text.length {
+            let c = text.character(at: close)
+            if c == 0x7D || c == 0x0A { break }
+            close += 1
+        }
+        if caret < open + 1 || caret > close { return false }
+        var k = open
+        while k > 0, text.character(at: k - 1) == 0x20 { k -= 1 }
+        func token(_ s: String) -> Bool {
+            let n = (s as NSString).length
+            return k >= n && text.substring(with: NSRange(location: k - n, length: n)) == s
+        }
+        return token("\\begin") || token("\\end")
+    }
 }
 
 // MARK: - model
@@ -314,6 +346,11 @@ extension SourceEditorView.Coordinator {
     func syncLinkedEnvironmentPartner(in tv: NSTextView, edit: (range: NSRange, replacement: String)?) {
         guard programmaticChanges == 0, !tv.hasMarkedText(), let edit else { return }
         if let completing = tv as? CompletingTextView, completing.isCompletionActive { return }
+        // O(line) on the live storage: typing on the `\end{document}` line
+        // (large-document bench) is not inside the name, so skip the O(n)
+        // pair scan and nativeText copy.
+        guard let storage = tv.textStorage,
+              EditorChangeEnvironment.isOnEnvironmentName(in: storage.mutableString, at: edit.range.location) else { return }
         let now = SourceEditorView.nativeText(of: tv) as NSString
         guard let old = EditorChangeEnvironment.preEditBuffer(now: now, lastKnown: lastKnownText as NSString, edit: edit),
               let partnerEdit = EditorChangeEnvironment.linkedPartnerEdit(old: old, edit: edit) else { return }

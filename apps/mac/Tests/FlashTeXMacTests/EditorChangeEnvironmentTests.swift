@@ -122,6 +122,11 @@ final class EditorChangeEnvironmentTests: XCTestCase {
         XCTAssertEqual(CE.linkedNames(at: beginName.location, in: s)?.partner, s.range(of: "itemize", range: NSRange(location: 16, length: s.length - 16)))
         XCTAssertNil(CE.linkedNames(at: s.range(of: "\\item").location, in: s), "body is not a name span")
         XCTAssertNil(CE.linkedNames(at: 8, in: "\\begin{itemize}" as NSString), "unbalanced never links")
+        XCTAssertTrue(CE.isOnEnvironmentName(in: s, at: beginName.location))
+        XCTAssertFalse(CE.isOnEnvironmentName(in: s, at: s.range(of: "\\item").location))
+        let endLine = "\\end{document}" as NSString
+        XCTAssertFalse(CE.isOnEnvironmentName(in: endLine, at: 0), "caret on the backslash is not in the name")
+        XCTAssertTrue(CE.isOnEnvironmentName(in: endLine, at: endLine.range(of: "document").location))
         let insertAt = NSRange(location: beginName.location, length: 0)
         let partner = try XCTUnwrap(CE.linkedPartnerEdit(old: s, edit: (insertAt, "x")))
         XCTAssertEqual(partner.replacement, "xitemize")
