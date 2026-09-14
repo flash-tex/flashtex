@@ -1486,6 +1486,8 @@ struct OpenList {
     label_star: Option<String>,
     /// The label text of the latest counted `\item` (for `label*` below).
     current_label: String,
+    /// The latest enumerate counter value, without its display punctuation.
+    current_reference: String,
     /// `series=<name>`: the counter is also saved under `series@<name>`.
     series: Option<String>,
     /// The `\begin` keys (saved for `resume*`).
@@ -3511,6 +3513,7 @@ impl P<'_> {
                     counter: 0,
                     label_star: None,
                     current_label: String::new(),
+                    current_reference: String::new(),
                     series: None,
                     begin_options: Vec::new(),
                 });
@@ -6033,6 +6036,13 @@ impl P<'_> {
             .find(|list| list.kind == "enumerate")
             .map(|list| list.current_label.clone())
             .unwrap_or_default();
+        let enclosing_references = self
+            .list_stack
+            .iter()
+            .take(self.list_stack.len().saturating_sub(1))
+            .filter(|list| list.kind == "enumerate")
+            .map(|list| list.current_reference.clone())
+            .collect::<Vec<_>>();
         let Some(list) = self.list_stack.last_mut() else {
             return;
         };
@@ -6068,13 +6078,36 @@ impl P<'_> {
             },
         };
         let item_text = item.text().to_string();
-        let reference_value = match &item {
+        let item_reference = match &item {
             ItemLabel::Counter { value, style, .. } => style.format(*value),
             _ => item_text.clone(),
+        };
+        list.current_reference = item_reference.clone();
+        let reference_value = if environment == ListEnvironment::Enumerate {
+            Self::enumerate_reference_value(&enclosing_references, item_reference)
+        } else {
+            item_reference
         };
         self.set_current_counter("item", Some(reference_value));
         self.pending_item_label = Some((item_text, span));
         self.pending_item = Some(item);
+    }
+
+    fn enumerate_reference_value(prefixes: &[String], current: String) -> String {
+        let mut values = prefixes.to_vec();
+        values.push(current);
+        match values.as_slice() {
+            [] => String::new(),
+            [value] => value.clone(),
+            [outer, inner] => format!("{outer}{inner}"),
+            [outer, inner, rest @ ..] => {
+                let mut value = format!("{outer}({inner})");
+                for part in rest {
+                    value.push_str(part);
+                }
+                value
+            }
+        }
     }
 
     fn push_list_frame(&mut self, environment: ListEnvironment, options: Vec<ListOption>, begin_span: Span) {
@@ -6172,6 +6205,7 @@ impl P<'_> {
             counter,
             label_star,
             current_label: String::new(),
+            current_reference: String::new(),
             series,
             begin_options,
         });

@@ -2212,6 +2212,7 @@ struct CleverReferenceItem {
     number: String,
     page: u32,
     kind: String,
+    raw_kind: String,
 }
 
 fn clever_reference_text(
@@ -2234,6 +2235,7 @@ fn clever_reference_text(
                 number: value.number.clone(),
                 page: value.page,
                 kind: crate::xref::cleveref_kind(&value.kind).to_string(),
+                raw_kind: value.kind.clone(),
             }),
             None => unresolved = true,
         }
@@ -2245,7 +2247,7 @@ fn clever_reference_text(
         if items.len() != 2 || items[0].kind != items[1].kind {
             return ("??".into(), true);
         }
-        let name = crate::xref::cleveref_name(config, &items[0].kind, true, capitalise);
+        let name = crate::xref::cleveref_name(config, &items[0].raw_kind, true, capitalise);
         return include_unresolved(
             format!(
                 "{} {} to {}",
@@ -2285,8 +2287,13 @@ fn clever_reference_text(
     }
     let group_text = groups
         .iter()
-        .map(|(kind, group)| {
-            let name = crate::xref::cleveref_name(config, kind, group.len() != 1, capitalise);
+        .map(|(_, group)| {
+            let name = crate::xref::cleveref_name(
+                config,
+                &group[0].raw_kind,
+                group.len() != 1,
+                capitalise,
+            );
             format!("{} {}", name, format_clever_numbers(group))
         })
         .collect::<Vec<_>>();

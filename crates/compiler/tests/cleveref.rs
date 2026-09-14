@@ -77,6 +77,46 @@ fn cleveref_custom_names_and_undefined_labels_match_ref_diagnostics() {
 }
 
 #[test]
+fn cleveref_crefname_does_not_derive_over_builtin_capital_name() {
+    let source = concat!(
+        r"\documentclass{article}",
+        r"\usepackage{cleveref}",
+        r"\crefname{section}{sec}{secs}",
+        r"\begin{document}",
+        r"\section{One}\label{s}",
+        r"See \Cref{s}.",
+        r"\end{document}",
+    );
+    let output = compile(source);
+    let rendered = text(&output);
+    assert!(rendered.contains("Section 1"), "{rendered}");
+    assert!(!rendered.contains("Sec 1"), "{rendered}");
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+}
+
+#[test]
+fn cleveref_subsection_names_override_the_section_alias() {
+    let source = concat!(
+        r"\documentclass{article}",
+        r"\usepackage{cleveref}",
+        r"\crefname{subsection}{subsec}{subsecs}",
+        r"\crefname{subsubsection}{subsubsec}{subsubsecs}",
+        r"\begin{document}",
+        r"\section{One}\label{sec}",
+        r"\subsection{Nested}\label{sub}",
+        r"\subsubsection{Deep}\label{subsub}",
+        r"See \cref{sec}; \cref{sub}; \cref{subsub}.",
+        r"\end{document}",
+    );
+    let output = compile(source);
+    let rendered = text(&output);
+    for expected in ["section 1", "subsec 1.1", "subsubsec 1.1.1"] {
+        assert!(rendered.contains(expected), "missing {expected}: {rendered}");
+    }
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+}
+
+#[test]
 fn cleveref_parses_starred_ranges_pages_and_labelcref() {
     let source = concat!(
         r"\documentclass{article}",
@@ -144,8 +184,8 @@ fn cleveref_capitalise_keeps_abbreviations() {
     );
     let output = compile(source);
     let rendered = text(&output);
-    assert_eq!(rendered.matches("Eq. (1)").count(), 2, "{rendered}");
-    assert!(!rendered.contains("Equation (1)"), "{rendered}");
+    assert_eq!(rendered.matches("Eq. (1)").count(), 1, "{rendered}");
+    assert_eq!(rendered.matches("Equation (1)").count(), 1, "{rendered}");
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
 }
 
