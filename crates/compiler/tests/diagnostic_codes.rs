@@ -155,6 +155,22 @@ fn codes_and_suggestions_are_serialized_in_runtime_v1_json() {
     assert!(diagnostics[1].get("suggestion").is_none());
     assert!(diagnostics[0].get("help").is_some(), "{:?}", diagnostics[0]);
     assert!(diagnostics[1].get("help").is_some(), "{:?}", diagnostics[1]);
+    let help = diagnostics[0].get("help").expect("help");
+    assert_eq!(
+        help.get("message").and_then(Value::as_str),
+        Some("did you mean \\alpha?")
+    );
+    let replacement = help.get("replacement").expect("replacement");
+    assert_eq!(
+        replacement.get("text").and_then(Value::as_str),
+        Some(r"\alpha")
+    );
+    let source = replacement.get("source").expect("source");
+    assert_eq!(source.get("path").and_then(Value::as_str), Some("main.tex"));
+    let start = source.get("start_byte").and_then(Value::as_i64).unwrap() as usize;
+    let end = source.get("end_byte").and_then(Value::as_i64).unwrap() as usize;
+    let text = r"Text \alpah and \tikz here.";
+    assert_eq!(&text[start..end], r"\alpah", "{start}..{end} in {text:?}");
 }
 
 #[test]

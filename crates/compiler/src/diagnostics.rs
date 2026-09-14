@@ -239,7 +239,12 @@ impl Diagnostic {
     }
 
     /// Like [`with_help`], or a no-op when there is nothing useful to say.
+    /// Does not replace help that is already set (so `command_error` can
+    /// attach a did-you-mean replacement and callers can still chain this).
     pub fn with_optional_help<S: Into<String>>(self, message: Option<S>) -> Self {
+        if self.help.is_some() {
+            return self;
+        }
         match message {
             Some(message) => self.with_help(message),
             None => self,
@@ -272,8 +277,14 @@ impl Diagnostic {
             diagnostic.code = Some(DiagnosticCode::UnsupportedFeature);
         } else {
             diagnostic.code = Some(DiagnosticCode::UnknownCommand);
-            diagnostic.suggestion =
-                crate::vocabulary::suggest_command(name).map(|known| format!("\\{known}"));
+            if let Some(known) = crate::vocabulary::suggest_command(name) {
+                let text = format!("\\{known}");
+                diagnostic.suggestion = Some(text.clone());
+                diagnostic = diagnostic.with_help(format!("did you mean \\{known}?"));
+                if let Some(span) = span {
+                    diagnostic = diagnostic.with_replacement(span, text);
+                }
+            }
         }
         diagnostic
     }
@@ -475,6 +486,24 @@ mod tests {
         let json = crate::json::write(&typo.to_json(""));
         assert!(json.contains(r#""code":"unknown_command""#), "{json}");
         assert!(json.contains(r#""suggestion":"\\alpha""#), "{json}");
+    }
+
+    #[test]
+    fn unknown_command_did_you_mean_emits_help_replacement() {
+        let span = Span::new(5, 11);
+        let typo = Diagnostic::command_error("alpah", "\\alpah is not supported", Some(span), None);
+        assert_eq!(typo.suggestion.as_deref(), Some("\\alpha"));
+        let help = typo.help.as_ref().expect("help");
+        assert_eq!(help.message, "did you mean \\alpha?");
+        let repl = help.replacement.as_ref().expect("replacement");
+        assert_eq!(repl.span, span);
+        assert_eq!(repl.text, "\\alpha");
+        let json = crate::json::write(&typo.to_json("main.tex"));
+        assert!(json.contains(r#""suggestion":"\\alpha""#), "{json}");
+        assert!(
+            json.contains(r#""help":{"message":"did you mean \\alpha?","replacement":{"source":{"end_byte":11,"path":"main.tex","start_byte":5},"text":"\\alpha"}}"#),
+            "{json}"
+        );
     }
 
     #[test]
