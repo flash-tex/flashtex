@@ -179,5 +179,85 @@ class ThumbTests(unittest.TestCase):
         self.assertEqual(rgb[:3], bytes((30, 60, 220)))  # reference-only ink = blue
 
 
+class WordGroupingTests(unittest.TestCase):
+    """`rank.v2_words` must group candidate glyphs by the same rule the
+    reference side uses, or the alignment measures the two halves of the
+    tool disagreeing about what a word is."""
+
+    def _runs(self, runs):
+        """A one-page display list from (text, font_id, x, y, advance, src)."""
+        Q = 2 ** 20
+        items = []
+        for text, font_id, x, y, adv, src in runs:
+            glyphs, clusters, at = [], [], x
+            for i, ch in enumerate(text):
+                glyphs.append({"gid": 1, "origin_x": int(at * Q), "baseline_y": int(y * Q),
+                               "advance_x": int(adv * Q), "advance_y": 0, "cluster": i})
+                clusters.append({"text_start_byte": i, "text_end_byte": i + 1,
+                                 "sources": [{"path": "main.tex", "start_byte": src + i, "end_byte": src + i + 1}]})
+                at += adv
+            items.append({"kind": "glyph_run", "font_id": font_id, "font_size": 10 * Q,
+                          "text": text, "glyphs": glyphs, "clusters": clusters})
+        fonts = [{"font_id": "rm", "postscript_name": "LMRoman10-Regular"},
+                 {"font_id": "mi", "postscript_name": "LMMathItalic10-Regular"}]
+        return {"payload": {"coordinate_unit": "bp_2pow20", "fonts": fonts,
+                            "pages": [{"number": 1, "width": 612 * Q, "height": 792 * Q, "items": items}]}}
+
+    def test_adjacent_runs_of_different_fonts_are_one_word(self):
+        # pdfTeX sets a siunitx `S` cell as three Tf-switched runs in one text
+        # object; `pdftext.words_from_glyphs` joins them because a font change
+        # does not end a word. The candidate must do the same, or the cell
+        # reads as three words against the reference's one.
+        page = rank.v2_words(self._runs([
+            ("1", "rm", 72.0, 100.0, 5.0, 0),
+            (".", "mi", 77.0, 100.0, 2.5, 1),
+            ("234", "rm", 79.5, 100.0, 5.0, 2),
+        ]))[0]
+        self.assertEqual([w["text"] for w in page["words"]], ["1.234"])
+        w = page["words"][0]
+        self.assertAlmostEqual(w["x"], 72.0)
+        self.assertAlmostEqual(w["width"], 22.5)
+        # Per-glyph facts survive the grouping: the span covers all three runs
+        # and a math font anywhere in the word marks it.
+        self.assertEqual(w["source"], {"path": "main.tex", "start_byte": 0, "end_byte": 5})
+        self.assertTrue(w["math"])
+
+    def test_a_gap_wider_than_the_space_fraction_still_splits(self):
+        # 0.16 em at 10 pt = 1.6 bp. Same baseline, same font, 3 bp clear.
+        page = rank.v2_words(self._runs([
+            ("ab", "rm", 72.0, 100.0, 5.0, 0),
+            ("cd", "rm", 85.0, 100.0, 5.0, 2),
+        ]))[0]
+        self.assertEqual([w["text"] for w in page["words"]], ["ab", "cd"])
+
+    def test_runs_on_different_baselines_are_never_joined(self):
+        page = rank.v2_words(self._runs([
+            ("ab", "rm", 72.0, 100.0, 5.0, 0),
+            ("cd", "rm", 82.0, 112.0, 5.0, 2),
+        ]))[0]
+        self.assertEqual([w["text"] for w in page["words"]], ["ab", "cd"])
+
+    def test_a_backwards_jump_splits_so_stray_ink_cannot_hide_in_a_word(self):
+        # `fixtures/real-world/unicode-accents` has a run whose last five
+        # glyphs sit at x = -12321 bp. Grouping by run alone hid that inside
+        # one word whose `x` came from its first glyph.
+        page = rank.v2_words(self._runs([
+            ("ab", "rm", 72.0, 100.0, 5.0, 0),
+            ("cd", "rm", -500.0, 100.0, 5.0, 2),
+        ]))[0]
+        self.assertEqual([w["text"] for w in page["words"]], ["ab", "cd"])
+        self.assertAlmostEqual(page["words"][1]["x"], -500.0)
+
+    def test_words_from_glyphs_indexes_its_input(self):
+        glyphs = [{"text": t, "x": x, "y_top": 100.0, "advance": 5.0, "size": 10.0,
+                   "font": "F", "bt": 0}
+                  for t, x in (("a", 72.0), ("b", 77.0), (" ", 82.0), ("c", 87.0))]
+        words = pdftext.words_from_glyphs(glyphs)
+        self.assertEqual([w["text"] for w in words], ["ab", "c"])
+        # A word's glyphs are contiguous in the input, so a caller can carry
+        # its own per-glyph data across the grouping.
+        self.assertEqual([(w["glyph_index"], w["glyphs"]) for w in words], [(0, 2), (3, 1)])
+
+
 if __name__ == "__main__":
     unittest.main()

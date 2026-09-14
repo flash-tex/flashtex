@@ -2137,6 +2137,13 @@ final class CompletingTextView: NSTextView {
     /// line's lexing. Unwired — a bare text view in a test — it says no, and
     /// the list keeps the plain text-mode order.
     var mathModeAtCaret: (Int) -> Bool = { _ in false }
+    /// Whether a mechanical fix hint is showing at the caret (the owner
+    /// answers from `ShellModel.caretFix`). Only Esc is handled here; Tab
+    /// accepts the fix in `SourceEditorView.handleTab`, after this view has
+    /// had its say on completion and snippet placeholders. Unwired — a bare
+    /// text view in a test — it says no and Esc keeps its old meaning.
+    var caretFixVisible: () -> Bool = { false }
+    var dismissCaretFix: () -> Void = {}
 
     // MARK: snippet tab stops (Snippets: Tab / ⇧Tab between placeholders, Esc leaves)
 
@@ -2237,6 +2244,20 @@ final class CompletingTextView: NSTextView {
     // MARK: ⌘/ line comment
 
     /// Toggles `% ` on every line the selection touches (one undo step).
+    /// ⌥⇧↓ / ⌥⇧↑: copy the line (or every line the selection touches) below or
+    /// above itself, leaving the caret on the copy. One undo step, like
+    /// `toggleLineComment`.
+    func duplicateLines(below: Bool) {
+        guard !hasMarkedText() else { return }
+        let sel = selectedRange()
+        guard let (edit, selection) = EditorKeyHandling.duplicateLinesEdit(in: string, range: sel, below: below) else { return }
+        breakUndoCoalescing()
+        insertText(edit.replacement, replacementRange: edit.range)
+        setSelectedRange(selection)
+        undoManager?.setActionName(selection.length > 0 || sel.length > 0 ? "Duplicate Lines" : "Duplicate Line")
+        breakUndoCoalescing()
+    }
+
     func toggleLineComment() {
         guard !hasMarkedText() else { return }
         let text = string as NSString
@@ -2744,6 +2765,14 @@ final class CompletingTextView: NSTextView {
             toggleLineComment()
             return
         }
+        // ⌥⇧↓ / ⌥⇧↑: duplicate the line(s) down/up (the Overleaf shortcut).
+        // This takes the key from AppKit's extend-selection-by-paragraph
+        // binding, which no LaTeX editor's users reach for and which ⇧↓ and
+        // ⌥↓ still cover between them.
+        if modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 {
+            duplicateLines(below: event.keyCode == 125)
+            return
+        }
         guard session != nil else {
             let plain = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
             if plain, event.keyCode == 48, isSnippetActive { // Tab / ⇧Tab between snippet placeholders
@@ -2753,6 +2782,12 @@ final class CompletingTextView: NSTextView {
             if plain, event.keyCode == 53, isSnippetActive || isSignatureHelpVisible { // Esc leaves the snippet / closes the help
                 endSnippet()
                 hideSignatureHelp()
+                return
+            }
+            // Esc takes the caret-fix hint down (and with it Tab's claim on the
+            // key) before Esc's other meaning, opening the completion list.
+            if plain, event.keyCode == 53, caretFixVisible() {
+                dismissCaretFix()
                 return
             }
             // Esc opens the list (AppKit's own `cancelOperation:` → `complete:`
