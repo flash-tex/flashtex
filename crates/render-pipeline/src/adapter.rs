@@ -2602,6 +2602,17 @@ fn apply_preamble_lengths(
             }
         }
     }
+    if assigned.parindent {
+        // \@startsection records \parindent into the heading spec at
+        // definition time; re-resolve after preamble assignments so
+        // \subparagraph sees the final indent. class-geometry is unchanged.
+        doc.headings = flashtex_class_geometry::sections::headings(
+            doc.options.kind,
+            &params,
+            doc.font,
+            doc.secnumdepth,
+        );
+    }
     // geometry's pdftex driver copies \paperwidth/\paperheight into the
     // MediaBox at \begin{document}. Without geometry, pdfTeX keeps the
     // engine default even after a later \setlength of those registers.
