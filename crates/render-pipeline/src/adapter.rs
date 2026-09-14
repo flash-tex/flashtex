@@ -496,11 +496,21 @@ pub enum ChromeEvent {
 }
 
 /// How a paragraph-shape environment began (see [`Block::Paragraph`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EnvOpen {
     /// `\begin{...}` was read in vertical mode (after a blank line, a
     /// heading, a rule or at the document start): `\partopsep` is added.
     pub vmode: bool,
+    /// `\@trivlist`'s `\advance\@topsep \parskip`, in points: the `\parskip`
+    /// in force where `\begin` was read. Zero at the outer level, and the
+    /// enclosing list's `\parsep` inside one, because `\list` sets
+    /// `\parskip\parsep` for its items.
+    ///
+    /// Measured with `\showoutput` on `10-verbatim-itemize`: a `verbatim`
+    /// inside a level-1 `enumerate` gets a net 12 pt above it (`\topsep` 8
+    /// plus the list's `\parsep` 4), where the same environment at the
+    /// outer level gets 8.
+    pub outer_parskip: f64,
 }
 
 #[derive(Debug)]
@@ -1913,8 +1923,37 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
             let begin = rfind_command(gap, "begin")?;
             let before = &gap[..begin];
             let vmode = prev_vmode || prev_end.is_none() || has_blank_line(before) || find_command(before, "par").is_some();
-            Some(EnvOpen { vmode })
+            // Only the verbatim family so far. `center`/`quote` inside a
+            // list are a measured but separate mismatch -- pdfTeX centres a
+            // `center` within the *indented* measure and sets it 24.0 pt
+            // below the item's baseline, while this pipeline sets it flush
+            // at the list margin 16.0 pt down -- and no fixture here pins
+            // them, so they are left as they were rather than moved blind.
+            let outer_parskip = if verbatim_env_after_begin(&gap[begin..]) {
+                enclosing_list_parskip(texts, f, size, style)
+            } else {
+                0.0
+            };
+            Some(EnvOpen { vmode, outer_parskip })
         });
+        // `\@verbatim` sets `\leftskip\@totalleftmargin`, so a verbatim body
+        // inside a list starts at the enclosing list's margin, not at the
+        // page's. It carries no label and no `\parsep`: the environment sets
+        // `\parskip\z@`.
+        if list.is_none() && styled.is_some() && env_open.is_some_and(|e| e.outer_parskip != 0.0) {
+            if let Some(f) = first {
+                let src = texts.get(f.document.0).copied().unwrap_or("");
+                let margins = list_margins(src, f.start, size);
+                if !margins.is_empty() {
+                    list = Some(ListGeom {
+                        level: list_stack_at(src, f.start).len() as u8,
+                        margins,
+                        label: None,
+                        parsep: crate::style::Skip::default(),
+                    });
+                }
+            }
+        }
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
         // or `\par` between them) is not indented.
         let after_env = styled.is_none()
@@ -2609,6 +2648,26 @@ fn setlist_names(envs: &str, env: &str) -> bool {
 
 /// The `itemize`/`enumerate` environments open at byte `at` of `source`,
 /// outermost first: `(environment, `\begin` optional argument)`.
+/// Whether the `\begin` at the start of `rest` opens a `verbatim`-family
+/// environment, whose body `\@verbatim` sets inside a `\trivlist`.
+fn verbatim_env_after_begin(rest: &str) -> bool {
+    let Some(inner) = rest.strip_prefix("\\begin").map(str::trim_start).and_then(|r| r.strip_prefix('{')) else {
+        return false;
+    };
+    inner.find('}').is_some_and(|close| matches!(inner[..close].trim(), "verbatim" | "verbatim*" | "lstlisting"))
+}
+
+/// The `\parskip` in force at `at`: zero outside a list, and the innermost
+/// enclosing list's `\parsep` inside one, because `\list` sets
+/// `\parskip\parsep` for its items.
+fn enclosing_list_parskip(texts: &[&str], at: Span, size: u32, style: &Stylesheet) -> f64 {
+    let Some(src) = texts.get(at.document.0).copied() else { return 0.0 };
+    let stack = list_stack_at(src, at.start);
+    let Some((env, keys)) = stack.last() else { return 0.0 };
+    let begin_keys = if *env == "thebibliography" { "" } else { *keys };
+    list_seps_with(src, env, stack.len(), size, style, begin_keys).parsep
+}
+
 fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str)> {
     let mut stack: Vec<(&str, &str)> = Vec::new();
     let mut from = 0;
