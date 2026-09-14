@@ -6321,6 +6321,10 @@ mod tests {
 
     #[test]
     fn geometry_setlength_paperwidth_updates_mediabox() {
+        // pdflatex (TeX Live 2026): with geometry,
+        // `\pdfpagewidth=361.34999pt` (=5in) and `\paperwidth=361.34999pt`;
+        // without geometry, `\pdfpagewidth=614.295pt` (US Letter) while
+        // `\paperwidth=361.34999pt`.
         let with = "\\documentclass{article}\n\\usepackage[margin=1in]{geometry}\n\\setlength{\\paperwidth}{5in}\n\\begin{document}x\\end{document}";
         let without = "\\documentclass{article}\n\\setlength{\\paperwidth}{5in}\n\\begin{document}x\\end{document}";
         let want = flashtex_class_geometry::Sp::parse("5in").unwrap();
