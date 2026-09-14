@@ -1570,9 +1570,27 @@ impl<'a> Context<'a> {
         if points.is_empty() {
             return self.whole_word(seg, size);
         }
-        let upem = shaped.units_per_em as f64;
-        let pt = |units: i64| size * units as f64 / upem;
-        let width = |t: &str| shaper.shape(&face, t).width_units;
+        // Each measurement carries the units of the shaping that produced
+        // it: a substring whose characters all have T1 slots is measured by
+        // the TFM ligature/kern program (2^20 per em), one that carries a
+        // character with no T1 slot falls back to the font program (the
+        // face's own units per em). `shape` decides that per string, so two
+        // substrings of the same word can come back in different units;
+        // measuring in points is the only scale they share. Dividing a TFM
+        // width by the face's 1000 units instead put the tail of a word like
+        // `ellipsis\dots` (U+2026 has no T1 slot, `ellip` does) 12676 pt to
+        // the left of the page, and every later word on its line with it.
+        let width_pt = |t: &str| shaper.shape(&face, t).width_pt(size);
+        // Whole minus parts, with the exact integer subtraction kept for the
+        // usual case where all three came back in the same units.
+        let residual_pt = |whole: &str, head: &str, tail: &str| {
+            let (w, h, t) = (shaper.shape(&face, whole), shaper.shape(&face, head), shaper.shape(&face, tail));
+            if w.units_per_em == h.units_per_em && h.units_per_em == t.units_per_em {
+                size * (w.width_units - h.width_units - t.width_units) as f64 / w.units_per_em as f64
+            } else {
+                w.width_pt(size) - h.width_pt(size) - t.width_pt(size)
+            }
+        };
         // Byte offset -> char index, for the fragments' `chars`.
         let mut char_index = vec![0usize; text.len() + 1];
         for (ci, (bi, _)) in text.char_indices().enumerate() {
@@ -1600,7 +1618,7 @@ impl<'a> Context<'a> {
                     };
                     self.text_box(&hyphen, size).map(|(mut run, rec)| {
                         self.mark_continues(rec);
-                        let adv = pt(width(&format!("{}-", &text[prev..at])) - width(&text[prev..at]));
+                        let adv = width_pt(&format!("{}-", &text[prev..at])) - width_pt(&text[prev..at]);
                         let doc_at = seg.chars[char_index[at]].start;
                         for g in &mut run.glyphs {
                             g.cluster = doc_at..doc_at;
@@ -1630,7 +1648,7 @@ impl<'a> Context<'a> {
                     }),
                     rec,
                 ));
-                let kern = pt(width(&text[prev..b]) - width(&text[prev..at]) - width(&text[at..b]));
+                let kern = residual_pt(&text[prev..b], &text[prev..at], &text[at..b]);
                 if kern != 0.0 {
                     out.push((pl::Item::kern(kern), None));
                 }

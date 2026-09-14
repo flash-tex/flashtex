@@ -192,6 +192,9 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Toggle Vim keybindings", shortcuts: ["⌃⌘V"], menu: "View",
                          description: "Switches the source editor's modal Vim emulation (normal/insert/visual modes, motions, operators, text objects, registers, marks, `/` search and `:` commands) on or off; the same as the Settings switch. The status bar shows -- NORMAL -- / -- INSERT -- / -- VISUAL --.",
                          menuItem: "Toggle Vim Keybindings")
+        case .duplicateLine:
+            return Entry(command: self, title: "Duplicate line", shortcuts: ["⌥⇧↓", "⌥⇧↑"], menu: "Editor",
+                         description: "Copies the line the caret is on — or every line the selection touches — below (⌥⇧↓) or above (⌥⇧↑) itself, leaving the caret on the copy so the key repeats; one undo step per press.")
         case .toggleComment:
             return Entry(command: self, title: "Toggle comment", shortcuts: ["⌘/"], menu: "Editor",
                          description: "Toggles a `% ` line comment on every line the selection touches: all commented lines are uncommented, otherwise the non-blank lines are commented; one undo step.")
