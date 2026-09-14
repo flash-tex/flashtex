@@ -1645,6 +1645,32 @@ impl P<'_> {
             "graphicspath" => {
                 let _ = self.required_group(name, span);
             }
+            // Preamble or body (GH#321: the preamble is where documents usually
+            // declare them).
+            "pagestyle" => {
+                // No header/footer rendering exists yet, so every style is
+                // accepted with the same (honest) effect: none. `empty` and
+                // `plain` both describe "no footer content beyond a page
+                // number", which is already what happens.
+                let _ = self.required_group(name, span);
+            }
+            // `\thispagestyle` differs from `\pagestyle` only in scope
+            // (current page vs. every later one); since no style ever
+            // renders anything either way, the same honest no-op covers it.
+            "thispagestyle" => {
+                let _ = self.required_group(name, span);
+            }
+            // `\pagenumbering{arabic|roman}` resets the page counter and its
+            // display style. With no footer rendering to show a number in
+            // (see `\pagestyle` above) and no separate "displayed page
+            // number" distinct from `Page::number` for `\pageref` to read,
+            // there is nothing observable left for it to change; accepted
+            // with the same honest no-op rather than faking a counter reset
+            // whose only visible effect would be through those two missing
+            // features.
+            "pagenumbering" => {
+                let _ = self.required_group(name, span);
+            }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
@@ -2089,30 +2115,6 @@ impl P<'_> {
             }
             // multicol.sty 564-567: column heights at output time.
             "raggedcolumns" | "flushcolumns" => {}
-            "pagestyle" => {
-                // No header/footer rendering exists yet, so every style is
-                // accepted with the same (honest) effect: none. `empty` and
-                // `plain` both describe "no footer content beyond a page
-                // number", which is already what happens.
-                let _ = self.required_group(name, span);
-            }
-            // `\thispagestyle` differs from `\pagestyle` only in scope
-            // (current page vs. every later one); since no style ever
-            // renders anything either way, the same honest no-op covers it.
-            "thispagestyle" => {
-                let _ = self.required_group(name, span);
-            }
-            // `\pagenumbering{arabic|roman}` resets the page counter and its
-            // display style. With no footer rendering to show a number in
-            // (see `\pagestyle` above) and no separate "displayed page
-            // number" distinct from `Page::number` for `\pageref` to read,
-            // there is nothing observable left for it to change; accepted
-            // with the same honest no-op rather than faking a counter reset
-            // whose only visible effect would be through those two missing
-            // features.
-            "pagenumbering" => {
-                let _ = self.required_group(name, span);
-            }
             // Kernel text symbols (`text_builtins::TEXT_SYMBOLS`; the
             // `text_symbol_arms_match_the_builtin_table` test keeps them equal).
             "AA" | "aa" | "AE" | "ae" | "OE" | "oe" | "O" | "o" | "L" | "l" | "ss" | "SS"
