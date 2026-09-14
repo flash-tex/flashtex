@@ -107,6 +107,22 @@ fn composite_and_extra_symbols_convert_with_texbook_classes() {
 }
 
 #[test]
+fn odot_is_painted_as_a_binary_math_glyph() {
+    if !lm_available() {
+        return;
+    }
+    let (words, diags) = math_words(r"$a \odot b$");
+    assert!(
+        words.iter().any(|(text, _)| text == "⊙"),
+        "odot glyph was not drawn: words={words:?}, diagnostics={diags:?}"
+    );
+    assert!(
+        diags.iter().all(|diagnostic| !diagnostic.contains("\\odot")),
+        "odot should not produce a compiler diagnostic: {diags:?}"
+    );
+}
+
+#[test]
 fn every_compiler_symbol_typesets_without_a_missing_glyph() {
     if !lm_available() {
         return;
