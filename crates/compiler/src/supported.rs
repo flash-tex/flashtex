@@ -255,6 +255,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("pagestyle", "{style}", "accepted; no headers or footers are rendered"),
     ("noindent", "", "accepted no-op; paragraphs are never indented"),
     ("subsubsection", "{...}", "numbered subsubsection heading; starred form unnumbered"),
+    ("paragraph", "{...}", "run-in heading: bold, flush, set into the first line of the paragraph that follows it"),
+    ("subparagraph", "{...}", "run-in heading indented by \\parindent, set into the first line of the paragraph that follows it"),
     ("tableofcontents", "", "article contents list from the previous layout pass"),
     ("eqref", "{key}", "parenthesised equation number of the labelled item"),
     ("numberwithin", "[\\style]{counter}{parent}", "amsmath: counter reset by parent and printed \\theparent.\\style{counter} (equation, figure, table; theorem counters within section)"),
