@@ -549,6 +549,9 @@ fn compile(id: &str, payload: &Value) -> Value {
                 recovery: None,
                 code: None,
                 suggestion: None,
+                labels: Vec::new(),
+                notes: Vec::new(),
+                help: None,
             };
             return failed(
                 id,
@@ -561,17 +564,20 @@ fn compile(id: &str, payload: &Value) -> Value {
         }
     }
     if !entry.is_empty() && !path_is_safe(&entry) {
-        let diag = Diagnostic {
-            severity: Severity::Error,
-            message: format!(
-                "rejected entry_path '{}': paths must be project-relative with no parent traversal",
-                entry
-            ),
-            span: None,
-            recovery: None,
-            code: None,
-            suggestion: None,
-        };
+            let diag = Diagnostic {
+                severity: Severity::Error,
+                message: format!(
+                    "rejected entry_path '{}': paths must be project-relative with no parent traversal",
+                    entry
+                ),
+                span: None,
+                recovery: None,
+                code: None,
+                suggestion: None,
+                labels: Vec::new(),
+                notes: Vec::new(),
+                help: None,
+            };
         return failed(
             id,
             &project_id,
@@ -619,6 +625,9 @@ fn compile(id: &str, payload: &Value) -> Value {
                 recovery: None,
                 code: None,
                 suggestion: None,
+                labels: Vec::new(),
+                notes: Vec::new(),
+                help: None,
             };
             return failed(
                 id,

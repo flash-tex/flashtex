@@ -755,10 +755,21 @@ fn shift_diagnostics(
         recovery: _,
         code: _,
         suggestion: _,
+        labels,
+        notes: _,
+        help,
     } in diagnostics
     {
         if let Some(span) = span {
             map_span(span, changes, deltas)?;
+        }
+        for label in labels {
+            map_span(&mut label.span, changes, deltas)?;
+        }
+        if let Some(help) = help {
+            if let Some(repl) = &mut help.replacement {
+                map_span(&mut repl.span, changes, deltas)?;
+            }
         }
     }
     Some(())

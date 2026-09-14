@@ -55,6 +55,36 @@ impl DiagnosticCode {
     }
 }
 
+/// One underlined span in a rustc-style report (`labels[]` on the wire).
+///
+/// `span` is serialized as a runtime-v1 `source` object
+/// (`{path, start_byte, end_byte}`). Exactly one label in a non-empty list
+/// should have `primary: true`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticLabel {
+    pub span: Span,
+    pub text: String,
+    pub primary: bool,
+}
+
+/// Optional mechanical edit for `help.replacement` (issue #277).
+///
+/// On the wire this is `{start_byte, end_byte, text}` in the diagnostic's
+/// `source.path`; `span` keeps the document id for incremental mapping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticReplacement {
+    pub span: Span,
+    pub text: String,
+}
+
+/// Suggested fix (`help` on the wire). `replacement` is omitted when the
+/// help is advice only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticHelp {
+    pub message: String,
+    pub replacement: Option<DiagnosticReplacement>,
+}
+
 /// Default code for a diagnostic from the compiler's own message conventions.
 ///
 /// This lets every existing construction site carry a code without being
@@ -137,6 +167,12 @@ pub struct Diagnostic {
     /// Replacement text for the source range (e.g. `\alpha` for `\alpah`),
     /// serialized as `suggestion`; `None` omits the field.
     pub suggestion: Option<String>,
+    /// Extra underlined spans; omitted from JSON when empty.
+    pub labels: Vec<DiagnosticLabel>,
+    /// Extra `= note:` strings; omitted from JSON when empty.
+    pub notes: Vec<String>,
+    /// Suggested fix; omitted from JSON when `None`.
+    pub help: Option<DiagnosticHelp>,
 }
 
 impl Diagnostic {
@@ -149,6 +185,9 @@ impl Diagnostic {
             span,
             recovery,
             suggestion: None,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
         }
     }
 
@@ -165,11 +204,48 @@ impl Diagnostic {
             span,
             recovery,
             suggestion: None,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
         }
     }
 
     pub fn with_code(mut self, code: DiagnosticCode) -> Self {
         self.code = Some(code);
+        self
+    }
+
+    pub fn with_label(mut self, span: Span, text: impl Into<String>, primary: bool) -> Self {
+        self.labels.push(DiagnosticLabel {
+            span,
+            text: text.into(),
+            primary,
+        });
+        self
+    }
+
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.notes.push(note.into());
+        self
+    }
+
+    pub fn with_help(mut self, message: impl Into<String>) -> Self {
+        self.help = Some(DiagnosticHelp {
+            message: message.into(),
+            replacement: None,
+        });
+        self
+    }
+
+    /// Attach a byte-range edit to an already-set `help`. No-op when help is
+    /// absent, so callers can chain `with_help(...).with_replacement(...)`.
+    pub fn with_replacement(mut self, span: Span, text: impl Into<String>) -> Self {
+        if let Some(help) = &mut self.help {
+            help.replacement = Some(DiagnosticReplacement {
+                span,
+                text: text.into(),
+            });
+        }
         self
     }
 
@@ -238,16 +314,45 @@ impl Diagnostic {
         if let Some(suggestion) = &self.suggestion {
             v.set("suggestion", str_(suggestion.clone()));
         }
+        if !self.labels.is_empty() {
+            v.set(
+                "labels",
+                Value::Arr(
+                    self.labels
+                        .iter()
+                        .map(|label| {
+                            let mut o = Value::obj();
+                            o.set("source", source_json(label.span, paths));
+                            o.set("text", str_(label.text.clone()));
+                            o.set("primary", Value::Bool(label.primary));
+                            o
+                        })
+                        .collect(),
+                ),
+            );
+        }
+        if !self.notes.is_empty() {
+            v.set(
+                "notes",
+                Value::Arr(self.notes.iter().cloned().map(str_).collect()),
+            );
+        }
+        if let Some(help) = &self.help {
+            let mut h = Value::obj();
+            h.set("message", str_(help.message.clone()));
+            if let Some(repl) = &help.replacement {
+                let mut r = Value::obj();
+                r.set("start_byte", Value::Num(repl.span.start as f64));
+                r.set("end_byte", Value::Num(repl.span.end as f64));
+                r.set("text", str_(repl.text.clone()));
+                h.set("replacement", r);
+            }
+            v.set("help", h);
+        }
         v.set(
             "source",
             match self.span {
-                Some(s) => {
-                    let mut src = Value::obj();
-                    src.set("path", str_(paths.get(s.document.0).copied().unwrap_or("")));
-                    src.set("start_byte", Value::Num(s.start as f64));
-                    src.set("end_byte", Value::Num(s.end as f64));
-                    src
-                }
+                Some(s) => source_json(s, paths),
                 None => Value::Null,
             },
         );
@@ -260,6 +365,14 @@ impl Diagnostic {
         );
         v
     }
+}
+
+fn source_json(span: Span, paths: &[&str]) -> Value {
+    let mut src = Value::obj();
+    src.set("path", str_(paths.get(span.document.0).copied().unwrap_or("")));
+    src.set("start_byte", Value::Num(span.start as f64));
+    src.set("end_byte", Value::Num(span.end as f64));
+    src
 }
 
 #[cfg(test)]
@@ -346,9 +459,30 @@ mod tests {
             !json.contains("\"code\"") && !json.contains("suggestion"),
             "{json}"
         );
+        assert!(
+            !json.contains("\"labels\"") && !json.contains("\"notes\"") && !json.contains("\"help\""),
+            "{json}"
+        );
         let typo = Diagnostic::command_error("alpah", "\\alpah is not supported", None, None);
         let json = crate::json::write(&typo.to_json(""));
         assert!(json.contains(r#""code":"unknown_command""#), "{json}");
         assert!(json.contains(r#""suggestion":"\\alpha""#), "{json}");
+    }
+
+    #[test]
+    fn labels_notes_and_help_are_emitted_only_when_set() {
+        let span = Span::new(0, 6);
+        let with = Diagnostic::error("\\tilde is not supported", Some(span), Some("skipped".into()))
+            .with_label(span, "this command", true)
+            .with_note("\\tilde is a math accent")
+            .with_help("wrap it in math: \\(\\tilde{c}\\)")
+            .with_replacement(span, "\\(\\tilde{c}\\)");
+        let json = crate::json::write(&with.to_json("notes.tex"));
+        assert!(json.contains(r#""labels":[{"primary":true,"source":{"end_byte":6,"path":"notes.tex","start_byte":0},"text":"this command"}]"#), "{json}");
+        assert!(json.contains(r#""notes":["\\tilde is a math accent"]"#), "{json}");
+        assert!(json.contains(r#""help":{"message":"wrap it in math: \\(\\tilde{c}\\)","replacement":{"end_byte":6,"start_byte":0,"text":"\\(\\tilde{c}\\)"}}"#), "{json}");
+        let without = Diagnostic::error("\\tilde is not supported", Some(span), Some("skipped".into()));
+        let json = crate::json::write(&without.to_json("notes.tex"));
+        assert!(!json.contains("\"labels\"") && !json.contains("\"notes\"") && !json.contains("\"help\""), "{json}");
     }
 }
