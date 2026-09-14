@@ -6196,6 +6196,30 @@ mod tests {
         assert!(plain.stretch.abs() < 1e-9, "plain setlength is a fixed skip");
     }
 
+    #[test]
+    fn geometry_setlength_paperwidth_updates_mediabox() {
+        let with = "\\documentclass{article}\n\\usepackage[margin=1in]{geometry}\n\\setlength{\\paperwidth}{5in}\n\\begin{document}x\\end{document}";
+        let without = "\\documentclass{article}\n\\setlength{\\paperwidth}{5in}\n\\begin{document}x\\end{document}";
+        let want = flashtex_class_geometry::Sp::parse("5in").unwrap();
+        let letter = flashtex_class_geometry::Sp::parse("8.5in").unwrap();
+        let w = adapted(with)
+            .style
+            .class_geometry
+            .as_ref()
+            .unwrap()
+            .frame
+            .pdf_page_width;
+        assert_eq!(w, want, "geometry copies paperwidth into the MediaBox");
+        let wo = adapted(without)
+            .style
+            .class_geometry
+            .as_ref()
+            .unwrap()
+            .frame
+            .pdf_page_width;
+        assert_eq!(wo, letter, "without geometry the MediaBox is unchanged");
+    }
+
     /// Shorthand for an item list: `W` word, `S` space, `F` fill, `Q` quad.
     fn shape(items: &[Item]) -> String {
         items
