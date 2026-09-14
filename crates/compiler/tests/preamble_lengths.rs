@@ -188,6 +188,39 @@ fn preamble_parskip_one_bp_is_tex_big_point_not_pt() {
 }
 
 #[test]
+fn newlength_bare_assignment_and_addtolength_in_the_preamble() {
+    let with_eq = "\\documentclass{article}\\newlength{\\mylen}\\mylen=5pt\
+         \\addtolength{\\mylen}{3pt}\\begin{document}\\the\\mylen\\end{document}";
+    assert_no_diagnostics(with_eq);
+    let without_eq = "\\documentclass{article}\\newlength{\\mylen}\\mylen 5pt\
+         \\addtolength{\\mylen}{3pt}\\begin{document}\\the\\mylen\\end{document}";
+    assert_no_diagnostics(without_eq);
+    let from_len = "\\documentclass{article}\\newlength{\\lena}\\newlength{\\lenb}\\lena=5pt\
+         \\lenb=\\lena\\addtolength{\\lenb}{3pt}\\begin{document}\\the\\lenb\\end{document}";
+    assert_no_diagnostics(from_len);
+    let setlength = "\\documentclass{article}\\newlength{\\mylen}\\setlength{\\mylen}{5pt}\
+         \\addtolength{\\mylen}{3pt}\\begin{document}\\the\\mylen\\end{document}";
+    assert_no_diagnostics(setlength);
+}
+
+#[test]
+fn newlength_bare_assignment_and_addtolength_in_the_body() {
+    let with_eq = "\\documentclass{article}\\newlength{\\mylen}\\begin{document}\
+         \\mylen=5pt\\addtolength{\\mylen}{3pt}\\the\\mylen\\end{document}";
+    assert_no_diagnostics(with_eq);
+    let without_eq = "\\documentclass{article}\\newlength{\\mylen}\\begin{document}\
+         \\mylen 5pt\\addtolength{\\mylen}{3pt}\\the\\mylen\\end{document}";
+    assert_no_diagnostics(without_eq);
+}
+
+#[test]
+fn builtin_parindent_assignment_and_addtolength() {
+    let src = "\\documentclass{article}\\parindent=10pt\\addtolength{\\parindent}{2pt}\
+         \\begin{document}x\\end{document}";
+    assert_no_diagnostics(src);
+}
+
+#[test]
 fn hw1_keeps_its_three_reference_pages_with_parskip_applied() {
     let hw1 = include_str!("../../../fixtures/real-world/hw1/HW1.tex");
     let parsed = parse(hw1);

@@ -96,17 +96,23 @@ pub struct Expansion {
 /// turns back into `\begin{<env>}` and records for the parser.
 ///
 /// Kernel definitions that would intercept a command the parser typesets
-/// itself (`\\setlength`, `\\addtolength`, `\\label`, `\\verb`, whose argument the pass has
-/// already hidden, and `\\:`, which latex.ltx only uses while building
-/// `\\@ifnextchar` before redefining it as a math space) are removed, so they
-/// pass through.
-pub const HOST_PRELUDE: &str = "\\let\\setlength\\flashtexundefined
-\\let\\addtolength\\flashtexundefined
-\\let\\label\\flashtexundefined
+/// itself (`\\label`, `\\verb`, whose argument the pass has already hidden,
+/// and `\\:`, which latex.ltx only uses while building `\\@ifnextchar`
+/// before redefining it as a math space) are removed, so they pass through.
+///
+/// `\\setlength`/`\\addtolength` keep the kernel meaning when `#1` is already
+/// defined (a `\\newlength` skip, so `\\the` can read it back). An undefined
+/// target (`\\textwidth`, `\\parindent`, `\\fboxsep`, ...) is rewritten to a
+/// host command the converter maps back, so the parser sees the original
+/// name with its argument still a control sequence — not consumed as a
+/// skip assignment, which would yield `\\addtolength{\\}`.
+pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
 \\let\\counterwithin\\flashtexundefined
 \\let\\counterwithout\\flashtexundefined
+\\def\\setlength#1#2{\\ifdefined#1#1 #2\\relax\\else\\flashtexsetlength{#1}{#2}\\fi}%
+\\def\\addtolength#1#2{\\ifdefined#1\\advance#1 #2\\relax\\else\\flashtexaddtolength{#1}{#2}\\fi}%
 \\long\\def\\flashtexdeclaremathop#1#2#3{\\newcommand#2{\\operatorname#1{#3}}}%
 \\expandafter\\def\\expandafter\\DeclareMathOperator\\expandafter{\\csname @ifstar\\endcsname{\\flashtexdeclaremathop*}{\\flashtexdeclaremathop{}}}%
 \\def\\arraystretch{1}%
@@ -611,6 +617,8 @@ fn configure(engine: &mut Engine) {
         engine.declare_host_command(name);
     }
     engine.declare_host_command("include");
+    engine.declare_host_command("flashtexsetlength");
+    engine.declare_host_command("flashtexaddtolength");
 }
 
 fn has_includes(text: &str) -> bool {
@@ -714,6 +722,10 @@ impl<'d> Converter<'d> {
                     // Grouping bookkeeping and `\relax` produce nothing for the
                     // parser (LaTeX's environment groups included).
                     "begingroup" | "endgroup" | "relax" => {}
+                    "flashtexsetlength" => conv.push(TokenKind::Command("setlength".to_string()), at),
+                    "flashtexaddtolength" => {
+                        conv.push(TokenKind::Command("addtolength".to_string()), at)
+                    }
                     "flashtexbegintabular" | "flashtexbegintabularstar" | "flashtexbeginarray" => {
                         let env = match name.as_str() {
                             "flashtexbegintabular" => "tabular",

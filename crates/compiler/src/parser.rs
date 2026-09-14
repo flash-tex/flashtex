@@ -2831,6 +2831,10 @@ impl P<'_> {
                 });
             }
             "parindent" if in_preamble && pt == 0.0 => {}
+            // A TeX assignment or `\addtolength` is accepted without noise
+            // (the layout still does not indent). `\setlength{\parindent}{nonzero}`
+            // keeps the existing "not implemented" warning.
+            "parindent" if in_preamble && (add || command.is_empty()) => {}
             "parindent" if in_preamble => self.diags.push(Diagnostic::warning(
                 "\\parindent is recognised but paragraph indentation is not implemented",
                 Some(span),
