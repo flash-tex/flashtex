@@ -29,6 +29,8 @@ enum SpecItem {
     Char(char, Span),
     Group(Vec<InputToken>, Span),
     Command(String, Span),
+    /// siunitx `S[<options>]` or `s[<options>]`, the bracket already read.
+    Siunitx(char, String, Span),
 }
 
 struct RawCell {
@@ -196,7 +198,7 @@ fn block_inlines(block: Block) -> Vec<Inline> {
 
 /// Packages that load array.sty (and so replace the kernel's `\@mkpream`).
 const ARRAY_PACKAGES: &[&str] = &[
-    "array", "tabularx", "tabulary", "dcolumn", "delarray", "colortbl", "arydshln",
+    "array", "tabularx", "tabulary", "dcolumn", "delarray", "colortbl", "arydshln", "siunitx",
 ];
 
 /// One column's array-package declarations: the tokens `>{}` inserts before
@@ -205,6 +207,15 @@ const ARRAY_PACKAGES: &[&str] = &[
 struct Decls {
     before: Vec<InputToken>,
     after: Vec<InputToken>,
+    /// siunitx `S`/`s`: each numeric entry becomes `\num`/`\unit` with
+    /// these options.
+    siunitx: Option<SiunitxColumn>,
+}
+
+#[derive(Debug, Clone)]
+struct SiunitxColumn {
+    command: &'static str,
+    options: String,
 }
 
 /// The alignment preamble being built, mirroring `\@mkpream`'s state.
@@ -657,7 +668,10 @@ impl P<'_> {
                 // then the `<{}` tokens, all in the entry's one group.
                 let declarations = !cell_decls.before.is_empty() || !cell_decls.after.is_empty();
                 let mut tokens = cell_decls.before;
-                tokens.extend(raw.tokens);
+                match &cell_decls.siunitx {
+                    Some(column) => tokens.extend(siunitx_entry(raw.tokens, column)),
+                    None => tokens.extend(raw.tokens),
+                }
                 tokens.extend(cell_decls.after);
                 let (tokens, cell_color, multirow) = self.strip_cell_commands(tokens, features);
                 let outer_alignment = self.declared_alignment.take();
@@ -1565,7 +1579,8 @@ impl P<'_> {
                     let span = match item {
                         SpecItem::Char(_, span)
                         | SpecItem::Group(_, span)
-                        | SpecItem::Command(_, span) => span,
+                        | SpecItem::Command(_, span)
+                        | SpecItem::Siunitx(_, _, span) => span,
                     };
                     self.diags.push(Diagnostic::error(
                         if last == Last::At {
@@ -1644,6 +1659,12 @@ impl P<'_> {
                     pre.placed = true;
                     last = Last::Column;
                 }
+                (_, SpecItem::Siunitx(..)) => {
+                    start_column(&mut pre, last);
+                    pre.current.align = Align::Center;
+                    pre.placed = true;
+                    last = Last::Column;
+                }
                 (_, SpecItem::Group(_, span)) => {
                     self.diags.push(Diagnostic::error(
                         "unexpected braced group in the column specification",
@@ -1694,13 +1715,15 @@ impl P<'_> {
         let mut pre = Preamble::new();
         let mut last = 4u8;
         let mut pending = Pending::Par('p');
+        let mut decimal_warned = false;
         for item in items {
             if matches!(last, 6..=10) {
                 let SpecItem::Group(group, span) = item else {
                     let span = match item {
                         SpecItem::Char(_, span)
                         | SpecItem::Group(_, span)
-                        | SpecItem::Command(_, span) => span,
+                        | SpecItem::Command(_, span)
+                        | SpecItem::Siunitx(_, _, span) => span,
                     };
                     self.diags.push(Diagnostic::error(
                         "array column specification: missing braced argument",
@@ -1848,6 +1871,26 @@ impl P<'_> {
                         Some("laid the column out as c".into()),
                     ));
                     pre.array_classz(last, Align::Center);
+                    last = 0;
+                }
+                SpecItem::Siunitx(kind, options, span) => {
+                    pre.array_classz(last, Align::Center);
+                    if kind == 'S' && !decimal_warned {
+                        decimal_warned = true;
+                        self.diags.push(Diagnostic::warning(
+                            "siunitx S columns align numbers on the decimal marker, which is not implemented",
+                            Some(span),
+                            Some("centred each entry and formatted numbers as \\num does".into()),
+                        ));
+                    }
+                    pre.current_decls.siunitx = Some(SiunitxColumn {
+                        command: if kind == 'S' { "num" } else { "unit" },
+                        options: options
+                            .split(',')
+                            .filter(|key| !key.trim().starts_with("table-"))
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    });
                     last = 0;
                 }
                 SpecItem::Group(_, span) => {
@@ -2145,6 +2188,47 @@ impl P<'_> {
                     continue;
                 }
             }
+            if let SpecItem::Char(kind @ ('S' | 's'), span) = item {
+                if self.packages.iter().any(|package| package == "siunitx") {
+                    let mut options = String::new();
+                    let mut end = span;
+                    if matches!(items.peek(), Some(SpecItem::Char('[', _))) {
+                        items.next();
+                        for next in items.by_ref() {
+                            match next {
+                                SpecItem::Char(']', close) => {
+                                    end = close;
+                                    break;
+                                }
+                                SpecItem::Char(ch, close) => {
+                                    options.push(ch);
+                                    end = close;
+                                }
+                                SpecItem::Group(group, close) => {
+                                    options.push('{');
+                                    options.push_str(&token_text(&group));
+                                    options.push('}');
+                                    end = close;
+                                }
+                                SpecItem::Command(name, close) => {
+                                    options.push('\\');
+                                    options.push_str(&name);
+                                    options.push(' ');
+                                    end = close;
+                                }
+                                SpecItem::Siunitx(..) => {}
+                            }
+                        }
+                    }
+                    let full = if end.document == span.document {
+                        span.merge(end)
+                    } else {
+                        span
+                    };
+                    out.push(SpecItem::Siunitx(kind, options, full));
+                    continue;
+                }
+            }
             let SpecItem::Char('*', star_span) = item else {
                 out.push(item);
                 continue;
@@ -2190,6 +2274,58 @@ fn start_column(pre: &mut Preamble, last: Last) {
             pre.acol();
         }
     }
+}
+
+/// siunitx's `S`/`s` entry: an entry of plain text holding a digit (`S`) or
+/// any plain entry (`s`) is typeset as `\num[<options>]{...}` or
+/// `\unit[<options>]{...}`; braced, blank or command-bearing entries stay
+/// text, as siunitx leaves `{...}` entries.
+fn siunitx_entry(tokens: Vec<InputToken>, column: &SiunitxColumn) -> Vec<InputToken> {
+    let plain = tokens.iter().all(|input| match &input.token.kind {
+        TokenKind::Word(_) | TokenKind::Space | TokenKind::Comment => true,
+        TokenKind::Command(name) => {
+            column.command == "unit" || matches!(name.as_str(), "pm" | "mp" | "times" | "cdot")
+        }
+        _ => false,
+    });
+    let numeric = column.command == "unit"
+        || tokens.iter().any(|input| {
+            matches!(&input.token.kind, TokenKind::Word(word) if word.bytes().any(|b| b.is_ascii_digit()))
+        });
+    let Some(first) = tokens
+        .iter()
+        .find(|input| !matches!(input.token.kind, TokenKind::Space | TokenKind::Comment))
+    else {
+        return tokens;
+    };
+    if !plain || !numeric {
+        return tokens;
+    }
+    // The inserted tokens carry the entry's own spans, so a diagnostic from
+    // the number parser points at the entry rather than the specification.
+    let last = tokens
+        .iter()
+        .rev()
+        .find(|input| !matches!(input.token.kind, TokenKind::Space | TokenKind::Comment))
+        .unwrap_or(first);
+    let make = |kind: TokenKind, at: &InputToken| InputToken {
+        token: Token {
+            kind,
+            span: at.token.span,
+        },
+        definition: at.definition,
+        maps_to_invocation: at.maps_to_invocation,
+    };
+    let mut out = Vec::with_capacity(tokens.len() + 4);
+    out.push(make(TokenKind::Command(column.command.to_string()), first));
+    if !column.options.trim().is_empty() {
+        let options = format!("[{}]", column.options);
+        out.push(make(TokenKind::Word(options), first));
+    }
+    out.push(make(TokenKind::LBrace, first));
+    out.extend(tokens.iter().cloned());
+    out.push(make(TokenKind::RBrace, last));
+    out
 }
 
 /// A `\newcolumntype` body with `#1`..`#9` replaced by the arguments.

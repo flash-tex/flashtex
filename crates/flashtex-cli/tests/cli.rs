@@ -137,9 +137,32 @@ fn multi_file_project_resolves_inputs_from_the_project_root() {
     assert_eq!(envelope.get("type").and_then(|v| v.as_str()), Some("display_list"));
     let listed = envelope.get("payload").unwrap().get("documents").unwrap().as_arr().unwrap();
     assert_eq!(listed.len(), 3, "{}", stdout(&o));
-    // Diagnostics inside an included file name that file.
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A diagnostic raised inside an included file names that file and its own
+/// line. Built on a project written here, not the fixture: the fixture's
+/// sections stopped producing any diagnostic once the compiler supported
+/// everything in them, which made the old assertion fail on a better engine.
+#[test]
+fn a_diagnostic_in_an_included_file_names_that_file() {
+    let dir = tmp("included-diag");
+    std::fs::create_dir_all(dir.join("sections")).unwrap();
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\n\\input{sections/a}\n\\end{document}\n").unwrap();
+    std::fs::write(dir.join("sections/a.tex"), "First line.\nHello \\undefinedmacro{x}.\n").unwrap();
+    let fonts = fonts_dir();
+    let o = run(&["check", src.to_str().unwrap(), "--json", "--font-dir", fonts.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = json(&stdout(&o));
     let diags = report.get("diagnostics").unwrap().as_arr().unwrap();
-    assert!(diags.iter().any(|d| d.get("path").and_then(|p| p.as_str()).map_or(false, |p| p.starts_with("sections/"))), "{}", stdout(&o));
+    let inner = diags
+        .iter()
+        .find(|d| d.get("message").and_then(|m| m.as_str()).map_or(false, |m| m.contains("undefinedmacro")))
+        .unwrap_or_else(|| panic!("the unsupported command is reported: {}", stdout(&o)));
+    assert_eq!(inner.get("path").and_then(|p| p.as_str()), Some("sections/a.tex"), "{}", stdout(&o));
+    assert_eq!(inner.get("line").and_then(|l| l.as_i64()), Some(2), "{}", stdout(&o));
+    assert!(stderr(&o).lines().any(|l| l.starts_with("sections/a.tex:2:7: error[")), "{}", stderr(&o));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -194,8 +217,49 @@ fn a_missing_include_is_reported_and_the_build_still_writes() {
     assert_eq!(o.status.code(), Some(0), "{err}");
     assert!(dir.join("main.pdf").exists(), "default -o is <main>.pdf");
     assert!(err.contains("main.tex:4:1: error[missing_file]"), "{err}");
+    assert_eq!(err.lines().filter(|line| line.contains("main.tex:4:1: error[")).count(), 1, "{err}");
+    assert!(err.contains("skipped the missing include"), "{err}");
+    let report = json(&stdout(&o));
+    assert_eq!(report.get("summary").unwrap().get("errors").and_then(|v| v.as_i64()), Some(1), "{}", stdout(&o));
     let strict = run(&["build", src.to_str().unwrap(), "--strict", "--font-dir", fonts.to_str().unwrap()]);
     assert_eq!(strict.status.code(), Some(1), "{}", stderr(&strict));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn diagnostics_full_shows_the_source_line_and_carets() {
+    let dir = tmp("full");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{nothere}\nAfter.\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let check = |extra: &[&str]| {
+        let mut args = vec!["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        run(&args)
+    };
+    // Piped stderr defaults to the one-line form.
+    let short = stderr(&check(&[]));
+    assert!(short.contains("main.tex:4:1: error[missing_file]"), "{short}");
+    assert!(!short.contains("-->"), "{short}");
+
+    for flag in [&["--diagnostics=full"][..], &["--diagnostics", "full"][..]] {
+        let o = check(flag);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{err}");
+        assert!(err.contains("error[missing_file]: "), "{err}");
+        assert!(err.contains(" --> main.tex:4:1\n"), "{err}");
+        assert!(err.contains("\n4 | \\input{nothere}\n  | ^"), "{err}");
+        assert!(!err.contains('\x1b'), "piped output is uncoloured by default:\n{err}");
+        assert!(err.contains("flashtex: main.tex: recovered"), "summary line stays:\n{err}");
+    }
+    assert!(stderr(&check(&["--diagnostics=full", "--color=always"])).contains("\x1b[1;31merror[missing_file]\x1b[0m"));
+    // `json` is `--json` (the report carries wall time, so compare its shape).
+    let as_json = json(&stdout(&check(&["--diagnostics=json"])));
+    assert_eq!(as_json.get("schema").and_then(|s| s.as_str()), Some("flashtex-check/1"));
+    assert!(as_json.get("diagnostics").and_then(|d| d.as_arr()).map_or(false, |d| !d.is_empty()));
+    let bad = check(&["--diagnostics=long"]);
+    assert_eq!(bad.status.code(), Some(2), "{}", stderr(&bad));
+    assert_eq!(check(&["--color", "sometimes"]).status.code(), Some(2));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

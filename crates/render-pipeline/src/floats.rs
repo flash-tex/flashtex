@@ -79,7 +79,16 @@ pub enum Piece {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FloatEnv {
     pub kind: FloatKind,
-    /// The placement letters as written (`None` = the class default `tbp`).
+    /// The starred form (`figure*`/`table*`). In a two-column document
+    /// `\@floatc@...`'s `\@dblarg` route makes it `\@dbflt`
+    /// (latex.ltx 17419: `\if@twocolumn\let\reserved@a\@dbflt\else
+    /// \let\reserved@a\@float\fi`), which sets the box at
+    /// `\hsize\textwidth \linewidth\textwidth` (`\@xdblfloat`, 17555)
+    /// and places it in the page's spanning top area. In a one-column
+    /// document the star does nothing at all.
+    pub starred: bool,
+    /// The placement letters as written (`None` = the class default,
+    /// `tbp` for `\@float` and `tp` for `\@dbflt`).
     pub placement: Option<String>,
     /// `\begin{...}` through `\end{...}`.
     pub span: Span,
@@ -92,10 +101,13 @@ pub struct FloatEnv {
 
 /// LaTeX's `\@xfloat` placement bits: 1 = h, 2 = t, 4 = b, 8 = p, 16 = not
 /// `!`. An empty or `!`-only specifier adds the class default (`tbp`).
-pub fn placement_bits(placement: Option<&str>) -> Result<u32, String> {
-    let mut fps = placement.unwrap_or("tbp").to_string();
+pub fn placement_bits(placement: Option<&str>, starred: bool) -> Result<u32, String> {
+    // `\@dbflt` defaults to `[tp]`, `\@float` to `[tbp]` (latex.ltx 17554,
+    // 17538); a full-width float has no bottom area to go to.
+    let default = if starred { "tp" } else { "tbp" };
+    let mut fps = placement.unwrap_or(default).to_string();
     if fps.is_empty() || fps == "!" {
-        fps.push_str("tbp");
+        fps.push_str(default);
     }
     let mut bits = 16u32;
     for c in fps.chars() {
@@ -146,6 +158,7 @@ pub fn scan(text: &str, document: DocumentId) -> Vec<FloatEnv> {
         let pieces = pieces(text, cursor, end, document);
         out.push(FloatEnv {
             kind,
+            starred: name.ends_with('*'),
             placement,
             span: Span::in_document(document, pos, end + end_tag.len()),
             hmode,
@@ -562,7 +575,15 @@ pub fn prepare(
     let mut specs = Vec::new();
     let mut diags = Vec::new();
     let (em, ex) = em_ex(style.body_size_pt);
-    let env = LengthEnv { text_width: style.text_width_pt, text_height: style.text_height_pt, paper_width: style.page_width_pt, paper_height: style.page_height_pt, em, ex };
+    // `\textwidth` is the whole text block even in a two-column document,
+    // where `style.text_width_pt` is `\columnwidth` (style.rs: the frame's
+    // first column). Inside a `figure*`/`table*` of a two-column document
+    // `\@xdblfloat` sets `\hsize\textwidth \linewidth\textwidth`, so
+    // `\linewidth` there is the whole block too.
+    let full_text_width = style.class_geometry.as_deref().map_or(style.text_width_pt, |g| crate::style::frame_pt(g.frame.text_width));
+    let twocolumn = style.class_geometry.as_deref().is_some_and(|g| g.frame.columns.len() > 1);
+    let env = LengthEnv { text_width: full_text_width, line_width: style.text_width_pt, text_height: style.text_height_pt, paper_width: style.page_width_pt, paper_height: style.page_height_pt, em, ex };
+    let wide_env = LengthEnv { line_width: full_text_width, ..env };
     // `draft`/`demo` are per document, from the class options and every
     // `\usepackage` of `graphics`/`graphicx` in the entry file.
     let gmode = graphics::mode(texts.get(entry_index).copied().unwrap_or_default());
@@ -571,7 +592,11 @@ pub fn prepare(
         let src = |span: Span| SourceRange { path: path.clone(), start_byte: span.start, end_byte: span.end };
         for (fi, f) in doc_envs.iter().enumerate() {
             let number = numbers[d][fi];
-            let bits = match placement_bits(f.placement.as_deref()) {
+            // `\figure*` is `\@dbflt` only `\if@twocolumn` (latex.ltx
+            // 17419); in a one-column document the star does nothing.
+            let wide = f.starred && twocolumn;
+            let env = if wide { &wide_env } else { &env };
+            let bits = match placement_bits(f.placement.as_deref(), wide) {
                 Ok(b) => b,
                 Err(msg) => {
                     let fallback = if msg.starts_with("placement H") { 16 | 1 } else { 16 | 8 };
@@ -618,7 +643,7 @@ pub fn prepare(
                         }
                     }
                     Piece::Graphic { span, options: opts, path: file } => {
-                        let (keys, problems) = graphics::parse_keys(opts, &env);
+                        let (keys, problems) = graphics::parse_keys(opts, env);
                         for p in problems {
                             diags.push(Diagnostic::warning("graphics_option", p, vec![src(*span)]));
                         }
@@ -683,7 +708,7 @@ pub fn prepare(
                     }
                 }
             }
-            specs.push(FloatSpec { kind: f.kind, number, bits, span: f.span, hmode: f.hmode, parts, labels: spec_labels });
+            specs.push(FloatSpec { kind: f.kind, number, wide, bits, span: f.span, hmode: f.hmode, parts, labels: spec_labels });
         }
     }
     (specs, diags)
@@ -823,10 +848,10 @@ mod tests {
         let masked = mask(src, &f);
         assert_eq!(masked.len(), src.len());
         assert!(!masked.contains("figure") && masked.contains("After."));
-        assert_eq!(placement_bits(Some("ht")), Ok(16 | 1 | 2));
+        assert_eq!(placement_bits(Some("ht"), false), Ok(16 | 1 | 2));
         // `\@fpsadddefault`: a bare `!` becomes `!tbp`, and `!` clears 16.
-        assert_eq!(placement_bits(Some("!")), Ok(2 | 4 | 8));
-        assert_eq!(placement_bits(Some("!h")), Ok(1));
+        assert_eq!(placement_bits(Some("!"), false), Ok(2 | 4 | 8));
+        assert_eq!(placement_bits(Some("!h"), false), Ok(1));
     }
 
     #[test]

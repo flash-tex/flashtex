@@ -2869,6 +2869,10 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("varnothing", "∅"),
     ("oplus", "⊕"),
     ("otimes", "⊗"),
+    ("ominus", "⊖"),
+    ("oslash", "⊘"),
+    ("odot", "⊙"),
+    ("bigcirc", "◯"),
     ("wedge", "∧"),
     ("land", "∧"),
     ("lor", "∨"),
@@ -2893,8 +2897,8 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("Re", "ℜ"),
     ("Im", "ℑ"),
     ("wp", "℘"),
-    ("langle", "〈"),
-    ("rangle", "〉"),
+    ("langle", "⟨"),
+    ("rangle", "⟩"),
     ("lvert", "∣"),
     ("rvert", "∣"),
     // `\|`/`\Vert`/`\lVert`/`\rVert` are U+2016 DOUBLE VERTICAL LINE, a
@@ -3146,7 +3150,7 @@ fn symbol_class(glyph: &str) -> AtomClass {
         // cmsy "76/"77 (kernel, not amssymb).
         | "⊑" | "⊒" => Rel,
         "+" | "-" | "−" | "*" | "±" | "×" | "÷" | "⋅" | "·" | "∗" | "∪" | "∩" | "∨" | "∧" | "⊕"
-        | "⊗" | "∖" | "∓" | "∘"
+        | "⊗" | "⊖" | "⊘" | "⊙" | "◯" | "∖" | "∓" | "∘"
         // fontmath.ltx 278-279: `\sqcap`/`\sqcup`, `\mathbin` at cmsy "75/"74.
         | "⊓" | "⊔"
         // `\bigtriangledown`; `\bigtriangleup` shares `\triangle`'s glyph
@@ -4270,6 +4274,13 @@ mod parse_tests {
         assert!(list.atoms[0].superscript.is_some());
         // cmmi "0F is `\epsilon` (lunate), "22 `\varepsilon`.
         assert_eq!(symbols(&parse(r"\epsilon\varepsilon")), ["\u{03F5}", "\u{03B5}"]);
+        // fontmath.ltx `\langle`/`\rangle` are `\mathopen`/`\mathclose` cmsy
+        // "68/"69: the mathematical angle brackets U+27E8/U+27E9, as `\left`
+        // uses, never the CJK U+3008 or the deprecated U+2329.
+        let list = parse(r"\langle x \rangle");
+        assert_eq!(symbols(&list), ["\u{27E8}", "x", "\u{27E9}"]);
+        assert_eq!(atom_class(&list.atoms[0]), Some(AtomClass::Open));
+        assert_eq!(atom_class(&list.atoms[2]), Some(AtomClass::Close));
     }
 
     #[test]
@@ -5419,6 +5430,15 @@ mod spacing_tests {
         let b = laid_out("a+b", SIZE);
         close(x(&b, "+"), width("a", SIZE) + 4.0);
         close(x(&b, "b"), x(&b, "+") + width("+", SIZE) + 4.0);
+    }
+
+    #[test]
+    fn odot_is_a_binary_operator() {
+        for (command, glyph) in [("ominus", "⊖"), ("oslash", "⊘"), ("odot", "⊙"), ("bigcirc", "◯")] {
+            let b = laid_out(&format!("a\\{command} b"), SIZE);
+            close(x(&b, glyph), width("a", SIZE) + 4.0);
+            close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE) + 4.0);
+        }
     }
 
     #[test]
