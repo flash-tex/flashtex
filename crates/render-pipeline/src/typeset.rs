@@ -2729,6 +2729,12 @@ impl<'a> Context<'a> {
     /// `\@afterheading` (`\clubpenalty 10000`). `sized` sets the paragraph
     /// at a size other than `\normalsize` with that size's own leading and
     /// `em` (`abstract`; see [`adapter::SizedPara`]).
+    ///
+    /// `leading` is the narrower thing: `\baselineskip` alone, for a
+    /// paragraph whose `\par` ran under a size declaration
+    /// (`adapter::ParLeading`). The runs keep the sizes they were typed at —
+    /// TeX reads `\baselineskip` in `append_to_vlist` (§679) without ever
+    /// looking at the boxes it is stacking, so the two are independent.
     fn paragraph_block(
         &mut self,
         items: &[AItem],
@@ -2738,9 +2744,12 @@ impl<'a> Context<'a> {
         style: ParaStyle,
         list_geom: Option<&ListGeom>,
         sized: Option<adapter::SizedPara>,
+        leading: Option<f64>,
     ) -> Option<BuiltBlock> {
         let size = sized.map_or(self.style.body_size_pt, |s| s.size_pt);
-        let baselineskip = sized.map_or(self.style.baselineskip_pt, |s| s.baselineskip_pt);
+        let baselineskip = leading
+            .or(sized.map(|s| s.baselineskip_pt))
+            .unwrap_or(self.style.baselineskip_pt);
         let (mut list, mut recs, labels, mut skips) = self.hlist(items, size, TextStyle::default(), style);
         if !list.iter().any(|i| matches!(i, pl::Item::Box(_))) {
             return None;
@@ -2854,7 +2863,10 @@ impl<'a> Context<'a> {
             },
             no_interline_first: false,
             no_interline_after: false,
-            baselineskip: sized.map(|s| s.baselineskip_pt),
+            // Also the glue *above* the first line: `post_line_break`
+            // appends every line of the paragraph, the first included, under
+            // the same `\baselineskip`.
+            baselineskip: leading.or(sized.map(|s| s.baselineskip_pt)),
             vskip_after: vskips_of(&lines, &skips),
             broken_penalty: broken_of(&lines),
             pre_space_after: None,
@@ -2895,6 +2907,7 @@ impl<'a> Context<'a> {
             endlist_adjust,
             list,
             sized,
+            leading_pt,
         } = block
         else {
             return;
@@ -3011,9 +3024,14 @@ impl<'a> Context<'a> {
                             s.vspace_after_em.to_bits().hash(&mut h);
                             h.finish()
                         });
-                        let (key, origin) = key_for(b'P', items, &[u64::from(ind), u64::from(starts), u64::from(ah), *style as u64, list_fp, sized_fp]);
+                        let (key, origin) = key_for(
+                            b'P',
+                            items,
+                            &[u64::from(ind), u64::from(starts), u64::from(ah), *style as u64, list_fp, sized_fp, leading_pt.map_or(0, f64::to_bits)],
+                        );
                         let st = *style;
                         let sz = *sized;
+                        let lead = *leading_pt;
                         // `\label` whatsits and a space left in horizontal
                         // mode after a display (the adapter's
                         // `label_line` part): TeX's line_break still sets
@@ -3026,7 +3044,7 @@ impl<'a> Context<'a> {
                         if label_line && !first {
                             blocks.push(ctx.empty_line_block());
                             pre_display = None;
-                        } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz)) {
+                        } else if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.paragraph_block(items, ind, starts, ah, st, geom, sz, lead)) {
                             pre_display = b.block.lines.lines.last().map(|l| l.natural_width + 2.0 * quad);
                             if std::mem::take(&mut eject) {
                                 b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
@@ -5106,7 +5124,7 @@ impl<'a> Context<'a> {
                     Some(v) => *v += before,
                     None => lead += before,
                 }
-                if let Some(b) = self.paragraph_block(&text.items, false, true, false, ParaStyle::Plain, None, None) {
+                if let Some(b) = self.paragraph_block(&text.items, false, true, false, ParaStyle::Plain, None, None, None) {
                     let offset = items.len();
                     let n = b.block.lines.lines.len();
                     for (k, mut line) in b.block.lines.lines.into_iter().enumerate() {
