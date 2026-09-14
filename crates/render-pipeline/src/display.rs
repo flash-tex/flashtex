@@ -1367,39 +1367,25 @@ mod tests {
 
     #[test]
     fn from_compiler_forwards_code_and_suggestion() {
-        use flashtex_compiler::diagnostics::{Diagnostic as C, DiagnosticCode, Severity as CS};
-        let unknown = C {
-            severity: CS::Error,
-            message: r"\alpah is not supported by this compiler version".into(),
-            span: None,
-            recovery: None,
-            code: Some(DiagnosticCode::UnknownCommand),
-            suggestion: Some(r"\alpha".into()),
-        };
+        use flashtex_compiler::diagnostics::{Diagnostic as C, DiagnosticCode};
+        // Built through the constructor (not a struct literal) so the test compiles
+        // against any vendored compiler, including ones whose `Diagnostic` has more
+        // fields (#389's labels/notes/help).
+        let mut unknown = C::error(r"\alpah is not supported by this compiler version", None, None);
+        unknown.code = Some(DiagnosticCode::UnknownCommand);
+        unknown.suggestion = Some(r"\alpha".into());
         let out = Diagnostic::from_compiler(&unknown, &[]);
         assert_eq!(out.code, "unknown_command");
         assert_eq!(out.suggestion.as_deref(), Some(r"\alpha"));
 
-        let no_explicit = C {
-            severity: CS::Error,
-            message: r"\tikz is not supported by this compiler version".into(),
-            span: None,
-            recovery: None,
-            code: None,
-            suggestion: None,
-        };
+        let mut no_explicit = C::error(r"\tikz is not supported by this compiler version", None, None);
+        no_explicit.code = None;
         // No code on the compiler side stays uncoded, even when the wording would
         // match `default_code`: the compiler omitted it on purpose.
         assert_eq!(Diagnostic::from_compiler(&no_explicit, &[]).code, "compiler");
 
-        let none = C {
-            severity: CS::Error,
-            message: "layout_capabilities must be a list".into(),
-            span: None,
-            recovery: None,
-            code: None,
-            suggestion: None,
-        };
+        let mut none = C::error("layout_capabilities must be a list", None, None);
+        none.code = None;
         assert_eq!(Diagnostic::from_compiler(&none, &[]).code, "compiler");
         assert_eq!(Diagnostic::from_compiler(&none, &[]).suggestion, None);
     }

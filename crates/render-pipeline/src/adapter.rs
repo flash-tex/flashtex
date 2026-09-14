@@ -1670,7 +1670,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::MathRows { span, .. }
         | Inline::Label { span, .. }
         | Inline::Reference { span, .. }
-        | Inline::HFill { span }
+        | Inline::HFill { span, .. }
         | Inline::HSpace { span, .. }
         | Inline::Footnote { span, .. }
         | Inline::Verbatim { span, .. }
@@ -4905,7 +4905,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 prev_span = Some(span);
                 factor = 1000;
             }
-            Inline::HFill { span } | Inline::HSpace { span, .. } | Inline::TextGlue { span, .. } => {
+            Inline::HFill { span, .. } | Inline::HSpace { span, .. } | Inline::TextGlue { span, .. } => {
                 // Explicit horizontal glue: the interword space read before
                 // it stays (TeX keeps both glue nodes). `TextGlue` is the
                 // compiler's text-mode `\quad`/`\qquad` (`em` ems of the
