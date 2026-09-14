@@ -198,15 +198,19 @@ final class EnvironmentPairTests: XCTestCase {
     // MARK: command table
 
     func testCommandsAreInTheTableAndThePalette() {
-        for c in [AccessibilityCommand.selectEnvironment, .wrapInEnvironment, .goToDefinition, .goToSymbol, .renameSymbol] {
+        for c in [AccessibilityCommand.selectEnvironment, .wrapInEnvironment, .changeEnvironment, .goToDefinition, .goToSymbol, .renameSymbol] {
             XCTAssertTrue(CommandPaletteModel.isRunnable(c), "\(c)")
-            XCTAssertEqual(c.entry.menu, "Navigate")
             XCTAssertNotNil(c.entry.menuItem)
         }
+        XCTAssertEqual(AccessibilityCommand.selectEnvironment.entry.menu, "Navigate")
+        XCTAssertEqual(AccessibilityCommand.wrapInEnvironment.entry.menu, "Navigate")
+        XCTAssertEqual(AccessibilityCommand.changeEnvironment.entry.menu, "Editor")
         XCTAssertEqual(AccessibilityCommand.selectEnvironment.entry.shortcuts, ["⌘⇧A"])
         XCTAssertEqual(AccessibilityCommand.wrapInEnvironment.entry.shortcuts, ["⌘⇧W"])
+        XCTAssertEqual(AccessibilityCommand.changeEnvironment.entry.shortcuts, ["⌃⌘E"])
         XCTAssertEqual(AccessibilityCommand.renameSymbol.entry.shortcuts, ["⌥⇧R"])
         XCTAssertEqual(CommandPaletteModel.rows(matching: "wrap").first?.id, .wrapInEnvironment)
+        XCTAssertEqual(CommandPaletteModel.rows(matching: "change environment").first?.id, .changeEnvironment)
         XCTAssertEqual(CommandPaletteModel.rows(matching: "rename symbol").first?.id, .renameSymbol)
     }
 }

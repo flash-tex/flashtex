@@ -81,7 +81,7 @@ final class CommandTableTests: XCTestCase {
     }
 
     /// Files whose `Commands` bodies wire menu items: the app, `Navigation.swift`
-    /// (`CommandMenu("Navigate")`) and `ProjectSearchPanel.swift`
+    /// (`CommandMenu("Navigate")` and `CommandMenu("Editor")`) and `ProjectSearchPanel.swift`
     /// (`ProjectSearchCommands`, Edit = `after: .textEditing`). In the panel
     /// file only the text from its `Commands` type on is read, so the
     /// window's own buttons (Search, Next Match ⌘G) are not menu items.
@@ -104,6 +104,7 @@ final class CommandTableTests: XCTestCase {
                 if line.contains("CommandGroup(replacing: .newItem)") { menu = "File" }
                 else if line.contains("CommandGroup(after: .pasteboard)") || line.contains("CommandGroup(after: .textEditing)") { menu = "Edit" }
                 else if line.contains("CommandMenu(\"Navigate\")") { menu = "Navigate" }
+                else if line.contains("CommandMenu(\"Editor\")") { menu = "Editor" }
                 else if line.contains("CommandGroup(after: .sidebar)") || line.contains("CommandGroup(after: .toolbar)") { menu = "View" }
                 else if line.contains("CommandGroup(replacing: .help)") || line.contains("CommandGroup(after: .help)") { menu = "Help" }
                 else if line.contains(" Window(\"") || line.contains("WindowGroup(\"") { menu = "?" }

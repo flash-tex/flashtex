@@ -93,6 +93,7 @@ enum CommandPaletteModel {
         case .goToSymbol: model.editorNavigation.symbolPickerShown = true
         case .selectEnvironment: model.selectEnvironment()
         case .wrapInEnvironment: model.editorNavigation.wrapShown = true
+        case .changeEnvironment: model.presentChangeEnvironment()
         case .renameSymbol: model.presentRenameSymbol()
         case .nextDiagnostic: model.goToDiagnostic(forward: true)
         case .previousDiagnostic: model.goToDiagnostic(forward: false)

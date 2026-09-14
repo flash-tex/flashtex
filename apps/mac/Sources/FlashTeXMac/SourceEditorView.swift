@@ -1137,6 +1137,7 @@ struct SourceEditorView: NSViewRepresentable {
             // the model sees the buffer once the composition is committed.
             guard !tv.hasMarkedText() else { return }
             if commitFromComposition { commitFromComposition = false } else { autoClose(after: edit, in: tv) }
+            syncLinkedEnvironmentPartner(in: tv, edit: edit)
             let s = SourceEditorView.nativeText(of: tv)
             lastKnownText = s
             parent.text = s

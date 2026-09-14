@@ -12,6 +12,10 @@ struct EditorNavigationState: Equatable {
     var renameStatus = ""
     var wrapShown = false
     var symbolPickerShown = false
+    var changeShown = false
+    var changeName = ""
+    /// VoiceOver announcements posted for a refused Change Environment (tests).
+    var changeAnnouncements: [String] = []
     /// Evidence for tests: rename plans applied (label, count).
     var renamesApplied: [String] = []
 }
@@ -248,6 +252,7 @@ struct EditorNavigationSheets: ViewModifier {
         content
             .sheet(isPresented: $model.editorNavigation.renameShown) { RenameSymbolSheet().environment(model) }
             .sheet(isPresented: $model.editorNavigation.wrapShown) { WrapEnvironmentSheet().environment(model) }
+            .sheet(isPresented: $model.editorNavigation.changeShown) { ChangeEnvironmentSheet().environment(model) }
             .sheet(isPresented: $model.editorNavigation.symbolPickerShown) { SymbolPickerSheet().environment(model) }
     }
 }
