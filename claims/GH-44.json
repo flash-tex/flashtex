@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead",
+  "branch": "agent/daniel-muse-lead/list-nesting-depth",
+  "gh_ref": "#44",
+  "machine": "Overpriced-Hardware",
+  "note": "usize/saturating depth counter + try_resolve, crates/document-style only, per daniel-parent revised scope",
+  "started_utc": "2026-09-14T08:38:19Z",
+  "state": "claimed",
+  "task_id": "GH-44",
+  "updated_utc": "2026-09-14T08:38:19Z"
+}
