@@ -2233,11 +2233,20 @@ final class CompletingTextView: NSTextView {
 
     // MARK: ⌘/ line comment
 
-    /// Toggles `% ` on every line the selection touches (one undo step).
     /// ⌥⇧↓ / ⌥⇧↑: copy the line (or every line the selection touches) below or
     /// above itself, leaving the caret on the copy. One undo step, like
-    /// `toggleLineComment`.
-    func duplicateLines(below: Bool) {
+    /// `toggleLineComment`. A menu key equivalent and `keyDown` must not both
+    /// apply the same event: `performKeyEquivalent` consumes it, and a second
+    /// call with that event's timestamp is ignored.
+    private var lastDuplicateEventTimestamp: TimeInterval = -.infinity
+    private var lastDuplicateEventKeyCode: UInt16 = 0
+
+    func duplicateLines(below: Bool, event: NSEvent? = nil) {
+        if let ev = event ?? Self.duplicateChordEvent(NSApp.currentEvent) {
+            if ev.timestamp == lastDuplicateEventTimestamp, ev.keyCode == lastDuplicateEventKeyCode { return }
+            lastDuplicateEventTimestamp = ev.timestamp
+            lastDuplicateEventKeyCode = ev.keyCode
+        }
         guard !hasMarkedText() else { return }
         let sel = selectedRange()
         guard let (edit, selection) = EditorKeyHandling.duplicateLinesEdit(in: string, range: sel, below: below) else { return }
@@ -2248,6 +2257,15 @@ final class CompletingTextView: NSTextView {
         breakUndoCoalescing()
     }
 
+    /// ⌥⇧↓ / ⌥⇧↑, the chord both `keyDown` and the Editor menu bind.
+    private static func duplicateChordEvent(_ event: NSEvent?) -> NSEvent? {
+        guard let event else { return nil }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 else { return nil }
+        return event
+    }
+
+    /// Toggles `% ` on every line the selection touches (one undo step).
     func toggleLineComment() {
         guard !hasMarkedText() else { return }
         let text = string as NSString
@@ -2739,6 +2757,19 @@ final class CompletingTextView: NSTextView {
 
     // MARK: events
 
+    /// Consumes ⌥⇧↓ / ⌥⇧↑ before the Editor menu's key equivalent can fire
+    /// the same chord a second time. `keyDown` still handles the chord when
+    /// the event never goes through `performKeyEquivalent` (hosted tests).
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if hasMarkedText() { return super.performKeyEquivalent(with: event) }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 {
+            duplicateLines(below: event.keyCode == 125, event: event)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
         if hasMarkedText() { super.keyDown(with: event); return } // IME composition owns the keys (mac-editor-accessibility)
         if vimActive, let key = VimMode.Key(event: event), vim.handle(key) { return } // VimMode.swift: normal/visual keys, Esc in insert
@@ -2758,9 +2789,10 @@ final class CompletingTextView: NSTextView {
         // ⌥⇧↓ / ⌥⇧↑: duplicate the line(s) down/up (the Overleaf shortcut).
         // This takes the key from AppKit's extend-selection-by-paragraph
         // binding, which no LaTeX editor's users reach for and which ⇧↓ and
-        // ⌥↓ still cover between them.
+        // ⌥↓ still cover between them. `performKeyEquivalent` also consumes
+        // this chord so an Editor-menu key equivalent cannot apply it twice.
         if modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 {
-            duplicateLines(below: event.keyCode == 125)
+            duplicateLines(below: event.keyCode == 125, event: event)
             return
         }
         guard session != nil else {

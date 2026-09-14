@@ -14,7 +14,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case undo
     case commandPalette, toggleProblems, toggleCaptures
     case zoomIn, zoomOut, actualSize, fitWidth, increaseEditorFontSize, decreaseEditorFontSize, resetEditorFontSize
-    case completion, completionList, toggleComment, duplicateLine, moveLineUp, moveLineDown, deleteLine, joinLines, sortLinesAscending, sortLinesDescending, trimTrailingWhitespace, signatureHelp, toggleVimKeybindings
+    case completion, completionList, toggleComment, duplicateLine, duplicateLineUp, moveLineUp, moveLineDown, deleteLine, joinLines, sortLinesAscending, sortLinesDescending, trimTrailingWhitespace, signatureHelp, toggleVimKeybindings
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
     case goToDefinition, goToSymbol, selectEnvironment, wrapInEnvironment, changeEnvironment, renameSymbol
     case selectPreviewItemSource
@@ -196,9 +196,13 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Toggle comment", shortcuts: ["⌘/"], menu: "Editor",
                          description: "Toggles a `% ` line comment on every line the selection touches: all commented lines are uncommented, otherwise the non-blank lines are commented; one undo step.")
         case .duplicateLine:
-            return Entry(command: self, title: "Duplicate Line/Selection", shortcuts: ["⌘D"], menu: "Editor",
-                         description: "Duplicates every full line the selection touches, inserting the copy below as one undo step, and keeps the selection on the copy. ⌘D is Xcode Duplicate; ⇧⌘D remains Go to Matching.",
-                         menuItem: "Duplicate Line/Selection")
+            return Entry(command: self, title: "Duplicate Line", shortcuts: ["⌥⇧↓"], menu: "Editor",
+                         description: "Copies the line the caret is on — or every line the selection touches — below itself, leaving the caret or selection on the copy so the key repeats; one undo step. The Overleaf shortcut; ⇧⌘D remains Go to Matching.",
+                         menuItem: "Duplicate Line")
+        case .duplicateLineUp:
+            return Entry(command: self, title: "Duplicate Line Up", shortcuts: ["⌥⇧↑"], menu: "Editor",
+                         description: "Copies the line the caret is on — or every line the selection touches — above itself, leaving the caret or selection on the copy so the key repeats; one undo step.",
+                         menuItem: "Duplicate Line Up")
         case .moveLineUp:
             return Entry(command: self, title: "Move Line Up", shortcuts: ["⌘⌥↑"], menu: "Editor",
                          description: "Moves every full line the selection touches up one line as one undo step, a no-op on the first line. ⌥⌘[ remains Previous Occurrence.",

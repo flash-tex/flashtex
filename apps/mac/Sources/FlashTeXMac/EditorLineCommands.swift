@@ -7,8 +7,9 @@ import SwiftUI
 /// (folding lane).
 ///
 /// Shortcut choice (conflicts reported, not stolen):
-/// - Duplicate Line/Selection is ⌘D (Xcode Duplicate). ⇧⌘D is already
-///   Navigate ▸ Go to Matching.
+/// - Duplicate Line / Duplicate Line Up is main's ⌥⇧↓ / ⌥⇧↑ (#419), not
+///   ⌘D (⇧⌘D is Navigate ▸ Go to Matching). The Editor menu items call
+///   `CompletingTextView.duplicateLines(below:)`; there is no second plan.
 /// - Move Line Up/Down is ⌥⌘↑ / ⌥⌘↓. Xcode's ⌥⌘[ / ⌥⌘] are already
 ///   Navigate ▸ Previous/Next Occurrence; VS Code's ⌥↑ / ⌥↓ would steal
 ///   paragraph motion. ⌘L is Go to Line (#412); ⌃I is Re-indent (#413).
@@ -31,26 +32,6 @@ enum EditorLineCommands {
     }
 
     // MARK: public commands
-
-    static func duplicate(in text: String, selection: NSRange) -> Plan? {
-        mutate(text, selection: selection) { lines, first, last, endedNL, term in
-            var newLines = lines
-            let block = Array(lines[first...last])
-            newLines.insert(contentsOf: block, at: last + 1)
-            let joined = join(newLines, originalEndedWithNewline: endedNL, defaultTerm: term)
-            let copyStart = offset(of: last + 1, in: newLines, endedNL: endedNL, defaultTerm: term)
-            let origStart = offset(of: first, in: lines, endedNL: endedNL, defaultTerm: term)
-            var sel = mappedSelection(selection, from: origStart, to: copyStart)
-            let n = (joined as NSString).length
-            // Relative mapping of a caret at original EOF on an unterminated
-            // last line lands at the new EOF, which is after the copy, not on
-            // it. Snap onto the copy.
-            if sel.length == 0, sel.location >= n, copyStart < n {
-                sel = NSRange(location: copyStart, length: 0)
-            }
-            return (joined, sel)
-        }
-    }
 
     static func move(in text: String, selection: NSRange, down: Bool) -> Plan? {
         mutate(text, selection: selection) { lines, first, last, endedNL, term in
@@ -477,7 +458,8 @@ enum EditorLineCommands {
 // MARK: - menu / first-responder hooks
 
 enum EditorLineCommandAction {
-    static func duplicate() { NSApp.sendAction(#selector(CompletingTextView.duplicateLines(_:)), to: nil, from: nil) }
+    static func duplicateBelow() { NSApp.sendAction(#selector(CompletingTextView.duplicateLinesBelow(_:)), to: nil, from: nil) }
+    static func duplicateAbove() { NSApp.sendAction(#selector(CompletingTextView.duplicateLinesAbove(_:)), to: nil, from: nil) }
     static func moveUp() { NSApp.sendAction(#selector(CompletingTextView.moveLinesUp(_:)), to: nil, from: nil) }
     static func moveDown() { NSApp.sendAction(#selector(CompletingTextView.moveLinesDown(_:)), to: nil, from: nil) }
     static func deleteLines() { NSApp.sendAction(#selector(CompletingTextView.deleteLines(_:)), to: nil, from: nil) }
@@ -488,7 +470,8 @@ enum EditorLineCommandAction {
 }
 
 extension CompletingTextView {
-    @objc func duplicateLines(_ sender: Any?) { applyLineCommand(EditorLineCommands.duplicate(in: string, selection: selectedRange()), actionName: "Duplicate Line") }
+    @objc func duplicateLinesBelow(_ sender: Any?) { duplicateLines(below: true) }
+    @objc func duplicateLinesAbove(_ sender: Any?) { duplicateLines(below: false) }
     @objc func moveLinesUp(_ sender: Any?) { applyLineCommand(EditorLineCommands.move(in: string, selection: selectedRange(), down: false), actionName: "Move Line Up") }
     @objc func moveLinesDown(_ sender: Any?) { applyLineCommand(EditorLineCommands.move(in: string, selection: selectedRange(), down: true), actionName: "Move Line Down") }
     @objc func deleteLines(_ sender: Any?) { applyLineCommand(EditorLineCommands.deleteLines(in: string, selection: selectedRange()), actionName: "Delete Line") }

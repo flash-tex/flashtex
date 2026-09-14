@@ -17,8 +17,10 @@ struct EditorMenuCommands: Commands {
 
 struct LineCommandMenuItems: View {
     var body: some View {
-        Button("Duplicate Line/Selection") { EditorLineCommandAction.duplicate() }
-            .keyboardShortcut("d")
+        Button("Duplicate Line") { EditorLineCommandAction.duplicateBelow() }
+            .keyboardShortcut(.downArrow, modifiers: [.option, .shift])
+        Button("Duplicate Line Up") { EditorLineCommandAction.duplicateAbove() }
+            .keyboardShortcut(.upArrow, modifiers: [.option, .shift])
         Button("Move Line Up") { EditorLineCommandAction.moveUp() }
             .keyboardShortcut(.upArrow, modifiers: [.command, .option])
         Button("Move Line Down") { EditorLineCommandAction.moveDown() }

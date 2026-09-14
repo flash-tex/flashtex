@@ -887,7 +887,10 @@ Return at the end of a `\item …` line continues the list with a new `\item `
 (`\item[] ` for a description entry; a bare `\item` line just breaks). ⌘/
 toggles `% ` on every line the selection touches (all commented → uncomment,
 `%` with or without a space; otherwise comment the non-blank lines; one undo
-step "Toggle Comment"). Editor ▸ Duplicate Line/Selection (⌘D), Move Line
+step "Toggle Comment"). Editor ▸ Duplicate Line (⌥⇧↓) and Duplicate Line Up
+(⌥⇧↑) copy every full line the selection touches below or above, leaving the
+caret or selection on the copy, as one undo step (`EditorKeyHandling.duplicateLinesEdit`,
+the Overleaf shortcut). Editor ▸ Move Line
 Up/Down (⌥⌘↑ / ⌥⌘↓), Delete Line (⌃⌘K), Join Lines (⌃J), Sort Lines
 Ascending/Descending (palette) and Trim Trailing Whitespace (palette) operate
 on the full lines the selection touches as one undo step (`EditorLineCommands.swift`).
@@ -980,7 +983,8 @@ explain that nothing is loaded.
 | ↑ / ↓ / Tab / ⇧Tab / Return | Completion list keys, while the list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Return/Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list, any other caret move closes it |
 | ⌘⇧Space | Signature help for the command whose argument the caret is in (also opens on `{`/`[` typed after a command name; `}`, Esc or leaving the argument closes it) |
 | ⌘/ | Toggle `% ` line comment on the selection's lines |
-| ⌘D | Duplicate Line/Selection (every full line the selection touches, copy below, one undo step; ⇧⌘D remains Go to Matching) |
+| ⌥⇧↓ | Duplicate Line (every full line the selection touches, copy below, caret/selection stays on the copy, one undo step; the Overleaf shortcut) |
+| ⌥⇧↑ | Duplicate Line Up (every full line the selection touches, copy above, caret/selection stays on the copy, one undo step) |
 | ⌘⌥↑ / ⌘⌥↓ | Move line up / down (full lines only, no-op at the buffer edges; ⌥⌘[ / ⌥⌘] remain Previous/Next Occurrence) |
 | ⌃⌘K | Delete Line (every full line the selection touches; ⇧⌘K remains Attach Built Compiler) |
 | ⌃J | Join Lines (one space; strips the next line's leading whitespace and a trailing `%` comment marker only when it ends the line) |
