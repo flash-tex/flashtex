@@ -193,7 +193,8 @@ pub fn command_package(name: &str) -> Option<&'static str> {
         "addbibresource" | "printbibliography" => Some("biblatex"),
         "eqref" | "intertext" | "shortintertext" | "substack" | "DeclareMathOperator"
         | "numberwithin" | "allowdisplaybreaks" => Some("amsmath"),
-        "cref" | "Cref" => Some("cleveref"),
+        "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
+        | "labelcref" | "crefname" | "Crefname" => Some("cleveref"),
         "autoref" | "nameref" | "url" | "href" | "hyperref" | "hyperlink" | "hypertarget"
         | "hypersetup" => Some("hyperref"),
         "geometry" => Some("geometry"),
