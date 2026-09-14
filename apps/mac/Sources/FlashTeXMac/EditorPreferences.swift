@@ -517,6 +517,23 @@ final class EditorPreferences {
 /// The Settings window body: `Settings { EditorPreferencesView() }` in the
 /// app. Every control is a standard focusable SwiftUI control (Tab moves
 /// between them) with an explicit accessibility label/hint for VoiceOver.
+/// The Settings window (⌘,): macOS IA — a toolbar-tabbed window, applying
+/// live, no OK/Cancel/Apply (design-principles §13). Two panes are all this
+/// app has, so IntelliJ's search-plus-tree IA would be chrome without
+/// content: a deliberate simplification, not an omission.
+struct SettingsRootView: View {
+    var body: some View {
+        TabView {
+            EditorPreferencesView(preferences: .shared, showConversion: false)
+                .tabItem { Label("Editor", systemImage: "square.and.pencil") }
+            Form { ConversionPreferencesSection() } // provider picker, model, API key (Keychain) (ConversionPreferencesView.swift)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Conversion", systemImage: "wand.and.stars") }
+        }
+    }
+}
+
 struct EditorPreferencesView: View {
     @Bindable private var prefs: EditorPreferences
     @State private var families: [String] = []
@@ -545,7 +562,7 @@ struct EditorPreferencesView: View {
                         .accessibilityLabel("Editor font size")
                         .accessibilityValue("\(Int(prefs.fontSize)) points")
                     Stepper(value: $prefs.fontSize, in: EditorPreferences.fontSizeRange, step: 1) {
-                        Text("\(Int(prefs.fontSize)) pt").monospacedDigit().frame(minWidth: 40, alignment: .trailing)
+                        Text("\(Int(prefs.fontSize)) pt").monospacedDigit().frame(minWidth: DS.Size.zoomReadoutMinWidth, alignment: .trailing)
                     }
                     .accessibilityLabel("Editor font size stepper")
                     .accessibilityValue("\(Int(prefs.fontSize)) points")
@@ -600,7 +617,7 @@ struct EditorPreferencesView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460)
+        .frame(width: DS.Layout.settingsWidth)
         .onAppear { if families.isEmpty { families = EditorPreferences.installedMonospacedFamilies() } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Editor preferences")

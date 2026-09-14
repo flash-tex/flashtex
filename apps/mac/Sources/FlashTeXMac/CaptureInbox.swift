@@ -245,23 +245,23 @@ struct CaptureInboxPanel: View {
                 emptyState
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
+                    LazyVStack(alignment: .leading, spacing: DS.Space.m) {
                         ForEach(inbox.items) { item in
                             CaptureInboxRow(item: item, state: model.captureInboxState(item))
                         }
                     }
-                    .padding(10)
+                    .padding(DS.Space.m)
                 }
             }
         }
-        .frame(minWidth: 300)
+        .frame(minWidth: DS.Layout.inspectorMinWidth)
         .onAppear { model.prepareCaptureInbox(nearby: nearby) }
         .accessibilityIdentifier("captures.panel")
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack(spacing: DS.Space.m) {
                 Text("Captures").font(.headline)
                 Spacer()
                 let finished = model.captureInboxFinalIDs
@@ -271,7 +271,7 @@ struct CaptureInboxPanel: View {
                         .help("Remove inserted, rejected and failed rows")
                 }
             }
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Space.m) {
                 StatusPill(on: nearby.isAdvertising,
                            text: nearby.isAdvertising ? "Advertising" + (nearby.connectedPairIds.isEmpty ? "" : " · \(nearby.connectedPairIds.count) connected") : "Not advertising")
                     .accessibilityIdentifier("captures.advertising")
@@ -283,7 +283,7 @@ struct CaptureInboxPanel: View {
                 .help("Show a pairing code and QR image in the Nearby Companion window (⌘⇧N)")
                 .accessibilityIdentifier("captures.pairing-code")
             }
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Space.m) {
                 StatusPill(on: model.bridgeAttached, text: model.bridgeAttached ? (model.bridge?.conversionEnabled == true ? "Bridge · \(model.bridge!.conversionProvider.displayName)" : "Bridge · no provider") : "No bridge")
                     .help(model.bridgeStatus)
                 if !model.bridgeAttached {
@@ -297,7 +297,7 @@ struct CaptureInboxPanel: View {
                 Text(note).font(.caption2).foregroundStyle(.secondary).lineLimit(2).help(note)
             }
         }
-        .padding(10)
+        .padding(DS.Space.m)
     }
 
     private var destinationLine: some View {
@@ -314,7 +314,7 @@ struct CaptureInboxPanel: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: DS.Space.m) {
             Image(systemName: "ipad.and.iphone").font(.largeTitle).foregroundStyle(.secondary)
             Text("No captures yet").font(.subheadline)
             Text(nearby.pairs.isEmpty ? "Show a pairing code, scan it on the iPad, then draw or photograph something and tap Send."
@@ -322,7 +322,7 @@ struct CaptureInboxPanel: View {
                 .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(20)
+        .padding(DS.Space.xl)
     }
 }
 
@@ -330,11 +330,11 @@ private struct StatusPill: View {
     let on: Bool
     let text: String
     var body: some View {
-        HStack(spacing: 4) {
-            Circle().fill(on ? Color.green : Color.secondary).frame(width: 7, height: 7)
+        HStack(spacing: DS.Space.xs) {
+            Circle().fill(on ? DS.Colors.severitySuccess : DS.Colors.textSecondary).frame(width: DS.Size.statusDot, height: DS.Size.statusDot)
             Text(text).font(.caption)
         }
-        .padding(.horizontal, 7).padding(.vertical, 3)
+        .padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs)
         .background(Capsule().fill(.quaternary))
         .accessibilityLabel(text)
     }
@@ -350,11 +350,11 @@ struct CaptureInboxRow: View {
     @State private var editing = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack(alignment: .top, spacing: DS.Space.m) {
                 thumbnail
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                    HStack(spacing: DS.Space.s) {
                         Image(systemName: state.symbol).foregroundStyle(color)
                         Text(state.label).font(.caption.bold()).foregroundStyle(color)
                             .accessibilityIdentifier("captures.row.state")
@@ -373,7 +373,7 @@ struct CaptureInboxRow: View {
                 if editing {
                     TextEditor(text: $latex)
                         .font(.system(.caption, design: .monospaced))
-                        .frame(minHeight: 60, maxHeight: 160)
+                        .frame(minHeight: DS.Layout.searchPreviewMinHeight, maxHeight: DS.Layout.searchPreviewMaxHeight)
                         .border(.separator)
                         .accessibilityIdentifier("captures.row.editor")
                 } else {
@@ -381,18 +381,18 @@ struct CaptureInboxRow: View {
                         Text(CaptureInboxRow.highlighted(text))
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
-                            .padding(6)
+                            .padding(DS.Space.s)
                     }
-                    .frame(maxHeight: 160)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(.quaternary.opacity(0.4)))
+                    .frame(maxHeight: DS.Layout.searchPreviewMaxHeight)
+                    .background(RoundedRectangle(cornerRadius: DS.Radius.control).fill(.quaternary.opacity(DS.State.restingControlOpacity)))
                     .accessibilityIdentifier("captures.row.latex")
                 }
             }
             actions
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 6).fill(.background))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.separator))
+        .padding(DS.Space.m)
+        .background(RoundedRectangle(cornerRadius: DS.Radius.tab).fill(.background))
+        .overlay(RoundedRectangle(cornerRadius: DS.Radius.tab).stroke(.separator))
         .onAppear { latex = item.latex ?? "" }
         .onChange(of: item.latex) { _, new in if !editing { latex = new ?? "" } }
         .accessibilityElement(children: .contain)
@@ -407,7 +407,7 @@ struct CaptureInboxRow: View {
     @ViewBuilder private var actions: some View {
         switch state {
         case .proposalReady:
-            HStack(spacing: 6) {
+            HStack(spacing: DS.Space.s) {
                 Button("Insert at caret") {
                     let text = editing ? latex : (model.captureInboxProposal(item)?.latex ?? latex)
                     Task { _ = await model.insertCaptureFromInbox(item, latex: text) }
@@ -467,8 +467,8 @@ struct CaptureInboxRow: View {
                 Image(systemName: "photo").foregroundStyle(.secondary)
             }
         }
-        .frame(width: 72, height: 72)
-        .background(RoundedRectangle(cornerRadius: 4).fill(.quaternary))
+        .frame(width: DS.Size.thumbnail, height: DS.Size.thumbnail)
+        .background(RoundedRectangle(cornerRadius: DS.Radius.control).fill(.quaternary))
         .accessibilityLabel("capture image, \(item.mimeType), \(item.image.count) bytes")
     }
 

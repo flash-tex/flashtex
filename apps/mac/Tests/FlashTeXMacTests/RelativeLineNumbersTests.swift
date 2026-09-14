@@ -1,4 +1,5 @@
 import AppKit
+import HostedWindows
 import SwiftUI
 import XCTest
 @testable import FlashTeXMac
@@ -86,8 +87,8 @@ final class RelativeLineNumbersTests: XCTestCase {
     /// A gutter on a real scroll view, with a highlighter table behind it.
     private func hostedGutter(_ text: String, width: CGFloat = 420) throws -> (NSWindow, NSScrollView, CompletingTextView, LineNumberGutter) {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: -10_000, y: -10_000, width: width, height: 300),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: width, height: 300),
+                                                styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         let scroll = CompletingTextView.scrollable()
         scroll.frame = NSRect(x: 0, y: 0, width: width, height: 300)

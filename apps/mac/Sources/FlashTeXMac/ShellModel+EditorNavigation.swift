@@ -333,7 +333,7 @@ struct RenameSymbolSheet: View {
     var body: some View {
         @Bindable var model = model
         let state = model.editorNavigation
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
             Text("Rename \(state.renameSymbol?.displayName ?? "symbol")").font(.headline)
             HStack {
                 Text(state.renameSymbol.map { if case .command = $0 { return "\\" } else { return "" } } ?? "").font(.body.monospaced()).foregroundStyle(.secondary)
@@ -354,7 +354,7 @@ struct RenameSymbolSheet: View {
                         }
                     }
                 }
-                .frame(minHeight: 80, maxHeight: 200)
+                .frame(minHeight: DS.Layout.diagnosticsListMinHeight, maxHeight: DS.Layout.sheetListMaxHeight)
                 .accessibilityLabel("Rename plan: \(plan.summary)")
             }
             Text(state.renameStatus).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -368,8 +368,8 @@ struct RenameSymbolSheet: View {
                     .disabled(state.renamePlan == nil)
             }
         }
-        .padding(16)
-        .frame(width: 520)
+        .padding(DS.Space.xl)
+        .frame(width: DS.Layout.sheetWidth)
         .onAppear { focused = true }
         .accessibilityIdentifier(Self.identifier)
     }
@@ -391,7 +391,7 @@ struct WrapEnvironmentSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
             Text("Wrap selection in environment").font(.headline)
             TextField("Environment name", text: $name)
                 .textFieldStyle(.roundedBorder).font(.body.monospaced())
@@ -400,22 +400,22 @@ struct WrapEnvironmentSheet: View {
                 .onSubmit { model.wrapSelection(inEnvironment: name.isEmpty ? (suggestions.first ?? "") : name) }
                 .onKeyPress(.escape) { model.editorNavigation.wrapShown = false; return .handled }
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], alignment: .leading, spacing: 4) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], alignment: .leading, spacing: DS.Space.xs) {
                     ForEach(suggestions, id: \.self) { env in
                         Button(env) { model.wrapSelection(inEnvironment: env) }
                             .buttonStyle(.bordered).controlSize(.small).font(.body.monospaced())
                     }
                 }
             }
-            .frame(maxHeight: 160)
+            .frame(maxHeight: DS.Layout.searchPreviewMaxHeight)
             HStack {
                 Spacer()
                 Button("Cancel") { model.editorNavigation.wrapShown = false }.keyboardShortcut(.cancelAction)
                 Button("Wrap") { model.wrapSelection(inEnvironment: name) }.keyboardShortcut(.defaultAction).disabled(name.isEmpty)
             }
         }
-        .padding(16)
-        .frame(width: 460)
+        .padding(DS.Space.xl)
+        .frame(width: DS.Layout.settingsWidth)
         .onAppear { focused = true }
         .accessibilityIdentifier(Self.identifier)
     }
@@ -435,7 +435,7 @@ struct SymbolPickerSheet: View {
     var body: some View {
         let rows = entries
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Space.m) {
                 Image(systemName: "number").foregroundStyle(.secondary)
                 TextField("Go to heading, environment or label…", text: $query)
                     .textFieldStyle(.plain).font(.title3)
@@ -447,13 +447,13 @@ struct SymbolPickerSheet: View {
                     .onKeyPress(.escape) { model.editorNavigation.symbolPickerShown = false; return .handled }
                 Text("\(rows.count)").font(.caption).foregroundStyle(.tertiary).monospacedDigit()
             }
-            .padding(.horizontal, 14).padding(.vertical, 10)
+            .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.m)
             Divider()
             if rows.isEmpty {
                 ContentUnavailableView.search(text: query).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(rows, selection: $selected) { e in
-                    HStack(spacing: 8) {
+                    HStack(spacing: DS.Space.m) {
                         Image(systemName: e.item.kind == .section ? "number" : e.item.kind == .environment ? "curlybraces" : "tag").foregroundStyle(.secondary)
                         Text(e.item.title.isEmpty ? "(untitled)" : e.item.title).lineLimit(1)
                         Text(e.item.kind == .section ? e.item.command : e.item.kind.rawValue).font(.caption2).foregroundStyle(.secondary)
@@ -469,7 +469,7 @@ struct SymbolPickerSheet: View {
                 .accessibilityIdentifier(Self.identifier)
             }
         }
-        .frame(width: 560, height: 400)
+        .frame(width: DS.Layout.pickerWindowSize.width, height: DS.Layout.pickerWindowSize.height)
         .onAppear { focused = true; selected = rows.first?.id }
         .onChange(of: query) { _, _ in selected = entries.first?.id }
     }
@@ -491,33 +491,33 @@ struct GoToLineSheet: View {
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "number").foregroundStyle(.secondary)
+            HStack(spacing: DS.Space.m) {
+                Image(systemName: "number").foregroundStyle(DS.Colors.textSecondary)
                 TextField("Line, line:column, or +N/−N", text: $model.editorNavigation.goToLineInput)
-                    .textFieldStyle(.plain).font(.title3)
+                    .textFieldStyle(.plain).font(DS.Fonts.field)
                     .focused($focused)
                     .accessibilityLabel("Go to line")
                     .onSubmit { _ = model.applyGoToLine() }
                     .onKeyPress(.escape) { model.cancelGoToLine(); return .handled }
                     .onChange(of: model.editorNavigation.goToLineInput) { _, _ in model.refreshGoToLineHint() }
             }
-            .padding(.horizontal, 14).padding(.vertical, 10)
+            .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.m)
             Divider()
             HStack {
                 Text(model.editorNavigation.goToLineHint)
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
                     .accessibilityIdentifier(Self.identifier + ".hint")
                 Spacer()
                 hint("⏎", "go"); hint("esc", "cancel")
             }
-            .padding(.horizontal, 14).padding(.vertical, 8)
+            .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.s)
         }
-        .frame(width: 420)
+        .frame(width: DS.Layout.sheetNarrowWidth)
         .onAppear { focused = true; model.refreshGoToLineHint() }
         .accessibilityIdentifier(Self.identifier)
     }
 
     private func hint(_ key: String, _ what: String) -> some View {
-        HStack(spacing: 3) { KeyCap(key); Text(what).font(.caption2).foregroundStyle(.secondary) }
+        HStack(spacing: DS.Space.xxs) { KeyCap(key); Text(what).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary) }
     }
 }

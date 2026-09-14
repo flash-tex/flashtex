@@ -127,6 +127,8 @@ pub enum Inline {
     Label {
         key: String,
         value: String,
+        /// cleveref's label type (`section`, `equation`, `figure`, ...).
+        kind: String,
         span: Span,
     },
     Reference {
@@ -134,6 +136,21 @@ pub enum Inline {
         page: bool,
         /// amsmath `\eqref`: the value is typeset in parentheses.
         equation: bool,
+        span: Span,
+        /// See `Inline::Text::space_before`.
+        space_before: bool,
+    },
+    /// A `cleveref`/`hyperref` reference whose label names are resolved after
+    /// the document has been laid out. The compiler has no link backend yet;
+    /// `linked` preserves whether the source used the starred no-link form
+    /// for the future pipeline consumer.
+    CleverReference {
+        keys: Vec<String>,
+        page: bool,
+        range: bool,
+        label_only: bool,
+        capitalise: bool,
+        linked: bool,
         span: Span,
         /// See `Inline::Text::space_before`.
         space_before: bool,
@@ -721,6 +738,8 @@ pub struct Parsed {
     pub incremental_safe: bool,
     /// True when counters or the label table make layout document-global.
     pub document_global_state: bool,
+    /// `cleveref` naming options and `\crefname` overrides.
+    pub cleveref: crate::xref::CleverefConfig,
     /// `\pagecolor`: the page background, document-wide (`None`: none).
     pub page_color: Option<DeviceColor>,
     /// The default text colour when xcolor converts to a target model
@@ -764,6 +783,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "section",
     "subsection",
     "subsubsection",
+    "paragraph",
+    "subparagraph",
     "tableofcontents",
     "textbf",
     "textmd",
@@ -781,6 +802,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "par",
     "documentclass",
     "setlength",
+    "addtolength",
     "usepackage",
     "definecolor",
     "providecolor",
@@ -810,6 +832,15 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "ref",
     "pageref",
     "eqref",
+    "cref",
+    "Cref",
+    "crefrange",
+    "Crefrange",
+    "cpageref",
+    "Cpageref",
+    "labelcref",
+    "crefname",
+    "Crefname",
     "numberwithin",
     "counterwithin",
     "counterwithout",
@@ -822,6 +853,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "reflectbox",
     "graphicspath",
     "hypersetup",
+    "lstset",
     "allowdisplaybreaks",
     "url",
     "href",
@@ -980,7 +1012,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textgreater",
     "textbraceleft",
     "textbraceright",
-    // `text_builtins::TEXT_ACCENTS`.
+    // `text_builtins::TEXT_ACCENTS` and the
+    // `text_builtins::CAPITAL_ACCENT_ALIASES` alias names.
     "c",
     "v",
     "u",
@@ -989,6 +1022,12 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "k",
     "d",
     "b",
+    "capitalcaron",
+    "capitalbreve",
+    "capitalring",
+    "capitalogonek",
+    "capitalhungarumlaut",
+    "capitalcedilla",
     "uline",
     "underline",
     "sout",
@@ -997,18 +1036,95 @@ pub(crate) const BUILT_INS: &[&str] = &[
 /// Parses a LaTeX dimension (`12pt`, `1.5em`, `0.5in`, `2cm`, `10mm`, `2ex`,
 /// `12bp`) to points. `em`/`ex` are relative to the compiler's fixed body size
 /// because the layout does not yet carry a current font size into dimension
-/// parsing; `ex` uses the common TeX-metrics approximation of half an em,
-/// since no real x-height is read from the font. `bp` ("big point") is exactly this compiler's own
-/// internal point (both are 1/72 inch, matching the 612×792pt page in
-/// `layout.rs`), unlike `in`/`cm`/`mm` below, which follow TeX's own
-/// 72.27-per-inch point.
+/// parsing. Physical units follow TeX `scan_dimen` §458 (`1bp` = 72.27/72 pt,
+/// not 1pt). `ex` uses [`CMR_EX_PER_EM`] (cmr x-height/em, the same constant
+/// as ulem `\sout`); this crate has no TFM, unlike the pipeline's `ec_em_ex`.
 pub(crate) fn parse_dimen_pt(text: &str) -> Option<f64> {
     parse_dimen_pt_at(text, crate::layout::BODY_SIZE_PT)
 }
 
+/// Page and paragraph lengths a preamble may assign (`\setlength`,
+/// `\addtolength`, or a TeX `\len=<dimen>` / `\len <dimen>` assignment).
+const PREAMBLE_LENGTHS: &[&str] = &[
+    "paperwidth",
+    "paperheight",
+    "textwidth",
+    "textheight",
+    "oddsidemargin",
+    "evensidemargin",
+    "topmargin",
+    "headheight",
+    "headsep",
+    "footskip",
+    "marginparwidth",
+    "marginparsep",
+    "columnsep",
+    "parindent",
+    "parskip",
+];
+
+fn is_preamble_length(name: &str) -> bool {
+    PREAMBLE_LENGTHS.contains(&name)
+}
+
+fn is_length_reference(raw: &str) -> bool {
+    let s = raw.trim().trim_start_matches('=').trim();
+    s.contains('\\') || is_preamble_length(s.trim_start_matches('\\'))
+}
+
+fn length_reference_parts(raw: &str) -> Option<(f64, &str)> {
+    let s = raw.trim().trim_start_matches('=').trim();
+    if let Some(bs) = s.find('\\') {
+        let (factor, rest) = s.split_at(bs);
+        let name = rest[1..].trim();
+        if !is_preamble_length(name) && !matches!(name, "linewidth" | "columnwidth" | "hsize") {
+            return None;
+        }
+        let f = factor.trim();
+        let scale = if f.is_empty() || f == "+" {
+            1.0
+        } else if f == "-" {
+            -1.0
+        } else {
+            f.parse().ok()?
+        };
+        return Some((scale, name));
+    }
+    let stripped = s.trim_start_matches('\\');
+    if is_preamble_length(stripped) {
+        return Some((1.0, stripped));
+    }
+    None
+}
+
 /// `parse_dimen_pt` with `em`/`ex` relative to `body_pt`.
+///
+/// Also accepts an optional leading `=`, a leading sign, and a factor times
+/// a known length (`\textwidth`, `-.5\textwidth`). A bare length name (with
+/// or without the backslash) is a factor of 1. The referenced length is not
+/// looked up here: the render pipeline applies real page geometry from the
+/// source; a zero is enough for the compiler to accept the assignment.
 pub(crate) fn parse_dimen_pt_at(text: &str, body_pt: f64) -> Option<f64> {
-    let text = text.trim();
+    let text = text.trim().trim_start_matches('=').trim();
+    if text.is_empty() {
+        return None;
+    }
+    if let Some(bs) = text.find('\\') {
+        let (factor, rest) = text.split_at(bs);
+        let name = rest[1..].trim();
+        if !is_preamble_length(name) && !matches!(name, "linewidth" | "columnwidth" | "hsize") {
+            return None;
+        }
+        let factor = factor.trim();
+        if !factor.is_empty() {
+            let _: f64 = factor.parse().ok()?;
+        }
+        return Some(0.0);
+    }
+    let stripped = text.trim_start_matches('\\');
+    if is_preamble_length(stripped) {
+        return Some(0.0);
+    }
     let unit_len = text
         .chars()
         .rev()
@@ -1020,13 +1136,19 @@ pub(crate) fn parse_dimen_pt_at(text: &str, body_pt: f64) -> Option<f64> {
     let split = text.len() - unit_len;
     let (number, unit) = text.split_at(split);
     let value: f64 = number.trim().parse().ok()?;
+    // TeX: The Program §458. `in`/`cm`/`mm`/`bp` share the 7227 numerator
+    // (72.27 pt per inch); `dd`/`cc` are Didot; `sp` is 2^-16 pt.
     let per_pt = match unit {
-        "pt" | "bp" => 1.0,
+        "pt" => 1.0,
+        "bp" => 72.27 / 72.0,
         "in" => 72.27,
         "cm" => 72.27 / 2.54,
         "mm" => 72.27 / 25.4,
+        "dd" => 1238.0 / 1157.0,
+        "cc" => 14856.0 / 1157.0,
+        "sp" => 1.0 / 65536.0,
         "em" => body_pt,
-        "ex" => body_pt * 0.5,
+        "ex" => body_pt * CMR_EX_PER_EM,
         _ => return None,
     };
     Some(value * per_pt)
@@ -1209,6 +1331,7 @@ pub fn parse_project_with(
         mpfootnote_counter: 0,
         chapter_class: false,
         current_counter: None,
+        current_counter_kind: None,
         seen_labels: HashMap::new(),
         list_stack: Vec::new(),
         list_frames: Vec::new(),
@@ -1220,6 +1343,7 @@ pub fn parse_project_with(
         pending_line_break: None,
         paragraph_styles: Vec::new(),
         document_global_state: false,
+        cleveref: crate::xref::CleverefConfig::default(),
         style: TextStyle::default(),
         style_stack: Vec::new(),
         env_styles: Vec::new(),
@@ -1232,6 +1356,7 @@ pub fn parse_project_with(
         theorem_counters: HashMap::new(),
         noted_unclickable_link: false,
         noted_hypersetup_keys: false,
+        noted_lstset_keys: false,
         bibliography,
         bib_cursor: 0,
         natbib_limitations: std::collections::BTreeSet::new(),
@@ -1288,6 +1413,7 @@ pub fn parse_project_with(
         preamble_source,
         incremental_safe,
         document_global_state: p.document_global_state,
+        cleveref: p.cleveref,
         page_color: p.page_color,
         default_color: p.colors.as_ref().and_then(|c| c.default_color()),
         expansions,
@@ -1374,6 +1500,7 @@ struct P<'a> {
     /// sections, figures and equations within it.
     chapter_class: bool,
     current_counter: Option<String>,
+    current_counter_kind: Option<String>,
     seen_labels: HashMap<String, Span>,
     /// Environment name, item count, an enumitem label template if given,
     /// the `\setlist` spacing resolved when this list's `\begin` ran, and the
@@ -1402,6 +1529,7 @@ struct P<'a> {
     pending_line_break: Option<LineBreakBefore>,
     paragraph_styles: Vec<ParagraphStyle>,
     document_global_state: bool,
+    cleveref: crate::xref::CleverefConfig,
     /// Every `\bibitem`'s resolved citation label, built once by
     /// `bib::prescan` before this parse starts — see that module's doc
     /// comment for why `\cite` does not need a page-aware two-pass pass.
@@ -1447,6 +1575,9 @@ struct P<'a> {
     /// layout-neutral set (see `hypersetup`), so a document that calls it
     /// several times gets a single notice.
     noted_hypersetup_keys: bool,
+    /// Set once `\lstset` has reported a name that is not a listings key,
+    /// so a document that calls it in a loop reports it once.
+    noted_lstset_keys: bool,
     /// Raw (unexpanded) tokens most recently given to `\title`/`\author`,
     /// with the command's own span for diagnostics. `\maketitle` reads
     /// whichever is active at its call site, mirroring how real
@@ -1492,6 +1623,8 @@ struct OpenList {
     label_star: Option<String>,
     /// The label text of the latest counted `\item` (for `label*` below).
     current_label: String,
+    /// The latest enumerate counter value, without its display punctuation.
+    current_reference: String,
     /// `series=<name>`: the counter is also saved under `series@<name>`.
     series: Option<String>,
     /// The `\begin` keys (saved for `resume*`).
@@ -1715,6 +1848,7 @@ impl P<'_> {
         match name {
             "documentclass" => self.document_class(span),
             "setlength" => self.set_length(span),
+            "addtolength" => self.add_to_length(span),
             "usepackage" => self.use_package(span),
             "definecolor" | "providecolor" | "xdefinecolor" | "colorlet" | "definecolorset"
             | "DefineNamedColor" => self.define_color(name, span),
@@ -1896,10 +2030,53 @@ impl P<'_> {
             // real documents put it, and in the body, where LaTeX also
             // allows it.
             "hypersetup" => self.hypersetup(span),
+            // `\lstset{key=value,...}` (listings): the package's own
+            // defaults, settable anywhere and global from that point on.
+            // The command typesets nothing itself -- `\lst@Init` reads the
+            // values when a listing is set -- so the argument is read, the
+            // key names are checked, and no material is contributed. It is
+            // accepted in the preamble, where every real document puts it,
+            // and in the body, where listings also allows it.
+            //
+            // Before this, `\lstset` was an unknown preamble command *and*
+            // its argument was then read as preamble material, so
+            // `fixtures/real-world/listings-manual`'s one `\lstset` produced
+            // six errors: the command, then `\ttfamily`, `\small`,
+            // `\bfseries`, `\itshape` and `\tiny` out of `basicstyle=`,
+            // `keywordstyle=`, `commentstyle=` and `numberstyle=`.
+            "lstset" => self.lstset(span),
+            "crefname" | "Crefname" => self.cleveref_name(name, span),
+            _ if self.has_document && !self.in_body && is_preamble_length(name) => {
+                self.length_assignment(name, span)
+            }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
             "chapter" if self.chapter_class => self.chapter(span, blocks, para),
+            // `\paragraph`/`\subparagraph` are `\@startsection` with a
+            // *negative* after-skip (article.cls 406-414), and `\@xsect`'s
+            // negative branch never sets the head as a block of its own: it
+            // arms `\everypar`, throws away the following paragraph's
+            // `\parindent` box and sets the head into that paragraph's first
+            // line instead. So the right thing for this layer is to take the
+            // star and the optional short title and then get out of the way:
+            // the braced title falls through to the main token loop as
+            // ordinary body text, which is exactly the material LaTeX runs
+            // into that paragraph, in the right place with the right spans.
+            //
+            // `flush_paragraph` is deliberately NOT called for the same
+            // reason — a run-in head does not start a new paragraph.
+            //
+            // The head's weight, indent, `\hskip 1em` and `\addvspace` come
+            // from the render pipeline, which reads the command back from the
+            // source at that position (`adapter::run_in_heading_at`). This
+            // arm only retires the `\paragraph is not supported by this
+            // compiler version` error, which has been stale since the
+            // pipeline started laying these heads out correctly.
+            "paragraph" | "subparagraph" => {
+                let _ = self.take_optional_star();
+                let _ = self.optional_bracket_argument();
+            }
             "section" | "subsection" | "subsubsection" => {
                 let level = match name {
                     "section" => 1,
@@ -1918,7 +2095,7 @@ impl P<'_> {
                     self.counters.step(name).unwrap_or_default()
                 };
                 if !starred {
-                    self.current_counter = Some(number.clone());
+                    self.set_current_counter(name, Some(number.clone()));
                 }
                 let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
                 if content.is_empty() {
@@ -1957,6 +2134,7 @@ impl P<'_> {
                     para.push(Inline::Label {
                         key,
                         value: self.current_counter.clone().unwrap_or_default(),
+                        kind: self.current_counter_kind.clone().unwrap_or_default(),
                         span,
                     });
                 }
@@ -1974,6 +2152,8 @@ impl P<'_> {
                     space_before,
                 });
             }
+            "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
+            | "labelcref" => self.clever_reference(name, span, para),
             "tableofcontents" => {
                 self.flush_paragraph(blocks, para);
                 self.document_global_state = true;
@@ -2071,7 +2251,7 @@ impl P<'_> {
                 } else {
                     self.flush_paragraph(blocks, para);
                     let number = self.counters.step("figure").unwrap_or_default();
-                    self.current_counter = Some(number.clone());
+                    self.set_current_counter("figure", Some(number.clone()));
                     let mut content = vec![Inline::Text {
                         text: format!("Figure {number}:"),
                         span,
@@ -2385,8 +2565,14 @@ impl P<'_> {
             | "textgreater" | "textbraceleft" | "textbraceright" => {
                 self.text_symbol(name, span, para)
             }
-            // `text_builtins::TEXT_ACCENTS`.
-            "c" | "v" | "u" | "H" | "r" | "k" | "d" | "b" => self.text_accent(name, span, para),
+            // `text_builtins::TEXT_ACCENTS` and the
+            // `text_builtins::CAPITAL_ACCENT_ALIASES` names that resolve to
+            // one of them; the alias reaches the same implementation under
+            // its canonical name.
+            "c" | "v" | "u" | "H" | "r" | "k" | "d" | "b" | "capitalcaron" | "capitalbreve"
+            | "capitalring" | "capitalogonek" | "capitalhungarumlaut" | "capitalcedilla" => {
+                self.text_accent(text_builtins::canonical_accent_name(name), span, para)
+            }
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
             // ulem `\uline`/`\sout` (need the package). Kernel text-mode
             // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
@@ -2563,46 +2749,147 @@ impl P<'_> {
     /// `\setlength{\parskip}{..}` and `\setlength{\parindent}{..}` in the
     /// preamble. `em`/`ex` resolve against the class body size. This engine
     /// never indents paragraphs, so only a zero `\parindent` is exact.
+    /// Page-geometry lengths (`\textwidth`, `\oddsidemargin`, ...) are
+    /// accepted in the preamble without a diagnostic; the render pipeline
+    /// applies them from the source.
     fn set_length(&mut self, span: Span) {
-        let (target_tokens, _) = self.required_group("setlength", span);
-        let (value_tokens, value_span) = self.required_group("setlength", span);
+        self.length_command("setlength", span, false);
+    }
+
+    fn add_to_length(&mut self, span: Span) {
+        self.length_command("addtolength", span, true);
+    }
+
+    fn length_command(&mut self, command: &str, span: Span, add: bool) {
+        let (target_tokens, _) = self.required_group(command, span);
+        let (value_tokens, value_span) = self.required_group(command, span);
         let span = span.merge(value_span);
         let target = token_text(&target_tokens)
             .trim()
             .trim_start_matches('\\')
             .to_string();
-        let raw = token_text(&value_tokens);
+        let raw = dimen_source(&value_tokens);
+        self.apply_length_value(command, &target, &raw, span, add);
+    }
+
+    /// A TeX assignment `\textwidth=6in` / `\textwidth 6in` in the preamble.
+    fn length_assignment(&mut self, name: &str, span: Span) {
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-        let Some(pt) = parse_dimen_pt_at(&raw, body) else {
+        let mut raw = String::new();
+        let mut end = span;
+        loop {
+            self.skip_spaces();
+            let Some(input) = self.t.get(self.i).cloned() else {
+                break;
+            };
+            let tok = &input.token;
+            match &tok.kind {
+                TokenKind::Word(word) => {
+                    raw.push_str(word);
+                    end = end.merge(tok.span);
+                    self.i += 1;
+                    if parse_dimen_pt_at(&raw, body).is_some() {
+                        break;
+                    }
+                }
+                TokenKind::Command(cmd)
+                    if is_preamble_length(cmd)
+                        || matches!(cmd.as_str(), "linewidth" | "columnwidth" | "hsize") =>
+                {
+                    raw.push('\\');
+                    raw.push_str(cmd);
+                    end = end.merge(tok.span);
+                    self.i += 1;
+                    if parse_dimen_pt_at(&raw, body).is_some() {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+            if raw.len() > 64 {
+                break;
+            }
+        }
+        self.apply_length_value("", name, &raw, end, false);
+    }
+
+    fn resolve_known_length_ref(&self, raw: &str) -> Option<f64> {
+        let (scale, name) = length_reference_parts(raw)?;
+        let base = match name {
+            "parskip" => self.parskip_pt?,
+            "fboxsep" => self.fboxsep_pt,
+            "fboxrule" => self.fboxrule_pt,
+            _ => return None,
+        };
+        Some(scale * base)
+    }
+
+    fn apply_length_value(&mut self, command: &str, target: &str, raw: &str, span: Span, add: bool) {
+        let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+        let Some(pt) = parse_dimen_pt_at(raw, body) else {
+            let who = if command.is_empty() {
+                format!("\\{target}")
+            } else {
+                format!("\\{command}")
+            };
             self.diags.push(Diagnostic::error(
-                format!(
-                    "\\setlength requires a recognised dimension, got '{}'",
-                    raw.trim()
-                ),
+                format!("{who} requires a recognised dimension, got '{}'", raw.trim()),
                 Some(span),
                 Some("ignored the length assignment".into()),
             ));
             return;
         };
         let in_preamble = self.has_document && !self.in_body;
-        match target.as_str() {
+        let pt = if is_length_reference(raw) {
+            match self.resolve_known_length_ref(raw) {
+                Some(v) => v,
+                None => {
+                    // Page geometry (`\textwidth`, `\paperwidth`, ...) is
+                    // applied by the pipeline; the compiler must not pretend
+                    // the value is 0pt or drop the assignment with no diagnostic.
+                    self.diags.push(Diagnostic::warning(
+                        "unsupported length expression",
+                        Some(span),
+                        Some("ignored the length assignment".into()),
+                    ));
+                    return;
+                }
+            }
+        } else {
+            pt
+        };
+        match target {
             // Read by `\colorbox`/`\fcolorbox` (not group-scoped here).
-            "fboxsep" => self.fboxsep_pt = pt,
-            "fboxrule" => self.fboxrule_pt = pt,
+            "fboxsep" => {
+                self.fboxsep_pt = if add { self.fboxsep_pt + pt } else { pt };
+            }
+            "fboxrule" => {
+                self.fboxrule_pt = if add { self.fboxrule_pt + pt } else { pt };
+            }
             // longtable's lengths are read from the source by the render
             // pipeline's longtable layout.
             "LTleft" | "LTright" | "LTpre" | "LTpost" | "LTcapwidth" => {}
-            "parskip" if in_preamble => self.parskip_pt = Some(pt),
+            "parskip" if in_preamble => {
+                self.parskip_pt = Some(if add {
+                    self.parskip_pt.unwrap_or(0.0) + pt
+                } else {
+                    pt
+                });
+            }
             "parindent" if in_preamble && pt == 0.0 => {}
+            // A TeX assignment or `\addtolength` is accepted without noise
+            // (the layout still does not indent). `\setlength{\parindent}{nonzero}`
+            // keeps the existing "not implemented" warning.
+            "parindent" if in_preamble && (add || command.is_empty()) => {}
             "parindent" if in_preamble => self.diags.push(Diagnostic::warning(
                 "\\parindent is recognised but paragraph indentation is not implemented",
                 Some(span),
                 Some("paragraphs are not indented".into()),
             )),
+            name if in_preamble && is_preamble_length(name) => {}
             _ => self.diags.push(Diagnostic::warning(
                 format!(
-                    "\\setlength{{\\{}}} is recognised but not implemented here",
-                    target
+                    "\\{command}{{\\{target}}} is recognised but not implemented here"
                 ),
                 Some(span),
                 Some("ignored the length assignment".into()),
@@ -2904,6 +3191,11 @@ impl P<'_> {
         ));
     }
 
+    fn set_current_counter(&mut self, kind: &str, value: Option<String>) {
+        self.current_counter_kind = value.as_ref().map(|_| kind.to_string());
+        self.current_counter = value;
+    }
+
     fn use_package(&mut self, span: Span) {
         // siunitx keys keep their braces (`output-decimal-marker={,}`).
         let raw_options = {
@@ -2935,6 +3227,9 @@ impl P<'_> {
         for package in &packages {
             self.math_packages.load_package(package);
             self.load_color_package(package, &options);
+            if package == "cleveref" {
+                self.cleveref.set_options(&options);
+            }
         }
         // xcolor.sty's `table` option loads colortbl (and so array).
         if packages.iter().any(|package| package == "xcolor")
@@ -2977,6 +3272,56 @@ impl P<'_> {
         .with_help(
             "remove that \\usepackage if you do not need it; its commands are still diagnosed when used",
         ));
+    }
+
+    fn clever_reference(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let linked = !self.take_optional_star();
+        let space_before = self.space_precedes(self.i - 1);
+        let range = matches!(name, "crefrange" | "Crefrange");
+        let page = matches!(name, "cpageref" | "Cpageref");
+        let label_only = name == "labelcref";
+        let capitalise = matches!(name, "Cref" | "Crefrange" | "Cpageref");
+        let full_span;
+        let keys = if range {
+            let (first, first_span) = self.required_group(name, span);
+            let (second, second_span) = self.required_group(name, span);
+            full_span = span.merge(first_span).merge(second_span);
+            vec![token_text(&first).trim().to_string(), token_text(&second).trim().to_string()]
+        } else {
+            let (tokens, argument_span) = self.required_group(name, span);
+            full_span = span.merge(argument_span);
+            token_text(&tokens)
+                .split(',')
+                .map(str::trim)
+                .map(str::to_string)
+                .collect()
+        };
+        self.document_global_state = true;
+        para.push(Inline::CleverReference {
+            keys,
+            page,
+            range,
+            label_only,
+            capitalise,
+            linked,
+            span: full_span,
+            space_before,
+        });
+    }
+
+    fn cleveref_name(&mut self, name: &str, span: Span) {
+        let (kind, kind_span) = self.required_group(name, span);
+        let (singular, singular_span) = self.required_group(name, span);
+        let (plural, plural_span) = self.required_group(name, span);
+        self.cleveref.set_name(
+            token_text(&kind).trim().to_string(),
+            token_text(&singular).to_string(),
+            token_text(&plural).to_string(),
+            name == "Crefname",
+        );
+        self.document_global_state = true;
+        self.current_dependencies.clear();
+        let _ = kind_span.merge(singular_span).merge(plural_span);
     }
 
     /// `\begin{multicols}{<n>}[<preface>][<premulticols>]` and `multicols*`
@@ -3327,7 +3672,7 @@ impl P<'_> {
             // zeroing here; `footnote` is not in the counter table yet.
             let number = self.counters.step("chapter").unwrap_or_default();
             self.footnote_counter = 0;
-            self.current_counter = Some(number);
+            self.set_current_counter("chapter", Some(number));
         }
         let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
         if content.is_empty() {
@@ -3455,6 +3800,7 @@ impl P<'_> {
                     counter: 0,
                     label_star: None,
                     current_label: String::new(),
+                    current_reference: String::new(),
                     series: None,
                     begin_options: Vec::new(),
                 });
@@ -3486,7 +3832,7 @@ impl P<'_> {
             self.env_styles.push(self.style);
             if self.in_body {
                 if let Some(theorem) = self.theorems.get(&environment).cloned() {
-                    self.begin_theorem(&theorem, span, para);
+                    self.begin_theorem(&theorem, &environment, span, para);
                 } else if environment == "proof" {
                     self.begin_proof(span, para);
                 }
@@ -3746,7 +4092,13 @@ impl P<'_> {
     /// glue, `\T1/cmr/m/n/10.95 (Divides)`, then `\T1/cmr/bx/n/10.95 .`;
     /// a numbered `remark` traces as italic `Remark`, italic glue,
     /// `\OT1/cmr/m/n/10.95 1`, italic `.`.
-    fn begin_theorem(&mut self, def: &TheoremDef, span: Span, para: &mut Vec<Inline>) {
+    fn begin_theorem(
+        &mut self,
+        def: &TheoremDef,
+        kind: &str,
+        span: Span,
+        para: &mut Vec<Inline>,
+    ) {
         let note = self.optional_bracket_argument();
         let head_style = def.style.head_style();
         // `\thmnumber{...\@upn{#2}}`: the number is `\textup`, so a
@@ -3770,7 +4122,7 @@ impl P<'_> {
             } else {
                 n.to_string()
             };
-            self.current_counter = Some(value.clone());
+            self.set_current_counter(kind, Some(value.clone()));
             // `\@ifnotempty{#1}{ }` sits outside `\@upn`, so the space token
             // between the name and the number is read in the head font
             // either way; the number only needs a run of its own where
@@ -3950,7 +4302,7 @@ impl P<'_> {
         let numbered = name == "equation";
         let number = if numbered {
             let number = self.counters.step("equation").unwrap_or_default();
-            self.current_counter = Some(number.clone());
+            self.set_current_counter("equation", Some(number.clone()));
             number
         } else {
             self.counters.the("equation").unwrap_or_default()
@@ -3987,6 +4339,7 @@ impl P<'_> {
                     labels.push(Inline::Label {
                         key,
                         value: number.clone(),
+                        kind: "equation".into(),
                         span: label_span,
                     });
                 }
@@ -4209,7 +4562,7 @@ impl P<'_> {
                 .unwrap_or(open);
             let number = (numbered && !unnumbered).then(|| {
                 let number = self.counters.step("equation").unwrap_or_default();
-                self.current_counter = Some(number.clone());
+                self.set_current_counter("equation", Some(number.clone()));
                 number
             });
             for (key, label_span) in row_labels {
@@ -4226,6 +4579,7 @@ impl P<'_> {
                     value: number
                         .clone()
                         .unwrap_or_else(|| self.counters.the("equation").unwrap_or_default()),
+                    kind: "equation".into(),
                     span: label_span,
                 });
             }
@@ -4718,6 +5072,35 @@ impl P<'_> {
                 "\\hypersetup keys {} are not modelled by this compiler",
                 unchecked.join(", ")
             ),
+            Some(span.merge(argument_span)),
+            Some("read the key list and typeset nothing for it".into()),
+        ));
+    }
+
+    /// `\lstset{key=value,...}` (listings v1.10c): reads the key list and
+    /// typesets nothing. A name outside [`listings_key_is_known`] is
+    /// reported once — that list is listings' own documented keys, and a
+    /// name this compiler has never heard of is far more likely a typo than
+    /// a key it silently honours.
+    ///
+    /// The values are deliberately not interpreted here. This compiler's own
+    /// layout sets an `lstlisting` as plain verbatim lines and applies none
+    /// of them, and saying otherwise in a diagnostic would be a claim it has
+    /// not earned; `crates/render-pipeline`'s `listings` module reads the
+    /// same keys from the source bytes and applies the geometric ones.
+    fn lstset(&mut self, span: Span) {
+        let (tokens, argument_span) = self.required_group("lstset", span);
+        let keys = token_text(&tokens);
+        let unknown: Vec<String> = listings_key_names(&keys)
+            .into_iter()
+            .filter(|key| !listings_key_is_known(key))
+            .collect();
+        if unknown.is_empty() || self.noted_lstset_keys {
+            return;
+        }
+        self.noted_lstset_keys = true;
+        self.diags.push(Diagnostic::warning(
+            format!("\\lstset keys {} are not listings keys", unknown.join(", ")),
             Some(span.merge(argument_span)),
             Some("read the key list and typeset nothing for it".into()),
         ));
@@ -5603,6 +5986,7 @@ impl P<'_> {
         } else {
             value.to_string()
         };
+        self.set_current_counter("footnote", Some(number.clone()));
         let text = if name == "footnotemark" {
             None
         } else {
@@ -5992,6 +6376,13 @@ impl P<'_> {
             .find(|list| list.kind == "enumerate")
             .map(|list| list.current_label.clone())
             .unwrap_or_default();
+        let enclosing_references = self
+            .list_stack
+            .iter()
+            .take(self.list_stack.len().saturating_sub(1))
+            .filter(|list| list.kind == "enumerate")
+            .map(|list| list.current_reference.clone())
+            .collect::<Vec<_>>();
         let Some(list) = self.list_stack.last_mut() else {
             return;
         };
@@ -6026,8 +6417,37 @@ impl P<'_> {
                 _ => lists::default_label(environment, kind_depth, 0),
             },
         };
-        self.pending_item_label = Some((item.text().to_string(), span));
+        let item_text = item.text().to_string();
+        let item_reference = match &item {
+            ItemLabel::Counter { value, style, .. } => style.format(*value),
+            _ => item_text.clone(),
+        };
+        list.current_reference = item_reference.clone();
+        let reference_value = if environment == ListEnvironment::Enumerate {
+            Self::enumerate_reference_value(&enclosing_references, item_reference)
+        } else {
+            item_reference
+        };
+        self.set_current_counter("item", Some(reference_value));
+        self.pending_item_label = Some((item_text, span));
         self.pending_item = Some(item);
+    }
+
+    fn enumerate_reference_value(prefixes: &[String], current: String) -> String {
+        let mut values = prefixes.to_vec();
+        values.push(current);
+        match values.as_slice() {
+            [] => String::new(),
+            [value] => value.clone(),
+            [outer, inner] => format!("{outer}{inner}"),
+            [outer, inner, rest @ ..] => {
+                let mut value = format!("{outer}({inner})");
+                for part in rest {
+                    value.push_str(part);
+                }
+                value
+            }
+        }
     }
 
     fn push_list_frame(&mut self, environment: ListEnvironment, options: Vec<ListOption>, begin_span: Span) {
@@ -6125,6 +6545,7 @@ impl P<'_> {
             counter,
             label_star,
             current_label: String::new(),
+            current_reference: String::new(),
             series,
             begin_options,
         });
@@ -6211,7 +6632,7 @@ impl P<'_> {
     fn begin_subequations(&mut self) {
         use crate::xref::{NumberStyle, Piece};
         let parent = self.counters.step("equation").unwrap_or_default();
-        self.current_counter = Some(parent.clone());
+        self.set_current_counter("equation", Some(parent.clone()));
         let value = self.counters.value("equation").unwrap_or(0);
         self.counters.set_value("parentequation", value);
         self.counters.set_value("equation", 0);
@@ -6433,10 +6854,55 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // and spacing, longtable page-breaking tables, multirow entries and
         // colortbl row/column/cell colours and rule colours.
         "booktabs" | "longtable" | "multirow" | "colortbl" => options.is_empty(),
-        // amsmath/amssymb (math typesetting: \mathbb, \forall, gather,
-        // align, ...) and microtype (character protrusion/expansion kerning)
-        // are genuinely unimplemented and change real output; they must keep
-        // warning rather than being silently matched here.
+        // amsmath/amssymb/amsfonts: implemented here, not merely recognised.
+        // `crate::math` parses the constructs into their own nuclei and
+        // `math::layout_nucleus` sets them — `GenFraction`
+        // (\dfrac/\tfrac/\binom/\genfrac), `Phantom`, `Operator`
+        // (\operatorname, \DeclareMathOperator), `SubArray` (\substack),
+        // `ExtArrow` and `Framed` (\boxed) — while the align/gather/multline
+        // /cases/matrix families reach `layout::display_rows`, and
+        // `takes_display_limits` gives the \lim family, \sum and \prod their
+        // display limits. The symbol inventory is gated on which file
+        // declared each name (`MathPackages::provides`, `crate::amssymb`:
+        // amsfonts' 22-name subset with \mathbb/\mathfrak, amssymb's full
+        // 203), so loading the package is what makes those names exist at
+        // all, and \colon takes amsmath's wider definition
+        // (`MathPackages::amsmath`).
+        //
+        // Like `siunitx` and `enumitem` above, the gaps that remain report
+        // themselves where they are used rather than at \usepackage:
+        // \sideset, \shoveleft, \smash, \mspace, \hdotsfor and the
+        // \varinjlim family each raise "\X is not supported in math mode" at
+        // their own span. A blanket package warning on top of that is false
+        // for every document that stays inside the implemented set --
+        // `fixtures/real-world/hw1` and `hw2` are exactly that -- and adds
+        // nothing to a document that does not, which already has a precise
+        // error pointing at the construct.
+        //
+        // Only the options that are amsmath's own defaults are accepted: they
+        // select behaviour this crate already produces. `leqno`, `fleqn`,
+        // `tbtags`, `nosumlimits`, `intlimits` and `nonamelimits` each move
+        // real output and are not read here, so they keep the warning (the
+        // same rule `natbib` and `geometry` follow). amssymb and amsfonts
+        // take no options of their own.
+        "amsmath" => options.iter().all(|option| {
+            matches!(
+                *option,
+                "centertags" | "sumlimits" | "nointlimits" | "namelimits" | "reqno"
+            )
+        }),
+        "amssymb" | "amsfonts" => options.is_empty(),
+        // microtype (character protrusion and font expansion) is genuinely
+        // absent from this crate: it has no dependency on
+        // `flashtex-microtype`, and nothing here protrudes a character or
+        // expands a font, so the warning is true of the output this crate
+        // lays out and must stay. The render pipeline, which does set it
+        // (`typeset.rs` calls `paragraph_layout::layout_paragraph_microtype`),
+        // drops this line for its own consumers in
+        // `render_pipeline::packages::supersede_message` -- which is where
+        // route-specific knowledge belongs, because this crate's display list
+        // is consumed by both `flashtex-render` and the plain
+        // `flashtex-compiler` worker and it cannot tell which is asking.
         // hyperref: its options are PDF annotation, outline and metadata
         // settings, and none of them moves a glyph (see
         // `hyperref_option_is_layout_neutral`). `\url`/`\href`/`\nolinkurl`
@@ -6444,6 +6910,9 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // `note_links_unclickable`, so a second "not implemented" line here
         // would only suggest the *text* is wrong, which it is not.
         "hyperref" => options.iter().all(|option| hyperref_option_is_layout_neutral(option)),
+        // cleveref's unknown package options are intentionally ignored by
+        // the package, so loading it is silent for every option here.
+        "cleveref" => true,
         // Colour packages (crate::color) with every option replayed.
         "xcolor" => crate::color::Colors::xcolor(&options.join(","), None).1.is_empty(),
         "color" => crate::color::Colors::color_sty(&options.join(",")).1.is_empty(),
@@ -6454,7 +6923,75 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
     }
 }
 
-/// Whether one `hyperref` package option or `\hypersetup` key leaves the
+/// The key *names* of a `listings` key list: entries split at top-level
+/// commas, each truncated at its first top-level `=`. Braces and brackets
+/// nest, so `caption={a, b}` and `basewidth={0.6em,0.45em}` are one key
+/// each, and a backslash skips the character after it so `\\{` inside a
+/// style value does not open a group.
+fn listings_key_names(list: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = list.as_bytes();
+    let (mut start, mut depth, mut i) = (0usize, 0i32, 0usize);
+    while i <= bytes.len() {
+        let end = i == bytes.len();
+        match if end { b',' } else { bytes[i] } {
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => depth -= 1,
+            b'\\' if !end => i += 1,
+            b',' if depth <= 0 => {
+                let entry = &list[start..i];
+                let name = entry.split_once('=').map_or(entry, |(name, _)| name).trim();
+                if !name.is_empty() {
+                    out.push(name.to_string());
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Whether `key` is a `listings` key at all (listings.sty / lstmisc.sty
+/// v1.10c, TeX Live 2025: every `\\lst@Key` the package defines, plus the
+/// `\\lst@Key`-less switches `\\lstset` accepts). Being on this list is not a
+/// claim that anything is done with it — `\\lstset` typesets nothing either
+/// way — only that the name is spelled like a key of the package.
+fn listings_key_is_known(key: &str) -> bool {
+    const KEYS: &[&str] = &[
+        // Styles and the character grid.
+        "basicstyle", "identifierstyle", "commentstyle", "stringstyle", "keywordstyle",
+        "ndkeywordstyle", "classoffset", "texcsstyle", "directivestyle", "emph", "moreemph",
+        "deleteemph", "emphstyle", "delim", "moredelim", "deletedelim", "columns", "flexiblecolumns",
+        "basewidth", "fontadjust", "keepspaces", "showspaces", "showtabs", "showstringspaces",
+        "formatstyle", "literate", "alsoletter", "alsodigit", "alsoother", "sensitive",
+        // Line numbers and labels.
+        "numbers", "numberstyle", "numbersep", "stepnumber", "numberfirstline", "firstnumber",
+        "numberblanklines", "name", "numberbychapter",
+        // Frames, margins and background.
+        "frame", "frameshape", "frameround", "framerule", "framesep", "framexleftmargin",
+        "framexrightmargin", "framextopmargin", "framexbottommargin", "backgroundcolor",
+        "fillcolor", "rulecolor", "rulesepcolor", "rulesep", "xleftmargin", "xrightmargin",
+        "resetmargins", "linewidth", "lineskip", "boxpos",
+        // Captions, floats and the list of listings.
+        "caption", "title", "label", "captionpos", "abovecaptionskip", "belowcaptionskip",
+        "aboveskip", "belowskip", "float", "floatplacement", "nolol", "multicols",
+        // Language and what is typeset.
+        "language", "alsolanguage", "defaultdialect", "print", "firstline", "lastline",
+        "linerange", "consecutivenumbers", "showlines", "extendedchars", "inputencoding",
+        "escapechar", "escapeinside", "escapebegin", "escapeend", "mathescape", "texcl",
+        "gobble", "tabsize", "index", "moreindex", "deleteindex", "indexstyle",
+        // Line breaking.
+        "breaklines", "breakatwhitespace", "breakindent", "breakautoindent", "prebreak",
+        "postbreak", "breakbefore", "breakafter", "style", "morecomment", "morestring",
+        "morekeywords", "deletekeywords", "morendkeywords", "keywordsprefix", "procnamekeys",
+        "procnamestyle", "indexprocnames", "tag",
+    ];
+    KEYS.contains(&key)
+}
+
+/// Whether one `hyperref` package option or `\\hypersetup` key leaves the
 /// typeset material alone.
 ///
 /// Measured, not assumed: the same document (`\maketitle`, `abstract`,
@@ -7198,8 +7735,25 @@ mod tests {
         assert_eq!(parse_dimen_pt("12pt"), Some(12.0));
         assert_eq!(parse_dimen_pt(" 1em "), Some(crate::layout::BODY_SIZE_PT));
         assert_eq!(parse_dimen_pt("1in"), Some(72.27));
+        assert_eq!(parse_dimen_pt("-.5in"), Some(-0.5 * 72.27));
+        assert_eq!(parse_dimen_pt("=6in"), Some(6.0 * 72.27));
+        assert_eq!(parse_dimen_pt("\\textwidth"), Some(0.0));
+        assert_eq!(parse_dimen_pt("0.5\\textwidth"), Some(0.0));
         assert!(parse_dimen_pt("banana").is_none());
         assert!(parse_dimen_pt("").is_none());
+        // TeXbook Appendix B / scan_dimen §458 ratios, in TeX points.
+        assert_eq!(parse_dimen_pt("1bp"), Some(72.27 / 72.0));
+        assert_eq!(parse_dimen_pt("1dd"), Some(1238.0 / 1157.0));
+        assert_eq!(parse_dimen_pt("1cc"), Some(14856.0 / 1157.0));
+        assert_eq!(parse_dimen_pt("1sp"), Some(1.0 / 65536.0));
+        assert_eq!(parse_dimen_pt("1mm"), Some(72.27 / 25.4));
+        assert_eq!(parse_dimen_pt("1cm"), Some(72.27 / 2.54));
+        // `ex` uses cmr's x-height/em (same constant as ulem); the compiler
+        // has no TFM metrics, unlike the pipeline's `ec_em_ex`.
+        assert_eq!(
+            parse_dimen_pt("1ex"),
+            Some(crate::layout::BODY_SIZE_PT * CMR_EX_PER_EM)
+        );
     }
 
     #[test]
@@ -7244,6 +7798,37 @@ mod tests {
                 > two_baseline.baseline_y_pt - one.baseline_y_pt,
             "\\vspace{{50pt}} should push the following text further down than an ordinary paragraph break"
         );
+    }
+
+    #[test]
+    fn run_in_headings_are_accepted_and_keep_their_title_as_body_text() {
+        // `\@xsect`'s negative-after-skip branch sets the head into the
+        // following paragraph's first line, so the title belongs in the body
+        // text stream exactly where it stands. The render pipeline reads the
+        // command back from the source there and gives it its weight, indent
+        // and `\hskip 1em`; this layer must only stop erroring, take the star
+        // and the optional short title, and leave the title alone.
+        // `\paragraph*[short]{...}` is not in the list: `\@startsection`'s
+        // starred form takes no optional argument, and pdflatex itself
+        // typesets the brackets there (`[Short]Solution.`), so there is no
+        // oracle behaviour to match.
+        for source in [
+            r"\paragraph{Solution.} Body text.",
+            r"\subparagraph{Solution.} Body text.",
+            r"\paragraph*{Solution.} Body text.",
+            r"\paragraph[Short]{Solution.} Body text.",
+            r"\subparagraph*{Solution.} Body text.",
+        ] {
+            let parsed = parse(source);
+            assert!(parsed.diagnostics.is_empty(), "{source}: {:?}", parsed.diagnostics);
+            let text: String = items(source).1.iter().map(|i| i.text.as_str()).collect::<Vec<_>>().join(" ");
+            assert!(text.contains("Solution."), "{source}: title kept as body text, got {text:?}");
+            assert!(text.contains("Body"), "{source}: body text kept, got {text:?}");
+            // The star and the short title are the command's parameters, not
+            // prose: neither may reach the page.
+            assert!(!text.contains('*'), "{source}: the star is not set, got {text:?}");
+            assert!(!text.contains("Short"), "{source}: the short title is not set, got {text:?}");
+        }
     }
 
     #[test]
@@ -8578,6 +9163,107 @@ mod tests {
             "\\nolinkurl was never a link, so it needs no 'not clickable' notice: {:?}",
             parsed.diagnostics
         );
+    }
+
+    /// `\lstset` is where every listings document puts its defaults, and it
+    /// used to be a hard *error* — and a compounding one. The command's
+    /// argument was then read as preamble material, so
+    /// `fixtures/real-world/listings-manual`'s single `\lstset` produced six
+    /// errors: `\lstset` itself, then `\ttfamily`, `\small`, `\bfseries`,
+    /// `\itshape` and `\tiny` out of the style values inside it. Built from
+    /// a `git archive` of `origin/main:crates` at 9d50d312 with this test
+    /// dropped in, main reports
+    ///
+    /// ```text
+    /// only the package notice may remain:
+    /// ["\\lstset is not supported in the document preamble",
+    ///  "\\ttfamily is not supported in the document preamble",
+    ///  "\\small is not supported in the document preamble",
+    ///  "\\bfseries is not supported in the document preamble",
+    ///  "\\itshape is not supported in the document preamble",
+    ///  "\\tiny is not supported in the document preamble"]
+    /// ```
+    #[test]
+    fn lstset_is_accepted_in_the_preamble_and_typesets_nothing() {
+        let source = concat!(
+            r"\documentclass[11pt]{article}",
+            "\n",
+            r"\usepackage{listings}",
+            "\n",
+            "\\lstset{\n  basicstyle=\\ttfamily\\small,\n  keywordstyle=\\bfseries,\n",
+            "  commentstyle=\\itshape,\n  numbers=left,\n  numberstyle=\\tiny,\n",
+            "  frame=single,\n  breaklines=true,\n  showstringspaces=false,\n  tabsize=2\n}",
+            "\n",
+            r"\begin{document}",
+            "\nBody text.\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        // `\usepackage{listings}` still says honestly that this compiler
+        // does not implement the package; nothing else may be reported.
+        let other: Vec<&str> = parsed
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .filter(|m| !m.starts_with("packages listings"))
+            .collect();
+        assert!(other.is_empty(), "only the package notice may remain: {other:?}");
+        assert_eq!(
+            items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            ["Body", "text."],
+            "\\lstset contributes no material"
+        );
+    }
+
+    /// `\lstset` is global from its point of use, so listings allows it in
+    /// the body too; a name that is not a listings key at all is reported
+    /// once rather than silently swallowed.
+    #[test]
+    fn a_name_that_is_not_a_listings_key_is_reported_once() {
+        let source = concat!(
+            r"\documentclass{article}\usepackage{listings}",
+            "\n",
+            r"\begin{document}",
+            "\n",
+            r"\lstset{bacicstyle=\ttfamily}A",
+            "\n\n",
+            r"\lstset{bacicstyle=\ttfamily}B",
+            "\n",
+            r"\end{document}",
+            "\n",
+        );
+        let (parsed, items) = items(source);
+        let notes: Vec<&str> = parsed
+            .diagnostics
+            .iter()
+            .filter(|d| d.message.contains("\\lstset keys"))
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(notes.len(), 1, "reported once, not per call: {notes:?}");
+        assert!(notes[0].contains("bacicstyle"), "{notes:?}");
+        assert_eq!(items.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(), ["A", "B"]);
+    }
+
+    /// The key list nests: a braced value may hold commas and `=`, and a
+    /// style value's backslashes never open a group.
+    #[test]
+    fn listings_key_names_split_at_top_level_commas_only() {
+        assert_eq!(
+            listings_key_names(r"basicstyle=\ttfamily\small,caption={A caption, part 2},breaklines"),
+            vec!["basicstyle".to_string(), "caption".to_string(), "breaklines".to_string()]
+        );
+        assert_eq!(
+            listings_key_names("basewidth={0.6em,0.45em}"),
+            vec!["basewidth".to_string()]
+        );
+        assert!(listings_key_names("  ,  ,  ").is_empty());
+        // Every key of the corpus fixture is a listings key.
+        for key in listings_key_names(
+            r"basicstyle=\ttfamily\small,backgroundcolor=\color{codebg},keywordstyle=\color{codekw}\bfseries,commentstyle=\color{codecomment}\itshape,numbers=left,numberstyle=\tiny,frame=single,breaklines=true,showstringspaces=false,tabsize=2",
+        ) {
+            assert!(listings_key_is_known(&key), "{key} is a listings key");
+        }
     }
 
     /// `\hypersetup` is where real documents put hyperref's options, and it

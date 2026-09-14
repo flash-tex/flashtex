@@ -75,6 +75,40 @@ fn includeonly_skips_unlisted_files_without_a_trace() {
 }
 
 #[test]
+fn input_never_consults_includeonly() {
+    // Real LaTeX tests `\@partlist` only in `\@include`: `\input` always
+    // reads, even for files the recorded list does not name.
+    let main = main_with(
+        "\\includeonly{a}\n",
+        "Before.\n\\include{a}\n\\include{b}\n\\input{b}\nAfter.\n",
+    );
+    let docs = project(&main);
+    let parsed = parse_project(&docs, "main.tex");
+    let text = paragraph_text(&parsed.blocks);
+    assert!(text.contains("Alpha content."), "{text:?}");
+    assert_eq!(
+        text.matches("Bravo content.").count(),
+        1,
+        "the skipped \\include{{b}} must leave no trace while \\input{{b}} reads: {text:?}"
+    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+}
+
+#[test]
+fn empty_includeonly_includes_nothing() {
+    // `\includeonly{}` still switches parts on, with an empty list: every
+    // `\include` is skipped. (`None` — never called — is what allows all.)
+    let main = main_with("\\includeonly{}\n", "Before.\n\\include{a}\n\\include{b}\nAfter.\n");
+    let docs = project(&main);
+    let parsed = parse_project(&docs, "main.tex");
+    let text = paragraph_text(&parsed.blocks);
+    assert!(!text.contains("Alpha"), "{text:?}");
+    assert!(!text.contains("Bravo"), "{text:?}");
+    assert!(text.contains("Before.") && text.contains("After."));
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+}
+
+#[test]
 fn no_includeonly_includes_everything() {
     let main = main_with("", "Before.\n\\include{a}\n\\include{b}\nAfter.\n");
     let docs = project(&main);
@@ -120,7 +154,9 @@ fn includeonly_normalizes_tex_extension_and_whitespace() {
 }
 
 #[test]
-fn second_includeonly_warns_and_keeps_the_first() {
+fn last_includeonly_call_wins_silently() {
+    // Each call resets the list (real LaTeX's `\let\@partlist\@empty`), so
+    // `\includeonly{a}\includeonly{b}` selects only `b`, with no warning.
     let main = main_with(
         "\\includeonly{a}\n\\includeonly{b}\n",
         "\\include{a}\n\\include{b}\n",
@@ -128,14 +164,53 @@ fn second_includeonly_warns_and_keeps_the_first() {
     let docs = project(&main);
     let parsed = parse_project(&docs, "main.tex");
     let text = paragraph_text(&parsed.blocks);
+    assert!(!text.contains("Alpha"), "{text:?}");
+    assert!(text.contains("Bravo content."), "{text:?}");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+}
+
+#[test]
+fn includeonly_in_inputted_preamble_config_counts() {
+    // A config file `\input` before `\begin{document}` is still preamble:
+    // its `\includeonly` must be recorded, not rejected for living in
+    // another document.
+    let main = "\\documentclass{article}\n\\input{cfg}\n\\begin{document}\n\\include{a}\n\\include{b}\n\\end{document}\n";
+    let docs = [
+        SourceDocument {
+            path: "main.tex",
+            text: main,
+        },
+        SourceDocument {
+            path: "cfg.tex",
+            text: "\\includeonly{a}\n",
+        },
+        SourceDocument {
+            path: "a.tex",
+            text: "Alpha content.\n",
+        },
+        SourceDocument {
+            path: "b.tex",
+            text: "Bravo content.\n",
+        },
+    ];
+    let parsed = parse_project(&docs, "main.tex");
+    let text = paragraph_text(&parsed.blocks);
     assert!(text.contains("Alpha content."), "{text:?}");
     assert!(!text.contains("Bravo"), "{text:?}");
-    assert!(
-        parsed.diagnostics.iter().any(|d| d.severity == Severity::Warning
-            && d.message.contains("more than once")),
-        "{:?}",
-        parsed.diagnostics
-    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+}
+
+#[test]
+fn commented_begin_document_does_not_end_preamble() {
+    // A `% \begin{document}` comment emits nothing, so an `\includeonly`
+    // after it but before the real `\begin{document}` is still preamble.
+    let main = "\\documentclass{article}\n% \\begin{document}\n\\includeonly{a}\n\\begin{document}\n\\include{a}\n\\include{b}\n\\end{document}\n";
+    let docs = project(&main);
+    let parsed = parse_project(&docs, "main.tex");
+    let text = paragraph_text(&parsed.blocks);
+    assert!(text.contains("Alpha content."), "{text:?}");
+    assert!(!text.contains("Bravo"), "{text:?}");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
 }
 
 #[test]

@@ -53,7 +53,7 @@ fn place(fonts: &FontSet, texts: &[&str], scripts: Option<(&str, &str)>) -> Plac
         atoms.push(a);
     }
     let list = ml::MathList::new(atoms);
-    let metrics = TextRunMetrics::new(&tex, fonts, fonts.shaper(), Family::LatinModern, &sink.texts, &sink.keys);
+    let metrics = TextRunMetrics::new(&tex, fonts, fonts.shaper(), Family::LatinModern, &sink.texts, &sink.keys, &sink.italics);
     let mut laid = ml::layout_with_report(&list, ml::Style::TEXT, &metrics);
     assert!(laid.limitations.is_empty(), "{:?}", laid.limitations);
     let (runs, _notices) = metrics.finish();

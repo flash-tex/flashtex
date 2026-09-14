@@ -19,6 +19,14 @@ pub enum ClassKind {
     Article,
     Report,
     Book,
+    /// `letter.cls` v1.3c (2024/08/12). It shares `size1x.clo` with article,
+    /// so `\textwidth`/`\textheight`/`\baselineskip` are article's, but it
+    /// then overrides the whole page frame around them (see
+    /// [`class_params`]) and defines no sectioning commands at all —
+    /// `\section`, `\chapter`, `\part`, `\maketitle` and `\tableofcontents`
+    /// are all undefined in a `letter` document (probed with
+    /// `\@ifundefined`, TeX Live 2025).
+    Letter,
 }
 
 impl ClassKind {
@@ -27,6 +35,7 @@ impl ClassKind {
             "article" => Some(ClassKind::Article),
             "report" => Some(ClassKind::Report),
             "book" => Some(ClassKind::Book),
+            "letter" => Some(ClassKind::Letter),
             _ => None,
         }
     }
@@ -35,10 +44,16 @@ impl ClassKind {
             ClassKind::Article => "article",
             ClassKind::Report => "report",
             ClassKind::Book => "book",
+            ClassKind::Letter => "letter",
         }
     }
     pub fn has_chapters(self) -> bool {
-        self != ClassKind::Article
+        matches!(self, ClassKind::Report | ClassKind::Book)
+    }
+    /// Whether the class defines `\section` and friends at all. `letter.cls`
+    /// does not, so a `letter` document has no heading specs to resolve.
+    pub fn has_sections(self) -> bool {
+        self != ClassKind::Letter
     }
 }
 
@@ -117,7 +132,8 @@ impl ClassOptions {
             twoside: kind == ClassKind::Book,
             twocolumn: false,
             // article.cls line 51 \@titlepagefalse; report.cls line 51 true.
-            titlepage: kind != ClassKind::Article,
+            // letter.cls has no title page at all (no `\maketitle`).
+            titlepage: matches!(kind, ClassKind::Report | ClassKind::Book),
             openright: kind == ClassKind::Book,
             fleqn: false,
             leqno: false,
@@ -141,13 +157,25 @@ impl ClassOptions {
             "twoside",
             "draft",
             "final",
-            "titlepage",
-            "notitlepage",
         ];
+        // letter.cls declares exactly the paper/size/side/draft options plus
+        // `leqno`/`fleqn` (lines 50-83): `onecolumn`, `twocolumn`,
+        // `titlepage`, `notitlepage` and `openbib` are NOT declared, so
+        // pdflatex answers "Unused global option(s)" for each of them
+        // (verified with all six at once, TeX Live 2025). Every other class
+        // keeps its previous declaration list and order exactly.
+        let letter = kind == ClassKind::Letter;
+        if !letter {
+            declared.extend(["titlepage", "notitlepage"]);
+        }
         if kind.has_chapters() {
             declared.extend(["openright", "openany"]);
         }
-        declared.extend(["onecolumn", "twocolumn", "leqno", "fleqn", "openbib"]);
+        if letter {
+            declared.extend(["leqno", "fleqn"]);
+        } else {
+            declared.extend(["onecolumn", "twocolumn", "leqno", "fleqn", "openbib"]);
+        }
         for name in &declared {
             if !given.iter().any(|g| g == name) {
                 continue;
@@ -307,6 +335,9 @@ impl PageParams {
 /// Compute the class's page parameters exactly as `size1x.clo`/`bk1x.clo`
 /// do (non-compatibility branches).
 pub fn class_params(o: &ClassOptions) -> PageParams {
+    if o.kind == ClassKind::Letter {
+        return letter_params(o);
+    }
     let bk = o.kind == ClassKind::Book;
     let size = o.size;
     let fm = body_font(size);
@@ -461,6 +492,144 @@ pub fn class_params(o: &ClassOptions) -> PageParams {
         hoffset: Sp::ZERO,
         voffset: Sp::ZERO,
     }
+}
+
+/// `letter.cls` (v1.3c 2024/08/12) lines 86-119, non-`\if@compatibility`
+/// branches.
+///
+/// The class inputs the *article* size file (`\input{size1\@ptsize.clo}`),
+/// so `\textwidth`, `\textheight`, `\baselineskip`, `\topskip` and
+/// `\maxdepth` are article's, and then replaces almost everything around
+/// them. Each value below was read back out of pdflatex (`\the\...`, TeX
+/// Live 2025) at 10pt, 11pt and 12pt on both Letter and A4 paper; the
+/// differences from article are worth naming, because they are exactly what
+/// a letter rendered with article geometry gets wrong:
+///
+/// | length | article (11pt, Letter) | letter |
+/// |---|---|---|
+/// | `\topmargin` | 8pt (derived) | **27pt** (fixed, line 116) |
+/// | `\headsep` | 25pt | **45pt** |
+/// | `\footskip` | 30pt | **25pt** |
+/// | `\oddsidemargin` | 55pt (`\@settopoint`ed) | **54.8775pt** (not) |
+/// | `\evensidemargin` | derived separately | **= `\oddsidemargin`** |
+/// | `\parindent` | 17pt | **0pt** |
+/// | `\parskip` | 0pt plus 1pt | **7.66498pt** rigid (0.7em) |
+/// | `\marginparwidth` | derived | **90pt** |
+/// | `\labelsep` | .5em | **5pt** |
+/// | `\footnotesep` | 7.7pt | **12pt** |
+/// | `\skip\footins` | 10pt plus 4 minus 2 | **10pt plus 2 minus 4** |
+///
+/// `\oddsidemargin` is `.5\@tempdima` of `\paperwidth - 2in - \textwidth`
+/// with **no** `\@settopoint` (lines 106-112), unlike article's, which is
+/// why it keeps a fraction: 54.8775pt at 11pt Letter, 31.48393pt at 12pt A4.
+/// `twoside` does not change either side margin (both measured 54.8775pt
+/// under `[twoside,11pt]`).
+fn letter_params(o: &ClassOptions) -> PageParams {
+    let size = o.size;
+    let fm = body_font(size);
+    let (pw, ph) = o.paper_size();
+
+    // size1x.clo, shared with article.
+    let baselineskip = match size {
+        BaseSize::Pt10 => len("12pt"),
+        BaseSize::Pt11 => len("13.6pt"),
+        BaseSize::Pt12 => len("14.5pt"),
+    };
+    let topskip = match size {
+        BaseSize::Pt10 => Sp::pt(10),
+        BaseSize::Pt11 => Sp::pt(11),
+        BaseSize::Pt12 => Sp::pt(12),
+    };
+    let maxdepth = topskip.scaled(".5").unwrap();
+    let nominal = match size {
+        BaseSize::Pt10 => Sp::pt(345),
+        BaseSize::Pt11 => Sp::pt(360),
+        BaseSize::Pt12 => Sp::pt(390),
+    };
+    let avail = pw - len("2in");
+    let textwidth = if avail > nominal { nominal } else { avail }.settopoint();
+    let room = ph - len("2in") - len("1.5in");
+    let lines = room.over(baselineskip.0);
+    let textheight = baselineskip.times(lines.0) + topskip;
+
+    // letter.cls line 91: `\setlength\parskip{0.7em}`, evaluated in the
+    // class body font, and rigid (no plus/minus). TeX's own fixed-point
+    // scaling of `0.7em` is what pdflatex reports, so the three values are
+    // measured rather than recomputed from `fm.em`.
+    let parskip = match size {
+        BaseSize::Pt10 => len("6.99997pt"),
+        BaseSize::Pt11 => len("7.66498pt"),
+        BaseSize::Pt12 => len("8.22487pt"),
+    };
+
+    // lines 95-97, 116.
+    let headheight = Sp::pt(12);
+    let headsep = Sp::pt(45);
+    let footskip = Sp::pt(25);
+    let topmargin = Sp::pt(27);
+
+    // lines 106-113.
+    let sidemargin = (pw - len("2in") - textwidth).scaled(".5").unwrap();
+
+    PageParams {
+        paperwidth: pw,
+        paperheight: ph,
+        textwidth,
+        textheight,
+        oddsidemargin: sidemargin,
+        evensidemargin: sidemargin,
+        topmargin,
+        headheight,
+        headsep,
+        footskip,
+        topskip,
+        baselineskip,
+        // line 92.
+        parindent: Sp::ZERO,
+        parskip: Glue::fixed(parskip),
+        // lines 111, 114-115.
+        marginparwidth: Sp::pt(90),
+        marginparsep: Sp::pt(11),
+        marginparpush: Sp::pt(5),
+        // line 358.
+        columnsep: Sp::pt(10),
+        columnseprule: Sp::ZERO,
+        maxdepth,
+        // lines 117-118.
+        footnotesep: Sp::pt(12),
+        skip_footins: Glue::new("10pt", "2pt", "4pt"),
+        // lines 80-81.
+        overfullrule: if o.draft { Sp::pt(5) } else { Sp::ZERO },
+        // lines 283-291: `\leftmargini` 2.5em, `\labelsep` a flat 5pt
+        // (article derives `.5em`).
+        leftmargini: fm.em.scaled("2.5").unwrap(),
+        labelsep: Sp::pt(5),
+        mathindent: if o.fleqn {
+            Some(fm.em.scaled("2.5").unwrap())
+        } else {
+            None
+        },
+        hoffset: Sp::ZERO,
+        voffset: Sp::ZERO,
+    }
+}
+
+/// `\longindentation` (`letter.cls` line 219: `.5\textwidth`) and
+/// `\indentedwidth` (lines 220-222: `\textwidth` less `\longindentation`) —
+/// the two lengths `\closing` sets its parbox at. Meaningful only for
+/// [`ClassKind::Letter`].
+///
+/// It takes the *class* options, not a resolved [`PageParams`], because
+/// `letter.cls` assigns both at class-load time from the class's own
+/// `\textwidth` and nothing updates them afterwards. Under
+/// `\usepackage[margin=1in]{letter}`-style geometry the text is 469.75502pt
+/// wide at 11pt but `\longindentation` is still 180pt — half of the class's
+/// 360pt, not half the measure (pdflatex, TeX Live 2025). A closing block
+/// indented by half the *geometry* measure would be 54.88pt too far right.
+pub fn letter_indentation(options: &ClassOptions) -> (Sp, Sp) {
+    let textwidth = class_params(options).textwidth;
+    let long = textwidth.scaled(".5").unwrap();
+    (long, textwidth - long)
 }
 
 /// The class's font-size commands (size1x.clo lines 47–86; sizes from

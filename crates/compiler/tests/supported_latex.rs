@@ -297,6 +297,7 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "renewcommand" => "\\newcommand{\\foo}{x}\\renewcommand{\\foo}{y}\\foo".into(),
         "usepackage" => "\\usepackage{geometry}".into(),
         "setlength" => "\\setlength{\\parskip}{1pt}".into(),
+        "addtolength" => "\\addtolength{\\textwidth}{1pt}".into(),
         "setlist" => "\\setlist{itemsep=1pt}".into(),
         "item" => "\\begin{itemize}\\item x\\end{itemize}".into(),
         // natbib's commands exist only once the package is loaded, and an

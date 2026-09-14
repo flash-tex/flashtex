@@ -721,6 +721,7 @@ struct NavigationCommands: Commands {
     @FocusedValue(\.diagnosticsPanel) private var diagnosticsPanel
 
     var body: some Commands {
+        EditorFoldCommands() // EditorFolding.swift: Editor ▸ Fold / Unfold
         CommandMenu("Navigate") {
             Button("Go to Line…") { model.presentGoToLine() }
                 .keyboardShortcut("l", modifiers: [.command])
