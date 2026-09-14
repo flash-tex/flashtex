@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-muse-lead/nearby-pairfile-lock",
+  "gh_ref": "#2",
+  "machine": "mac-m5pro-dq222",
+  "note": "NearbyClient PairFile lock + Sendable conformances; delegated to daniel-muse-lead",
+  "started_utc": "2026-09-14T16:09:36Z",
+  "state": "claimed",
+  "task_id": "GH-NEARBY-PAIRFILE",
+  "updated_utc": "2026-09-14T16:09:36Z"
+}
