@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/cli-fix",
+  "gh_ref": "#277",
+  "machine": "mac-m5pro-dq222",
+  "note": "CLI shows suggestion as help; flashtex check --fix applies machine-applicable suggestions; crates/flashtex-cli only; stacked on #303+#354",
+  "started_utc": "2026-09-14T08:28:36Z",
+  "state": "claimed",
+  "task_id": "GH-277-cli-fix",
+  "updated_utc": "2026-09-14T08:28:36Z"
+}
