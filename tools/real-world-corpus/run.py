@@ -11,7 +11,8 @@ single `*.tex`, plus any `\\input` files) the harness
 
   1. finds the reference PDF (`reference.pdf`, else `*-reference.pdf`); when
      none exists and pdflatex is available it generates `reference.pdf` with
-     `SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1` (two passes) and records SHA-256,
+     `SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1`, run to convergence (the PDF
+     stops changing and pdflatex stops asking for a rerun), and records SHA-256,
      page count, pdflatex version and argv in `reference.json`. User-provided
      references are never overwritten; `--regenerate` writes a separate
      `reference-mactex2026.pdf` next to them and records its SHA too;
@@ -56,6 +57,8 @@ import fontenv  # noqa: E402
 DEFAULT_FIXTURES = os.path.join(REPO, "fixtures", "real-world")
 DEFAULT_TEXBIN = "/usr/local/texlive/2026/bin/universal-darwin"
 DPI = 144
+# How many pdflatex passes a reference may take before we call it unsettled.
+MAX_ORACLE_PASSES = 6
 
 # Commander ruling (issue #2 5646504285): this compiler gap is listed first
 # regardless of frequency — starred sectioning inside the two-argument
@@ -78,6 +81,11 @@ def sha256_file(path):
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def read_text(path):
+    with open(path, "rb") as f:
+        return f.read().decode("utf-8", "replace")
 
 
 def run(cmd, stdin_bytes=None, env=None, timeout=300, cwd=None):
@@ -187,8 +195,9 @@ def pdf_page_count(path):
 
 
 def generate_reference(fx, texbin, out_name, log):
-    """Run pdflatex twice in a scratch copy of the fixture; copy the PDF to
-    <fixture>/<out_name>. Returns the sidecar record or None."""
+    """Run pdflatex in a scratch copy of the fixture until the PDF it writes
+    stops changing, then copy that PDF to <fixture>/<out_name>. Returns the
+    sidecar record, or None if it never settled."""
     exe, version = pdflatex_version(texbin)
     if exe is None:
         log.append(f"{fx['id']}: no pdflatex at {texbin}; cannot generate a reference")
@@ -198,25 +207,45 @@ def generate_reference(fx, texbin, out_name, log):
     shutil.copytree(fx["dir"], scratch, ignore=shutil.ignore_patterns("*.pdf", "*.json", "*.md"))
     env = dict(os.environ, SOURCE_DATE_EPOCH="0", FORCE_SOURCE_DATE="1")
     argv = [exe, "-interaction=nonstopmode", "-halt-on-error", fx["entry"]]
-    for _pass in range(2):
+    produced = os.path.join(scratch, os.path.splitext(fx["entry"])[0] + ".pdf")
+    logpath = os.path.join(scratch, os.path.splitext(fx["entry"])[0] + ".log")
+    # Two passes are not enough. `hyperref-toc` needed three (its table of
+    # contents still listed a page-2 section on page 1 after two), and
+    # `lmodern-report` needed three *without* pdflatex ever asking for a rerun
+    # -- so neither the pass count nor the "Rerun to get" warning is the test.
+    # Keep running until the PDF stops changing: that is convergence.
+    passes, previous = 0, None
+    for _attempt in range(MAX_ORACLE_PASSES):
         code, out, err, secs, timed_out = run(argv, env=env, timeout=300, cwd=scratch)
+        passes += 1
         if timed_out or code != 0:
             log.append(f"{fx['id']}: pdflatex failed (exit {code}, timeout={timed_out})")
             return None
-    produced = os.path.join(scratch, os.path.splitext(fx["entry"])[0] + ".pdf")
-    if not os.path.isfile(produced):
-        log.append(f"{fx['id']}: pdflatex produced no PDF")
+        if not os.path.isfile(produced):
+            log.append(f"{fx['id']}: pdflatex produced no PDF")
+            return None
+        current = sha256_file(produced)
+        rerun = "Rerun to get" in read_text(logpath)
+        if current == previous and not rerun:
+            break
+        previous = current
+    else:
+        log.append(
+            f"{fx['id']}: pdflatex did not converge in {MAX_ORACLE_PASSES} passes; "
+            "the reference is not a settled document and was not written"
+        )
         return None
     dest = os.path.join(fx["dir"], out_name)
     shutil.copyfile(produced, dest)
-    logtxt = open(os.path.join(scratch, os.path.splitext(fx["entry"])[0] + ".log"), "rb").read().decode("utf-8", "replace")
+    logtxt = read_text(logpath)
     m = re.search(r"Output written on .*?\((\d+) pages?", logtxt)
     return {
         "file": out_name,
         "sha256": sha256_file(dest),
         "pages": int(m.group(1)) if m else pdf_page_count(dest),
         "pdflatex": version,
-        "argv": ["SOURCE_DATE_EPOCH=0", "FORCE_SOURCE_DATE=1"] + [os.path.basename(argv[0])] + argv[1:] + ["(x2)"],
+        "argv": ["SOURCE_DATE_EPOCH=0", "FORCE_SOURCE_DATE=1"] + [os.path.basename(argv[0])] + argv[1:] + [f"(x{passes}, to convergence)"],
+        "converged_after_passes": passes,
         "generated_utc": utc_now(),
         "overfull_boxes": len(re.findall(r"^Overfull", logtxt, re.M)),
         "latex_warnings": len(re.findall(r"LaTeX Warning", logtxt)),

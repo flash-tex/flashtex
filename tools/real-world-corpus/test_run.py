@@ -99,3 +99,65 @@ class PgmTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReferenceConvergenceTests(unittest.TestCase):
+    """A reference is only a reference once pdflatex has settled. Two passes
+    used to be assumed; `hyperref-toc` needed three, and `lmodern-report`
+    needed three while never printing "Rerun to get" -- so the loop is tested
+    against both a late-settling document and one that never settles."""
+
+    def _fixture(self, tmp):
+        src = os.path.join(tmp, "src")
+        os.makedirs(src)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write("\\documentclass{article}\\begin{document}x\\end{document}\n")
+        return {"id": "fake", "dir": src, "entry": "main.tex"}
+
+    def _patch(self, tmp, bodies, logtext="", ):
+        """Fake pdflatex: writes bodies[i] on pass i, then the last body forever."""
+        calls = {"n": 0}
+
+        def fake_run(cmd, stdin_bytes=None, env=None, timeout=300, cwd=None):
+            i = min(calls["n"], len(bodies) - 1)
+            calls["n"] += 1
+            with open(os.path.join(cwd, "main.pdf"), "wb") as f:
+                f.write(bodies[i])
+            with open(os.path.join(cwd, "main.log"), "w") as f:
+                f.write("Output written on main.pdf (1 page).\n" + logtext)
+            return 0, b"", b"", 0.0, False
+
+        harness.pdflatex_version = lambda texbin: (os.path.join(texbin, "pdflatex"), "fake pdfTeX")
+        harness.run = fake_run
+        harness.HERE = tmp
+        return calls
+
+    def setUp(self):
+        self._saved = (harness.run, harness.pdflatex_version, harness.HERE)
+
+    def tearDown(self):
+        harness.run, harness.pdflatex_version, harness.HERE = self._saved
+
+    def test_runs_until_the_pdf_stops_changing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = self._fixture(tmp)
+            calls = self._patch(tmp, [b"pass1", b"pass2", b"settled"])
+            log = []
+            rec = harness.generate_reference(fx, tmp, "reference.pdf", log)
+            self.assertIsNotNone(rec, log)
+            # three distinct passes, plus the one that proved pass 3 was stable
+            self.assertEqual(calls["n"], 4)
+            self.assertEqual(rec["converged_after_passes"], 4)
+            self.assertIn("to convergence", rec["argv"][-1])
+            with open(os.path.join(fx["dir"], "reference.pdf"), "rb") as f:
+                self.assertEqual(f.read(), b"settled")
+
+    def test_a_rerun_request_is_not_convergence(self):
+        """Identical bytes still are not settled while pdflatex asks again."""
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = self._fixture(tmp)
+            self._patch(tmp, [b"same"], logtext="LaTeX Warning: Rerun to get cross-references right.\n")
+            log = []
+            self.assertIsNone(harness.generate_reference(fx, tmp, "reference.pdf", log))
+            self.assertTrue(any("did not converge" in m for m in log), log)
+            self.assertFalse(os.path.exists(os.path.join(fx["dir"], "reference.pdf")))
