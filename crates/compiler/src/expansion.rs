@@ -86,6 +86,13 @@ pub struct Expansion {
     /// `\arraystretch`'s replacement text in effect at each
     /// `\begin{tabular}`/`tabular*`/`array`, keyed by that `\begin`'s span.
     pub arraystretch: HashMap<(usize, usize), String>,
+    /// `\labelitemi`..`\labelitemiv`'s replacement texts in effect at each
+    /// `\begin{itemize}` (the itemize analogue of [`Expansion::arraystretch`]),
+    /// keyed by that `\begin`'s span. A level the document never redefined
+    /// captures as its own `\labelitem<i>` name (left unexpanded by the
+    /// engine) or the kernel expansion; anything else is a genuine
+    /// `\renewcommand` the parser must honor.
+    pub labelitem_overrides: HashMap<(usize, usize), [String; 4]>,
 }
 
 /// Host definitions run before the document. `\DeclareMathOperator` is
@@ -94,6 +101,14 @@ pub struct Expansion {
 /// LaTeX's `\tabular`/`\array` read `\arraystretch` when the environment begins; here they emit a
 /// marker plus `\arraystretch`'s current expansion, which the converter
 /// turns back into `\begin{<env>}` and records for the parser.
+/// Likewise `\itemize` (which the engine runs for every `\begin{itemize}`
+/// via `do_begin`) emits a marker plus the current expansions of
+/// `\labelitemi`..`\labelitemiv`, so the parser sees a `\renewcommand` of
+/// one of those names. The wrapper preserves the kernel behavior exactly:
+/// `\itemize` takes no arguments and interacts with no depth counter at
+/// expansion time (nesting is tracked by the parser's `kind_depth`), and
+/// the tail re-emits the pass-through `\begin{itemize}` tokens, so
+/// anything after them (enumitem's `[...]` options included) is untouched.
 ///
 /// Kernel definitions that would intercept a command the parser typesets
 /// itself (`\\setlength`, `\\label`, `\\verb`, whose argument the pass has
@@ -112,6 +127,8 @@ pub const HOST_PRELUDE: &str = "\\let\\setlength\\flashtexundefined
 \\def\\tabular{\\flashtexbegintabular\\expandafter{\\arraystretch}}%
 \\expandafter\\def\\csname tabular*\\endcsname{\\flashtexbegintabularstar\\expandafter{\\arraystretch}}%
 \\def\\array{\\flashtexbeginarray\\expandafter{\\arraystretch}}%
+\\let\\flashtexrealitemize\\itemize
+\\def\\itemize{\\flashtexbeginitemizelabels{\\labelitemi}{\\labelitemii}{\\labelitemiii}{\\labelitemiv}\\flashtexrealitemize}%
 ";
 
 /// Engine diagnostics that duplicate the parser's own reports, or only note
@@ -393,13 +410,74 @@ struct Converter<'d> {
     /// Reading the `{<\arraystretch>}` group after a table marker: the key
     /// it is recorded under, brace depth, and the text so far.
     stretch: Option<((usize, usize), usize, String)>,
+    /// Reading the four `{\labelitem<i>}` groups after an itemize marker:
+    /// the `\begin{itemize}` key they are recorded under, its span (used to
+    /// rebuild the pass-through `\begin{itemize}` tokens), which group
+    /// (0-3) is being read, brace depth within it, and the four texts so far.
+    labels: Option<LabelCapture>,
+    /// `\labelitem<i>` replacement texts by `\begin{itemize}` span, and the
+    /// production-ordered log the incremental cache keeps and splices (both
+    /// the itemize analogue of `arraystretch`/`stretch_log`).
+    labelitem_overrides: HashMap<(usize, usize), [String; 4]>,
+    labelitem_log: Vec<(usize, (usize, usize), [String; 4])>,
     /// Engine token index being converted, and the index of the marker that
-    /// opened the current `\arraystretch` capture.
+    /// opened the current `\arraystretch` or `\labelitem<i>` capture.
     index: usize,
     stretch_index: usize,
+    labelitem_index: usize,
     /// Every `\arraystretch` record in production order, with its marker's
     /// engine token index (what the incremental cache keeps and splices).
     stretch_log: Vec<(usize, (usize, usize), String)>,
+}
+
+/// The four `{\labelitem<i>}` groups the `\itemize` wrapper emits after its
+/// marker, being read as plain text (exactly like the `\arraystretch`
+/// capture: characters accumulate, control sequences as `\name`). Plain
+/// groups rather than `\expandafter{...}`: a `\labelitem<i>` the document
+/// never redefined is undefined in the engine and must pass through
+/// unexpanded — the same pass-through the parser's running-text
+/// `\labelitem<i>` arms already rely on — instead of hitting `\expandafter`.
+struct LabelCapture {
+    key: (usize, usize),
+    begin: Span,
+    group: usize,
+    depth: usize,
+    texts: [String; 4],
+}
+
+impl LabelCapture {
+    /// Fold one engine token in. True once the fourth group has closed, at
+    /// which point `texts` holds the four current expansions in order.
+    fn consume(&mut self, token: &tex::Token) -> bool {
+        match &token.kind {
+            TexKind::Char(_, CatCode::BeginGroup) => {
+                if self.depth > 0 {
+                    self.texts[self.group].push('{');
+                }
+                self.depth += 1;
+            }
+            TexKind::Char(_, CatCode::EndGroup) if self.depth <= 1 => {
+                if self.group >= 3 {
+                    return true;
+                }
+                self.group += 1;
+                self.depth = 0;
+            }
+            TexKind::Char(_, CatCode::EndGroup) => {
+                self.texts[self.group].push('}');
+                self.depth -= 1;
+            }
+            TexKind::Char(c, _) | TexKind::ActiveChar(c) => {
+                self.texts[self.group].push(*c);
+            }
+            TexKind::ControlSequence(cs) => {
+                self.texts[self.group].push('\\');
+                self.texts[self.group].push_str(cs);
+            }
+            _ => {}
+        }
+        false
+    }
 }
 
 struct PendingWord {
@@ -636,16 +714,20 @@ impl<'d> Converter<'d> {
             word: None,
             last_span: Span::in_document(DocumentId(entry), 0, 0),
             stretch: None,
+            labels: None,
+            labelitem_overrides: HashMap::new(),
+            labelitem_log: Vec::new(),
             index: 0,
             stretch_index: 0,
+            labelitem_index: 0,
             stretch_log: Vec::new(),
         }
     }
 
-    /// No partially built word or `\arraystretch` capture: the output so far
-    /// does not depend on tokens still to come.
+    /// No partially built word, `\arraystretch` capture, or `\labelitem<i>`
+    /// capture: the output so far does not depend on tokens still to come.
     fn clean(&self) -> bool {
-        self.word.is_none() && self.stretch.is_none()
+        self.word.is_none() && self.stretch.is_none() && self.labels.is_none()
     }
 
     fn convert_token(&mut self, prepared: &[Prepared<'_>], token: &tex::Token, origin: Option<tex::Span>) -> Flow {
@@ -677,6 +759,25 @@ impl<'d> Converter<'d> {
                     conv.stretch = Some((key, depth, text));
                 }
                 _ => conv.stretch = Some((key, depth, text)),
+            }
+            return Flow::Next;
+        }
+        if let Some(mut capture) = conv.labels.take() {
+            if capture.consume(token) {
+                conv.labelitem_log.push((conv.labelitem_index, capture.key, capture.texts.clone()));
+                conv.labelitem_overrides.insert(capture.key, capture.texts);
+                // The wrapper's tail (`\flashtexrealitemize`, swallowed
+                // below) stood exactly here: rebuild the pass-through
+                // `\begin{itemize}` from the real `\begin` span, so the
+                // parser sees byte-identical tokens to the old
+                // pass-through path.
+                conv.push_environment(
+                    "begin",
+                    "itemize",
+                    Placement { span: capture.begin, definition: None, maps: false, real: Some(capture.begin) },
+                );
+            } else {
+                conv.labels = Some(capture);
             }
             return Flow::Next;
         }
@@ -720,6 +821,27 @@ impl<'d> Converter<'d> {
                         conv.stretch = Some(((begin.span.document.0, begin.span.start), 0, String::new()));
                         conv.push_environment("begin", env, begin);
                     }
+                    "flashtexbeginitemizelabels" => {
+                        let begin = origin
+                            .and_then(|o| conv.span(o))
+                            .filter(|b| conv.source_text(*b) == "\\begin")
+                            .map(|b| Placement { span: b, definition: None, maps: false, real: Some(b) })
+                            .unwrap_or(at);
+                        conv.labelitem_index = conv.index;
+                        conv.labels = Some(LabelCapture {
+                            key: (begin.span.document.0, begin.span.start),
+                            begin: begin.span,
+                            group: 0,
+                            depth: 0,
+                            texts: [String::new(), String::new(), String::new(), String::new()],
+                        });
+                    }
+                    // The `\itemize` wrapper's tail: `\let` to the (undefined)
+                    // kernel `\itemize`, so expanding it re-emits this token
+                    // with the `\begin` invocation as its origin. The four
+                    // groups before it already recorded the overrides and
+                    // rebuilt `\begin{itemize}`; swallow this.
+                    "flashtexrealitemize" => {}
                     "\\" => conv.push(TokenKind::LineBreak, at),
                     "[" => conv.push(TokenKind::DisplayMathOpen, at),
                     "]" => conv.push(TokenKind::DisplayMathClose, at),
@@ -898,7 +1020,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     }
     let diagnostics = engine.diagnostics().to_vec();
     conv.map_diagnostics(&diagnostics);
-    Expansion { tokens: Rc::new(conv.out), diagnostics: conv.diagnostics, arraystretch: conv.arraystretch }
+    Expansion { tokens: Rc::new(conv.out), diagnostics: conv.diagnostics, arraystretch: conv.arraystretch, labelitem_overrides: conv.labelitem_overrides }
 }
 
 /// A converter state with nothing pending, recorded while converting: after
@@ -925,6 +1047,7 @@ pub struct ExpansionCache {
     out: Rc<Vec<ExpandedToken>>,
     marks: Vec<Mark>,
     stretch_log: Vec<(usize, (usize, usize), String)>,
+    labelitem_log: Vec<(usize, (usize, usize), [String; 4])>,
     last_span: Span,
     /// Engine tokens the previous run produced.
     old_engine_tokens: usize,
@@ -1071,6 +1194,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         out: Rc::new(Vec::new()),
         marks,
         stretch_log: Vec::new(),
+        labelitem_log: Vec::new(),
         last_span: conv.last_span,
         old_engine_tokens: 0,
         halted: false,
@@ -1175,6 +1299,8 @@ fn update_cache(
         conv.last_span = cache.last_span;
         conv.stretch_log = cache.stretch_log.clone();
         conv.arraystretch = stretch_map(&conv.stretch_log);
+        conv.labelitem_log = cache.labelitem_log.clone();
+        conv.labelitem_overrides = labelitem_map(&conv.labelitem_log);
         let tokens = cache.out.clone();
         let mut expansion = finish_diagnostics(cache, conv)?;
         expansion.tokens = tokens;
@@ -1198,6 +1324,7 @@ fn update_cache(
     let mut out = Rc::try_unwrap(std::mem::replace(&mut cache.out, Rc::new(Vec::new()))).unwrap_or_else(|shared| (*shared).clone());
     let mut old_tail = out.split_off(restart.out_len);
     let old_log = std::mem::take(&mut cache.stretch_log);
+    let old_labels = std::mem::take(&mut cache.labelitem_log);
     let edit_start = changes.old.start;
     let old_edit_end = changes.old.end;
     let document = DocumentId(entry);
@@ -1216,6 +1343,8 @@ fn update_cache(
     // ones are regenerated or come back with the spliced suffix.
     conv.stretch_log = old_log.iter().filter(|(index, _, _)| *index < restart.index).cloned().collect();
     conv.arraystretch = stretch_map(&conv.stretch_log);
+    conv.labelitem_log = old_labels.iter().filter(|(index, _, _)| *index < restart.index).cloned().collect();
+    conv.labelitem_overrides = labelitem_map(&conv.labelitem_log);
     let _ = edit_start;
     let mut marks: Vec<Mark> = old_marks[..=restart_at].to_vec();
     let old_count = cache.engine_token_count(n_new, &stats);
@@ -1239,6 +1368,15 @@ fn update_cache(
                 };
                 conv.stretch_log.push(((index as isize + token_offset) as usize, key, text.clone()));
                 conv.arraystretch.insert(key, text);
+            }
+            for (index, key, texts) in old_labels.into_iter().filter(|(index, _, _)| *index >= old_mark.index) {
+                let key = if key.0 == entry && key.1 >= old_edit_end {
+                    (key.0, (key.1 as isize + delta) as usize)
+                } else {
+                    key
+                };
+                conv.labelitem_log.push(((index as isize + token_offset) as usize, key, texts.clone()));
+                conv.labelitem_overrides.insert(key, texts);
             }
             conv.last_span = shift(cache.last_span);
         }
@@ -1265,6 +1403,7 @@ fn finish(cache: &mut ExpansionCache, conv: Converter<'_>) -> Option<Expansion> 
     let mut conv = conv;
     let out = std::mem::take(&mut conv.out);
     cache.stretch_log = conv.stretch_log.clone();
+    cache.labelitem_log = conv.labelitem_log.clone();
     cache.last_span = conv.last_span;
     cache.old_engine_tokens = cache.expander.tokens().len();
     let tokens = Rc::new(out);
@@ -1278,6 +1417,10 @@ fn stretch_map(log: &[(usize, (usize, usize), String)]) -> HashMap<(usize, usize
     log.iter().map(|(_, key, text)| (*key, text.clone())).collect()
 }
 
+fn labelitem_map(log: &[(usize, (usize, usize), [String; 4])]) -> HashMap<(usize, usize), [String; 4]> {
+    log.iter().map(|(_, key, texts)| (*key, texts.clone())).collect()
+}
+
 fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Option<Expansion> {
     if step_limit_hit(cache.expander.diagnostics()) {
         return None;
@@ -1288,6 +1431,7 @@ fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Option
         tokens: Rc::new(Vec::new()),
         diagnostics: conv.diagnostics,
         arraystretch: conv.arraystretch,
+        labelitem_overrides: conv.labelitem_overrides,
     })
 }
 

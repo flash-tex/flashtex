@@ -1119,6 +1119,7 @@ pub fn parse_project_with(
             tokens: Rc::new(Vec::new()),
             diagnostics: Vec::new(),
             arraystretch: HashMap::new(),
+            labelitem_overrides: HashMap::new(),
         }
     } else {
         expansion::expand_project_cached(documents, entry)
@@ -1158,6 +1159,7 @@ pub fn parse_project_with(
         brace_stack: Vec::new(),
         env_stack: Vec::new(),
         arraystretch: expanded.arraystretch,
+        labelitem_overrides: expanded.labelitem_overrides,
         has_document,
         in_body: !has_document,
         document_ended: false,
@@ -1293,6 +1295,9 @@ struct P<'a> {
     env_stack: Vec<(String, Span)>,
     /// `\arraystretch` at each `\begin{tabular}`, from the expansion pass.
     arraystretch: HashMap<(usize, usize), String>,
+    /// `\labelitemi`..`\labelitemiv` at each `\begin{itemize}`, from the
+    /// expansion pass (see `expansion::Expansion::labelitem_overrides`).
+    labelitem_overrides: HashMap<(usize, usize), [String; 4]>,
     has_document: bool,
     in_body: bool,
     document_ended: bool,
@@ -5178,7 +5183,7 @@ impl P<'_> {
                         "labelitemi" | "labelitemii" | "labelitemiii" | "labelitemiv"
                     ) =>
                 {
-                    content.push(self.labelitem_inline(name, input.token.span, space_before));
+                    content.push(self.labelitem_inline(name, input.token.span, style, space_before));
                 }
                 TokenKind::Command(name) if TextLogo::from_command(name).is_some() => {
                     if let Some(logo) = TextLogo::from_command(name) {
@@ -5366,17 +5371,20 @@ impl P<'_> {
 
     /// A `\labelitem<i>` default marker: the same glyph (and level 2's
     /// `\bfseries` bold) `lists::labelitem` gives the matching itemize
-    /// level. The article default is `\normalfont\bfseries\textendash` for
-    /// level 2 (plain for the others) — the marker's own style is reset,
-    /// not inherited from whatever style is active at the point it's used,
-    /// exactly like a real `\normalfont`/`\bfseries` prefix in its
-    /// definition would. A `\renewcommand` of one of these names expands in
-    /// the expansion pass, so the redefinition — not this arm — supplies
-    /// later uses in running text; the itemize labels themselves always
-    /// keep the kernel defaults (a known, separate gap: `default_label`
-    /// calls `lists::labelitem` directly and does not consult a
-    /// redefinition).
-    fn labelitem_inline(&self, name: &str, span: Span, space_before: bool) -> Inline {
+    /// level. The article default is `\labelitemfont\bfseries\textendash`
+    /// for level 2 (plain for the others), where `\labelitemfont` is
+    /// `\normalfont` (`article.cls:355-359`) — and `\normalfont` resets
+    /// family, series and shape only, not size or colour. So the marker
+    /// starts from the style active where it is used (keeping its size and
+    /// colour) and only overrides `family` (Roman), `italic` (upright) and
+    /// `bold` (level 2's `\bfseries`), exactly like a real
+    /// `\normalfont`/`\bfseries` prefix in its definition would. A
+    /// `\renewcommand` of one of these names expands in the expansion pass,
+    /// so the redefinition — not this arm — supplies later uses in running
+    /// text. The itemize labels themselves consult the same redefinition
+    /// through the expansion pass's per-`\begin{itemize}` capture (see
+    /// `itemize_default_label`).
+    fn labelitem_inline(&self, name: &str, span: Span, style: TextStyle, space_before: bool) -> Inline {
         let level = match name {
             "labelitemi" => 1,
             "labelitemii" => 2,
@@ -5387,7 +5395,12 @@ impl P<'_> {
         Inline::Text {
             text: text.to_string(),
             span,
-            style: if bold { TextStyle::BOLD } else { TextStyle::default() },
+            style: TextStyle {
+                family: TextFamily::Roman,
+                italic: false,
+                bold,
+                ..style
+            },
             space_before,
         }
     }
@@ -5396,7 +5409,8 @@ impl P<'_> {
     /// `labelitem_inline`).
     fn labelitem_marker(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         let space_before = self.space_precedes(self.i - 1);
-        para.push(self.labelitem_inline(name, span, space_before));
+        let style = self.style;
+        para.push(self.labelitem_inline(name, span, style, space_before));
     }
 
     /// A siunitx typesetting command (`crate::siunitx`): its arguments are
@@ -6018,11 +6032,37 @@ impl P<'_> {
                         template.strip_prefix("label=").unwrap_or(template),
                     ),
                 },
-                _ => lists::default_label(environment, kind_depth, 0),
+                _ => {
+                    let begin = frame.as_ref().map_or(span, |frame| frame.begin_span);
+                    self.itemize_default_label(environment, kind_depth, begin)
+                }
             },
         };
         self.pending_item_label = Some((item.text().to_string(), span));
         self.pending_item = Some(item);
+    }
+
+    /// itemize's default label for one `\item`: a `\renewcommand` of the
+    /// matching `\labelitem<i>` — captured by the expansion pass at
+    /// `\begin{itemize}` and read here by that `\begin`'s span, the same
+    /// keying as `array_stretch` — wins over the kernel glyph. Captured
+    /// text that is just the kernel default
+    /// (`lists::is_kernel_labelitem_text`) still takes the
+    /// `lists::default_label` path; anything else is typeset as plain text,
+    /// the way the running-text `\labelitem<i>` arms typeset a redefinition
+    /// the expansion pass already expanded. An enumitem `label=` template
+    /// never reaches here (it wins earlier, as in real LaTeX).
+    fn itemize_default_label(&self, environment: ListEnvironment, kind_depth: u8, begin: Span) -> ItemLabel {
+        if environment == ListEnvironment::Itemize {
+            let index = kind_depth.clamp(1, 4) as usize - 1;
+            if let Some(texts) = self.labelitem_overrides.get(&(begin.document.0, begin.start)) {
+                let text = texts[index].trim();
+                if !lists::is_kernel_labelitem_text(kind_depth, text) {
+                    return ItemLabel::Template { text: apply_text_ligatures(text) };
+                }
+            }
+        }
+        lists::default_label(environment, kind_depth, 0)
     }
 
     fn push_list_frame(&mut self, environment: ListEnvironment, options: Vec<ListOption>, begin_span: Span) {

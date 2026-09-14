@@ -5,7 +5,8 @@
 //! article.cls and enumitem.sty provenance.
 
 use flashtex_compiler::parser::{
-    self, Block, CounterStyle, Inline, ItemLabel, ListEnvironment, ListLength, ListOption,
+    self, Block, CounterStyle, FontSizeLevel, Inline, ItemLabel, ListEnvironment, ListLength,
+    ListOption, TextFamily,
 };
 
 fn doc(body: &str) -> String {
@@ -343,15 +344,53 @@ fn labelitem_command_resets_style_rather_than_inheriting_it() {
 }
 
 #[test]
-#[ignore = "known bug, not fixed in this slice: the itemize environment's \
-            own default label (lists::default_label -> lists::labelitem) is \
-            a direct Rust lookup and never consults a \\renewcommand of the \
-            matching \\labelitem<i> -- see the GH-LIST-LABELS PR discussion. \
-            Fixing it needs the expansion pass to capture a \\labelitem<i> \
-            redefinition's body (the same way it already captures \
-            \\arraystretch/\\includeonly) and thread it into default_label, \
-            which is a larger change than this slice's scope."]
+fn labelitem_command_keeps_size_and_colour_but_resets_face() {
+    // `\labelitemfont` is `\normalfont` (article.cls:355-359): it resets
+    // family, series and shape only, so an active size or colour survives
+    // the marker while the surrounding face does not.
+    let source = "\\documentclass[10pt]{article}\n\\usepackage{xcolor}\n\\begin{document}\n{\\Large\\labelitemi} {\\sffamily\\itshape\\color{red}\\labelitemii}\n\\end{document}\n";
+    let parsed = parser::parse(source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let mut markers = Vec::new();
+    for block in &parsed.blocks {
+        if let Block::Paragraph(content) = block {
+            for inline in content {
+                if let Inline::Text { text, style, .. } = inline {
+                    if text == "•" || text == "–" {
+                        markers.push((text.clone(), *style));
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(markers.len(), 2, "{markers:?}");
+    // `\Large` survives the reset; level 1 stays upright roman.
+    assert_eq!(markers[0].1.size, Some(FontSizeLevel::Large2));
+    assert!(!markers[0].1.bold);
+    assert!(!markers[0].1.italic);
+    assert_eq!(markers[0].1.family, TextFamily::Roman);
+    // Level 2 keeps its own `\bfseries`, drops sans+italic, keeps red.
+    assert!(markers[1].1.bold);
+    assert!(!markers[1].1.italic);
+    assert_eq!(markers[1].1.family, TextFamily::Roman);
+    assert_eq!(markers[1].1.size, None);
+    assert_eq!(
+        markers[1].1.color.map(|c| c.fill_operator()),
+        Some("1 0 0 rg".to_string())
+    );
+}
+
+#[test]
 fn renewcommand_of_a_labelitem_changes_the_itemize_default_too() {
     let source = doc("\\renewcommand{\\labelitemi}{X}\\begin{itemize}\\item A\\end{itemize}");
     assert_eq!(label_texts(&source), ["X"], "a redefined \\labelitemi should change itemize's own default marker too");
+}
+
+#[test]
+fn renewcommand_of_a_deeper_labelitem_applies_only_at_that_nesting_level() {
+    // The expansion pass captures all four levels at each `\begin{itemize}`;
+    // the parser selects by its own `kind_depth`, so only the renewed level
+    // changes.
+    let source = doc("\\renewcommand{\\labelitemii}{Y}\\begin{itemize}\\item A\\begin{itemize}\\item B\\end{itemize}\\item C\\end{itemize}");
+    assert_eq!(label_texts(&source), ["•", "Y", "•"]);
 }
