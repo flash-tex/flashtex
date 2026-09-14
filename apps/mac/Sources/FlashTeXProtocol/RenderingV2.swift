@@ -471,7 +471,14 @@ public enum RenderingV2 {
         public static func elided(number: Int, width: Int64, height: Int64) -> Page {
             Page(number: number, width: width, height: height, content: .elided)
         }
-        public var items: [Item] { content.items }
+        /// Items of a resident page; **empty for an elided one**, which is why
+        /// everything reachable by a windowed list asks `isResident` first.
+        /// Assigning items makes the page resident, which is the only thing
+        /// "this page now has content" can mean.
+        public var items: [Item] {
+            get { content.items }
+            set { content = .resident(newValue) }
+        }
         public var isResident: Bool { content.isResident }
         public var widthPt: Double { RenderingV2.points(width) }
         public var heightPt: Double { RenderingV2.points(height) }

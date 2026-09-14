@@ -206,8 +206,8 @@ final class V2PageWindowTests: XCTestCase {
             PreviewPageLayout.Page(number: $0.number, widthPt: $0.widthPt, heightPt: $0.heightPt)
         }, scale: 1)
         XCTAssertEqual(layout.frames.count, 8)
-        XCTAssertEqual(layout.frame(of: 1)?.height, Self.pageH)
-        XCTAssertEqual(layout.frame(of: 8)?.height, Self.pageH)
+        XCTAssertEqual(layout.frame(of: 1)?.height, CGFloat(Self.pageH))
+        XCTAssertEqual(layout.frame(of: 8)?.height, CGFloat(Self.pageH))
     }
 
     /// An elided page has nothing to draw, so it must not be rasterized — and
@@ -431,6 +431,7 @@ final class V2PageWindowTests: XCTestCase {
     /// §4.1: a windowed reply never authorises a source action outside its
     /// coverage. An elided page carries no provenance, so caret sync and
     /// click-to-source must decline rather than land somewhere plausible.
+    @MainActor
     func testSourceActionsAreDeclinedForElidedPages() throws {
         let frame = try V2Frame.prepare(data: Self.data(Self.list()))
         XCTAssertFalse(frame.allowsSourceActions(page: 1))
