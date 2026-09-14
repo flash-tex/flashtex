@@ -164,6 +164,43 @@ final class EditorFirstFocusTests: XCTestCase {
         XCTAssertEqual(shifted(14, 2, 0), NSRange(location: 10, length: 4), "deleting inside shrinks it")
     }
 
+    /// Local-only (it takes keyboard focus): the owner's launch, a window that
+    /// was only ordered back, then a real click and real key events through
+    /// the window's event dispatch, as a person produces them.
+    func testFocusProbeClickThenTypeInABackgroundWindow() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["FLASHTEX_FOCUS_PROBE"] == "1", "set FLASHTEX_FOCUS_PROBE=1 (takes focus)")
+        let model = ShellModel()
+        let tv = try await hostContentView(model)
+        let window = try XCTUnwrap(self.window)
+        window.orderBack(nil)
+        try await turn()
+        func send(_ type: NSEvent.EventType, at point: NSPoint) {
+            window.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+        }
+        let length = (tv.string as NSString).length
+        let glyphs = tv.layoutManager!.glyphRange(forCharacterRange: NSRange(location: max(0, length - 1), length: 1), actualCharacterRange: nil)
+        var rect = tv.layoutManager!.boundingRect(forGlyphRange: glyphs, in: tv.textContainer!)
+        rect.origin.x += tv.textContainerOrigin.x + rect.width + 2; rect.origin.y += tv.textContainerOrigin.y + rect.height / 2
+        let point = tv.convert(rect.origin, to: nil)
+        send(.leftMouseDown, at: point); send(.leftMouseUp, at: point)
+        try await turn()
+        XCTAssertTrue(window.firstResponder === tv, "the click gives the editor first responder")
+        for ch in " \\se" {
+            let s = String(ch)
+            window.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, characters: s,
+                                              charactersIgnoringModifiers: s, isARepeat: false, keyCode: 0)!)
+        }
+        try await Task.sleep(nanoseconds: 400_000_000)
+        let popupVisible = window.childWindows?.contains { $0 is CompletionPopup && $0.isVisible } ?? false
+        XCTAssertTrue(tv.string.hasSuffix(" \\se"), "the keys reached the editor")
+        XCTAssertTrue(tv.isCompletionActive, "typing \\se opens a session")
+        XCTAssertTrue(popupVisible, "the completion panel is on screen")
+        XCTAssertGreaterThan(colourRuns(tv), 0, "the typed command is coloured")
+        tv.close(.escape)
+    }
+
     func testDocumentPresentBeforeTheEditorMountsIsColouredAndCompletes() async throws {
         let model = ShellModel()
         model.replaceProject(entryText: Self.document)
