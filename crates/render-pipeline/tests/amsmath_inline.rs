@@ -33,34 +33,9 @@ fn render(body: &str) -> (Vec<(String, String)>, bool) {
     (diags, has_math_glyph)
 }
 
-/// `\usepackage{amsmath}` itself warns `unsupported_feature`: the compiler
-/// keeps amsmath out of `package_matches_layout` on purpose, because *its
-/// own* v1 layout does not implement the package (`crates/compiler`'s
-/// `parser::package_matches_layout`: "genuinely unimplemented and change real
-/// output; they must keep warning"). That warning arrived with the
-/// `vendor/compiler` re-pin to `faa7d484` — the previous pin `e44d5917` did
-/// not emit it for amsmath — and it is about the *declaration*, not about the
-/// construct each test here is checking, which this pipeline does set (that is
-/// what the `amsmath-inline` feature is). So it is excluded by its exact
-/// wording and everything else stays strictly asserted.
-///
-/// This is a live cross-crate disagreement, not something this test settles:
-/// the line is user-visible on every amsmath document rendered through the
-/// pipeline and says "not implemented" about constructs the pipeline
-/// implements. Reported to the compiler/pipeline owners with the re-pin.
-fn is_package_declaration_warning(message: &str) -> bool {
-    message.starts_with("packages ") && message.contains("are recognised but not implemented")
-}
-
 fn assert_no_limitation_or_unsupported(construct: &str, body: &str) {
     let (diags, has_math_glyph) = render(body);
-    let flagged: Vec<&(String, String)> = diags
-        .iter()
-        .filter(|(code, message)| {
-            (code == "math_limitation" || code.starts_with("unsupported"))
-                && !is_package_declaration_warning(message)
-        })
-        .collect();
+    let flagged: Vec<&(String, String)> = diags.iter().filter(|(code, _)| code == "math_limitation" || code.starts_with("unsupported")).collect();
     assert!(flagged.is_empty(), "{construct} ({body:?}) should have no math_limitation/unsupported diagnostic, got {flagged:?}");
     assert!(has_math_glyph, "{construct} ({body:?}) produced no math glyph run at all");
 }
@@ -101,13 +76,7 @@ fn phantom_sets_an_empty_box_without_a_limitation() {
     // `\phantom` alone has no visible glyph, so gate on diagnostics only;
     // pair it with a visible atom to also confirm the formula still typesets.
     let (diags, has_math_glyph) = render("$a\\phantom{x}b$");
-    let flagged: Vec<&(String, String)> = diags
-        .iter()
-        .filter(|(code, message)| {
-            (code == "math_limitation" || code.starts_with("unsupported"))
-                && !is_package_declaration_warning(message)
-        })
-        .collect();
+    let flagged: Vec<&(String, String)> = diags.iter().filter(|(code, _)| code == "math_limitation" || code.starts_with("unsupported")).collect();
     assert!(flagged.is_empty(), "\\phantom should have no math_limitation/unsupported diagnostic, got {flagged:?}");
     assert!(has_math_glyph, "\\phantom{{x}} between two symbols produced no math glyph run");
 }
