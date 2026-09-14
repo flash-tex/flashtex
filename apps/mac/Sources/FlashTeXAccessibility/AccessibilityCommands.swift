@@ -14,7 +14,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case undo
     case commandPalette, toggleProblems, toggleCaptures
     case zoomIn, zoomOut, actualSize, fitWidth, increaseEditorFontSize, decreaseEditorFontSize, resetEditorFontSize
-    case completion, completionList, toggleComment, signatureHelp, toggleVimKeybindings
+    case completion, completionList, toggleComment, duplicateLine, moveLineUp, moveLineDown, deleteLine, joinLines, sortLinesAscending, sortLinesDescending, trimTrailingWhitespace, signatureHelp, toggleVimKeybindings
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
     case goToDefinition, goToSymbol, selectEnvironment, wrapInEnvironment, renameSymbol
     case selectPreviewItemSource
@@ -195,6 +195,38 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
         case .toggleComment:
             return Entry(command: self, title: "Toggle comment", shortcuts: ["⌘/"], menu: "Editor",
                          description: "Toggles a `% ` line comment on every line the selection touches: all commented lines are uncommented, otherwise the non-blank lines are commented; one undo step.")
+        case .duplicateLine:
+            return Entry(command: self, title: "Duplicate Line/Selection", shortcuts: ["⌘D"], menu: "Editor",
+                         description: "Duplicates every full line the selection touches, inserting the copy below as one undo step, and keeps the selection on the copy. ⌘D is Xcode Duplicate; ⇧⌘D remains Go to Matching.",
+                         menuItem: "Duplicate Line/Selection")
+        case .moveLineUp:
+            return Entry(command: self, title: "Move Line Up", shortcuts: ["⌘⌥↑"], menu: "Editor",
+                         description: "Moves every full line the selection touches up one line as one undo step, a no-op on the first line. ⌥⌘[ remains Previous Occurrence.",
+                         menuItem: "Move Line Up")
+        case .moveLineDown:
+            return Entry(command: self, title: "Move Line Down", shortcuts: ["⌘⌥↓"], menu: "Editor",
+                         description: "Moves every full line the selection touches down one line as one undo step, a no-op on the last line. ⌥⌘] remains Next Occurrence.",
+                         menuItem: "Move Line Down")
+        case .deleteLine:
+            return Entry(command: self, title: "Delete Line", shortcuts: ["⌃⌘K"], menu: "Editor",
+                         description: "Deletes every full line the selection touches as one undo step. ⌃⌘K avoids File ▸ Attach Built Compiler (⇧⌘K).",
+                         menuItem: "Delete Line")
+        case .joinLines:
+            return Entry(command: self, title: "Join Lines", shortcuts: ["⌃J"], menu: "Editor",
+                         description: "Joins the selection's lines, or the caret's line with the next, with a single space, stripping the next line's leading whitespace and a trailing % comment marker only when it ends the line.",
+                         menuItem: "Join Lines")
+        case .sortLinesAscending:
+            return Entry(command: self, title: "Sort Lines Ascending", shortcuts: ["Editor > Sort Lines Ascending"], menu: "Editor",
+                         description: "Sorts the full lines the selection touches ascending with a stable, locale-aware compare, as one undo step.",
+                         menuItem: "Sort Lines Ascending")
+        case .sortLinesDescending:
+            return Entry(command: self, title: "Sort Lines Descending", shortcuts: ["Editor > Sort Lines Descending"], menu: "Editor",
+                         description: "Sorts the full lines the selection touches descending with a stable, locale-aware compare, as one undo step.",
+                         menuItem: "Sort Lines Descending")
+        case .trimTrailingWhitespace:
+            return Entry(command: self, title: "Trim Trailing Whitespace", shortcuts: ["Editor > Trim Trailing Whitespace"], menu: "Editor",
+                         description: "Removes trailing spaces and tabs from every line of the document, leaving verbatim bodies and a line that is only \\\\ plus spaces unchanged.",
+                         menuItem: "Trim Trailing Whitespace")
         case .goToMatching:
             return Entry(command: self, title: "Go to matching", shortcuts: ["⌘⇧D"], menu: "Navigate",
                          description: "Selects the matching \\begin/\\end or \\label/\\ref for the command under the caret; misses are explained in the footer.",

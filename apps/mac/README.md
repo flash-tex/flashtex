@@ -887,7 +887,11 @@ Return at the end of a `\item …` line continues the list with a new `\item `
 (`\item[] ` for a description entry; a bare `\item` line just breaks). ⌘/
 toggles `% ` on every line the selection touches (all commented → uncomment,
 `%` with or without a space; otherwise comment the non-blank lines; one undo
-step "Toggle Comment"). The delimiter pair around the caret is highlighted
+step "Toggle Comment"). Editor ▸ Duplicate Line/Selection (⌘D), Move Line
+Up/Down (⌥⌘↑ / ⌥⌘↓), Delete Line (⌃⌘K), Join Lines (⌃J), Sort Lines
+Ascending/Descending (palette) and Trim Trailing Whitespace (palette) operate
+on the full lines the selection touches as one undo step (`EditorLineCommands.swift`).
+The delimiter pair around the caret is highlighted
 (`BraceMatcher`).
 
 Commands trigger on `\` (empty prefix lists everything supported). Invalid
@@ -976,6 +980,13 @@ explain that nothing is loaded.
 | ↑ / ↓ / Tab / ⇧Tab / Return | Completion list keys, while the list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Return/Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list, any other caret move closes it |
 | ⌘⇧Space | Signature help for the command whose argument the caret is in (also opens on `{`/`[` typed after a command name; `}`, Esc or leaving the argument closes it) |
 | ⌘/ | Toggle `% ` line comment on the selection's lines |
+| ⌘D | Duplicate Line/Selection (every full line the selection touches, copy below, one undo step; ⇧⌘D remains Go to Matching) |
+| ⌘⌥↑ / ⌘⌥↓ | Move line up / down (full lines only, no-op at the buffer edges; ⌥⌘[ / ⌥⌘] remain Previous/Next Occurrence) |
+| ⌃⌘K | Delete Line (every full line the selection touches; ⇧⌘K remains Attach Built Compiler) |
+| ⌃J | Join Lines (one space; strips the next line's leading whitespace and a trailing `%` comment marker only when it ends the line) |
+| Editor > Sort Lines Ascending | Sort Lines Ascending (stable, locale-aware compare of the touched lines; no key equivalent) |
+| Editor > Sort Lines Descending | Sort Lines Descending (stable, locale-aware compare of the touched lines; no key equivalent) |
+| Editor > Trim Trailing Whitespace | Trim Trailing Whitespace of the whole document (verbatim bodies and a line that is only `\\` plus spaces are left alone) |
 | ⌘⇧D | Go to matching `\begin`/`\end` or `\label`/`\ref` |
 | ⌃⌘J | Go to definition of the command/environment under the caret (`\newcommand`, `\def`, `\DeclareMathOperator`, `\newenvironment`; ⌘-click does the same, hover peeks the body) |
 | ⌘⇧T | Go to symbol: fuzzy picker over every heading, environment and label of the open documents |

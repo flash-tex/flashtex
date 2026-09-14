@@ -85,7 +85,7 @@ final class CommandTableTests: XCTestCase {
     /// (`ProjectSearchCommands`, Edit = `after: .textEditing`). In the panel
     /// file only the text from its `Commands` type on is read, so the
     /// window's own buttons (Search, Next Match ⌘G) are not menu items.
-    static let commandFiles = ["FlashTeXMacApp.swift", "Navigation.swift", "ProjectSearchPanel.swift", "DiagnosticsPanel.swift", "CitationRename.swift", "EditorFind.swift"]
+    static let commandFiles = ["FlashTeXMacApp.swift", "Navigation.swift", "ProjectSearchPanel.swift", "DiagnosticsPanel.swift", "CitationRename.swift", "EditorFind.swift", "EditorLineCommands.swift"]
 
     /// `Button("Title")` items with their `keyboardShortcut` and enclosing
     /// menu from `FlashTeXMacApp.swift` (File = `replacing: .newItem`,
@@ -104,6 +104,7 @@ final class CommandTableTests: XCTestCase {
                 if line.contains("CommandGroup(replacing: .newItem)") { menu = "File" }
                 else if line.contains("CommandGroup(after: .pasteboard)") || line.contains("CommandGroup(after: .textEditing)") { menu = "Edit" }
                 else if line.contains("CommandMenu(\"Navigate\")") { menu = "Navigate" }
+                else if line.contains("CommandMenu(\"Editor\")") { menu = "Editor" }
                 else if line.contains("CommandGroup(after: .sidebar)") || line.contains("CommandGroup(after: .toolbar)") { menu = "View" }
                 else if line.contains("CommandGroup(replacing: .help)") || line.contains("CommandGroup(after: .help)") { menu = "Help" }
                 else if line.contains(" Window(\"") || line.contains("WindowGroup(\"") { menu = "?" }
@@ -125,12 +126,25 @@ final class CommandTableTests: XCTestCase {
         return out
     }
 
-    /// `.keyboardShortcut("k", modifiers: [.command, .shift])` → "⌘⇧K"; `.keyboardShortcut("o")` → "⌘O".
+    /// `.keyboardShortcut("k", modifiers: [.command, .shift])` → "⌘⇧K"; `.keyboardShortcut("o")` → "⌘O";
+    /// `.keyboardShortcut(.upArrow, modifiers: [.command, .option])` → "⌘⌥↑".
     static func spell(keyboardShortcutLine line: String) -> String? {
-        guard let r = line.range(of: ".keyboardShortcut(\"") else { return nil }
-        let rest = line[r.upperBound...]
-        guard let q = rest.firstIndex(of: "\"") else { return nil }
-        let key = String(rest[..<q]).uppercased()
+        let key: String
+        let rest: Substring
+        if let r = line.range(of: ".keyboardShortcut(\"") {
+            let after = line[r.upperBound...]
+            guard let q = after.firstIndex(of: "\"") else { return nil }
+            key = String(after[..<q]).uppercased()
+            rest = after[q...]
+        } else if line.contains(".keyboardShortcut(.upArrow") {
+            key = "↑"
+            rest = line[...]
+        } else if line.contains(".keyboardShortcut(.downArrow") {
+            key = "↓"
+            rest = line[...]
+        } else {
+            return nil
+        }
         var mods = "⌘"
         if let m = rest.range(of: "modifiers: [") {
             let list = rest[m.upperBound...]
