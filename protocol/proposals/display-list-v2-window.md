@@ -557,6 +557,10 @@ the committed baseline, which predates current main and differs independently
 on 50 of 90 digests — reported on #206); `cargo test -p
 flashtex-render-pipeline` no worse than the control's failing set.
 
+At r2 that digest gate is **190 digests over 26 cases, 0 differing**, against a
+control built and run in the same directory from the same merge of main with
+this lane's changes reverted, `unmeasured: []` on both runs.
+
 **r2 adds two gates to `tests/`, both of which fail without their fix:**
 
 * `cli_e2e::a_document_over_the_reply_limit_has_a_reply_when_a_window_is_negotiated`
@@ -631,9 +635,12 @@ structures and none of which this proposal touches.
 A 16-page window, `crates/perf-bench`'s `memprofile`, against an unwindowed
 control taking the same code path (`--render-only`, so the comparison does not
 credit the window with the v1 payload and JSON line that the protocol warm path
-also builds). Re-run at r2, after the rebase onto current main and the
-negotiation, and it reproduces r1 to within 0.1 MiB — which is the point of
-re-running it:
+also builds). The table below is r1's. Re-running the 2 MB pair at r2, after
+the rebase onto current main and the negotiation, gives **2919.5 → 2037.0 MiB**
+VmRSS and **1442.9 → 922.2 MiB** live against r1's 2912.3 → 2035.8 and
+1440.7 → 920.0 — 0.2% apart, with the display-list and render-cache rows
+(247.5 → 2.5 and 693.6 → 416.1 MiB) identical to the digit. Reproducing the
+control is the point of re-running it:
 
 | | 500 KB / 385 pp | | 2 MB / 1507 pp | |
 |---|---:|---:|---:|---:|
