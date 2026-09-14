@@ -176,6 +176,8 @@ pub enum Item {
     Footnote { number: String, mark: bool, span: Span, text: Option<Vec<Item>> },
     /// `\colorbox`/`\fcolorbox` (compiler `Inline::ColorBox`).
     ColorBox(Box<ColorBoxItem>),
+    /// ulem `\uline` (compiler `Inline::Underline`).
+    Underline(Box<UnderlineItem>),
 }
 
 /// A `\colorbox`/`\fcolorbox`: `items` set as an `\hbox` on a `fill`
@@ -187,6 +189,15 @@ pub struct ColorBoxItem {
     pub frame: Option<DeviceColor>,
     pub sep_pt: f64,
     pub rule_pt: f64,
+    pub items: Vec<Item>,
+    pub span: Span,
+}
+
+/// A `\uline`: `items` set as an `\hbox`, with a `thickness_pt` rule
+/// under the baseline at the ulem default depth (`\dp` of `\hbox{{(j}}`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnderlineItem {
+    pub thickness_pt: f64,
     pub items: Vec<Item>,
     pub span: Span,
 }
@@ -1493,6 +1504,7 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
                     }
                 }
                 Inline::ColorBox(b) => walk(&b.content, out),
+                Inline::Underline(u) => walk(&u.content, out),
                 _ => {}
             }
         }
@@ -1568,6 +1580,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::Kern { span, .. } => *span,
         Inline::Tabular(t) => t.span,
         Inline::ColorBox(b) => b.span,
+        Inline::Underline(u) => u.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
     }
@@ -4064,6 +4077,10 @@ fn items_cached(
                 15u8.hash(&mut h);
                 format!("{b:?}").hash(&mut h);
             }
+            Inline::Underline(u) => {
+                18u8.hash(&mut h);
+                format!("{u:?}").hash(&mut h);
+            }
             Inline::Logo { logo, style, .. } => {
                 12u8.hash(&mut h);
                 logo.hash(&mut h);
@@ -4232,6 +4249,23 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     frame: b.frame,
                     sep_pt: b.fboxsep_pt,
                     rule_pt: b.fboxrule_pt,
+                    items: content,
+                    span,
+                })));
+                prev_end = Some(span.end);
+                prev_span = Some(span);
+                factor = 1000;
+            }
+            Inline::Underline(u) => {
+                let span = u.span;
+                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
+                after_control_word = false;
+                let content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight);
+                items.push(Item::Underline(Box::new(UnderlineItem {
+                    thickness_pt: u.thickness_pt,
                     items: content,
                     span,
                 })));

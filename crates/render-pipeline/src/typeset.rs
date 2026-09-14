@@ -116,6 +116,8 @@ pub enum BoxRec {
     Table(Rc<TableRec>),
     /// `\colorbox`/`\fcolorbox` (`Context::color_box`).
     ColorBox(Rc<ColorBoxRec>),
+    /// ulem `\uline` (`Context::underline_box`).
+    Underline(Rc<UnderlineRec>),
 }
 
 /// A laid-out `\colorbox`/`\fcolorbox`: the content as one line whose
@@ -130,6 +132,20 @@ pub struct ColorBoxRec {
     pub rule: f64,
     pub fill: flashtex_compiler::color::DeviceColor,
     pub frame: Option<flashtex_compiler::color::DeviceColor>,
+    pub span: Span,
+}
+
+/// A laid-out `\uline`: the content as one line, plus a `thickness` rule
+/// whose top is `ul_depth` below the baseline (ulem `\UL@setULdepth`:
+/// `\dp` of `\hbox{{(j}}`, max of `(` and `j`; 0.25em for cmr/lmr).
+#[derive(Clone)]
+pub struct UnderlineRec {
+    pub block: BuiltBlock,
+    pub width: f64,
+    pub height: f64,
+    pub depth: f64,
+    pub thickness: f64,
+    pub ul_depth: f64,
     pub span: Span,
 }
 
@@ -1898,6 +1914,10 @@ impl<'a> Context<'a> {
                     let (run, rec) = self.color_box(cb, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
+                AItem::Underline(ul) => {
+                    let (run, rec) = self.underline_box(ul, size);
+                    push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                }
                 AItem::Kern { amount, style } => {
                     let style = merge_base(*style, base);
                     let cx = self.dimen_context(style, style.size_or(size));
@@ -3491,6 +3511,110 @@ impl<'a> Context<'a> {
         (run, self.recs.len() - 1)
     }
 
+    /// ulem `\uline`: content as an `\hbox`, rule of `\ULthickness`
+    /// whose top is `\dp` of `\hbox{{(j}}` below the baseline.
+    fn underline_box(&mut self, ul: &adapter::UnderlineItem, size: f64) -> (pl::GlyphRun, usize) {
+        let (placed, width) = self.hbox_runs(&ul.items, size);
+        let (mut ht, mut dp) = (0.0f64, 0.0f64);
+        let mut runs = Vec::with_capacity(placed.len());
+        let mut items = Vec::with_capacity(placed.len());
+        let mut recs = Vec::with_capacity(placed.len());
+        for (run, rec, x) in placed {
+            ht = ht.max(run.height);
+            dp = dp.max(run.depth);
+            runs.push(position_run(&run, x, 0.0));
+            items.push(pl::Item::Box(run));
+            recs.push(Some(rec));
+        }
+        let n = items.len();
+        let lines = pl::Lines {
+            lines: vec![pl::Line {
+                index: 0,
+                runs,
+                baseline_y: ht,
+                height: ht,
+                depth: dp,
+                natural_width: width,
+                set_width: width,
+                ratio: 0.0,
+                badness: 0.0,
+                items: 0..n,
+                hyphenated: false,
+            }],
+            breaks: Vec::new(),
+            stats: one_line_stats(),
+            diagnostics: Vec::new(),
+            height: ht + dp,
+        };
+        let block = BuiltBlock {
+            block: pl::ParagraphBlock::body(lines),
+            items,
+            recs,
+            vertical: VBlock {
+                lines: vec![(ht, dp)],
+                penalty_before: None,
+                space_before: None,
+                parskip: None,
+                interline_penalty: 0,
+                club_penalty: 0,
+                widow_penalty: 0,
+                penalty_after: None,
+                space_after: None,
+                no_interline_first: true,
+                no_interline_after: true,
+                baselineskip: None,
+                vskip_after: Vec::new(),
+                pre_space_after: None,
+                lineskip: None,
+                contributed: None,
+                line_penalty: Vec::new(),
+                depth_after: pagebuild::DepthAfter::default(),
+            },
+            labels: Vec::new(),
+            cache_key: None,
+        };
+        let ul_depth = self.uline_depth(size);
+        let depth = dp.max(ul_depth + ul.thickness_pt);
+        self.recs.push(BoxRec::Underline(Rc::new(UnderlineRec {
+            block,
+            width,
+            height: ht,
+            depth,
+            thickness: ul.thickness_pt,
+            ul_depth,
+            span: ul.span,
+        })));
+        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height: ht, depth, source: ul.span.start..ul.span.end };
+        (run, self.recs.len() - 1)
+    }
+
+    /// ulem `\UL@setULdepth`: `\dp` of `\hbox{{(j}}` — max depth of `(`
+    /// and `j` in the current text font. For cmr/lmr that is `(` at
+    /// 0.25em (pdflatex 10pt 2.5pt, 12pt 3.0pt). Fallback 0.25em when
+    /// the face has no TFM.
+    fn uline_depth(&self, size: f64) -> f64 {
+        use crate::ids::{Encoding, EncodingCode};
+        let r = self.fonts.resolve(
+            self.style.family,
+            crate::fonts::Role::Text { bold: false, italic: false },
+            size,
+        );
+        if let (None, Some(tfm)) = (&r.substituted, &r.face.tfm) {
+            let depth = |ch: char| {
+                EncodingCode::for_char(ch, Encoding::T1)
+                    .and_then(|c| tfm.metrics(c.0))
+                    .map(|m| crate::tfm::Tfm::pt(m.depth, size))
+            };
+            match (depth('('), depth('j')) {
+                (Some(a), Some(b)) => return a.max(b),
+                (Some(a), None) => return a,
+                (None, Some(b)) => return b,
+                (None, None) => {}
+            }
+        }
+        0.25 * size
+    }
+
     /// A header or footer line,`\hb@xt@\textwidth{<left>\hfil <center>\hfil
     /// <right>}` in the `\normalsize` body font: each slot is `(text,
     /// \slshape)`; `\thepage` is upright, marks slanted. Words are separated
@@ -4586,6 +4710,7 @@ impl<'a> Context<'a> {
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Underline(u) => Some(u.span),
                 })
                 .next();
             let _ = list;
@@ -6792,6 +6917,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Underline(u) => Some(u.span),
             });
         let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
         ctx.diagnostics.push(Diagnostic::warning(
@@ -7280,6 +7406,7 @@ pub fn assemble(
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Underline(u) => Some(u.span),
                     BoxRec::Text { .. } => None,
                 });
                 diagnostics.push(Diagnostic::warning(
@@ -7493,6 +7620,33 @@ fn assemble_block(
                         items.push(block_rule(x0, r / 2.0 - cb.height, r, total - r, frame));
                         items.push(block_rule(x0 + cb.width - r, r / 2.0 - cb.height, r, total - r, frame));
                         items.push(block_rule(x0, cb.depth - r, cb.width, r, frame));
+                    }
+                }
+                BoxRec::Underline(ul) => {
+                    let x0 = local.x;
+                    let a = assemble_block(&ul.block, recs, maths, 0.0, source_of, paths, empty);
+                    let dx = Tick::from_tex_pt(x0);
+                    for line_items in &a.lines {
+                        for it in line_items {
+                            let mut item = incremental::place_item(it, Tick(0), "", 0);
+                            display::shift_x(&mut item, dx);
+                            items.push(item);
+                        }
+                    }
+                    for f in a.faces {
+                        used.entry(f.font_id.clone()).or_insert(f);
+                    }
+                    resources.extend(a.resources);
+                    unmapped.extend(a.unmapped);
+                    if ul.width > 0.0 && ul.thickness > 0.0 {
+                        items.push(display::Item::Rule(Rule {
+                            x: Tick::from_tex_pt(x0),
+                            top: Tick::from_tex_pt(ul.ul_depth),
+                            width: Tick::from_tex_pt(ul.width).max(Tick(1)),
+                            height: Tick::from_tex_pt(ul.thickness).max(Tick(1)),
+                            paint: Paint::BLACK,
+                            provenance: Provenance::Source(source_of(ul.span)),
+                        }));
                     }
                 }
                 BoxRec::Rule { width, height, bottom, span } => {
