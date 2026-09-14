@@ -85,7 +85,7 @@ final class CommandTableTests: XCTestCase {
     /// (`ProjectSearchCommands`, Edit = `after: .textEditing`). In the panel
     /// file only the text from its `Commands` type on is read, so the
     /// window's own buttons (Search, Next Match ⌘G) are not menu items.
-    static let commandFiles = ["FlashTeXMacApp.swift", "Navigation.swift", "ProjectSearchPanel.swift", "DiagnosticsPanel.swift", "CitationRename.swift", "EditorFind.swift", "EditorLineCommands.swift"]
+    static let commandFiles = ["FlashTeXMacApp.swift", "Navigation.swift", "ProjectSearchPanel.swift", "DiagnosticsPanel.swift", "CitationRename.swift", "EditorFind.swift", "EditorMenu.swift"]
 
     /// `Button("Title")` items with their `keyboardShortcut` and enclosing
     /// menu from `FlashTeXMacApp.swift` (File = `replacing: .newItem`,

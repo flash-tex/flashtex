@@ -142,7 +142,7 @@ struct FlashTeXMacApp: App {
             DiagnosticsCommands(model: model) // DiagnosticsPanel.swift: Edit > Copy Diagnostics as Text (⌘⌥C)
             Group {
                 FindCommands() // EditorFind.swift: Edit > Find submenu (⌘F, ⌥⌘F, ⌘G, ⇧⌘G, ⌘E, ⌘J)
-                EditorLineCommandMenus() // EditorLineCommands.swift: Duplicate / Move / Delete / Join / Sort / Trim
+                EditorMenuCommands() // EditorMenu.swift: one Editor menu (line commands today)
             }
             ProjectSearchCommands(openWindow: openWindow) // ProjectSearchPanel.swift: ⌘⇧F Find in Project…
             CitationRenameCommands(openWindow: openWindow) // CitationRename.swift: Edit > Rename Citation… (no shortcut)
