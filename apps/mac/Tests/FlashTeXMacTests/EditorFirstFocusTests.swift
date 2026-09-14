@@ -1,4 +1,5 @@
 import AppKit
+import HostedWindows
 import SwiftUI
 import XCTest
 @testable import FlashTeXMac
@@ -37,8 +38,8 @@ final class EditorFirstFocusTests: XCTestCase {
 
     private func host(_ model: ShellModel) async throws -> CompletingTextView {
         HostedWindowSupport.prepare()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                                                backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model))
         window.orderFrontRegardless()
         self.window = window
@@ -104,8 +105,8 @@ final class EditorFirstFocusTests: XCTestCase {
     /// The whole window, as `FlashTeXMacApp` builds it.
     private func hostContentView(_ model: ShellModel) async throws -> CompletingTextView {
         HostedWindowSupport.prepare()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 640), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 640), styleMask: [.titled],
+                                                backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: ContentView().environment(model).environmentObject(NearbyState()))
         window.orderFrontRegardless()
         self.window = window

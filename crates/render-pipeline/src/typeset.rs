@@ -116,6 +116,8 @@ pub enum BoxRec {
     Table(Rc<TableRec>),
     /// `\colorbox`/`\fcolorbox` (`Context::color_box`).
     ColorBox(Rc<ColorBoxRec>),
+    /// ulem `\uline` (`Context::underline_box`).
+    Underline(Rc<UnderlineRec>),
 }
 
 /// A laid-out `\colorbox`/`\fcolorbox`: the content as one line whose
@@ -130,6 +132,21 @@ pub struct ColorBoxRec {
     pub rule: f64,
     pub fill: flashtex_compiler::color::DeviceColor,
     pub frame: Option<flashtex_compiler::color::DeviceColor>,
+    pub span: Span,
+}
+
+/// A laid-out `\uline`/`\sout`/`\underline`: the content as one line, plus
+/// a `thickness` rule whose top is `ul_depth` from the baseline (positive
+/// down). ulem `\uline`: `\dp` of `\hbox{{(j}}`; kernel `\underline`:
+/// box depth + 3θ; `\sout`: −(0.55ex + thickness).
+#[derive(Clone)]
+pub struct UnderlineRec {
+    pub block: BuiltBlock,
+    pub width: f64,
+    pub height: f64,
+    pub depth: f64,
+    pub thickness: f64,
+    pub ul_depth: f64,
     pub span: Span,
 }
 
@@ -1979,6 +1996,50 @@ impl<'a> Context<'a> {
                         }
                     }
                 }
+                AItem::Lap { items: lapped } => {
+                    // `\llap{#1}` is `\hb@xt@\z@{\hss #1}`: the material at
+                    // its natural width, ending at the reference point.
+                    let (mut list, mut lrecs, _, _) = self.hlist(lapped, size, base, style);
+                    // `hlist` ends every list it builds with TeX's paragraph
+                    // end (`\penalty10000 \parfillskip \penalty-10000`).
+                    // That belongs to a paragraph, not to the `\hbox` this
+                    // is: left in place it breaks the line after the lapped
+                    // material, which is how every numbered listing line
+                    // came out one line below its own number.
+                    if matches!(
+                        list.last_chunk::<3>(),
+                        Some([pl::Item::Penalty(_), pl::Item::Glue(_), pl::Item::Penalty(_)])
+                    ) {
+                        list.truncate(list.len() - 3);
+                        lrecs.truncate(lrecs.len().saturating_sub(3));
+                    }
+                    let width: f64 = list
+                        .iter()
+                        .map(|i| match i {
+                            pl::Item::Box(run) => run.width,
+                            pl::Item::Glue(glue) => glue.width,
+                            pl::Item::Kern(kern) => kern.width,
+                            pl::Item::Penalty(_) => 0.0,
+                        })
+                        .sum();
+                    // The anchor: a box of no size, so the pull-back kern
+                    // behind it survives a line break (see `Item::Lap`).
+                    self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    let anchor = pl::GlyphRun {
+                        font: MATH_SENTINEL,
+                        size,
+                        glyphs: Vec::new(),
+                        width: 0.0,
+                        height: 0.0,
+                        depth: 0.0,
+                        source: 0..0,
+                    };
+                    push(&mut out, &mut recs, pl::Item::Box(anchor), Some(self.recs.len() - 1));
+                    push(&mut out, &mut recs, pl::Item::kern(-width), None);
+                    for (item, rec) in list.into_iter().zip(lrecs) {
+                        push(&mut out, &mut recs, item, rec);
+                    }
+                }
                 AItem::LeaveVmode => {
                     // The empty `\hbox` `\leavevmode` starts a paragraph
                     // with; its only job is to be undiscardable so the
@@ -2046,6 +2107,10 @@ impl<'a> Context<'a> {
                 }
                 AItem::ColorBox(cb) => {
                     let (run, rec) = self.color_box(cb, size);
+                    push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                }
+                AItem::Underline(ul) => {
+                    let (run, rec) = self.underline_box(ul, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
                 AItem::Kern { amount, style } => {
@@ -4201,6 +4266,118 @@ impl<'a> Context<'a> {
         (run, self.recs.len() - 1)
     }
 
+    /// ulem `\uline`/`\sout` or kernel `\underline`: content as an `\hbox`,
+    /// rule placed by `ul.geom`. `\uline` keeps the 0.25em-top / 0.4pt path.
+    fn underline_box(&mut self, ul: &adapter::UnderlineItem, size: f64) -> (pl::GlyphRun, usize) {
+        let (placed, width) = self.hbox_runs(&ul.items, size);
+        let (mut ht, mut dp) = (0.0f64, 0.0f64);
+        let mut runs = Vec::with_capacity(placed.len());
+        let mut items = Vec::with_capacity(placed.len());
+        let mut recs = Vec::with_capacity(placed.len());
+        for (run, rec, x) in placed {
+            ht = ht.max(run.height);
+            dp = dp.max(run.depth);
+            runs.push(position_run(&run, x, 0.0));
+            items.push(pl::Item::Box(run));
+            recs.push(Some(rec));
+        }
+        let n = items.len();
+        let lines = pl::Lines {
+            lines: vec![pl::Line {
+                index: 0,
+                runs,
+                baseline_y: ht,
+                height: ht,
+                depth: dp,
+                natural_width: width,
+                set_width: width,
+                ratio: 0.0,
+                badness: 0.0,
+                items: 0..n,
+                hyphenated: false,
+            }],
+            breaks: Vec::new(),
+            stats: one_line_stats(),
+            diagnostics: Vec::new(),
+            height: ht + dp,
+        };
+        let block = BuiltBlock {
+            block: pl::ParagraphBlock::body(lines),
+            items,
+            recs,
+            vertical: VBlock {
+                lines: vec![(ht, dp)],
+                penalty_before: None,
+                space_before: None,
+                parskip: None,
+                interline_penalty: 0,
+                club_penalty: 0,
+                widow_penalty: 0,
+                penalty_after: None,
+                space_after: None,
+                no_interline_first: true,
+                no_interline_after: true,
+                baselineskip: None,
+                vskip_after: Vec::new(),
+                pre_space_after: None,
+                lineskip: None,
+                contributed: None,
+                line_penalty: Vec::new(),
+                // TeX §890 `\brokenpenalty` follows a discretionary-broken
+                // line; the underlined fragment is one unbreakable line
+                // (`hyphenated: false`), so there is never one to follow.
+                broken_penalty: Vec::new(),
+                depth_after: pagebuild::DepthAfter::default(),
+            },
+            labels: Vec::new(),
+            cache_key: None,
+        };
+        let descender = self.uline_depth(size);
+        let ex = self.text_params(TextStyle::default(), size).x_height;
+        let (top, extra_depth) =
+            ul.geom
+                .rule_top_and_depth(ul.thickness_pt, dp, descender, ex);
+        let depth = dp.max(extra_depth);
+        self.recs.push(BoxRec::Underline(Rc::new(UnderlineRec {
+            block,
+            width,
+            height: ht,
+            depth,
+            thickness: ul.thickness_pt,
+            ul_depth: top,
+            span: ul.span,
+        })));
+        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height: ht, depth, source: ul.span.start..ul.span.end };
+        (run, self.recs.len() - 1)
+    }
+
+    /// ulem `\UL@setULdepth`: `\dp` of `\hbox{{(j}}` — max depth of `(`
+    /// and `j` in the current text font. For cmr/lmr that is `(` at
+    /// 0.25em (pdflatex 10pt 2.5pt, 12pt 3.0pt). Fallback 0.25em when
+    /// the face has no TFM.
+    fn uline_depth(&self, size: f64) -> f64 {
+        use crate::ids::{Encoding, EncodingCode};
+        let r = self.fonts.resolve(
+            self.style.family,
+            crate::fonts::Role::Text { bold: false, italic: false },
+            size,
+        );
+        if let (None, Some(tfm)) = (&r.substituted, &r.face.tfm) {
+            let depth = |ch: char| {
+                EncodingCode::for_char(ch, Encoding::T1)
+                    .and_then(|c| tfm.metrics(c.0))
+                    .map(|m| crate::tfm::Tfm::pt(m.depth, size))
+            };
+            match (depth('('), depth('j')) {
+                (Some(a), Some(b)) => return a.max(b),
+                (Some(a), None) => return a,
+                (None, Some(b)) => return b,
+                (None, None) => {}
+            }
+        }
+        0.25 * size
+    }
+
     /// A header or footer line,`\hb@xt@\textwidth{<left>\hfil <center>\hfil
     /// <right>}` in the `\normalsize` body font: each slot is `(text,
     /// \slshape)`; `\thepage` is upright, marks slanted. Words are separated
@@ -5311,6 +5488,7 @@ impl<'a> Context<'a> {
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Underline(u) => Some(u.span),
                 })
                 .next();
             let _ = list;
@@ -7760,6 +7938,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Underline(u) => Some(u.span),
             });
         let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
         ctx.diagnostics.push(Diagnostic::warning(
@@ -8248,6 +8427,7 @@ pub fn assemble(
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Underline(u) => Some(u.span),
                     BoxRec::Text { .. } => None,
                 });
                 diagnostics.push(Diagnostic::warning(
@@ -8461,6 +8641,33 @@ fn assemble_block(
                         items.push(block_rule(x0, r / 2.0 - cb.height, r, total - r, frame));
                         items.push(block_rule(x0 + cb.width - r, r / 2.0 - cb.height, r, total - r, frame));
                         items.push(block_rule(x0, cb.depth - r, cb.width, r, frame));
+                    }
+                }
+                BoxRec::Underline(ul) => {
+                    let x0 = local.x;
+                    let a = assemble_block(&ul.block, recs, maths, 0.0, source_of, paths, empty);
+                    let dx = Tick::from_tex_pt(x0);
+                    for line_items in &a.lines {
+                        for it in line_items {
+                            let mut item = incremental::place_item(it, Tick(0), "", 0);
+                            display::shift_x(&mut item, dx);
+                            items.push(item);
+                        }
+                    }
+                    for f in a.faces {
+                        used.entry(f.font_id.clone()).or_insert(f);
+                    }
+                    resources.extend(a.resources);
+                    unmapped.extend(a.unmapped);
+                    if ul.width > 0.0 && ul.thickness > 0.0 {
+                        items.push(display::Item::Rule(Rule {
+                            x: Tick::from_tex_pt(x0),
+                            top: Tick::from_tex_pt(ul.ul_depth),
+                            width: Tick::from_tex_pt(ul.width).max(Tick(1)),
+                            height: Tick::from_tex_pt(ul.thickness).max(Tick(1)),
+                            paint: Paint::BLACK,
+                            provenance: Provenance::Source(source_of(ul.span)),
+                        }));
                     }
                 }
                 BoxRec::Rule { width, height, bottom, span } => {

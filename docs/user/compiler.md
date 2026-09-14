@@ -296,7 +296,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 280 text-mode and 546 math-mode command entries, 48 environments and 17 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 290 text-mode and 546 math-mode command entries, 48 environments and 18 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -401,6 +401,15 @@ Canonical sources:
 | `\ref` | `{key}` | number of the labelled item |
 | `\pageref` | `{key}` | page number of the labelled item |
 | `\eqref` | `{key}` | parenthesised equation number of the labelled item |
+| `\cref` | `*{key list}` | cleveref lower-case named references; consecutive ranges are compressed |
+| `\Cref` | `*{key list}` | cleveref capitalised named references; consecutive ranges are compressed |
+| `\crefrange` | `*{first}{last}` | cleveref named reference range |
+| `\Crefrange` | `*{first}{last}` | capitalised cleveref named reference range |
+| `\cpageref` | `*{key list}` | cleveref named page references |
+| `\Cpageref` | `*{key list}` | capitalised cleveref named page references |
+| `\labelcref` | `*{key list}` | cleveref label text without the reference name |
+| `\crefname` | `{type}{singular}{plural}` | cleveref lower-case singular and plural name override |
+| `\Crefname` | `{type}{singular}{plural}` | cleveref capitalised singular and plural name override |
 | `\numberwithin` | `[\style]{counter}{parent}` | amsmath: counter reset by parent and printed \theparent.\style{counter} (equation, figure, table; theorem counters within section) |
 | `\counterwithin` | `{counter}{parent}` | counter reset by parent and printed \theparent.\arabic{counter}; starred form keeps the printed form |
 | `\counterwithout` | `{counter}{parent}` | undoes \counterwithin; starred form keeps the printed form |
@@ -413,6 +422,7 @@ Canonical sources:
 | `\reflectbox` | `{...}` | graphics.sty box mirrored left to right |
 | `\graphicspath` | `{{dir/}...}` | image search directories; no material |
 | `\hypersetup` | `{key=value,...}` | hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them |
+| `\lstset` | `{key=value,...}` | listings defaults, global from that point on; the key names are checked and nothing is typeset here |
 | `\allowdisplaybreaks` | `[0-4]` | amsmath page-break permission inside displays; no material |
 | `\url` | `{url}` | monospaced URL text, breaking as url.sty does; links are not clickable |
 | `\href` | `{url}{text}` | link text; links are not clickable |
@@ -849,6 +859,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `inputenc` | `utf8` | source text is already decoded as UTF-8 |
 | `fontenc` | `T1` | text glyphs are mapped from Unicode |
 | `hyperref` | `colorlinks, hidelinks, bookmarks, bookmarksopen, bookmarksnumbered, linktoc, breaklinks, unicode, pageanchor, hyperfootnotes, pdfstartview, pdfpagemode` | loading hyperref moves no glyph (measured against pdflatex, TeX Live 2025: the same document with and without it is 1062 words on 4 pages, 0 moved), and the link-colour, border, outline, viewer and pdf* metadata keys are accepted with it; \url, \href and \nolinkurl are typeset, while the PDF links, bookmarks and link colours still missing are reported once by their own diagnostic; backref and pagebackref add bibliography text and keep warning |
+| `cleveref` | `capitalise, noabbrev` | named cross-references with compressed ranges; unknown package options are silently ignored |
 | `color` | `dvipsnames, usenames` | color.sty colours with pdfTeX's exact operator values |
 | `xcolor` | `natural, rgb, cmy, cmyk, gray, dvipsnames, svgnames, x11names, table` | xcolor 3.02 definitions, expressions and target models with pdfTeX's exact operator values; hsb models, colour series and table colours are diagnosed |
 | `amsthm` | `` | \newtheorem, \theoremstyle and the proof environment |
