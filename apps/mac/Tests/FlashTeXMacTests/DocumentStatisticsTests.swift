@@ -269,4 +269,25 @@ final class WordCountModelTests: XCTestCase {
         await published(model, settles: 2)
         XCTAssertEqual(model.total?.totalWords, 4)
     }
+
+    func testCancelledScheduleNeverPublishesItsResult() async {
+        let model = WordCountModel()
+        // Capturing scheduler: neither item runs until we say so, so the
+        // second `scheduleUpdate` must cancel the still-pending first item —
+        // the real production coalescing path (`debounce?.cancel()`).
+        var captured: [DispatchWorkItem] = []
+        model.scheduleDebounce = { _, item in captured.append(item) }
+        model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One.")])
+        model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three four.")])
+        XCTAssertEqual(captured.count, 2)
+        XCTAssertTrue(captured[0].isCancelled)
+        // Even if a queue naively invoked the cancelled item anyway (real
+        // `DispatchQueue.asyncAfter` would not), the `generation` guard is a
+        // second line of defense: only the second update may publish.
+        captured[0].perform()
+        captured[1].perform()
+        let ok = await settles { model.total?.totalWords == 4 }
+        XCTAssertTrue(ok)
+        XCTAssertEqual(model.total?.totalWords, 4)
+    }
 }
