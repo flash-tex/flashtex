@@ -1120,7 +1120,10 @@ impl<'a> Context<'a> {
                 grid: g.clone(),
             })
             .collect();
-        let text_metrics = crate::mathtext::TextRunMetrics::new(fonts.metrics(), self.fonts, self.shaper, self.style.family, &sink.texts, &sink.keys).with_grids(&nested);
+        let frames = sink.frames.clone();
+        let text_metrics = crate::mathtext::TextRunMetrics::new(fonts.metrics(), self.fonts, self.shaper, self.style.family, &sink.texts, &sink.keys)
+            .with_grids(&nested)
+            .with_frames(&frames);
         let mut laid = if has_grid {
             self.grid_formula(&grid_pieces, style, &text_metrics, span)
         } else {
@@ -1128,9 +1131,11 @@ impl<'a> Context<'a> {
             layout_kerned(&ml_lists, &glue, style, &text_metrics)
         };
         let (grid_boxes, grid_limitations) = text_metrics.take_grids();
+        let (frame_boxes, frame_limitations) = text_metrics.take_frames();
         laid.limitations.extend(grid_limitations);
+        laid.limitations.extend(frame_limitations);
         let (text_runs, notices) = text_metrics.finish();
-        crate::mathtext::substitute_grids(&mut laid.root, &grid_boxes);
+        crate::mathtext::substitute_math_boxes(&mut laid.root, &grid_boxes, &frame_boxes);
         crate::mathtext::substitute(&mut laid.root, &text_runs);
         // Text-style formulas in a paragraph break after top-level Bin/Rel
         // atoms; a formula holding a grid stays one box.
@@ -4746,15 +4751,24 @@ pub fn convert_math_classed(
                 }
             }
             // `\overline`/`\underline` are Appendix G Rules 9/10 atoms;
-            // `\boxed` has no frame atom, so the body is set as a group and
-            // reported by `math_box`.
+            // `\boxed` uses the pipeline's existing framed-box placeholder
+            // and rule substitution path.
             N::Framed { body, frame } => {
                 use flashtex_compiler::math::Frame;
                 let body = sub(body, sink);
                 vec![match frame {
                     Frame::Over => ml::Atom::overline(body),
                     Frame::Under => ml::Atom::underline(body),
-                    Frame::Box => ml::Atom::group(body),
+                    Frame::Box => sink.frame_atom(body, {
+                        #[cfg(feature = "math-glyph-spans")]
+                        {
+                            math_tag(a.span)
+                        }
+                        #[cfg(not(feature = "math-glyph-spans"))]
+                        {
+                            ml::SourceTag::NONE
+                        }
+                    }),
                     // `\mathop{..}\limits` (`fontmath.ltx` 430-437): the
                     // compiler's scripts attach below as limits.
                     Frame::OverBrace => ml::Atom::brace(body, false),
@@ -5369,10 +5383,9 @@ fn ams_ex(size_pt: f64) -> f64 {
 
 /// Constructs in `list` and its sub-formulas the pipeline sets only
 /// approximately, as `math_limitation` messages (one entry per occurrence;
-/// `math_box` deduplicates by message): `\mathbf` in the roman face and
-/// `\boxed` without its frame.
+/// `math_box` deduplicates by message): `\mathbf` in the roman face.
 fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<String>) {
-    use flashtex_compiler::math::{Frame, Nucleus as N};
+    use flashtex_compiler::math::Nucleus as N;
     for a in &list.atoms {
         match &a.nucleus {
             // `\mathbf` is now set through the text sink's bold alphabet role
@@ -5380,12 +5393,7 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
             // the regular roman face, so it is no longer a math_limitation.
             N::Bold(_) => {}
             N::Rule(_) => out.push("math-mode \\rule set as horizontal space of its width: math-layout has no rule atom, nothing painted".to_string()),
-            N::Framed { body, frame } => {
-                if *frame == Frame::Box {
-                    out.push("\\boxed frame dropped: math-layout has no framed-box atom".to_string());
-                }
-                math_approximations(body, out);
-            }
+            N::Framed { body, .. } => math_approximations(body, out),
             N::Fraction { numerator, denominator } => {
                 math_approximations(numerator, out);
                 math_approximations(denominator, out);

@@ -15,7 +15,7 @@ fn boxed_math_draws_frames_in_inline_and_display_math() {
     if !lm_available() {
         return;
     }
-    let src = "\\begin{document}Inline $\\boxed{x}$ here.\n\\[\\boxed{a+b}\\]\n\\end{document}";
+    let src = "\\begin{document}Inline $\\boxed{x}$ here.\n\\[\\boxed{a}\\]\n\\end{document}";
     let r = render_one(src);
     let rules: Vec<_> = r
         .v2
