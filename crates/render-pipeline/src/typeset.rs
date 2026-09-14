@@ -1138,6 +1138,8 @@ impl<'a> Context<'a> {
         // of them `Nucleus::Text`, but only a *whole* run of math characters
         // keeps the italic correction of its last character (§752).
         let text_italic = |sp: &Span| math_text_keeps_italic(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        // `\limsup`/`\liminf`: `lim`, a thin space, then `sup`/`inf`.
+        let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\quad`/`\qquad`/`\,`/`\:`/`\;`/`\!` (compiler `Space { em }`) at
         // the top level of the formula (outside `\left...\right`): math-layout
         // has no kern atom, so the formula is split there into runs laid out
@@ -1151,7 +1153,7 @@ impl<'a> Context<'a> {
         // fraction, a script, inside `\left...\right`, another grid's cell)
         // enters math-layout as a box handle (`mathtext::GridCells`).
         let segments = split_at_spaces(list, &fence, sink.font_em_ratio());
-        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic)).collect();
+        let ml_lists: Vec<ml::MathList> = segments.iter().map(|(atoms, _)| convert_math_classed(&flashtex_compiler::math::MathList { atoms: atoms.clone() }, &mut sink, &fence, &class, &op_limits, &text_italic, &text_split)).collect();
         // Glue at a top-level grid cell's own top level is split out like
         // the formula's; only deeper glue is dropped.
         let nested_glue_em: f64 = segments
@@ -5680,7 +5682,7 @@ pub fn convert_math_fenced(list: &flashtex_compiler::math::MathList, sink: &mut 
     // No source to read, so no source-derived fact: no fence, no forced
     // class, no operator limits, and no run shown to be a whole run of math
     // characters (so no italic correction).
-    convert_math_classed(list, sink, fence, &|_| None, &|_| None, &|_| false)
+    convert_math_classed(list, sink, fence, &|_| None, &|_| None, &|_| false, &|_| None)
 }
 
 /// Maps the compiler's own atom class onto math-layout's.
@@ -5868,6 +5870,41 @@ pub fn math_text_keeps_italic(text: &str, at: usize) -> bool {
     matches!(word, "mathrm" | "bmod" | "mod" | "pmod") || NAMED_OPERATORS.iter().any(|(name, _)| *name == word)
 }
 
+/// The two log-like functions the kernel defines with a thin space inside
+/// them, split at it, re-read from the control word at the span like
+/// [`fence_of`].
+///
+/// ```text
+/// \DeclareRobustCommand\limsup{\mathop{\operator@font lim\,sup}}   % latex.ltx 15528
+/// \DeclareRobustCommand\liminf{\mathop{\operator@font lim\,inf}}   % latex.ltx 15529
+/// ```
+///
+/// Every other one of the thirty-odd log-like functions is a single word, so
+/// this is the whole list rather than a sample of it. The compiler has no
+/// glue inside a named operator and emits one `Nucleus::Text("limsup")`, so
+/// the space is re-derived here and the operator becomes a three-atom list.
+///
+/// Two consequences follow from the split, both of them TeX's:
+///
+///  - `lim` ends a run of math characters (the next node is glue, not a math
+///    char of the same family, so §753's `make_ord` never demotes its `m` to
+///    a `math_text_char`), which means it keeps its own italic correction as
+///    well. pdfTeX's `\limsup` box is
+///    `l i m \kern0.05731 \glue 1.99997 s u p`, so the gap between `m` and
+///    `s` is 2.05728 pt and not the 1.99997 pt of the glue alone.
+///  - `sup` and `inf` likewise end runs, so `\liminf` takes `f`'s 0.84708 pt
+///    correction at the end -- pdfTeX's box is 32.60657 pt and closes with
+///    `\kern0.84708`.
+pub fn operator_thin_space_split(text: &str, at: usize) -> Option<(&'static str, &'static str)> {
+    let rest = text.get(at..)?.strip_prefix('\\')?;
+    let word_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).map(char::len_utf8).sum::<usize>();
+    match &rest[..word_len] {
+        "limsup" => Some(("lim", "sup")),
+        "liminf" => Some(("lim", "inf")),
+        _ => None,
+    }
+}
+
 /// [`convert_math_fenced`] with `class` giving the forced class of a
 /// `Group` (`\mathbin{...}`) or class-overridden symbol atom at a span, and
 /// `op_limits` the limit placement of a named operator at a span
@@ -5879,13 +5916,14 @@ pub fn convert_math_classed(
     class: &dyn Fn(&flashtex_compiler::math::MathAtom) -> Option<ml::AtomClass>,
     op_limits: &dyn Fn(&Span) -> Option<ml::Limits>,
     text_italic: &dyn Fn(&Span) -> bool,
+    text_split: &dyn Fn(&Span) -> Option<(&'static str, &'static str)>,
 ) -> ml::MathList {
     use flashtex_compiler::math::{DelimiterRole, Nucleus as N};
     // Open fences: (left delimiter, atoms converted since it, its span).
     let mut stack: Vec<(Option<char>, Vec<ml::Atom>, Span)> = Vec::new();
     let mut atoms = Vec::new();
     for a in &list.atoms {
-        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits, text_italic);
+        let sub = |l: &flashtex_compiler::math::MathList, sink: &mut crate::mathtext::TextSink| convert_math_classed(l, sink, fence, class, op_limits, text_italic, text_split);
         let mut out: Vec<ml::Atom> = match &a.nucleus {
             // `\lim`, `\sin`, `\max`, ...: TeX's `\mathop` of upright roman
             // text (`latex.ltx` 15523-15556), so an `Op` atom -- which is both
@@ -5902,7 +5940,17 @@ pub fn convert_math_classed(
             // correction of the run's last character: `$\lim$` and
             // `$\mathrm{lim}$` are 16.3773 pt, `$\text{lim}$` 16.31999 pt.
             N::Text(text) => {
-                let mut atom = if text_italic(&a.span) { sink.atom_corrected(text) } else { sink.atom(text) };
+                // `\limsup`/`\liminf` are `lim\,sup` and `lim\,inf`: one
+                // operator whose nucleus is a list of two math-character runs
+                // with 3mu between them (`operator_thin_space_split`).
+                let mut atom = match text_split(&a.span) {
+                    Some((head, tail)) => {
+                        let parts = vec![sink.atom_corrected(head), ml::Atom::glue(3.0, 0.0), sink.atom_corrected(tail)];
+                        ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::List(ml::MathList::new(parts)))
+                    }
+                    None if text_italic(&a.span) => sink.atom_corrected(text),
+                    None => sink.atom(text),
+                };
                 if let Some(limits) = op_limits(&a.span) {
                     atom.class = ml::AtomClass::Op;
                     atom.limits = limits;
@@ -6498,12 +6546,14 @@ fn grid_pieces(
     // characters, re-read from the control word at the span.
     let text_italic = |sp: &Span| math_text_keeps_italic(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let text_italic = &text_italic;
+    let text_split = |sp: &Span| operator_thin_space_split(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+    let text_split = &text_split;
     let mut pieces = Vec::new();
     for (atoms, em) in segments {
         let mut run: Vec<MathAtom> = Vec::new();
         let flush = |run: &mut Vec<MathAtom>, pieces: &mut Vec<GridPiece>, sink: &mut crate::mathtext::TextSink| {
             if !run.is_empty() {
-                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits, text_italic)));
+                pieces.push(GridPiece::Run(convert_math_classed(&CList { atoms: std::mem::take(run) }, sink, fence, class, op_limits, text_italic, text_split)));
             }
         };
         for (a, top) in atoms.iter().zip(top_level_grids(atoms, fence)) {
@@ -6534,7 +6584,7 @@ fn grid_pieces(
                             _ => cell,
                         };
                         let parts = split_at_spaces(cell, fence, sink.font_em_ratio());
-                        let runs = parts.iter().map(|(atoms, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits, text_italic)).collect();
+                        let runs = parts.iter().map(|(atoms, _)| convert_math_classed(&CList { atoms: atoms.clone() }, sink, fence, class, op_limits, text_italic, text_split)).collect();
                         let glue = parts.iter().map(|(_, em)| *em).collect();
                         (runs, glue)
                     };
