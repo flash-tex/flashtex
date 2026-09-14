@@ -91,6 +91,22 @@ pub enum Inline {
     },
     LineBreak {
         span: Span,
+        /// `\\[<dimen>]`'s optional argument in TeX points, when the source
+        /// carried one: latex.ltx's `\\@normalcr` ends the line and then
+        /// `\\@xnewline` issues `\\vspace{<dimen>}`, so this is a real vertical
+        /// skip after the broken line, and a negative one is as real as a
+        /// positive one (`\\\\[-6pt]` is how a heading macro pulls a rule up
+        /// under its title).
+        ///
+        /// The parser has always *consumed* this argument -- it must not
+        /// reach the page as text -- but used to discard the value, leaving
+        /// each consumer to re-read the `[...]` out of the source bytes that
+        /// follow `span`. That works only for a `\\\\` written literally in the
+        /// document: expanded from a macro body, `span` is the *invocation*
+        /// (`crate::expansion::Converter::place`), so the bytes after it are
+        /// the call's own arguments and the skip is invisible. Reporting the
+        /// parsed value is the only way a consumer can see it at all.
+        skip_pt: Option<f64>,
     },
     /// Explicit text-mode horizontal glue (`\quad` is 1em, `\qquad` is 2em),
     /// measured in ems of the surrounding body text size. Named distinctly
@@ -1739,11 +1755,17 @@ impl P<'_> {
                         });
                         continue;
                     }
-                    // `\\[<length>]`: the vertical space is not modelled, but the
-                    // argument must not be typeset as text.
-                    self.skip_line_break_length();
+                    // `\\[<length>]`: the length is reported on the node rather
+                    // than dropped, so a consumer sees it even when the `\\\\`
+                    // came from a macro body and the bytes after `span` are
+                    // the invocation's arguments. Consuming it here (so it is
+                    // never typeset as text) is unchanged.
+                    let skip_pt = self.skip_line_break_length();
                     if render {
-                        para.push(Inline::LineBreak { span: tok.span });
+                        para.push(Inline::LineBreak {
+                            span: tok.span,
+                            skip_pt,
+                        });
                     }
                 }
                 TokenKind::LBrace => {
@@ -2405,7 +2427,7 @@ impl P<'_> {
             // bracket.
             "linebreak" => {
                 if self.mandatory_break_requested() {
-                    para.push(Inline::LineBreak { span });
+                    para.push(Inline::LineBreak { span, skip_pt: None });
                 }
             }
             "nolinebreak" => {
@@ -3511,7 +3533,10 @@ impl P<'_> {
                 continue;
             }
             if wrote_author {
-                author_content.push(Inline::LineBreak { span: author_span });
+                author_content.push(Inline::LineBreak {
+                    span: author_span,
+                    skip_pt: None,
+                });
             }
             author_content.extend(inlines);
             wrote_author = true;
@@ -5544,6 +5569,7 @@ impl P<'_> {
                 }),
                 TokenKind::LineBreak => content.push(Inline::LineBreak {
                     span: input.token.span,
+                    skip_pt: None,
                 }),
                 // `\hfill`/`\hfil` take no argument, so — unlike `\hspace`,
                 // which needs a following brace group this flat,
@@ -6049,7 +6075,7 @@ impl P<'_> {
                 _ => continue,
             };
             if !content.is_empty() && !inlines.is_empty() {
-                content.push(Inline::LineBreak { span });
+                content.push(Inline::LineBreak { span, skip_pt: None });
             }
             content.extend(inlines);
         }

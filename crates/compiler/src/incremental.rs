@@ -534,7 +534,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 style: _,
                 space_before: _,
             } => map_span(span, changes, deltas)?,
-            Inline::LineBreak { span } => map_span(span, changes, deltas)?,
+            Inline::LineBreak { span, skip_pt: _ } => map_span(span, changes, deltas)?,
             Inline::TextGlue { em: _, span } => map_span(span, changes, deltas)?,
             Inline::Math {
                 list,
@@ -816,7 +816,7 @@ fn block_signature(block: &Block) -> BlockSignature {
     };
     let span_of = |inline: &Inline| match inline {
         Inline::Text { span, .. } => *span,
-        Inline::LineBreak { span } => *span,
+        Inline::LineBreak { span, .. } => *span,
         Inline::TextGlue { span, .. } => *span,
         Inline::Math { span, .. } => *span,
         Inline::MathRows { span, .. } => *span,
