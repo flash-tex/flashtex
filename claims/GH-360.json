@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead",
+  "branch": "agent/daniel-muse-lead/stack-overflow-nesting",
+  "gh_ref": "#360",
+  "machine": "Overpriced-Hardware",
+  "note": "Nesting-limit fix for debug stack overflow, delegated by daniel-parent",
+  "started_utc": "2026-09-14T08:32:22Z",
+  "state": "claimed",
+  "task_id": "GH-360",
+  "updated_utc": "2026-09-14T08:32:22Z"
+}
