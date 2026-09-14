@@ -1307,15 +1307,43 @@ pub fn adapt_cached(
                     items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
                 }
                 items.extend(content_items);
-                blocks.push(Block::Heading {
-                    level,
-                    items,
-                    eject_before,
-                    vspace_before,
-                    number,
-                    title,
-                    span: number_span,
-                });
+                // report.cls/book.cls open `thebibliography` with
+                // `\chapter*{\bibname\@mkboth{...}}`, not article.cls's
+                // `\section*{\refname}`: a `\clearpage`, the `\@makeschapterhead`
+                // drop and the name `Bibliography`. The compiler synthesises one
+                // unnumbered level-1 heading reading `References` for every class
+                // (`parser.rs`, `thebibliography`), so a `report` bibliography was
+                // set in the flow of the preceding page under the wrong name —
+                // which is why `fixtures/real-world/thesis-chapter` came out 4
+                // pages against pdflatex's 5.
+                if has_chapters && bibliography_heading(texts, level, &number, number_span) {
+                    // Keep whatever `\label`s the contents-list machinery put
+                    // in front of the title; replace the compiler's
+                    // `References` text with `\bibname`.
+                    let mut head: Vec<Item> = items.into_iter().take_while(|i| matches!(i, Item::Label { .. })).collect();
+                    head.extend(command_words(BIBNAME, number_span));
+                    blocks.push(Block::Chapter {
+                        number: None,
+                        appendix,
+                        items: head,
+                        title: BIBNAME.to_string(),
+                        span: number_span,
+                        // `\chapter*` issues no `\chaptermark`; `thebibliography`'s
+                        // own `\@mkboth` sets both marks, which only a `headings`
+                        // page style would show (report/book default to `plain`).
+                        mark: false,
+                    });
+                } else {
+                    blocks.push(Block::Heading {
+                        level,
+                        items,
+                        eject_before,
+                        vspace_before,
+                        number,
+                        title,
+                        span: number_span,
+                    });
+                }
                 after_heading = true;
                 prev_para_end = None;
             }
@@ -4424,6 +4452,26 @@ pub(crate) fn words_at(text: &str, document: DocumentId, start: usize) -> Vec<It
         push_segment(&mut items, word.to_string(), chars, TextStyle::default());
     }
     items
+}
+
+/// `\bibname` (report.cls line 665, book.cls line 690). article.cls has
+/// `\refname` = `References` instead, which is what the compiler puts in
+/// the heading it synthesises for `thebibliography` whatever the class is.
+const BIBNAME: &str = "Bibliography";
+
+/// Whether this heading is the one the compiler synthesises for
+/// `\begin{thebibliography}`: unnumbered, level 1, and its span — which the
+/// compiler sets to the `\begin` merged with its widest-label argument —
+/// really does start there in the source.
+fn bibliography_heading(texts: &[&str], level: u8, number: &str, span: Span) -> bool {
+    if level != 1 || !number.is_empty() {
+        return false;
+    }
+    texts
+        .get(span.document.0)
+        .and_then(|t| t.get(span.start..span.end))
+        .and_then(|t| t.strip_prefix("\\begin"))
+        .is_some_and(|r| r.trim_start().starts_with("{thebibliography}"))
 }
 
 /// Words of generated text (`Chapter 1`) whose characters all point at
