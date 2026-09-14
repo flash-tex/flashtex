@@ -6066,6 +6066,23 @@ mod tests {
         assert_eq!(doc2.style.parindent_pt, 15.0);
     }
 
+    fn adapted(src: &str) -> Doc {
+        adapt(&[src], 0, &flashtex_compiler::parser::parse(src), &RenderOptions::default(), &Labels::default())
+    }
+
+    #[test]
+    fn addtolength_parindent_accumulates_after_setlength() {
+        let src = "\\documentclass{article}\n\\setlength{\\parindent}{10pt}\n\\addtolength{\\parindent}{5pt}\n\\begin{document}x\\end{document}";
+        let doc = adapted(src);
+        assert!(
+            (doc.style.parindent_pt - 15.0).abs() < 1e-6,
+            "10pt + 5pt must be 15pt, got {}",
+            doc.style.parindent_pt
+        );
+        let body = "\\documentclass{article}\\begin{document}\\setlength{\\parindent}{0pt}x\\end{document}";
+        assert!((adapted(body).style.parindent_pt).abs() < 1e-9);
+    }
+
     /// Shorthand for an item list: `W` word, `S` space, `F` fill, `Q` quad.
     fn shape(items: &[Item]) -> String {
         items
