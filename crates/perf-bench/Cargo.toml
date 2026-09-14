@@ -1,0 +1,44 @@
+[package]
+name = "flashtex-perf-bench"
+version = "0.1.0"
+edition = "2021"
+description = "Original FlashTeX engine performance harness (FT-070): cold and warm per-phase timings, peak RSS, byte-identity digests and a regression gate over the real-world and synthetic corpus."
+publish = false
+
+[[bin]]
+name = "flashtex-perf-bench"
+path = "src/main.rs"
+
+# The product path, so the harness measures exactly what the app runs. The
+# pipeline links its own pinned `vendor/compiler`, so a change under
+# `crates/compiler` is invisible here until vendor/ is re-pinned (see
+# README.md, "Which compiler am I measuring?"). There is no `--worker` flag:
+# the harness calls `protocol::handle_line` in process, and measuring an
+# unpinned `crates/compiler` needs vendor/ re-pinned first. Changes under
+# `crates/render-pipeline` itself ARE measured, because that crate is linked
+# directly rather than vendored.
+[dependencies]
+flashtex-render-pipeline = { path = "../render-pipeline" }
+flashtex-compiler = { path = "../render-pipeline/vendor/compiler" }
+flashtex-font-engine = { path = "../render-pipeline/vendor/font-engine" }
+# The same pin render-pipeline links, so there is exactly one copy in the build:
+# --warm-profile replays the pre-parser picture scan and must call that function.
+flashtex-vector-graphics = { path = "../render-pipeline/vendor/vector-graphics" }
+
+# Pinned to cargo's stock `release` values rather than left implicit, because
+# the report states the build profile and two runs are only comparable when it
+# matches. Changing anything here invalidates every committed baseline.
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 16
+panic = "unwind"
+debug = false
+
+# `--profile perf` for flamegraphs: identical codegen, line tables kept so
+# symbols resolve. Never produce a committed baseline with it (the report
+# records the profile, and the gate refuses a cross-profile comparison).
+[profile.perf]
+inherits = "release"
+debug = 1
+strip = "none"
