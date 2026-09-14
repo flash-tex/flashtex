@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use flashtex_compiler::math::MathList;
-use flashtex_compiler::parser::{Block as CBlock, Inline, Parsed};
+use flashtex_compiler::parser::{Block as CBlock, Inline, Parsed, UnderlineGeom};
 use flashtex_compiler::text_builtins::{TextDimen, TextLogo, TextRule};
 use flashtex_compiler::{DocumentId, Span};
 
@@ -176,7 +176,8 @@ pub enum Item {
     Footnote { number: String, mark: bool, span: Span, text: Option<Vec<Item>> },
     /// `\colorbox`/`\fcolorbox` (compiler `Inline::ColorBox`).
     ColorBox(Box<ColorBoxItem>),
-    /// ulem `\uline` (compiler `Inline::Underline`).
+    /// ulem `\uline`/`\sout` or kernel text `\underline` (compiler
+    /// `Inline::Underline`).
     Underline(Box<UnderlineItem>),
 }
 
@@ -193,11 +194,13 @@ pub struct ColorBoxItem {
     pub span: Span,
 }
 
-/// A `\uline`: `items` set as an `\hbox`, with a `thickness_pt` rule
-/// under the baseline at the ulem default depth (`\dp` of `\hbox{{(j}}`).
+/// A `\uline`/`\sout`/`\underline`: `items` set as an `\hbox`, with a
+/// `thickness_pt` rule placed by `geom` (ulem descender, TeXbook Rule 10,
+/// or a 0.55ex strike).
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnderlineItem {
     pub thickness_pt: f64,
+    pub geom: UnderlineGeom,
     pub items: Vec<Item>,
     pub span: Span,
 }
@@ -4266,6 +4269,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 let content = items_from_inlines_styled(texts, &u.content, styles, labels, size, heading, compiler_weight);
                 items.push(Item::Underline(Box::new(UnderlineItem {
                     thickness_pt: u.thickness_pt,
+                    geom: u.geom,
                     items: content,
                     span,
                 })));

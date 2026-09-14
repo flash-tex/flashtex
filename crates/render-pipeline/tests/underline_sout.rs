@@ -4,7 +4,10 @@
 mod common;
 
 use common::*;
-use flashtex_render_pipeline::display::Item;
+use flashtex_compiler::parser::{
+    CMR_EX_PER_EM, MATH_RULE_THETA_PT, SOUT_RAISE_EX, UL_THICKNESS_PT,
+};
+use flashtex_render_pipeline::display::{Item, Tick};
 
 fn underline_doc(class_opt: &str) -> String {
     format!(
@@ -42,7 +45,7 @@ fn page_summary(page: &flashtex_render_pipeline::display::Page) -> Vec<String> {
         .collect()
 }
 
-fn assert_text_and_rule(source: &str, needle: &str) {
+fn assert_text_and_rule(source: &str, needle: &str, want_height_pt: f64, want_top_pt: f64) {
     let rendered = render_one(source);
     let page = &rendered.v2.pages[0];
     let summary = page_summary(page);
@@ -65,6 +68,9 @@ fn assert_text_and_rule(source: &str, needle: &str) {
         .expect("glyphs");
     let text_left = first.origin_x.to_bp();
     let text_right = last.origin_x.to_bp() + last.advance_x.to_bp();
+    let baseline = first.baseline_y.to_bp();
+    let want_h = Tick::from_tex_pt(want_height_pt).to_bp();
+    let want_top = Tick::from_tex_pt(want_top_pt).to_bp();
     let rules: Vec<_> = page
         .items
         .iter()
@@ -81,6 +87,18 @@ fn assert_text_and_rule(source: &str, needle: &str) {
     assert!(
         !rules.is_empty(),
         "expected a rule spanning {needle}: {summary:?}"
+    );
+    let rule = rules[0];
+    let got_h = rule.height.to_bp();
+    let got_top = rule.top.to_bp() - baseline;
+    assert!(
+        (got_h - want_h).abs() < 0.01,
+        "rule height {want_h}bp, got {got_h}bp"
+    );
+    assert!(
+        (got_top - want_top).abs() < 0.01,
+        "rule top {want_top}bp from baseline, got {got_top}bp (page top {}, baseline {baseline})",
+        rule.top.to_bp()
     );
 }
 
@@ -127,8 +145,18 @@ fn text_mode_underline_paints_a_rule() {
     if !lm_available() {
         return;
     }
-    assert_text_and_rule(&underline_doc("[10pt]"), "under");
-    assert_text_and_rule(&underline_doc("[12pt]"), "under");
+    assert_text_and_rule(
+        &underline_doc("[10pt]"),
+        "under",
+        MATH_RULE_THETA_PT,
+        3.0 * MATH_RULE_THETA_PT,
+    );
+    assert_text_and_rule(
+        &underline_doc("[12pt]"),
+        "under",
+        MATH_RULE_THETA_PT,
+        3.0 * MATH_RULE_THETA_PT,
+    );
 }
 
 #[test]
@@ -136,6 +164,7 @@ fn sout_paints_a_rule() {
     if !lm_available() {
         return;
     }
-    assert_text_and_rule(&sout_doc("[10pt]"), "struck");
-    assert_text_and_rule(&sout_doc("[12pt]"), "struck");
+    let top_at = |size: f64| -(SOUT_RAISE_EX * CMR_EX_PER_EM * size + UL_THICKNESS_PT);
+    assert_text_and_rule(&sout_doc("[10pt]"), "struck", UL_THICKNESS_PT, top_at(10.0));
+    assert_text_and_rule(&sout_doc("[12pt]"), "struck", UL_THICKNESS_PT, top_at(12.0));
 }

@@ -135,9 +135,10 @@ pub struct ColorBoxRec {
     pub span: Span,
 }
 
-/// A laid-out `\uline`: the content as one line, plus a `thickness` rule
-/// whose top is `ul_depth` below the baseline (ulem `\UL@setULdepth`:
-/// `\dp` of `\hbox{{(j}}`, max of `(` and `j`; 0.25em for cmr/lmr).
+/// A laid-out `\uline`/`\sout`/`\underline`: the content as one line, plus
+/// a `thickness` rule whose top is `ul_depth` from the baseline (positive
+/// down). ulem `\uline`: `\dp` of `\hbox{{(j}}`; kernel `\underline`:
+/// box depth + 3θ; `\sout`: −(0.55ex + thickness).
 #[derive(Clone)]
 pub struct UnderlineRec {
     pub block: BuiltBlock,
@@ -3511,8 +3512,8 @@ impl<'a> Context<'a> {
         (run, self.recs.len() - 1)
     }
 
-    /// ulem `\uline`: content as an `\hbox`, rule of `\ULthickness`
-    /// whose top is `\dp` of `\hbox{{(j}}` below the baseline.
+    /// ulem `\uline`/`\sout` or kernel `\underline`: content as an `\hbox`,
+    /// rule placed by `ul.geom`. `\uline` keeps the 0.25em-top / 0.4pt path.
     fn underline_box(&mut self, ul: &adapter::UnderlineItem, size: f64) -> (pl::GlyphRun, usize) {
         let (placed, width) = self.hbox_runs(&ul.items, size);
         let (mut ht, mut dp) = (0.0f64, 0.0f64);
@@ -3573,15 +3574,19 @@ impl<'a> Context<'a> {
             labels: Vec::new(),
             cache_key: None,
         };
-        let ul_depth = self.uline_depth(size);
-        let depth = dp.max(ul_depth + ul.thickness_pt);
+        let descender = self.uline_depth(size);
+        let ex = self.text_params(TextStyle::default(), size).x_height;
+        let (top, extra_depth) =
+            ul.geom
+                .rule_top_and_depth(ul.thickness_pt, dp, descender, ex);
+        let depth = dp.max(extra_depth);
         self.recs.push(BoxRec::Underline(Rc::new(UnderlineRec {
             block,
             width,
             height: ht,
             depth,
             thickness: ul.thickness_pt,
-            ul_depth,
+            ul_depth: top,
             span: ul.span,
         })));
         let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height: ht, depth, source: ul.span.start..ul.span.end };
