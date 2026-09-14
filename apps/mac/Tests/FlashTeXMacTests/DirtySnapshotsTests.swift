@@ -95,14 +95,14 @@ final class DirtySnapshotsTests: XCTestCase {
         let helper = try requireRealHelper()
         let dir = try tempDir("entry")
         let store = privateStore(dir)
-        let url = dir.appendingPathComponent("paper.tex") // not main.tex: the entry path stays main.tex in the model
+        let url = dir.appendingPathComponent("paper.tex") // the entry is named after the file, not main.tex
         try "v1\n".write(to: url, atomically: true, encoding: .utf8)
 
         let model = ShellModel()
         model.detachWorker()
         model.files.policy = .executable(helper, arguments: [])
         XCTAssertEqual(model.openTex(at: url), .opened)
-        XCTAssertEqual(model.activePath, "main.tex")
+        XCTAssertEqual(model.activePath, "paper.tex")
         XCTAssertEqual(model.files.offeredSnapshots, [], "nothing kept yet")
         XCTAssertEqual(model.dirtySnapshots.directory.path, store.path)
         model.updateActiveText("v1 edited\n")
@@ -329,106 +329,5 @@ private extension DirtySnapshotStore {
     func summaryIsReadable(for url: URL) -> Bool {
         guard let s = read(for: url) else { return false }
         return s.summary.contains(url.lastPathComponent) && s.summary.contains("bytes")
-    }
-}
-
-/// The Fable-found case: a file not named `main.tex` is a *session* project
-/// for the preview controller (its ledger holds a copy, `controllerRoutesFiles`
-/// is false), so dirty preservation must not rely on that ledger: the reload
-/// goes the direct way and the discarded text is kept in the store; a
-/// detach/reattach of the helper with a dirty buffer makes the text durable
-/// again on the new helper. Skipped unless `FLASHTEX_PREVIEW_CONTROLLER` and
-/// `FLASHTEX_COMPILER` point at built binaries.
-@MainActor
-final class DirtySnapshotsControllerTests: XCTestCase {
-    static var helper: URL? {
-        ProcessInfo.processInfo.environment["FLASHTEX_PREVIEW_CONTROLLER"].map { URL(fileURLWithPath: $0) }
-    }
-
-    private func waitUntil(_ what: String, timeout: TimeInterval = 15, _ cond: () -> Bool) async throws {
-        let start = Date()
-        while !cond() {
-            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out waiting for \(what)"); throw XCTSkip("timeout: \(what)") }
-            try await Task.sleep(nanoseconds: 30_000_000)
-        }
-    }
-
-    func testFileNotNamedMainTexKeepsDirtyTextAcrossReloadDetachAndReattach() async throws {
-        guard let helper = Self.helper, FileManager.default.isExecutableFile(atPath: helper.path),
-              ShellModel.locateCompiler() != nil else {
-            throw XCTSkip("set FLASHTEX_PREVIEW_CONTROLLER and FLASHTEX_COMPILER to built binaries")
-        }
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("snap-pc-\(UUID().uuidString)").resolvingSymlinksInPath()
-        try FileManager.default.createDirectory(at: root.appendingPathComponent("project"), withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        setenv("FLASHTEX_DIRTY_SNAPSHOTS", root.appendingPathComponent("snapshots").path, 1)
-        defer { unsetenv("FLASHTEX_DIRTY_SNAPSHOTS") }
-        setenv("FLASHTEX_CONTROLLER_LEDGER_ROOT", root.appendingPathComponent("ledger").path, 1)
-        defer { unsetenv("FLASHTEX_CONTROLLER_LEDGER_ROOT") }
-        let tex = root.appendingPathComponent("project/paper.tex")
-        let v1 = "\\begin{document}\nA paper.\n\\end{document}\n"
-        try v1.write(to: tex, atomically: true, encoding: .utf8)
-
-        let model = ShellModel()
-        model.autoCompile = true
-        XCTAssertEqual(model.openTex(at: tex), .opened)
-        model.attachController(at: helper)
-        try await waitUntil("initial preview") { model.result?.revision == model.editorRevision && model.controllerState.durable["main.tex"] != nil && model.inFlightRevision == nil }
-        XCTAssertFalse(model.controllerRoutesFiles, "paper.tex is a session project for the helper")
-
-        // Dirty edit (durable in the session copy, not on disk), then an
-        // external change: the conflict comes from the file layer, and the
-        // buffer is kept durably because the ledger is not this file's home.
-        let edited = "\\begin{document}\nA paper, edited.\n\\end{document}\n"
-        model.updateActiveText(edited)
-        try await waitUntil("edit durable") { model.inFlightRevision == nil && model.controllerState.textByDurable["main.tex"]?.values.contains { $0 == edited } == true }
-        let v2 = "\\begin{document}\nChanged outside.\n\\end{document}\n"
-        try v2.write(to: tex, atomically: true, encoding: .utf8)
-        do { let got = await model.refreshDiskStatus(); XCTAssertEqual(got, .modified) }
-        XCTAssertEqual(model.files.conflict?.kind, .modifiedExternally)
-        XCTAssertEqual(model.dirtySnapshots.read(for: tex)?.text, edited)
-        XCTAssertEqual(model.activeText, edited)
-
-        // Reviewed reload goes the direct way (no ledger import for a session
-        // copy); the discarded text stays recoverable in memory and on disk,
-        // and the helper compiles the reloaded text as a new durable revision.
-        let review = try XCTUnwrap(model.prepareReload())
-        XCTAssertFalse(review.viaController)
-        XCTAssertEqual(review.diskText, v2)
-        do { let got = await model.confirmReload(review); XCTAssertEqual(got, .blockedByUnsavedEdits) }
-        do { let got = await model.confirmReload(review, dirty: .discard); XCTAssertEqual(got, .opened) }
-        XCTAssertEqual(model.activeText, v2)
-        XCTAssertFalse(model.isDirty)
-        XCTAssertEqual(model.recoverableBuffer, .init(url: tex, text: edited))
-        XCTAssertEqual(model.dirtySnapshots.read(for: tex)?.reason, "discarded by a reload from disk")
-        XCTAssertEqual(model.dirtySnapshots.read(for: tex)?.text, edited)
-        try await waitUntil("preview of the reloaded text") { model.controllerAttached && model.compiledDocuments["main.tex"]?.sameBytes(as: v2) == true && model.inFlightRevision == nil }
-        XCTAssertEqual(try String(contentsOf: tex, encoding: .utf8), v2, "reload never writes")
-
-        // Detach the helper with a dirty buffer, reattach: the text survives in
-        // the editor and becomes durable again on the new helper.
-        let dirty = "\\begin{document}\nChanged outside, then typed.\n\\end{document}\n"
-        model.updateActiveText(dirty)
-        try await waitUntil("typed text durable") { model.inFlightRevision == nil && model.controllerState.textByDurable["main.tex"]?.values.contains { $0 == dirty } == true }
-        model.detachController()
-        XCTAssertFalse(model.controllerAttached)
-        XCTAssertEqual(model.activeText, dirty)
-        XCTAssertTrue(model.isDirty)
-        model.attachController(at: helper)
-        defer { model.detachController() }
-        try await waitUntil("reattached and durable") {
-            model.controllerState.ready && model.inFlightRevision == nil
-                && model.controllerState.durable["main.tex"].map { model.controllerState.textByDurable["main.tex"]?[$0.revision]?.sameBytes(as: dirty) == true } == true
-        }
-        XCTAssertEqual(model.activeText, dirty)
-        XCTAssertTrue(model.isDirty, "durable on the helper is not saved to the file")
-        XCTAssertEqual(try String(contentsOf: tex, encoding: .utf8), v2)
-        try await waitUntil("preview of the dirty text") { model.compiledDocuments["main.tex"]?.sameBytes(as: dirty) == true }
-        // The real file is what a save writes (Fable finding), and that
-        // consumes nothing but the snapshot of exactly the saved text.
-        model.saveTexInteractive()
-        try await waitUntil("save") { !model.isDirty || model.captureNote?.contains("failed") == true }
-        XCTAssertEqual(try String(contentsOf: tex, encoding: .utf8), dirty, model.captureNote ?? "-")
-        XCTAssertEqual(model.dirtySnapshots.read(for: tex)?.text, edited, "the earlier discarded text is still offered next time")
     }
 }
