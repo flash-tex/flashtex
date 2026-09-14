@@ -1190,6 +1190,7 @@ pub fn parse_project_with(
         in_body: !has_document,
         document_ended: false,
         document_class: None,
+        seen_documentclass: false,
         class_size_pt: None,
         parskip_pt: None,
         packages: Vec::new(),
@@ -1328,6 +1329,11 @@ struct P<'a> {
     in_body: bool,
     document_ended: bool,
     document_class: Option<String>,
+    /// Whether `\documentclass` has been seen at all — even with an empty
+    /// argument that records no class name. `\DocumentMetadata` must come
+    /// before `\documentclass` regardless, so that position check reads
+    /// this flag, not whether a class name is known.
+    seen_documentclass: bool,
     class_size_pt: Option<f64>,
     parskip_pt: Option<f64>,
     packages: Vec<String>,
@@ -2540,6 +2546,10 @@ impl P<'_> {
     }
 
     fn document_class(&mut self, span: Span) {
+        // Any invocation counts as "seen" for `\DocumentMetadata` ordering —
+        // even `\documentclass{}` with an empty argument, which warns below
+        // and records no class name.
+        self.seen_documentclass = true;
         let options = self.optional_bracket_argument();
         let option_list: Vec<&str> = options
             .as_ref()
@@ -2584,12 +2594,13 @@ impl P<'_> {
     /// Its keys (PDF tagging, PDF/A conformance, the document language)
     /// feed PDF-generation machinery this compiler does not implement, so
     /// before `\documentclass` they are accepted with a warning naming
-    /// them. `document_class` records whether `\documentclass` has already
-    /// been seen, so no new preamble tracking is needed.
+    /// them. `seen_documentclass` records whether `\documentclass` has
+    /// already been invoked (even with an empty argument), which is what
+    /// the position check reads.
     fn document_metadata(&mut self, span: Span) {
         let (tokens, argument_span) = self.required_group("DocumentMetadata", span);
         let full_span = span.merge(argument_span);
-        if self.document_class.is_some() {
+        if self.seen_documentclass {
             self.diags.push(Diagnostic::error(
                 "\\DocumentMetadata must come before \\documentclass",
                 Some(full_span),
@@ -2597,9 +2608,45 @@ impl P<'_> {
             ));
             return;
         }
-        let raw = token_text(&tokens);
-        let mut keys: Vec<String> = raw
-            .split(',')
+        // `token_text` drops braces, so rebuild a brace-faithful rendering
+        // first: `testphase={phase-III,math,table}` is ONE key whose braced
+        // value happens to contain commas, not three keys. (Command names
+        // cannot contain `{`, `}` or `,`, so rendering a command as its bare
+        // name cannot disturb the depth tracking.)
+        let mut rich = String::new();
+        for input in &tokens {
+            match &input.token.kind {
+                TokenKind::Word(text) | TokenKind::Command(text) => rich.push_str(text),
+                TokenKind::Space | TokenKind::ParBreak => rich.push(' '),
+                TokenKind::LBrace => rich.push('{'),
+                TokenKind::RBrace => rich.push('}'),
+                _ => {}
+            }
+        }
+        // Split on top-level commas only: track brace depth character by
+        // character and only split when no `{...}` value is open.
+        let mut parts: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0usize;
+        for ch in rich.chars() {
+            match ch {
+                '{' => {
+                    depth += 1;
+                    current.push(ch);
+                }
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    current.push(ch);
+                }
+                ',' if depth == 0 => {
+                    parts.push(std::mem::take(&mut current));
+                }
+                _ => current.push(ch),
+            }
+        }
+        parts.push(current);
+        let mut keys: Vec<String> = parts
+            .iter()
             .map(|part| {
                 let part = part.trim();
                 part.split_once('=')
