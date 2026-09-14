@@ -434,6 +434,27 @@ pub struct ListGeom {
     /// the glue every paragraph of the item adds. Article's `\@list<i>`
     /// value for the nesting level, or an enumitem `parsep=` key.
     pub parsep: crate::style::Skip,
+    /// The innermost list's `\makelabel` and label geometry.
+    pub label_style: ItemLabel,
+}
+
+/// How the innermost `\list` sets an `\item`'s label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ItemLabel {
+    /// `itemize`/`enumerate`/`thebibliography` (latex.ltx `\@mklab`,
+    /// `\makelabel##1{\hss\llap{##1}}`): right-aligned in `\labelwidth`,
+    /// its right edge `\labelsep` before the text.
+    #[default]
+    Llap,
+    /// `description` (article.cls lines 360-365):
+    /// `\list{}{\labelwidth\z@ \itemindent-\leftmargin
+    /// \let\makelabel\descriptionlabel}` with `\descriptionlabel#1` =
+    /// `\hspace\labelsep\normalfont\bfseries #1`. The label is set at its
+    /// natural width in the bold body face, starting at the *enclosing*
+    /// margin (`\itemindent` takes this list's own `\leftmargin` back off
+    /// the first line), and the item text follows one `\labelsep` later;
+    /// continuation lines still hang at `\@totalleftmargin`.
+    Description,
 }
 
 /// One list level's `\leftmargin`.
@@ -464,6 +485,44 @@ pub enum ChromeEvent {
     PageNumbering(flashtex_class_geometry::Numbering),
     /// `\setcounter{page}{n}`.
     SetPage(i64),
+}
+
+/// A `\paragraph`/`\subparagraph` heading held until the paragraph it runs
+/// into (`\@startsection` with `#5 <= 0`).
+///
+/// `\@sect` puts such a heading in `\@svsechd` instead of setting it, and
+/// `\@xsect` installs an `\everypar` that, on the *next* paragraph, removes
+/// that paragraph's `\parindent` box (`{\setbox\z@\lastbox}`), unboxes the
+/// heading and adds `\hskip -#5`. So the heading is never a vertical block:
+/// its words open the following paragraph's first line, and only
+/// `\@startsection`'s `\addvspace{#4}` stands above it.
+#[derive(Debug, Clone)]
+struct RunInHeading {
+    /// The heading's items, `\@startsection`'s `#3` indent first (if any)
+    /// and the `\hskip -#5` last.
+    items: Vec<Item>,
+    /// `\addvspace{#4}` plus whatever the heading's own unit carried.
+    addvspace_before: f64,
+    eject_before: bool,
+    vspace_before: f64,
+}
+
+/// Set a held run-in heading as a paragraph of its own, for the case where
+/// no paragraph follows it.
+fn flush_run_in(blocks: &mut Vec<Block>, head: Option<RunInHeading>) {
+    let Some(head) = head else { return };
+    blocks.push(Block::Paragraph {
+        parts: vec![ParaPart::Lines(head.items)],
+        indent: false,
+        style: ParaStyle::default(),
+        env_open: None,
+        env_close: false,
+        eject_before: head.eject_before,
+        vspace_before: head.vspace_before,
+        addvspace_before: head.addvspace_before,
+        endlist_adjust: 0.0,
+        list: None,
+    });
 }
 
 /// How a paragraph-shape environment began (see [`Block::Paragraph`]).
@@ -803,7 +862,26 @@ pub fn adapt_cached(
     if let Some(pt) = setlength_in(source, "parskip", size, em_ex) {
         style.parskip = crate::style::Skip::fixed(pt);
     }
-    let secnumdepth = counter(source, "secnumdepth").unwrap_or(options.default_secnumdepth);
+    // `\renewcommand{\baselinestretch}{f}` / `\linespread{f}`: every
+    // `\@setfontsize` multiplies its size's `\baselineskip` by `f`.
+    if let Some(f) = baselinestretch(source) {
+        style.set_baselinestretch(f);
+    }
+    // `\c@secnumdepth`: the class's own `\setcounter{secnumdepth}{...}`
+    // (article.cls line 255 `{3}`, report.cls/book.cls `{2}`), which
+    // `class-geometry` resolves as `ResolvedDocument::secnumdepth`. A
+    // document-only input (no `\documentclass`) keeps the caller's default.
+    // Before this, the body headings used `options.default_secnumdepth` (2)
+    // for every class, so `\subsubsection` was never numbered in `article`
+    // while the contents list (which already read the class value below)
+    // numbered it -- the two now read one value.
+    let class_secnumdepth = style
+        .class_geometry
+        .as_ref()
+        .filter(|_| explicit_class.is_some())
+        .and_then(|d| u8::try_from(d.secnumdepth).ok())
+        .unwrap_or(options.default_secnumdepth);
+    let secnumdepth = counter(source, "secnumdepth").unwrap_or(class_secnumdepth);
     style.nfss = crate::nfss::Scheme::for_document(&parsed.packages, t1_encoding(source));
     let styles: Vec<Styles> = texts.iter().map(|t| Styles::new(style_intervals(t), style.nfss)).collect();
     let labels_fp = {
@@ -866,13 +944,10 @@ pub fn adapt_cached(
     // the next block. Nothing is collected without a list.
     let toc_active = commands.iter().any(|c| matches!(c.kind, BodyKind::ContentsList(_)));
     let toc_settings = crate::toc::Settings::read(source, has_chapters);
-    // `\@sect` writes `\numberline` up to the class's `secnumdepth`
-    // (article.cls 3, report/book.cls 2) when the document declares one.
-    let toc_secnumdepth = counter(source, "secnumdepth").unwrap_or(match (explicit_class.is_some(), has_chapters) {
-        (true, true) => 2,
-        (true, false) => 3,
-        (false, _) => options.default_secnumdepth,
-    });
+    // `\@sect` writes `\numberline` up to the same `\c@secnumdepth` the
+    // heading itself is numbered by (article.cls 3, report/book.cls 2 when
+    // the document declares a class): one counter, one value.
+    let toc_secnumdepth = secnumdepth;
     let mut toc_records: Vec<crate::toc::Record> = Vec::new();
     let mut toc_lists: Vec<(usize, crate::toc::ListKind, Span, bool)> = Vec::new();
     let mut toc_pending: Vec<String> = Vec::new();
@@ -881,10 +956,21 @@ pub fn adapt_cached(
     // Last source span of the previous paragraph block (None after a
     // heading or rule), for rejoining a display with its paragraph.
     let mut prev_para_end: Option<Span> = None;
+    // A `\paragraph`/`\subparagraph` heading waiting for the paragraph it
+    // runs into (see `RunInHeading`).
+    let mut run_in: Option<RunInHeading> = None;
     for unit in split_at_page_breaks(texts, &lowered, size, &style) {
         let mut eject_before = unit.eject_before;
         let vspace_before = unit.vspace_before;
         limitations.extend(unit.limitations);
+        // A run-in heading with nothing to run into (a heading, rule or
+        // picture follows it): `\@xsect`'s `\everypar` fires on whatever
+        // paragraph comes next, and with none it is set on its own.
+        if run_in.is_some() && !matches!(unit.kind, UnitKind::Paragraph { .. }) {
+            flush_run_in(&mut blocks, run_in.take());
+            after_heading = false;
+            prev_para_end = None;
+        }
         let unit_start = match &unit.kind {
             UnitKind::Heading { number_span, .. } => Some(*number_span),
             UnitKind::Paragraph { inlines, .. } => inlines.iter().map(inline_span).next(),
@@ -1145,7 +1231,44 @@ pub fn adapt_cached(
                     }
                     items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
                 }
+                let content_items_len = content_items.len();
                 items.extend(content_items);
+                let h = style.heading(level);
+                if let Some(em) = h.run_in_em {
+                    // `\@startsection` with `#5 <= 0`: `\@xsect` puts the
+                    // heading in `\@svsechd` and sets it from the *next*
+                    // paragraph's `\everypar`, which first takes that
+                    // paragraph's `\parindent` box back off
+                    // (`{\setbox\z@\lastbox}`) and then follows the heading
+                    // with `\hskip -#5`. So the heading never becomes a
+                    // vertical block of its own; it is held here until the
+                    // paragraph it belongs to.
+                    //
+                    // It is also set inside that paragraph, whose base style
+                    // is not bold, so `\@startsection`'s `\bfseries` has to
+                    // reach the items themselves -- the display form takes it
+                    // from `heading_block`'s base style instead and only
+                    // cancels it where the title says `\normalfont`.
+                    let mut items = items;
+                    items.truncate(items.len() - content_items_len);
+                    items.extend(items_for_weighted(content, true));
+                    if h.indent_pt != 0.0 {
+                        // `#3`: `\subparagraph` starts `\parindent` in.
+                        items.insert(0, Item::HSpace { pt: h.indent_pt });
+                    }
+                    items.push(Item::Quad { em });
+                    run_in = Some(RunInHeading {
+                        items,
+                        // `\addvspace{#4}` before the heading, as for any
+                        // other `\@startsection` level.
+                        addvspace_before: unit.addvspace_before + h.before.natural,
+                        eject_before,
+                        vspace_before,
+                    });
+                    after_heading = false;
+                    prev_para_end = None;
+                    continue;
+                }
                 blocks.push(Block::Heading {
                     level,
                     items,
@@ -1197,6 +1320,12 @@ pub fn adapt_cached(
                 // own scoping inside a theorem-like environment.
                 let mut items = items_for_weighted(inlines, in_theorem);
                 items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
+                // A held `\paragraph`/`\subparagraph` heading opens this
+                // paragraph's first line (`\@xsect`'s `\everypar`).
+                let run_in_head = run_in.take();
+                if let Some(head) = &run_in_head {
+                    items.splice(0..0, head.items.iter().cloned());
+                }
                 let mut parts = Vec::new();
                 let mut current = Vec::new();
                 for item in items {
@@ -1282,7 +1411,8 @@ pub fn adapt_cached(
                 // empty opener line, no indent after the display).
                 let first_span = inlines.iter().map(inline_span).next();
                 let starts_display = matches!(parts.first(), Some(ParaPart::Display { .. } | ParaPart::Rows { .. }));
-                if let (Some(Block::Paragraph { parts: prev_parts, style: prev_style, list: prev_list, .. }), Some(f), Some(p)) = (blocks.last_mut(), first_span, prev_para_end) {
+                let joinable = run_in_head.is_none();
+                if let (Some(Block::Paragraph { parts: prev_parts, style: prev_style, list: prev_list, .. }), Some(f), Some(p)) = (blocks.last_mut().filter(|_| joinable), first_span, prev_para_end) {
                     // Labels only, or a `label_line` (labels then one space).
                     let label_only = |p: &ParaPart| matches!(p, ParaPart::Lines(items) if items.iter().all(|i| matches!(i, Item::Label { .. } | Item::Space { .. })));
                     // A display's `\label` is flushed after it as a part of
@@ -1348,13 +1478,15 @@ pub fn adapt_cached(
                 // ones after it, `quote` likewise.
                 blocks.push(Block::Paragraph {
                     parts,
-                    indent: !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent,
+                    // `\@xsect`'s `{\setbox\z@\lastbox}` takes the
+                    // `\parindent` box off a run-in heading's paragraph.
+                    indent: run_in_head.is_none() && !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent,
                     style: styled.unwrap_or_default(),
                     env_open,
                     env_close: false,
-                    eject_before,
-                    vspace_before,
-                    addvspace_before: unit.addvspace_before,
+                    eject_before: eject_before || run_in_head.as_ref().is_some_and(|h| h.eject_before),
+                    vspace_before: vspace_before + run_in_head.as_ref().map_or(0.0, |h| h.vspace_before),
+                    addvspace_before: unit.addvspace_before + run_in_head.as_ref().map_or(0.0, |h| h.addvspace_before),
                     endlist_adjust: unit.endlist_adjust,
                     list,
                 });
@@ -1362,6 +1494,7 @@ pub fn adapt_cached(
             }
         }
     }
+    flush_run_in(&mut blocks, run_in.take());
     // The contents lists, now that every record is known.
     for (at, kind, span, eject) in toc_lists.into_iter().rev() {
         let list = crate::toc::list_blocks(kind, span, eject, &toc_settings, &toc_records, labels, &chapter_starts);
@@ -1836,6 +1969,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                     margins: list_margins(src, at.start, size),
                     label: label.clone(),
                     parsep: seps.parsep_skip,
+                    label_style: if env == "description" { ItemLabel::Description } else { ItemLabel::Llap },
                 });
             }
         }
@@ -2300,6 +2434,60 @@ pub fn parskip(source: &str, size: u32) -> Option<f64> {
     setlength(source, "parskip", size)
 }
 
+/// `\baselinestretch` as the source last set it, or `None` for the kernel's
+/// `\def\baselinestretch{1}`.
+///
+/// latex.ltx defines the macro and `\@setfontsize` ends with
+/// `\baselineskip\baselinestretch\baselineskip`, so the value in force at a
+/// size selection multiplies that size's leading. The source can set it as
+/// `\renewcommand{\baselinestretch}{<f>}` (braced or unbraced first
+/// argument, `*`-form included), `\def\baselinestretch{<f>}`, or
+/// `\linespread{<f>}`, which latex.ltx defines as exactly the first of
+/// those. The last one in the source wins, as for `\setlength`.
+pub fn baselinestretch(source: &str) -> Option<f64> {
+    let factor = |text: &str| text.trim().parse::<f64>().ok().filter(|f| f.is_finite() && *f > 0.0);
+    fn braced(rest: &str) -> Option<&str> {
+        let r = rest.trim_start().strip_prefix('{')?;
+        let end = r.find('}')?;
+        Some(&r[..end])
+    }
+    let mut found = None;
+    for name in ["renewcommand", "newcommand", "providecommand", "def", "linespread"] {
+        let mut from = 0;
+        while let Some(at) = find_command(&source[from..], name) {
+            let abs = from + at;
+            from = abs + 1;
+            let rest = &source[abs + 1 + name.len()..];
+            let rest = rest.strip_prefix('*').unwrap_or(rest);
+            let value = if name == "linespread" {
+                braced(rest)
+            } else {
+                // `\renewcommand\baselinestretch{f}` and
+                // `\renewcommand{\baselinestretch}{f}` are the same call.
+                let rest = rest.trim_start();
+                let rest = match rest.strip_prefix('{') {
+                    Some(r) => r.trim_start().strip_prefix("\\baselinestretch").and_then(|r| r.trim_start().strip_prefix('}')),
+                    None => rest.strip_prefix("\\baselinestretch"),
+                }?;
+                // Skip `[<n>]`/`[<n>][<default>]`, which a sane source will
+                // not write here but `\newcommand` allows.
+                let mut rest = rest.trim_start();
+                while let Some(r) = rest.strip_prefix('[') {
+                    let Some(end) = r.find(']') else { break };
+                    rest = r[end + 1..].trim_start();
+                }
+                braced(rest)
+            };
+            if let Some(f) = value.and_then(factor) {
+                if found.is_none_or(|(prev, _): (usize, f64)| prev < abs) {
+                    found = Some((abs, f));
+                }
+            }
+        }
+    }
+    found.map(|(_, f)| f)
+}
+
 /// The last `\setlength{\<name>}{<dimen>}` of the source, in points.
 fn setlength(source: &str, name: &str, size: u32) -> Option<f64> {
     setlength_in(source, name, size, None)
@@ -2477,7 +2665,7 @@ fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Styl
 /// Whether `rest` (starting at a `\begin`) opens `itemize`/`enumerate`.
 fn list_env_after_begin(rest: &str) -> bool {
     let after = rest.strip_prefix("\\begin").unwrap_or(rest).trim_start();
-    after.starts_with("{itemize}") || after.starts_with("{enumerate}") || after.starts_with("{thebibliography}")
+    after.starts_with("{itemize}") || after.starts_with("{enumerate}") || after.starts_with("{description}") || after.starts_with("{thebibliography}")
 }
 
 /// `\endtrivlist` for every `\end{itemize}`/`\end{enumerate}` in `gap`
@@ -2510,7 +2698,7 @@ fn list_end_adjust(source: &str, gap_start: usize, gap: &str, size: u32, style: 
 fn gap_has_list_end(gap: &str) -> Option<&'static str> {
     let end = rfind_command(gap, "end")?;
     let rest = gap[end + "\\end".len()..].trim_start();
-    ["itemize", "enumerate", "thebibliography"].into_iter().find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}"))))
+    ["itemize", "enumerate", "description", "thebibliography"].into_iter().find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}"))))
 }
 
 /// The `\setlist[<envs>]{<keys>}` calls of `source`, in order:
@@ -2573,7 +2761,7 @@ fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str)> {
         let Some(inner) = rest.strip_prefix('{') else { continue };
         let Some(close) = inner.find('}') else { continue };
         let env = inner[..close].trim();
-        if !matches!(env, "itemize" | "enumerate" | "thebibliography") {
+        if !matches!(env, "itemize" | "enumerate" | "description" | "thebibliography") {
             continue;
         }
         if is_begin {

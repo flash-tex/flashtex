@@ -78,6 +78,13 @@ math-glyph-spans = []
 # all; the re-derivation stays as the fallback. Builds only against a
 # vendor/compiler that carries the public field; off until vendor/ is re-pinned.
 math-class-override = []
+# `\paragraph`/`\subparagraph` run-in headings. The pipeline arm
+# (`adapter::RunInHeading`, `Stylesheet::heading` levels 4 and 5) is inert
+# against a vendor/compiler that does not emit `Block::Heading` above level 3,
+# so the code itself needs no feature -- but `tests/run_in_headings.rs`
+# measures the result against pdflatex and can only pass once vendor/compiler
+# is re-pinned past the compiler-side PR. Off until then.
+run-in-headings = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }
