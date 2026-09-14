@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/mathtools-colons",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/417",
   "machine": "Overpriced-Hardware",
   "note": "mathtools colon relations, delegated by daniel-parent gap sweep",
   "started_utc": "2026-09-14T16:20:50Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-MATHTOOLS-COLONS",
-  "updated_utc": "2026-09-14T16:20:50Z"
+  "updated_utc": "2026-09-14T17:07:50Z"
 }
