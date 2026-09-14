@@ -162,7 +162,7 @@ private struct WorkspaceToolbar: ToolbarContent {
 // result the status bar, PreviewPane and ProblemsPanel; bridge traffic the
 // bridge bar only.
 
-private struct EditorPane: View {
+struct EditorPane: View {
     @Environment(ShellModel.self) var model
     /// Vim `:set nu` / `:set nonu` (VimMode.swift); the gutter is on by default.
     @State private var lineNumbers = true
@@ -303,7 +303,7 @@ private struct BridgeBar: View {
     }
 }
 
-private struct PreviewPane: View {
+struct PreviewPane: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
@@ -358,7 +358,7 @@ private struct PreviewPane: View {
 /// The preview column's header: source badge, compile status, freshness
 /// (historical / stale / compiling) and the layout capabilities — the former
 /// top banner, kept to one line with details in tooltips.
-private struct PreviewHeader: View {
+struct PreviewHeader: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
@@ -439,7 +439,7 @@ private struct PreviewHeader: View {
 /// active document, compile latency, the route (fixture / worker /
 /// controller), then the last navigation, staleness or capture note, and an
 /// exact-export progress control while one runs.
-private struct StatusBar: View {
+struct StatusBar: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {

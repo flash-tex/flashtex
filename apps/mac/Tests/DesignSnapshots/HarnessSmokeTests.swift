@@ -6,6 +6,7 @@
 import SwiftUI
 import XCTest
 
+@MainActor
 final class HarnessSmokeTests: XCTestCase {
     /// A deliberately trivial surface using semantic colours, so a failure
     /// here is the harness and never the app.
