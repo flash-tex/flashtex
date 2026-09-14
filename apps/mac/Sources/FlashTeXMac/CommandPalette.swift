@@ -19,7 +19,7 @@ enum CommandPaletteModel {
 
     /// Commands the palette cannot run: they are keys inside the editor, a
     /// mouse action on the preview, or a key that only the search window has.
-    static let notRunnable: Set<AccessibilityCommand> = [.completion, .completionList, .toggleComment, .duplicateLine, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch]
+    static let notRunnable: Set<AccessibilityCommand> = [.completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch]
 
     static func isRunnable(_ command: AccessibilityCommand) -> Bool { !notRunnable.contains(command) }
 
