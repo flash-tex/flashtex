@@ -2613,9 +2613,23 @@ impl P<'_> {
         // value happens to contain commas, not three keys. (Command names
         // cannot contain `{`, `}` or `,`, so rendering a command as its bare
         // name cannot disturb the depth tracking.)
+        //
+        // A control symbol such as `\,` lexes as a standalone one-character
+        // `Word` (see the lexer), while a real separator comma is always
+        // swept into a longer word (`world,lang=en` is a single token) — so
+        // a `Word` that is exactly `,`, `{` or `}` is an escaped literal,
+        // not syntax. Those hide behind placeholders while splitting (a
+        // literal `\{` must not open a brace group either) and are restored
+        // in each split-out part afterwards.
+        const ESCAPED_COMMA: char = '\u{E000}';
+        const ESCAPED_OPEN: char = '\u{E001}';
+        const ESCAPED_CLOSE: char = '\u{E002}';
         let mut rich = String::new();
         for input in &tokens {
             match &input.token.kind {
+                TokenKind::Word(text) if text == "," => rich.push(ESCAPED_COMMA),
+                TokenKind::Word(text) if text == "{" => rich.push(ESCAPED_OPEN),
+                TokenKind::Word(text) if text == "}" => rich.push(ESCAPED_CLOSE),
                 TokenKind::Word(text) | TokenKind::Command(text) => rich.push_str(text),
                 TokenKind::Space | TokenKind::ParBreak => rich.push(' '),
                 TokenKind::LBrace => rich.push('{'),
@@ -2649,9 +2663,12 @@ impl P<'_> {
             .iter()
             .map(|part| {
                 let part = part.trim();
+                let part = part
+                    .replace(ESCAPED_COMMA, ",")
+                    .replace(ESCAPED_OPEN, "{")
+                    .replace(ESCAPED_CLOSE, "}");
                 part.split_once('=')
-                    .map_or(part, |(key, _)| key.trim())
-                    .to_string()
+                    .map_or(part.clone(), |(key, _)| key.trim().to_string())
             })
             .filter(|key| !key.is_empty())
             .collect();
@@ -4861,33 +4878,68 @@ impl P<'_> {
         let start = first.span.start;
         let document = first.span.document;
         let mut end = first.span.end;
-        let mut found = first_word.contains(']');
-        let mut raw = first_word.clone();
-        self.i += 1;
-        while !found && self.i < self.t.len() {
-            let token = &self.t[self.i].token;
+        // `{`/`}` lex as their own tokens (`is_special`), so a `]` inside a
+        // `{...}` group only closes the bracket at depth 0. `index` walks
+        // ahead of `self.i` so the word holding the closing `]` can keep
+        // its tail: `[2024]VISIBLE` lexes as one `Word`, and consuming the
+        // whole token would silently drop `VISIBLE` — instead the tail is
+        // rewritten back into the stream (as `trim_word_prefix` does).
+        let mut raw = String::new();
+        let mut depth = 0usize;
+        let mut found = false;
+        let mut index = self.i;
+        while index < self.t.len() {
+            let token = self.t[index].token.clone();
             end = token.span.end;
             match &token.kind {
                 TokenKind::Word(word) => {
-                    raw.push_str(word);
-                    found = word.contains(']');
+                    // The `[` opens the argument, so the first word's first
+                    // byte is skipped; every later word starts at byte 0.
+                    let from = usize::from(index == self.i).min(word.len());
+                    let body = &word[from..];
+                    if depth == 0 {
+                        if let Some(close) = body.find(']') {
+                            raw.push_str(&body[..close]);
+                            let tail = body[close + 1..].to_string();
+                            let span = token.span;
+                            let literal = span.end - span.start == word.len();
+                            if literal && !tail.is_empty() {
+                                end = span.start + from + close + 1;
+                            }
+                            if tail.is_empty() {
+                                self.i = index + 1;
+                            } else {
+                                if let Some(slot) = self.token_mut(index) {
+                                    if literal {
+                                        slot.token.span =
+                                            Span::in_document(span.document, end, span.end);
+                                    }
+                                    slot.token.kind = TokenKind::Word(tail);
+                                }
+                                self.i = index;
+                            }
+                            found = true;
+                            break;
+                        }
+                    }
+                    raw.push_str(body);
                 }
                 TokenKind::Space | TokenKind::ParBreak => raw.push(' '),
                 TokenKind::Command(name) => {
                     raw.push('\\');
                     raw.push_str(name);
                 }
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => depth = depth.saturating_sub(1),
                 _ => {}
             }
-            self.i += 1;
+            index += 1;
+        }
+        if !found {
+            self.i = index;
         }
         let span = Span::in_document(document, start, end);
-        let content = raw
-            .strip_prefix('[')
-            .unwrap_or(&raw)
-            .split_once(']')
-            .map_or(raw.as_str(), |(inside, _)| inside)
-            .to_string();
+        let content = raw;
         if !found {
             self.diags.push(Diagnostic::error(
                 "optional argument is missing its closing ']'",

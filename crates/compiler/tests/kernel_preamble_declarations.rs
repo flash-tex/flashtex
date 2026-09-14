@@ -62,6 +62,32 @@ fn needstexformat_before_documentclass_is_silent() {
 }
 
 #[test]
+fn text_glued_after_bracket_argument_is_kept() {
+    // `[`/`]` are ordinary lexer word characters, so `[2024]VISIBLE` is a
+    // single `Word` token: the bracket reader must consume exactly up to
+    // the matching `]` and leave `VISIBLE` in the stream.
+    let out = compile(&format!(
+        "\\documentclass{{article}}\n\\begin{{document}}\n\\ProvidesFile{{foo.cfg}}[2024]VISIBLE\n\\end{{document}}\n"
+    ));
+    assert!(
+        out.diagnostics.is_empty(),
+        "no diagnostics: {:?}",
+        out.diagnostics
+    );
+    let seen = words(&out);
+    assert!(
+        seen.iter().any(|word| word.contains("VISIBLE")),
+        "text glued after `]` is still typeset: {:?}",
+        seen
+    );
+    assert!(
+        !seen.iter().any(|word| word.contains("2024")),
+        "the bracket itself is still consumed: {:?}",
+        seen
+    );
+}
+
+#[test]
 fn missing_required_argument_is_a_parse_error() {
     for command in [
         "NeedsTeXFormat",
@@ -159,6 +185,29 @@ fn document_metadata_nested_braces_are_a_single_key() {
 }
 
 #[test]
+fn document_metadata_escaped_comma_is_not_a_separator() {
+    // `\,` lexes as a standalone one-character `Word`, while a real
+    // separator comma always sits inside a longer word — so the escaped
+    // comma stays part of `foo`'s value instead of splitting out `world`.
+    let out = compile(&format!(
+        "\\DocumentMetadata{{foo=hello\\,world,lang=en}}\n\\documentclass{{article}}\n{BODY}"
+    ));
+    assert_eq!(
+        out.diagnostics.len(),
+        1,
+        "exactly one diagnostic: {:?}",
+        out.diagnostics
+    );
+    let diagnostic = &out.diagnostics[0];
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    assert_eq!(
+        diagnostic.message, "\\DocumentMetadata keys have no effect in this compiler: foo, lang",
+        "escaped comma stays inside the value: {:?}",
+        diagnostic.message
+    );
+}
+
+#[test]
 fn document_metadata_after_empty_documentclass_is_an_error() {
     let out = compile(&format!(
         "\\documentclass{{}}\n\\DocumentMetadata{{lang=en-US}}\n{BODY}"
@@ -192,10 +241,10 @@ fn document_metadata_after_documentclass_is_an_error() {
         .filter(|d| d.severity == Severity::Error)
         .collect();
     assert!(
-        errors
-            .iter()
-            .any(|d| d.message.contains("DocumentMetadata")),
-        "a real error, not a warning: {:?}",
+        errors.iter().any(|d| d
+            .message
+            .contains("\\DocumentMetadata must come before \\documentclass")),
+        "this PR's ordering error, not a generic preamble error: {:?}",
         out.diagnostics
     );
     assert_eq!(words(&out), bare_words, "no stray output text");
