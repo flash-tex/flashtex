@@ -6,7 +6,8 @@ import AppKit
 /// `doCommandBy` dispatch (SourceEditorView.swift), and one closure property
 /// plus a single call site in Completion.swift's snippet insertion, so a
 /// completion's placeholder closer (`\section{}`) is tracked for overtype the
-/// same way a hand-typed `{` already is.
+/// same way a hand-typed `{` already is. LaTeX-aware Re-indent Lines / Document
+/// (⌃I) lives in EditorIndentation.swift so this file stays Tab/Shift-Tab only.
 enum EditorKeyHandling {
     /// One text-storage edit in the *original* text's coordinates.
     struct LineEdit: Equatable {
@@ -202,6 +203,24 @@ extension SourceEditorView.Coordinator {
         if let completing = tv as? CompletingTextView, completing.isCompletionActive { return false }
         let text = currentText(of: tv)
         let range = tv.selectedRange()
+        // The fix at the caret sits between the modal lanes and indentation.
+        //
+        // Completion and snippets come first and are already handled above and
+        // in `CompletingTextView.keyDown`: both are mid-interaction, the author
+        // is looking at them, and Tab plainly belongs to them. Indentation
+        // comes after, but only loses the key on three conditions, so Tab never
+        // does something invisible:
+        //   - a fix is actually offered (`parent.caretFix` is non-nil, which is
+        //     the same value that draws the hint, and Esc has not taken it down);
+        //   - the selection is empty — Tab on a multi-line selection is
+        //     unambiguously "indent this block", never "fix a word in it";
+        //   - it is Tab, not ⇧Tab, which always means outdent.
+        // With no fix offered this falls straight through and Tab indents
+        // exactly as it did before.
+        if !reverse, range.length == 0, parent.caretFix != nil {
+            parent.onAcceptCaretFix()
+            return true
+        }
         let unit = EditorPreferences.shared.indentString
         if reverse {
             guard let (edits, selection) = EditorKeyHandling.outdentEdits(in: text, range: range, unit: unit) else { return true }
