@@ -74,6 +74,8 @@ enum CommandPaletteModel {
         case .exportPDF: model.exportPDF()
         case .exportPDFViaRust: model.exportPDFViaRust()
         case .exportPDFExact: model.exportPDFExact()
+        case .printDocument: model.printDocument()
+        case .printSource: model.printSource()
         case .pinInsertionPoint: model.pinAnchorAtCaret()
         case .openCaptureProposal: model.openProposalPanel()
         case .submitSampleCapture: model.submitSampleCapturePanel()
