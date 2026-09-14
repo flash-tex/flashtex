@@ -723,6 +723,8 @@ impl<'d> Converter<'d> {
                     "\\" => conv.push(TokenKind::LineBreak, at),
                     "[" => conv.push(TokenKind::DisplayMathOpen, at),
                     "]" => conv.push(TokenKind::DisplayMathClose, at),
+                    "(" => conv.push(TokenKind::InlineMathOpen, at),
+                    ")" => conv.push(TokenKind::InlineMathClose, at),
                     "par" if !real_text.starts_with('\\') && at.real.is_some() => conv.push(TokenKind::ParBreak, at),
                     "verb" | "verb*" => {
                         let verb = at
