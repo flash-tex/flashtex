@@ -105,6 +105,11 @@ pub enum Piece {
     The(String),
     /// `\arabic{counter}` and friends.
     Value(String, NumberStyle),
+    /// `\ifnum \c@<counter>>\z@ <then>\fi`: the pieces are contributed
+    /// only while that counter is non-zero. report.cls prints `\thefigure`
+    /// this way, so a figure before the first `\chapter` is "1" rather than
+    /// "0.1".
+    IfPositive(String, Vec<Piece>),
 }
 
 /// One named counter.
@@ -152,12 +157,37 @@ impl Counters {
     /// The class counters outside sectioning that article.cls leaves
     /// unreset: `equation`, `figure` and `table` (`\newcounter{equation}`
     /// etc., printed `\@arabic`), and amsmath's `parentequation` used by
-    /// `subequations`. report/book register `equation`/`figure`/`table`
-    /// within `chapter` on top of this ([`Counters::counter_within`]).
+    /// `subequations`.
     pub fn define_body_counters(&mut self) {
         for name in ["equation", "figure", "table", "parentequation"] {
             self.define(name, None);
         }
+    }
+
+    /// report.cls/book.cls: `chapter`, `section` numbered within it
+    /// (`\thesection` is `\thechapter.\@arabic\c@section`), then
+    /// `subsection` and `subsubsection` as in article.
+    ///
+    /// `equation`, `figure` and `table` are reset by `chapter`
+    /// (`\@addtoreset`) and printed
+    /// `\ifnum \c@chapter>\z@ \thechapter.\fi \@arabic\c@<name>` --
+    /// note the guard, which [`Counters::counter_within`] (`\counterwithin`)
+    /// does not have: a figure in the front matter of a report, before any
+    /// `\chapter`, is "1", not "0.1".
+    pub fn report() -> Self {
+        let mut counters = Counters::default();
+        counters.define("chapter", None);
+        counters.number_within("section", "chapter");
+        counters.number_within("subsection", "section");
+        counters.number_within("subsubsection", "subsection");
+        counters.define_body_counters();
+        for name in ["equation", "figure", "table"] {
+            let child = counters.index(name).expect("just defined");
+            let chapter = counters.index("chapter").expect("just defined");
+            counters.add_to_reset(child, chapter);
+            counters.counters[child].the = within_chapter_pieces(name);
+        }
+        counters
     }
 
     fn index(&self, name: &str) -> Option<usize> {
@@ -333,10 +363,19 @@ impl Counters {
     }
 
     fn format(&self, index: usize, depth: usize) -> String {
+        self.format_pieces(&self.counters[index].the, depth)
+    }
+
+    fn format_pieces(&self, pieces: &[Piece], depth: usize) -> String {
         let mut out = String::new();
-        for piece in &self.counters[index].the {
+        for piece in pieces {
             match piece {
                 Piece::Text(text) => out.push_str(text),
+                Piece::IfPositive(name, then) => {
+                    if self.value(name).unwrap_or(0) > 0 && depth < THE_DEPTH {
+                        out.push_str(&self.format_pieces(then, depth + 1));
+                    }
+                }
                 Piece::The(name) => {
                     if let Some(other) = self.index(name).filter(|_| depth < THE_DEPTH) {
                         out.push_str(&self.format(other, depth + 1));
@@ -354,6 +393,18 @@ impl Counters {
 }
 
 /// `\the<parent>.\<style>{name}`.
+/// report.cls/book.cls `\the<name>` for a body counter:
+/// `\ifnum \c@chapter>\z@ \thechapter.\fi \@arabic\c@<name>`.
+fn within_chapter_pieces(name: &str) -> Vec<Piece> {
+    vec![
+        Piece::IfPositive(
+            "chapter".to_string(),
+            vec![Piece::The("chapter".to_string()), Piece::Text(".".to_string())],
+        ),
+        Piece::Value(name.to_string(), NumberStyle::Arabic),
+    ]
+}
+
 fn within_pieces(name: &str, parent: &str, style: NumberStyle) -> Vec<Piece> {
     vec![
         Piece::The(parent.to_string()),
@@ -365,6 +416,34 @@ fn within_pieces(name: &str, parent: &str, style: NumberStyle) -> Vec<Piece> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_prefixes_body_counters_with_the_chapter_only_once_one_exists() {
+        // report.cls: `\thefigure` is
+        // `\ifnum \c@chapter>\z@ \thechapter.\fi \@arabic\c@figure`,
+        // so the guard matters in the front matter -- `\counterwithin`'s
+        // unconditional `\thechapter.\arabic{figure}` would print "0.1".
+        let mut counters = Counters::report();
+        assert_eq!(counters.step("figure").as_deref(), Some("1"));
+        assert_eq!(counters.step("figure").as_deref(), Some("2"));
+
+        assert_eq!(counters.step("chapter").as_deref(), Some("1"));
+        // Stepping `chapter` resets every body counter registered within it.
+        assert_eq!(counters.step("figure").as_deref(), Some("1.1"));
+        assert_eq!(counters.step("equation").as_deref(), Some("1.1"));
+        assert_eq!(counters.step("table").as_deref(), Some("1.1"));
+        // `\thesection` is unconditional in report.cls, unlike the three above.
+        assert_eq!(counters.step("section").as_deref(), Some("1.1"));
+        assert_eq!(counters.step("subsection").as_deref(), Some("1.1.1"));
+
+        assert_eq!(counters.step("chapter").as_deref(), Some("2"));
+        assert_eq!(counters.step("figure").as_deref(), Some("2.1"));
+        assert_eq!(counters.step("section").as_deref(), Some("2.1"));
+        // `\setcounter{chapter}{0}` puts the guard back (book.cls does this
+        // for the front matter).
+        assert!(counters.set_value("chapter", 0));
+        assert_eq!(counters.step("figure").as_deref(), Some("2"));
+    }
 
     #[test]
     fn article_sectioning_numbers_and_resets_transitively() {
