@@ -62,7 +62,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "verb", "hyphenation", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
     "PassOptionsToPackage", "AtBeginDocument",
     // Cross-references and links.
-    "eqref", "autoref", "cref", "Cref", "nameref", "url", "href", "hyperref", "hyperlink",
+    "eqref", "autoref", "nameref", "url", "href", "hyperref", "hyperlink",
     "hypertarget", "citep", "citet", "citeauthor", "addbibresource", "printbibliography",
     // Colour and graphics packages.
     "tikz",
@@ -251,7 +251,8 @@ pub fn command_package(name: &str) -> Option<&'static str> {
         "addbibresource" | "printbibliography" => Some("biblatex"),
         "eqref" | "intertext" | "shortintertext" | "substack" | "DeclareMathOperator"
         | "numberwithin" | "allowdisplaybreaks" => Some("amsmath"),
-        "cref" | "Cref" => Some("cleveref"),
+        "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
+        | "labelcref" | "crefname" | "Crefname" => Some("cleveref"),
         "autoref" | "nameref" | "url" | "href" | "hyperref" | "hyperlink" | "hypertarget"
         | "hypersetup" => Some("hyperref"),
         "geometry" => Some("geometry"),
