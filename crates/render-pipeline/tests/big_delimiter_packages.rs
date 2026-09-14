@@ -57,6 +57,36 @@ fn big_bracket(class_option: &str, amsmath: bool) -> (u16, String) {
     panic!("no `[` glyph painted for {class_option} amsmath={amsmath}");
 }
 
+/// The painted glyph-box heights of `\bigl[`/`\Bigl[`/`\biggl[`/`\Biggl[` in
+/// command order, in PDF points. These are the Latin Modern Math boxes used
+/// by the corresponding cmex variants in the pdfLaTeX oracle.
+fn big_bracket_heights(class_option: &str, amsmath: bool) -> Vec<f64> {
+    use flashtex_render_pipeline::display::RunRole;
+
+    let fonts = FontSet::with_default_dirs(&[]);
+    let preamble = if amsmath { "\\usepackage{amsmath}" } else { "" };
+    let text = format!(
+        "\\documentclass[{class_option}]{{article}}{preamble}\\begin{{document}}\\[\\bigl[ x \\bigr] \\quad \\Bigl[ x \\Bigr] \\quad \\biggl[ x \\biggr] \\quad \\Biggl[ x \\Biggr]\\]\\end{{document}}"
+    );
+    let docs = [SourceDocument { path: "main.tex", text: &text }];
+    let r = render(&docs, "main.tex", 1, "p", &fonts, &RenderOptions::default());
+    r.v2
+        .pages
+        .iter()
+        .flat_map(|page| page.items.iter())
+        .filter_map(|item| match item {
+            Item::GlyphRun(run) if run.role == RunRole::Math => Some(run),
+            _ => None,
+        })
+        .flat_map(|run| run.glyphs.iter().map(move |g| (run, g)))
+        .filter_map(|(run, glyph)| {
+            let cluster = run.clusters.get(glyph.cluster as usize)?;
+            let ch = run.text[cluster.text_start_byte..cluster.text_end_byte].chars().next()?;
+            (ch == '[').then(|| cluster.hit_rect.height.to_bp())
+        })
+        .collect()
+}
+
 /// Without amsmath the kernel's lengths are absolute: the *same* cmex
 /// variant at the *same* size in a 10, 11 and 12 pt document.
 ///
@@ -92,6 +122,25 @@ fn with_amsmath_big_tracks_the_body_size() {
         .map(|c| big_bracket(c, true).1)
         .collect();
     assert_eq!(sizes, vec!["9.9626", "10.9091", "11.9552"], "amsmath's \\bBigg@ scales");
+}
+
+#[test]
+fn twelve_point_big_delimiter_heights_match_pdflatex() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let expected = [
+        [12.0, 18.00017, 24.00022, 30.00029],
+        [14.40013, 21.60021, 28.80028, 36.00035],
+    ];
+    for (amsmath, reference) in [false, true].into_iter().zip(expected) {
+        let got = big_bracket_heights("12pt", amsmath);
+        assert_eq!(got.len(), reference.len(), "12pt amsmath={amsmath}: {got:?}");
+        for (i, (got, want)) in got.into_iter().zip(reference).enumerate() {
+            assert!((got / flashtex_render_pipeline::display::BP_PER_TEX_PT - want).abs() < 0.02, "12pt amsmath={amsmath} delimiter {i}: got {got:.5}bp, want {want:.5}pt");
+        }
+    }
 }
 
 /// `amssymb`/`amsfonts` are the msam/msbm *symbol fonts*; neither loads
