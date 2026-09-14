@@ -12,6 +12,7 @@
 pub mod date;
 pub use date::TodayDate;
 pub mod adapter;
+pub(crate) mod amsthm;
 pub mod cff;
 pub mod delta;
 pub mod display;

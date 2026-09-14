@@ -238,13 +238,16 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 key.hash(h);
             }
             Item::ItalicCorrection => 6u8.hash(h),
+            Item::NoteParBreak => 200u8.hash(h),
             Item::HFill { fill } => {
                 7u8.hash(h);
                 fill.hash(h);
             }
-            Item::HSpace { pt } => {
+            Item::HSpace { pt, stretch_pt, shrink_pt } => {
                 8u8.hash(h);
                 pt.to_bits().hash(h);
+                stretch_pt.to_bits().hash(h);
+                shrink_pt.to_bits().hash(h);
             }
             Item::Logo { logo, style, span } => {
                 9u8.hash(h);

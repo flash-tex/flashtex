@@ -26,6 +26,29 @@
 //! ejecting one more page with the ordinary foot first when the last foot
 //! is taller than the foot and no longer fits. `\endlongtable` closes with
 //! `\addvspace\LTpost` (280).
+//!
+//! # `\LTchunksize` is deliberately not modelled
+//!
+//! The body is also cut into chunks of `\LTchunksize` rows (65: 200 by
+//! default), each its own `\halign`: `\LT@t@bularcr` closes the chunk at
+//! row `\LTchunksize` (303-312) and `\LT@get@widths` (395-429) folds its
+//! column widths into `\LT@save@row` with `\LT@max@sel`, the running
+//! maximum. A chunk can therefore only be as wide as the widest cell *seen
+//! so far*, so on a run where a later chunk turns out wider, the earlier
+//! chunks are already set narrower — and that is exactly the state
+//! longtable reports as `Column widths have changed` (260-266). It also
+//! writes the final widths to the `.aux` (253-259), so the next run starts
+//! from the maximum and every chunk is set at the same width.
+//!
+//! This module measures the whole table once, which is what a converged
+//! run produces. Verified against pdflatex on two shapes: 260 rows with
+//! the widest cell past the default 200-row boundary, and 30 rows with
+//! `\LTchunksize=5` and the widest cell in the sixth chunk. Both warn on
+//! pass 1 and are silent on pass 2, and the corpus references (two passes,
+//! like every oracle run here) match this module's single measurement to
+//! the last decimal — 104-longtable-chunk-boundary and
+//! 105-longtable-ltchunksize. Modelling chunking would only reproduce the
+//! *unconverged* first pass, which is not what a document renders as.
 
 use crate::table::{self, MCell, Metrics, TableEntry, TableItem, Widths};
 use flashtex_compiler::tabular::{self as ct, LongtableSection};
