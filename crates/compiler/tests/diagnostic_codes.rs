@@ -239,3 +239,30 @@ fn math_mode_help_is_real_or_absent() {
     assert_eq!(env.len(), 1, "{:?}", tabbing.diagnostics);
     assert!(env[0].help.is_none(), "restating help: {:?}", env[0].help);
 }
+
+#[test]
+fn undefined_ref_help_points_at_the_ref_key() {
+    let near = compile_full(r"See \ref{s2}. \label{s1}", LayoutConstraints::default());
+    let matching: Vec<_> = near
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("undefined"))
+        .collect();
+    assert_eq!(matching.len(), 1, "{:?}", near.diagnostics);
+    assert_eq!(
+        matching[0].help.as_ref().map(|h| h.message.as_str()),
+        Some("a label `s1` exists; did you mean \\ref{s1}?")
+    );
+
+    let none = compile_full(r"See \ref{missing}.", LayoutConstraints::default());
+    let matching: Vec<_> = none
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("undefined"))
+        .collect();
+    assert_eq!(matching.len(), 1, "{:?}", none.diagnostics);
+    assert_eq!(
+        matching[0].help.as_ref().map(|h| h.message.as_str()),
+        Some("add a matching \\label{...} or fix the key; undefined references render as ??")
+    );
+}

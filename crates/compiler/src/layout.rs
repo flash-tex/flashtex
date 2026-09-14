@@ -2039,7 +2039,7 @@ pub fn layout_converged(
                 key,
                 state.0.keys().map(String::as_str),
             ) {
-                Some(near) => format!("did you mean \\label{{{near}}}? undefined references render as ??"),
+                    Some(near) => format!("a label `{near}` exists; did you mean \\ref{{{near}}}?"),
                 None => "add a matching \\label{...} or fix the key; undefined references render as ??".into(),
             }));
         }
