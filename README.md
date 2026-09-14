@@ -273,6 +273,10 @@ fixtures/            real-world documents with pdfLaTeX reference PDFs
 docs/                user guides, contracts, evidence reports
 ```
 
+## Community
+
+Questions, feedback and release news: the FlashTeX Discord — <https://discord.gg/J4kHDJmTrD>.
+
 ## Contributing
 
 Issues and pull requests: <https://github.com/flash-tex/flashtex>. CI builds
