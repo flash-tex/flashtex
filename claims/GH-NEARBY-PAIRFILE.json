@@ -1,11 +1,11 @@
 {
-  "actor": "daniel-parent",
+  "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/nearby-pairfile-lock",
-  "gh_ref": "#2",
-  "machine": "mac-m5pro-dq222",
-  "note": "handed to daniel-muse-lead",
-  "started_utc": "2026-09-14T16:09:36Z",
-  "state": "released",
+  "gh_ref": null,
+  "machine": "Overpriced-Hardware",
+  "note": "PairFile lock + Sendable conformances, from #375 audit",
+  "started_utc": "2026-09-14T16:12:52Z",
+  "state": "claimed",
   "task_id": "GH-NEARBY-PAIRFILE",
-  "updated_utc": "2026-09-14T16:11:50Z"
+  "updated_utc": "2026-09-14T16:12:52Z"
 }
