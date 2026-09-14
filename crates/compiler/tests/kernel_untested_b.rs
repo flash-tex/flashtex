@@ -90,16 +90,17 @@ fn providecommand_defines_when_undefined_but_never_overrides() {
     assert!(!all.contains("Second"), "providecommand did not override: {all:?}");
 }
 
-#[ignore = "bug: engine-level \\refstepcounter never reaches the parser's \\label (\\ref renders empty)"]
+#[ignore = "known bug (supervisor to file issue): `\\refstepcounter` label invisible to `\\ref` — `\\newcounter{myc}\\refstepcounter{myc}\\label{mylab}Value \\arabic{myc}, ref \\ref{mylab}.` renders `Value1,ref.` (empty ref) instead of `Value1,ref1.`"]
 #[test]
 fn refstepcounter_makes_the_counter_the_current_label() {
     let output = compile(r"\newcounter{myc}\refstepcounter{myc}\label{mylab}Value \arabic{myc}, ref \ref{mylab}.");
     assert_supported(&output);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    // Both the direct rendering and the \label/\ref round-trip read "1".
+    // Correct output: both the direct rendering and the \label/\ref
+    // round-trip read "1". Currently the \ref renders empty.
     assert_eq!(
-        texts(&output).iter().filter(|text| *text == "1").count(),
-        2,
+        texts(&output),
+        ["Value", "1", ",", "ref", "1", "."],
         "{:?}",
         texts(&output)
     );
@@ -110,21 +111,33 @@ fn renewenvironment_replaces_the_environment_expansion() {
     let output = compile(r"\newenvironment{shout}{Hi }{!}\renewenvironment{shout}{Yo }{?}\begin{shout}Bob\end{shout}");
     assert_supported(&output);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    let all = joined(&output);
-    assert!(all.contains("Yo"), "redefined begin text runs: {all:?}");
-    assert!(all.contains("Bob"), "body runs: {all:?}");
-    assert!(!all.contains("Hi"), "old begin text is gone: {all:?}");
+    // Exact item sequence: redefined begin, body, redefined end. A stale
+    // end body leaking through would render "!" instead of "?", and stale
+    // begin text ("Hi") would add an item, so both fail this equality.
+    // (Inter-word spaces are layout gaps, not text items: even plain
+    // `Yo Bob?` compiles to the spaceless join "YoBob?".)
+    assert_eq!(texts(&output), ["Yo", "Bob", "?"], "{:?}", texts(&output));
 }
 
 #[test]
 fn rmfamily_restores_the_roman_family() {
-    let parsed = parser::parse(r"{\sffamily A\rmfamily B}");
+    let parsed = parser::parse(r"{\sffamily A\rmfamily B} C");
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
-    let runs = text_runs(r"{\sffamily A\rmfamily B}");
-    assert_eq!(runs.len(), 2);
+    let runs = text_runs(r"{\sffamily A\rmfamily B} C");
+    assert_eq!(runs.len(), 3);
     assert_eq!(runs[0].1.family, TextFamily::Sans);
     assert_eq!(runs[1].0, "B");
     assert_eq!(runs[1].1.family, TextFamily::Roman);
+    // After the group closes the outer (roman) family is back: a family
+    // declaration leaking past its group would leave `C` sans.
+    assert_eq!(runs[2].0, "C");
+    assert_eq!(runs[2].1.family, TextFamily::Roman);
+    let output = compile(r"{\sffamily A\rmfamily B} C");
+    assert_supported(&output);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(item(&output, "A").font, Font::Helvetica);
+    assert_eq!(item(&output, "B").font, Font::TimesRoman);
+    assert_eq!(item(&output, "C").font, Font::TimesRoman);
 }
 
 #[test]
@@ -132,9 +145,14 @@ fn scriptscriptstyle_is_consumed_without_visible_output() {
     let output = compile(r"$p \scriptscriptstyle q$");
     assert_supported(&output);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    let all = texts(&output);
-    assert!(all.contains(&"p".to_string()), "{all:?}");
-    assert!(all.contains(&"q".to_string()), "{all:?}");
+    // The switch itself emits no item: exactly `p` then `q`, nothing extra.
+    let items: Vec<&TextItem> = output.pages.iter().flat_map(|page| &page.items).collect();
+    assert_eq!(items.len(), 2, "{:?}", texts(&output));
+    assert_eq!(items[0].text, "p");
+    assert_eq!(items[1].text, "q");
+    // `math.rs` consumes the switch as a zero-width no-op ("accepted
+    // without changing size" in `supported-latex.json`): `q` keeps `p`'s size.
+    assert_eq!(items[1].font_size_pt, items[0].font_size_pt);
 }
 
 #[test]
@@ -142,12 +160,17 @@ fn scriptstyle_is_consumed_without_visible_output() {
     let output = compile(r"$p \scriptstyle q$");
     assert_supported(&output);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    let all = texts(&output);
-    assert!(all.contains(&"p".to_string()), "{all:?}");
-    assert!(all.contains(&"q".to_string()), "{all:?}");
+    // The switch itself emits no item: exactly `p` then `q`, nothing extra.
+    let items: Vec<&TextItem> = output.pages.iter().flat_map(|page| &page.items).collect();
+    assert_eq!(items.len(), 2, "{:?}", texts(&output));
+    assert_eq!(items[0].text, "p");
+    assert_eq!(items[1].text, "q");
+    // `math.rs` consumes the switch as a zero-width no-op ("accepted
+    // without changing size" in `supported-latex.json`): `q` keeps `p`'s size.
+    assert_eq!(items[1].font_size_pt, items[0].font_size_pt);
 }
 
-#[ignore = "bug: \\settodepth stores 0pt (no real BoxMeasurer is wired; DefaultBoxMeasurer placeholder)"]
+#[ignore = "known bug (supervisor to file issue): `\\settodepth` stores 0pt, no BoxMeasurer wired — `\\newlength{\\mydepth}\\settodepth{\\mydepth}{g}\\the\\mydepth` renders `0.0pt` instead of a positive descender depth"]
 #[test]
 fn settodepth_stores_the_depth_in_a_length_register() {
     let output = compile(r"\newlength{\mydepth}\settodepth{\mydepth}{g}\the\mydepth");
@@ -159,7 +182,7 @@ fn settodepth_stores_the_depth_in_a_length_register() {
     assert!(value > 0.0, "a descender has positive depth: {rendered:?}");
 }
 
-#[ignore = "bug: \\settoheight stores 0pt (no real BoxMeasurer is wired; DefaultBoxMeasurer placeholder)"]
+#[ignore = "known bug (supervisor to file issue): `\\settoheight` stores 0pt, no BoxMeasurer wired — `\\newlength{\\myheight}\\settoheight{\\myheight}{Ag}\\the\\myheight` renders `0.0pt` instead of a positive capital height"]
 #[test]
 fn settoheight_stores_the_height_in_a_length_register() {
     let output = compile(r"\newlength{\myheight}\settoheight{\myheight}{Ag}\the\myheight");
@@ -171,7 +194,7 @@ fn settoheight_stores_the_height_in_a_length_register() {
     assert!(value > 0.0, "a capital has positive height: {rendered:?}");
 }
 
-#[ignore = "bug: \\settowidth stores 0pt (no real BoxMeasurer is wired; DefaultBoxMeasurer placeholder)"]
+#[ignore = "known bug (supervisor to file issue): `\\settowidth` stores 0pt, no BoxMeasurer wired — `\\newlength{\\mywidth}\\settowidth{\\mywidth}{Hi}\\the\\mywidth` and the `HiHiHi` variant both render `0.0pt` instead of positive, growing widths"]
 #[test]
 fn settowidth_stores_the_width_and_grows_with_the_text() {
     let short = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{Hi}\the\mywidth");
@@ -253,11 +276,10 @@ fn stepcounter_increments_and_resets_dependants() {
     let output = compile(r"\newcounter{myc}\newcounter{sub}[myc]\stepcounter{sub}\stepcounter{sub}\stepcounter{myc}M \arabic{myc} S \arabic{sub}");
     assert_supported(&output);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    // Exact order: `myc` stepped once reads 1, and stepping `myc` reset
+    // its dependant `sub` to 0. Swapped lookups (`M 0 S 1`) fail this.
     let all = texts(&output);
-    assert!(all.contains(&"M".to_string()), "{all:?}");
-    assert!(all.contains(&"S".to_string()), "{all:?}");
-    assert!(all.contains(&"1".to_string()), "stepped once: {all:?}");
-    assert!(all.contains(&"0".to_string()), "dependant reset to zero: {all:?}");
+    assert_eq!(all, ["M", "1", "S", "0"], "{all:?}");
 }
 
 #[test]
@@ -282,9 +304,14 @@ fn textstyle_is_consumed_without_visible_output() {
     let output = compile(r"$p \textstyle q$");
     assert_supported(&output);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    let all = texts(&output);
-    assert!(all.contains(&"p".to_string()), "{all:?}");
-    assert!(all.contains(&"q".to_string()), "{all:?}");
+    // The switch itself emits no item: exactly `p` then `q`, nothing extra.
+    let items: Vec<&TextItem> = output.pages.iter().flat_map(|page| &page.items).collect();
+    assert_eq!(items.len(), 2, "{:?}", texts(&output));
+    assert_eq!(items[0].text, "p");
+    assert_eq!(items[1].text, "q");
+    // `math.rs` consumes the switch as a zero-width no-op ("accepted
+    // without changing size" in `supported-latex.json`): `q` keeps `p`'s size.
+    assert_eq!(items[1].font_size_pt, items[0].font_size_pt);
 }
 
 #[test]
