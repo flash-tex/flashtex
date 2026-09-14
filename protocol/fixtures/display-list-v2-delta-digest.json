@@ -1,0 +1,151 @@
+{
+  "_comment": "Cross-language gate for the dl2-canon-1 header digest of a v2 diagnostic's `suggestion` (GH-277): the Rust producer (`crates/render-pipeline/src/delta.rs` `header_digest`) and the Swift consumer (`apps/mac/Sources/FlashTeXMac/DisplayListDelta.swift` `headerDigest`) must produce `expected_header_digest` for each case. All four cases share one minimal display list (project_id, revision, documents, fonts, pages, required_features) and vary ONLY `diagnostics`, so the fixture isolates exactly the diagnostic/suggestion behavior. Digests are for `Wire { images: false, device_color: false, diagnostics: true }` (hex-encoded SHA-256, the same convention as the delta `list_digest` acknowledgement). `required_features` is exactly what the Rust `required_features_wire` computes for these page-less lists, so both sides hash the same feature sequence.",
+  "wire": { "images": false, "device_color": false, "diagnostics": true },
+  "cases": [
+    {
+      "name": "no-diagnostics",
+      "display_list": {
+        "protocol_version": 2,
+        "id": "delta-digest-no-diagnostics",
+        "type": "display_list",
+        "payload": {
+          "render_format": "display-list-v2",
+          "coordinate_unit": "bp_2pow20",
+          "color_space": "srgb",
+          "text_extraction": "cluster-actualtext",
+          "project_id": "digest-fixture",
+          "revision": 7,
+          "required_features": ["glyph_run", "rgba-srgb", "cluster-actualtext"],
+          "documents": [
+            {
+              "path": "main.tex",
+              "revision": 3,
+              "sha256": "abababababababababababababababababababababababababababababababab",
+              "byte_length": 128
+            }
+          ],
+          "fonts": [],
+          "pages": [],
+          "diagnostics": []
+        }
+      },
+      "expected_header_digest": "d266b9fa37fb8e3324cba63c3580eae3d913b0d808dbb46493b892320aa88351"
+    },
+    {
+      "name": "suggestion-none",
+      "display_list": {
+        "protocol_version": 2,
+        "id": "delta-digest-suggestion-none",
+        "type": "display_list",
+        "payload": {
+          "render_format": "display-list-v2",
+          "coordinate_unit": "bp_2pow20",
+          "color_space": "srgb",
+          "text_extraction": "cluster-actualtext",
+          "project_id": "digest-fixture",
+          "revision": 7,
+          "required_features": ["glyph_run", "rgba-srgb", "cluster-actualtext"],
+          "documents": [
+            {
+              "path": "main.tex",
+              "revision": 3,
+              "sha256": "abababababababababababababababababababababababababababababababab",
+              "byte_length": 128
+            }
+          ],
+          "fonts": [],
+          "pages": [],
+          "diagnostics": [
+            {
+              "code": "unknown-command",
+              "message": "Undefined control sequence \\foo.",
+              "severity": "error",
+              "sources": [{ "path": "main.tex", "start_byte": 10, "end_byte": 14 }]
+            }
+          ]
+        }
+      },
+      "expected_header_digest": "f3d444ce48fbfe5f5db539af771a0e0bfdeb318da1930969e4c7ef01c6064155"
+    },
+    {
+      "name": "suggestion-some",
+      "display_list": {
+        "protocol_version": 2,
+        "id": "delta-digest-suggestion-some",
+        "type": "display_list",
+        "payload": {
+          "render_format": "display-list-v2",
+          "coordinate_unit": "bp_2pow20",
+          "color_space": "srgb",
+          "text_extraction": "cluster-actualtext",
+          "project_id": "digest-fixture",
+          "revision": 7,
+          "required_features": ["glyph_run", "rgba-srgb", "cluster-actualtext"],
+          "documents": [
+            {
+              "path": "main.tex",
+              "revision": 3,
+              "sha256": "abababababababababababababababababababababababababababababababab",
+              "byte_length": 128
+            }
+          ],
+          "fonts": [],
+          "pages": [],
+          "diagnostics": [
+            {
+              "code": "unknown-command",
+              "message": "Undefined control sequence \\foo.",
+              "severity": "error",
+              "sources": [{ "path": "main.tex", "start_byte": 10, "end_byte": 14 }],
+              "suggestion": "\\foobar"
+            }
+          ]
+        }
+      },
+      "expected_header_digest": "2e6bbdd81a8fbb5ab6b7b8e0525f2c36c6fe1e753aa30ae60aae683fa6463135"
+    },
+    {
+      "name": "mixed-suggestions",
+      "display_list": {
+        "protocol_version": 2,
+        "id": "delta-digest-mixed-suggestions",
+        "type": "display_list",
+        "payload": {
+          "render_format": "display-list-v2",
+          "coordinate_unit": "bp_2pow20",
+          "color_space": "srgb",
+          "text_extraction": "cluster-actualtext",
+          "project_id": "digest-fixture",
+          "revision": 7,
+          "required_features": ["glyph_run", "rgba-srgb", "cluster-actualtext"],
+          "documents": [
+            {
+              "path": "main.tex",
+              "revision": 3,
+              "sha256": "abababababababababababababababababababababababababababababababab",
+              "byte_length": 128
+            }
+          ],
+          "fonts": [],
+          "pages": [],
+          "diagnostics": [
+            {
+              "code": "unknown-command",
+              "message": "Undefined control sequence \\foo.",
+              "severity": "error",
+              "sources": [{ "path": "main.tex", "start_byte": 10, "end_byte": 14 }],
+              "suggestion": "\\foobar"
+            },
+            {
+              "code": "overfull-hbox",
+              "message": "Overfull \\hbox (3.2pt too wide).",
+              "severity": "warning",
+              "sources": [{ "path": "main.tex", "start_byte": 20, "end_byte": 30 }]
+            }
+          ]
+        }
+      },
+      "expected_header_digest": "60071e0e6d99de2d347f692aaa4cd07050e4e60a76443d6b70c6c471d4852fff"
+    }
+  ]
+}
