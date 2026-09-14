@@ -107,4 +107,99 @@ final class CaptureQueueTests: XCTestCase {
         XCTAssertEqual(code, "invalid_input")
         XCTAssertTrue(mac.captures.isEmpty)
     }
+
+    /// GH #359: `CaptureQueue.records` was a bare Array. `refreshOutcome`/`send`
+    /// resume off the main actor after `await` and mutate it while PadModel
+    /// (and other pollers) copy the array. Without a lock this crashes the
+    /// test host (EXC_BAD_ACCESS) or TSan-reports a data race.
+    func testConcurrentRefreshSendAndRecordsRead() async throws {
+        model.maxPolls = 0
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("CaptureQueueRace-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let q = CaptureQueue(link: model.link, store: CaptureStore(directory: tmp))
+        let png = Self.trianglePNG()
+        let a = q.draft(CaptureRecord(source: .pencil, png: png, instructions: "race-a"))
+        let b = q.draft(CaptureRecord(source: .sample, png: png, instructions: "race-b"))
+        await q.send(a.id)
+        await q.send(b.id)
+        XCTAssertEqual(q.records.filter { if case .received = $0.status { return true }; return false }.count, 2)
+
+        let id1 = a.id, id2 = b.id
+        let rounds = 60
+        // Stay under maxRecords so persist pruning cannot evict id1/id2; the
+        // race is concurrent mutation of the same array, not list overflow.
+        let extraDrafts = 20
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<4 {
+                group.addTask {
+                    await Task.detached {
+                        for _ in 0..<rounds {
+                            await q.refreshOutcome(id1)
+                            await q.refreshOutcome(id2)
+                        }
+                    }.value
+                }
+            }
+            for _ in 0..<2 {
+                group.addTask {
+                    await Task.detached {
+                        for _ in 0..<rounds {
+                            await q.send(id1)
+                            await q.send(id2)
+                        }
+                    }.value
+                }
+            }
+            group.addTask {
+                await Task.detached {
+                    for _ in 0..<extraDrafts {
+                        let extra = q.draft(CaptureRecord(source: .fixture, png: png, instructions: "tmp"))
+                        q.discard(extra.id)
+                    }
+                }.value
+            }
+            for _ in 0..<4 {
+                group.addTask {
+                    await Task.detached {
+                        for _ in 0..<(rounds * 200) {
+                            let snap = q.records
+                            _ = snap.count
+                            _ = q.record(id1)
+                            _ = q.shouldPoll(id2)
+                            _ = q.lastStoreError
+                            _ = q.redeliveries
+                        }
+                    }.value
+                }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(q.records.count, 2)
+        XCTAssertNotNil(q.record(id1))
+        XCTAssertNotNil(q.record(id2))
+    }
+}
+
+/// GH #359: the TEST_HOST app's @StateObject PadModel() must not load
+/// Application Support captures or start leftover pollers (that raced the
+/// in-test PadModel and crashed FluidCaptureTests).
+@MainActor
+final class HostedPadModelTests: XCTestCase {
+    func testHostedXCTestPadModelDoesNotLoadPersistedCapturesOrStartPolling() throws {
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"],
+                        "this assertion is the hosted-XCTest isolation contract")
+        let store = CaptureStore()
+        let original = store.load()
+        let id = "cap-hosted-xctest-\(UUID().uuidString)"
+        var leftover = CaptureRecord(id: id, source: .fixture, png: PadModel.png1x1, instructions: "leftover-for-issue-359")
+        leftover.status = .received(FakeMac.wire(["capture_id": id, "durable": false, "has_proposal": false, "applied": false]))
+        try store.save([leftover] + original)
+        defer { try? store.save(original) }
+
+        let m = PadModel()
+        XCTAssertNil(m.queue.store, "hosted tests must not attach the production CaptureStore")
+        XCTAssertFalse(m.captures.contains { $0.id == id }, "must not load leftover capture \(id)")
+        XCTAssertNil(m.pairedMac, "hosted tests must not load Keychain pairings")
+        m.resumeOutcomePolling()
+        XCTAssertFalse(m.isPollingOutcomes, "hosted PadModel must not poll leftover captures")
+    }
 }
