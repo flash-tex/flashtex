@@ -6,7 +6,7 @@
 mod common;
 
 use common::*;
-use flashtex_render_pipeline::display::Item;
+use flashtex_render_pipeline::display::{Item, RunRole};
 use flashtex_render_pipeline::typeset::{convert_math, fence_before, fence_of, Fence};
 use flashtex_math_layout::{AtomClass, Nucleus};
 
@@ -38,6 +38,35 @@ fn math_words(body: &str) -> (Vec<(String, f64)>, Vec<String>) {
     }
     let diags = r.v1_diagnostics_codes();
     (out, diags)
+}
+
+#[test]
+fn active_primes_use_one_script_style_with_explicit_prime() {
+    if !lm_available() {
+        return;
+    }
+    let r = render_one(&doc("$f'(x) + g''(y)$ and $x^{\\prime}$ and $f'^2$."));
+    assert!(!r.v2.diagnostics.iter().any(|d| d.severity == flashtex_render_pipeline::display::Severity::Error), "{:?}", r.v2.diagnostics);
+    let mut primes = Vec::new();
+    let mut body_size = None;
+    for item in &r.v2.pages[0].items {
+        let Item::GlyphRun(run) = item else { continue };
+        if run.role != RunRole::Math {
+            continue;
+        }
+        if run.text == "f" && body_size.is_none() {
+            body_size = Some(run.font_size);
+        }
+        if matches!(run.text.as_str(), "′" | "′′") {
+            primes.push(run);
+        }
+    }
+    assert_eq!(primes.len(), 4, "{primes:?}");
+    assert_eq!(primes[1].glyphs.len(), 2, "g'' stays one superscript group");
+    assert_eq!(primes[0].font_size, primes[2].font_size, "f' and x^{{\\prime}} use script size");
+    assert_eq!(primes[0].glyphs[0].baseline_y, primes[2].glyphs[0].baseline_y, "f' and x^{{\\prime}} share the script baseline");
+    assert_eq!(primes[0].font_size, primes[3].font_size, "f'^2 keeps the prime in the joined script");
+    assert!(primes[0].font_size < body_size.expect("math body"), "prime must not use text size");
 }
 
 trait Codes {
