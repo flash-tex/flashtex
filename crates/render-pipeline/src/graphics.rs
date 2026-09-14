@@ -308,7 +308,12 @@ fn probe_pdf(b: &[u8], page: u32) -> Result<ImageInfo, String> {
 /// Lengths a graphicx dimension may refer to, in TeX points.
 #[derive(Debug, Clone, Copy)]
 pub struct LengthEnv {
+    /// `\textwidth`: the whole text block, both columns and `\columnsep`.
     pub text_width: f64,
+    /// `\linewidth`/`\columnwidth`/`\hsize` where the key is read: the
+    /// column in a two-column document, `\textwidth` inside a `figure*`
+    /// (`\@xdblfloat`: `\hsize\textwidth \linewidth\textwidth`).
+    pub line_width: f64,
     pub text_height: f64,
     pub paper_width: f64,
     pub paper_height: f64,
@@ -339,7 +344,8 @@ pub fn parse_dimen(raw: &str, env: &LengthEnv) -> Option<f64> {
         "sp" => 1.0 / 65536.0,
         "em" => env.em,
         "ex" => env.ex,
-        "\\textwidth" | "\\linewidth" | "\\columnwidth" | "\\hsize" => env.text_width,
+        "\\textwidth" => env.text_width,
+        "\\linewidth" | "\\columnwidth" | "\\hsize" => env.line_width,
         "\\textheight" | "\\vsize" => env.text_height,
         "\\paperwidth" => env.paper_width,
         "\\paperheight" => env.paper_height,
@@ -632,7 +638,7 @@ mod tests {
     use super::*;
 
     fn env() -> LengthEnv {
-        LengthEnv { text_width: 469.75499, text_height: 650.43, paper_width: 614.295, paper_height: 794.96999, em: 11.74988, ex: 5.16 }
+        LengthEnv { text_width: 469.75499, line_width: 469.75499, text_height: 650.43, paper_width: 614.295, paper_height: 794.96999, em: 11.74988, ex: 5.16 }
     }
 
     #[test]
@@ -724,7 +730,7 @@ mod tests {
     /// `\usepackage[demo]{graphicx}`; `\linewidth` there was 345pt.
     #[test]
     fn demo_boxes_match_pdflatex() {
-        let e = LengthEnv { text_width: 345.0, ..env() };
+        let e = LengthEnv { text_width: 345.0, line_width: 345.0, ..env() };
         let case = |opts: &str| {
             let (k, p) = parse_keys(opts, &e);
             assert!(p.is_empty(), "{opts}: {p:?}");
