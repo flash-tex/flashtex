@@ -58,7 +58,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "newtheorem", "newcounter", "setcounter", "addtocounter", "stepcounter", "refstepcounter",
     "value", "arabic", "roman", "Roman", "alph", "Alph", "fnsymbol", "the", "makeatletter",
     "makeatother", "ifthenelse", "newif", "relax", "expandafter", "csname", "endcsname",
-    "newlength", "addtolength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
+    "newlength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
     "verb", "hyphenation", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
     "PassOptionsToPackage", "AtBeginDocument",
     // Cross-references and links.
