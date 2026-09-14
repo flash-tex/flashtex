@@ -247,6 +247,12 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
     // float-level command ends it, so a blank line inside it stays in it and
     // the compiler makes the paragraph break.
     let mut run: Option<(usize, usize)> = None;
+    // A float-level command is only float-level at the body's own level: an
+    // `\includegraphics` in a `tabular` cell or a `\label` inside a group
+    // belongs to the material around it, and cutting the run there would
+    // hand the compiler three fragments of a table instead of a table.
+    let (mut braces, mut envs) = (0usize, 0usize);
+    let outer = |braces: usize, envs: usize| braces == 0 && envs == 0;
     macro_rules! flush {
         () => {
             if let Some((s, e)) = run.take() {
@@ -280,7 +286,7 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                 let name_end = text[i + 1..end].find(|c: char| !c.is_ascii_alphabetic()).map_or(end, |n| i + 1 + n);
                 let name = &text[i + 1..name_end];
                 match name {
-                    "centering" | "raggedright" | "raggedleft" => {
+                    "centering" | "raggedright" | "raggedleft" if outer(braces, envs) => {
                         // The declaration is body material too: its bytes stay
                         // in the run so the compiler sets the paragraph style,
                         // and the piece records it for the graphics line.
@@ -297,7 +303,7 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                         out.push(Piece::ParBreak);
                         i = name_end;
                     }
-                    "includegraphics" => {
+                    "includegraphics" if outer(braces, envs) => {
                         let mut j = skip_ws(text, name_end, end);
                         let mut options = String::new();
                         if b.get(j) == Some(&b'[') {
@@ -318,7 +324,7 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                             }
                         }
                     }
-                    "caption" | "label" => {
+                    "caption" | "label" if outer(braces, envs) => {
                         let mut j = skip_ws(text, name_end, end);
                         let mut short = None;
                         if name == "caption" && b.get(j) == Some(&b'[') {
@@ -343,7 +349,12 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                             }
                         }
                     }
-                    _ => {
+                    other => {
+                        match other {
+                            "begin" => envs += 1,
+                            "end" => envs = envs.saturating_sub(1),
+                            _ => {}
+                        }
                         let stop = name_end.max(i + 2).min(end);
                         body!(i, stop);
                         i = stop;
@@ -353,6 +364,11 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
             _ => {
                 let s = i;
                 while i < end && !matches!(b[i], b'\\' | b'\n' | b'%') {
+                    match b[i] {
+                        b'{' => braces += 1,
+                        b'}' => braces = braces.saturating_sub(1),
+                        _ => {}
+                    }
                     i += 1;
                 }
                 if !text[s..i].trim().is_empty() {
@@ -578,6 +594,21 @@ pub fn prepare(
                         keep.push(*span);
                         let (blocks, problems) = body_blocks(&keep, *span, d, documents, entry_index, texts, options, labels);
                         diags.extend(problems);
+                        // A `\includegraphics` the scan left in the run is
+                        // nested in a group or an environment, where the
+                        // adapter drops it like every other running-text
+                        // graphic. Losing it silently is the bug this file
+                        // is fixing, so it is reported.
+                        if documents[d].text[span.start..span.end].contains("\\includegraphics") {
+                            diags.push(Diagnostic::warning(
+                                "float_content_unsupported",
+                                format!(
+                                    "{} {number}: an \\includegraphics inside a group or an environment (a `tabular` cell, say) is not set yet and takes no space",
+                                    f.kind.name()
+                                ),
+                                vec![src(*span)],
+                            ));
+                        }
                         if !blocks.is_empty() {
                             let end_skip = adapter::list_end_skip(documents[d].text, &(span.start..span.end), style.body_size_pt, style);
                             parts.push(FloatPart::Content { blocks, end_skip });
@@ -656,12 +687,14 @@ fn body_blocks(
     // `\centering` is a declaration, not `\begin{center}`: it adds no
     // `\topsep`/`\partopsep` and no closing `\@endparenv` skip. The
     // adapter decides that from the bytes before the block, which here are
-    // the preamble the isolation kept -- so the run's leading `\begin{document}`
-    // reads as an environment opening. When the run's own bytes hold no
-    // paragraph-shape environment, there is none to open or close.
-    if !run_opens_styled_env(&documents[d].text[run.start..run.end]) {
-        for block in &mut blocks {
-            if let adapter::Block::Paragraph { env_open, env_close, .. } = block {
+    // the preamble the isolation kept -- so the run's leading
+    // `\begin{document}` reads as an environment opening. Every block
+    // before the run's first paragraph-shape environment (all of them when
+    // it has none) therefore has no environment to open or close.
+    let styled_at = styled_env_at(&documents[d].text[run.start..run.end]).map_or(usize::MAX, |at| run.start + at);
+    for block in &mut blocks {
+        if let adapter::Block::Paragraph { parts, env_open, env_close, .. } = block {
+            if paragraph_start(parts).is_none_or(|start| start < styled_at) {
                 *env_open = None;
                 *env_close = false;
             }
@@ -670,13 +703,22 @@ fn body_blocks(
     (blocks, doc.diagnostics.into_iter().filter(mine).collect())
 }
 
-/// Whether `run` opens one of the compiler's paragraph-shape environments
-/// (`parser::paragraph_style`), whose `\trivlist` really does add the
-/// `\topsep` glue around it.
-fn run_opens_styled_env(run: &str) -> bool {
+/// Where `run` first opens one of the compiler's paragraph-shape
+/// environments (`parser::paragraph_style`), whose `\trivlist` really does
+/// add the `\topsep` glue around it.
+fn styled_env_at(run: &str) -> Option<usize> {
     ["center", "flushright", "flushleft", "quote", "quotation", "verse"]
         .iter()
-        .any(|name| run.contains(&format!("\\begin{{{name}}}")))
+        .filter_map(|name| run.find(&format!("\\begin{{{name}}}")))
+        .min()
+}
+
+/// The first source byte a paragraph block was set from.
+fn paragraph_start(parts: &[adapter::ParaPart]) -> Option<usize> {
+    parts.iter().find_map(|part| match part {
+        adapter::ParaPart::Lines(items) => crate::incremental::block_origin(items).map(|(_, start)| start),
+        adapter::ParaPart::Display { span, .. } | adapter::ParaPart::Rows { span, .. } => Some(span.start),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -772,6 +814,26 @@ mod tests {
         assert_eq!(runs[0], "\\centering");
         assert!(runs[1].starts_with("\\begin{tabular}") && runs[1].ends_with("And a note."));
         assert!(matches!(f[0].pieces[2], Piece::Caption { .. }));
+    }
+
+    #[test]
+    fn a_command_inside_a_cell_does_not_cut_the_run() {
+        let src = "\\begin{document}\n\\begin{table}\n\\centering\n\\begin{tabular}{ll}\nA\\label{r}& \\includegraphics{p.png}\\\\\n\\end{tabular}\n\\caption{C}\n\\end{table}\n\\end{document}\n";
+        let f = scan(src, DocumentId(0));
+        // One run holding the whole tabular: the `\\label` and the
+        // `\\includegraphics` in its cells are the table's, not the float's.
+        let runs: Vec<&str> = f[0]
+            .pieces
+            .iter()
+            .filter_map(|p| match p {
+                Piece::Content { span } => Some(&src[span.start..span.end]),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert!(runs[0].starts_with("\\centering") && runs[0].ends_with("\\end{tabular}"));
+        assert!(!f[0].pieces.iter().any(|p| matches!(p, Piece::Graphic { .. } | Piece::Label { .. })));
+        assert!(f[0].pieces.iter().any(|p| matches!(p, Piece::Caption { .. })));
     }
 
     #[test]

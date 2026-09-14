@@ -267,7 +267,7 @@ fn float_bodies_match_pdflatex() {
         return;
     }
     let names = fixtures();
-    assert!(names.len() >= 14, "expected at least 14 float-body fixtures, found {}", names.len());
+    assert!(names.len() >= 19, "expected at least 19 float-body fixtures, found {}", names.len());
     let mut failures = Vec::new();
     for name in &names {
         let r = measure(name);

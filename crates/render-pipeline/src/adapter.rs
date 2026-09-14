@@ -2612,12 +2612,13 @@ pub(crate) fn list_end_skip(source: &str, run: &std::ops::Range<usize>, body_siz
         return 0.0;
     }
     // `\@topsepadd` is what `\@trivlist` computed when the list opened:
-    // `\topsep`, plus `\partopsep` when its `\begin` was read in vertical
-    // mode (the run's start, or after a blank line or `\par`).
-    let vmode = find_command(text, "begin").is_none_or(|b| {
-        let before = &text[..b];
-        before.trim().is_empty() || has_blank_line(before) || find_command(before, "par").is_some()
-    });
+    // `\topsep`, plus `\partopsep` when its own `\begin` was read in
+    // vertical mode (the run's start, or after a blank line or `\par`).
+    // An alignment declaration sets no material, so it does not leave
+    // vertical mode.
+    let opened = text[..at].rfind(&format!("\\begin{{{env}}}")).unwrap_or(0);
+    let before = text[..opened].replace("\\centering", "").replace("\\raggedright", "").replace("\\raggedleft", "");
+    let vmode = before.trim().is_empty() || has_blank_line(&before) || find_command(&before, "par").is_some();
     let stack = list_stack_at(source, run.start + at);
     let begin_keys = stack.last().map_or("", |(e, keys)| if *e == env && *e != "thebibliography" { keys } else { "" });
     let size = if body_size_pt >= 11.5 {

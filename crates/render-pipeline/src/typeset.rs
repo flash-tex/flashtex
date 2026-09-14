@@ -2666,6 +2666,7 @@ impl<'a> Context<'a> {
             params.tolerance = 9999.0;
             params.emergency_stretch = 3.0 * self.text_params(TextStyle::default(), s.body_size_pt).quad;
             params.hfuzz = 0.5;
+            params.hbadness = 10_000.0;
         }
         params
     }
@@ -2715,8 +2716,7 @@ impl<'a> Context<'a> {
         let lines = self.break_paragraph(&list, &params, items, Some(&recs))?;
         self.report_overfull(&lines, &list, &recs);
         // `\list` sets `\parskip\parsep`: an item paragraph adds `\parsep`.
-        // `\@parboxrestore` has zeroed `\parskip` outside any list.
-        let parskip = list_geom.map_or(if self.parbox { crate::style::Skip::default() } else { self.style.parskip }, |g| g.parsep);
+        let parskip = self.parskip_of(list_geom);
         let vertical = VBlock {
             lines: line_extents(&lines),
             penalty_before: None,
@@ -2986,9 +2986,16 @@ impl<'a> Context<'a> {
     /// `tabular`, an `itemize`, a display or a paragraph of prose is set
     /// inside a float exactly as it is outside one. Returns the range of
     /// `blocks` the body added.
-    pub(crate) fn box_blocks(&mut self, body: &[Block], blocks: &mut Vec<BuiltBlock>, float: Span, minipage: bool) -> std::ops::Range<usize> {
-        let first = blocks.len();
+    pub(crate) fn box_blocks(&mut self, body: &[Block], out: &mut Vec<BuiltBlock>, float: Span, minipage: bool) -> std::ops::Range<usize> {
+        // The box has a vertical list of its own: `\addvspace` compares
+        // against what *it* left last (`\lastskip`), not against the page's
+        // last block, so the body builds into its own vector.
+        let mut owned: Vec<BuiltBlock> = Vec::new();
+        let blocks = &mut owned;
         let quad = self.text_params(TextStyle::default(), self.style.body_size_pt).quad;
+        // `\footnote` inside a float box: `footnotes::prepare` has already
+        // run, so a note raised here would set its mark and never be placed.
+        let (notes, anchors) = (self.notes.len(), self.note_anchors.len());
         let mut st = ParaState { after_heading: false, env_vmode: false };
         let outer = std::mem::replace(&mut self.parbox, true);
         // `\@floatboxreset` runs `\@setminipage`, and `\addvspace` does
@@ -3063,7 +3070,29 @@ impl<'a> Context<'a> {
             }
         }
         self.parbox = outer;
-        first..blocks.len()
+        if self.notes.len() > notes {
+            let source = vec![self.source(float)];
+            self.notes.truncate(notes);
+            self.note_anchors.truncate(anchors);
+            self.diagnostics.push(Diagnostic::warning(
+                "float_footnote_unplaced",
+                "a \\footnote inside a float body is not placed yet (LaTeX needs \\footnotemark here and \\footnotetext outside the float); the mark is set and the note text is omitted",
+                source,
+            ));
+        }
+        let first = out.len();
+        out.append(blocks);
+        first..out.len()
+    }
+
+    /// `\parskip` as the box being set has it: `\@parboxrestore` zeroed it
+    /// for a float body, and `\list` sets it to `\parsep` inside a list.
+    fn parskip_of(&self, list_geom: Option<&ListGeom>) -> crate::style::Skip {
+        match list_geom {
+            Some(g) => g.parsep,
+            None if self.parbox => crate::style::Skip::default(),
+            None => self.style.parskip,
+        }
     }
 
     /// `(\@totalleftmargin, \labelwidth)` of an item paragraph, in points:
@@ -3230,7 +3259,9 @@ impl<'a> Context<'a> {
                 items.push(pl::Item::Box(run));
                 recs.push(Some(rec));
             }
-            None => width += s.parindent_pt,
+            // `\@parboxrestore` has zeroed `\parindent`, so the box a
+            // display opens a paragraph with is empty in a float body.
+            None => width += if self.parbox { 0.0 } else { s.parindent_pt },
         }
         let n = items.len();
         let line = pl::Line {
@@ -3263,8 +3294,7 @@ impl<'a> Context<'a> {
             height: height + depth,
         };
         let quad = self.text_params(TextStyle::default(), size).quad;
-        // `\list` sets `\parskip\parsep`.
-        let parskip = list_geom.map_or(s.parskip, |g| g.parsep);
+        let parskip = self.parskip_of(list_geom);
         let vertical = VBlock {
             lines: vec![(height, depth)],
             penalty_before: None,
@@ -4165,7 +4195,7 @@ impl<'a> Context<'a> {
             lines: vec![(height, 0.0)],
             penalty_before: None,
             space_before: None,
-            parskip: Some(skip_tuple(self.style.parskip)),
+            parskip: Some(skip_tuple(self.parskip_of(None))),
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalty: 0,
