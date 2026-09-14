@@ -308,6 +308,63 @@ fn scaled_factor_times_internal_dimen_setlength_and_addtolength() {
     }
 }
 
+/// Class / paper / size combinations where the article-10pt-letter table is
+/// the wrong number. Expected `\the` strings are `\the\dimexpr0.5<len>\relax`
+/// from `/Library/TeX/texbin/pdflatex` (TeX Live 2026) on this machine, and
+/// match `flashtex-class-geometry`'s oracle (`crates/class-geometry/tests/data/oracle.txt`).
+#[test]
+fn scaled_factor_follows_class_size_paper_and_standard_classes() {
+    // (documentclass, expr, expected `\the\mylen`)
+    let cases: &[(&str, &str, &str)] = &[
+        ("[12pt]{article}", "0.5\\textwidth", "195.0pt"),
+        ("[11pt]{article}", "0.5\\textwidth", "180.0pt"),
+        ("[12pt]{article}", "0.5\\textheight", "274.25pt"),
+        ("[12pt]{article}", "-1.5\\parindent", "-26.43723pt"),
+        ("[a4paper]{article}", "0.5\\paperwidth", "298.75394pt"),
+        ("[a4paper]{article}", "0.5\\textheight", "299.0pt"),
+        ("[a4paper,12pt]{article}", "0.5\\textwidth", "195.0pt"),
+        ("[a4paper,12pt]{article}", "0.5\\paperheight", "422.52342pt"),
+        ("[11pt]{report}", "0.5\\textwidth", "180.0pt"),
+        ("[12pt]{book}", "0.5\\textwidth", "195.0pt"),
+        ("[12pt]{book}", "-1.5\\parindent", "-26.43723pt"),
+    ];
+    for &(class, expr, expected) in cases {
+        let src = format!(
+            "\\documentclass{class}\\newlength{{\\mylen}}\\setlength{{\\mylen}}{{{expr}}}\\begin{{document}}\\the\\mylen\\end{{document}}"
+        );
+        assert_the_mylen(&src, expected);
+    }
+}
+
+/// geometry `margin=1in` (the option this compiler already accepts without a
+/// package warning) changes `\textwidth` from 345pt to 469.75502pt.
+#[test]
+fn scaled_factor_follows_geometry_package() {
+    let src = "\\documentclass{article}\\usepackage[margin=1in]{geometry}\\newlength{\\mylen}\\setlength{\\mylen}{0.5\\textwidth}\\begin{document}\\the\\mylen\\end{document}";
+    assert_the_mylen(src, "234.8775pt");
+}
+
+/// A preamble assignment to a class length must be what a later
+/// `0.5\textwidth` reads, not the class default.
+#[test]
+fn scaled_factor_honours_preamble_textwidth_assignment() {
+    let src = "\\documentclass{article}\\setlength{\\textwidth}{6in}\\newlength{\\mylen}\\setlength{\\mylen}{0.5\\textwidth}\\begin{document}\\the\\mylen\\end{document}";
+    assert_the_mylen(src, "216.81pt");
+}
+
+/// Non-standard classes are not in class-geometry. Using `\textwidth` as a
+/// factor must not silently return the article 10pt letterpaper number.
+#[test]
+fn scaled_factor_warns_for_nonstandard_class() {
+    let src = "\\documentclass{beamer}\\newlength{\\mylen}\\setlength{\\mylen}{0.5\\textwidth}\\begin{document}\\the\\mylen\\end{document}";
+    let (_, messages) = compile(src);
+    assert!(
+        messages.iter().any(|m| m.contains("textwidth")
+            && (m.contains("approximated") || m.contains("unknown"))),
+        "non-standard class must not silently use article 10pt \\textwidth, got {messages:?}"
+    );
+}
+
 #[test]
 fn unknown_length_register_is_named_in_the_diagnostic() {
     let src = "\\documentclass{article}\\newlength{\\mylen}\\setlength{\\mylen}{0.5\\foo}\\begin{document}x\\end{document}";
