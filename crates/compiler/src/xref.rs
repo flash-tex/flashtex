@@ -136,15 +136,25 @@ pub struct Counters {
 const THE_DEPTH: usize = 16;
 
 impl Counters {
-    /// article.cls: `section`, `subsection` numbered within `section`, and
-    /// `subsubsection` numbered within `subsection` (`\thesubsection` is
-    /// `\thesection.\arabic{subsection}`), plus the body counters every
-    /// class defines ([`Counters::define_body_counters`]).
+    /// article.cls lines 255-266: the five sectioning counters, each
+    /// `\newcounter{<this>}[<parent>]` and each `\the<this>` the parent's
+    /// followed by `.\arabic{<this>}` — `section`, then `subsection`
+    /// within it, `subsubsection` within that, `paragraph` within that and
+    /// `subparagraph` within that — plus the body counters every class
+    /// defines ([`Counters::define_body_counters`]).
+    ///
+    /// Every level steps here; which of them are *printed* is the
+    /// consumer's `\c@secnumdepth` (article 3, report/book 2), which this
+    /// crate does not model — it reports the number and the layout decides.
+    /// The same simplification already applied to `subsubsection` under
+    /// report/book, where `\@sect` would not `\refstepcounter` it either.
     pub fn article() -> Self {
         let mut counters = Counters::default();
         counters.define("section", None);
         counters.number_within("subsection", "section");
         counters.number_within("subsubsection", "subsection");
+        counters.number_within("paragraph", "subsubsection");
+        counters.number_within("subparagraph", "paragraph");
         counters.define_body_counters();
         counters
     }

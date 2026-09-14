@@ -414,6 +414,8 @@ pub struct FlowState {
     content_end: f64,
     /// See `LayoutCursor::closed_line_skip`.
     closed_line_skip: Option<f64>,
+    /// See `LayoutCursor::after_run_in_heading`.
+    after_run_in_heading: bool,
 }
 
 impl FlowState {
@@ -426,6 +428,7 @@ impl FlowState {
             && self.trailing_line_items == other.trailing_line_items
             && self.content_end.to_bits() == other.content_end.to_bits()
             && self.closed_line_skip.map(f64::to_bits) == other.closed_line_skip.map(f64::to_bits)
+            && self.after_run_in_heading == other.after_run_in_heading
     }
 }
 
@@ -489,6 +492,11 @@ pub struct LayoutCursor {
     /// and its own `\addvspace`-style gap only adds what exceeds this skip.
     /// Cleared by `newline`.
     closed_line_skip: Option<f64>,
+    /// A `\\paragraph`/`\\subparagraph` heading was just set and did not
+    /// end its line (`\\@xsect` with `#5 <= 0`), so the next paragraph
+    /// continues on it after `\\hskip -#5` instead of starting one of its
+    /// own and adding `\\parskip`. Cleared by the block that continues.
+    after_run_in_heading: bool,
 }
 
 impl LayoutCursor {
@@ -530,6 +538,7 @@ impl LayoutCursor {
             list_margin_pt: 0.0,
             footnotes: footnotes::FootnoteState::default(),
             closed_line_skip: None,
+            after_run_in_heading: false,
         }
     }
 
@@ -1242,6 +1251,12 @@ impl LayoutCursor {
             .take()
             .filter(|_| self.state().trailing_line_items == 0);
         let parskip = self.constraints.parskip_pt.unwrap_or(PARAGRAPH_GAP_PT);
+        // `\@xsect`'s run-in branch put the heading on the current line and
+        // left `\hskip -#5` after it; the block that follows continues
+        // there, with no `\par` and so no `\parskip`.
+        if std::mem::take(&mut self.after_run_in_heading) && matches!(block, Block::Paragraph(_)) {
+            return self.state();
+        }
         // Lists reset `\parskip` to `\parsep`, so a document's custom
         // `\parskip` never reaches its items. Without one, the fixed
         // `PARAGRAPH_GAP_PT` stand-in is kept for both.
@@ -1475,7 +1490,7 @@ impl LayoutCursor {
                         page: self.pages.len() as u32,
                     });
                 }
-                if self.emit_heading_numbers && !number.is_empty() {
+                if self.emit_heading_numbers && !number.is_empty() && !heading_run_in(*level) {
                     let size = heading_size(*level, body_size);
                     self.place(number.clone(), size, *number_span, Font::TimesBold, true);
                     // `\@seccntformat`: `\csname the#1\endcsname\quad`.
@@ -1487,11 +1502,22 @@ impl LayoutCursor {
                     heading_size(*level, body_size),
                     Font::TimesBold,
                 );
-                self.newline(body_size);
-                let after = heading_after_skip(*level, body_size);
-                self.vertical_gap(after);
-                self.closed_line_skip = Some(after);
-                self.x = MARGIN_PT;
+                if heading_run_in(*level) {
+                    // `\@xsect` with `#5 <= 0`: no `\par`. The heading stays
+                    // on the line and `\everypar` follows it with
+                    // `\hskip -#5` = `\hskip 1em` of the body font, so the
+                    // next paragraph continues here instead of starting a
+                    // line of its own.
+                    self.x = self.content_end + body_size;
+                    self.closed_line_skip = None;
+                    self.after_run_in_heading = true;
+                } else {
+                    self.newline(body_size);
+                    let after = heading_after_skip(*level, body_size);
+                    self.vertical_gap(after);
+                    self.closed_line_skip = Some(after);
+                    self.x = MARGIN_PT;
+                }
             }
             Block::FigureCaption { content } => {
                 let width: f64 = content
@@ -1760,6 +1786,7 @@ impl LayoutCursor {
             trailing_line_items: self.pages[page_index].items.len() - self.line_start,
             content_end: self.content_end,
             closed_line_skip: self.closed_line_skip,
+            after_run_in_heading: self.after_run_in_heading,
         }
     }
 
@@ -1787,6 +1814,7 @@ impl LayoutCursor {
         self.x = end.x;
         self.content_end = end.content_end;
         self.closed_line_skip = end.closed_line_skip;
+        self.after_run_in_heading = end.after_run_in_heading;
         self.y = end.y;
         self.line_ascent = end.line_ascent;
         self.line_descent = end.line_descent;
@@ -1857,6 +1885,15 @@ fn heading_before_skip(level: u8, body_size: f64) -> f64 {
 /// `\@startsection` after-skip: 2.3ex for `\section`, 1.5ex below it.
 fn heading_after_skip(level: u8, body_size: f64) -> f64 {
     body_ex(body_size) * if level == 1 { 2.3 } else { 1.5 }
+}
+
+/// `\@startsection`'s `#5` is `-1em` for `\paragraph` and
+/// `\subparagraph` (article.cls lines 316-321), so `\@xsect` runs those
+/// two into the following paragraph instead of ending their own line. They
+/// are also past every standard class's `\c@secnumdepth` (article 3,
+/// report/book 2), so their number is never printed.
+fn heading_run_in(level: u8) -> bool {
+    level >= 4
 }
 
 fn heading_size(level: u8, body_size: f64) -> f64 {

@@ -192,6 +192,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("listfiles", "", "accepted no-op; there is no log stream"),
     ("section", "{...}", "numbered section heading; starred form unnumbered"),
     ("subsection", "{...}", "numbered subsection heading; starred form unnumbered"),
+    ("paragraph", "{...}", "run-in paragraph heading, unnumbered at the standard classes' secnumdepth"),
+    ("subparagraph", "{...}", "run-in subparagraph heading, indented by \\parindent"),
     ("label", "{key}", "names the current section, equation or figure number"),
     ("ref", "{key}", "number of the labelled item"),
     ("pageref", "{key}", "page number of the labelled item"),

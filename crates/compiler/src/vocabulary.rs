@@ -35,7 +35,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // LaTeX2e document structure and front matter.
-    "part", "chapter", "subsubsection", "paragraph", "subparagraph", "appendix", "maketitle",
+    "part", "chapter", "subsubsection", "appendix", "maketitle",
     "title", "author", "date", "thanks", "and", "today", "tableofcontents", "listoffigures",
     "listoftables", "abstractname", "footnote", "footnotemark", "footnotetext", "marginpar",
     "index", "glossary", "bibliography", "bibliographystyle", "bibitem", "cite", "nocite",

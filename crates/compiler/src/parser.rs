@@ -631,6 +631,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "section",
     "subsection",
     "subsubsection",
+    "paragraph",
+    "subparagraph",
     "tableofcontents",
     "textbf",
     "textmd",
@@ -1625,11 +1627,20 @@ impl P<'_> {
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
-            "section" | "subsection" | "subsubsection" => {
+            // article.cls lines 302-321 (report.cls/book.cls identical):
+            // the five `\@startsection` levels. `\paragraph` and
+            // `\subparagraph` are run-in headings (`\@startsection`'s `#5`
+            // is `-1em`, so `\@xsect` sets them into the first line of the
+            // following paragraph); that is a layout decision, and the
+            // block they produce here is the same `Heading` as the other
+            // three, at level 4 and 5.
+            "section" | "subsection" | "subsubsection" | "paragraph" | "subparagraph" => {
                 let level = match name {
                     "section" => 1,
                     "subsection" => 2,
-                    _ => 3,
+                    "subsubsection" => 3,
+                    "paragraph" => 4,
+                    _ => 5,
                 };
                 let starred = self.take_optional_star();
                 let (tokens, _) = self.required_group(name, span);
@@ -6420,6 +6431,76 @@ mod tests {
             })
             .collect();
         assert_eq!(numbers, ["1", "", "1.1"]);
+    }
+
+    /// article.cls lines 302-321: `\paragraph` is `\@startsection`'s level
+    /// 4 and `\subparagraph` level 5, so both are `Block::Heading`s like the
+    /// three above them. Whether their number is *printed* is the
+    /// consumer's `\c@secnumdepth` (3 in article), not this crate's.
+    #[test]
+    fn paragraph_and_subparagraph_are_heading_levels_four_and_five() {
+        let parsed = parse(r"\section{One}\subsection{Two}\subsubsection{Three}\paragraph{Four}\subparagraph{Five}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let headings: Vec<(u8, &str)> = parsed
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Heading { level, number, .. } => Some((*level, number.as_str())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(headings, [(1, "1"), (2, "1.1"), (3, "1.1.1"), (4, "1.1.1.1"), (5, "1.1.1.1.1")]);
+    }
+
+    /// article.cls lines 255-266: `paragraph` is numbered within
+    /// `subsubsection` and `subparagraph` within `paragraph`, so a new
+    /// `\subsubsection` resets both.
+    #[test]
+    fn a_new_subsubsection_resets_the_paragraph_counters() {
+        let parsed = parse(r"\section{A}\subsection{B}\subsubsection{C}\paragraph{d}\paragraph{e}\subsubsection{F}\paragraph{g}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let numbers: Vec<&str> = parsed
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Heading { level: 4, number, .. } => Some(number.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(numbers, ["1.1.1.1", "1.1.1.2", "1.1.2.1"]);
+    }
+
+    /// The starred forms take no number and leave the counter alone, as for
+    /// every other `\@startsection` level.
+    #[test]
+    fn starred_paragraph_takes_no_number() {
+        let parsed = parse(r"\paragraph*{Aside}\paragraph{Real}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let numbers: Vec<&str> = parsed
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Heading { number, .. } => Some(number.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(numbers, ["", "0.0.0.1"]);
+        assert!(!parsed.blocks.iter().any(|b| matches!(b, Block::Paragraph(_))), "the argument is a heading, not body text");
+    }
+
+    /// `\@xsect` with `#5 <= 0` does not `\par`: the heading stays on the
+    /// line and the paragraph after it continues there. The `\subsection`
+    /// above it, whose `#5` is `1.5ex`, still ends its own line.
+    #[test]
+    fn a_run_in_heading_keeps_its_paragraph_on_the_same_line() {
+        let (parsed, items) = items(r"\subsection{Display}Above.\paragraph{Run in.}Body after it.");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let at = |t: &str| items.iter().find(|i| i.text == t).unwrap_or_else(|| panic!("no {t:?} in {items:?}"));
+        assert!(at("Above.").baseline_y_pt > at("Display").baseline_y_pt, "a display heading ends its line");
+        assert_eq!(at("Body").baseline_y_pt, at("in.").baseline_y_pt, "a run-in heading does not");
+        assert!(at("Body").x_pt > at("in.").x_pt, "the paragraph follows the heading horizontally");
+        // Past article's `\c@secnumdepth`, so no number is set.
+        assert!(!items.iter().any(|item| item.text.starts_with("0.1.0.1")), "{items:?}");
     }
 
     #[test]
