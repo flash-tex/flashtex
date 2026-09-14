@@ -45,15 +45,28 @@ final class EditorLineCommandsTests: XCTestCase {
 
     func testDuplicateMultiLineSelectionDuplicatesEveryTouchedLine() {
         let text = "aa\nbb\ncc\n"
-        let plan = ELC.duplicate(in: text, selection: span(text, of: "bb\ncc"))!
-        XCTAssertEqual(apply(plan, to: text), "aa\nbb\ncc\nbb\ncc\n")
+        let sel = span(text, of: "bb\ncc")
+        let plan = ELC.duplicate(in: text, selection: sel)!
+        let out = apply(plan, to: text)
+        XCTAssertEqual(out, "aa\nbb\ncc\nbb\ncc\n")
+        XCTAssertEqual(plan.selection, NSRange(location: 9, length: sel.length))
+        XCTAssertEqual((out as NSString).substring(with: plan.selection), "bb\ncc")
     }
 
     func testDuplicateLastLineWithoutTrailingNewlineInsertsASeparator() {
         let text = "aa\nbb"
-        let plan = ELC.duplicate(in: text, selection: caret(text, at: "bb"))!
-        XCTAssertEqual(apply(plan, to: text), "aa\nbb\nbb")
-        XCTAssertEqual((apply(plan, to: text) as NSString).substring(with: NSRange(location: plan.selection.location, length: 2)), "bb")
+        // Caret at the start of "bb" (offset 3) already mapped onto the copy.
+        // The defect is a caret at the end of the unterminated line, which is
+        // also original EOF (offset 5): relative mapping lands at the new EOF
+        // (8), past the copy. The old substring(loc, 2)=="bb" check never
+        // exercised that caret, and would also have accepted the original
+        // "bb" at offset 3.
+        let plan = ELC.duplicate(in: text, selection: NSRange(location: 5, length: 0))!
+        let out = apply(plan, to: text)
+        XCTAssertEqual(out, "aa\nbb\nbb")
+        XCTAssertEqual(plan.selection, NSRange(location: 6, length: 0))
+        XCTAssertEqual((out as NSString).substring(with: NSRange(location: 6, length: 2)), "bb")
+        XCTAssertNotEqual(plan.selection.location, (out as NSString).length)
     }
 
     func testDuplicatePreservesCRLF() {
@@ -83,8 +96,12 @@ final class EditorLineCommandsTests: XCTestCase {
 
     func testMoveMultiLineBlockMovesEveryTouchedLineTogether() {
         let text = "aa\nbb\ncc\ndd\n"
-        let plan = ELC.move(in: text, selection: span(text, of: "bb\ncc"), down: true)!
-        XCTAssertEqual(apply(plan, to: text), "aa\ndd\nbb\ncc\n")
+        let sel = span(text, of: "bb\ncc")
+        let plan = ELC.move(in: text, selection: sel, down: true)!
+        let out = apply(plan, to: text)
+        XCTAssertEqual(out, "aa\ndd\nbb\ncc\n")
+        XCTAssertEqual(plan.selection, NSRange(location: 6, length: sel.length))
+        XCTAssertEqual((out as NSString).substring(with: plan.selection), "bb\ncc")
     }
 
     func testMoveIsNoOpAtBufferEdges() {
@@ -174,6 +191,26 @@ final class EditorLineCommandsTests: XCTestCase {
         let text = "a\n  b\n\tc\n"
         let plan = ELC.joinLines(in: text, selection: NSRange(location: 0, length: (text as NSString).length))!
         XCTAssertEqual(apply(plan, to: text), "a b c\n")
+    }
+
+    func testJoinMultiLineTrimsTrailingWhitespaceOnEveryNonLastLine() {
+        let text = "a\nb  \nc\n"
+        let plan = ELC.joinLines(in: text, selection: NSRange(location: 0, length: (text as NSString).length))!
+        XCTAssertEqual(apply(plan, to: text), "a b c\n")
+    }
+
+    func testJoinStripsATrailingPercentOnMiddleLinesTheSameAsTheFirst() {
+        // Same rule as the left-hand line of a two-line join: a `%` that ends
+        // the line (optional trailing space, not escaped) is dropped, because
+        // keeping it would comment out every subsequent survivor. A `%` that
+        // does not end the line is kept, even though the rest of the join
+        // then sits in that comment.
+        let stripped = "a\nb %\nc\n"
+        XCTAssertEqual(apply(ELC.joinLines(in: stripped, selection: NSRange(location: 0, length: (stripped as NSString).length))!, to: stripped), "a b c\n")
+        let escaped = "a\nb \\%\nc\n"
+        XCTAssertEqual(apply(ELC.joinLines(in: escaped, selection: NSRange(location: 0, length: (escaped as NSString).length))!, to: escaped), "a b \\% c\n")
+        let kept = "a\nb % still\nc\n"
+        XCTAssertEqual(apply(ELC.joinLines(in: kept, selection: NSRange(location: 0, length: (kept as NSString).length))!, to: kept), "a b % still c\n")
     }
 
     func testJoinOnLastLineIsANoOp() {
@@ -271,6 +308,20 @@ final class EditorLineCommandsTests: XCTestCase {
         XCTAssertNil(ELC.trimTrailingWhitespace(in: "aa\nbb\n", selection: NSRange(location: 0, length: 0)))
     }
 
+    func testTrimMapsSelectionBySubtractingRemovalsThatEndAtOrBeforeIt() {
+        // "aa  \nbb  \n" — removals [2,4) and [7,9). After trim: "aa\nbb\n".
+        let text = "aa  \nbb  \n"
+        func loc(_ n: Int) -> Int {
+            ELC.trimTrailingWhitespace(in: text, selection: NSRange(location: n, length: 0))!.selection.location
+        }
+        XCTAssertEqual(loc(0), 0)
+        XCTAssertEqual(loc(5), 3, "caret at start of bb (offset 5) must shift by the two spaces removed on line 1")
+        XCTAssertEqual(loc(3), 2, "inside the first trailing-whitespace run clamps to that run's start")
+        XCTAssertEqual(loc(6), 4)
+        XCTAssertEqual(loc(8), 5, "inside the second trailing-whitespace run clamps to 7, then subtracts the first removal")
+        XCTAssertEqual(loc(9), 5)
+    }
+
     func testTrimLastLineWithoutTrailingNewline() {
         let text = "aa  \nbb  "
         let plan = ELC.trimTrailingWhitespace(in: text, selection: NSRange(location: 0, length: 0))!
@@ -332,6 +383,15 @@ final class EditorLineCommandsHostTests: XCTestCase {
         XCTAssertEqual(tv.string, "aa\nbb\ncc\n")
         tv.undoManager?.redo()
         XCTAssertEqual(tv.string, "aa\nbb\nbb\ncc\n")
+    }
+
+    func testDuplicateLastUnterminatedLineSelectsTheCopyNotEOF() throws {
+        let (window, tv) = try host("aa\nbb")
+        defer { window.orderOut(nil) }
+        tv.setSelectedRange(NSRange(location: 5, length: 0))
+        tv.duplicateLines(nil)
+        XCTAssertEqual(tv.string, "aa\nbb\nbb")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 6, length: 0))
     }
 
     func testMoveJoinDeleteSortTrimAreEachOneUndoStep() throws {
