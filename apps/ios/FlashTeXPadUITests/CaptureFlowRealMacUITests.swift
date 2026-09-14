@@ -2,14 +2,19 @@ import UIKit
 import XCTest
 
 /// Opt-in end-to-end against a **real** FlashTeX Mac process (not FakeMac).
-/// Skipped unless both are set, so `xcodebuild test` on CI is unchanged:
+/// Skipped unless `FLASHTEX_PAD_E2E_MAC=1` plus either discrete host/port/
+/// bootstrap vars or `FLASHTEX_PAD_E2E_INFO`, so `xcodebuild test` on CI is
+/// unchanged. The XCUITest runner lives **in the simulator**: host env is
+/// invisible unless xcodebuild prefixes it `TEST_RUNNER_` (Xcode strips that
+/// prefix when injecting the runner process). A Mac `/tmp` JSON path is also
+/// invisible to the simulator, so prefer:
 ///
-///   FLASHTEX_PAD_E2E_MAC=1
-///   FLASHTEX_PAD_E2E_INFO=/path/to/mac-info.json
+///   TEST_RUNNER_FLASHTEX_PAD_E2E_MAC=1
+///   TEST_RUNNER_FLASHTEX_PAD_E2E_HOST=127.0.0.1
+///   TEST_RUNNER_FLASHTEX_PAD_E2E_PORT=<port>
+///   TEST_RUNNER_FLASHTEX_PAD_E2E_BOOTSTRAP='flashtex-nearby://pair?…'
 ///
-/// The JSON is written by the lane's Mac launch (pairing journal + pair store
-/// + listening port). Keys: `host`, `port`, `bootstrap` (the
-/// `flashtex-nearby://pair?…` payload). The test types host/port, pastes the
+/// The test types host/port (host already defaults to 127.0.0.1), pastes the
 /// payload, sends the bundled sample image and a finger-drawn triangle, and
 /// asserts both receipts. No provider call is involved on either side.
 final class CaptureFlowRealMacUITests: XCTestCase {
@@ -29,6 +34,37 @@ final class CaptureFlowRealMacUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
     }
 
+    /// SwiftUI `Form` cells below the fold are not in the accessibility tree
+    /// until they have been scrolled on-screen (NavigationSplitView + iPad
+    /// landscape). Swipe the already-visible QR field so the sidebar is not
+    /// the swipe target.
+    @discardableResult
+    private func reveal(_ app: XCUIApplication, _ id: String, timeout: TimeInterval = 10) -> XCUIElement {
+        let target = el(app, id)
+        if target.waitForExistence(timeout: 0.4) { return target }
+        let anchor = el(app, "pair.qr.text")
+        let deadline = Date().addingTimeInterval(timeout)
+        var n = 0
+        while Date() < deadline, !target.exists {
+            let up = n % 6 < 4
+            if anchor.exists { up ? anchor.swipeUp() : anchor.swipeDown() }
+            else { up ? app.swipeUp() : app.swipeDown() }
+            n += 1
+        }
+        return target
+    }
+
+    /// iOS paste-from-another-app may show a system "Allow Paste" control.
+    private func confirmPasteIfPrompted() {
+        let spring = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for label in ["Allow Paste", "Allow paste"] {
+            if spring.buttons[label].waitForExistence(timeout: 1.0) {
+                spring.buttons[label].tap()
+                return
+            }
+        }
+    }
+
     private func text(_ app: XCUIApplication, startingWith p: String) -> XCUIElement {
         app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", p)).firstMatch
     }
@@ -42,10 +78,15 @@ final class CaptureFlowRealMacUITests: XCTestCase {
     private func loadInfo() throws -> MacInfo {
         let env = ProcessInfo.processInfo.environment
         guard env["FLASHTEX_PAD_E2E_MAC"] == "1" else {
-            throw XCTSkip("set FLASHTEX_PAD_E2E_MAC=1 and FLASHTEX_PAD_E2E_INFO to run against a real Mac")
+            throw XCTSkip("set FLASHTEX_PAD_E2E_MAC=1 (xcodebuild TEST_RUNNER_FLASHTEX_PAD_E2E_MAC=1) to run against a real Mac")
+        }
+        if let host = env["FLASHTEX_PAD_E2E_HOST"], let portS = env["FLASHTEX_PAD_E2E_PORT"],
+           let port = UInt16(portS), let bootstrap = env["FLASHTEX_PAD_E2E_BOOTSTRAP"],
+           !host.isEmpty, !bootstrap.isEmpty {
+            return MacInfo(host: host, port: port, bootstrap: bootstrap, name: env["FLASHTEX_PAD_E2E_NAME"])
         }
         guard let path = env["FLASHTEX_PAD_E2E_INFO"], !path.isEmpty else {
-            throw XCTSkip("FLASHTEX_PAD_E2E_INFO is missing")
+            throw XCTSkip("FLASHTEX_PAD_E2E_HOST/PORT/BOOTSTRAP or FLASHTEX_PAD_E2E_INFO is missing")
         }
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
         return try JSONDecoder().decode(MacInfo.self, from: data)
@@ -63,24 +104,35 @@ final class CaptureFlowRealMacUITests: XCTestCase {
         app.staticTexts.matching(NSPredicate(format: "label == %@", "Mac link")).firstMatch.tap()
         XCTAssertTrue(el(app, "pair.qr.text").waitForExistence(timeout: 10), app.debugDescription)
 
-        // Host defaults to 127.0.0.1 (loopback); re-typing would duplicate it.
-        if info.host != "127.0.0.1" {
-            let hostField = el(app, "pair.host")
-            hostField.tap()
-            hostField.typeText(info.host)
-        }
-        let portField = el(app, "pair.port")
-        XCTAssertTrue(portField.waitForExistence(timeout: 5))
-        portField.tap()
-        portField.typeText(String(info.port))
-
+        // Paste while the QR section is still on-screen; then scroll to the
+        // typed host/port section (lazy Form cells are not queryable off-screen).
         UIPasteboard.general.string = info.bootstrap
         XCTAssertTrue(el(app, "pair.qr.paste").waitForExistence(timeout: 5))
         el(app, "pair.qr.paste").tap()
-        XCTAssertTrue(el(app, "pair.qr.go").waitForExistence(timeout: 5) && el(app, "pair.qr.go").isEnabled,
+        confirmPasteIfPrompted()
+        if !el(app, "pair.qr.go").isEnabled {
+            let qr = el(app, "pair.qr.text")
+            qr.tap()
+            qr.typeText(info.bootstrap)
+        }
+
+        // Host defaults to 127.0.0.1 (loopback); re-typing would duplicate it.
+        if info.host != "127.0.0.1" {
+            let hostField = reveal(app, "pair.host")
+            XCTAssertTrue(hostField.waitForExistence(timeout: 2), app.debugDescription)
+            hostField.tap()
+            hostField.typeText(info.host)
+        }
+        let portField = reveal(app, "pair.port")
+        XCTAssertTrue(portField.waitForExistence(timeout: 2), "pair.port still missing after scrolling the Form: \(app.debugDescription)")
+        portField.tap()
+        portField.typeText(String(info.port))
+
+        let go = reveal(app, "pair.qr.go")
+        XCTAssertTrue(go.waitForExistence(timeout: 5) && go.isEnabled,
                       "Paste should fill the payload field")
         attach(app, "e2e-01-mac-link-filled")
-        el(app, "pair.qr.go").tap()
+        go.tap()
 
         let paired = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "connected")).firstMatch
         XCTAssertTrue(paired.waitForExistence(timeout: 20), app.debugDescription)
