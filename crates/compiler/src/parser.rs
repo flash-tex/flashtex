@@ -5169,6 +5169,17 @@ impl P<'_> {
                         content.push(inline);
                     }
                 }
+                // `\item[\labelitemi]`-style nested use (#GH-LIST-LABELS
+                // review: this restricted dispatcher previously recognised
+                // only `TEXT_SYMBOLS`, so the marker silently vanished here).
+                TokenKind::Command(name)
+                    if matches!(
+                        name.as_str(),
+                        "labelitemi" | "labelitemii" | "labelitemiii" | "labelitemiv"
+                    ) =>
+                {
+                    content.push(self.labelitem_inline(name, input.token.span, space_before));
+                }
                 TokenKind::Command(name) if TextLogo::from_command(name).is_some() => {
                     if let Some(logo) = TextLogo::from_command(name) {
                         content.push(Inline::Logo {
@@ -5353,12 +5364,19 @@ impl P<'_> {
         }
     }
 
-    /// A `\labelitem<i>` default marker in running text: the same glyph (and
-    /// level 2's `\bfseries` bold) `lists::labelitem` gives the matching
-    /// itemize level. A `\renewcommand` of one of these names expands in the
-    /// expansion pass, so the redefinition — not this arm — supplies later
-    /// uses; the itemize labels themselves always keep the kernel defaults.
-    fn labelitem_marker(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+    /// A `\labelitem<i>` default marker: the same glyph (and level 2's
+    /// `\bfseries` bold) `lists::labelitem` gives the matching itemize
+    /// level. The article default is `\normalfont\bfseries\textendash` for
+    /// level 2 (plain for the others) — the marker's own style is reset,
+    /// not inherited from whatever style is active at the point it's used,
+    /// exactly like a real `\normalfont`/`\bfseries` prefix in its
+    /// definition would. A `\renewcommand` of one of these names expands in
+    /// the expansion pass, so the redefinition — not this arm — supplies
+    /// later uses in running text; the itemize labels themselves always
+    /// keep the kernel defaults (a known, separate gap: `default_label`
+    /// calls `lists::labelitem` directly and does not consult a
+    /// redefinition).
+    fn labelitem_inline(&self, name: &str, span: Span, space_before: bool) -> Inline {
         let level = match name {
             "labelitemi" => 1,
             "labelitemii" => 2,
@@ -5366,21 +5384,19 @@ impl P<'_> {
             _ => 4,
         };
         let (text, _, bold) = lists::labelitem(level);
-        let space_before = self.space_precedes(self.i - 1);
-        let style = if bold {
-            TextStyle {
-                bold: true,
-                ..self.style
-            }
-        } else {
-            self.style
-        };
-        para.push(Inline::Text {
+        Inline::Text {
             text: text.to_string(),
             span,
-            style,
+            style: if bold { TextStyle::BOLD } else { TextStyle::default() },
             space_before,
-        });
+        }
+    }
+
+    /// A `\labelitem<i>` default marker in running text (see
+    /// `labelitem_inline`).
+    fn labelitem_marker(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        para.push(self.labelitem_inline(name, span, space_before));
     }
 
     /// A siunitx typesetting command (`crate::siunitx`): its arguments are

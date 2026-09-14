@@ -305,3 +305,53 @@ fn quote_inside_an_item_is_styled_with_both_frames() {
         .collect();
     assert_eq!(kinds, [("item", 1), ("styled", 2), ("item", 1)]);
 }
+
+#[test]
+fn labelitem_command_survives_as_a_nested_explicit_label() {
+    // `\item[\labelitemi]`: the restricted nested-content dispatcher used
+    // for explicit `[...]` labels previously recognised only
+    // `text_builtins::TEXT_SYMBOLS`, so a `\labelitem<i>` inside it
+    // silently vanished instead of typesetting the marker.
+    let source = doc("\\begin{itemize}\\item[\\labelitemi] A\\item[\\labelitemiii] B\\end{itemize}");
+    assert_eq!(label_texts(&source), ["•", "∗"]);
+}
+
+#[test]
+fn labelitem_command_resets_style_rather_than_inheriting_it() {
+    // The article default for level 2 is `\normalfont\bfseries\textendash`:
+    // the marker's own style, not whatever face happens to be active where
+    // `\labelitemii` is written. `\itshape\labelitemii` must NOT come out
+    // italic-and-bold.
+    let source = doc("\\itshape\\labelitemii");
+    let parsed = parser::parse(&source);
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    let mut found = false;
+    for block in &parsed.blocks {
+        if let Block::Paragraph(content) = block {
+            for inline in content {
+                if let Inline::Text { text, style, .. } = inline {
+                    if text == "–" {
+                        found = true;
+                        assert!(style.bold, "level 2's marker keeps its own \\bfseries");
+                        assert!(!style.italic, "the marker must reset \\itshape, not inherit it");
+                    }
+                }
+            }
+        }
+    }
+    assert!(found, "expected the \\labelitemii marker in the output");
+}
+
+#[test]
+#[ignore = "known bug, not fixed in this slice: the itemize environment's \
+            own default label (lists::default_label -> lists::labelitem) is \
+            a direct Rust lookup and never consults a \\renewcommand of the \
+            matching \\labelitem<i> -- see the GH-LIST-LABELS PR discussion. \
+            Fixing it needs the expansion pass to capture a \\labelitem<i> \
+            redefinition's body (the same way it already captures \
+            \\arraystretch/\\includeonly) and thread it into default_label, \
+            which is a larger change than this slice's scope."]
+fn renewcommand_of_a_labelitem_changes_the_itemize_default_too() {
+    let source = doc("\\renewcommand{\\labelitemi}{X}\\begin{itemize}\\item A\\end{itemize}");
+    assert_eq!(label_texts(&source), ["X"], "a redefined \\labelitemi should change itemize's own default marker too");
+}
