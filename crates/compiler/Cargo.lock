@@ -3,9 +3,14 @@
 version = 4
 
 [[package]]
+name = "flashtex-class-geometry"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-compiler"
 version = "0.1.0"
 dependencies = [
+ "flashtex-class-geometry",
  "flashtex-font-engine",
  "flashtex-tex-boxes",
  "flashtex-tex-expansion",

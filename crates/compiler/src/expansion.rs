@@ -47,6 +47,7 @@ use std::rc::Rc;
 
 use flashtex_tex_expansion::{self as tex, CatCode, Edit, Engine, IncrementalExpander, Limits, TokenKind as TexKind};
 
+use crate::class_lengths;
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{tokenize_document, Token, TokenKind};
 use crate::parser::{path_is_safe, SourceDocument, BUILT_INS, INCLUDE_DEPTH_LIMIT};
@@ -106,8 +107,9 @@ pub struct Expansion {
 /// host command the converter maps back, so the parser sees the original
 /// name with its argument still a control sequence, not consumed as a
 /// skip assignment, which would yield `\\addtolength{\\}`. Those same
-/// undefined names are still `<internal dimen>` in `scan_dimen` (article
-/// 10pt defaults), so `0.5\\textwidth` assigns a real skip.
+/// undefined names are still `<internal dimen>` in `scan_dimen` (filled
+/// from class-geometry for article/report/book), so `0.5\\textwidth`
+/// assigns a real skip.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
@@ -645,6 +647,7 @@ fn configure(engine: &mut Engine) {
     engine.declare_host_command("include");
     engine.declare_host_command("flashtexsetlength");
     engine.declare_host_command("flashtexaddtolength");
+    class_lengths::install(engine);
 }
 
 fn has_includes(text: &str) -> bool {
@@ -1064,7 +1067,10 @@ pub fn expand_project_with_cache(
     }
     let masked: &str = prepared[entry].text.as_ref();
     let reusable = cache.as_ref().is_some_and(|c| {
-        !c.lent && c.entry_path == document.path && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
+        !c.lent
+            && c.entry_path == document.path
+            && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
+            && class_lengths::class_preamble(&c.masked) == class_lengths::class_preamble(masked)
     });
     let expansion = if reusable {
         update_cache(cache.as_mut().expect("checked"), documents, entry, &prepared)

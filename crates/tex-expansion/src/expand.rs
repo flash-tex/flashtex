@@ -156,6 +156,12 @@ pub(crate) struct State {
     pub in_csname: u32,
     /// Host option, see `Engine::set_emit_unbalanced_close`.
     pub emit_unbalanced_close: bool,
+    /// Class lengths left undefined so they pass through to the typesetter
+    /// (`\textwidth` and friends) but still usable as `<internal dimen>`.
+    pub pass_through_dimens: Rc<HashMap<String, i64>>,
+    /// False when the table is only the article 10pt/letterpaper
+    /// approximation (non-standard class): `scan_dimen` warns on use.
+    pub pass_through_exact: bool,
 }
 
 impl State {
@@ -193,6 +199,8 @@ impl State {
             edef_depth,
             in_csname,
             emit_unbalanced_close,
+            pass_through_dimens,
+            pass_through_exact,
         } = self;
         conditionals == &new.conditionals
             && *pending_global == new.pending_global
@@ -210,6 +218,9 @@ impl State {
             && *edef_depth == new.edef_depth
             && *in_csname == new.in_csname
             && *emit_unbalanced_close == new.emit_unbalanced_close
+            && *pass_through_exact == new.pass_through_exact
+            && (Rc::ptr_eq(pass_through_dimens, &new.pass_through_dimens)
+                || pass_through_dimens == &new.pass_through_dimens)
             && match (after_assignment, &new.after_assignment) {
                 (None, None) => true,
                 (Some(a), Some(b)) => crate::scopes::token_eq_mapped(a, b, f),
@@ -503,6 +514,23 @@ impl Engine {
     /// recover from it at its own position. The error is still recorded.
     pub fn set_emit_unbalanced_close(&mut self, emit: bool) {
         self.st.emit_unbalanced_close = emit;
+    }
+
+    /// Class lengths this engine leaves undefined (`\textwidth` and
+    /// friends) so the typesetter still sees them. `scan_dimen` treats
+    /// them as `<internal dimen>`. The default table is article 10pt /
+    /// letterpaper; a host that knows the document's class replaces it.
+    /// `exact` is false when the values are only that default
+    /// approximation: `scan_dimen` then warns on use.
+    pub fn set_pass_through_dimens(&mut self, dimens: HashMap<String, i64>, exact: bool) {
+        self.st.pass_through_dimens = Rc::new(dimens);
+        self.st.pass_through_exact = exact;
+    }
+
+    /// Keep the current pass-through table but mark it approximated
+    /// (non-standard class) or exact.
+    pub fn set_pass_through_exact(&mut self, exact: bool) {
+        self.st.pass_through_exact = exact;
     }
 
     /// Start reading `text` before the rest of the current input, as a
@@ -3663,7 +3691,7 @@ impl Engine {
                     }
                     Meaning::Undefined => {
                         if let Some(name) = token_cs_name(&t) {
-                            if let Some(v) = pass_through_dimen_sp(name) {
+                            if let Some(v) = self.lookup_pass_through_dimen(name, t.span) {
                                 self.next_raw_token();
                                 Some(v)
                             } else {
@@ -3707,7 +3735,7 @@ impl Engine {
     /// so the typesetter sees them) or a named "not a known length" error.
     fn take_pass_through_or_unknown_dimen(&mut self, t: &Token) -> Option<i64> {
         let name = token_cs_name(t)?;
-        if let Some(v) = pass_through_dimen_sp(name) {
+        if let Some(v) = self.lookup_pass_through_dimen(name, t.span) {
             self.next_raw_token();
             return Some(v);
         }
@@ -3717,6 +3745,19 @@ impl Engine {
         );
         self.next_raw_token();
         Some(0)
+    }
+
+    /// A still-undefined class length the host (or the article 10pt
+    /// default table) supplied as an `<internal dimen>`.
+    fn lookup_pass_through_dimen(&mut self, name: &str, span: Span) -> Option<i64> {
+        let v = *self.st.pass_through_dimens.get(name)?;
+        if !self.st.pass_through_exact {
+            self.warn(
+                format!("\\{name} value is approximated (not a standard class)"),
+                span,
+            );
+        }
+        Some(v)
     }
 
     fn unit_sp(&mut self, unit: &str) -> f64 {
@@ -4710,20 +4751,27 @@ fn token_cs_name(t: &Token) -> Option<&str> {
 /// Article 10pt / letterpaper defaults for length names the LaTeX-mode
 /// engine leaves undefined so they pass through to the typesetter
 /// (CONTRACT.md). `scan_dimen` still treats them as `<internal dimen>`
-/// so `0.5\textwidth` works inside a `\newlength` assignment.
+/// so `0.5\textwidth` works inside a `\newlength` assignment. A host
+/// that knows the document's class replaces this table.
 ///
 /// Sources: size10.clo lines 87–91 (`\parindent` 15pt) and 107–127
 /// (`\textwidth` 345pt when `\paperwidth-2in` is larger); latex.ltx
 /// `\linewidth`/`\columnwidth`/`\hsize` equal `\textwidth` in onecolumn
-/// main text; article.cls `letterpaper` `\paperwidth` 8.5in. 8.5in in sp
-/// is TeX §458 `dimen_from_parts(8, [5], in)` = 40258437 (`614.295pt`).
-fn pass_through_dimen_sp(name: &str) -> Option<i64> {
-    Some(match name {
-        "textwidth" | "linewidth" | "columnwidth" | "hsize" => 345 * 65536,
-        "parindent" => 15 * 65536,
-        "paperwidth" => 40258437,
-        _ => return None,
-    })
+/// main text; article.cls `letterpaper` `\paperwidth` 8.5in /
+/// `\paperheight` 11in. 8.5in in sp is TeX §458 `dimen_from_parts(8, [5],
+/// in)` = 40258437 (`614.295pt`); 11in is 52099153; `\textheight` 550pt
+/// is size10.clo lines 130–138.
+fn default_pass_through_dimens() -> HashMap<String, i64> {
+    let tw = 345 * 65536;
+    let mut m = HashMap::new();
+    for name in ["textwidth", "linewidth", "columnwidth", "hsize"] {
+        m.insert(name.to_string(), tw);
+    }
+    m.insert("parindent".into(), 15 * 65536);
+    m.insert("paperwidth".into(), 40258437);
+    m.insert("paperheight".into(), 52099153);
+    m.insert("textheight".into(), 550 * 65536);
+    m
 }
 
 /// tex.web §107 `xn_over_d`: x*n/d truncated toward zero.
@@ -5141,6 +5189,8 @@ fn base_state(tex_only: bool) -> State {
         edef_depth: 0,
         in_csname: 0,
         emit_unbalanced_close: false,
+        pass_through_dimens: Rc::new(default_pass_through_dimens()),
+        pass_through_exact: true,
     }
 }
 

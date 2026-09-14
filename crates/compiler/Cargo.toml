@@ -18,3 +18,4 @@ flashtex-font-engine = { path = "../font-engine" }
 flashtex-tex-text-encoding = { path = "../tex-text-encoding" }
 flashtex-tex-boxes = { path = "../tex-boxes" }
 flashtex-tex-expansion = { path = "../tex-expansion" }
+flashtex-class-geometry = { path = "../class-geometry" }
