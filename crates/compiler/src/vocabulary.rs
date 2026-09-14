@@ -158,6 +158,91 @@ pub fn suggest_command(name: &str) -> Option<&'static str> {
     best.map(|(_, candidate)| candidate)
 }
 
+/// Closest of `names` to `needle`, same distance limit as [`suggest_command`].
+pub fn nearest_name<'a>(needle: &str, names: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    let limit = if needle.chars().count() <= 3 { 1 } else { 2 };
+    let mut best: Option<(usize, &'a str)> = None;
+    for candidate in names {
+        if candidate == needle {
+            continue;
+        }
+        let distance = edit_distance(needle, candidate);
+        if distance <= limit && best.is_none_or(|(d, _)| distance < d) {
+            best = Some((distance, candidate));
+        }
+    }
+    best.map(|(_, name)| name)
+}
+
+fn is_math_command(name: &str) -> bool {
+    MATH_COMMANDS.contains(&name)
+        || COMMAND_GLYPHS.iter().any(|(n, _)| *n == name)
+        || OPERATOR_NAMES.contains(&name)
+        || DELIMITER_COMMANDS.contains(&name)
+}
+
+/// Package that defines `name`, when that is the useful help.
+pub fn command_package(name: &str) -> Option<&'static str> {
+    match name {
+        "tikz" | "usetikzlibrary" | "draw" | "node" | "fill" | "path" => Some("tikz"),
+        "includegraphics" | "graphicspath" | "scalebox" | "resizebox" | "rotatebox"
+        | "reflectbox" => Some("graphicx"),
+        "lstinline" | "listoflistings" => Some("listings"),
+        "mintinline" => Some("minted"),
+        "citep" | "citet" | "citeauthor" => Some("natbib"),
+        "addbibresource" | "printbibliography" => Some("biblatex"),
+        "eqref" | "intertext" | "shortintertext" | "substack" | "DeclareMathOperator"
+        | "numberwithin" | "allowdisplaybreaks" => Some("amsmath"),
+        "cref" | "Cref" => Some("cleveref"),
+        "autoref" | "nameref" | "url" | "href" | "hyperref" | "hyperlink" | "hypertarget"
+        | "hypersetup" => Some("hyperref"),
+        "geometry" => Some("geometry"),
+        _ => None,
+    }
+}
+
+/// `= help:` for an unsupported text-mode command (issue #277).
+pub fn command_help(name: &str) -> String {
+    if is_math_command(name) {
+        return format!("wrap this in math mode: \\(\\{name}\\)");
+    }
+    if let Some(package) = command_package(name) {
+        return format!(
+            "\\{name} is a {package} command, which this compiler does not implement"
+        );
+    }
+    if is_known_command(name) {
+        return format!("\\{name} is recognised LaTeX that this compiler does not implement");
+    }
+    if let Some(known) = suggest_command(name) {
+        return format!("did you mean \\{known}?");
+    }
+    "no known LaTeX command has this name; check the spelling".into()
+}
+
+/// `= help:` for an unimplemented environment.
+pub fn environment_help(name: &str) -> String {
+    let package = match name {
+        "tikzpicture" => Some("tikz"),
+        "lstlisting" => Some("listings"),
+        "minted" => Some("minted"),
+        "longtable" => Some("longtable"),
+        "tabularx" => Some("tabularx"),
+        "wrapfigure" => Some("wrapfig"),
+        "subfigure" => Some("subcaption"),
+        "landscape" => Some("lscape"),
+        _ => None,
+    };
+    match package {
+        Some(p) => format!(
+            "environment '{name}' needs the {p} package, which this compiler does not implement; the body is typeset as plain text"
+        ),
+        None => format!(
+            "environment '{name}' is not in this compiler's implemented subset; the body is typeset as plain text"
+        ),
+    }
+}
+
 /// Optimal string alignment distance: Levenshtein plus adjacent transposition,
 /// so `alpah` is one edit from `alpha`.
 fn edit_distance(a: &str, b: &str) -> usize {
@@ -199,6 +284,8 @@ mod tests {
         assert_eq!(suggest_command("sectoin"), Some("section"));
         assert_eq!(suggest_command("frobnicate"), None);
         assert_eq!(suggest_command("alpha"), None);
+        assert_eq!(nearest_name("s2", ["s1", "sec2"].into_iter()), Some("s1"));
+        assert_eq!(nearest_name("nope", ["intro", "later"].into_iter()), None);
     }
 
     #[test]

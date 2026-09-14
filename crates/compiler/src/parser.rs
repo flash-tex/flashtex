@@ -20,6 +20,7 @@ use crate::math::{self, MathList, MathPackages};
 use crate::siunitx;
 use crate::text_builtins::{self, SymbolOutcome, TextDimen, TextLogo, TextRule};
 use crate::theorems::{self, TheoremDef, TheoremStyle};
+use crate::vocabulary;
 use crate::{DocumentId, Span};
 use flashtex_tex_text_encoding::encoding::Encoding;
 
@@ -1084,18 +1085,25 @@ pub fn parse_project_with(
     let blocks = p.document();
 
     while let Some(open) = p.brace_stack.pop() {
-        p.diags.push(Diagnostic::error(
-            "unmatched '{' — group never closed",
-            Some(open),
-            Some("treated the rest of the document as part of the group".into()),
-        ));
+        p.diags.push(
+            Diagnostic::error(
+                "unmatched '{' — group never closed",
+                Some(open),
+                Some("treated the rest of the document as part of the group".into()),
+            )
+            .with_help("add a closing '}'")
+            .with_label(open, "this group opens here", true),
+        );
     }
     while let Some((name, span)) = p.env_stack.pop() {
-        p.diags.push(Diagnostic::error(
-            format!("unterminated environment '{}' — no matching \\end", name),
-            Some(span),
-            Some("closed the environment at end of input".into()),
-        ));
+        p.diags.push(
+            Diagnostic::error(
+                format!("unterminated environment '{}' — no matching \\end", name),
+                Some(span),
+                Some("closed the environment at end of input".into()),
+            )
+            .with_help(format!("add \\end{{{name}}}")),
+        );
     }
 
     let incremental_safe = p.diags.is_empty();
@@ -1433,11 +1441,14 @@ impl P<'_> {
                     self.i += 1;
                     if self.brace_stack.pop().is_none() {
                         if render {
-                            self.diags.push(Diagnostic::error(
-                                "unmatched '}' — no group is open here",
-                                Some(tok.span),
-                                Some("ignored the stray brace and continued".into()),
-                            ));
+                            self.diags.push(
+                                Diagnostic::error(
+                                    "unmatched '}' — no group is open here",
+                                    Some(tok.span),
+                                    Some("ignored the stray brace and continued".into()),
+                                )
+                                .with_help("remove this '}' or add a matching '{'"),
+                            );
                         }
                     } else {
                         if let Some(style) = self.style_stack.pop() {
@@ -1460,11 +1471,14 @@ impl P<'_> {
                 }
                 TokenKind::Superscript | TokenKind::Subscript if render => {
                     self.i += 1;
-                    self.diags.push(Diagnostic::error(
-                        "math script marker used outside math mode",
-                        Some(tok.span),
-                        Some("ignored the script marker and continued".into()),
-                    ));
+                    self.diags.push(
+                        Diagnostic::error(
+                            "math script marker used outside math mode",
+                            Some(tok.span),
+                            Some("ignored the script marker and continued".into()),
+                        )
+                        .with_help("wrap the marked atom in math mode: \\(x^{...}\\)"),
+                    );
                 }
                 TokenKind::MathShift
                 | TokenKind::DisplayMathOpen
@@ -2148,11 +2162,15 @@ impl P<'_> {
             // `\def\enskip{\hskip.5em\relax}` (latex.ltx 9434): glue, like `\quad`.
             "enskip" => para.push(Inline::TextGlue { em: 0.5, span }),
             "rule" => self.text_rule(span, para),
-            "frac" | "sqrt" => self.diags.push(Diagnostic::error(
-                format!("\\{} requires math mode", name),
-                Some(span),
-                Some("skipped the command and typeset its braced arguments as plain text".into()),
-            )),
+            "frac" | "sqrt" => self.diags.push(
+                Diagnostic::error(
+                    format!("\\{} requires math mode", name),
+                    Some(span),
+                    Some("skipped the command and typeset its braced arguments as plain text".into()),
+                )
+                .with_help(format!("wrap it in math mode: \\(\\{name}{{...}}\\)"))
+                .with_label(span, "this command", true),
+            ),
             other => self.unsupported(other, span),
         }
     }
@@ -2192,11 +2210,16 @@ impl P<'_> {
             .copied()
             .or_else(|| self.document_by_path.get(appended.as_str()).copied());
         let Some(document_index) = resolved else {
-            self.diags.push(Diagnostic::error(
-                format!("included file not found: looked for '{requested}' and '{appended}'"),
-                Some(span),
-                Some("skipped the missing include and continued".into()),
-            ));
+            self.diags.push(
+                Diagnostic::error(
+                    format!("included file not found: looked for '{requested}' and '{appended}'"),
+                    Some(span),
+                    Some("skipped the missing include and continued".into()),
+                )
+                .with_help(format!(
+                    "add '{requested}' or '{appended}' to the project documents, or fix the \\input path"
+                )),
+            );
             return;
         };
 
@@ -2500,14 +2523,19 @@ impl P<'_> {
         if packages.is_empty() {
             return;
         }
-        self.diags.push(Diagnostic::warning(
-            format!(
-                "packages {} are recognised but not implemented",
-                packages.join(", ")
+        self.diags.push(
+            Diagnostic::warning(
+                format!(
+                    "packages {} are recognised but not implemented",
+                    packages.join(", ")
+                ),
+                Some(span.merge(argument_span)),
+                Some("continued without package-specific commands or formatting".into()),
+            )
+            .with_help(
+                "remove that \\usepackage if you do not need it; its commands are still diagnosed when used",
             ),
-            Some(span.merge(argument_span)),
-            Some("continued without package-specific commands or formatting".into()),
-        ));
+        );
     }
 
     /// `\begin{multicols}{<n>}[<preface>][<premulticols>]` and `multicols*`
@@ -2653,21 +2681,27 @@ impl P<'_> {
         self.flush_paragraph(blocks, para);
 
         let Some((title_tokens, title_span)) = self.title.clone() else {
-            self.diags.push(Diagnostic::error(
-                "\\maketitle requires \\title to be set first",
-                Some(span),
-                Some("no title block was produced".into()),
-            ));
+            self.diags.push(
+                Diagnostic::error(
+                    "\\maketitle requires \\title to be set first",
+                    Some(span),
+                    Some("no title block was produced".into()),
+                )
+                .with_help("add \\title{...} before \\maketitle"),
+            );
             return;
         };
         // latex.ltx: `\def\@author{\@latex@warning@no@line{No \noexpand\author
         // given}}`. The title block is set regardless, with an empty author box.
         let (author_tokens, author_span) = self.author.clone().unwrap_or_else(|| {
-            self.diags.push(Diagnostic::warning(
-                "No \\author given",
-                Some(span),
-                Some("set the title block without an author line, as LaTeX does".into()),
-            ));
+            self.diags.push(
+                Diagnostic::warning(
+                    "No \\author given",
+                    Some(span),
+                    Some("set the title block without an author line, as LaTeX does".into()),
+                )
+                .with_help("add \\author{...} before \\maketitle; an empty \\author{} is silent like LaTeX"),
+            );
             (Vec::new(), span)
         });
 
@@ -2995,15 +3029,18 @@ impl P<'_> {
                 self.flush_paragraph(blocks, para);
                 self.multicols_arguments(span.merge(argument_span), &environment);
             } else if self.in_body {
-                self.diags.push(Diagnostic::environment_warning(
-                    &environment,
-                    format!(
-                        "environment '{}' is not implemented; its body is typeset as plain text",
-                        environment
-                    ),
-                    Some(span),
-                    Some("typeset the body without the environment's formatting".into()),
-                ));
+                self.diags.push(
+                    Diagnostic::environment_warning(
+                        &environment,
+                        format!(
+                            "environment '{}' is not implemented; its body is typeset as plain text",
+                            environment
+                        ),
+                        Some(span),
+                        Some("typeset the body without the environment's formatting".into()),
+                    )
+                    .with_help(vocabulary::environment_help(&environment)),
+                );
             }
             if is_minipage(&environment) {
                 // `\@iiiminipage`: `\c@mpfootnote\z@`.
@@ -3903,11 +3940,14 @@ impl P<'_> {
             raw.last().map_or(open.end, |t| t.span.end)
         };
         match (found, unclosed) {
-            (true, Some(group)) => self.diags.push(Diagnostic::error(
-                "math group is missing its closing brace",
-                Some(group),
-                Some("closed the group at the math delimiter".into()),
-            )),
+            (true, Some(group)) => self.diags.push(
+                Diagnostic::error(
+                    "math group is missing its closing brace",
+                    Some(group),
+                    Some("closed the group at the math delimiter".into()),
+                )
+                .with_help("add a closing '}'"),
+            ),
             // One primary diagnostic at the innermost opener: closing it is
             // the next thing the author has to type.
             (false, Some(group)) => self.diags.push(Diagnostic::error(
@@ -3922,17 +3962,25 @@ impl P<'_> {
                     .into(),
                 ),
             )),
-            (false, None) => self.diags.push(Diagnostic::error(
-                if display {
-                    "display math is missing its closing delimiter"
+            (false, None) => self.diags.push(
+                Diagnostic::error(
+                    if display {
+                        "display math is missing its closing delimiter"
+                    } else {
+                        "inline math is missing its closing '$'"
+                    },
+                    Some(open),
+                    Some(
+                        "closed math mode at the end of the paragraph and typeset its contents".into(),
+                    ),
+                )
+                .with_help(if display {
+                    "add a closing \\] or $$ to end the display"
                 } else {
-                    "inline math is missing its closing '$'"
-                },
-                Some(open),
-                Some(
-                    "closed math mode at the end of the paragraph and typeset its contents".into(),
-                ),
-            )),
+                    "add a closing '$' to end the formula"
+                })
+                .with_label(open, "math starts here", true),
+            ),
             (true, None) => {}
         }
         // `\[...\]` and `$$...$$` are unnumbered displays in LaTeX: they never
@@ -4016,11 +4064,14 @@ impl P<'_> {
             None => (self.t.len(), "closed the argument at end of input"),
         };
         self.i = stop;
-        self.diags.push(Diagnostic::error(
-            format!("argument to \\{} is missing its closing brace", command),
-            Some(open),
-            Some(recovery.into()),
-        ));
+        self.diags.push(
+            Diagnostic::error(
+                format!("argument to \\{} is missing its closing brace", command),
+                Some(open),
+                Some(recovery.into()),
+            )
+            .with_help("add a closing '}'"),
+        );
         (
             self.t[start..stop].to_vec(),
             Span::in_document(open.document, open.start, end),
@@ -4077,11 +4128,14 @@ impl P<'_> {
         let mut pos = open.end;
         let close_end = loop {
             let Some(ch) = source[pos..].chars().next() else {
-                self.diags.push(Diagnostic::error(
-                    format!("argument to \\{command} is missing its closing brace"),
-                    Some(open),
-                    Some("closed the argument at end of input".into()),
-                ));
+                self.diags.push(
+                    Diagnostic::error(
+                        format!("argument to \\{command} is missing its closing brace"),
+                        Some(open),
+                        Some("closed the argument at end of input".into()),
+                    )
+                    .with_help("add a closing '}'"),
+                );
                 break pos;
             };
             let ch_len = ch.len_utf8();
@@ -4215,11 +4269,14 @@ impl P<'_> {
             .map_or(raw.as_str(), |(inside, _)| inside)
             .to_string();
         if !found {
-            self.diags.push(Diagnostic::error(
-                "optional argument is missing its closing ']'",
-                Some(span),
-                Some("used the text through end of input as the option".into()),
-            ));
+            self.diags.push(
+                Diagnostic::error(
+                    "optional argument is missing its closing ']'",
+                    Some(span),
+                    Some("used the text through end of input as the option".into()),
+                )
+                .with_help("add a closing ']'"),
+            );
         }
         Some((content, span))
     }
@@ -5484,12 +5541,17 @@ impl P<'_> {
     }
 
     fn unsupported_preamble(&mut self, name: &str, span: Span) {
-        self.diags.push(Diagnostic::command_error(
-            name,
-            format!("\\{} is not supported in the document preamble", name),
-            Some(span),
-            Some("skipped the command and did not typeset preamble content".into()),
-        ));
+        self.diags.push(
+            Diagnostic::command_error(
+                name,
+                format!("\\{} is not supported in the document preamble", name),
+                Some(span),
+                Some("skipped the command and did not typeset preamble content".into()),
+            )
+            .with_help(format!(
+                "move \\{name} after \\begin{{document}}, or remove it from the preamble"
+            )),
+        );
     }
 
     /// Recovery policy for a command this compiler does not implement.
@@ -5525,18 +5587,22 @@ impl P<'_> {
     fn unsupported(&mut self, name: &str, span: Span) {
         debug_assert!(!BUILT_INS.contains(&name));
         let skipped = self.skip_recoverable_argument(name);
-        self.diags.push(Diagnostic::command_error(
-            name,
-            // A text-mode command: math has its own reader and diagnostics,
-            // so this message says nothing about math mode.
-            format!("\\{} is not supported by this compiler version", name),
-            Some(span),
-            Some(if skipped {
-                "skipped the command and its argument, which looked like a parameter rather than text".into()
-            } else {
-                "skipped the command; any braced argument was typeset as plain text".into()
-            }),
-        ));
+        self.diags.push(
+            Diagnostic::command_error(
+                name,
+                // A text-mode command: math has its own reader and diagnostics,
+                // so this message says nothing about math mode.
+                format!("\\{} is not supported by this compiler version", name),
+                Some(span),
+                Some(if skipped {
+                    "skipped the command and its argument, which looked like a parameter rather than text".into()
+                } else {
+                    "skipped the command; any braced argument was typeset as plain text".into()
+                }),
+            )
+            .with_help(vocabulary::command_help(name))
+            .with_label(span, "this command", true),
+        );
     }
 
     /// Commands this compiler recognises by name as taking a fixed count of

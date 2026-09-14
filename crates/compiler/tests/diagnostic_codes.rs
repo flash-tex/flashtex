@@ -153,4 +153,49 @@ fn codes_and_suggestions_are_serialized_in_runtime_v1_json() {
     // Absent, not null, when there is no suggestion: older decoders never see
     // a new null-valued key.
     assert!(diagnostics[1].get("suggestion").is_none());
+    assert!(diagnostics[0].get("help").is_some(), "{:?}", diagnostics[0]);
+    assert!(diagnostics[1].get("help").is_some(), "{:?}", diagnostics[1]);
+}
+
+#[test]
+fn high_frequency_messages_carry_help() {
+    let cases = [
+        (r"Visible \frobnicate{argument} Tail.", r"\frobnicate is not supported"),
+        (r"Visible \tikz Tail.", r"\tikz is not supported"),
+        (r"\usepackage{tikz} Visible.", "recognised but not implemented"),
+        ("Visible $x+1", "missing its closing '$'"),
+        ("Visible {tail.", "unmatched '{'"),
+        (r"Visible \usepackage[broken", "missing its closing ']'"),
+        ("Visible ^ Tail.", "math script marker used outside math mode"),
+        (r"Visible \frac{a}{b} Tail.", r"\frac requires math mode"),
+        (r"See \ref{missing}.", "undefined"),
+        (r"Visible \input{chapter.tex} Tail.", "included file not found"),
+        (r"Visible \begin{tabbing}body\end{tabbing} Tail.", "environment 'tabbing'"),
+        (
+            "\\documentclass{article}\\title{T}\\begin{document}\\maketitle\\end{document}",
+            r"No \author given",
+        ),
+        (
+            r"\tikz \begin{document}Visible\end{document}",
+            "not supported in the document preamble",
+        ),
+    ];
+    for (text, needle) in cases {
+        let matching: Vec<_> = compile_full(text, LayoutConstraints::default())
+            .diagnostics
+            .into_iter()
+            .filter(|d| d.message.contains(needle))
+            .collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "{text}: {:?}",
+            matching.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+        assert!(
+            matching[0].help.is_some(),
+            "{needle} has no help: {:?}",
+            matching[0].message
+        );
+    }
 }

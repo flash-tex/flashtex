@@ -2030,11 +2030,20 @@ pub fn layout_converged(
                 .iter()
                 .find(|page| page.items.iter().any(|item| item.span == span))
                 .map_or_else(String::new, |page| format!(" on page {}", page.number));
-            diagnostics.push(Diagnostic::warning(
-                format!("Reference `{key}'{page} undefined"),
-                Some(span),
-                Some("rendered ?? for the unresolved reference".into()),
-            ));
+            diagnostics.push(
+                Diagnostic::warning(
+                    format!("Reference `{key}'{page} undefined"),
+                    Some(span),
+                    Some("rendered ?? for the unresolved reference".into()),
+                )
+                .with_help(match crate::vocabulary::nearest_name(
+                    key,
+                    state.0.keys().map(String::as_str),
+                ) {
+                    Some(near) => format!("did you mean \\label{{{near}}}? undefined references render as ??"),
+                    None => "add a matching \\label{...} or fix the key; undefined references render as ??".into(),
+                }),
+            );
         }
     });
     if oscillating {

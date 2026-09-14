@@ -572,11 +572,14 @@ pub fn parse_tokens(
 ) -> MathList {
     let (list, unclosed) = parse_tokens_reporting_unclosed(tokens, packages, diagnostics, false);
     if let Some(open) = unclosed {
-        diagnostics.push(Diagnostic::error(
-            "math group is missing its closing brace",
-            Some(open),
-            Some("closed the group at the math delimiter".into()),
-        ));
+        diagnostics.push(
+            Diagnostic::error(
+                "math group is missing its closing brace",
+                Some(open),
+                Some("closed the group at the math delimiter".into()),
+            )
+            .with_help("add a closing '}'"),
+        );
     }
     list
 }
@@ -945,12 +948,15 @@ impl MathParser<'_> {
     /// every unsupported math command already uses, so the divergence is
     /// visible in the output as well as in the diagnostics.
     fn missing_package(&mut self, name: &str, package: &str, span: Span) -> MathAtom {
-        self.diagnostics.push(Diagnostic::command_error(
-            name,
-            format!("\\{name} requires \\usepackage{{{package}}}"),
-            Some(span),
-            Some("typeset the command literally and continued".into()),
-        ));
+        self.diagnostics.push(
+            Diagnostic::command_error(
+                name,
+                format!("\\{name} requires \\usepackage{{{package}}}"),
+                Some(span),
+                Some("typeset the command literally and continued".into()),
+            )
+            .with_help(format!("add \\usepackage{{{package}}} in the preamble")),
+        );
         symbol(format!("\\{name}"), span)
     }
 
@@ -1675,12 +1681,16 @@ impl MathParser<'_> {
                 }
                 (None, Some(glyph)) => symbol(glyph.into(), span),
                 (None, None) => {
-                    self.diagnostics.push(Diagnostic::command_error(
-                        &name,
-                        format!("\\{} is not supported in math mode", name),
-                        Some(span),
-                        Some("typeset the command literally and continued".into()),
-                    ));
+                    self.diagnostics.push(
+                        Diagnostic::command_error(
+                            &name,
+                            format!("\\{} is not supported in math mode", name),
+                            Some(span),
+                            Some("typeset the command literally and continued".into()),
+                        )
+                        .with_help(format!("\\{name} is not implemented in math mode"))
+                        .with_label(span, "this command", true),
+                    );
                     symbol(format!("\\{}", name), span)
                 }
             },
@@ -1891,11 +1901,14 @@ impl MathParser<'_> {
                 _ => {}
             }
         }
-        self.diagnostics.push(Diagnostic::error(
-            format!("\\{command} argument is missing its closing brace"),
-            Some(open.merge(end)),
-            Some("used the text up to the end of the formula".into()),
-        ));
+        self.diagnostics.push(
+            Diagnostic::error(
+                format!("\\{command} argument is missing its closing brace"),
+                Some(open.merge(end)),
+                Some("used the text up to the end of the formula".into()),
+            )
+            .with_help("add a closing '}'"),
+        );
         (text, open.merge(end))
     }
 
@@ -1946,11 +1959,14 @@ impl MathParser<'_> {
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {
-            self.diagnostics.push(Diagnostic::error(
-                "math group is missing its closing brace",
-                Some(open),
-                Some("closed the group at the math delimiter".into()),
-            ));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "math group is missing its closing brace",
+                    Some(open),
+                    Some("closed the group at the math delimiter".into()),
+                )
+                .with_help("add a closing '}'"),
+            );
         }
         list
     }
@@ -2203,11 +2219,14 @@ impl MathParser<'_> {
             }
             after_comment = false;
         }
-        self.diagnostics.push(Diagnostic::error(
-            format!("argument to \\{command} is missing its closing brace"),
-            Some(open.span),
-            Some("closed the text argument at the math delimiter".into()),
-        ));
+        self.diagnostics.push(
+            Diagnostic::error(
+                format!("argument to \\{command} is missing its closing brace"),
+                Some(open.span),
+                Some("closed the text argument at the math delimiter".into()),
+            )
+            .with_help("add a closing '}'"),
+        );
         (text, open.span.merge(end))
     }
 
@@ -2498,11 +2517,14 @@ impl MathParser<'_> {
             end += 1;
         }
         if end >= self.tokens.len() {
-            self.diagnostics.push(Diagnostic::error(
-                format!("\\{command} argument is missing its closing brace"),
-                Some(span),
-                Some("closed the argument at the end of the formula".into()),
-            ));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    format!("\\{command} argument is missing its closing brace"),
+                    Some(span),
+                    Some("closed the argument at the end of the formula".into()),
+                )
+                .with_help("add a closing '}'"),
+            );
         }
         self.i = (end + 1).min(self.tokens.len());
         let mut rows = Vec::new();

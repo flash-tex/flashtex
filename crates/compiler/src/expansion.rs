@@ -1333,11 +1333,18 @@ fn include(
         .copied()
         .or_else(|| conv.document_by_path.get(appended.as_str()).copied())
     else {
-        return skip(
-            conv,
-            format!("included file not found: looked for '{requested}' and '{appended}'"),
-            "skipped the missing include and continued",
-        );
+        return {
+            conv.diagnostics.push(
+                Diagnostic::error(
+                    format!("included file not found: looked for '{requested}' and '{appended}'"),
+                    Some(span),
+                    Some("skipped the missing include and continued".into()),
+                )
+                .with_help(format!(
+                    "add '{requested}' or '{appended}' to the project documents, or fix the \\input path"
+                )),
+            );
+        };
     };
     let open: Vec<usize> = engine
         .open_input_ids()
