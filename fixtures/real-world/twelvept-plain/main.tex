@@ -1,0 +1,116 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+
+\title{Lecture Handout: Limits, Derivatives, and a Few Old Tricks}
+\author{Instructor's Notes}
+\date{Week 3}
+
+\begin{document}
+\maketitle
+
+\section{Why kernel math still matters}
+
+Long before \emph{amsmath} existed, authors wrote perfectly good mathematics using only
+the plain \TeX{} math primitives that ship with every \LaTeX{} kernel. This handout is a
+deliberate throwback: every displayed formula below uses only $\ldots$, \verb|\[...\]|,
+\verb|\frac|, \verb|\sqrt|, and the growable delimiters \verb|\left|/\verb|\right| together
+with the \verb|\bigl|/\verb|\Bigl|/\verb|\biggl|/\verb|\Biggl| family---no
+\emph{amsmath}, no \emph{amssymb}.
+
+\subsection{A first example}
+
+Consider the average of $n$ numbers, $\bar{x} = \frac{1}{n}\sum_{i=1}^{n} x_i$. If we also
+define the sample variance in the usual way, we can write the standard deviation as a
+nested fraction under a single radical:
+\[
+  \sigma = \sqrt{\frac{1}{n} \sum_{i=1}^{n} \left( x_i - \bar{x} \right)^2}.
+\]
+Notice that the fraction bar inside the square root is exactly the kind of nested structure
+that forces \TeX{} to grow the radical sign automatically---no special package is needed
+for that either.
+
+\subsection{Delimiters that have to grow}
+
+The following expression stacks fractions inside parentheses, so the enclosing delimiters
+must expand well beyond their default size:
+\[
+  \left( \frac{1}{1 + \frac{1}{1 + \frac{1}{1 + x}}} \right)
+\]
+is a continued fraction that appears, for instance, when approximating $\sqrt{2}$ by
+successive rational convergents. We can also mix delimiter sizes explicitly, rather than
+relying on \verb|\left|/\verb|\right| to choose automatically:
+\[
+  \bigl( a + b \bigr), \qquad
+  \Bigl[ a + b \Bigr], \qquad
+  \biggl\{ a + b \biggr\}, \qquad
+  \Biggl\langle a + b \Biggr\rangle.
+\]
+And here is a norm written with a manually sized pair of double bars:
+\[
+  \left\| x \right\| = \sqrt{ x_1^2 + x_2^2 + \cdots + x_n^2 }.
+\]
+
+\section{Sums, integrals, and a bit of notation}
+
+The definite integral of a continuous function $f$ over $[a,b]$ is the limit of a Riemann
+sum,
+\[
+  \int_a^b f(x)\, dx = \lim_{n \to \infty} \sum_{i=1}^{n} f(x_i^*) \, \Delta x,
+\]
+and when $f$ happens to be a vector-valued quantity we decorate it accordingly: the
+position vector $\vec{r}(t)$ has velocity $\dot{\vec{r}}(t)$, and its magnitude is written
+$\left| \vec{r}(t) \right|$. It is common in older texts to write an average or a complex
+conjugate with an overline, as in $\overline{z} = a - bi$ for $z = a + bi$, or to place a
+circumflex over an estimator, as in $\hat{\theta}$ for an estimate of the parameter
+$\theta$. We will also occasionally use roman and italic text inside math mode, e.g.\ to
+label a unit as $\mathrm{kg}$ or to emphasize a variable name as $\mathit{index}$.
+
+\subsection{A worked limit}
+
+\begin{quote}
+``The limit of a sum is the sum of the limits, \emph{provided both limits exist}''---a
+qualifier students often forget to check.
+\end{quote}
+
+As an example, evaluate
+\[
+  \lim_{x \to 0} \frac{\sin x}{x} = 1,
+\]
+a fact that can be proved geometrically by squeezing $\sin x$ between $x\cos x$ and $x$ for
+small positive $x$. A slightly harder relative uses a nested radical inside a fraction:
+\[
+  \lim_{x \to \infty} \sqrt{\frac{4x^2 + 3x}{x^2 + 1}} = 2.
+\]
+
+\section{Series and closing remarks}
+
+Finally, we record the geometric series formula,
+\[
+  \sum_{i=0}^{n} r^i = \frac{1 - r^{n+1}}{1 - r}, \qquad r \neq 1,
+\]
+which, for $|r| < 1$, gives the familiar infinite-sum limit $\frac{1}{1-r}$ as
+$n \to \infty$.
+
+\begin{itemize}
+  \item Always check the domain of validity before taking a limit term by term.
+  \item Growable delimiters are a kernel feature---you do not need \emph{amsmath} just to
+    make parentheses bigger.
+  \item Nested fractions are the easiest way to stress-test delimiter sizing by hand.
+\end{itemize}
+
+\begin{enumerate}
+  \item Redo the continued-fraction example above with one more level of nesting.
+  \item Show that $\left\| \vec{r}(t) \right\|$ is differentiable wherever $\vec{r}(t)$ is,
+    away from the origin.
+  \item Prove the squeeze argument for $\lim_{x \to 0} \frac{\sin x}{x}$ in full.
+\end{enumerate}
+
+A closing historical note\footnote{This kind of ``no \emph{amsmath}'' document was the
+norm throughout the 1980s and early 1990s---plain \TeX{} primitives, curly quotes typed as
+two backticks and two apostrophes, and dashes typed with two or three hyphens---like
+this---were simply how one wrote mathematics.}: even today, a document that never loads
+\emph{amsmath} compiles fine and produces perfectly respectable mathematics, provided the
+author is comfortable with the more limited (but entirely serviceable) kernel macros
+described above.
+
+\end{document}

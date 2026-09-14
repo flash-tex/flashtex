@@ -2323,6 +2323,11 @@ final class CompletingTextView: NSTextView {
     /// a hand-typed `{` (EditorKeyHandling.swift). Called with the UTF-16
     /// offset of the closer, once, right after `insertSnippet` places the caret.
     var onCloserInserted: ((Int) -> Void)?
+    /// The other half of `onCloserInserted`: answers whether the UTF-16 offset
+    /// still holds a closer this editor inserted and the user has not passed
+    /// (SourceEditorView's `pendingClosers`). Nil outside the hosted editor,
+    /// where nothing is auto-closed.
+    var isPendingCloser: ((Int) -> Bool)?
 
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command), !event.modifierFlags.contains(.shift), event.clickCount == 1,
@@ -2498,14 +2503,53 @@ final class CompletingTextView: NSTextView {
             return
         }
         applyingCompletion = true
+        let range = rangeConsumingStaleCloser(s.range, inserting: item.snippet?.text ?? item.insertText)
         if let snippet = item.snippet {
-            insertSnippet(snippet, replacing: s.range, kind: item.kind)
+            insertSnippet(snippet, replacing: range, kind: item.kind)
+        } else if range.length != s.range.length {
+            // AppKit's `insertCompletion` recomputes the range it replaces from
+            // `rangeForUserCompletion` (the bare token) instead of using the one
+            // it is handed, so a grown range never reaches the storage through
+            // it — measured: the stale `}` survived as `\end{itemize}}`. This
+            // one goes in directly, with the same effect and one undo step.
+            insertPlainCompletion(item.insertText, replacing: range)
         } else {
-            insertCompletion(item.insertText, forPartialWordRange: s.range, movement: NSReturnTextMovement, isFinal: true)
+            insertCompletion(item.insertText, forPartialWordRange: range, movement: NSReturnTextMovement, isFinal: true)
         }
         applyingCompletion = false
         scheduler.cancel()
         close(.accepted)
+    }
+
+    /// The session range, grown by one unit when an auto-inserted closer sits
+    /// immediately after it and `inserted` supplies that closer itself. Without
+    /// this the editor's `}` survives the replacement and strands itself past
+    /// the completion: `\begin{` auto-closes, `proof` is accepted as
+    /// `proof}\n\n\end{proof}`, and the buffer ends `\end{proof}}` (GH#2).
+    /// Only offsets the editor is still tracking are eaten, so a brace the user
+    /// typed is never removed and `pendingClosers` keeps its invariant: every
+    /// tracked offset points at a closer this editor inserted and the user has
+    /// not yet passed (the delegate drops this one as the edit overlaps it).
+    private func rangeConsumingStaleCloser(_ range: NSRange, inserting inserted: String) -> NSRange {
+        let end = NSMaxRange(range)
+        let ns = string as NSString
+        guard end < ns.length, isPendingCloser?(end) == true,
+              let closer = ns.substring(with: NSRange(location: end, length: 1)).first,
+              EditorKeyHandling.supersedesTrackedCloser(inserted, closer: closer) else { return range }
+        return NSRange(location: range.location, length: range.length + 1)
+    }
+
+    /// What `insertCompletion(_:forPartialWordRange:movement:isFinal:)` does —
+    /// replace the range, leave the caret after the word, one undo step — for
+    /// the range this view chose rather than the one AppKit would recompute.
+    private func insertPlainCompletion(_ word: String, replacing range: NSRange) {
+        breakUndoCoalescing()
+        guard shouldChangeText(in: range, replacementString: word) else { return }
+        textStorage?.replaceCharacters(in: range, with: word)
+        didChangeText() // registers the undo step, fires textDidChange
+        undoManager?.setActionName("Insert Completion")
+        setSelectedRange(NSRange(location: range.location + (word as NSString).length, length: 0))
+        breakUndoCoalescing()
     }
 
     /// One undo step: the typed partial token is closed off first so ⌘Z

@@ -14,6 +14,19 @@ fn doc(body: &str) -> String {
     format!("\\begin{{document}}{body}\\end{{document}}")
 }
 
+/// A document that loads `amssymb`, for bodies using the msam/msbm
+/// inventory (`\mathbb`, `\varnothing`, `\aleph`, ...).
+///
+/// Base LaTeX2e has no definition for those names, so the compiler now
+/// diagnoses them without the package (`\varnothing requires
+/// \usepackage{amssymb}`) and typesets the command literally, exactly as
+/// pdflatex refuses them. These fixtures are about which *face* paints the
+/// glyph, not about the gating, so they declare the package a real document
+/// would have to declare.
+fn ams_doc(body: &str) -> String {
+    format!("\\usepackage{{amssymb}}\\begin{{document}}{body}\\end{{document}}")
+}
+
 /// Math glyph runs of page 1 as `(text, origin x bp)`.
 fn math_words(body: &str) -> (Vec<(String, f64)>, Vec<String>) {
     let r = render_one(&doc(body));
@@ -58,7 +71,15 @@ fn composite_and_extra_symbols_convert_with_texbook_classes() {
     // parser from the control words that produce these symbols.
     let tokens = flashtex_compiler::lexer::tokenize("a \\neq b \\cdot c \\perp d \\notin e");
     let mut diagnostics = Vec::new();
-    let list = flashtex_compiler::math::parse_tokens(&tokens, &mut diagnostics);
+    // `MathPackages::default()` is every package absent: \neq, \cdot, \perp
+    // and \notin are all LaTeX kernel commands, so they must convert with no
+    // package loaded (compiler pin past #230, which gates the
+    // amssymb/amsfonts-provided names on their package).
+    let list = flashtex_compiler::math::parse_tokens(
+        &tokens,
+        flashtex_compiler::math::MathPackages::default(),
+        &mut diagnostics,
+    );
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     let list = convert_math(&list);
     let classes: Vec<(AtomClass, Option<char>)> = list
@@ -250,7 +271,7 @@ fn cm_less_symbols_are_painted_from_latin_modern_math() {
     // covers the bundled case.
     let staged = stage_faces_without("cm_less_symbols", &["NewCMMath-Regular.otf"]);
     let fonts = staged.font_set(&[], ambient_tfm_dirs());
-    let r = render_one_with(&doc("A $\\mathbb{Z}\\aleph$ $\\mathbb{R}\\setminus\\mathbb{Q}$ $x\\Longrightarrow y$ $10 - x$ B"), &fonts);
+    let r = render_one_with(&ams_doc("A $\\mathbb{Z}\\aleph$ $\\mathbb{R}\\setminus\\mathbb{Q}$ $x\\Longrightarrow y$ $10 - x$ B"), &fonts);
     let runs: Vec<(String, u16)> = r.v2.pages[0]
         .items
         .iter()
@@ -294,7 +315,7 @@ fn mathbb_paints_from_new_computer_modern_when_bundled() {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/mac/Fonts"),
         PathBuf::from("/usr/local/texlive/2026/texmf-dist/fonts/opentype/public/newcomputermodern"),
     ];
-    let text = doc("A $\\mathbb{Z}_{>0}$ and $\\mathbb{R}\\setminus\\mathbb{Q}$ and $x \\in \\mathbb{N}$.");
+    let text = ams_doc("A $\\mathbb{Z}_{>0}$ and $\\mathbb{R}\\setminus\\mathbb{Q}$ and $x \\in \\mathbb{N}$.");
     let sources = [SourceDocument { path: "main.tex", text: &text }];
     // Hermetic, not `FontSet::with_default_dirs(extra)`: that reads
     // `FLASHTEX_FONT_DIRS`, and `apps/mac/Fonts` -- exactly what CI exports --
@@ -526,7 +547,7 @@ fn varnothing_sets_at_msbm_width_and_paints_from_new_computer_modern_when_bundle
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/mac/Fonts"),
         PathBuf::from("/usr/local/texlive/2026/texmf-dist/fonts/opentype/public/newcomputermodern"),
     ];
-    let text = doc("$\\varnothing X$ and $\\emptyset X$.");
+    let text = ams_doc("$\\varnothing X$ and $\\emptyset X$.");
     let sources = [SourceDocument { path: "main.tex", text: &text }];
     // Hermetic, not `FontSet::with_default_dirs(extra)`: that reads
     // `FLASHTEX_FONT_DIRS`, and `apps/mac/Fonts` -- exactly what CI exports --

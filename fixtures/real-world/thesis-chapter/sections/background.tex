@@ -1,0 +1,68 @@
+\section{Background}
+\label{sec:background}
+
+Estimating how frequently a rare event recurs is a classical problem in
+applied statistics, arising in contexts ranging from seismology to
+equipment failure monitoring. The canonical model treats event occurrences
+as realizations of a point process on the real line, and the recurrence
+interval is characterized by the distribution of inter-arrival times under
+that process \citep{cox1966}. When the process is assumed to be a
+homogeneous Poisson process, the inter-arrival times are exponentially
+distributed and the recurrence interval reduces to the reciprocal of a
+single rate parameter, which can be estimated directly from the observed
+event counts. In practice, however, sensor networks deployed for rare-event
+monitoring rarely satisfy the homogeneity assumption: sensitivity drifts
+over time, environmental conditions modulate the true event rate, and
+individual sensors intermittently drop out of the network, all of which
+violate the assumptions underlying the simplest estimators.
+
+\subsection{Point Process Models}
+A more flexible family of models represents the event rate as a
+time-varying intensity function $\lambda(t)$, so that the expected number
+of events in an interval $[t_1, t_2]$ is given by the integral of
+$\lambda(t)$ over that interval, following the general treatment
+of~\citet{daley2003}. Self-exciting variants of this model, most notably
+the Hawkes process, further allow each observed event to temporarily elevate
+the intensity of future events, which is a useful property when modeling
+phenomena such as aftershock sequences or cascading equipment failures.
+Bayesian inference procedures for Hawkes processes have been studied
+extensively; see \citet{rasmussen2013} for a thorough treatment of
+posterior sampling schemes under weakly informative priors.\footnote{In our own experiments we found that a weakly informative
+gamma prior on the baseline intensity, combined with a Beta prior on the
+excitation decay rate, gave stable posterior estimates even with as few as
+twenty observed events.}
+
+\subsection{Sparse Sensor Networks}
+The setting considered in this thesis differs from the classical point
+process literature in one important respect: observations do not arrive
+from a single continuously monitored location, but rather from a spatially
+distributed network of low-power sensors that report intermittently and
+that individually observe only a fraction of the true event population.
+\citet{fictional2020} studied the related problem of sensor placement for
+rare-event monitoring and showed that even a modest number of well-placed
+sensors can recover an unbiased estimate of the aggregate event rate,
+provided that the missingness process is independent of the underlying
+event intensity. This independence assumption is central to the estimator
+developed in Section~\ref{sec:method}, and we return to it explicitly when
+discussing the conditions under which our estimator remains consistent.
+
+Figure~\ref{fig:network} illustrates a representative deployment topology
+used in the field study described later in this chapter, showing sensor
+nodes placed at irregular intervals along a monitored corridor.
+
+\begin{figure}[h]
+\centering
+\includegraphics[draft,width=0.7\linewidth]{network.pdf}
+\caption{Representative sparse sensor deployment topology used in the
+field study. Circles denote sensor nodes; the shaded region denotes the
+monitored corridor.}
+\label{fig:network}
+\end{figure}
+
+As the figure suggests, the effective sampling density varies considerably
+across the monitored region, which motivates the spatially adaptive
+weighting scheme introduced later in the chapter. The remainder of this
+chapter builds toward a single unified estimator that accounts for both the
+temporal irregularity of event arrivals and the spatial sparsity of the
+sensor network, combining ideas from the classical point-process literature
+with the placement-aware corrections proposed by \citet{fictional2020}.

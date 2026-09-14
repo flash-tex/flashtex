@@ -59,6 +59,70 @@ const GATED: [&str; 15] = [
     "32-verbatim-microtype",
 ];
 
+/// The listings fixtures PR #248 committed with TL2025 references. The
+/// listings rendering engine is a separate body of work (PR #145's
+/// `listings.rs` was 1623 lines against a font model main has replaced); it
+/// is being rebuilt on the current model in its own lane. Each entry names
+/// the part of listings' geometry it needs, from the measured
+/// specification, so nothing here is a placeholder.
+const LISTINGS_NOT_YET: [(&str, &str); 15] = [
+    ("16-lst-default",
+     "`[c]fixed` columns in the surrounding roman face: a token of N characters is set in an hbox \
+      N cells wide with N+1 `\\hss`, so the first glyph sits N(W-w)/(N+1) in. Also needs TS1 for \
+      `*` and CMSY for the braces."),
+    ("17-lst-tt-fixed",
+     "`[c]fixed` with `basicstyle=\\ttfamily`: cell width W = 0.6em of the basicstyle font, fixed \
+      once at `InitVars` (`fontadjust=false`)."),
+    ("18-lst-tt-flexible",
+     "`columns=flexible`: natural token boxes, and leading whitespace worth `\\lst@width` = 0.45em \
+      each rather than a space glyph."),
+    ("19-lst-fullflexible",
+     "`columns=fullflexible`. Note this fixture's reference is byte-identical to 18's: this code \
+      never produces positive lost space mid-line, so it does not actually discriminate the two \
+      modes. A fixture that does is still wanted."),
+    ("20-lst-numbers",
+     "`numbers=left`: `\\lst@PlaceNumber` is an `\\llap`, so the code x is untouched and the \
+      number's *right* edge sits at `leftmargin - numbersep`."),
+    ("21-lst-frame-single",
+     "`frame=single`: four rules at `framerule` .4pt, `x = leftmargin - framesep - framerule`, \
+      `w = \\textwidth + 2(framesep + framerule)`, and `\\lst@frameInit`'s negative correction \
+      cancelling the interline glue."),
+    ("22-lst-frame-lines-numbers",
+     "`frame=lines` + `numbers=left` under `\\small`: a t/b-only frame's rules are *not* widened by \
+      `framesep`, and `numberstyle` empty means the number is `\\normalfont` at the current size."),
+    ("23-lst-c-keywords",
+     "`language=C`: `commentstyle=\\itshape` (CMITT10) changes glyph positions inside a token, and \
+      `keywordstyle=\\bfseries` is substituted away in OT1 cmtt (`OT1/cmtt/bx/n` does not exist)."),
+    ("24-lst-python-keywords",
+     "`language=Python` at `\\small`: code in CMTT9, comments in CMITT10 *scaled to 9pt* -- there \
+      is no cmitt9, so the NFSS path must scale."),
+    ("25-lst-java-roman",
+     "`language=Java` with a roman basicstyle and CMBX10 keywords. Worth noting: this fixture \
+      contains no ligature-forming pair at all, so it does not test what #145 thought it did. \
+      Measured separately: listings suppresses ligatures *unconditionally*, roman basicstyle \
+      included, matching `verbatim` glyph for glyph -- so a listing needs per-character shaping, \
+      not `Shaper::shape_with`'s `\\@noligs` split."),
+    ("26-lst-breaklines",
+     "`breaklines=true`: ragged right, `breakindent` 20pt continuation, and no break mark \
+      (`prebreak`/`postbreak` are empty and the `\\llap` is zero-width)."),
+    ("27-lst-showstringspaces",
+     "`showstringspaces`: `false` suppresses the visible-space glyph but the space keeps its \
+      column -- x0 and xN are identical either way. Also pins that two adjacent listings *add* \
+      both skips (24.0 pt between them), because `\\vspace` is not `\\addvspace`."),
+    ("29-lst-tabs-gobble",
+     "`tabsize=4, gobble=2`: unlike `\\@verbatim`, listings implements real absolute tab stops -- \
+      `\\lst@ProcessTabulator` moves to the next multiple of `tabsize` in `\\lst@width` units, so a \
+      tab costs 3 columns from column 1 and 4 from column 0."),
+    ("30-lst-lstset-margin",
+     "`xleftmargin=2em` under `\\footnotesize`: the margin is expanded *inside* the listing, after \
+      `basicstyle`, so `2em` is 2 x cmtt8's quad = 17.00024 pt -- and cmtt8's em is 8.5 pt, not \
+      8.4."),
+    ("31-lst-t1-lmodern-bold",
+     "T1 + lmodern: keywords resolve `T1/lmtt/bx/n` -> `T1/lmtt/b/n` -> `ec-lmtk10` \
+      (LMMonoLt10-Bold), comments to `ec-lmtti10`. Here the keywords really do come out bold, \
+      unlike fixture 23."),
+];
+
 /// Committed with their references but not gated yet, each for a reason
 /// that names what is still missing. Listed here so the material is in the
 /// tree and the follow-up is visible rather than forgotten.
@@ -228,7 +292,12 @@ fn every_committed_fixture_is_accounted_for() {
         .filter_map(|e| e.file_name().to_str()?.strip_suffix(".tex").map(str::to_string))
         .collect();
     on_disk.sort();
-    let mut known: Vec<String> = GATED.iter().map(|s| s.to_string()).chain(NOT_YET.iter().map(|(n, _)| n.to_string())).collect();
+    let mut known: Vec<String> = GATED
+        .iter()
+        .map(|s| s.to_string())
+        .chain(NOT_YET.iter().map(|(n, _)| n.to_string()))
+        .chain(LISTINGS_NOT_YET.iter().map(|(n, _)| n.to_string()))
+        .collect();
     known.sort();
     assert_eq!(on_disk, known, "every fixture must be gated or listed in NOT_YET with a reason");
     for name in &on_disk {
@@ -237,7 +306,7 @@ fn every_committed_fixture_is_accounted_for() {
             "{name} has no committed pdfLaTeX reference"
         );
     }
-    for (_, why) in NOT_YET {
+    for (_, why) in NOT_YET.iter().chain(LISTINGS_NOT_YET.iter()) {
         assert!(why.len() > 40, "a NOT_YET entry needs a real reason");
     }
 }

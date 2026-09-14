@@ -16,7 +16,7 @@ use crate::expansion::{self, ExpansionSite};
 use crate::lexer::{apply_text_ligatures, tokenize_document, Token, TokenKind};
 #[cfg(test)]
 use crate::lexer::tokenize;
-use crate::math::{self, MathList};
+use crate::math::{self, MathList, MathPackages};
 use crate::siunitx;
 use crate::text_builtins::{self, SymbolOutcome, TextDimen, TextLogo, TextRule};
 use crate::theorems::{self, TheoremDef, TheoremStyle};
@@ -1022,6 +1022,7 @@ pub fn parse_project_with(
         class_size_pt: None,
         parskip_pt: None,
         packages: Vec::new(),
+        math_packages: MathPackages::KERNEL,
         font_encoding: Encoding::OT1,
         block_dependencies: Vec::new(),
         current_dependencies: BTreeMap::new(),
@@ -1146,6 +1147,11 @@ struct P<'a> {
     class_size_pt: Option<f64>,
     parskip_pt: Option<f64>,
     packages: Vec<String>,
+    /// The loaded packages that redefine math commands (`math::MathPackages`),
+    /// folded in as `\documentclass` and `\usepackage` are read. Math parsed
+    /// before the class line is parsed with the kernel's definitions, which is
+    /// what pdfLaTeX does too: a redefinition applies only after it runs.
+    math_packages: MathPackages,
     /// array's `\newcolumntype{X}[n]{spec}` definitions (`parser/tabular.rs`).
     column_types: HashMap<char, (usize, Vec<InputToken>)>,
     /// The loaded colour package (`crate::color`), `None` before one.
@@ -1344,10 +1350,10 @@ impl P<'_> {
                     }
                 }
                 TokenKind::Space | TokenKind::Comment => self.i += 1,
-                TokenKind::Word(word) if control_symbol_kern(&word, tok.span).is_some() => {
+                TokenKind::Word(word) if control_symbol_kern(&word, tok.span, self.math_packages.amsmath).is_some() => {
                     self.i += 1;
                     if render {
-                        if let Some(amount) = control_symbol_kern(&word, tok.span) {
+                        if let Some(amount) = control_symbol_kern(&word, tok.span, self.math_packages.amsmath) {
                             para.push(Inline::Kern {
                                 amount,
                                 span: tok.span,
@@ -2098,7 +2104,7 @@ impl P<'_> {
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
             "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
             | "negthickspace" | "enspace" => {
-                if let Some(amount) = text_builtins::text_kern(name) {
+                if let Some(amount) = text_builtins::text_kern(name, self.math_packages.amsmath) {
                     para.push(Inline::Kern {
                         amount,
                         span,
@@ -2243,6 +2249,7 @@ impl P<'_> {
                 Some("no document class was recorded".into()),
             ));
         } else if self.document_class.is_none() {
+            self.math_packages.load_class(&class);
             self.document_class = Some(class);
         }
     }
@@ -2420,6 +2427,7 @@ impl P<'_> {
         }
         self.packages.extend(packages.iter().cloned());
         for package in &packages {
+            self.math_packages.load_package(package);
             self.load_color_package(package, &options);
         }
         // multicol.sty lines 111-113: the global `twocolumn` class option
@@ -3410,7 +3418,7 @@ impl P<'_> {
                 ),
             ));
         }
-        let list = math::parse_tokens(&raw, &mut self.diags);
+        let list = math::parse_tokens(&raw, self.math_packages, &mut self.diags);
         let color_ranges = self.math_color_ranges(&raw);
         para.push(Inline::Math {
             color: self.style.color,
@@ -3629,9 +3637,10 @@ impl P<'_> {
                     span: label_span,
                 });
             }
+            let packages = self.math_packages;
             let cells = cells
                 .iter()
-                .map(|cell| math::parse_tokens(cell, &mut self.diags))
+                .map(|cell| math::parse_tokens(cell, packages, &mut self.diags))
                 .collect();
             math_rows.push(MathRow {
                 cells,
@@ -3765,7 +3774,12 @@ impl P<'_> {
             }
             raw.push(input.token.clone());
         }
-        let (list, unclosed) = math::parse_tokens_reporting_unclosed(&raw, &mut self.diags, !found);
+        let (list, unclosed) = math::parse_tokens_reporting_unclosed(
+            &raw,
+            self.math_packages,
+            &mut self.diags,
+            !found,
+        );
         let end = if found {
             close_end
         } else {
@@ -4394,6 +4408,7 @@ impl P<'_> {
                         pre_unit.as_deref(),
                         &args,
                         false,
+                        self.math_packages,
                         span,
                         &mut self.diags,
                     );
@@ -4427,8 +4442,8 @@ impl P<'_> {
                         style = previous;
                     }
                 }
-                TokenKind::Word(text) if control_symbol_kern(text, input.token.span).is_some() => {
-                    if let Some(amount) = control_symbol_kern(text, input.token.span) {
+                TokenKind::Word(text) if control_symbol_kern(text, input.token.span, self.math_packages.amsmath).is_some() => {
+                    if let Some(amount) = control_symbol_kern(text, input.token.span, self.math_packages.amsmath) {
                         content.push(Inline::Kern {
                             amount,
                             span: input.token.span,
@@ -4436,8 +4451,12 @@ impl P<'_> {
                         });
                     }
                 }
-                TokenKind::Command(name) if text_builtins::text_kern(name).is_some() => {
-                    if let Some(amount) = text_builtins::text_kern(name) {
+                TokenKind::Command(name)
+                    if text_builtins::text_kern(name, self.math_packages.amsmath).is_some() =>
+                {
+                    if let Some(amount) =
+                        text_builtins::text_kern(name, self.math_packages.amsmath)
+                    {
                         content.push(Inline::Kern {
                             amount,
                             span: input.token.span,
@@ -4578,6 +4597,7 @@ impl P<'_> {
             pre_unit.as_deref(),
             &args,
             false,
+            self.math_packages,
             full,
             &mut self.diags,
         );
@@ -5640,13 +5660,13 @@ fn preamble_source(text: &str, has_document: bool, tokens: &[InputToken]) -> Str
 
 /// The kern a control-symbol token (`\,` lexed as the word `,` with a
 /// two-byte span, the same test `math.rs` uses) stands for in text mode.
-fn control_symbol_kern(word: &str, span: Span) -> Option<TextDimen> {
+fn control_symbol_kern(word: &str, span: Span, amsmath: bool) -> Option<TextDimen> {
     let mut chars = word.chars();
     match (chars.next(), chars.next()) {
         (Some(c), None)
             if span.end - span.start == 2 && text_builtins::KERN_CONTROL_SYMBOLS.contains(&c) =>
         {
-            text_builtins::text_kern(word)
+            text_builtins::text_kern(word, amsmath)
         }
         _ => None,
     }
@@ -6033,6 +6053,63 @@ mod tests {
         assert_eq!(heading, Some(vec![7]));
         // 1 2 3 4 5: ungrouped digits.
         assert_eq!(paragraph, Some(vec![5]));
+    }
+
+    /// The document's packages reach math parsing, so the same `$f\colon A$`
+    /// is the kernel's single punctuation atom in an `article` and amsmath's
+    /// glue-`:`-glue trio once amsmath is loaded — directly, through a
+    /// package that loads it, or through the document class.
+    ///
+    /// Verified against TeX Live 2025 pdflatex at 10pt: `\hbox{$a\colon b$}`
+    /// is 14.02196pt without amsmath and 16.79967pt with it, a 5mu
+    /// difference, and `\usepackage{mathtools}` and `\documentclass{amsart}`
+    /// both measure the same as `\usepackage{amsmath}`.
+    #[test]
+    fn math_parsing_takes_the_documents_package_definitions() {
+        fn colon_atoms(preamble: &str) -> usize {
+            let source =
+                format!("{preamble}\\begin{{document}}\n$f\\colon A$\n\\end{{document}}\n");
+            let parsed = parse(&source);
+            // amsmath itself still reports that it is not implemented as a
+            // whole (`package_matches_layout`); what must not appear is any
+            // complaint about the formula.
+            assert!(
+                !parsed
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.message.contains("colon")),
+                "{preamble}: {:?}",
+                parsed.diagnostics
+            );
+            let mut found = None;
+            for block in &parsed.blocks {
+                if let Block::Paragraph(content) = block {
+                    for inline in content {
+                        if let Inline::Math { list, .. } = inline {
+                            found = Some(list.atoms.len());
+                        }
+                    }
+                }
+            }
+            found.unwrap_or_else(|| panic!("{preamble}: no formula"))
+        }
+
+        // `f`, the colon, `A`.
+        assert_eq!(colon_atoms("\\documentclass{article}\n"), 3);
+        // `f`, 2mu, the colon, 6mu, `A`.
+        for preamble in [
+            "\\documentclass{article}\n\\usepackage{amsmath}\n",
+            "\\documentclass{article}\n\\usepackage{mathtools}\n",
+            "\\documentclass{article}\n\\usepackage{amssymb,amsmath}\n",
+            "\\documentclass{amsart}\n",
+        ] {
+            assert_eq!(colon_atoms(preamble), 5, "{preamble}");
+        }
+        // A package that does not load amsmath leaves the kernel's definition.
+        assert_eq!(
+            colon_atoms("\\documentclass{article}\n\\usepackage{amsthm}\n"),
+            3
+        );
     }
 
     #[test]

@@ -98,6 +98,56 @@ pub enum Limits {
     NoLimits,
 }
 
+/// How a `\big`/`\Big`/`\bigg`/`\Bigg` delimiter is sized. The two
+/// definitions are genuinely different, not two spellings of one rule, and
+/// which is in force depends only on whether `amsmath` is loaded.
+///
+/// `\showbox` under pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025),
+/// `\Big[` in an `article`, as the delimiter glyph's own box (height+depth):
+///
+/// | body size | no `amsmath` | `amsmath` |
+/// |---|---|---|
+/// | 10pt | 18.00017 (`cmex` `h`) | 18.00017 (`cmex` `h`) |
+/// | 11pt | 18.00017 (`cmex` `h`) | 19.71019 (`cmex` `h`) |
+/// | 12pt | 18.00017 (`cmex` `h`) | 21.60020 (`cmex` `h`) |
+///
+/// The kernel column does not move with the body size because its target is
+/// an absolute number of points *and* family 3 is `sfixed*cmex10`; the
+/// amsmath column moves with both.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BigSizing {
+    /// The LaTeX kernel's definition (`fontmath.ltx` 513-520), in force
+    /// whenever `amsmath` is **not** loaded:
+    /// `\hbox{$\left<delim>\vbox to<pt>{}\right.\n@space$}` with `pt`
+    /// **8.5** (`\big`), **11.5** (`\Big`), **14.5** (`\bigg`), **17.5**
+    /// (`\Bigg`) — absolute lengths, independent of the body size, the math
+    /// size and the fonts.
+    ///
+    /// The box is a `\vbox`, so its height is `pt` and its depth is zero;
+    /// Rule 19's δ is therefore `max(pt − axis, axis)`, not `pt/2`.
+    Kernel { pt: f64 },
+    /// amsmath's redefinition (`amsmath.sty` 721-738 `\bBigg@`), in force
+    /// whenever `amsmath` is loaded:
+    /// `\hbox{$\nulldelimiterspace0pt \left<delim>\vcenter to<factor>\big@size{}\right.$}`
+    /// with `\big@size` = 1.2 × (height + depth) of `\Mathstrutbox@` (the
+    /// text-size roman `(`) and `factor` 1, 1.5, 2, 2.5.
+    ///
+    /// The box is a `\vcenter`, so it straddles the axis and Rule 19's δ is
+    /// exactly half the target.
+    Amsmath { factor: f64 },
+}
+
+impl BigSizing {
+    /// The kernel's `\big`…`\Bigg` for amsmath's 1 / 1.5 / 2 / 2.5, so a
+    /// caller that only knows which of the four commands it saw can ask for
+    /// either rule. 1 → 8.5pt, 1.5 → 11.5, 2 → 14.5, 2.5 → 17.5.
+    pub fn kernel_for_factor(factor: f64) -> BigSizing {
+        BigSizing::Kernel {
+            pt: 8.5 + 6.0 * (factor - 1.0),
+        }
+    }
+}
+
 /// What sits in the nucleus of an atom.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Nucleus {
@@ -117,11 +167,9 @@ pub enum Nucleus {
         left: Option<char>,
         right: Option<char>,
     },
-    /// amsmath's `\big`/`\Big`/`\bigg`/`\Bigg` (`amsmath.sty` `\bBigg@`):
-    /// `\hbox{$\nulldelimiterspace0pt \left<delim>\vcenter to <factor>\big@size{}\right.$}`
-    /// with `\big@size` = 1.2 × (height + depth) of the text-size roman `(`
-    /// (`\Mathstrutbox@`), `factor` 1, 1.5, 2, 2.5. `None` is `\big.`.
-    BigDelimiter { delim: Option<char>, factor: f64 },
+    /// `\big`/`\Big`/`\bigg`/`\Bigg`, sized by whichever of the two
+    /// definitions is in force ([`BigSizing`]). `None` is `\big.`.
+    BigDelimiter { delim: Option<char>, sizing: BigSizing },
     /// `\phantom`/`\hphantom`/`\vphantom` (`latex.ltx` `\ph@nt`/`\finph@nt`):
     /// an empty box with the width (`horizontal`) and/or height and depth
     /// (`vertical`) of `body` set in the current (uncramped) style.
@@ -356,8 +404,31 @@ impl Atom {
 
     /// amsmath `\big(` (`factor` 1), `\Big` 1.5, `\bigg` 2, `\Bigg` 2.5, as
     /// an ordinary atom; `\bigl`/`\bigr`/`\bigm` change `class`.
+    ///
+    /// This is the amsmath rule. A document that does not load `amsmath`
+    /// gets the kernel's fixed lengths instead — see
+    /// [`Atom::big_delimiter_kernel`] and [`BigSizing`].
     pub fn big_delimiter(class: AtomClass, delim: Option<char>, factor: f64) -> Atom {
-        Atom::new(class, Nucleus::BigDelimiter { delim, factor })
+        Atom::new(
+            class,
+            Nucleus::BigDelimiter {
+                delim,
+                sizing: BigSizing::Amsmath { factor },
+            },
+        )
+    }
+
+    /// The LaTeX kernel's `\big`…`\Bigg` (`fontmath.ltx`), for a document
+    /// that does not load `amsmath`: `pt` is the absolute `\vbox to` length,
+    /// 8.5 / 11.5 / 14.5 / 17.5.
+    pub fn big_delimiter_kernel(class: AtomClass, delim: Option<char>, pt: f64) -> Atom {
+        Atom::new(
+            class,
+            Nucleus::BigDelimiter {
+                delim,
+                sizing: BigSizing::Kernel { pt },
+            },
+        )
     }
 
     /// `\phantom{body}` (both), `\hphantom` (horizontal), `\vphantom` (vertical).
