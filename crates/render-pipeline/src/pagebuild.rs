@@ -1276,6 +1276,11 @@ pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil:
     let (mut x, mut d, mut has_box) = (0.0f64, 0.0f64, false);
     let (mut stretch, mut shrink) = (0.0f64, 0.0f64);
     let mut fil_in_body = false;
+    // `\@makecol` contributes `\skip\footins`, the `\footnoterule` and the
+    // notes only `\ifvoid\footins\else`: a column with no note of its own
+    // has none of them, and its `\vskip-\@outputbox@depth` then lands right
+    // after the body, so the body's last depth is *outside* `\@colht`.
+    let has_notes = notes.iter().any(|l| !l.is_empty());
     // `\@cflt`.
     for (k, h) in floats.tops.iter().enumerate() {
         if k > 0 {
@@ -1318,24 +1323,26 @@ pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil:
             VItem::Penalty(_) => {}
         }
     }
-    x += d + ins.skip.0;
-    d = 0.0;
-    stretch += ins.skip.1;
-    shrink += ins.skip.2;
-    x += ins.rule.0 + ins.rule.1 + ins.rule.2;
-    for v in notes.iter().flatten() {
-        match v {
-            VItem::Box { height, depth, .. } => {
-                x += d + height;
-                d = *depth;
+    if has_notes {
+        x += d + ins.skip.0;
+        d = 0.0;
+        stretch += ins.skip.1;
+        shrink += ins.skip.2;
+        x += ins.rule.0 + ins.rule.1 + ins.rule.2;
+        for v in notes.iter().flatten() {
+            match v {
+                VItem::Box { height, depth, .. } => {
+                    x += d + height;
+                    d = *depth;
+                }
+                VItem::Glue { width, stretch: st, shrink: sh, .. } => {
+                    x += d + width;
+                    d = 0.0;
+                    stretch += st;
+                    shrink += sh;
+                }
+                VItem::Penalty(_) => {}
             }
-            VItem::Glue { width, stretch: st, shrink: sh, .. } => {
-                x += d + width;
-                d = 0.0;
-                stretch += st;
-                shrink += sh;
-            }
-            VItem::Penalty(_) => {}
         }
     }
     // `\@cflb`: `\textfloatsep` after the notes (so the notes' last depth
@@ -1410,24 +1417,31 @@ pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil:
             VItem::Penalty(_) => {}
         }
     }
-    y += d + vfil_shift + set_glue(ins.skip.0, ins.skip.1, ins.skip.2);
-    d = 0.0;
-    let rule_top = y + ins.rule.0;
-    y += ins.rule.0 + ins.rule.1 + ins.rule.2;
-    let mut area = InsertArea { rule_top, lines: Vec::new() };
-    for v in notes.iter().flatten() {
-        match v {
-            VItem::Box { height, depth, payload } => {
-                y += d + height;
-                d = *depth;
-                area.lines.push(Placed { payload: *payload, baseline: y, height: *height, depth: *depth });
+    let mut area = InsertArea { rule_top: y, lines: Vec::new() };
+    if has_notes {
+        y += d + vfil_shift + set_glue(ins.skip.0, ins.skip.1, ins.skip.2);
+        d = 0.0;
+        area.rule_top = y + ins.rule.0;
+        y += ins.rule.0 + ins.rule.1 + ins.rule.2;
+        for v in notes.iter().flatten() {
+            match v {
+                VItem::Box { height, depth, payload } => {
+                    y += d + height;
+                    d = *depth;
+                    area.lines.push(Placed { payload: *payload, baseline: y, height: *height, depth: *depth });
+                }
+                VItem::Glue { width, stretch: st, shrink: sh, .. } => {
+                    y += d + set_glue(*width, *st, *sh);
+                    d = 0.0;
+                }
+                VItem::Penalty(_) => {}
             }
-            VItem::Glue { width, stretch: st, shrink: sh, .. } => {
-                y += d + set_glue(*width, *st, *sh);
-                d = 0.0;
-            }
-            VItem::Penalty(_) => {}
         }
+    } else {
+        // `\box\@cclv`'s own `\vfil` (`\@doclearpage`, `\newpage`,
+        // `\LT@output`'s `\vss`) still sits after the body's depth.
+        y += d + vfil_shift;
+        d = 0.0;
     }
     if !floats.bots.is_empty() {
         y += d + set_glue(floats.textfloatsep.0, floats.textfloatsep.1, floats.textfloatsep.2);
