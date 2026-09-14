@@ -188,6 +188,9 @@ private struct EditorPane: View {
                 onSelectionChange: { if model.caretLengthUTF16 != $0.length { model.caretLengthUTF16 = $0.length } }, // every keystroke reports length 0; an equal write still invalidates its readers
                 onEditApplied: { model.editApplied($0, newText: $1) },
                 onEditRefused: { model.editRefused($0, reason: $1) },
+                caretFix: model.caretFix, // the hint the editor draws, and the only thing Tab accepts
+                onAcceptCaretFix: { model.acceptCaretFix() },
+                onDismissCaretFix: { model.dismissCaretFix() },
                 autoClosePairs: EditorPreferences.shared.autoCloseBraces ? model.autoClosePairs : [] // EditorPreferences.swift gates the braces lane set
                 ,
                 syntaxHighlighting: true, // SyntaxHighlighter.swift / EditorIntelligence.swift (mac-syntax-highlight)
@@ -216,6 +219,11 @@ private struct EditorPane: View {
                     }
                 }
             )
+            // Vim's status line belongs to the window being edited, so it sits
+            // directly under the source text — not in the window's status bar,
+            // which the Problems panel pushes two panes away from the caret
+            // (owner report). Takes no space at all while Vim is off.
+            VimStatusLine()
             CaptureBar()
             // The bridge line is lifecycle telemetry: shown once a bridge is
             // attached or a capture exists, not as a permanent orange
@@ -453,7 +461,8 @@ private struct StatusBar: View {
             Label(route(chrome), systemImage: routeIcon(chrome))
                 .help(chrome.routeHelp)
             WordCountStatusItem() // GH68: live word count + breakdown popover (WordCountStatusView.swift)
-            VimModeStatusItem() // -- NORMAL -- / -- INSERT -- / -- VISUAL -- and the `:` line while Vim keybindings are on (VimMode.swift)
+            // The Vim mode indicator is NOT here: it is `VimStatusLine`, at the
+            // bottom of the editor pane where vim puts a window's status line.
             let problems = chrome.problems
             if !problems.isEmpty {
                 Button {
@@ -522,6 +531,11 @@ private struct ProposalReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
     let proposal: RuntimeV1.CaptureProposal
     @State private var latex: String = ""
+    /// Why the last Approve did not insert. The model writes every refusal to
+    /// `captureNote`, but that is rendered in the status bar and the Captures
+    /// inspector — both behind this window-modal sheet. Without showing it
+    /// here, a refused approval looks exactly like a dead button.
+    @State private var failure: String?
     @StateObject private var preview = ProposalPreview(executable: ShellModel.locateCompiler()) // shadow compile (ProposalPreview.swift)
 
     var body: some View {
@@ -555,14 +569,31 @@ private struct ProposalReviewSheet: View {
             if !proposal.requiredDependencies.isEmpty {
                 Text("Required packages: " + proposal.requiredDependencies.joined(separator: ", ")).font(.caption)
             }
+            if let failure {
+                Label(failure, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout).foregroundStyle(.orange)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("review.failure")
+            }
             HStack {
                 Button("Reject", role: .destructive) { model.rejectProposal(proposal); dismiss() }
+                // Non-destructive exit: the sheet blocks the whole window, so
+                // without this the Captures inspector's Insert is unreachable
+                // for exactly the proposals it could act on.
+                Button("Close") { model.dismissReviewWithoutDeciding() }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("review.close")
                 Spacer()
                 ProposalApproveWarning(preview: preview)
                 Button("Approve and insert") {
+                    failure = nil
                     if model.isBridgeCapture(proposal.captureId) {
-                        Task { if case .inserted = await model.approveBridgeProposal(proposal, latex: latex) { dismiss() } }
+                        Task {
+                            if case .inserted = await model.approveBridgeProposal(proposal, latex: latex) { dismiss() }
+                            else { failure = model.captureNote ?? "The insertion was refused." }
+                        }
                     } else if case .inserted = model.approveProposal(proposal, latex: latex) { dismiss() }
+                    else { failure = model.captureNote ?? "The insertion was refused." }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled((model.anchor == nil && !model.isBridgeCapture(proposal.captureId)) || latex.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -571,26 +602,42 @@ private struct ProposalReviewSheet: View {
         .padding(16)
         .frame(width: 520)
         .onAppear { latex = proposal.latex; preview.update(from: model, latex: proposal.latex) }
-        .onChange(of: latex) { _, new in preview.update(from: model, latex: new) }
+        .onChange(of: latex) { _, new in failure = nil; preview.update(from: model, latex: new) }
         .onChange(of: model.editorRevision) { _, _ in preview.update(from: model, latex: latex) }
         .onChange(of: model.anchor) { _, _ in preview.update(from: model, latex: latex) }
         .onDisappear { preview.close() }
     }
 }
 
-/// Status-bar mode indicator for Vim keybindings (VimMode.swift): hidden
-/// while the preference is off.
-struct VimModeStatusItem: View {
+/// Vim's status line (VimMode.swift): `-- NORMAL --` / `-- INSERT --` /
+/// `-- VISUAL --` and the `:`/`/` command line, at the bottom of the editor
+/// pane. Vim puts the status line at the bottom of the window being edited,
+/// so it stays with the text even when the Problems panel is open below or
+/// the preview is beside it; the global status bar would put it two panes
+/// away from the caret it describes.
+///
+/// While the preference is off `VimMode.Status.shared.indicator` is nil and
+/// the body produces no view at all — the editor gains no empty strip.
+struct VimStatusLine: View {
     var body: some View {
         let status = VimMode.Status.shared
         if let indicator = status.indicator {
-            Text(indicator)
-                .fontWeight(.semibold)
-                .help("Vim keybindings are on (Settings, or View > Toggle Vim Keybindings ⌃⌘V)")
-                .accessibilityIdentifier("status.vimMode")
-            if let line = status.commandLine, !line.isEmpty {
-                Text(line).lineLimit(1).accessibilityIdentifier("status.vimCommandLine")
+            HStack(spacing: 8) {
+                Text(indicator)
+                    .fontWeight(.semibold)
+                    .help("Vim keybindings are on (Settings, or View > Toggle Vim Keybindings ⌃⌘V)")
+                    .accessibilityIdentifier("status.vimMode")
+                if let line = status.commandLine, !line.isEmpty {
+                    Text(line).lineLimit(1).accessibilityIdentifier("status.vimCommandLine")
+                }
+                Spacer(minLength: 0)
             }
+            .font(.caption)
+            .monospacedDigit()
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(.bar)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Vim status line")
         }
     }
 }

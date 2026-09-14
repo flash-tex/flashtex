@@ -47,6 +47,16 @@ struct SourceEditorView: NSViewRepresentable {
     /// A pending edit the view could not apply (the buffer moved on since it
     /// was prepared, or its range no longer fits); never reported as applied.
     var onEditRefused: (ShellModel.PendingEdit, String) -> Void = { _, _ in }
+    /// The mechanical fix offered at the caret (`ShellModel.caretFix`).
+    /// Non-nil draws the inline hint *and* arms Tab, from the one value, so
+    /// the key can never accept something the author was not shown. Nil leaves
+    /// Tab exactly as it was: indent the selection, or insert an indent unit.
+    var caretFix: EditorDiagnostics.CaretFix?
+    /// Tab on a visible caret fix (`ShellModel.acceptCaretFix`).
+    var onAcceptCaretFix: () -> Void = {}
+    /// Esc while the hint is up (`ShellModel.dismissCaretFix`): the hint goes
+    /// down and Tab indents again until the caret moves onto another fix.
+    var onDismissCaretFix: () -> Void = {}
     /// Openers typed at the caret that get their closer inserted after it
     /// (`{`, `[`, `$`). Default: braces only; the owner passes its setting.
     /// Auto-close, type-over and empty-pair backspace never run while marked
@@ -117,6 +127,7 @@ struct SourceEditorView: NSViewRepresentable {
         context.coordinator.attach(scroll)
         context.coordinator.spelling.attach(tv) // LaTeX-aware spell checking (LaTeXSpellCheck.swift)
         context.coordinator.installIntelligence(on: scroll, lineNumbers: showLineNumbers)
+        (tv as? CompletingTextView)?.installFolding() // EditorFolding.swift: TextKit-1 glyph hiding
         (tv as? CompletingTextView)?.vim.exCommandHandler = { [weak coordinator = context.coordinator] in coordinator?.parent.onExCommand($0) } // VimMode.swift
         return scroll
     }
@@ -170,7 +181,21 @@ struct SourceEditorView: NSViewRepresentable {
         co.marks.update(marks, in: tv, reset: textReset)
         co.gutter?.update(marks: marks)
         co.errorLens.update(marks: marks)
+        co.errorLens.update(caretFix: caretFix) // the hint Tab acts on, drawn whatever the lens preference is
         if textReset { co.refreshBraceHighlight(tv) }
+        // Fold triangles: never a whole-buffer region scan from SwiftUI's
+        // per-frame update (marks / diagnostics while typing). Text changes
+        // debounce a rescan in `textDidChange` → `scheduleFoldGutterRefresh`.
+        // A programmatic `tv.string` replace (revert / reload / other document)
+        // posts no `textDidChange`, and `textWasReset` leaves the fold cache
+        // cold, so `rescan: false` would keep the previous document's triangles
+        // (or none, if the highlighter table has not caught up with the new
+        // length — that guard clears the gutter). Rescan now if the line table
+        // already matches; the debounce retries if it does not.
+        if textReset {
+            co.refreshFoldGutter(rescan: true)
+            co.scheduleFoldGutterRefresh()
+        }
         if let selection, selection.token != co.appliedToken {
             co.appliedToken = selection.token
             co.applySelection(selection, to: tv)
@@ -724,6 +749,7 @@ struct SourceEditorView: NSViewRepresentable {
         /// changes in that turn are typing steps, not caret moves.
         private var textChangedThisTurn = false
         private var announcementPending = false
+        private var foldGutterWork: DispatchWorkItem?
         /// True while the view has marked text (an IME composition or dead key).
         var composing: Bool { textView?.hasMarkedText() ?? false }
         /// Composition selection changes observed (tests and evidence).
@@ -765,6 +791,7 @@ struct SourceEditorView: NSViewRepresentable {
         }
 
         deinit {
+            foldGutterWork?.cancel()
             if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
             if let magnifyMonitor { NSEvent.removeMonitor(magnifyMonitor) }
             deferredTimer?.invalidate()
@@ -797,6 +824,13 @@ struct SourceEditorView: NSViewRepresentable {
             hover.mathPreview = { [weak self] index in self?.mathPreview(at: index) }
             if let completing = tv as? CompletingTextView {
                 completing.commandClickHandler = { [weak self] index in self?.commandClick(at: index) ?? false }
+                // Math-mode ranking in the completion list (Completion.swift):
+                // answered from the in-sync syntax model, one line's lexing.
+                completing.mathModeAtCaret = { [weak self] index in
+                    guard let self, let text = self.textView?.textStorage?.string as NSString? else { return false }
+                    return Completion.isMathMode(in: text, caretUTF16: index,
+                                                 highlighter: self.syntax.highlighter.length == text.length ? self.syntax.highlighter : nil)
+                }
                 completing.backgroundDecorator = { [weak self] rect in self?.drawCurrentLine(in: rect) }
                 // GH74: a completion snippet's placeholder closer (`\section{}`)
                 // overtypes like a hand-typed `{` instead of doubling
@@ -807,6 +841,11 @@ struct SourceEditorView: NSViewRepresentable {
                 // supplies its own closer eats the one already sitting there
                 // instead of stranding it (`\begin{proof}` … `\end{proof}}`).
                 completing.isPendingCloser = { [weak self] offset in self?.pendingClosers.contains(offset) ?? false }
+                // Esc while the caret-fix hint is up takes it down, ahead of
+                // Esc's other meaning (open the completion list). Tab's side of
+                // the same state lives in `handleTab`.
+                completing.caretFixVisible = { [weak self] in self?.parent.caretFix != nil }
+                completing.dismissCaretFix = { [weak self] in self?.parent.onDismissCaretFix() }
             }
             errorLens.lineTable = { [weak self] in self?.syntax.highlighter ?? SyntaxHighlighter() }
             errorLens.attach(tv)
@@ -827,6 +866,14 @@ struct SourceEditorView: NSViewRepresentable {
                 g.update(marks: parent.marks)
                 g.currentLine = currentLine
                 g.relativeLineNumbers = LineNumberGutter.relativeOverride ?? EditorPreferences.shared.relativeLineNumbers
+                g.onToggleFold = { [weak self] line in
+                    guard let self, let completing = self.textView as? CompletingTextView else { return }
+                    let table = self.syntax.highlighter
+                    guard line < table.lineCount else { return }
+                    _ = completing.folds.toggleHeader(at: table.lineStarts[line], in: completing.string as NSString)
+                    completing.snapCaretOutOfFolds()
+                }
+                refreshFoldGutter(rescan: true)
             } else if !on, gutter != nil {
                 scroll.rulersVisible = false
                 scroll.hasVerticalRuler = false
@@ -903,6 +950,36 @@ struct SourceEditorView: NSViewRepresentable {
             currentLine = line
             gutter?.currentLine = line
             for l in [old, line].compactMap({ $0 }) { tv.setNeedsDisplay(currentLineRect(l, in: tv)) }
+        }
+
+        /// Gutter disclosure triangles. `rescan` walks foldable regions (not
+        /// per keystroke: text changes debounce this; fold commands pass true).
+        func refreshFoldGutter(rescan: Bool = false) {
+            guard let tv = textView as? CompletingTextView, let gutter else { return }
+            let table = syntax.highlighter
+            let length = tv.textStorage?.length ?? 0
+            guard table.length == length, length > 0 else {
+                gutter.foldableLines = []
+                gutter.foldedLines = []
+                // The line table lags a whole-buffer replace: retry after the
+                // highlighter catches up rather than leaving the gutter empty.
+                if rescan, length > 0, table.length != length { scheduleFoldGutterRefresh() }
+                return
+            }
+            func lineOf(_ loc: Int) -> Int { table.line(at: min(max(0, loc), length - 1)) }
+            gutter.foldedLines = Set(tv.folds.foldedLineStarts.map(lineOf))
+            if rescan || tv.folds.cacheIsWarm {
+                gutter.foldableLines = Set(tv.folds.foldableLineStarts(in: tv.string as NSString).map(lineOf))
+            }
+        }
+
+        /// Debounced whole-buffer fold-triangle rescan. Also called from
+        /// `updateNSView` on a text reset: that path posts no `textDidChange`.
+        func scheduleFoldGutterRefresh() {
+            foldGutterWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.refreshFoldGutter(rescan: true) }
+            foldGutterWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
         }
 
         private func currentLineRect(_ line: Int, in tv: NSTextView) -> NSRect {
@@ -1007,6 +1084,7 @@ struct SourceEditorView: NSViewRepresentable {
             }
             deferredSelection = nil
             deferredTimer?.invalidate()
+            (tv as? CompletingTextView)?.folds.unfoldCovering(range) // Find / go-to-definition / diagnostics / preview reveal
             programmaticChanges += 1
             tv.setSelectedRange(range)
             tv.scrollRangeToVisible(range) // scrolls only when the range is off screen
@@ -1050,6 +1128,8 @@ struct SourceEditorView: NSViewRepresentable {
                 return false // nothing changes: the caret stepped over the closer
             }
             shiftPendingClosers(edit: range, replacementLength: replacementLength)
+            (textView as? CompletingTextView)?.noteFoldEdit(range, replacementLength: replacementLength)
+            refreshFoldGutter(rescan: false)
             if !pairing, programmaticChanges == 0 {
                 lastEdit = replacementString.map { (range, $0) }
                 noteTypingStep() // the selection change AppKit posts before textDidChange is a typing step: no highlight refresh, no announcement
@@ -1111,6 +1191,7 @@ struct SourceEditorView: NSViewRepresentable {
             hover.dismiss()
             gutter?.layoutIfNeeded(lineCount: syntax.highlighter.lineCount)
             gutter?.needsDisplay = true
+            scheduleFoldGutterRefresh()
             if !textChangedThisTurn {
                 textChangedThisTurn = true
                 DispatchQueue.main.async { [weak self] in self?.textChangedThisTurn = false }
@@ -1133,6 +1214,7 @@ struct SourceEditorView: NSViewRepresentable {
             let s = SourceEditorView.nativeText(of: tv)
             lastKnownText = s
             parent.text = s
+            (tv as? CompletingTextView)?.folds.revalidate(in: s as NSString)
             refreshBraceHighlight(tv)
             if let edit, edit.range.length == 0, edit.replacement.count == 1, let ch = edit.replacement.first, BraceMatcher.isCloser(ch) {
                 announceMatch(in: tv)
@@ -1147,6 +1229,9 @@ struct SourceEditorView: NSViewRepresentable {
             parent.onSelectionChange(range)
             updateCurrentLine(tv)
             if !textChangedThisTurn { refreshBraceHighlight(tv) } // a typing turn refreshes from textDidChange
+            // Find-bar matches are a non-empty selection; a caret on the header
+            // of a fold must not unfold it (Fold would immediately reverse).
+            if range.length > 0 { (tv as? CompletingTextView)?.folds.unfoldCovering(range) }
             // A typing step already reads as typed text in VoiceOver; only
             // caret/selection moves are announced, once per run-loop turn.
             // (`textChangedThisTurn` is checked again when the turn ends because
@@ -1195,6 +1280,7 @@ struct SourceEditorView: NSViewRepresentable {
             pendingClosers = []
             syntax.reset()
             hover.dismiss()
+            (textView as? CompletingTextView)?.folds.reset()
             gutter?.layoutIfNeeded(lineCount: syntax.highlighter.lineCount)
             gutter?.needsDisplay = true
         }

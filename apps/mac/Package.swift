@@ -31,9 +31,16 @@ let package = Package(
             name: "FlashTeXProtocolTests",
             dependencies: ["FlashTeXProtocol"]
         ),
+        // Shared by both hosted test targets: builds the real `NSWindow`s the
+        // tests measure, parked off every display so runs stay invisible to
+        // whoever is using the Mac. Test-only; nothing in the app depends on it.
+        .target(
+            name: "HostedWindows",
+            path: "Tests/HostedWindows"
+        ),
         .testTarget(
             name: "FlashTeXMacTests",
-            dependencies: ["FlashTeXMac", .product(name: "NearbyClient", package: "nearby-client")]
+            dependencies: ["FlashTeXMac", "HostedWindows", .product(name: "NearbyClient", package: "nearby-client")]
         ),
         // Pure accessibility models (reading sequence, editor navigation,
         // command table) plus the SwiftUI attachment views; depends only on
@@ -44,7 +51,7 @@ let package = Package(
         ),
         .testTarget(
             name: "FlashTeXAccessibilityTests",
-            dependencies: ["FlashTeXAccessibility"]
+            dependencies: ["FlashTeXAccessibility", "HostedWindows"]
         ),
     ]
 )

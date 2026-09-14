@@ -144,6 +144,11 @@ pub struct VBlock {
     /// LaTeX's `\vadjust{\vskip <dimen>}`, §888 adjust material, before
     /// the interline penalty); entries past the end are 0.
     pub vskip_after: Vec<f64>,
+    /// `\brokenpenalty` (100 in the LaTeX kernel) added to the penalty after
+    /// line `i` when that line was broken at a discretionary — TeX §890's
+    /// `if disc_break then pen:=pen+broken_penalty`. Entries past the end
+    /// are 0; an empty vector means no line was broken that way.
+    pub broken_penalty: Vec<i32>,
     /// Glue appended after `penalty_after` and before `space_after`, so
     /// `space_after` stays the list's `\lastskip` (`\@maketitle`'s
     /// `\@endparenv` `\topsep` before its closing `\vskip 1.5em`).
@@ -268,6 +273,7 @@ pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
                 if li + 2 == n {
                     pen += b.widow_penalty;
                 }
+                pen += b.broken_penalty.get(li).copied().unwrap_or(0);
                 if pen != 0 {
                     out.push(VItem::Penalty(pen.min(INF_PENALTY)));
                 }
@@ -1537,6 +1543,7 @@ mod tests {
             no_interline_after: false,
             baselineskip: None,
             vskip_after: Vec::new(),
+            broken_penalty: Vec::new(),
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -1690,6 +1697,7 @@ mod tests {
             no_interline_first: false,
             no_interline_after: false,
             vskip_after: Vec::new(),
+            broken_penalty: Vec::new(),
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -1706,5 +1714,62 @@ mod tests {
         assert_eq!(pages[0].lines.len(), 44);
         assert_eq!(pages[1].lines[0].payload, (1, 0));
         assert_eq!(pages[1].lines.len(), 4);
+    }
+
+    /// `\brokenpenalty` (TeX §890 `if disc_break then pen:=pen+broken_penalty`)
+    /// lands after the line the paragraph broke at a discretionary, and nowhere
+    /// else.
+    #[test]
+    fn a_hyphenated_line_is_followed_by_the_broken_penalty() {
+        let mut b = para(4);
+        b.club_penalty = 0;
+        b.widow_penalty = 0;
+        b.broken_penalty = vec![0, 100, 0, 100];
+        let list = vlist(&params(), &[b]);
+        let pens: Vec<i32> = list.iter().filter_map(|v| match v {
+            VItem::Penalty(p) => Some(*p),
+            _ => None,
+        }).collect();
+        // One penalty node, after the second line; the last line's entry is
+        // never appended (no penalty follows the last line of a paragraph).
+        assert_eq!(pens, vec![100]);
+        let i = list.iter().position(|v| matches!(v, VItem::Penalty(100))).unwrap();
+        assert!(matches!(list[i - 1], VItem::Box { payload: (0, 1), .. }));
+    }
+
+    /// The lmodern-report page-1 shape, reduced: breaking one line early is
+    /// cheaper on badness alone (1 against 2), but the early break sits at a
+    /// hyphenated line, so `\brokenpenalty` makes pdflatex keep the line and
+    /// shrink the page instead.
+    #[test]
+    fn the_broken_penalty_keeps_a_line_the_page_can_still_shrink_to_fit() {
+        // Lines sit at 12 + 14.5i; the goal is 11.1pt above line 43 and
+        // 3.4pt below line 44, with 47pt of stretch and 12.9pt of shrink on
+        // the page: badness 1 at the earlier break, badness 2 at the later.
+        let p = PageParams { vsize: 646.6, ..params() };
+        let mut head = para(10);
+        head.parskip = None;
+        head.club_penalty = 0;
+        head.widow_penalty = 0;
+        let mut body = para(40);
+        body.parskip = None;
+        body.club_penalty = 0;
+        body.widow_penalty = 0;
+        body.space_before = Some((0.0, 47.0, 12.9));
+        let mut without = body.clone();
+        without.broken_penalty = Vec::new();
+        let pages = break_pages(&p, &vlist(&p, &[head.clone(), without]));
+        assert_eq!(pages[0].lines.len(), 44, "without \\brokenpenalty the shorter page wins");
+
+        // Global line 43 is `body`'s line 33: the line ending at a hyphen.
+        let mut with = body;
+        let mut broken = vec![0; 40];
+        broken[33] = 100;
+        with.broken_penalty = broken;
+        let pages = break_pages(&p, &vlist(&p, &[head, with]));
+        assert_eq!(pages[0].lines.len(), 45, "\\brokenpenalty makes the later break cheaper");
+        // The page's glue shrinks by the 3.4pt it is over, so the kept line's
+        // baseline lands on `\vsize` rather than 3.4pt past it.
+        assert!((pages[0].lines[44].baseline - 646.6).abs() < 1e-9, "{}", pages[0].lines[44].baseline);
     }
 }
