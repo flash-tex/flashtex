@@ -13,8 +13,8 @@
 # instead: https://flash-tex.github.io/flashtex/install-cli.sh
 set -eu
 
-VERSION="v0.1.3"
-SHA256="8a0b31ed18adc4b4e7646c3608e84155871d8efe3f2ad01899eb3906bd7c7bc5"
+VERSION="v0.1.4"
+SHA256="3f16d7b75da761d656e4c8552d528335af97f34253abfbfd85bda872f8a18a05"
 URL="https://github.com/flash-tex/flashtex/releases/download/${VERSION}/FlashTeX.dmg"
 
 say() { printf '%s\n' "$*"; }
