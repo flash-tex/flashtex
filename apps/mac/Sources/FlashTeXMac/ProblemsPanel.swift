@@ -12,9 +12,12 @@ struct ProblemsPanel: View {
     @Environment(ShellModel.self) var model
 
     static let identifier = "problems.panel"
-    /// Split-pane bounds: the header plus two rows at least; the ideal shows ~5 grouped rows.
+    /// Split-pane bounds: the header plus two rows at least; the ideal shows
+    /// ~3 grouped rows (180 pt). 260 pt was ~1/3 of a typical window (audit #76);
+    /// the 40 % cap in ContentView still stops a large window from swallowing
+    /// the editor (daniel-fable-ui-qa #3).
     static let minHeight: CGFloat = 120
-    static let idealHeight: CGFloat = 260
+    static let idealHeight: CGFloat = 180
 
     var body: some View {
         @Bindable var model = model
@@ -22,17 +25,17 @@ struct ProblemsPanel: View {
         // (ShellModel); `displayedDiagnostics` reads `result`, which every
         // reply replaces, and this panel's List re-laid out with each one.
         let diags = model.problemsList
-        let (errors, warnings, gaps) = EditorDiagnostics.counts(diags)
+        let summary = EditorDiagnostics.summary(diags)
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Label("Problems", systemImage: "exclamationmark.triangle").font(.caption.bold())
-                if errors > 0 { Label("\(errors)", systemImage: "xmark.octagon.fill").foregroundStyle(.red).font(.caption) }
-                if warnings > 0 { Label("\(warnings)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.caption) }
-                if gaps > 0 {
-                    Label("\(gaps) not implemented", systemImage: "puzzlepiece.extension").foregroundStyle(.secondary).font(.caption)
-                        .help("Commands, packages or environments FlashTeX does not implement yet — not mistakes in the source")
+                if diags.isEmpty {
+                    Text("none").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text(summary).font(.caption)
+                        .help("Author errors, warnings, then FlashTeX gaps — not a single undifferentiated error count")
+                        .accessibilityHidden(true)
                 }
-                if diags.isEmpty { Text("none").font(.caption).foregroundStyle(.secondary) }
                 if let status = model.resultStatus, status != .ok {
                     Text(status == .recovered ? "recovered: preview shown with provisional rendering" : "compile failed: the previous preview is kept")
                         .font(.caption).foregroundStyle(.orange).lineLimit(1)
@@ -68,7 +71,7 @@ struct ProblemsPanel: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Problems")
+        .accessibilityLabel("Problems, \(summary)")
         .accessibilityIdentifier(Self.identifier)
     }
 

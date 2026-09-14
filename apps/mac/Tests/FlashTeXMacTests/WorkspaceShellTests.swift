@@ -136,7 +136,9 @@ final class WorkspaceShellTests: XCTestCase {
         // Panel bounds: the documentation pane is part of the popup's height.
         XCTAssertGreaterThan(CompletionPopup.docHeight, 40)
         XCTAssertEqual(ProblemsPanel.minHeight, 120)
+        XCTAssertEqual(ProblemsPanel.idealHeight, 180, "opening height is a compact list, not ~1/3 of the min window")
         XCTAssertGreaterThan(ProblemsPanel.idealHeight, ProblemsPanel.minHeight)
+        XCTAssertLessThan(Double(ProblemsPanel.idealHeight), 640.0 / 3)
     }
 
     // MARK: workspace flags

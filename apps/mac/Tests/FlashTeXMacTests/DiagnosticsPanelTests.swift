@@ -119,11 +119,16 @@ final class DiagnosticsPanelTests: XCTestCase {
             .init(severity: .error, message: "m", source: .init(path: "main.tex", startByte: 4, endByte: 5), recovery: nil),
         ]
         let byCode = EditorDiagnostics.groups(of: split, documentOrder: ["main.tex"])
-        XCTAssertEqual(byCode.map(\.id), [
+        XCTAssertEqual(Set(byCode.map(\.id)), Set([
             "error:unknown_command:m",
             "error:unsupported_feature:m",
             "error:m",
-        ], "code in the key; missing code falls back to severity:message")
+        ]), "code in the key; missing code falls back to severity:message")
+        XCTAssertEqual(byCode.map(\.id), [
+            "error:unknown_command:m",
+            "error:m",
+            "error:unsupported_feature:m",
+        ], "author errors (unknown_command, then the uncoded error) before the unsupported_feature gap")
     }
 
     func testCopyLineIncludesHelpAndNotes() {
@@ -162,24 +167,25 @@ final class DiagnosticsPanelTests: XCTestCase {
                        "no compiled text: the byte offset stands in for the line")
     }
 
-    func testCopyTextIsTheSelectedGroupInDocumentOrderOrEverything() {
+    func testCopyTextIsTheSelectedGroupInDocumentOrderOrEverything() throws {
         let diags = diagnostics()
         let texts = ["main.tex": Self.text]
         let groups = EditorDiagnostics.groups(of: diags, documentOrder: ["main.tex"])
-        XCTAssertEqual(groups.map(\.count), [3, 1, 1])
-        let inGroup = groups[0]
+        XCTAssertEqual(groups.map(\.count), [1, 1, 3], "warnings (mathbb, Overfull) then the \\in gap group")
+        let inGroup = try XCTUnwrap(groups.first { $0.count == 3 })
         XCTAssertEqual(EditorDiagnostics.copyText(groups: groups, selection: inGroup.id, in: diags, texts: texts),
                        """
                        main.tex:2: error: \\in is not supported in math mode
                        main.tex:3: error: \\in is not supported in math mode
                        main.tex:5: error: \\in is not supported in math mode
                        """, "every place of the grouped row, document order, no trailing newline")
-        XCTAssertEqual(EditorDiagnostics.copyText(groups: groups, selection: groups[2].id, in: diags, texts: texts),
+        let overfull = try XCTUnwrap(groups.first { $0.message == "Overfull line" })
+        XCTAssertEqual(EditorDiagnostics.copyText(groups: groups, selection: overfull.id, in: diags, texts: texts),
                        "-:0: warning: Overfull line")
         let all = EditorDiagnostics.copyText(groups: groups, selection: nil, in: diags, texts: texts)
         XCTAssertEqual(all.split(separator: "\n").count, 5, "no selection: all diagnostics, group by group")
-        XCTAssertTrue(all.hasPrefix("main.tex:2: error"), all)
-        XCTAssertTrue(all.hasSuffix("-:0: warning: Overfull line"), all)
+        XCTAssertTrue(all.hasPrefix("main.tex:4: warning"), all)
+        XCTAssertTrue(all.hasSuffix("main.tex:5: error: \\in is not supported in math mode"), all)
         XCTAssertEqual(EditorDiagnostics.copyText(groups: groups, selection: "error:not a group", in: diags, texts: texts), all,
                        "a stale selection copies everything rather than nothing")
         XCTAssertEqual(EditorDiagnostics.copyText(groups: [], selection: nil, in: [], texts: texts), "")
@@ -252,6 +258,35 @@ final class DiagnosticsPanelTests: XCTestCase {
         XCTAssertEqual(m.currentDiagnosticID, "r-order#2@main.tex:18..<24")
     }
 
+    func testSummaryNamesPerBucketCounts() {
+        var diags: [RuntimeV1.Diagnostic] = [
+            .init(severity: .error, message: "e1", source: nil, recovery: nil, code: "unknown_command"),
+            .init(severity: .error, message: "e2", source: nil, recovery: nil, code: "syntax_error"),
+            .init(severity: .warning, message: "w1", source: nil, recovery: nil),
+            .init(severity: .warning, message: "w2", source: nil, recovery: nil),
+            .init(severity: .warning, message: "w3", source: nil, recovery: nil),
+            .init(severity: .warning, message: "w4", source: nil, recovery: nil),
+            .init(severity: .warning, message: "w5", source: nil, recovery: nil),
+        ]
+        diags += (0..<46).map { i in
+            RuntimeV1.Diagnostic(severity: .error, message: "gap \(i)", source: nil, recovery: nil, code: "unsupported_feature")
+        }
+        XCTAssertEqual(EditorDiagnostics.summary(diags), "2 errors · 5 warnings · 46 FlashTeX gaps")
+        XCTAssertEqual(EditorDiagnostics.summary([]), "0 errors · 0 warnings · 0 FlashTeX gaps")
+        XCTAssertEqual(EditorDiagnostics.summary([
+            .init(severity: .error, message: "e", source: nil, recovery: nil, code: "unknown_command"),
+        ]), "1 error · 0 warnings · 0 FlashTeX gaps")
+        XCTAssertEqual(EditorDiagnostics.summary([
+            .init(severity: .warning, message: "w", source: nil, recovery: nil),
+        ]), "0 errors · 1 warning · 0 FlashTeX gaps")
+        XCTAssertEqual(EditorDiagnostics.summary([
+            .init(severity: .error, message: "g", source: nil, recovery: nil, code: "unsupported_feature"),
+        ]), "0 errors · 0 warnings · 1 FlashTeX gap")
+        XCTAssertEqual(EditorDiagnostics.listBucket(diags[0]), 0)
+        XCTAssertEqual(EditorDiagnostics.listBucket(diags[2]), 1)
+        XCTAssertEqual(EditorDiagnostics.listBucket(diags[7]), 2)
+    }
+
     func testCopyDiagnosticsAsTextWritesThePasteboardAndNotesTheCount() {
         let m = model()
         let panel = DiagnosticsPanelState()
@@ -261,7 +296,7 @@ final class DiagnosticsPanelTests: XCTestCase {
         XCTAssertEqual(pb.string(forType: .string), written)
         XCTAssertEqual(written.split(separator: "\n").count, 5)
         XCTAssertEqual(m.navigationNote, "Copied 5 diagnostic lines as text.")
-        panel.selection = EditorDiagnostics.groups(of: m.displayedDiagnostics)[2].id
+        panel.selection = EditorDiagnostics.groups(of: m.displayedDiagnostics).first { $0.message == "Overfull line" }?.id
         XCTAssertEqual(m.copyDiagnosticsAsText(panel: panel, pasteboard: pb), "-:0: warning: Overfull line")
         XCTAssertEqual(pb.string(forType: .string), "-:0: warning: Overfull line")
         XCTAssertEqual(m.navigationNote, "Copied 1 diagnostic line as text.")
@@ -274,18 +309,21 @@ final class DiagnosticsPanelTests: XCTestCase {
 
     // MARK: group info and occurrence stepping
 
-    func testGroupInfoNamesTheCurrentOccurrenceLine() {
+    func testGroupInfoNamesTheCurrentOccurrenceLine() throws {
         let diags = diagnostics()
         let texts = ["main.tex": Self.text]
         let groups = EditorDiagnostics.groups(of: diags, documentOrder: ["main.tex"])
-        let g = groups[0]
+        let g = try XCTUnwrap(groups.first { $0.count > 1 })
         XCTAssertEqual(EditorDiagnostics.groupInfo(g, occurrence: 0, in: diags, texts: texts),
                        .init(count: 3, occurrence: 0, location: "main.tex line 2"))
         XCTAssertEqual(EditorDiagnostics.groupInfo(g, occurrence: 2, in: diags, texts: texts)?.spoken, "3 places, 3 of 3, main.tex line 5")
         XCTAssertEqual(EditorDiagnostics.groupInfo(g, occurrence: 9, in: diags, texts: texts)?.occurrence, 2, "clamped")
         XCTAssertEqual(EditorDiagnostics.groupInfo(g, occurrence: 1, in: diags)?.location, "main.tex bytes 29..<32", "no compiled text")
-        XCTAssertNil(EditorDiagnostics.groupInfo(groups[1], occurrence: 0, in: diags, texts: texts), "single place: not a group")
-        XCTAssertEqual(EditorDiagnostics.groupInfo(EditorDiagnostics.groups(of: diags + [diags[4]])[2], occurrence: 1, in: diags + [diags[4]])?.spoken,
+        let mathbb = try XCTUnwrap(groups.first { $0.message.contains("mathbb") })
+        XCTAssertNil(EditorDiagnostics.groupInfo(mathbb, occurrence: 0, in: diags, texts: texts), "single place: not a group")
+        let doubled = diags + [diags[4]]
+        let overfull = try XCTUnwrap(EditorDiagnostics.groups(of: doubled).first { $0.message == "Overfull line" })
+        XCTAssertEqual(EditorDiagnostics.groupInfo(overfull, occurrence: 1, in: doubled)?.spoken,
                        "2 places, 2 of 2, no source")
         // The row label the panel builds from it.
         let row = DiagnosticRowAccessibility(diags[g.first], index: g.first, total: diags.count, status: .recovered,
@@ -293,11 +331,11 @@ final class DiagnosticsPanelTests: XCTestCase {
         XCTAssertEqual(row.label, "Diagnostic 2 of 5: Error: \\in is not supported in math mode, 3 places, 2 of 3, main.tex line 3")
     }
 
-    func testStepOccurrenceWrapsWithinTheGroupAndFeedsDiagnosticNavigation() {
+    func testStepOccurrenceWrapsWithinTheGroupAndFeedsDiagnosticNavigation() throws {
         let m = model()
         let panel = DiagnosticsPanelState()
         let groups = EditorDiagnostics.groups(of: m.displayedDiagnostics, documentOrder: ["main.tex"])
-        let g = groups[0]
+        let g = try XCTUnwrap(groups.first { $0.count > 1 })
         // No selection, no current diagnostic: the first multi-place group, from its first place.
         m.stepOccurrence(forward: true, panel: panel)
         XCTAssertEqual(panel.selection, g.id)
@@ -324,7 +362,7 @@ final class DiagnosticsPanelTests: XCTestCase {
         let single = DiagnosticsPanelState()
         m.currentDiagnosticID = "r1#2@main.tex:39..<49"
         m.stepOccurrence(forward: true, panel: single)
-        XCTAssertEqual(single.selection, groups[1].id)
+        XCTAssertEqual(single.selection, groups.first { $0.message.contains("mathbb") }?.id)
         XCTAssertEqual(m.navigationNote?.hasPrefix("Only one place: "), true, m.navigationNote ?? "nil")
         XCTAssertEqual(m.selection?.nsRange, NSRange(location: 39, length: 10))
         // The selected group wins over the caret's diagnostic (from its first place, so the step lands on 2 of 3).
@@ -429,8 +467,9 @@ final class DiagnosticsPanelTests: XCTestCase {
 
         // Return: jump to the selected group's current occurrence.
         let groups = EditorDiagnostics.groups(of: m.displayedDiagnostics, documentOrder: ["main.tex"])
-        panel.selection = groups[0].id
-        panel.occurrence[groups[0].id] = 1
+        let inGroup = try XCTUnwrap(groups.first { $0.count > 1 })
+        panel.selection = inGroup.id
+        panel.occurrence[inGroup.id] = 1
         try await settle()
         var returnPath = "key event"
         if let ev = key(36, "\r", window: window) { window.sendEvent(ev) }

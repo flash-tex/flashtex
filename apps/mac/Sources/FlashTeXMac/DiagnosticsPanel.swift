@@ -248,7 +248,7 @@ struct DiagnosticsListView: View {
     /// Severity to show (nil: all); group indices stay those of `diagnostics`,
     /// so explanations, quick fixes and occurrences are unaffected by the filter.
     let severityFilter: RuntimeV1.Severity?
-    /// Whether the "Diagnostics (n) — …" caption is drawn (the Problems panel draws its own header).
+    /// Whether the per-bucket summary caption is drawn (the Problems panel draws its own header).
     let showsHeader: Bool
     let maxHeight: CGFloat
 
@@ -271,8 +271,9 @@ struct DiagnosticsListView: View {
         let status = model.resultStatus ?? .ok
         VStack(alignment: .leading, spacing: 0) {
             if showsHeader {
-                Text("Diagnostics (\(diags.count)\(groups.count < diags.count ? " in \(groups.count) groups" : "")) — the preview above is still shown; errors are not hidden")
+                Text("\(EditorDiagnostics.summary(diags)) — the preview above is still shown; errors are not hidden")
                     .font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 4)
+                    .accessibilityLabel(EditorDiagnostics.summary(diags))
             }
             if let carriedLine = model.chrome.carriedLine {
                 Text("Underlines \(carriedLine); the list below is the failed result's.")
