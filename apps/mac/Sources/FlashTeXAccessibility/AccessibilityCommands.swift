@@ -213,7 +213,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          menuItem: "Delete Line")
         case .joinLines:
             return Entry(command: self, title: "Join Lines", shortcuts: ["⌃J"], menu: "Editor",
-                         description: "Joins the selection's lines, or the caret's line with the next, with a single space, stripping the next line's leading whitespace and a trailing % comment marker only when it ends the line.",
+                         description: "Joins the selection's lines, or the caret's line with the next, with a single space. Every non-last line is right-trimmed and a trailing % is dropped only when it ends that line; every line after the first is left-trimmed.",
                          menuItem: "Join Lines")
         case .sortLinesAscending:
             return Entry(command: self, title: "Sort Lines Ascending", shortcuts: ["Editor > Sort Lines Ascending"], menu: "Editor",

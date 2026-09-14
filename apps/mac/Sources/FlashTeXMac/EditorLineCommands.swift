@@ -40,7 +40,14 @@ enum EditorLineCommands {
             let joined = join(newLines, originalEndedWithNewline: endedNL, defaultTerm: term)
             let copyStart = offset(of: last + 1, in: newLines, endedNL: endedNL, defaultTerm: term)
             let origStart = offset(of: first, in: lines, endedNL: endedNL, defaultTerm: term)
-            let sel = mappedSelection(selection, from: origStart, to: copyStart)
+            var sel = mappedSelection(selection, from: origStart, to: copyStart)
+            let n = (joined as NSString).length
+            // Relative mapping of a caret at original EOF on an unterminated
+            // last line lands at the new EOF, which is after the copy, not on
+            // it. Snap onto the copy.
+            if sel.length == 0, sel.location >= n, copyStart < n {
+                sel = NSRange(location: copyStart, length: 0)
+            }
             return (joined, sel)
         }
     }
@@ -81,16 +88,25 @@ enum EditorLineCommands {
     }
 
     /// Joins the touched lines, or the caret's line with the next one. One
-    /// space between survivors; the next line's leading whitespace is
-    /// stripped; a trailing `%` on the left-hand line is dropped only when it
-    /// ends that line (TeX "comment out the newline") and is not escaped.
+    /// space between survivors. Every line after the first is left-trimmed.
+    /// Every line except the last is right-trimmed and has a trailing `%`
+    /// dropped only when that `%` ends the line (TeX "comment out the
+    /// newline") and is not escaped — the same rule as a two-line join's
+    /// left-hand line, applied to each interior join. A `%` that does not
+    /// end its line is kept, so later survivors sit in that comment. The
+    /// last line's trailing whitespace is left alone.
     static func joinLines(in text: String, selection: NSRange) -> Plan? {
         mutate(text, selection: selection, extendSingleLine: true) { lines, first, last, endedNL, term in
             guard last > first else { return nil }
             let block = Array(lines[first...last])
-            var acc = rtrim(stripTrailingPercentIfLineComment(block[0].content))
-            for line in block.dropFirst() {
-                acc = joinPair(acc, ltrim(line.content))
+            var acc = ""
+            for (i, line) in block.enumerated() {
+                var s = line.content
+                if i > 0 { s = ltrim(s) }
+                if i < block.count - 1 {
+                    s = rtrim(stripTrailingPercentIfLineComment(s))
+                }
+                acc = i == 0 ? s : joinPair(acc, s)
             }
             var newLines = lines
             let folded = SplitLine(content: acc, terminator: block.last!.terminator)
@@ -138,23 +154,40 @@ enum EditorLineCommands {
         let term = defaultTerminator(lines)
         var preserved: String?
         var newLines = lines
+        var removals: [NSRange] = []
+        var loc = 0
         for i in newLines.indices {
+            let original = newLines[i].content
+            let contentLen = (original as NSString).length
+            let termLen = (newLines[i].terminator as NSString).length
             if let name = preserved {
-                if isCloser(newLines[i].content, for: name) {
+                if isCloser(original, for: name) {
                     preserved = nil
-                    newLines[i].content = rtrim(newLines[i].content)
+                    let trimmed = rtrim(original)
+                    let newLen = (trimmed as NSString).length
+                    if newLen < contentLen {
+                        removals.append(NSRange(location: loc + newLen, length: contentLen - newLen))
+                    }
+                    newLines[i].content = trimmed
                 }
+                loc += contentLen + termLen
                 continue
             }
-            if !isProtectedBackslashLine(newLines[i].content) {
-                newLines[i].content = rtrim(newLines[i].content)
+            if !isProtectedBackslashLine(original) {
+                let trimmed = rtrim(original)
+                let newLen = (trimmed as NSString).length
+                if newLen < contentLen {
+                    removals.append(NSRange(location: loc + newLen, length: contentLen - newLen))
+                }
+                newLines[i].content = trimmed
             }
             if let env = isOpener(newLines[i].content), SyntaxHighlighter.verbatimEnvironments.contains(env) {
                 if !isCloser(newLines[i].content, for: env) { preserved = env }
             }
+            loc += contentLen + termLen
         }
         let joined = join(newLines, originalEndedWithNewline: endedNL, defaultTerm: term)
-        let mapped = mapSelectionThroughReplacement(sel, old: text, new: joined)
+        let mapped = mapSelectionSubtractingRemovals(sel, removals: removals, newLength: (joined as NSString).length)
         return makePlan(old: text, new: joined, selection: mapped)
     }
 
@@ -290,29 +323,23 @@ enum EditorLineCommands {
         return NSRange(location: max(0, sel.location + delta), length: sel.length)
     }
 
-    private static func mapSelectionThroughReplacement(_ sel: NSRange, old: String, new: String) -> NSRange {
-        let oldNS = old as NSString
-        let newNS = new as NSString
+    /// Maps `sel` through independent deletions: a location inside a removed
+    /// range clamps to that range's start, then every removal that ends at or
+    /// before the (clamped) location is subtracted.
+    private static func mapSelectionSubtractingRemovals(_ sel: NSRange, removals: [NSRange], newLength: Int) -> NSRange {
         func map(_ pos: Int) -> Int {
-            let p = max(0, min(pos, oldNS.length))
-            if newNS.length == oldNS.length { return min(p, newNS.length) }
-            if p >= oldNS.length { return newNS.length }
-            // Walk both strings by common prefix then treat the rest as the
-            // trimmed span (same rule as trimmedReplacement).
-            var prefix = 0
-            let shared = min(oldNS.length, newNS.length)
-            while prefix < shared, oldNS.character(at: prefix) == newNS.character(at: prefix) { prefix += 1 }
-            var suffix = 0
-            while prefix + suffix < oldNS.length, prefix + suffix < newNS.length,
-                  oldNS.character(at: oldNS.length - 1 - suffix) == newNS.character(at: newNS.length - 1 - suffix) {
-                suffix += 1
+            var p = max(0, pos)
+            for r in removals {
+                if p >= r.location && p < NSMaxRange(r) {
+                    p = r.location
+                    break
+                }
             }
-            let oldMid = oldNS.length - prefix - suffix
-            let newMid = newNS.length - prefix - suffix
-            if p <= prefix { return p }
-            if p >= prefix + oldMid { return newNS.length - (oldNS.length - p) }
-            let rel = p - prefix
-            return prefix + min(rel, newMid)
+            var subtract = 0
+            for r in removals {
+                if NSMaxRange(r) <= p { subtract += r.length }
+            }
+            return max(0, min(p - subtract, newLength))
         }
         if sel.length == 0 { return NSRange(location: map(sel.location), length: 0) }
         let a = map(sel.location)
