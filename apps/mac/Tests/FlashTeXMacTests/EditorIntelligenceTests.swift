@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 import FlashTeXProtocol
+import HostedWindows
 @testable import FlashTeXMac
 
 /// Hover data, ⌘-click routing, Return-key auto-indent/auto-close and the
@@ -155,7 +156,7 @@ final class EditorIntelligenceTests: XCTestCase {
         model.updateActiveText(text)
         let probe = Probe()
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model, probe: probe, marks: marks))
         window.orderFrontRegardless()
         var found: NSTextView?

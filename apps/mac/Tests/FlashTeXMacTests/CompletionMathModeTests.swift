@@ -1,4 +1,5 @@
 import AppKit
+import HostedWindows
 import XCTest
 @testable import FlashTeXMac
 
@@ -122,7 +123,7 @@ final class CompletionMathModeTests: XCTestCase {
     @MainActor
     func testTheEditorAnswersMathModeFromItsOwnSyntaxModel() throws {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
