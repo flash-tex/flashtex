@@ -242,6 +242,27 @@ impl MathRec {
         self.metrics.otf_glyph(g)
     }
 
+    /// Whether a placed glyph is one of the cmex extensible pieces tex.web
+    /// §713 stacks for a delimiter taller than every fixed size.
+    pub fn extensible_piece(&self, g: &ml::PositionedGlyph) -> bool {
+        if g.font_id.0 >= crate::mathtext::RUN_FONT_BASE {
+            return false;
+        }
+        match &self.metrics {
+            MathProvider::Tex(t) => t.extensible_piece(g.font_id, g.gid as u8, g.ch).is_some(),
+            MathProvider::Otf(_) => false,
+        }
+    }
+
+    /// The Latin Modern Math vertical assembly that paints such a run; see
+    /// [`TexMathMetrics::vertical_assembly`].
+    pub fn vertical_assembly(&self, ch: char, span: f64, size: f64) -> Option<Vec<(u16, f64)>> {
+        match &self.metrics {
+            MathProvider::Tex(t) => t.vertical_assembly(ch, span, size),
+            MathProvider::Otf(_) => None,
+        }
+    }
+
     /// The TFM box a placed cmex glyph was laid out with; see
     /// [`TexMathMetrics::extension_box`].
     pub fn extension_box(&self, g: &ml::PositionedGlyph) -> Option<(f64, f64)> {
@@ -398,6 +419,17 @@ pub struct Context<'a> {
     /// count). A field rather than a memo so that `math_box` has no
     /// re-derivation to reach for.
     ams_symbol_fonts: bool,
+    /// Whether `amsmath` itself is loaded. Distinct from
+    /// [`Self::ams_symbol_fonts`]: `amssymb`/`amsfonts` bring the msam/msbm
+    /// symbol fonts, they do **not** bring `amsmath`, and a document may
+    /// load either without the other. `\big`..`\Bigg` key off this one,
+    /// because `\bBigg@` is amsmath's (amsmath.sty 721-738) and the kernel
+    /// keeps its own fixed lengths (fontmath.ltx 513-520) without it.
+    ///
+    /// Answered once, here, for the same reason `ams_symbol_fonts` is: a
+    /// per-formula `\usepackage` re-scan made a whole-document render
+    /// quadratic in (source size x formula count).
+    amsmath_loaded: bool,
     reported: BTreeSet<String>,
     /// Diagnostics emitted while a cacheable block is being built (with
     /// their once-only keys, suppressed ones included).
@@ -448,6 +480,9 @@ impl<'a> Context<'a> {
             ams_symbol_fonts: texts
                 .iter()
                 .any(|t| crate::adapter::package_options(t, "amssymb").is_some() || crate::adapter::package_options(t, "amsfonts").is_some()),
+            amsmath_loaded: texts
+                .iter()
+                .any(|t| crate::adapter::package_options(t, "amsmath").is_some()),
             reported: BTreeSet::new(),
             capture: None,
             path_rcs: std::cell::RefCell::new(BTreeMap::new()),
@@ -1029,6 +1064,7 @@ impl<'a> Context<'a> {
         }
         sink.body_size_pt = self.style.body_size_pt;
         sink.amsfonts = self.ams_symbol_fonts;
+        sink.amsmath = self.amsmath_loaded;
         let texts = self.texts;
         let fence = |sp: &Span| fence_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // The atom's own class when the pinned compiler exposes it, and the
@@ -4622,7 +4658,25 @@ pub fn convert_math_classed(
                     DelimiterRole::Rel => ml::AtomClass::Rel,
                     _ => ml::AtomClass::Ord,
                 };
-                vec![ml::Atom::big_delimiter(class, glyph.chars().next(), scale / 1.2)]
+                // Which of the two `\big` rules applies is a fact about the
+                // package list, not about the formula: amsmath's `\bBigg@`
+                // when amsmath is loaded, the LaTeX kernel's fixed `\vbox`
+                // lengths when it is not. The compiler's `scale` is
+                // amsmath's 1.2/1.8/2.4/3.0, so `scale / 1.2` is its
+                // 1/1.5/2/2.5 factor; `BigSizing::kernel_for_factor` maps
+                // that same factor onto the kernel's 8.5/11.5/14.5/17.5pt,
+                // so the two rules stay in one place rather than the
+                // constants being copied into this crate.
+                let factor = scale / 1.2;
+                let delim = glyph.chars().next();
+                vec![if sink.amsmath {
+                    ml::Atom::big_delimiter(class, delim, factor)
+                } else {
+                    let ml::BigSizing::Kernel { pt } = ml::BigSizing::kernel_for_factor(factor) else {
+                        unreachable!("kernel_for_factor always returns BigSizing::Kernel")
+                    };
+                    ml::Atom::big_delimiter_kernel(class, delim, pt)
+                }]
             }
             // `\big(`..`\Bigg]` (and an unmatched `\right`): math-layout has
             // no fixed-step delimiter atom, so the glyph is set at text size
@@ -7944,6 +7998,63 @@ fn text_item(
     }))
 }
 
+/// One stacked extensible delimiter in a flattened math box.
+struct VerticalAssembly {
+    /// The Latin Modern Math parts that paint it, bottom to top: the part's
+    /// glyph id and the rise of its ink bottom above `bottom`.
+    parts: Vec<(u16, f64)>,
+    /// Top and bottom edges of the cmex boxes TeX stacked, in the flattened
+    /// box's coordinates (y downward).
+    top: f64,
+    bottom: f64,
+}
+
+/// Finds the runs of cmex extensible pieces in `glyphs` (tex.web §713
+/// stacks them for one delimiter, so they are consecutive, share the
+/// character and the horizontal position, and their boxes tile) and builds
+/// the Latin Modern Math assembly that paints each run as a whole.
+///
+/// Painting piece by piece cannot work: the font's parts are a different
+/// design from cmex's, so the extender's own height (0.498 em for `(`,
+/// 1.202 em for `|`) is not cmex's repeat (0.6 em), and the assembly is
+/// held together by overlapping connectors rather than by abutting boxes.
+/// Assembling once per run instead makes the painted ink span exactly the
+/// TeX box, which is what pdfTeX's own cmex pieces do.
+///
+/// Returns the assembly for the run's first glyph and the flags of the
+/// pieces it swallowed (nothing is painted for those).
+fn vertical_assemblies(glyphs: &[ml::PositionedGlyph], m: &MathRec) -> (BTreeMap<usize, VerticalAssembly>, Vec<bool>) {
+    let mut runs = BTreeMap::new();
+    let mut swallowed = vec![false; glyphs.len()];
+    let mut i = 0;
+    while i < glyphs.len() {
+        let g = &glyphs[i];
+        if !m.extensible_piece(g) {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        while j < glyphs.len() {
+            let n = &glyphs[j];
+            if n.ch != g.ch || n.font_id != g.font_id || (n.x - g.x).abs() > 1e-6 || n.size != g.size || !m.extensible_piece(n) {
+                break;
+            }
+            j += 1;
+        }
+        // The stack runs top to bottom, so the run's box is the first
+        // piece's top edge down to the last piece's bottom edge.
+        let top = g.baseline_y - m.extension_box(g).map_or(0.0, |(h, _)| h);
+        let last = &glyphs[j - 1];
+        let bottom = last.baseline_y + m.extension_box(last).map_or(0.0, |(_, d)| d);
+        if let Some(parts) = m.vertical_assembly(g.ch, bottom - top, g.size) {
+            runs.insert(i, VerticalAssembly { parts, top, bottom });
+            swallowed[i + 1..j].fill(true);
+        }
+        i = j;
+    }
+    (runs, swallowed)
+}
+
 fn math_items(
     run: &pl::PositionedRun,
     m: &MathRec,
@@ -7988,7 +8099,13 @@ fn math_items(
             }
         }
     };
-    for g in &flat.glyphs {
+    let (assemblies, swallowed) = vertical_assemblies(&flat.glyphs, m);
+    for (gi, g) in flat.glyphs.iter().enumerate() {
+        // Painted by the run's first piece, as one assembly.
+        if swallowed[gi] {
+            continue;
+        }
+        let assembly = assemblies.get(&gi);
         let Some((face, gid)) = m.otf_glyph(g) else { continue };
         if gid == 0 {
             if g.ch == ' ' {
@@ -8018,6 +8135,50 @@ fn math_items(
             paint,
             role: display::RunRole::Math,
         });
+        // A stacked extensible delimiter: one cluster holding the whole
+        // Latin Modern Math assembly. Each part draws from its own origin up
+        // to its `fullAdvance`, so a part whose ink bottom rises `r` above
+        // the bottom of the run sits on the baseline `bottom - r`. The parts
+        // keep the TFM advance the pieces were laid out with (pdfTeX's
+        // `/Widths`, which Latin Modern Math's parts match to 0.0001 pt).
+        if let Some(a) = assembly {
+            let start = r.text.len();
+            r.text.push(g.ch);
+            let ci = r.clusters.len() as u32;
+            for (part, rise) in &a.parts {
+                r.glyphs.push(Glyph {
+                    gid: *part,
+                    origin_x: Tick::from_tex_pt(g.x),
+                    baseline_y: Tick::from_tex_pt(a.bottom - rise),
+                    advance_x: Tick::from_tex_pt(g.width),
+                    advance_y: Tick(0),
+                    cluster: ci,
+                });
+            }
+            let top = Tick::from_tex_pt(a.top);
+            let hh = Tick::from_tex_pt((a.bottom - a.top).max(0.01));
+            r.clusters.push(Cluster {
+                text_start_byte: start,
+                text_end_byte: r.text.len(),
+                hit_rect: Rect {
+                    x: Tick::from_tex_pt(g.x),
+                    top,
+                    width: Tick::from_tex_pt(g.width),
+                    height: hh,
+                },
+                carets: display::Carets {
+                    first: Caret {
+                        text_byte: start,
+                        x: Tick::from_tex_pt(g.x),
+                        top,
+                        height: hh,
+                    },
+                    last: None,
+                },
+                provenance: Provenance::Source(glyph_src),
+            });
+            continue;
+        }
         let b = face.bounds(crate::ids::GlyphId(gid), Some(g.ch));
         // The advance TeX used: the laid-out glyph box's width (the TFM
         // width, pdfTeX's `/Widths`), not the painted OpenType glyph's own.

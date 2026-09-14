@@ -3574,11 +3574,33 @@ fn kern_command_text(source: &str, span: Span, amount: &TextDimen) -> Option<Str
     let name = control_word_at(source, span.start, span.end)?;
     let body = macro_body(source, name, span.start)?;
     const SPELLINGS: &[&str] = &[",", "!", ":", ">", ";", "thinspace", "negthinspace", "medspace", "negmedspace", "thickspace", "negthickspace", "enspace"];
+    // `\,`/`\!` have two amounts: amsmath renews `\thinspace`/`\negthinspace`
+    // to `.1667em` against the kernel's `.16667em` (20sp apart at 10pt, 24sp
+    // at 12pt, measured with TeX Live 2025 pdflatex), and the compiler picks
+    // one from the document's packages. This is a reverse lookup of the
+    // *spelling* that produced an amount already chosen, and it has no
+    // document in scope, so it accepts either definition; the two amounts are
+    // disjoint, so no spelling is claimed twice.
     SPELLINGS
         .iter()
-        .filter(|s| flashtex_compiler::text_builtins::text_kern(s).as_ref() == Some(amount))
+        .filter(|s| kern_amount_matches(s, amount))
         .map(|s| format!("\\{s}"))
         .find(|s| body.contains(s.as_str()))
+}
+
+/// Whether a spelling produces `amount` under any package context.
+#[cfg(feature = "compiler-package-gating")]
+fn kern_amount_matches(spelling: &str, amount: &TextDimen) -> bool {
+    [false, true].iter().any(|&amsmath| {
+        flashtex_compiler::text_builtins::text_kern(spelling, amsmath).as_ref() == Some(amount)
+    })
+}
+
+/// Against a `vendor/compiler` pinned before the package context reached
+/// `text_kern`, there is only the kernel definition to match.
+#[cfg(not(feature = "compiler-package-gating"))]
+fn kern_amount_matches(spelling: &str, amount: &TextDimen) -> bool {
+    flashtex_compiler::text_builtins::text_kern(spelling).as_ref() == Some(amount)
 }
 
 /// Where the reader stands after the `\verb`/`\verb*`/`\lstinline`
@@ -3612,12 +3634,10 @@ fn literal_command_end(source: &str, span: Span) -> Option<usize> {
 struct LiteralBody {
     text: std::ops::Range<usize>,
     end: usize,
-    /// `\verb*`. Not consumed yet: the star form sets each space as
-    /// `\char32` of the T1 typewriter font (`visiblespace`), and the
-    /// bundled OpenType Latin Modern carries no such glyph — pdfTeX draws it
-    /// from the Type 1 ec font. Parsed here so the delimiter scan is right
-    /// either way, and so the follow-up has the flag it needs.
-    #[allow(dead_code)]
+    /// `\verb*`: the star form sets each space as `\char32` of the
+    /// typewriter font, Cork slot 32, the open box `\textvisiblespace`.
+    /// [`visible_space_ranges`] reads it from the same scan so the two can
+    /// never disagree about where the body ends.
     starred: bool,
 }
 

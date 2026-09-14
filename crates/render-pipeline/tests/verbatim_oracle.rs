@@ -1,20 +1,23 @@
-//! `\verb` and `verbatim` against pdfLaTeX, glyph origin by glyph origin.
+//! `\verb`, `verbatim` and `lstlisting` against pdfLaTeX, glyph origin by
+//! glyph origin.
 //!
 //! The `.tex` sources and the `reference/*.json` origins come from draft
 //! PR #145, which measured them with **MacTeX 2026**
 //! (`pdfTeX 3.141592653-2.6-1.40.29`, two passes, `SOURCE_DATE_EPOCH=0
-//! FORCE_SOURCE_DATE=1`). They are committed oracle data and are never
-//! regenerated here. Only the test material was taken from #145 -- the
-//! rendering is written against main's NFSS font selection, not #145's
-//! rival `Role::Mono`/`MonoMetrics` model.
+//! FORCE_SOURCE_DATE=1`), and from PR #248, which measured the sixteen
+//! `listings` fixtures with this host's TeX Live 2025. They are committed
+//! oracle data and are never regenerated here. Only the test material was
+//! taken from #145 -- the rendering is written against main's NFSS font
+//! selection, not #145's rival `Role::Mono`/`MonoMetrics` model.
 //!
 //! The two distributions were checked against each other rather than
 //! assumed to agree: this host's **TeX Live 2025** (`pdfTeX
-//! 3.141592653-2.6-1.40.27`) was run over all seventeen fixtures with
+//! 3.141592653-2.6-1.40.27`) was run over all seventeen #145 fixtures with
 //! `fixtures/verbatim/oracle.py` and reproduced every committed reference
 //! to **0.001 bp or better**, with identical rule sets and page counts. A
 //! number measured here can therefore be compared with these files
-//! directly.
+//! directly. `33-lst-columns-lr` and `34-lst-roman-ligatures` were added
+//! by the listings lane and carry their own TeX Live 2025 references.
 //!
 //! Units are bp; `y` runs down from the page top. A reference glyph must
 //! find a candidate within [`TOL`] in both x and y (Chebyshev), glyph counts
@@ -258,7 +261,11 @@ fn every_committed_fixture_is_accounted_for() {
         .filter_map(|e| e.file_name().to_str()?.strip_suffix(".tex").map(str::to_string))
         .collect();
     on_disk.sort();
-    let mut known: Vec<String> = GATED.iter().map(|s| s.to_string()).chain(NOT_YET.iter().map(|(n, _)| n.to_string())).collect();
+    let mut known: Vec<String> = GATED
+        .iter()
+        .map(|s| s.to_string())
+        .chain(NOT_YET.iter().map(|(n, _)| n.to_string()))
+        .collect();
     known.sort();
     assert_eq!(on_disk, known, "every fixture must be gated or listed in NOT_YET with a reason");
     for name in &on_disk {
@@ -267,7 +274,7 @@ fn every_committed_fixture_is_accounted_for() {
             "{name} has no committed pdfLaTeX reference"
         );
     }
-    for (_, why) in NOT_YET {
+    for (_, why) in NOT_YET.iter() {
         assert!(why.len() > 40, "a NOT_YET entry needs a real reason");
     }
 }
