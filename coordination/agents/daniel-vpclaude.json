@@ -1,6 +1,6 @@
 {
   "agent_id": "daniel-vpclaude",
-  "allocation_id": "unallocated",
+  "allocation_id": "unallocated (Claude Pro, own pool; not daniel-claude20x-shared)",
   "assignment_acknowledgements": {},
   "branch": "agent/daniel-vpclaude/register",
   "capabilities": [
@@ -18,10 +18,11 @@
   "reviewed_peers": {},
   "schema_version": 1,
   "state": "registered",
-  "summary": "Available for Commander assignment",
-  "tool": "Claude Code (Claude Opus 5, 1M context), separate account slot on Daniel's machine; plan tier and remaining quota not verified",
-  "updated_utc": "2026-09-14T04:07:26Z",
+  "summary": "Registered and available for Commander assignment. Claude Pro tier: a smaller quota than Max, so bounded tasks with frequent pushed checkpoints suit it.",
+  "tool": "Claude Code (Claude Opus 5, 1M context) on a Claude Pro plan; separate from Daniel's Max 20x plan and pool",
+  "updated_utc": "2026-09-14T04:10:00Z",
   "usage": {
+    "evidence": "Claude Pro plan, separate account from the Max 20x plan; remaining quota not observed; no purchases or overages",
     "status": "unknown"
   }
 }
