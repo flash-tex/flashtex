@@ -1683,7 +1683,7 @@ impl MathParser<'_> {
                         Some(span),
                         Some("typeset the command literally and continued".into()),
                     )
-                    .with_help(format!("\\{name} is not implemented in math mode"))
+                    .with_optional_help(crate::vocabulary::math_mode_help(&name))
                     .with_label(span, "this command", true));
                     symbol(format!("\\{}", name), span)
                 }

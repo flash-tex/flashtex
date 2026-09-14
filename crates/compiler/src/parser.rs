@@ -3020,7 +3020,7 @@ impl P<'_> {
                     Some(span),
                     Some("typeset the body without the environment's formatting".into()),
                 )
-                .with_help(vocabulary::environment_help(&environment)));
+                .with_optional_help(vocabulary::environment_help(&environment)));
             }
             if is_minipage(&environment) {
                 // `\@iiiminipage`: `\c@mpfootnote\z@`.
@@ -5567,7 +5567,7 @@ impl P<'_> {
                 "skipped the command; any braced argument was typeset as plain text".into()
             }),
         )
-        .with_help(vocabulary::command_help(name))
+        .with_optional_help(vocabulary::command_help(name))
         .with_label(span, "this command", true));
     }
 

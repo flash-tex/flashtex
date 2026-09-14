@@ -238,6 +238,14 @@ impl Diagnostic {
         self
     }
 
+    /// Like [`with_help`], or a no-op when there is nothing useful to say.
+    pub fn with_optional_help<S: Into<String>>(self, message: Option<S>) -> Self {
+        match message {
+            Some(message) => self.with_help(message),
+            None => self,
+        }
+    }
+
     /// Attach a byte-range edit to an already-set `help`. No-op when help is
     /// absent, so callers can chain `with_help(...).with_replacement(...)`.
     pub fn with_replacement(mut self, span: Span, text: impl Into<String>) -> Self {

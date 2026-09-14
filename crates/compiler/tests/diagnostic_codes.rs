@@ -170,7 +170,7 @@ fn high_frequency_messages_carry_help() {
         (r"Visible \frac{a}{b} Tail.", r"\frac requires math mode"),
         (r"See \ref{missing}.", "undefined"),
         (r"Visible \input{chapter.tex} Tail.", "included file not found"),
-        (r"Visible \begin{tabbing}body\end{tabbing} Tail.", "environment 'tabbing'"),
+        (r"Visible \begin{tikzpicture}body\end{tikzpicture} Tail.", "environment 'tikzpicture'"),
         (
             "\\documentclass{article}\\title{T}\\begin{document}\\maketitle\\end{document}",
             r"No \author given",
@@ -198,4 +198,44 @@ fn high_frequency_messages_carry_help() {
             matching[0].message
         );
     }
+}
+
+#[test]
+fn math_mode_help_is_real_or_absent() {
+    let text_cmd = compile_full(r"Math $\centering$ here.", LayoutConstraints::default());
+    let centering: Vec<_> = text_cmd
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains(r"\centering is not supported in math mode"))
+        .collect();
+    assert_eq!(centering.len(), 1, "{:?}", text_cmd.diagnostics);
+    assert_eq!(
+        centering[0].help.as_ref().map(|h| h.message.as_str()),
+        Some(r"\centering is a text command; use it outside math or inside \text{...}")
+    );
+
+    let unknown = compile_full(r"Math $\bogusxyz$ here.", LayoutConstraints::default());
+    let bogus: Vec<_> = unknown
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains(r"\bogusxyz is not supported in math mode"))
+        .collect();
+    assert_eq!(bogus.len(), 1, "{:?}", unknown.diagnostics);
+    assert!(
+        bogus[0].help.is_none(),
+        "restating help: {:?}",
+        bogus[0].help
+    );
+
+    let tabbing = compile_full(
+        r"Visible \begin{tabbing}body\end{tabbing} Tail.",
+        LayoutConstraints::default(),
+    );
+    let env: Vec<_> = tabbing
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("environment 'tabbing'"))
+        .collect();
+    assert_eq!(env.len(), 1, "{:?}", tabbing.diagnostics);
+    assert!(env[0].help.is_none(), "restating help: {:?}", env[0].help);
 }

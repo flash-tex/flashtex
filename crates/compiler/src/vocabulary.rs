@@ -202,26 +202,42 @@ pub fn command_package(name: &str) -> Option<&'static str> {
 }
 
 /// `= help:` for an unsupported text-mode command (issue #277).
-pub fn command_help(name: &str) -> String {
+///
+/// Returns `None` when the diagnostic message already says everything useful
+/// (a known command with no extra package/mode hint).
+pub fn command_help(name: &str) -> Option<String> {
     if is_math_command(name) {
-        return format!("wrap this in math mode: \\(\\{name}\\)");
+        return Some(format!("wrap this in math mode: \\(\\{name}\\)"));
     }
     if let Some(package) = command_package(name) {
-        return format!(
+        return Some(format!(
             "\\{name} is a {package} command, which this compiler does not implement"
-        );
+        ));
     }
     if is_known_command(name) {
-        return format!("\\{name} is recognised LaTeX that this compiler does not implement");
+        return None;
     }
     if let Some(known) = suggest_command(name) {
-        return format!("did you mean \\{known}?");
+        return Some(format!("did you mean \\{known}?"));
     }
-    "no known LaTeX command has this name; check the spelling".into()
+    Some("no known LaTeX command has this name; check the spelling".into())
 }
 
-/// `= help:` for an unimplemented environment.
-pub fn environment_help(name: &str) -> String {
+/// Help when a command has no math-mode definition. Known text commands get a
+/// mode hint; otherwise the message already says it is unsupported.
+pub fn math_mode_help(name: &str) -> Option<String> {
+    if is_known_command(name) && !is_math_command(name) {
+        Some(format!(
+            "\\{name} is a text command; use it outside math or inside \\text{{...}}"
+        ))
+    } else {
+        None
+    }
+}
+
+/// `= help:` for an unimplemented environment. Only when a package name is
+/// extra information; the diagnostic already says the body is plain text.
+pub fn environment_help(name: &str) -> Option<String> {
     let package = match name {
         "tikzpicture" => Some("tikz"),
         "lstlisting" => Some("listings"),
@@ -233,14 +249,9 @@ pub fn environment_help(name: &str) -> String {
         "landscape" => Some("lscape"),
         _ => None,
     };
-    match package {
-        Some(p) => format!(
-            "environment '{name}' needs the {p} package, which this compiler does not implement; the body is typeset as plain text"
-        ),
-        None => format!(
-            "environment '{name}' is not in this compiler's implemented subset; the body is typeset as plain text"
-        ),
-    }
+    package.map(|p| {
+        format!("environment '{name}' needs the {p} package, which this compiler does not implement")
+    })
 }
 
 /// Optimal string alignment distance: Levenshtein plus adjacent transposition,
@@ -298,6 +309,38 @@ mod tests {
         assert!(is_known_environment("tabular"));
         assert!(is_known_environment("pmatrix"));
         assert!(!is_known_environment("itemze"));
+    }
+
+    #[test]
+    fn help_does_not_restate_the_diagnostic_message() {
+        assert_eq!(
+            command_help("tikz").as_deref(),
+            Some("\\tikz is a tikz command, which this compiler does not implement")
+        );
+        assert_eq!(
+            command_help("alpha").as_deref(),
+            Some("wrap this in math mode: \\(\\alpha\\)")
+        );
+        assert!(command_help("maketitle").is_none(), "{:?}", command_help("maketitle"));
+        assert_eq!(
+            command_help("alpah").as_deref(),
+            Some("did you mean \\alpha?")
+        );
+        assert_eq!(
+            command_help("frobnicate").as_deref(),
+            Some("no known LaTeX command has this name; check the spelling")
+        );
+        assert_eq!(
+            math_mode_help("centering").as_deref(),
+            Some("\\centering is a text command; use it outside math or inside \\text{...}")
+        );
+        assert!(math_mode_help("bogusxyz").is_none());
+        assert!(math_mode_help("alpha").is_none());
+        assert!(environment_help("tabbing").is_none());
+        assert_eq!(
+            environment_help("tikzpicture").as_deref(),
+            Some("environment 'tikzpicture' needs the tikz package, which this compiler does not implement")
+        );
     }
 
     /// `MATH_COMMANDS` is hand-kept beside `math.rs`'s dispatch; an entry the
