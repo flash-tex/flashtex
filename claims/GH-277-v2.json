@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/v2-structured-diagnostics",
+  "gh_ref": "#277",
+  "machine": "mac-m5pro-dq222",
+  "note": "display-list-v2-diagnostics capability proposal + pipeline producer (suggestion now; labels/notes/help after re-pin past #346); stacked on #354",
+  "started_utc": "2026-09-14T08:00:29Z",
+  "state": "claimed",
+  "task_id": "GH-277-v2",
+  "updated_utc": "2026-09-14T08:00:29Z"
+}
