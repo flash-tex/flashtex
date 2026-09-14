@@ -71,11 +71,56 @@ public enum NearbyWire {
         public var projectId: String
         public var path: String
         public var baseRevision: Int
+        /// What kind of place the caret is in — text, inline/display math, a
+        /// tabular cell, verbatim, a comment — and the wrapping a capture
+        /// landing there needs. Additive and optional: a Mac that predates it
+        /// omits the key and a companion that predates it ignores it.
+        /// See protocol/proposals/transfer-v1-caret-context.md.
+        public var caretContext: CaretContext?
         enum CodingKeys: String, CodingKey {
             case destinationId = "destination_id", projectId = "project_id", path, baseRevision = "base_revision"
+            case caretContext = "caret_context"
         }
-        public init(destinationId: String, projectId: String, path: String, baseRevision: Int) {
+        public init(destinationId: String, projectId: String, path: String, baseRevision: Int,
+                    caretContext: CaretContext? = nil) {
             self.destinationId = destinationId; self.projectId = projectId; self.path = path; self.baseRevision = baseRevision
+            self.caretContext = caretContext
+        }
+    }
+
+    /// What kind of place the Mac's caret is in, so the companion can say where
+    /// a capture will land and how it will be wrapped. The Mac derives it; the
+    /// companion only displays it. Mirrors `CaretContext` in `apps/mac` and
+    /// `crates/bridge/src/caret.rs`.
+    public struct CaretContext: Codable, Equatable {
+        public var mode: String
+        public var delimiter: String?
+        public var environment: String?
+        public var environments: [String]
+        public var amsmath: Bool
+        public var wrap: String
+        enum CodingKeys: String, CodingKey { case mode, delimiter, environment, environments, amsmath, wrap }
+        public init(mode: String, delimiter: String? = nil, environment: String? = nil,
+                    environments: [String] = [], amsmath: Bool = false, wrap: String) {
+            self.mode = mode; self.delimiter = delimiter; self.environment = environment
+            self.environments = environments; self.amsmath = amsmath; self.wrap = wrap
+        }
+
+        /// One short line for the companion's destination row.
+        public var label: String {
+            switch wrap {
+            case "display": return "text — formulas wrapped in \\[ … \\] or $ … $"
+            case "inline":
+                if let environment, !environment.isEmpty, mode == "text", environment.hasPrefix("tabular") || environment == "longtable" {
+                    return "\(environment) cell — inline math only"
+                }
+                return "text — inline math only"
+            case "already_math":
+                if let environment, mode == "display_math" { return "\(environment) — already math, no delimiters added" }
+                return "\(delimiter ?? "$") math — already math, no delimiters added"
+            case "literal": return mode == "verbatim" ? "verbatim — inserted literally" : "comment — inserted literally"
+            default: return wrap
+            }
         }
     }
 

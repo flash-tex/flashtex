@@ -89,6 +89,10 @@ const CMID_RULE_EM: f64 = 0.03;
 const ABOVE_RULE_SEP_EX: f64 = 0.4;
 const BELOW_RULE_SEP_EX: f64 = 0.65;
 const CMID_RULE_KERN_EM: f64 = 0.5;
+/// booktabs `\defaultaddspace` (.5em) and `\cmidrulesep` (`\doublerulesep`
+/// when booktabs is loaded: 2pt).
+const DEFAULT_ADD_SPACE_EM: f64 = 0.5;
+const CMIDRULESEP_PT: f64 = 2.0;
 
 /// A dimension rounded to TeX's scaled points.
 pub fn sp(pt: f64) -> f64 {
@@ -180,6 +184,11 @@ pub struct TableItem {
     /// The preamble is array.sty's (see the module comment).
     pub array_package: bool,
     pub span: Span,
+    /// colortbl `\arrayrulecolor`/`\doublerulesepcolor` at `\begin`.
+    pub rule_color: Option<ct::ColorSpec>,
+    pub double_rule_sep_color: Option<ct::ColorSpec>,
+    /// longtable (see `crate::longtable`).
+    pub longtable: Option<ct::Longtable>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -189,6 +198,8 @@ pub struct TableColumn {
     pub after: Vec<TableMaterial>,
     /// `\extracolsep{\fill}` `\tabskip` glue after this column.
     pub fill_after: bool,
+    /// colortbl `>{\columncolor}`.
+    pub color: Option<ct::ColorFill>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -198,6 +209,9 @@ pub enum TableMaterial {
     /// A rule that takes its width (array's `|`, `!{\vrule}`).
     VLine(Span, f64),
     Text(Vec<Item>),
+    /// The `\doublerulesep` between `||` (colortbl `\@classvi`: a
+    /// `\vrule` of `\doublerulesepcolor` when one is set, else a skip).
+    DoubleRuleGap(f64),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -207,22 +221,64 @@ pub struct TableCell {
     pub template: Option<TableColumn>,
     /// `\centering`/`\raggedright`/`\raggedleft` of a `p`/`m`/`b` entry.
     pub alignment: Option<ParagraphStyle>,
+    /// colortbl `\cellcolor`.
+    pub color: Option<ct::ColorSpec>,
+    /// multirow `\multirow` (the entry's items are its text).
+    pub multirow: Option<ct::Multirow>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TableEntry {
-    Row { cells: Vec<TableCell>, extra_depth_pt: f64 },
+    Row {
+        cells: Vec<TableCell>,
+        extra_depth_pt: f64,
+        /// colortbl `\rowcolor`.
+        color: Option<ct::ColorFill>,
+        /// longtable `\\*`.
+        nobreak: bool,
+        /// longtable `\kill`: widths only.
+        kill: bool,
+    },
     HLine { span: Span },
     CLine { first: usize, last: usize, span: Span },
     BookRule { kind: BookRule, width_pt: Option<f64>, span: Span },
-    CMidRule { first: usize, last: usize, trim_left: bool, trim_right: bool, width_pt: Option<f64>, span: Span },
+    CMidRule {
+        first: usize,
+        last: usize,
+        trim_left: bool,
+        trim_right: bool,
+        width_pt: Option<f64>,
+        /// booktabs `\@setrulekerning`: `(l{<dimen>})`/`(r{<dimen>})` replacing
+        /// `\cmidrulekern`, in the font in force at the rule.
+        kern_left: Option<ct::FontDimen>,
+        kern_right: Option<ct::FontDimen>,
+        span: Span,
+    },
     VSpace { pt: f64 },
+    /// booktabs `\addlinespace[<dimen>]` (`None`: `\defaultaddspace`).
+    AddLineSpace { space: Option<ct::FontDimen> },
+    SpecialRule { width_pt: f64, above_pt: f64, below_pt: f64, span: Span },
+    MoreCmidRules,
+    RuleColor(ct::ColorSpec),
+    DoubleRuleSepColor(ct::ColorSpec),
+    Section(ct::LongtableSection),
+    /// longtable `\caption` (`\LT@makecaption`): a `\multicolumn` row over
+    /// every column holding a `\parbox[t]\LTcapwidth`. `box_` is that
+    /// parbox once the typesetter has set it; until then the entry has no
+    /// extent.
+    Caption { items: Vec<Item>, number: Option<u32>, span: Span, box_: Option<CaptionBox> },
+    PageBreak,
 }
 
 fn material(m: &[ct::Material], lengths: TableLengths, items_of: &mut dyn FnMut(&[Inline], bool) -> Vec<Item>) -> Vec<TableMaterial> {
     let mut out = Vec::with_capacity(m.len());
-    for m in m {
-        out.push(match m {
+    for (i, piece) in m.iter().enumerate() {
+        let is_rule = |k: Option<&ct::Material>| matches!(k, Some(ct::Material::Rule(_) | ct::Material::VLine { .. }));
+        out.push(match piece {
+            // `\@classvi` puts exactly `\doublerulesep` between two rules.
+            ct::Material::Space(pt) if *pt == ct::DOUBLERULESEP_PT && i > 0 && is_rule(m.get(i - 1)) && is_rule(m.get(i + 1)) => {
+                TableMaterial::DoubleRuleGap(lengths.doublerulesep)
+            }
             ct::Material::Space(pt) => TableMaterial::Space(lengths.space(*pt)),
             ct::Material::Rule(span) => TableMaterial::Rule(*span),
             ct::Material::VLine { span, width_pt } => TableMaterial::VLine(*span, width_pt.unwrap_or(lengths.arrayrulewidth)),
@@ -238,6 +294,7 @@ fn column(t: &ct::ColumnTemplate, lengths: TableLengths, items_of: &mut dyn FnMu
         align: t.align,
         after: material(&t.after, lengths, items_of),
         fill_after: t.fill_after,
+        color: t.color.clone(),
     }
 }
 
@@ -258,22 +315,63 @@ pub fn from_compiler(t: &ct::Tabular, lengths: TableLengths, size_cpt: u16, item
                         columns: c.columns,
                         template: c.template.as_ref().map(|tp| column(tp, lengths, items_of)),
                         alignment: c.alignment,
+                        color: c.color.clone(),
+                        multirow: c.multirow.clone(),
                     })
                     .collect(),
                 extra_depth_pt: row.extra_depth_pt,
+                color: row.color.clone(),
+                nobreak: row.nobreak,
+                kill: row.kill,
             },
             ct::Entry::HLine { span } => TableEntry::HLine { span: *span },
             ct::Entry::CLine { first, last, span } => TableEntry::CLine { first: *first, last: *last, span: *span },
             ct::Entry::BookRule { kind, width_pt, span } => TableEntry::BookRule { kind: *kind, width_pt: *width_pt, span: *span },
-            ct::Entry::CMidRule { first, last, trim_left, trim_right, width_pt, span } => TableEntry::CMidRule {
+            ct::Entry::CMidRule { first, last, trim_left, trim_right, width_pt, kern_left, kern_right, span } => TableEntry::CMidRule {
                 first: *first,
                 last: *last,
                 trim_left: *trim_left,
                 trim_right: *trim_right,
                 width_pt: *width_pt,
+                kern_left: *kern_left,
+                kern_right: *kern_right,
                 span: *span,
             },
             ct::Entry::VSpace { pt } => TableEntry::VSpace { pt: *pt },
+            ct::Entry::AddLineSpace { space, .. } => TableEntry::AddLineSpace { space: *space },
+            ct::Entry::SpecialRule { width_pt, above_pt, below_pt, span } => TableEntry::SpecialRule {
+                width_pt: *width_pt,
+                above_pt: *above_pt,
+                below_pt: *below_pt,
+                span: *span,
+            },
+            ct::Entry::MoreCmidRules { .. } => TableEntry::MoreCmidRules,
+            ct::Entry::RuleColor { color } => TableEntry::RuleColor(color.clone()),
+            ct::Entry::DoubleRuleSepColor { color } => TableEntry::DoubleRuleSepColor(color.clone()),
+            ct::Entry::Section { kind, .. } => TableEntry::Section(*kind),
+            ct::Entry::Caption { content, number, span } => {
+                // `\LT@c@ption` sets `#1{#2: }#3`: `\fnum@table` is
+                // `\tablename~\thetable`, with a tie, and `\caption*`
+                // (`number` `None`) drops the whole prefix.
+                let mut items = Vec::new();
+                if let Some(n) = number {
+                    items.extend(crate::adapter::command_words(&format!("{} {n}:", crate::floats::FloatKind::Table.name()), *span));
+                    if let Some(Item::Space { no_break, .. }) = items.get_mut(1) {
+                        *no_break = true;
+                    }
+                    // The space after `:` carries TeX's space factor
+                    // (`\sfcode`\:` = 2000), so it takes the face's
+                    // `\fontdimen7` extra space.
+                    items.push(Item::Space {
+                        style: crate::adapter::TextStyle::default(),
+                        factor: crate::adapter::space_factor(':', 1000),
+                        no_break: false,
+                    });
+                }
+                items.extend(items_of(content, false));
+                TableEntry::Caption { items, number: *number, span: *span, box_: None }
+            }
+            ct::Entry::PageBreak { .. } => TableEntry::PageBreak,
         });
     }
     TableItem {
@@ -286,6 +384,9 @@ pub fn from_compiler(t: &ct::Tabular, lengths: TableLengths, size_cpt: u16, item
         lengths,
         array_package: t.array_package,
         span: t.span,
+        rule_color: t.rule_color.clone(),
+        double_rule_sep_color: t.double_rule_sep_color.clone(),
+        longtable: t.longtable.clone(),
     }
 }
 
@@ -304,6 +405,7 @@ pub enum MPiece {
     Rule(Span),
     VLine(Span, f64),
     Text(Dims),
+    DoubleRuleGap(f64),
 }
 
 impl MPiece {
@@ -313,6 +415,7 @@ impl MPiece {
             MPiece::Rule(_) => 0.0,
             MPiece::VLine(_, width) => *width,
             MPiece::Text(d) => d.width,
+            MPiece::DoubleRuleGap(width) => *width,
         }
     }
 }
@@ -419,20 +522,51 @@ pub struct Placed {
     pub baseline: f64,
 }
 
-/// A filled rule; `top` is relative to the table's baseline (y down).
+/// A longtable caption's `\parbox[t]\LTcapwidth` once it is set
+/// (`\LT@makecaption`, longtable.sty 475-485). `\parbox[t]` is a `\vtop`:
+/// its reference point is the first line's baseline, so `height` is that
+/// line's height and `depth` everything below it — the remaining lines,
+/// the last line's depth and the closing `\vskip\baselineskip`.
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CaptionBox {
+    /// `\LTcapwidth`: the parbox is centred on the table, and a caption
+    /// that fits on one line is centred inside it.
+    pub width: f64,
+    pub height: f64,
+    pub depth: f64,
+}
+
+/// A filled rule; `top` is relative to the table's baseline (y down).
+#[derive(Debug, Clone, PartialEq)]
 pub struct PlacedRule {
     pub x: f64,
     pub top: f64,
     pub width: f64,
     pub height: f64,
     pub span: Span,
+    /// colortbl colour as written (`None`: black).
+    pub color: Option<ct::ColorSpec>,
+    /// The colour resolved to sRGB by the typesetter.
+    pub rgb: Option<[f64; 3]>,
+}
+
+/// The vertical extent of one table entry (y down from the table's
+/// baseline); `baseline` for rows. Kill rows have none.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Band {
+    pub entry: usize,
+    pub top: f64,
+    pub baseline: Option<f64>,
+    pub bottom: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Geometry {
     pub placed: Vec<Placed>,
     pub rules: Vec<PlacedRule>,
+    /// colortbl fills, painted before the entries and rules.
+    pub fills: Vec<PlacedRule>,
+    pub bands: Vec<Band>,
     pub width: f64,
     pub height: f64,
     pub depth: f64,
@@ -458,9 +592,44 @@ pub struct Metrics {
 /// Lays the table out. `rows[i]` holds the measured cells of the i-th
 /// `Row` entry, in the order [`row_slots`] returns them.
 pub fn layout(table: &TableItem, rows: &[Vec<MCell>], m: &Metrics) -> Geometry {
+    let widths = widths(table, rows, m);
+    layout_with(table, rows, m, &widths, Options::default())
+}
+
+/// The column geometry of a table: what TeX’s `\halign` settles after
+/// §801. longtable measures it over every row of every chunk (head, foot
+/// and `\kill` rows included) and then sets each chunk with it, so it is
+/// computed apart from the vertical pass.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Widths {
+    /// Left edge of each column, plus the table's right edge.
+    pub column_x: Vec<f64>,
+    /// Natural width of each column (without the following `\tabskip`).
+    pub widths: Vec<f64>,
+    /// The whole table's width (`\hsize` for `tabular*`).
+    pub box_width: f64,
+}
+
+impl Widths {
+    /// The right edge of column `k`'s material (before its `\tabskip`).
+    fn right_of(&self, k: usize) -> f64 {
+        self.column_x[k] + self.widths[k]
+    }
+}
+
+/// How [`layout_with`] differs from a plain `tabular`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Options {
+    /// longtable: `\hline` is `\LT@hline` (longtable.sty 430-454), two
+    /// `\multispan` leader rows `\LT@sep` apart rather than one `\hrule`,
+    /// and the geometry keeps the vertical origin at the top (each chunk is
+    /// its own box in the page's vertical list, not a box on a baseline).
+    pub longtable: bool,
+}
+
+/// TeX §801 over every row: the column widths and the table's width.
+pub fn widths(table: &TableItem, rows: &[Vec<MCell>], m: &Metrics) -> Widths {
     let n = table.columns.len().max(1);
-    let arw = table.lengths.arrayrulewidth;
-    let dbl = table.lengths.doublerulesep;
 
     // TeX §801: w[k][j] is the widest entry spanning columns k..=j.
     let mut w = vec![vec![f64::NEG_INFINITY; n]; n];
@@ -506,29 +675,57 @@ pub fn layout(table: &TableItem, rows: &[Vec<MCell>], m: &Metrics) -> Geometry {
     for k in 0..n {
         column_x[k + 1] = column_x[k] + widths[k] + tabskip[k];
     }
-    let right_of = |k: usize| column_x[k] + widths[k];
+    Widths { column_x, widths, box_width }
+}
+
+/// The vertical pass over `table.entries` with the column geometry already
+/// settled, so a longtable can set several chunks against one measurement.
+pub fn layout_with(table: &TableItem, rows: &[Vec<MCell>], m: &Metrics, cols: &Widths, opts: Options) -> Geometry {
+    let n = table.columns.len().max(1);
+    let arw = table.lengths.arrayrulewidth;
+    let dbl = table.lengths.doublerulesep;
+    let column_x = &cols.column_x;
+    let box_width = cols.box_width;
+    let right_of = |k: usize| cols.right_of(k);
 
     let mut placed = Vec::new();
     let mut rules: Vec<PlacedRule> = Vec::new();
-    let mut vrules: Vec<(f64, f64, f64, f64, Span)> = Vec::new();
+    let mut fills: Vec<PlacedRule> = Vec::new();
+    let mut bands: Vec<Band> = Vec::new();
+    // `|` rules as (x, width, top, bottom, span, colour), merged where rows abut.
+    let mut vrules: Vec<(f64, f64, f64, f64, Span, Option<ct::ColorSpec>)> = Vec::new();
     let mut y = 0.0f64;
     let mut first_height: Option<f64> = None;
     let mut last_depth = 0.0;
     let mut last_rule_class = 0u8;
     let mut row_index = 0usize;
-    let rule = |rules: &mut Vec<PlacedRule>, x: f64, top: f64, width: f64, height: f64, span: Span| {
+    // colortbl `\CT@arc@`/`\CT@drsc@` (global, so they change mid-table).
+    let mut rule_color = table.rule_color.clone();
+    let mut gap_color = table.double_rule_sep_color.clone();
+    let rule = |rules: &mut Vec<PlacedRule>, x: f64, top: f64, width: f64, height: f64, span: Span, color: &Option<ct::ColorSpec>| {
         if width > 0.0 && height > 0.0 {
-            rules.push(PlacedRule { x, top, width, height, span });
+            rules.push(PlacedRule { x, top, width, height, span, color: color.clone(), rgb: None });
         }
     };
     for (index, entry) in table.entries.iter().enumerate() {
         let next = table.entries.get(index + 1);
-        let next_is_booktabs = matches!(next, Some(TableEntry::BookRule { .. } | TableEntry::CMidRule { .. }));
+        // booktabs `\@BTendrule` (booktabs.sty 110-116) peeks at the next
+        // token for another booktabs rule.
+        let next_is_booktabs = matches!(
+            next,
+            Some(TableEntry::BookRule { .. } | TableEntry::CMidRule { .. } | TableEntry::SpecialRule { .. } | TableEntry::AddLineSpace { .. })
+        );
         last_depth = 0.0;
+        let band_top = y;
+        let mut band_baseline = None;
         match entry {
-            TableEntry::Row { extra_depth_pt, .. } => {
+            TableEntry::Row { extra_depth_pt, kill, color: row_color, cells: tcells, .. } => {
                 let ri = row_index;
                 row_index += 1;
+                if *kill {
+                    // longtable `\kill`: the row only gave its widths.
+                    continue;
+                }
                 let cells = rows.get(ri).map_or(&[][..], Vec::as_slice);
                 let mut height = m.strut_height;
                 let mut depth = m.strut_depth;
@@ -548,15 +745,57 @@ pub fn layout(table: &TableItem, rows: &[Vec<MCell>], m: &Metrics) -> Geometry {
                 first_height.get_or_insert(height);
                 let top = y;
                 let baseline = y + height;
+                band_baseline = Some(baseline);
                 for (ci, cell) in cells.iter().enumerate() {
                     let first = cell.column.min(n - 1);
                     let last = (cell.column + cell.columns.max(1) - 1).min(n - 1);
                     let left = column_x[first];
                     let right = right_of(last);
+                    let before_width: f64 = cell.before.iter().map(MPiece::width).sum();
+                    let after_width: f64 = cell.after.iter().map(MPiece::width).sum();
+                    // colortbl `\@classz` (colortbl.sty 60-66): column, row and
+                    // cell colour are `\color`s in that order (the last wins),
+                    // painted by `\CT@@do@color` (78-88) as leaders `\vrule`
+                    // running the row's height and depth, from `\@tempdimb`
+                    // before the entry box to `\@tempdimc` after the stretched
+                    // entry. Both default to `\col@sep`; a column's then a
+                    // row's `[left][right]` replace them.
+                    let tcell = tcells.get(ci);
+                    let template = tcell.and_then(|c| c.template.as_ref()).or_else(|| table.columns.get(cell.column));
+                    let column_fill = template.and_then(|t| t.color.as_ref());
+                    let color = tcell
+                        .and_then(|c| c.color.clone())
+                        .or_else(|| row_color.as_ref().map(|f| f.color.clone()))
+                        .or_else(|| column_fill.map(|f| f.color.clone()));
+                    if let Some(color) = color {
+                        let (mut b, mut c) = (table.lengths.tabcolsep, table.lengths.tabcolsep);
+                        for fill in [column_fill, row_color.as_ref()].into_iter().flatten() {
+                            if let Some(l) = fill.left_pt {
+                                b = l;
+                            }
+                            if let Some(r) = fill.right_pt {
+                                c = r;
+                            }
+                        }
+                        let x0 = left + before_width - b;
+                        let x1 = right - after_width + c;
+                        let span = color.span;
+                        rule(&mut fills, x0, top, x1 - x0, height + depth, span, &Some(color));
+                    }
                     let mut place = |piece: &MPiece, x: f64, slot: Slot, placed: &mut Vec<Placed>| match piece {
                         MPiece::Space(_) => {}
-                        MPiece::Rule(span) => vrules.push((x - arw / 2.0, arw, top, top + height + depth, *span)),
-                        MPiece::VLine(span, width) => vrules.push((x, *width, top, top + height + depth, *span)),
+                        // colortbl `\@classvi` and `\@arrayrule` (colortbl.sty
+                        // 146-166) put `{\CT@drsc@\vrule\@width\doublerulesep}`
+                        // and `{\CT@arc@\vline}` into the preamble with
+                        // `\@addtopreamble`'s `\edef`: the colours in force at
+                        // `\begin` are baked in, whatever changes mid-table.
+                        MPiece::DoubleRuleGap(width) => {
+                            if table.double_rule_sep_color.is_some() {
+                                vrules.push((x, *width, top, top + height + depth, table.span, table.double_rule_sep_color.clone()))
+                            }
+                        }
+                        MPiece::Rule(span) => vrules.push((x - arw / 2.0, arw, top, top + height + depth, *span, table.rule_color.clone())),
+                        MPiece::VLine(span, width) => vrules.push((x, *width, top, top + height + depth, *span, table.rule_color.clone())),
                         MPiece::Text(_) => placed.push(Placed { row: ri, cell: ci, slot, x, baseline }),
                     };
                     let mut x = left;
@@ -564,7 +803,6 @@ pub fn layout(table: &TableItem, rows: &[Vec<MCell>], m: &Metrics) -> Geometry {
                         place(piece, x, Slot::Before(pi), &mut placed);
                         x += piece.width();
                     }
-                    let after_width: f64 = cell.after.iter().map(MPiece::width).sum();
                     let content_x = match cell.align {
                         Align::Left | Align::Paragraph(_) | Align::Middle(_) | Align::Bottom(_) | Align::Fixed(..) => x,
                         Align::Right => right - after_width - cell.content.width,
@@ -586,19 +824,48 @@ pub fn layout(table: &TableItem, rows: &[Vec<MCell>], m: &Metrics) -> Geometry {
                 y += height + depth;
                 last_depth = depth;
             }
+            // The second `\hline` of `\hline\hline` was gobbled by
+            // `\@gtempa` (longtable.sty 437, 454): the pair is one rule row,
+            // `\doublerulesep`, another rule row.
+            TableEntry::HLine { .. } if opts.longtable && matches!(table.entries.get(index.wrapping_sub(1)), Some(TableEntry::HLine { .. })) => {}
+            TableEntry::HLine { span } if opts.longtable => {
+                // `\LT@hline` (longtable.sty 430-454): `\hline` is two
+                // `\multispan\LT@cols` leader rows of `\arrayrulewidth`
+                // with `\LT@sep` between them, not one `\hrule`. A single
+                // `\hline` separates them by `-\arrayrulewidth`, so they
+                // coincide; `\hline\hline` (the second one gobbled) by
+                // `\doublerulesep`. Both rows are real boxes, so a
+                // longtable paints two rules where a tabular paints one.
+                first_height.get_or_insert(arw);
+                let double = matches!(next, Some(TableEntry::HLine { .. }));
+                rule(&mut rules, 0.0, y, box_width, arw, *span, &rule_color);
+                y += arw;
+                let sep = if double { dbl } else { -arw };
+                if double && gap_color.is_some() {
+                    rule(&mut rules, 0.0, y, box_width, sep, *span, &gap_color);
+                }
+                y += sep;
+                rule(&mut rules, 0.0, y, box_width, arw, *span, &rule_color);
+                y += arw;
+            }
             TableEntry::HLine { span } => {
                 first_height.get_or_insert(arw);
-                rule(&mut rules, 0.0, y, box_width, arw, *span);
+                rule(&mut rules, 0.0, y, box_width, arw, *span, &rule_color);
                 y += arw;
                 if matches!(next, Some(TableEntry::HLine { .. })) {
-                    y += if table.array_package { dbl } else { dbl - arw };
+                    let gap = if table.array_package { dbl } else { dbl - arw };
+                    // colortbl `\@xhline` (colortbl.sty 175-183).
+                    if gap_color.is_some() {
+                        rule(&mut rules, 0.0, y, box_width, gap, *span, &gap_color);
+                    }
+                    y += gap;
                 }
             }
             TableEntry::CLine { first, last, span } => {
                 first_height.get_or_insert(arw);
                 let (first, last) = ((*first).min(n - 1), (*last).min(n - 1));
                 let x = column_x[first];
-                rule(&mut rules, x, y, right_of(last) - x, arw, *span);
+                rule(&mut rules, x, y, right_of(last) - x, arw, *span, &rule_color);
             }
             TableEntry::VSpace { pt } => {
                 first_height.get_or_insert(0.0);
@@ -609,26 +876,41 @@ pub fn layout(table: &TableItem, rows: &[Vec<MCell>], m: &Metrics) -> Geometry {
                     BookRule::Mid => LIGHT_RULE_EM * m.em,
                     BookRule::Top | BookRule::Bottom => HEAVY_RULE_EM * m.em,
                 });
-                let above = match kind {
-                    BookRule::Top => 0.0,
-                    BookRule::Mid | BookRule::Bottom => ABOVE_RULE_SEP_EX * m.ex,
-                };
                 // `\@BTrule` always appends its `\vskip` first, so a `[t]`
                 // table opening with a booktabs rule has zero height.
                 first_height.get_or_insert(0.0);
-                y += if last_rule_class == 0 { above } else { dbl };
-                rule(&mut rules, 0.0, y, box_width, width, *span);
+                // booktabs.sty 94-96: `\@aboverulesep` after class 0 (0 for
+                // `\toprule`), `\doublerulesep` after class 1, nothing after
+                // a class 2 `\specialrule`/`\addlinespace`.
+                y += match last_rule_class {
+                    0 if *kind == BookRule::Top => 0.0,
+                    0 => ABOVE_RULE_SEP_EX * m.ex,
+                    1 => dbl,
+                    _ => 0.0,
+                };
+                rule(&mut rules, 0.0, y, box_width, width, *span, &rule_color);
                 y += width;
-                if next_is_booktabs {
-                    last_rule_class = 1;
-                } else {
-                    last_rule_class = 0;
-                    if *kind != BookRule::Bottom {
-                        y += BELOW_RULE_SEP_EX * m.ex;
-                    }
+                last_rule_class = if next_is_booktabs { 1 } else { 0 };
+                if last_rule_class != 1 && *kind != BookRule::Bottom {
+                    y += BELOW_RULE_SEP_EX * m.ex;
                 }
             }
-            TableEntry::CMidRule { first, last, trim_left, trim_right, width_pt, span } => {
+            TableEntry::SpecialRule { width_pt, above_pt, below_pt, span } => {
+                // booktabs.sty 77-79, 94, 117: class 2 always takes its skips.
+                first_height.get_or_insert(0.0);
+                y += above_pt;
+                rule(&mut rules, 0.0, y, box_width, *width_pt, *span, &rule_color);
+                y += width_pt;
+                last_rule_class = if next_is_booktabs { 2 } else { 0 };
+                y += below_pt;
+            }
+            TableEntry::AddLineSpace { space } => {
+                // booktabs.sty 80-83: `\@belowrulesep` is the space, class 2.
+                first_height.get_or_insert(0.0);
+                last_rule_class = if next_is_booktabs { 2 } else { 0 };
+                y += space.map_or(DEFAULT_ADD_SPACE_EM * m.em, |d| d.resolve(m.em, m.ex));
+            }
+            TableEntry::CMidRule { first, last, trim_left, trim_right, width_pt, kern_left, kern_right, span } => {
                 let width = width_pt.unwrap_or(CMID_RULE_EM * m.em);
                 if last_rule_class == 0 {
                     first_height.get_or_insert(0.0);
@@ -638,49 +920,99 @@ pub fn layout(table: &TableItem, rows: &[Vec<MCell>], m: &Metrics) -> Geometry {
                 }
                 let (first, last) = ((*first).min(n - 1), (*last).min(n - 1));
                 let kern = CMID_RULE_KERN_EM * m.em;
-                let left = column_x[first] + if *trim_left { kern } else { 0.0 };
-                let right = right_of(last) - if *trim_right { kern } else { 0.0 };
-                rule(&mut rules, left, y, right - left, width, *span);
+                let left = column_x[first] + if *trim_left { kern_left.map_or(kern, |d| d.resolve(m.em, m.ex)) } else { 0.0 };
+                let right = right_of(last) - if *trim_right { kern_right.map_or(kern, |d| d.resolve(m.em, m.ex)) } else { 0.0 };
+                rule(&mut rules, left, y, right - left, width, *span, &rule_color);
                 y += width;
-                if matches!(next, Some(TableEntry::CMidRule { .. })) {
-                    y -= width;
-                    last_rule_class = 1;
-                } else {
-                    y += BELOW_RULE_SEP_EX * m.ex;
-                    last_rule_class = 0;
+                // `\@xcmidrule` (booktabs.sty 151-161).
+                match next {
+                    Some(TableEntry::CMidRule { .. }) => {
+                        y -= width;
+                        last_rule_class = 1;
+                    }
+                    Some(TableEntry::MoreCmidRules) => {
+                        y += CMIDRULESEP_PT;
+                        last_rule_class = 1;
+                    }
+                    _ => {
+                        y += BELOW_RULE_SEP_EX * m.ex;
+                        last_rule_class = 0;
+                    }
                 }
             }
+            TableEntry::MoreCmidRules => {}
+            TableEntry::RuleColor(color) => rule_color = Some(color.clone()),
+            TableEntry::DoubleRuleSepColor(color) => gap_color = Some(color.clone()),
+            // `\LT@makecaption`: `\LT@mcol\LT@cols c{\hbox to\z@{\hss
+            // <parbox> \hss}}` — a row like any other, so it takes the
+            // `\@arstrut`, and a zero-width box centred in the table, so a
+            // wide caption never widens a column.
+            TableEntry::Caption { box_: Some(b), .. } => {
+                let height = m.strut_height.max(b.height);
+                let depth = m.strut_depth.max(b.depth);
+                first_height.get_or_insert(height);
+                let baseline = y + height;
+                band_baseline = Some(baseline);
+                placed.push(Placed {
+                    row: usize::MAX,
+                    cell: index,
+                    slot: Slot::Content,
+                    x: (box_width - b.width) / 2.0,
+                    baseline,
+                });
+                y += height + depth;
+                last_depth = depth;
+            }
+            // The longtable block (`crate::longtable`) handles these.
+            TableEntry::Section(_) | TableEntry::Caption { .. } | TableEntry::PageBreak => {}
         }
+        bands.push(Band { entry: index, top: band_top, baseline: band_baseline, bottom: y });
     }
 
     // One rule per `|` over consecutive rows it runs through.
     vrules.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.2.total_cmp(&b.2)));
-    let mut merged: Vec<(f64, f64, f64, f64, Span)> = Vec::new();
+    let mut merged: Vec<(f64, f64, f64, f64, Span, Option<ct::ColorSpec>)> = Vec::new();
     for r in vrules {
         match merged.last_mut() {
-            Some(last) if last.0 == r.0 && last.1 == r.1 && last.4 == r.4 && (last.3 - r.2).abs() < 1e-9 => last.3 = r.3,
+            Some(last) if last.0 == r.0 && last.1 == r.1 && last.4 == r.4 && last.5 == r.5 && (last.3 - r.2).abs() < 1e-9 => last.3 = r.3,
             _ => merged.push(r),
         }
     }
-    for (x, width, top, bottom, span) in merged {
-        rule(&mut rules, x, top, width, bottom - top, span);
+    for (x, width, top, bottom, span, color) in merged {
+        rule(&mut rules, x, top, width, bottom - top, span, &color);
     }
 
     let total = y;
-    let reference = match table.position {
-        VerticalPosition::Top => first_height.unwrap_or(0.0),
-        VerticalPosition::Bottom => total - last_depth,
-        VerticalPosition::Center => total / 2.0 + m.axis,
+    // longtable chunks go into the page's vertical list as boxes of their
+    // own, with `\baselineskip\z@` (longtable.sty 191): the origin stays
+    // at the top and the caller reads the bands.
+    let reference = if opts.longtable {
+        0.0
+    } else {
+        match table.position {
+            VerticalPosition::Top => first_height.unwrap_or(0.0),
+            VerticalPosition::Bottom => total - last_depth,
+            VerticalPosition::Center => total / 2.0 + m.axis,
+        }
     };
     for p in &mut placed {
         p.baseline -= reference;
     }
-    for r in &mut rules {
+    for r in rules.iter_mut().chain(fills.iter_mut()) {
         r.top -= reference;
+    }
+    for b in &mut bands {
+        b.top -= reference;
+        b.bottom -= reference;
+        if let Some(bl) = &mut b.baseline {
+            *bl -= reference;
+        }
     }
     Geometry {
         placed,
         rules,
+        fills,
+        bands,
         width: box_width,
         height: reference,
         depth: total - reference,
@@ -707,7 +1039,7 @@ mod tests {
         if rule_after {
             after.push(TableMaterial::Rule(span()));
         }
-        TableColumn { before, align, after, fill_after: false }
+        TableColumn { before, align, after, fill_after: false, color: None }
     }
 
     fn table(columns: Vec<TableColumn>, entries: Vec<TableEntry>) -> TableItem {
@@ -721,13 +1053,19 @@ mod tests {
             lengths: TableLengths::default(),
             array_package: false,
             span: span(),
+            rule_color: None,
+            double_rule_sep_color: None,
+            longtable: None,
         }
     }
 
     fn row(n: usize) -> TableEntry {
         TableEntry::Row {
-            cells: (0..n).map(|_| TableCell { items: Vec::new(), columns: 1, template: None, alignment: None }).collect(),
+            cells: (0..n).map(|_| TableCell { items: Vec::new(), columns: 1, template: None, alignment: None, color: None, multirow: None }).collect(),
             extra_depth_pt: 0.0,
+            color: None,
+            nobreak: false,
+            kill: false,
         }
     }
 
@@ -748,6 +1086,7 @@ mod tests {
                             TableMaterial::Rule(s) => MPiece::Rule(*s),
                             TableMaterial::VLine(s, w) => MPiece::VLine(*s, *w),
                             TableMaterial::Text(_) => MPiece::Text(Dims::default()),
+                            TableMaterial::DoubleRuleGap(w) => MPiece::DoubleRuleGap(*w),
                         };
                         MCell {
                             column,

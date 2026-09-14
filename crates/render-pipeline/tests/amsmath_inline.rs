@@ -12,8 +12,15 @@ mod common;
 use common::*;
 use flashtex_render_pipeline::display::Item;
 
+/// Every construct in this file is amsmath's, and base LaTeX2e defines none
+/// of them: pdflatex answers `! Undefined control sequence` for `\binom`,
+/// `\dfrac`, `\genfrac`, `\substack` and `\operatorname`, and "Environment
+/// dcases undefined" for the `dcases` grid. These documents used to omit the
+/// `\usepackage`, which only worked because the compiler applied amsmath's
+/// constructs unconditionally; it diagnoses them against the document's own
+/// packages now, so the fixture has to load the one it is testing.
 fn doc(body: &str) -> String {
-    format!("\\documentclass{{article}}\\begin{{document}}{body}\\end{{document}}")
+    format!("\\documentclass{{article}}\\usepackage{{amsmath}}\\begin{{document}}{body}\\end{{document}}")
 }
 
 /// Renders `body` and returns every diagnostic code/message pair plus

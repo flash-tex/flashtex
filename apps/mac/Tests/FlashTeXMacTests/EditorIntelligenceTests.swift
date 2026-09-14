@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 import FlashTeXProtocol
+import HostedWindows
 @testable import FlashTeXMac
 
 /// Hover data, ⌘-click routing, Return-key auto-indent/auto-close and the
@@ -32,7 +33,9 @@ final class EditorIntelligenceTests: XCTestCase {
         XCTAssertEqual(frac?.documentation, "\\frac{num}{den}: a fraction.")
         let ref = EI.quickInfo(in: s, at: 18)
         XCTAssertEqual(ref?.title, "eq:1"); XCTAssertEqual(ref?.detail, "Label reference")
-        XCTAssertEqual(ref?.documentation, "⌘-click to go to \\label{eq:1}.")
+        // The resolved target comes first (EditorHoverResolution.swift); there
+        // is no \label{eq:1} in this snippet, which the hover says outright.
+        XCTAssertEqual(ref?.documentation, "No \\label{eq:1} in this document or the open ones.\n⌘-click to go to \\label{eq:1}.")
         let env = EI.quickInfo(in: s, at: 31)
         XCTAssertEqual(env?.title, "itemize"); XCTAssertEqual(env?.detail, "Environment")
         XCTAssertEqual(env?.documentation, "Bulleted list of \\item entries.")
@@ -153,7 +156,7 @@ final class EditorIntelligenceTests: XCTestCase {
         model.updateActiveText(text)
         let probe = Probe()
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model, probe: probe, marks: marks))
         window.orderFrontRegardless()
         var found: NSTextView?

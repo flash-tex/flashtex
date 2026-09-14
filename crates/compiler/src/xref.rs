@@ -20,6 +20,180 @@
 //! Counters live in a small `Vec` in definition order, so iteration and
 //! therefore output are deterministic.
 
+use std::collections::BTreeMap;
+
+/// The document-level naming options and overrides from `cleveref`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleverefConfig {
+    pub capitalise: bool,
+    pub noabbrev: bool,
+    pub names: BTreeMap<String, CleverefName>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CleverefName {
+    pub singular: Option<String>,
+    pub plural: Option<String>,
+    pub capital_singular: Option<String>,
+    pub capital_plural: Option<String>,
+}
+
+impl Default for CleverefConfig {
+    fn default() -> Self {
+        let mut names = BTreeMap::new();
+        for (kind, singular, plural) in [
+            ("equation", "Equation", "Equations"),
+            ("figure", "Figure", "Figures"),
+            ("table", "Table", "Tables"),
+            ("page", "Page", "Pages"),
+            ("part", "Part", "Parts"),
+            ("chapter", "Chapter", "Chapters"),
+            ("section", "Section", "Sections"),
+            ("subsection", "Section", "Sections"),
+            ("subsubsection", "Section", "Sections"),
+            ("appendix", "Appendix", "Appendices"),
+            ("item", "Item", "Items"),
+            ("footnote", "Footnote", "Footnotes"),
+        ] {
+            names.insert(
+                kind.to_string(),
+                CleverefName {
+                    capital_singular: Some(singular.to_string()),
+                    capital_plural: Some(plural.to_string()),
+                    ..CleverefName::default()
+                },
+            );
+        }
+        Self {
+            capitalise: false,
+            noabbrev: false,
+            names,
+        }
+    }
+}
+
+impl CleverefConfig {
+    pub fn set_options(&mut self, options: &str) {
+        for option in options.split(',').map(str::trim) {
+            match option {
+                "capitalise" => self.capitalise = true,
+                "noabbrev" => self.noabbrev = true,
+                _ => {}
+            }
+        }
+    }
+
+    pub fn set_name(&mut self, kind: String, singular: String, plural: String, capital: bool) {
+        let name = self.names.entry(kind).or_default();
+        if capital {
+            name.capital_singular = Some(singular.clone());
+            name.capital_plural = Some(plural.clone());
+            if name.singular.is_none() {
+                name.singular = Some(if self.capitalise {
+                    singular.clone()
+                } else {
+                    singular.to_lowercase()
+                });
+            }
+            if name.plural.is_none() {
+                name.plural = Some(if self.capitalise {
+                    plural.clone()
+                } else {
+                    plural.to_lowercase()
+                });
+            }
+        } else {
+            name.singular = Some(singular.clone());
+            name.plural = Some(plural.clone());
+            if name.capital_singular.is_none() {
+                name.capital_singular = Some(capitalize_first(&singular));
+            }
+            if name.capital_plural.is_none() {
+                name.capital_plural = Some(capitalize_first(&plural));
+            }
+        }
+    }
+}
+
+/// The default `cleveref` name for a label type. `capitalise` changes the
+/// initial letter; `noabbrev` selects full equation/figure names.
+pub fn cleveref_name(config: &CleverefConfig, kind: &str, plural: bool, capital: bool) -> String {
+    if let Some(name) = configured_name(config, kind, plural, capital) {
+        return name;
+    }
+    let canonical_kind = cleveref_kind(kind);
+    if canonical_kind != kind {
+        if let Some(name) = configured_name(config, canonical_kind, plural, capital) {
+            return name;
+        }
+    }
+    let kind = canonical_kind;
+    let full = config.noabbrev;
+    let (singular, plural_name) = match (kind, full) {
+        ("equation", false) => ("eq.", "eqs."),
+        ("figure", false) => ("fig.", "figs."),
+        ("appendix", _) => ("appendix", "appendices"),
+        ("section", _) => ("section", "sections"),
+        ("table", _) => ("table", "tables"),
+        ("item", _) => ("item", "items"),
+        ("footnote", _) => ("footnote", "footnotes"),
+        ("chapter", _) => ("chapter", "chapters"),
+        ("part", _) => ("part", "parts"),
+        (kind, _) => (kind, ""),
+    };
+    let name = if plural {
+        if plural_name.is_empty() {
+            let fallback = format!("{singular}s");
+            return if capital || config.capitalise {
+                capitalize_first(&fallback)
+            } else {
+                fallback
+            };
+        }
+        plural_name.to_string()
+    } else {
+        singular.to_string()
+    };
+    if capital || config.capitalise {
+        capitalize_first(&name)
+    } else {
+        name
+    }
+}
+
+fn configured_name(
+    config: &CleverefConfig,
+    kind: &str,
+    plural: bool,
+    capital: bool,
+) -> Option<String> {
+    config.names.get(kind).and_then(|name| {
+        match (capital, plural) {
+            (true, true) => name.capital_plural.as_ref(),
+            (true, false) => name.capital_singular.as_ref(),
+            (false, true) => name.plural.as_ref(),
+            (false, false) => name.singular.as_ref(),
+        }
+        .cloned()
+    })
+}
+
+/// `cleveref` aliases subsections to the section name by default.
+pub fn cleveref_kind(kind: &str) -> &str {
+    match kind {
+        "subsection" | "subsubsection" => "section",
+        kind => kind,
+    }
+}
+
+fn capitalize_first(text: &str) -> String {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    first.to_uppercase().chain(chars).collect()
+}
+
 /// A counter's printed form (`\arabic`, `\alph`, `\Alph`, `\roman`,
 /// `\Roman`; latex.ltx `\@arabic`, `\@alph`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +279,11 @@ pub enum Piece {
     The(String),
     /// `\arabic{counter}` and friends.
     Value(String, NumberStyle),
+    /// `\ifnum \c@<counter>>\z@ <then>\fi`: the pieces are contributed
+    /// only while that counter is non-zero. report.cls prints `\thefigure`
+    /// this way, so a figure before the first `\chapter` is "1" rather than
+    /// "0.1".
+    IfPositive(String, Vec<Piece>),
 }
 
 /// One named counter.
@@ -152,12 +331,37 @@ impl Counters {
     /// The class counters outside sectioning that article.cls leaves
     /// unreset: `equation`, `figure` and `table` (`\newcounter{equation}`
     /// etc., printed `\@arabic`), and amsmath's `parentequation` used by
-    /// `subequations`. report/book register `equation`/`figure`/`table`
-    /// within `chapter` on top of this ([`Counters::counter_within`]).
+    /// `subequations`.
     pub fn define_body_counters(&mut self) {
         for name in ["equation", "figure", "table", "parentequation"] {
             self.define(name, None);
         }
+    }
+
+    /// report.cls/book.cls: `chapter`, `section` numbered within it
+    /// (`\thesection` is `\thechapter.\@arabic\c@section`), then
+    /// `subsection` and `subsubsection` as in article.
+    ///
+    /// `equation`, `figure` and `table` are reset by `chapter`
+    /// (`\@addtoreset`) and printed
+    /// `\ifnum \c@chapter>\z@ \thechapter.\fi \@arabic\c@<name>` --
+    /// note the guard, which [`Counters::counter_within`] (`\counterwithin`)
+    /// does not have: a figure in the front matter of a report, before any
+    /// `\chapter`, is "1", not "0.1".
+    pub fn report() -> Self {
+        let mut counters = Counters::default();
+        counters.define("chapter", None);
+        counters.number_within("section", "chapter");
+        counters.number_within("subsection", "section");
+        counters.number_within("subsubsection", "subsection");
+        counters.define_body_counters();
+        for name in ["equation", "figure", "table"] {
+            let child = counters.index(name).expect("just defined");
+            let chapter = counters.index("chapter").expect("just defined");
+            counters.add_to_reset(child, chapter);
+            counters.counters[child].the = within_chapter_pieces(name);
+        }
+        counters
     }
 
     fn index(&self, name: &str) -> Option<usize> {
@@ -333,10 +537,19 @@ impl Counters {
     }
 
     fn format(&self, index: usize, depth: usize) -> String {
+        self.format_pieces(&self.counters[index].the, depth)
+    }
+
+    fn format_pieces(&self, pieces: &[Piece], depth: usize) -> String {
         let mut out = String::new();
-        for piece in &self.counters[index].the {
+        for piece in pieces {
             match piece {
                 Piece::Text(text) => out.push_str(text),
+                Piece::IfPositive(name, then) => {
+                    if self.value(name).unwrap_or(0) > 0 && depth < THE_DEPTH {
+                        out.push_str(&self.format_pieces(then, depth + 1));
+                    }
+                }
                 Piece::The(name) => {
                     if let Some(other) = self.index(name).filter(|_| depth < THE_DEPTH) {
                         out.push_str(&self.format(other, depth + 1));
@@ -354,6 +567,18 @@ impl Counters {
 }
 
 /// `\the<parent>.\<style>{name}`.
+/// report.cls/book.cls `\the<name>` for a body counter:
+/// `\ifnum \c@chapter>\z@ \thechapter.\fi \@arabic\c@<name>`.
+fn within_chapter_pieces(name: &str) -> Vec<Piece> {
+    vec![
+        Piece::IfPositive(
+            "chapter".to_string(),
+            vec![Piece::The("chapter".to_string()), Piece::Text(".".to_string())],
+        ),
+        Piece::Value(name.to_string(), NumberStyle::Arabic),
+    ]
+}
+
 fn within_pieces(name: &str, parent: &str, style: NumberStyle) -> Vec<Piece> {
     vec![
         Piece::The(parent.to_string()),
@@ -365,6 +590,34 @@ fn within_pieces(name: &str, parent: &str, style: NumberStyle) -> Vec<Piece> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_prefixes_body_counters_with_the_chapter_only_once_one_exists() {
+        // report.cls: `\thefigure` is
+        // `\ifnum \c@chapter>\z@ \thechapter.\fi \@arabic\c@figure`,
+        // so the guard matters in the front matter -- `\counterwithin`'s
+        // unconditional `\thechapter.\arabic{figure}` would print "0.1".
+        let mut counters = Counters::report();
+        assert_eq!(counters.step("figure").as_deref(), Some("1"));
+        assert_eq!(counters.step("figure").as_deref(), Some("2"));
+
+        assert_eq!(counters.step("chapter").as_deref(), Some("1"));
+        // Stepping `chapter` resets every body counter registered within it.
+        assert_eq!(counters.step("figure").as_deref(), Some("1.1"));
+        assert_eq!(counters.step("equation").as_deref(), Some("1.1"));
+        assert_eq!(counters.step("table").as_deref(), Some("1.1"));
+        // `\thesection` is unconditional in report.cls, unlike the three above.
+        assert_eq!(counters.step("section").as_deref(), Some("1.1"));
+        assert_eq!(counters.step("subsection").as_deref(), Some("1.1.1"));
+
+        assert_eq!(counters.step("chapter").as_deref(), Some("2"));
+        assert_eq!(counters.step("figure").as_deref(), Some("2.1"));
+        assert_eq!(counters.step("section").as_deref(), Some("2.1"));
+        // `\setcounter{chapter}{0}` puts the guard back (book.cls does this
+        // for the front matter).
+        assert!(counters.set_value("chapter", 0));
+        assert_eq!(counters.step("figure").as_deref(), Some("2"));
+    }
 
     #[test]
     fn article_sectioning_numbers_and_resets_transitively() {

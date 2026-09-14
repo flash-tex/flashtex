@@ -177,7 +177,7 @@ pub fn block_origin(items: &[Item]) -> Option<(DocumentId, usize)> {
             }
             // A table's cell blocks hold absolute record indices and
             // spans: blocks containing one are never cached.
-            Item::Table(_) | Item::ColorBox(_) => return None,
+            Item::Table(_) | Item::ColorBox(_) | Item::Underline(_) => return None,
             Item::Math { span, .. } => {
                 if !note(&CharSrc {
                     document: span.document,
@@ -205,6 +205,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                     seg.style.italic.hash(h);
                     seg.style.color.hash(h);
                     (seg.style.slanted, seg.style.caps, seg.style.family, seg.style.undefined).hash(h);
+                    seg.style.literal.hash(h);
                     for c in &seg.chars {
                         (c.start.wrapping_sub(base)).hash(h);
                         (c.end.wrapping_sub(base)).hash(h);
@@ -216,6 +217,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 style.bold.hash(h);
                 style.italic.hash(h);
                 (style.slanted, style.caps, style.family, style.undefined).hash(h);
+                style.literal.hash(h);
                 factor.hash(h);
                 no_break.hash(h);
             }
@@ -238,13 +240,16 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 key.hash(h);
             }
             Item::ItalicCorrection => 6u8.hash(h),
+            Item::NoteParBreak => 200u8.hash(h),
             Item::HFill { fill } => {
                 7u8.hash(h);
                 fill.hash(h);
             }
-            Item::HSpace { pt } => {
+            Item::HSpace { pt, stretch_pt, shrink_pt } => {
                 8u8.hash(h);
                 pt.to_bits().hash(h);
+                stretch_pt.to_bits().hash(h);
+                shrink_pt.to_bits().hash(h);
             }
             Item::Logo { logo, style, span } => {
                 9u8.hash(h);
@@ -284,6 +289,15 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 11u8.hash(h);
                 format!("{b:?}").hash(h);
             }
+            Item::Lap { items } => {
+                202u8.hash(h);
+                hash_items(items, base, h);
+            }
+            Item::Underline(u) => {
+                12u8.hash(h);
+                format!("{u:?}").hash(h);
+            }
+            Item::LeaveVmode => 201u8.hash(h),
         }
     }
 }

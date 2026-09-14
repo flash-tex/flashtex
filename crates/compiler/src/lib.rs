@@ -24,6 +24,7 @@ pub mod layout;
 pub mod lexer;
 pub mod lm_math;
 pub mod math;
+pub mod natbib;
 pub mod newcm_math;
 pub mod parser;
 pub mod protocol;

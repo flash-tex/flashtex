@@ -414,6 +414,9 @@ pub struct Diagnostic {
     pub sources: Vec<SourceRange>,
     /// The compiler's recovery note, when it produced this diagnostic.
     pub recovery: Option<String>,
+    /// Replacement text for the source range (runtime-v1 `suggestion`).
+    /// Never serialised on display-list-v2 (`additionalProperties: false`).
+    pub suggestion: Option<String>,
 }
 
 impl Diagnostic {
@@ -424,6 +427,7 @@ impl Diagnostic {
             severity: Severity::Error,
             sources,
             recovery: None,
+            suggestion: None,
         }
     }
     pub fn warning(code: &str, message: impl Into<String>, sources: Vec<SourceRange>) -> Diagnostic {
@@ -433,33 +437,108 @@ impl Diagnostic {
             severity: Severity::Warning,
             sources,
             recovery: None,
+            suggestion: None,
         }
     }
 
     /// Converts a compiler diagnostic; `paths` is indexed by `DocumentId`.
+    ///
+    /// The compiler's structured diagnostics (#346/#389) carry three fields
+    /// beyond the code and suggestion this already forwarded (#354): `labels`
+    /// (extra spans with a word about each), `notes` (`= note:` strings) and
+    /// `help` (a suggested fix, optionally with a mechanical `replacement`).
+    /// display-list-v2's `diagnostic` object is
+    /// `additionalProperties: false` over exactly `{code, message, severity,
+    /// sources}` (`protocol/rendering-v2.schema.json`), so there is no wire
+    /// field to put them in and inventing one is the protocol owner's call,
+    /// not this converter's. They are folded onto the fields that already
+    /// mean the same thing instead of being dropped:
+    ///
+    /// * every label's span joins `sources` behind the diagnostic's own span,
+    ///   which is what `sources` is for (v1 still reads `sources.first()`, so
+    ///   its single `source` stays the primary one);
+    /// * each label's text, each note and the help message are appended to
+    ///   `message` as bracketed `[note: ...]` / `[help: ...]` clauses,
+    ///   because the label spans alone would say where without saying what.
+    ///   They stay on **one line**: `message` is a single-line human string
+    ///   here — `flashtex-render --tex` prints one diagnostic per line as
+    ///   `severity[code] message (line:col)` — so rustc's multi-line
+    ///   `= note:` rendering would split the line and lose the position
+    ///   suffix (`tests/cli_e2e.rs`);
+    /// * `help.replacement` back-fills runtime-v1's `suggestion` when the
+    ///   compiler set the structured replacement but not the legacy field.
+    ///
+    /// Both wire limits are respected: `sources` `maxItems` 128 and `message`
+    /// `maxLength` 4096.
     pub fn from_compiler(d: &flashtex_compiler::diagnostics::Diagnostic, paths: &[&str]) -> Diagnostic {
         use flashtex_compiler::diagnostics::Severity as S;
+
+        let range = |s: flashtex_compiler::Span| SourceRange {
+            path: std::rc::Rc::from(paths.get(s.document.0).copied().unwrap_or("")),
+            start_byte: s.start,
+            end_byte: s.end,
+        };
+
+        let mut sources: Vec<SourceRange> = d.span.map(range).into_iter().collect();
+        for l in &d.labels {
+            if sources.len() >= MAX_DIAGNOSTIC_SOURCES {
+                break;
+            }
+            let r = range(l.span);
+            // A label on the diagnostic's own span adds no location.
+            if !sources.contains(&r) {
+                sources.push(r);
+            }
+        }
+
+        let mut message = d.message.clone();
+        let mut push_clause = |prefix: &str, text: &str| {
+            // One line, and no embedded newline from the compiler either.
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if text.is_empty() {
+                return;
+            }
+            let clause = format!(" [{prefix}: {text}]");
+            if message.len() + clause.len() <= MAX_DIAGNOSTIC_MESSAGE {
+                message.push_str(&clause);
+            }
+        };
+        for l in &d.labels {
+            push_clause("note", &l.text);
+        }
+        for n in &d.notes {
+            push_clause("note", n);
+        }
+        if let Some(h) = &d.help {
+            push_clause("help", &h.message);
+        }
+
         Diagnostic {
-            code: "compiler".into(),
-            message: d.message.clone(),
+            // Exactly the compiler's own `code`: its constructors already apply
+            // `default_code`, and a `None` is deliberate (request validation), so
+            // re-deriving one here would disagree with the compiler's runtime-v1 reply.
+            code: d.code.map_or("compiler", |c| c.as_str()).into(),
+            message,
             severity: match d.severity {
                 S::Error => Severity::Error,
                 _ => Severity::Warning,
             },
-            sources: d
-                .span
-                .map(|s| {
-                    vec![SourceRange {
-                        path: std::rc::Rc::from(paths.get(s.document.0).copied().unwrap_or("")),
-                        start_byte: s.start,
-                        end_byte: s.end,
-                    }]
-                })
-                .unwrap_or_default(),
+            sources,
             recovery: d.recovery.clone(),
+            suggestion: d.suggestion.clone().or_else(|| {
+                d.help
+                    .as_ref()
+                    .and_then(|h| h.replacement.as_ref())
+                    .map(|r| r.text.clone())
+            }),
         }
     }
 }
+
+/// `protocol/rendering-v2.schema.json`: `diagnostic.sources` `maxItems`.
+const MAX_DIAGNOSTIC_SOURCES: usize = 128;
+/// `protocol/rendering-v2.schema.json`: `diagnostic.message` `maxLength`.
+const MAX_DIAGNOSTIC_MESSAGE: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplayList {
@@ -1354,6 +1433,143 @@ mod tests {
         assert_eq!(Tick::from_tex_pt(72.27), Tick(72 * 1_048_576));
         assert_eq!(Tick::from_bp(612.0).0, 612 * 1_048_576);
         assert_eq!(Tick::from_tex_pt(0.0), Tick(0));
+    }
+
+    #[test]
+    fn from_compiler_forwards_code_and_suggestion() {
+        use flashtex_compiler::diagnostics::{Diagnostic as C, DiagnosticCode, Severity as CS};
+        let unknown = C {
+            severity: CS::Error,
+            message: r"\alpah is not supported by this compiler version".into(),
+            span: None,
+            recovery: None,
+            code: Some(DiagnosticCode::UnknownCommand),
+            suggestion: Some(r"\alpha".into()),
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
+        };
+        let out = Diagnostic::from_compiler(&unknown, &[]);
+        assert_eq!(out.code, "unknown_command");
+        assert_eq!(out.suggestion.as_deref(), Some(r"\alpha"));
+
+        let no_explicit = C {
+            severity: CS::Error,
+            message: r"\tikz is not supported by this compiler version".into(),
+            span: None,
+            recovery: None,
+            code: None,
+            suggestion: None,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
+        };
+        // No code on the compiler side stays uncoded, even when the wording would
+        // match `default_code`: the compiler omitted it on purpose.
+        assert_eq!(Diagnostic::from_compiler(&no_explicit, &[]).code, "compiler");
+
+        let none = C {
+            severity: CS::Error,
+            message: "layout_capabilities must be a list".into(),
+            span: None,
+            recovery: None,
+            code: None,
+            suggestion: None,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
+        };
+        assert_eq!(Diagnostic::from_compiler(&none, &[]).code, "compiler");
+        assert_eq!(Diagnostic::from_compiler(&none, &[]).suggestion, None);
+    }
+
+    /// The compiler's structured `labels`/`notes`/`help` (#346/#389) have no
+    /// display-list-v2 wire field of their own, so `from_compiler` folds them
+    /// onto `sources`, `message` and `suggestion` rather than dropping them.
+    #[test]
+    fn from_compiler_folds_labels_notes_and_help() {
+        use flashtex_compiler::diagnostics::{
+            Diagnostic as C, DiagnosticHelp, DiagnosticLabel, DiagnosticReplacement, Severity as CS,
+        };
+        use flashtex_compiler::{DocumentId, Span};
+
+        let at = |start, end| Span { document: DocumentId(0), start, end };
+        let d = C {
+            severity: CS::Error,
+            message: r"\tilde is a math command".into(),
+            span: Some(at(10, 16)),
+            recovery: None,
+            code: None,
+            suggestion: None,
+            labels: vec![
+                // A label on the diagnostic's own span adds no new location...
+                DiagnosticLabel { span: at(10, 16), text: "this command".into(), primary: true },
+                // ...but a label elsewhere does.
+                DiagnosticLabel { span: at(40, 44), text: "opened here".into(), primary: false },
+            ],
+            notes: vec![r"\tilde is a math accent".into()],
+            help: Some(DiagnosticHelp {
+                message: r"wrap it in math: \(\tilde{c}\)".into(),
+                replacement: Some(DiagnosticReplacement {
+                    span: at(10, 16),
+                    text: r"\(\tilde{c}\)".into(),
+                }),
+            }),
+        };
+        let out = Diagnostic::from_compiler(&d, &["main.tex"]);
+
+        // The diagnostic's own span first, then the one label span it does not
+        // already cover; the duplicate is not repeated.
+        assert_eq!(out.sources.len(), 2);
+        assert_eq!((out.sources[0].start_byte, out.sources[0].end_byte), (10, 16));
+        assert_eq!((out.sources[1].start_byte, out.sources[1].end_byte), (40, 44));
+        assert_eq!(&*out.sources[0].path, "main.tex");
+
+        assert_eq!(
+            out.message,
+            concat!(
+                r"\tilde is a math command",
+                " [note: this command]",
+                " [note: opened here]",
+                r" [note: \tilde is a math accent]",
+                r" [help: wrap it in math: \(\tilde{c}\)]",
+            )
+        );
+        // One line: `flashtex-render --tex` prints `severity[code] message
+        // (line:col)` per line, so an embedded newline would strand the
+        // position suffix on a line of its own (`tests/cli_e2e.rs`).
+        assert!(!out.message.contains('\n'), "{}", out.message);
+        // `help.replacement` back-fills the legacy runtime-v1 `suggestion`.
+        assert_eq!(out.suggestion.as_deref(), Some(r"\(\tilde{c}\)"));
+    }
+
+    /// A compiler `suggestion` already set is authoritative; `help.replacement`
+    /// only fills the gap.
+    #[test]
+    fn from_compiler_prefers_an_explicit_suggestion_over_help_replacement() {
+        use flashtex_compiler::diagnostics::{
+            Diagnostic as C, DiagnosticHelp, DiagnosticReplacement, Severity as CS,
+        };
+        use flashtex_compiler::{DocumentId, Span};
+        let at = |start, end| Span { document: DocumentId(0), start, end };
+        let d = C {
+            severity: CS::Warning,
+            message: "m".into(),
+            span: None,
+            recovery: None,
+            code: None,
+            suggestion: Some("explicit".into()),
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: Some(DiagnosticHelp {
+                message: String::new(),
+                replacement: Some(DiagnosticReplacement { span: at(0, 1), text: "from-help".into() }),
+            }),
+        };
+        let out = Diagnostic::from_compiler(&d, &["main.tex"]);
+        assert_eq!(out.suggestion.as_deref(), Some("explicit"));
+        // An empty help message adds no `= help:` line.
+        assert_eq!(out.message, "m");
     }
 
     #[test]

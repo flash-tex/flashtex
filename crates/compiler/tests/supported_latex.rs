@@ -297,11 +297,28 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "renewcommand" => "\\newcommand{\\foo}{x}\\renewcommand{\\foo}{y}\\foo".into(),
         "usepackage" => "\\usepackage{geometry}".into(),
         "setlength" => "\\setlength{\\parskip}{1pt}".into(),
+        "addtolength" => "\\addtolength{\\textwidth}{1pt}".into(),
         "setlist" => "\\setlist{itemsep=1pt}".into(),
         "item" => "\\begin{itemize}\\item x\\end{itemize}".into(),
+        // natbib's commands exist only once the package is loaded, and an
+        // author-year citation needs an `[Author(Year)]` entry to resolve to
+        // — exactly as `\item` needs its list around it.
+        n if natbib_command(n) => format!(
+            "\\usepackage{{natbib}}\\begin{{thebibliography}}{{9}}\\bibitem[Knuth(1984)]{{x}}A.\\end{{thebibliography}}{}",
+            with_arguments(n, arguments, "1pt")
+        ),
         "caption" => "\\begin{figure}\\caption{x}\\end{figure}".into(),
+        "uline" => "\\usepackage{ulem}\\uline{x}".into(),
+        "sout" => "\\usepackage{ulem}\\sout{x}".into(),
         _ => with_arguments(name, arguments, "1pt"),
     }
+}
+
+/// The natbib citation commands, which `\usepackage{natbib}` defines.
+fn natbib_command(name: &str) -> bool {
+    name != "cite"
+        && (name.starts_with("cite") || name.starts_with("Cite"))
+        && name != "citation"
 }
 
 fn with_arguments(name: &str, arguments: &str, dimension: &str) -> String {

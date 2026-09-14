@@ -156,7 +156,8 @@ enum EditorIntelligence {
     /// command name (ShellModel.definitionSummary); shown as a peek under
     /// the standard documentation.
     static func quickInfo(in text: NSString, at utf16: Int, marks: [EditorDiagnostics.Mark] = [],
-                          highlighter: SyntaxHighlighter? = nil, userDefinition: (String) -> String? = { _ in nil }) -> QuickInfo? {
+                          highlighter: SyntaxHighlighter? = nil, userDefinition: (String) -> String? = { _ in nil },
+                          context: HoverContext = .init()) -> QuickInfo? {
         let hits = marks.filter { NSLocationInRange(utf16, $0.nsRange) }
         let diagnostics = hits.map { m in
             QuickInfo.Diagnostic(severity: m.severity, message: m.message,
@@ -173,13 +174,39 @@ enum EditorIntelligence {
             let isLabel = command == "label"
             let isCite = CommandDocs.citationCommands.contains(command)
             let detail = isLabel ? "Label" : isCite ? "Citation key" : "Label reference"
-            let doc = isLabel ? "Referenced with \\ref{\(key)}; ⌘-click a reference to come back here."
-                : isCite ? "⌘-click to go to the bibliography entry." : "⌘-click to go to \\label{\(key)}."
-            return QuickInfo(title: key, detail: detail, documentation: doc, diagnostics: diagnostics, range: range)
+            // What the key points at, resolved from the buffer and the other
+            // open documents (EditorHoverResolution.swift), above the
+            // navigation hint — which is the part the reader already knew.
+            var lines: [String] = []
+            if isCite {
+                if let entry = bibliographyEntry(forKey: key, in: text as String, context: context) {
+                    lines.append(entry.summary)
+                    if let path = entry.path { lines.append("in " + path) }
+                } else {
+                    lines.append("No bibliography entry found for this key.")
+                }
+                lines.append("⌘-click to go to the bibliography entry.")
+            } else if isLabel {
+                lines.append("Referenced with \\ref{\(key)}; ⌘-click a reference to come back here.")
+            } else {
+                if let target = labelTarget(forKey: key, in: text as String, context: context) {
+                    lines.append(target.summary)
+                } else {
+                    lines.append("No \\label{\(key)} in this document or the open ones.")
+                }
+                lines.append("⌘-click to go to \\label{\(key)}.")
+            }
+            return QuickInfo(title: key, detail: detail, documentation: lines.joined(separator: "\n"),
+                             diagnostics: diagnostics, range: range)
         case .file(let command, let path, let range)?:
             let detail = command == "includegraphics" ? "Graphics file" : ["usepackage", "RequirePackage"].contains(command) ? "Package"
                 : command == "documentclass" ? "Document class" : "Input file"
-            let doc = ["input", "include", "subfile", "import", "subimport"].contains(command) ? "⌘-click to open the file." : nil
+            var doc: String?
+            if command == "includegraphics" {
+                doc = resolveGraphics(path, in: text as String, context: context).summary
+            } else if ["input", "include", "subfile", "import", "subimport"].contains(command) {
+                doc = "⌘-click to open the file."
+            }
             return QuickInfo(title: path, detail: detail, documentation: doc, diagnostics: diagnostics, range: range)
         case .environment(let name, let range)?:
             return QuickInfo(title: name, detail: "Environment", documentation: CommandDocs.environmentDocumentation(for: name),
@@ -397,7 +424,7 @@ enum EditorIntelligence {
         /// `CompletionTests.testCommandDocsNameOnlyKnownCommands`), and a
         /// name listed here must leave the list once the compiler renders it.
         static let beyondCompiler: Set<String> = [
-            "chapter", "part", "paragraph", "autoref", "cref", "citep", "citet",
+            "chapter", "part", "paragraph", "autoref",
             "def", "newline", "hline", "toprule", "midrule",
             "bottomrule", "multicolumn", "verb", "%", "$", "&", "#", "_", "{", "}",
             "geometry", "onehalfspacing", "doublespacing",
@@ -559,6 +586,12 @@ final class LineNumberGutter: NSRulerView {
     /// Hybrid relative numbering for Vim users (`EditorPreferences.relativeLineNumbers`,
     /// off by default and independent of whether Vim keybindings are on).
     var relativeLineNumbers = false { didSet { if relativeLineNumbers != oldValue { setNeedsRedraw() } } }
+    /// Line indices (0-based) that start a foldable region (EditorFolding.swift).
+    var foldableLines: Set<Int> = [] { didSet { if foldableLines != oldValue { setNeedsRedraw() } } }
+    /// Line indices that are currently folded.
+    var foldedLines: Set<Int> = [] { didSet { if foldedLines != oldValue { setNeedsRedraw() } } }
+    /// Toggle the fold whose header is this 0-based line.
+    var onToggleFold: ((Int) -> Void)?
     /// Test seam, like `CaretFollow.enabledOverride`: a hosted editor reads the
     /// shared preferences, which a test cannot inject into. Set it in `setUp`
     /// and clear it in `tearDown`.
@@ -674,6 +707,9 @@ final class LineNumberGutter: NSRulerView {
             let size = label.size(withAttributes: attrs)
             let baselineAdjust = (fragment.height - size.height) / 2
             label.draw(at: NSPoint(x: numberRight - size.width, y: inRuler.minY + baselineAdjust), withAttributes: attrs)
+            if foldableLines.contains(line) {
+                drawFoldMark(folded: foldedLines.contains(line), midY: inRuler.midY)
+            }
             if let severity = severities[line] {
                 let d: CGFloat = 7
                 let dot = NSRect(x: 6, y: inRuler.midY - d / 2, width: d, height: d)
@@ -685,6 +721,38 @@ final class LineNumberGutter: NSRulerView {
             }
             line += 1
         }
+    }
+
+    /// Disclosure triangle in the marker column: collapsed ▶ when folded, ▼ when open.
+    private func drawFoldMark(folded: Bool, midY: CGFloat) {
+        let r = NSRect(x: 3, y: midY - 4, width: 8, height: 8)
+        NSColor.secondaryLabelColor.setFill()
+        let path = NSBezierPath()
+        if folded {
+            path.move(to: NSPoint(x: r.minX + 1, y: r.minY + 1))
+            path.line(to: NSPoint(x: r.maxX - 1, y: r.midY))
+            path.line(to: NSPoint(x: r.minX + 1, y: r.maxY - 1))
+        } else {
+            path.move(to: NSPoint(x: r.minX + 1, y: r.minY + 2))
+            path.line(to: NSPoint(x: r.maxX - 1, y: r.minY + 2))
+            path.line(to: NSPoint(x: r.midX, y: r.maxY - 1))
+        }
+        path.close()
+        path.fill()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        guard p.x <= 16, let onToggleFold, let tv = textView, let lm = tv.layoutManager,
+              let container = tv.textContainer, let table = lineTable?() else {
+            super.mouseDown(with: event); return
+        }
+        let inText = convert(p, to: tv)
+        let index = tv.characterIndexForInsertion(at: NSPoint(x: tv.visibleRect.minX + 1, y: inText.y))
+        _ = (lm, container)
+        let line = table.line(at: min(index, max(0, table.length - 1)))
+        guard foldableLines.contains(line) else { super.mouseDown(with: event); return }
+        onToggleFold(line)
     }
 }
 

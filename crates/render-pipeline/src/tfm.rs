@@ -145,6 +145,32 @@ impl Tfm {
     }
 }
 
+/// The codes with **no** ligature or kern program applied: every character
+/// stands for itself, nothing is inserted between two of them, and neither
+/// word boundary runs its program.
+///
+/// This is the regime `\verb`, `verbatim`/`verbatim*` and `lstlisting`
+/// typeset under. LaTeX gets there by making `` ` ``, `'`, `<`, `>`, `,`
+/// and `-` active inside verbatim (`\@noligs`, latex.ltx), each expanding
+/// to `\kern\z@` followed by the character, so the ligature program can
+/// never see two of them in a row — visible in pdflatex's `\showbox` as
+/// the `\kern 0.0` between the `b` and the `-` of `\verb*"a b-c"`.
+///
+/// The measured consequence at 12 pt T1 (`ectt1200`, every character
+/// 6.1735 pt): `\verb|x--y|` is 24.69397 pt = 4 characters, while
+/// `\ttfamily x--y` is 18.52048 pt = 3, because `ectt` *does* carry the
+/// `--` → endash ligature and `\ttfamily` is right to use it.
+pub fn literal_run(codes: &[u8]) -> TfmRun {
+    TfmRun {
+        leading_kern: 0,
+        glyphs: codes
+            .iter()
+            .enumerate()
+            .map(|(i, &code)| TfmGlyph { code, input: (i, i + 1), kern_after: 0 })
+            .collect(),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TfmRun {
     /// Fixword kern before the first glyph (left boundary program).

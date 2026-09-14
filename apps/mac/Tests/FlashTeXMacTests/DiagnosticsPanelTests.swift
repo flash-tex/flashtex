@@ -3,6 +3,7 @@ import AppKit
 import SwiftUI
 import FlashTeXProtocol
 import FlashTeXAccessibility
+import HostedWindows
 @testable import FlashTeXMac
 
 /// Diagnostics panel follow-up (DiagnosticsPanel.swift): grouped rows speak
@@ -61,6 +62,73 @@ final class DiagnosticsPanelTests: XCTestCase {
         XCTAssertEqual(c.gaps, 6)
         XCTAssertFalse(EditorDiagnostics.isGap("missing } inserted"))
         XCTAssertEqual(EditorDiagnostics.counts([]).gaps, 0)
+        // `code` wins over message wording; unknown codes keep the phrase fallback.
+        let byCode: [RuntimeV1.Diagnostic] = [
+            .init(severity: .error, message: "custom wording with no gap phrase", source: nil, recovery: nil,
+                  code: "unsupported_feature"),
+            .init(severity: .error, message: "\\foo is not implemented", source: nil, recovery: nil,
+                  code: "unknown_command"),
+            .init(severity: .error, message: "still a gap phrase: not implemented", source: nil, recovery: nil,
+                  code: "made_up_code"),
+        ]
+        XCTAssertTrue(EditorDiagnostics.isGap(byCode[0]))
+        XCTAssertFalse(EditorDiagnostics.isGap(byCode[1]), "unknown_command is an author error even if the message mentions unimplemented")
+        XCTAssertTrue(EditorDiagnostics.isGap(byCode[2]), "unknown codes fall back to message phrases")
+        let coded = EditorDiagnostics.counts(byCode)
+        XCTAssertEqual(coded.gaps, 2)
+        XCTAssertEqual(coded.errors, 1)
+    }
+
+    func testGroupsByCodeWhenPresentAndFallsBackToMessage() {
+        let sameCode: [RuntimeV1.Diagnostic] = [
+            .init(severity: .error, message: "\\in is not supported in math mode",
+                  source: .init(path: "main.tex", startByte: 9, endByte: 12), recovery: nil, code: "unsupported_feature"),
+            .init(severity: .error, message: "\\in is not supported in math mode",
+                  source: .init(path: "main.tex", startByte: 29, endByte: 32), recovery: nil, code: "unsupported_feature"),
+            .init(severity: .error, message: "\\mathbb is not supported",
+                  source: .init(path: "main.tex", startByte: 39, endByte: 49), recovery: nil, code: "unsupported_feature"),
+        ]
+        let groups = EditorDiagnostics.groups(of: sameCode, documentOrder: ["main.tex"])
+        XCTAssertEqual(groups.map(\.count), [2, 1], "same code still splits on different messages")
+        XCTAssertEqual(groups[0].code, "unsupported_feature")
+        XCTAssertEqual(groups[0].id, "error:unsupported_feature:\\in is not supported in math mode")
+        let split: [RuntimeV1.Diagnostic] = [
+            .init(severity: .error, message: "m", source: .init(path: "main.tex", startByte: 0, endByte: 1), recovery: nil,
+                  code: "unknown_command"),
+            .init(severity: .error, message: "m", source: .init(path: "main.tex", startByte: 2, endByte: 3), recovery: nil,
+                  code: "unsupported_feature"),
+            .init(severity: .error, message: "m", source: .init(path: "main.tex", startByte: 4, endByte: 5), recovery: nil),
+        ]
+        let byCode = EditorDiagnostics.groups(of: split, documentOrder: ["main.tex"])
+        XCTAssertEqual(byCode.map(\.id), [
+            "error:unknown_command:m",
+            "error:unsupported_feature:m",
+            "error:m",
+        ], "code in the key; missing code falls back to severity:message")
+    }
+
+    func testCopyLineIncludesHelpAndNotes() {
+        let texts = ["main.tex": Self.text]
+        let d = RuntimeV1.Diagnostic(
+            severity: .error, message: "\\in is not supported in math mode",
+            source: .init(path: "main.tex", startByte: 9, endByte: 12), recovery: "rendered as text",
+            code: "unsupported_feature",
+            notes: ["math mode only"],
+            help: .init(message: "wrap in $...$"))
+        XCTAssertEqual(EditorDiagnostics.copyLine(d, texts: texts), """
+            main.tex:2: error: \\in is not supported in math mode
+            = note: math mode only
+            = help: wrap in $...$
+            """)
+        XCTAssertEqual(EditorDiagnostics.secondaryLabelHelp(d), nil)
+        let labeled = RuntimeV1.Diagnostic(
+            severity: .error, message: "m", source: nil, recovery: nil,
+            labels: [
+                .init(source: .init(path: "main.tex", startByte: 0, endByte: 1), text: "primary", primary: true),
+                .init(source: .init(path: "main.tex", startByte: 2, endByte: 3), text: "secondary one", primary: false),
+                .init(source: .init(path: "ch.tex", startByte: 0, endByte: 1), text: "secondary two", primary: false),
+            ])
+        XCTAssertEqual(EditorDiagnostics.secondaryLabelHelp(labeled), "secondary one\nsecondary two")
     }
 
     // MARK: copy text
@@ -245,7 +313,7 @@ final class DiagnosticsPanelTests: XCTestCase {
         let hostView = NSHostingView(rootView: Host(model: m, panel: panel))
         hostView.frame = NSRect(x: 0, y: 0, width: 640, height: 420)
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: hostView.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: hostView.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = hostView
         window.orderFrontRegardless() // never makeKey

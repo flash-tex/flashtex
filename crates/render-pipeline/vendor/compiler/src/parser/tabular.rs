@@ -15,8 +15,9 @@ use super::{
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{Token, TokenKind};
 use crate::tabular::{
-    Align, BookRule, BoxAlign, Cell, ColumnTemplate, Entry, Length, Material, Row, Tabular,
-    VerticalPosition, ARRAYRULEWIDTH_PT, DOUBLERULESEP_PT, TABCOLSEP_PT,
+    Align, BookRule, BoxAlign, Cell, ColorFill, ColorSpec, ColumnTemplate, Entry, FontDimen, Length,
+    Longtable, LongtableAlign, LongtableSection, Material, Multirow, MultirowPos, MultirowWidth,
+    Row, Tabular, VerticalPosition, ARRAYRULEWIDTH_PT, DOUBLERULESEP_PT, TABCOLSEP_PT,
 };
 use crate::Span;
 
@@ -28,6 +29,8 @@ enum SpecItem {
     Char(char, Span),
     Group(Vec<InputToken>, Span),
     Command(String, Span),
+    /// siunitx `S[<options>]` or `s[<options>]`, the bracket already read.
+    Siunitx(char, String, Span),
 }
 
 struct RawCell {
@@ -52,9 +55,20 @@ impl RawCell {
     }
 }
 
+struct RawRow {
+    cells: Vec<RawCell>,
+    /// The `\\[<dimen>]` argument, if any.
+    argument: Option<f64>,
+    /// longtable `\\*`.
+    nobreak: bool,
+    /// longtable `\kill`.
+    kill: bool,
+    /// colortbl `\rowcolor` before the row.
+    color: Option<ColorFill>,
+}
+
 enum RawEntry {
-    /// Entries plus the `\\[<dimen>]` argument, if any.
-    Row(Vec<RawCell>, Option<f64>),
+    Row(RawRow),
     Done(Entry),
 }
 
@@ -73,7 +87,64 @@ fn row_is_blank(row: &[RawCell]) -> bool {
 
 fn is_rule_command(name: &str, booktabs: bool) -> bool {
     matches!(name, "hline" | "cline")
-        || (booktabs && matches!(name, "toprule" | "midrule" | "bottomrule" | "cmidrule"))
+        || (booktabs
+            && matches!(
+                name,
+                "toprule"
+                    | "midrule"
+                    | "bottomrule"
+                    | "cmidrule"
+                    | "addlinespace"
+                    | "specialrule"
+                    | "morecmidrules"
+            ))
+}
+
+/// Row-scanner state carried between rows.
+#[derive(Default)]
+struct RowState {
+    /// `\rowcolor` waiting for the row it colours.
+    row_color: Option<ColorFill>,
+    /// A longtable `\caption` opened the current row.
+    caption_pending: bool,
+}
+
+fn is_table_command(name: &str, features: TableFeatures) -> bool {
+    (features.longtable
+        && matches!(
+            name,
+            "kill"
+                | "endfirsthead"
+                | "endhead"
+                | "endfoot"
+                | "endlastfoot"
+                | "caption"
+                | "newpage"
+                | "pagebreak"
+                | "nopagebreak"
+        ))
+        || (features.colortbl && matches!(name, "rowcolor" | "arrayrulecolor" | "doublerulesepcolor"))
+}
+
+/// Package support in force for one table.
+#[derive(Clone, Copy)]
+struct TableFeatures {
+    longtable: bool,
+    colortbl: bool,
+    multirow: bool,
+}
+
+/// A dimension that may be em/ex of the font where it is used.
+fn font_dimen(raw: &str, body: f64) -> Option<FontDimen> {
+    let text = raw.trim();
+    for (unit, is_em) in [("em", true), ("ex", false)] {
+        if let Some(number) = text.strip_suffix(unit) {
+            if let Ok(v) = number.trim().parse::<f64>() {
+                return Some(FontDimen { pt: 0.0, em: if is_em { v } else { 0.0 }, ex: if is_em { 0.0 } else { v } });
+            }
+        }
+    }
+    parse_dimen_pt_at(text, body).map(|pt| FontDimen { pt, em: 0.0, ex: 0.0 })
 }
 
 /// A `tabular*` width or `p{}` width: a dimension, or a multiple of the text
@@ -127,7 +198,7 @@ fn block_inlines(block: Block) -> Vec<Inline> {
 
 /// Packages that load array.sty (and so replace the kernel's `\@mkpream`).
 const ARRAY_PACKAGES: &[&str] = &[
-    "array", "tabularx", "tabulary", "dcolumn", "delarray", "colortbl", "arydshln",
+    "array", "tabularx", "tabulary", "dcolumn", "delarray", "colortbl", "arydshln", "siunitx",
 ];
 
 /// One column's array-package declarations: the tokens `>{}` inserts before
@@ -136,6 +207,15 @@ const ARRAY_PACKAGES: &[&str] = &[
 struct Decls {
     before: Vec<InputToken>,
     after: Vec<InputToken>,
+    /// siunitx `S`/`s`: each numeric entry becomes `\num`/`\unit` with
+    /// these options.
+    siunitx: Option<SiunitxColumn>,
+}
+
+#[derive(Debug, Clone)]
+struct SiunitxColumn {
+    command: &'static str,
+    options: String,
 }
 
 /// The alignment preamble being built, mirroring `\@mkpream`'s state.
@@ -146,6 +226,8 @@ struct Preamble {
     current_decls: Decls,
     /// `>{}` tokens waiting for the next column (array.sty `\toks\count@`).
     pending_before: Vec<InputToken>,
+    /// colortbl `\columncolor` found in a `>{}` waiting for its column.
+    pending_color: Option<ColorFill>,
     placed: bool,
     first_amp: bool,
     fill: bool,
@@ -166,6 +248,7 @@ impl Preamble {
             decls: Vec::new(),
             current_decls: Decls::default(),
             pending_before: Vec::new(),
+            pending_color: None,
             placed: false,
             first_amp: true,
             fill: false,
@@ -218,6 +301,8 @@ impl Preamble {
         self.current.align = align;
         self.placed = true;
         self.current_decls.before = std::mem::take(&mut self.pending_before);
+        // colortbl's `\@classz` extracts `\columncolor` from the `>{}` toks.
+        self.current.color = self.pending_color.take();
     }
 
     fn add(&mut self, material: Material) {
@@ -253,6 +338,7 @@ fn empty_template(align: Align) -> ColumnTemplate {
         align,
         after: Vec::new(),
         fill_after: false,
+        color: None,
     }
 }
 
@@ -297,11 +383,38 @@ impl P<'_> {
         } else {
             None
         };
+        let features = TableFeatures {
+            longtable: name == "longtable",
+            colortbl: self.colortbl(),
+            multirow: self.packages.iter().any(|package| package == "multirow"),
+        };
+        let mut longtable_align = None;
         let position = match self.optional_bracket_argument() {
+            // longtable.sty 106/120-126: `[l]`/`[c]`/`[r]` set `\LTleft`/`\LTright`.
+            Some((raw, _)) if features.longtable => {
+                longtable_align = match raw.trim() {
+                    "l" => Some(LongtableAlign::Left),
+                    "c" => Some(LongtableAlign::Center),
+                    "r" => Some(LongtableAlign::Right),
+                    _ => None,
+                };
+                VerticalPosition::Top
+            }
             Some((raw, _)) if raw.trim() == "t" => VerticalPosition::Top,
             Some((raw, _)) if raw.trim() == "b" => VerticalPosition::Bottom,
+            _ if features.longtable => VerticalPosition::Top,
             _ => VerticalPosition::Center,
         };
+        if features.longtable {
+            // `\LT@array`: `\@kernel@refstepcounter{\LTcaptype}` for every
+            // longtable, captioned or not.
+            // `table` is one of the class body counters (`crate::xref`), so
+            // `\thetable` carries report/book's `\thechapter.` prefix and any
+            // `\numberwithin`/`\setcounter` in force.
+            self.current_counter = self.counters.step("table");
+        }
+        let rule_color = self.table_rule_color.clone();
+        let double_rule_sep_color = self.table_double_rule_sep_color.clone();
         let (spec_tokens, spec_span) = self.required_group(name, open);
         let arraystretch = self.array_stretch(open);
         let array_package = self.array_package();
@@ -323,6 +436,7 @@ impl P<'_> {
 
         let mut entries = Vec::new();
         let mut row = vec![RawCell::new(None)];
+        let mut state = RowState::default();
         let mut depth = 0usize;
         let mut end = spec_span.end;
         let mut found_end = false;
@@ -352,6 +466,11 @@ impl P<'_> {
                             Some("ignored the misplaced rule".into()),
                         ));
                     }
+                    continue;
+                }
+                TokenKind::Command(command) if depth == 0 && is_table_command(command, features) => {
+                    self.i += 1;
+                    self.table_command(command, span, body, &mut row, &mut entries, &mut state);
                     continue;
                 }
                 TokenKind::Command(command)
@@ -385,16 +504,12 @@ impl P<'_> {
                 }
                 TokenKind::Command(command) if depth == 0 && command == "tabularnewline" => {
                     self.i += 1;
-                    let argument = self.row_end_argument(body);
-                    let done = std::mem::replace(&mut row, vec![RawCell::new(None)]);
-                    entries.push(RawEntry::Row(done, argument));
+                    self.finish_row(body, &mut row, &mut entries, &mut state);
                     continue;
                 }
                 TokenKind::LineBreak if depth == 0 => {
                     self.i += 1;
-                    let argument = self.row_end_argument(body);
-                    let done = std::mem::replace(&mut row, vec![RawCell::new(None)]);
-                    entries.push(RawEntry::Row(done, argument));
+                    self.finish_row(body, &mut row, &mut entries, &mut state);
                     continue;
                 }
                 // `\&` lexes as a one-character word spanning two bytes.
@@ -468,18 +583,32 @@ impl P<'_> {
                 Some("closed the table at end of input".into()),
             ));
         }
-        if !row_is_blank(&row) {
-            entries.push(RawEntry::Row(row, None));
+        if state.caption_pending {
+            self.attach_caption_tail(std::mem::take(&mut row), &mut entries);
+        } else if !row_is_blank(&row) {
+            entries.push(RawEntry::Row(RawRow {
+                cells: row,
+                argument: None,
+                nobreak: false,
+                kill: false,
+                color: state.row_color.take(),
+            }));
         }
 
         let mut out = Vec::new();
         for entry in entries {
-            let (cells, argument) = match entry {
+            let RawRow {
+                cells,
+                argument,
+                nobreak,
+                kill,
+                color: row_color,
+            } = match entry {
                 RawEntry::Done(entry) => {
                     out.push(entry);
                     continue;
                 }
-                RawEntry::Row(cells, argument) => (cells, argument),
+                RawEntry::Row(row) => row,
             };
             let mut row_cells = Vec::new();
             let mut column = 0;
@@ -494,6 +623,9 @@ impl P<'_> {
                     out.push(Entry::Row(Row {
                         cells: std::mem::take(&mut row_cells),
                         extra_depth_pt: 0.0,
+                        color: row_color.clone(),
+                        nobreak: false,
+                        kill,
                     }));
                     column = 0;
                 }
@@ -536,8 +668,12 @@ impl P<'_> {
                 // then the `<{}` tokens, all in the entry's one group.
                 let declarations = !cell_decls.before.is_empty() || !cell_decls.after.is_empty();
                 let mut tokens = cell_decls.before;
-                tokens.extend(raw.tokens);
+                match &cell_decls.siunitx {
+                    Some(column) => tokens.extend(siunitx_entry(raw.tokens, column)),
+                    None => tokens.extend(raw.tokens),
+                }
                 tokens.extend(cell_decls.after);
+                let (tokens, cell_color, multirow) = self.strip_cell_commands(tokens, features);
                 let outer_alignment = self.declared_alignment.take();
                 let content = self.tabular_cell_inlines(tokens);
                 let alignment =
@@ -548,12 +684,17 @@ impl P<'_> {
                     template,
                     alignment: align.paragraph_width().and(alignment),
                     declarations,
+                    color: cell_color,
+                    multirow,
                 });
                 column += columns_spanned;
             }
             out.push(Entry::Row(Row {
                 cells: row_cells,
                 extra_depth_pt: argument.filter(|pt| *pt > 0.0).unwrap_or(0.0),
+                color: row_color,
+                nobreak,
+                kill,
             }));
             if let Some(pt) = argument.filter(|pt| *pt <= 0.0) {
                 out.push(Entry::VSpace { pt });
@@ -570,7 +711,457 @@ impl P<'_> {
             array_package,
             span: Span::in_document(open.document, open.start, end),
             space_before,
+            rule_color,
+            double_rule_sep_color,
+            longtable: features.longtable.then(|| Longtable {
+                align: longtable_align,
+                number: self.counters.value("table").unwrap_or(0),
+            }),
         })));
+    }
+
+    /// `longtable` when longtable.sty is loaded (longtable.sty 91-106:
+    /// `\par`, then the table as a block of its own, a paragraph holding
+    /// only the table). Without the package LaTeX has no such environment,
+    /// so it stays diagnosed. Returns whether the environment was taken.
+    pub(super) fn package_table_environment(
+        &mut self,
+        open: Span,
+        name: &str,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) -> bool {
+        const LONGTABLE: &str = "longtable";
+        if name != LONGTABLE || !self.packages.iter().any(|package| package == LONGTABLE) {
+            return false;
+        }
+        self.flush_paragraph(blocks, para);
+        let mut table = Vec::new();
+        self.tabular_environment(open, name, &mut table);
+        blocks.push(Block::Paragraph(table));
+        self.finish_block_dependencies();
+        true
+    }
+
+    /// Ends the row at `\\`/`\tabularnewline`; the row after a longtable
+    /// `\caption` is the caption's own.
+    fn finish_row(
+        &mut self,
+        body: f64,
+        row: &mut Vec<RawCell>,
+        entries: &mut Vec<RawEntry>,
+        state: &mut RowState,
+    ) {
+        let (argument, nobreak) = self.row_end_argument(body);
+        let done = std::mem::replace(row, vec![RawCell::new(None)]);
+        if std::mem::take(&mut state.caption_pending) {
+            self.attach_caption_tail(done, entries);
+            return;
+        }
+        entries.push(RawEntry::Row(RawRow {
+            cells: done,
+            argument,
+            nobreak,
+            kill: false,
+            color: state.row_color.take(),
+        }));
+    }
+
+    /// Material between `\caption{..}` and the `\\` ending its row (a
+    /// `\label`, usually) belongs to the caption's entry.
+    fn attach_caption_tail(&mut self, cells: Vec<RawCell>, entries: &mut Vec<RawEntry>) {
+        let tokens: Vec<InputToken> = cells.into_iter().flat_map(|cell| cell.tokens).collect();
+        if blank(&tokens) {
+            return;
+        }
+        let tail = self.tabular_cell_inlines(tokens);
+        if let Some(RawEntry::Done(Entry::Caption { content, .. })) = entries.last_mut() {
+            content.extend(tail);
+        }
+    }
+
+    /// longtable and colortbl commands the row scanner handles itself.
+    fn table_command(
+        &mut self,
+        command: &str,
+        span: Span,
+        body: f64,
+        row: &mut Vec<RawCell>,
+        entries: &mut Vec<RawEntry>,
+        state: &mut RowState,
+    ) {
+        let entry = match command {
+            // longtable.sty 358-366: `\LT@kill` ends the row, which then
+            // only contributes its widths.
+            "kill" => {
+                let done = std::mem::replace(row, vec![RawCell::new(None)]);
+                state.caption_pending = false;
+                entries.push(RawEntry::Row(RawRow {
+                    cells: done,
+                    argument: None,
+                    nobreak: false,
+                    kill: true,
+                    color: state.row_color.take(),
+                }));
+                return;
+            }
+            // longtable.sty 520-562: `\LT@end@hd@ft` closes a started row.
+            "endfirsthead" | "endhead" | "endfoot" | "endlastfoot" => {
+                let done = std::mem::replace(row, vec![RawCell::new(None)]);
+                if std::mem::take(&mut state.caption_pending) {
+                    self.attach_caption_tail(done, entries);
+                } else if !row_is_blank(&done) {
+                    entries.push(RawEntry::Row(RawRow {
+                        cells: done,
+                        argument: None,
+                        nobreak: false,
+                        kill: false,
+                        color: state.row_color.take(),
+                    }));
+                }
+                let kind = match command {
+                    "endfirsthead" => LongtableSection::FirstHead,
+                    "endhead" => LongtableSection::Head,
+                    "endfoot" => LongtableSection::Foot,
+                    _ => LongtableSection::LastFoot,
+                };
+                entries.push(RawEntry::Done(Entry::Section { kind, span }));
+                return;
+            }
+            // longtable.sty 455-485.
+            "caption" => {
+                let starred = self.take_star();
+                let _ = self.optional_bracket_argument();
+                let (tokens, argument_span) = self.required_group(command, span);
+                let content = self.tabular_cell_inlines(tokens);
+                let blank_row = row_is_blank(row);
+                if blank_row {
+                    state.caption_pending = true;
+                }
+                Entry::Caption {
+                    content,
+                    number: (!starred).then(|| self.counters.value("table").unwrap_or(0)),
+                    span: span.merge(argument_span),
+                }
+            }
+            // longtable.sty 135-137.
+            "newpage" => Entry::PageBreak { span },
+            "pagebreak" | "nopagebreak" => {
+                let _ = self.glued_bracket_argument();
+                if command == "nopagebreak" {
+                    return;
+                }
+                Entry::PageBreak { span }
+            }
+            // colortbl.sty 208-229: the colour of the next row.
+            "rowcolor" => {
+                let fill = self.color_fill(command, span, body);
+                if row_is_blank(row) {
+                    state.row_color = Some(fill);
+                } else {
+                    self.misplaced_noalign(command, span);
+                }
+                return;
+            }
+            // colortbl.sty 156-165: global, from here on.
+            _ => {
+                let color = self.table_color_argument(command, span);
+                if command == "arrayrulecolor" {
+                    self.table_rule_color = Some(color.clone());
+                    Entry::RuleColor { color }
+                } else {
+                    self.table_double_rule_sep_color = Some(color.clone());
+                    Entry::DoubleRuleSepColor { color }
+                }
+            }
+        };
+        if row_is_blank(row) {
+            *row = vec![RawCell::new(None)];
+            entries.push(RawEntry::Done(entry));
+        } else {
+            self.misplaced_noalign(command, span);
+        }
+    }
+
+    fn misplaced_noalign(&mut self, command: &str, span: Span) {
+        self.diags.push(Diagnostic::error(
+            format!("\\{command} is only allowed at the start of a table row"),
+            Some(span),
+            Some("ignored the misplaced command".into()),
+        ));
+    }
+
+    /// A `*` right after a command (`\caption*`, `\\*`).
+    fn take_star(&mut self) -> bool {
+        self.skip_spaces();
+        let Some(input) = self.token_mut(self.i) else {
+            return false;
+        };
+        let TokenKind::Word(word) = &input.token.kind else {
+            return false;
+        };
+        let Some(rest) = word.strip_prefix('*') else {
+            return false;
+        };
+        if rest.is_empty() {
+            self.i += 1;
+        } else {
+            let span = input.token.span;
+            if span.end - span.start == word.len() {
+                input.token.span = Span::in_document(span.document, span.start + 1, span.end);
+            }
+            input.token.kind = TokenKind::Word(rest.to_string());
+        }
+        true
+    }
+
+    pub(super) fn colortbl(&self) -> bool {
+        self.packages.iter().any(|package| package == "colortbl")
+    }
+
+    /// A colortbl colour argument `[model]{spec}`, kept exactly as written.
+    ///
+    /// Distinct from `parser::colors::color_argument`, which resolves
+    /// `\color`/`\textcolor` against the live `crate::color::Colors` state:
+    /// colortbl's fills are carried to the render pipeline unresolved (see
+    /// `crate::tabular::ColorSpec`).
+    pub(super) fn table_color_argument(&mut self, command: &str, span: Span) -> ColorSpec {
+        let model = self
+            .optional_bracket_argument()
+            .map(|(model, _)| model.trim().to_string());
+        let (tokens, argument_span) = self.required_group(command, span);
+        ColorSpec {
+            model,
+            spec: token_text(&tokens).trim().to_string(),
+            span: span.merge(argument_span),
+        }
+    }
+
+    /// `[model]{spec}[left][right]`: an absent right overhang copies the left
+    /// one (colortbl `\CT@rowd`, `\CT@extracte`: `\@testopt{..}{#1}`).
+    fn color_fill(&mut self, command: &str, span: Span, body: f64) -> ColorFill {
+        let color = self.table_color_argument(command, span);
+        let mut fill = ColorFill {
+            color,
+            left_pt: None,
+            right_pt: None,
+        };
+        if let Some((raw, option_span)) = self.glued_bracket_argument() {
+            let left = self.overhang(command, &raw, option_span, body);
+            fill.left_pt = left;
+            fill.right_pt = match self.glued_bracket_argument() {
+                Some((raw, option_span)) => self.overhang(command, &raw, option_span, body),
+                None => left,
+            };
+        }
+        fill
+    }
+
+    /// `[...]` whose closing bracket may be glued to following text in one
+    /// word (`[1pt][3pt]a`): only the first bracket is taken, the rest stays
+    /// in the input.
+    fn glued_bracket_argument(&mut self) -> Option<(String, Span)> {
+        self.skip_spaces();
+        let index = self.i;
+        let (inside, rest, span, len) = match self.t.get(index).map(|input| &input.token) {
+            Some(Token {
+                kind: TokenKind::Word(word),
+                span,
+            }) if word.starts_with('[') && word.contains(']') => {
+                let close = word.find(']').expect("checked");
+                (word[1..close].to_string(), word[close + 1..].to_string(), *span, word.len())
+            }
+            _ => return self.optional_bracket_argument(),
+        };
+        if rest.is_empty() {
+            self.i += 1;
+            return Some((inside, span));
+        }
+        let input = self.token_mut(index).expect("word is at the cursor");
+        let exact = span.end - span.start == len;
+        if exact {
+            input.token.span = Span::in_document(span.document, span.end - rest.len(), span.end);
+        }
+        input.token.kind = TokenKind::Word(rest.clone());
+        let taken = if exact {
+            Span::in_document(span.document, span.start, span.end - rest.len())
+        } else {
+            span
+        };
+        Some((inside, taken))
+    }
+
+    fn overhang(&mut self, command: &str, raw: &str, span: Span, body: f64) -> Option<f64> {
+        let pt = parse_dimen_pt_at(raw, body);
+        if pt.is_none() {
+            self.diags.push(Diagnostic::error(
+                format!("\\{command} overhang must be a dimension, got '{}'", raw.trim()),
+                Some(span),
+                Some("used \\tabcolsep".into()),
+            ));
+        }
+        pt
+    }
+
+    /// Runs `f` with `tokens` as the input and returns what it left unread.
+    fn with_tokens<R>(&mut self, tokens: Vec<InputToken>, f: impl FnOnce(&mut Self) -> R) -> (R, Vec<InputToken>) {
+        let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::new(tokens));
+        let outer_index = std::mem::replace(&mut self.i, 0);
+        let result = f(self);
+        let rest = self.t[self.i.min(self.t.len())..].to_vec();
+        self.t = outer_tokens;
+        self.i = outer_index;
+        (result, rest)
+    }
+
+    /// colortbl `\CT@extract`: takes `\columncolor[model]{spec}[l][r]` out of
+    /// a `>{}` group.
+    fn extract_column_color(&mut self, group: Vec<InputToken>) -> (Vec<InputToken>, Option<ColorFill>) {
+        let Some(at) = group
+            .iter()
+            .position(|input| matches!(&input.token.kind, TokenKind::Command(name) if name == "columncolor"))
+        else {
+            return (group, None);
+        };
+        let span = group[at].token.span;
+        let body = self.body_pt();
+        let mut out = group[..at].to_vec();
+        let (fill, rest) = self.with_tokens(group[at + 1..].to_vec(), |p| p.color_fill("columncolor", span, body));
+        out.extend(rest);
+        (out, Some(fill))
+    }
+
+    /// Takes `\cellcolor` and a `\multirow` out of an entry's tokens; the
+    /// multirow's text (with its braces) stays in place.
+    fn strip_cell_commands(
+        &mut self,
+        tokens: Vec<InputToken>,
+        features: TableFeatures,
+    ) -> (Vec<InputToken>, Option<ColorSpec>, Option<Multirow>) {
+        let mut color = None;
+        let mut multirow = None;
+        let mut out = Vec::with_capacity(tokens.len());
+        let mut rest = tokens;
+        loop {
+            let mut depth = 0usize;
+            let mut found = None;
+            for (index, input) in rest.iter().enumerate() {
+                match &input.token.kind {
+                    TokenKind::LBrace => depth += 1,
+                    TokenKind::RBrace => depth = depth.saturating_sub(1),
+                    TokenKind::Command(name)
+                        if depth == 0
+                            && ((features.colortbl && name == "cellcolor")
+                                || (features.multirow && name == "multirow" && multirow.is_none())) =>
+                    {
+                        found = Some(index);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            let Some(index) = found else {
+                out.extend(rest);
+                break;
+            };
+            let span = rest[index].token.span;
+            let is_color = matches!(&rest[index].token.kind, TokenKind::Command(name) if name == "cellcolor");
+            out.extend(rest[..index].iter().cloned());
+            let tail = rest[index + 1..].to_vec();
+            if is_color {
+                let (c, unread) = self.with_tokens(tail, |p| p.table_color_argument("cellcolor", span));
+                color = Some(c);
+                rest = unread;
+            } else {
+                let ((m, text), unread) = self.with_tokens(tail, |p| p.multirow_arguments(span));
+                multirow = Some(m);
+                out.extend(text);
+                rest = unread;
+            }
+        }
+        (out, color, multirow)
+    }
+
+    /// multirow.sty 151-155: `[vpos]{nrows}[bigstruts]{width}[vmove]{text}`;
+    /// returns the text group with its braces.
+    fn multirow_arguments(&mut self, span: Span) -> (Multirow, Vec<InputToken>) {
+        let body = self.body_pt();
+        let vpos = match self.optional_bracket_argument() {
+            Some((raw, _)) if raw.trim() == "t" => MultirowPos::Top,
+            Some((raw, _)) if raw.trim() == "b" => MultirowPos::Bottom,
+            _ => MultirowPos::Center,
+        };
+        let (rows_tokens, rows_span) = self.required_group("multirow", span);
+        let raw = token_text(&rows_tokens);
+        let rows = match raw.trim().parse::<f64>() {
+            Ok(rows) if rows.is_finite() => rows,
+            _ => {
+                self.diags.push(Diagnostic::error(
+                    format!("\\multirow needs a number of rows, got '{}'", raw.trim()),
+                    Some(rows_span),
+                    Some("spanned one row".into()),
+                ));
+                1.0
+            }
+        };
+        // `\multirow@piii` (158-167).
+        let (mut top, mut bottom, mut count) = (false, false, 0);
+        if let Some((raw, _)) = self.optional_bracket_argument() {
+            let mut s = raw.trim();
+            if let Some(r) = s.strip_prefix('t') {
+                top = true;
+                s = r;
+            }
+            if let Some(r) = s.strip_prefix('b') {
+                bottom = true;
+                s = r;
+            }
+            count = s.trim().parse().unwrap_or(0);
+        }
+        let (width_tokens, width_span) = self.required_group("multirow", span);
+        let width = match token_text(&width_tokens).trim() {
+            "*" => MultirowWidth::Natural,
+            "=" => MultirowWidth::Column,
+            other => match table_length(&width_tokens, body) {
+                Some(length) => MultirowWidth::Fixed(length),
+                None => {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\multirow width must be *, = or a dimension, got '{other}'"),
+                        Some(width_span),
+                        Some("set the text at its natural width".into()),
+                    ));
+                    MultirowWidth::Natural
+                }
+            },
+        };
+        let vmove_pt = match self.optional_bracket_argument() {
+            Some((raw, option_span)) => parse_dimen_pt_at(&raw, body).unwrap_or_else(|| {
+                self.diags.push(Diagnostic::error(
+                    format!("\\multirow vmove must be a dimension, got '{}'", raw.trim()),
+                    Some(option_span),
+                    Some("did not move the text".into()),
+                ));
+                0.0
+            }),
+            None => 0.0,
+        };
+        self.skip_spaces();
+        let start = self.i;
+        let (_, text_span) = self.required_group("multirow", span);
+        let text = self.t[start..self.i.min(self.t.len())].to_vec();
+        (
+            Multirow {
+                rows,
+                vpos,
+                bigstrut_count: count,
+                bigstrut_top: top,
+                bigstrut_bottom: bottom,
+                width,
+                vmove_pt,
+                span: span.merge(text_span),
+            },
+            text,
+        )
     }
 
     /// `\arraystretch` as currently defined (`1` by default).
@@ -599,26 +1190,17 @@ impl P<'_> {
         }
     }
 
-    /// The optional `*` and `[<dimen>]` after a row's `\\`.
-    fn row_end_argument(&mut self, body: f64) -> Option<f64> {
-        self.skip_spaces();
-        if let Some(input) = self.token_mut(self.i) {
-            if let TokenKind::Word(word) = &input.token.kind {
-                if let Some(rest) = word.strip_prefix('*') {
-                    if rest.is_empty() {
-                        self.i += 1;
-                    } else {
-                        let span = input.token.span;
-                        if span.end - span.start == word.len() {
-                            input.token.span =
-                                Span::in_document(span.document, span.start + 1, span.end);
-                        }
-                        input.token.kind = TokenKind::Word(rest.to_string());
-                    }
-                    self.skip_spaces();
-                }
-            }
+    /// The optional `*` and `[<dimen>]` after a row's `\\`: the dimension
+    /// and whether the star was given.
+    fn row_end_argument(&mut self, body: f64) -> (Option<f64>, bool) {
+        let star = self.take_star();
+        if star {
+            self.skip_spaces();
         }
+        (self.row_end_dimen(body), star)
+    }
+
+    fn row_end_dimen(&mut self, body: f64) -> Option<f64> {
         // `\\[2pt]Next`: keep the text glued after `]` as the next entry's.
         let glued = match self.t.get(self.i).map(|input| &input.token) {
             Some(Token {
@@ -694,9 +1276,52 @@ impl P<'_> {
                     span,
                 })
             }
+            // booktabs.sty 80-83: `\addlinespace[\defaultaddspace]`.
+            "addlinespace" => {
+                let (pt, span) = match self.glued_bracket_argument() {
+                    Some((raw, option_span)) => {
+                        let pt = font_dimen(&raw, body);
+                        if pt.is_none() {
+                            self.diags.push(Diagnostic::error(
+                                format!("\\addlinespace needs a dimension, got '{}'", raw.trim()),
+                                Some(option_span),
+                                Some("used \\defaultaddspace".into()),
+                            ));
+                        }
+                        (pt, span.merge(option_span))
+                    }
+                    None => (None, span),
+                };
+                Some(Entry::AddLineSpace { space: pt, span })
+            }
+            // booktabs.sty 77-79: `\specialrule{width}{above}{below}`.
+            "specialrule" => {
+                let mut values = [0.0f64; 3];
+                let mut whole = span;
+                for value in &mut values {
+                    let (tokens, argument_span) = self.required_group(command, span);
+                    whole = whole.merge(argument_span);
+                    let raw = token_text(&tokens);
+                    *value = parse_dimen_pt_at(&raw, body).unwrap_or_else(|| {
+                        self.diags.push(Diagnostic::error(
+                            format!("\\specialrule needs dimensions, got '{}'", raw.trim()),
+                            Some(argument_span),
+                            Some("used 0pt".into()),
+                        ));
+                        0.0
+                    });
+                }
+                Some(Entry::SpecialRule {
+                    width_pt: values[0],
+                    above_pt: values[1],
+                    below_pt: values[2],
+                    span: whole,
+                })
+            }
+            "morecmidrules" => Some(Entry::MoreCmidRules { span }),
             _ => {
                 let (width_pt, span) = self.rule_width(command, span, body);
-                let (trim_left, trim_right) = self.cmidrule_trim();
+                let (trim_left, trim_right, kern_left, kern_right) = self.cmidrule_trim(body);
                 let (tokens, argument_span) = self.required_group(command, span);
                 let span = span.merge(argument_span);
                 let (first, last) = self.column_range(command, &token_text(&tokens), n, span)?;
@@ -706,6 +1331,8 @@ impl P<'_> {
                     trim_left,
                     trim_right,
                     width_pt,
+                    kern_left,
+                    kern_right,
                     span,
                 })
             }
@@ -733,28 +1360,77 @@ impl P<'_> {
         }
     }
 
-    /// booktabs `\cmidrule(lr)` trimming.
-    fn cmidrule_trim(&mut self) -> (bool, bool) {
+    /// booktabs `\cmidrule(trim)` (`\@setrulekerning`, booktabs.sty 119-135):
+    /// `l`/`r` trim that side by `\cmidrulekern`; a braced dimension after
+    /// one (`l{.25em}`) replaces that side's kern. Returns the sides and
+    /// their explicit kerns.
+    fn cmidrule_trim(&mut self, body: f64) -> (bool, bool, Option<FontDimen>, Option<FontDimen>) {
         self.skip_spaces();
-        let Some(TokenKind::Word(word)) = self.peek().map(|token| token.kind.clone()) else {
-            return (false, false);
-        };
-        let Some(inner) = word.strip_prefix('(').and_then(|rest| rest.split_once(')')) else {
-            return (false, false);
-        };
-        let (trim, rest) = (inner.0.to_string(), inner.1.to_string());
-        if rest.is_empty() {
-            self.i += 1;
-        } else if let Some(input) = self.token_mut(self.i) {
-            let span = input.token.span;
-            if span.end - span.start == word.len() {
-                let consumed = word.len() - rest.len();
-                input.token.span =
-                    Span::in_document(span.document, span.start + consumed, span.end);
-            }
-            input.token.kind = TokenKind::Word(rest);
+        if !matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Word(word)) if word.starts_with('(')) {
+            return (false, false, None, None);
         }
-        (trim.contains('l'), trim.contains('r'))
+        let mut text = String::new();
+        while let Some(token) = self.peek().cloned() {
+            match &token.kind {
+                TokenKind::Word(word) => {
+                    let Some(close) = word.find(')') else {
+                        text.push_str(word);
+                        self.i += 1;
+                        continue;
+                    };
+                    text.push_str(&word[..close]);
+                    let rest = word[close + 1..].to_string();
+                    if rest.is_empty() {
+                        self.i += 1;
+                    } else if let Some(input) = self.token_mut(self.i) {
+                        let span = input.token.span;
+                        if span.end - span.start == word.len() {
+                            input.token.span =
+                                Span::in_document(span.document, span.start + close + 1, span.end);
+                        }
+                        input.token.kind = TokenKind::Word(rest);
+                    }
+                    break;
+                }
+                TokenKind::LBrace => text.push('{'),
+                TokenKind::RBrace => text.push('}'),
+                TokenKind::Space => {}
+                _ => break,
+            }
+            self.i += 1;
+        }
+        let inner = text.strip_prefix('(').unwrap_or(&text);
+        let (mut left, mut right, mut kern_left, mut kern_right) = (false, false, None, None);
+        let mut side = None;
+        let mut chars = inner.char_indices();
+        while let Some((index, ch)) = chars.next() {
+            match ch {
+                'l' => {
+                    left = true;
+                    kern_left = None;
+                    side = Some('l');
+                }
+                'r' => {
+                    right = true;
+                    kern_right = None;
+                    side = Some('r');
+                }
+                '{' => {
+                    let value: String = inner[index + 1..].chars().take_while(|c| *c != '}').collect();
+                    for _ in 0..=value.chars().count() {
+                        chars.next();
+                    }
+                    let pt = font_dimen(&value, body);
+                    match side {
+                        Some('l') => kern_left = pt,
+                        Some('r') => kern_right = pt,
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        (left, right, kern_left, kern_right)
     }
 
     fn column_range(
@@ -903,7 +1579,8 @@ impl P<'_> {
                     let span = match item {
                         SpecItem::Char(_, span)
                         | SpecItem::Group(_, span)
-                        | SpecItem::Command(_, span) => span,
+                        | SpecItem::Command(_, span)
+                        | SpecItem::Siunitx(_, _, span) => span,
                     };
                     self.diags.push(Diagnostic::error(
                         if last == Last::At {
@@ -982,6 +1659,12 @@ impl P<'_> {
                     pre.placed = true;
                     last = Last::Column;
                 }
+                (_, SpecItem::Siunitx(..)) => {
+                    start_column(&mut pre, last);
+                    pre.current.align = Align::Center;
+                    pre.placed = true;
+                    last = Last::Column;
+                }
                 (_, SpecItem::Group(_, span)) => {
                     self.diags.push(Diagnostic::error(
                         "unexpected braced group in the column specification",
@@ -1032,13 +1715,15 @@ impl P<'_> {
         let mut pre = Preamble::new();
         let mut last = 4u8;
         let mut pending = Pending::Par('p');
+        let mut decimal_warned = false;
         for item in items {
             if matches!(last, 6..=10) {
                 let SpecItem::Group(group, span) = item else {
                     let span = match item {
                         SpecItem::Char(_, span)
                         | SpecItem::Group(_, span)
-                        | SpecItem::Command(_, span) => span,
+                        | SpecItem::Command(_, span)
+                        | SpecItem::Siunitx(_, _, span) => span,
                     };
                     self.diags.push(Diagnostic::error(
                         "array column specification: missing braced argument",
@@ -1073,6 +1758,14 @@ impl P<'_> {
                         2
                     }
                     (9, _) => {
+                        let (group, color) = if self.colortbl() {
+                            self.extract_column_color(group)
+                        } else {
+                            (group, None)
+                        };
+                        if color.is_some() {
+                            pre.pending_color = color;
+                        }
                         prepend(&mut pre.pending_before, group);
                         3
                     }
@@ -1178,6 +1871,26 @@ impl P<'_> {
                         Some("laid the column out as c".into()),
                     ));
                     pre.array_classz(last, Align::Center);
+                    last = 0;
+                }
+                SpecItem::Siunitx(kind, options, span) => {
+                    pre.array_classz(last, Align::Center);
+                    if kind == 'S' && !decimal_warned {
+                        decimal_warned = true;
+                        self.diags.push(Diagnostic::warning(
+                            "siunitx S columns align numbers on the decimal marker, which is not implemented",
+                            Some(span),
+                            Some("centred each entry and formatted numbers as \\num does".into()),
+                        ));
+                    }
+                    pre.current_decls.siunitx = Some(SiunitxColumn {
+                        command: if kind == 'S' { "num" } else { "unit" },
+                        options: options
+                            .split(',')
+                            .filter(|key| !key.trim().starts_with("table-"))
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    });
                     last = 0;
                 }
                 SpecItem::Group(_, span) => {
@@ -1475,6 +2188,47 @@ impl P<'_> {
                     continue;
                 }
             }
+            if let SpecItem::Char(kind @ ('S' | 's'), span) = item {
+                if self.packages.iter().any(|package| package == "siunitx") {
+                    let mut options = String::new();
+                    let mut end = span;
+                    if matches!(items.peek(), Some(SpecItem::Char('[', _))) {
+                        items.next();
+                        for next in items.by_ref() {
+                            match next {
+                                SpecItem::Char(']', close) => {
+                                    end = close;
+                                    break;
+                                }
+                                SpecItem::Char(ch, close) => {
+                                    options.push(ch);
+                                    end = close;
+                                }
+                                SpecItem::Group(group, close) => {
+                                    options.push('{');
+                                    options.push_str(&token_text(&group));
+                                    options.push('}');
+                                    end = close;
+                                }
+                                SpecItem::Command(name, close) => {
+                                    options.push('\\');
+                                    options.push_str(&name);
+                                    options.push(' ');
+                                    end = close;
+                                }
+                                SpecItem::Siunitx(..) => {}
+                            }
+                        }
+                    }
+                    let full = if end.document == span.document {
+                        span.merge(end)
+                    } else {
+                        span
+                    };
+                    out.push(SpecItem::Siunitx(kind, options, full));
+                    continue;
+                }
+            }
             let SpecItem::Char('*', star_span) = item else {
                 out.push(item);
                 continue;
@@ -1520,6 +2274,58 @@ fn start_column(pre: &mut Preamble, last: Last) {
             pre.acol();
         }
     }
+}
+
+/// siunitx's `S`/`s` entry: an entry of plain text holding a digit (`S`) or
+/// any plain entry (`s`) is typeset as `\num[<options>]{...}` or
+/// `\unit[<options>]{...}`; braced, blank or command-bearing entries stay
+/// text, as siunitx leaves `{...}` entries.
+fn siunitx_entry(tokens: Vec<InputToken>, column: &SiunitxColumn) -> Vec<InputToken> {
+    let plain = tokens.iter().all(|input| match &input.token.kind {
+        TokenKind::Word(_) | TokenKind::Space | TokenKind::Comment => true,
+        TokenKind::Command(name) => {
+            column.command == "unit" || matches!(name.as_str(), "pm" | "mp" | "times" | "cdot")
+        }
+        _ => false,
+    });
+    let numeric = column.command == "unit"
+        || tokens.iter().any(|input| {
+            matches!(&input.token.kind, TokenKind::Word(word) if word.bytes().any(|b| b.is_ascii_digit()))
+        });
+    let Some(first) = tokens
+        .iter()
+        .find(|input| !matches!(input.token.kind, TokenKind::Space | TokenKind::Comment))
+    else {
+        return tokens;
+    };
+    if !plain || !numeric {
+        return tokens;
+    }
+    // The inserted tokens carry the entry's own spans, so a diagnostic from
+    // the number parser points at the entry rather than the specification.
+    let last = tokens
+        .iter()
+        .rev()
+        .find(|input| !matches!(input.token.kind, TokenKind::Space | TokenKind::Comment))
+        .unwrap_or(first);
+    let make = |kind: TokenKind, at: &InputToken| InputToken {
+        token: Token {
+            kind,
+            span: at.token.span,
+        },
+        definition: at.definition,
+        maps_to_invocation: at.maps_to_invocation,
+    };
+    let mut out = Vec::with_capacity(tokens.len() + 4);
+    out.push(make(TokenKind::Command(column.command.to_string()), first));
+    if !column.options.trim().is_empty() {
+        let options = format!("[{}]", column.options);
+        out.push(make(TokenKind::Word(options), first));
+    }
+    out.push(make(TokenKind::LBrace, first));
+    out.extend(tokens.iter().cloned());
+    out.push(make(TokenKind::RBrace, last));
+    out
 }
 
 /// A `\newcolumntype` body with `#1`..`#9` replaced by the arguments.

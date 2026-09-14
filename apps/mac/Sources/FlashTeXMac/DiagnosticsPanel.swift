@@ -77,11 +77,22 @@ extension EditorDiagnostics {
     ///     -:0: warning: Overfull line
     static func copyLine(_ d: RuntimeV1.Diagnostic, texts: [String: String] = [:]) -> String {
         let severity = d.severity == .error ? "error" : "warning"
-        guard let s = d.source else { return "-:0: \(severity): \(d.message)" }
-        if let text = texts[s.path], let line = lineNumber(ofByte: s.startByte, in: text) {
-            return "\(s.path):\(line): \(severity): \(d.message)"
+        let header: String
+        if let s = d.source {
+            if let text = texts[s.path], let line = lineNumber(ofByte: s.startByte, in: text) {
+                header = "\(s.path):\(line): \(severity): \(d.message)"
+            } else {
+                header = "\(s.path):byte\(s.startByte): \(severity): \(d.message)"
+            }
+        } else {
+            header = "-:0: \(severity): \(d.message)"
         }
-        return "\(s.path):byte\(s.startByte): \(severity): \(d.message)"
+        var lines = [header]
+        if let notes = d.notes {
+            for note in notes where !note.isEmpty { lines.append("= note: \(note)") }
+        }
+        if let help = d.help?.message, !help.isEmpty { lines.append("= help: \(help)") }
+        return lines.joined(separator: "\n")
     }
 
     /// The clipboard text for the panel: the selected group's occurrences in
@@ -92,6 +103,14 @@ extension EditorDiagnostics {
         let chosen = groups.first { $0.id == selection }.map { [$0] } ?? groups
         return chosen.flatMap { g in g.occurrences.compactMap { diagnostics.indices.contains($0) ? copyLine(diagnostics[$0], texts: texts) : nil } }
             .joined(separator: "\n")
+    }
+
+    /// Secondary label captions for the row hover (`.help`); nil when there
+    /// are none. Primary labels are the diagnostic span itself.
+    static func secondaryLabelHelp(_ d: RuntimeV1.Diagnostic) -> String? {
+        guard let labels = d.labels else { return nil }
+        let texts = labels.filter { !$0.primary }.map(\.text).filter { !$0.isEmpty }
+        return texts.isEmpty ? nil : texts.joined(separator: "\n")
     }
 }
 
@@ -290,7 +309,11 @@ struct DiagnosticsListView: View {
         let i = g.first
         let d = diags[i]
         let group = EditorDiagnostics.groupInfo(g, occurrence: k, in: diags, texts: model.compiledDocuments)
-        let gap = EditorDiagnostics.isGap(d.message) // FlashTeX gap, not an authoring error: grey puzzle piece
+        let gap = EditorDiagnostics.isGap(d) // FlashTeX gap, not an authoring error: grey puzzle piece
+        let helpFix = EditorDiagnostics.canApplyHelpReplacement(
+            d, path: model.activePath, currentText: model.activeText,
+            compiledRevision: model.result?.revision, editorRevision: model.editorRevision)
+        let secondaryHelp = EditorDiagnostics.secondaryLabelHelp(d)
         HStack(alignment: .top) {
             Image(systemName: gap ? "puzzlepiece.extension" : d.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                 .foregroundStyle(gap ? Color.secondary : d.severity == .error ? .red : .orange)
@@ -299,6 +322,14 @@ struct DiagnosticsListView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(g.title)
                     Text(location(of: g, occurrence: k, diagnostic: d, group: group)).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                }
+                if let notes = d.notes {
+                    ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
+                        Text("= note: \(note)").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if let help = d.help?.message, !help.isEmpty {
+                    Text("= help: \(help)").font(.caption).foregroundStyle(.secondary)
                 }
                 if let line = EditorDiagnostics.recoveryLine(recovery: d.recovery, status: status) {
                     Text("↳ \(line)").font(.caption).foregroundStyle(d.recovery == nil ? .tertiary : .secondary)
@@ -328,7 +359,10 @@ struct DiagnosticsListView: View {
                 Button("Go to source") { model.goToOccurrence(0, of: g, panel: panel) }
                     .help("Select the diagnostic's span in the editor (Return does the same)")
             }
-            if let x = model.explanations.explanation(resultID: model.resultID, index: i),
+            if helpFix {
+                Button("Fix…") { model.previewQuickFix(diagnosticIndex: i) }
+                    .help(d.help?.message ?? "Preview a suggested fix")
+            } else if let x = model.explanations.explanation(resultID: model.resultID, index: i),
                x.suggestions.contains(where: { !$0.edits.isEmpty }) {
                 Button("Fix…") { model.previewQuickFix(diagnosticIndex: i) }
                     .help(x.suggestions.first { !$0.edits.isEmpty }?.text ?? "Preview a suggested fix")
@@ -342,8 +376,18 @@ struct DiagnosticsListView: View {
         }
         .controlSize(.small) // 30 TeX diagnostics must fit a 260 pt panel: small trailing controls, tight rows
         .tag(g.id)
+        .modifier(SecondaryLabelHelp(text: secondaryHelp))
         .accessibleDiagnostic(d, index: i, total: diags.count, status: status,
                               explanation: model.explanations.explanation(resultID: model.resultID, index: i)?.line,
                               group: group) { model.goToOccurrence(k, of: g, panel: panel) } // FlashTeXAccessibility
+    }
+}
+
+/// Attaches `.help` only when secondary labels have caption text, so an empty
+/// hover does not override the Fix… / Go to source tooltips.
+private struct SecondaryLabelHelp: ViewModifier {
+    var text: String?
+    @ViewBuilder func body(content: Content) -> some View {
+        if let text { content.help(text) } else { content }
     }
 }

@@ -35,7 +35,7 @@ Status: `recovered`
 Diagnostics:
 
 - `environment 'tikzpicture' is not implemented; its body is typeset as plain text` — recovery: typeset the body without the environment's formatting
-- `\draw is not supported by this compiler version; unrestricted TeX math mode is not implemented` — recovery: skipped the command; any braced argument was typeset as plain text
+- `\draw is not supported by this compiler version` — recovery: skipped the command; any braced argument was typeset as plain text
 ## \includegraphics — image loading
 
 Figures lay out and number, but no image is loaded or drawn.
@@ -50,7 +50,7 @@ Status: `recovered`
 
 Diagnostics:
 
-- `\includegraphics is unsupported; image loading is not implemented` — recovery: omitted the image and continued
+- `\includegraphics: this layout does not load or draw images` — recovery: left no space for the image
 ## longtable — multi-page tables
 
 tabular is laid out, but longtable's page-breaking tables are typeset as plain text.

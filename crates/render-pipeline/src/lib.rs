@@ -11,7 +11,9 @@
 
 pub mod date;
 pub use date::TodayDate;
+pub mod abstractenv;
 pub mod adapter;
+pub(crate) mod amsthm;
 pub mod cff;
 pub mod delta;
 pub mod display;
@@ -20,12 +22,15 @@ pub mod fonts;
 pub mod graphics;
 pub mod ids;
 pub mod incremental;
+pub mod listings;
+pub mod longtable;
 pub mod mathalpha;
 pub mod mathfont;
 pub mod mathgrid;
 pub mod mathtex;
 pub mod mathtext;
 pub mod nfss;
+pub mod packages;
 pub mod pagebuild;
 pub mod params;
 pub mod pdf;
@@ -33,6 +38,7 @@ pub mod protocol;
 pub mod shape;
 pub mod style;
 pub mod table;
+pub mod tablecolor;
 pub mod tfm;
 pub mod tikz;
 pub mod toc;
@@ -185,14 +191,26 @@ pub fn render_cached(
     let in_picture = |s: &flashtex_compiler::Span| picture_ranges.get(s.document.0).is_some_and(|r| r.iter().any(|(a, b)| s.start >= *a && s.start < *b));
     let mut labels = adapter::Labels::from_parsed(&parsed);
     labels.values.extend(float_label_values);
+    // `\label` given inside an `lstlisting`'s keys (`crate::listings`).
+    labels.values.extend(listings::label_values(&texts));
     // Contents lists: entry pages come from the previous pass (`toc`).
     let entry_text = texts.get(entry_index).copied().unwrap_or("");
     let has_lists = toc::has_lists(entry_text);
+    let has_class = adapter::class_options(entry_text).is_some();
     labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>());
     // Entry titles from source bytes (`\addcontentsline`, `\chapter`,
     // `\part`, captions) are set as body text: one parse per document.
-    if has_lists {
-        let spans = toc::entry_spans(entry_text, flashtex_compiler::DocumentId(entry_index), &labels.floats);
+    // A `listings` caption may hold any body command
+    // (`caption={Generating a starter \texttt{ftxc.toml}}`), so its range
+    // is parsed the same way.
+    let has_listings = listings::present(&texts);
+    if has_lists || has_listings {
+        let mut spans = if has_lists {
+            toc::entry_spans(entry_text, flashtex_compiler::DocumentId(entry_index), &labels.floats)
+        } else {
+            Vec::new()
+        };
+        spans.extend(listings::caption_spans(&texts));
         labels.entry_items = toc::entry_items(documents, entry_index, &texts, options, &labels, &spans);
     }
     // The compiler reports the list commands, `\addcontentsline` and
@@ -209,8 +227,23 @@ pub fn render_cached(
             .iter()
             .filter(|d| !d.span.as_ref().is_some_and(&in_picture))
             .filter(|d| !d.span.as_ref().is_some_and(&is_superseded))
+            .filter(|d| !packages::preamble_command_superseded(&d.message, has_class))
             .map(|d| display::Diagnostic::from_compiler(d, &paths))
+            // `\usepackage` gaps the pipeline fills (`packages`).
+            .filter_map(|mut d| {
+                d.message = packages::supersede_message(&d.message)?;
+                Some(d)
+            })
             .collect();
+        // `abstract`: the pipeline sets what the compiler reported as an
+        // unimplemented environment (`adapter::Doc::superseded`).
+        diagnostics.retain(|d| {
+            !doc.superseded.iter().any(|s| {
+                d.sources.iter().any(|r| {
+                    r.start_byte == s.start && paths.get(s.document.0).copied() == Some(&*r.path)
+                })
+            })
+        });
         diagnostics.extend(doc.diagnostics.iter().cloned());
         diagnostics.extend(doc.limitations.iter().map(|(code, span, message)| {
             display::Diagnostic::warning(
