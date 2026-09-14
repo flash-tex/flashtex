@@ -51,6 +51,16 @@ fn superscript_x_squared() {
     assert_eq!(f5(two.x), "5.71527");
     assert_eq!(f5(b.width - two.x), "4.48613");
     assert_eq!(two.size, 7.0);
+    // The flattened glyph carries its whole box, not just the advance: a
+    // renderer that has only the width ends up substituting the painted
+    // outline's ink for the height, which is a different measurement.
+    // cmmi10 `x` is (4.30554 + 0.0) x 5.71527. The superscript's own box is
+    // cmr7 `2` at (4.51111 + 0.0), which the whole formula's height checks:
+    // 3.62892 of shift plus 4.51111 is the 8.14003 `\showbox` reports above.
+    assert_eq!(f5(x.height), "4.30554");
+    assert_eq!(f5(x.depth), "0.00000");
+    assert_eq!(f5(two.height), "4.51111");
+    assert_eq!(f5(x.baseline_y - two.baseline_y + two.height), f5(b.height));
 }
 
 #[test]

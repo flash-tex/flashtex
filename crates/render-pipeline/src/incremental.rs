@@ -551,7 +551,10 @@ pub fn place_item(item: &crate::display::Item, dy: crate::display::Tick, path: &
                 g.baseline_y = add(g.baseline_y);
             }
             for c in &mut r.clusters {
-                c.hit_rect.top = add(c.hit_rect.top);
+                c.box_rect.top = add(c.box_rect.top);
+                if let Some(ink) = &mut c.ink_rect {
+                    ink.top = add(ink.top);
+                }
                 c.carets.first.top = add(c.carets.first.top);
                 if let Some(l) = &mut c.carets.last {
                     l.top = add(l.top);

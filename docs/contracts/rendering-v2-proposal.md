@@ -122,6 +122,19 @@ Each cluster supplies hit/caret geometry from the compiler. The Mac uses those
 bounds and source ranges to navigate, after confirming the source revision or a
 validated rebase. Ligature carets need explicit positions or a documented whole-
 cluster selection fallback; dividing glyph width by character count is not exact.
+
+A cluster's `hit_rects` are its **laid-out TeX boxes**, not the extent of the
+outlines painted inside them: `width` is the advance TeX positions the next atom
+from (the TFM width, pdfTeX's `/Widths`), `top` is the baseline minus the box
+height, and `height` is the box height plus its depth. That is the definition
+`$defs.cluster.hit_rects` now carries in `protocol/rendering-v2.schema.json`,
+and it is what "the agreed cluster geometry" below means. It matters in both
+directions: a consumer must be able to hit-test a space and draw a selection
+band of line height, and a lane measuring a delimiter against pdfTeX's
+`\showbox` must get the box. The painted outline's own bounding box is a
+different measurement — it can fall short of the box or run past it — and
+travels, when negotiated, as the separate `ink_rect`
+(`protocol/proposals/display-list-v2-ink-rect.md`).
 PDF text extraction uses a ToUnicode mapping for the cluster's Unicode sequence.
 Combining sequences and duplicate outlines need extraction tests, not just visible
 rendering tests. A PDF embedding implementation that maps one glyph to only one

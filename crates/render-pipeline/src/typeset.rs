@@ -7167,12 +7167,16 @@ fn picture_items(
             clusters.push(display::Cluster {
                 text_start_byte: start,
                 text_end_byte: end,
-                hit_rect: display::Rect {
+                box_rect: display::Rect {
                     x: ox,
                     top,
                     width: adv.max(Tick(1)),
                     height: box_h,
                 },
+                // No ink bounds on the text paths: nothing measures the
+                // painted outline there, and an absent rectangle is honest
+                // where a box standing in for one would not be.
+                ink_rect: None,
                 carets: display::Carets {
                     first: display::Caret {
                         text_byte: start,
@@ -7313,12 +7317,13 @@ fn text_item(
             Cluster {
                 text_start_byte: c.text_range.start,
                 text_end_byte: c.text_range.end,
-                hit_rect: Rect {
+                box_rect: Rect {
                     x: Tick::from_tex_pt(x0),
                     top,
                     width: Tick::from_tex_pt(x1 - x0),
                     height: box_height,
                 },
+                ink_rect: None,
                 carets,
                 provenance: Provenance::Source(source_of(c.span)),
             }
@@ -7333,6 +7338,76 @@ fn text_item(
         paint,
         role: display::RunRole::Text,
     }))
+}
+
+/// The laid-out TeX box `(height, depth)` in pt of every glyph in `root`,
+/// in the order [`ml::positioned_runs`] flattens them.
+///
+/// math-layout's `MathBox` carries the box its `char_box` selected — the
+/// width, height and depth TeX positions every surrounding atom from — but
+/// `PositionedGlyph` keeps only the width. Height and depth are then the one
+/// thing the painter cannot ask for, and substituting the painted outline's
+/// ink for them is the bug this exists to remove: Latin Modern Math's `(`
+/// variants stop short of their box, and a cmex extension piece is drawn
+/// past its own.
+///
+/// `crates/math-layout`'s `PositionedGlyph` now carries `height`/`depth`
+/// directly; re-pinning `vendor/math-layout` past that retires this walk in
+/// favour of reading the two fields. Both visit the `BoxKind::Glyph` leaves
+/// of the same tree in the same pre-order, which
+/// `math_glyph_boxes_line_up_with_the_flattened_run` pins.
+fn math_glyph_boxes(root: &ml::MathBox) -> Vec<(f64, f64)> {
+    fn walk(b: &ml::MathBox, out: &mut Vec<(f64, f64)>) {
+        match &b.kind {
+            ml::BoxKind::Glyph { .. } => out.push((b.height, b.depth)),
+            ml::BoxKind::HBox(children) | ml::BoxKind::VBox(children) => {
+                for c in children {
+                    walk(&c.content, out);
+                }
+            }
+            ml::BoxKind::Rule | ml::BoxKind::Kern | ml::BoxKind::Glue { .. } => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, &mut out);
+    out
+}
+
+/// The union of the outlines a cluster actually paints, in flattened-box
+/// coordinates (TeX pt, y downward).
+///
+/// Kept apart from the cluster's TeX box on purpose: the two are different
+/// measurements and neither is a substitute for the other. A cluster whose
+/// glyphs are all blank (a `\text` space) stays [`InkBounds::default`] and
+/// reports no ink rather than a degenerate rectangle.
+#[derive(Debug, Clone, Copy, Default)]
+struct InkBounds {
+    bounds: Option<(f64, f64, f64, f64)>,
+}
+
+impl InkBounds {
+    /// Adds the outline of `gid`, drawn from `(x, baseline)` at `size` pt.
+    fn add(&mut self, face: &LoadedFace, gid: crate::ids::GlyphId, ch: Option<char>, x: f64, baseline: f64, size: f64) {
+        let b = face.bounds(gid, ch);
+        if b.empty {
+            return;
+        }
+        let (x0, x1) = (x + face.pt(i64::from(b.x_min), size), x + face.pt(i64::from(b.x_max), size));
+        let (y0, y1) = (baseline - face.pt(i64::from(b.y_max), size), baseline - face.pt(i64::from(b.y_min), size));
+        self.bounds = Some(match self.bounds {
+            None => (x0, y0, x1, y1),
+            Some((a, b2, c, d)) => (a.min(x0), b2.min(y0), c.max(x1), d.max(y1)),
+        });
+    }
+
+    fn rect(self) -> Option<display::Rect> {
+        self.bounds.map(|(x0, y0, x1, y1)| display::Rect {
+            x: Tick::from_tex_pt(x0),
+            top: Tick::from_tex_pt(y0),
+            width: Tick::from_tex_pt(x1 - x0),
+            height: Tick::from_tex_pt(y1 - y0),
+        })
+    }
 }
 
 /// One stacked extensible delimiter in a flattened math box.
@@ -7437,6 +7512,10 @@ fn math_items(
         }
     };
     let (assemblies, swallowed) = vertical_assemblies(&flat.glyphs, m);
+    // The laid-out boxes, parallel to `flat.glyphs`: a cluster's rectangle
+    // is its TeX box, never the ink of the outline drawn inside it.
+    let boxes = math_glyph_boxes(&m.root);
+    debug_assert_eq!(boxes.len(), flat.glyphs.len(), "one TeX box per flattened math glyph");
     for (gi, g) in flat.glyphs.iter().enumerate() {
         // Painted by the run's first piece, as one assembly.
         if swallowed[gi] {
@@ -7482,27 +7561,34 @@ fn math_items(
             let start = r.text.len();
             r.text.push(g.ch);
             let ci = r.clusters.len() as u32;
+            let mut ink = InkBounds::default();
             for (part, rise) in &a.parts {
+                let baseline = a.bottom - rise;
+                ink.add(&face, crate::ids::GlyphId(*part), None, g.x, baseline, g.size);
                 r.glyphs.push(Glyph {
                     gid: *part,
                     origin_x: Tick::from_tex_pt(g.x),
-                    baseline_y: Tick::from_tex_pt(a.bottom - rise),
+                    baseline_y: Tick::from_tex_pt(baseline),
                     advance_x: Tick::from_tex_pt(g.width),
                     advance_y: Tick(0),
                     cluster: ci,
                 });
             }
+            // The box is the cmex pieces TeX stacked, which is what every
+            // surrounding atom was positioned from; the assembly is painted
+            // to span it, but the two are still separate measurements.
             let top = Tick::from_tex_pt(a.top);
             let hh = Tick::from_tex_pt((a.bottom - a.top).max(0.01));
             r.clusters.push(Cluster {
                 text_start_byte: start,
                 text_end_byte: r.text.len(),
-                hit_rect: Rect {
+                box_rect: Rect {
                     x: Tick::from_tex_pt(g.x),
                     top,
                     width: Tick::from_tex_pt(g.width),
                     height: hh,
                 },
+                ink_rect: ink.rect(),
                 carets: display::Carets {
                     first: Caret {
                         text_byte: start,
@@ -7520,9 +7606,9 @@ fn math_items(
         // The advance TeX used: the laid-out glyph box's width (the TFM
         // width, pdfTeX's `/Widths`), not the painted OpenType glyph's own.
         #[cfg(feature = "amsmath-inline")]
-        let adv = g.width;
+        let paint_adv = g.width;
         #[cfg(not(feature = "amsmath-inline"))]
-        let adv = face.pt(i64::from(face.face().advance(crate::ids::GlyphId(gid)).unwrap_or(0)), g.size);
+        let paint_adv = face.pt(i64::from(face.face().advance(crate::ids::GlyphId(gid)).unwrap_or(0)), g.size);
         let (h, d) = if b.empty {
             (0.0, 0.0)
         } else {
@@ -7536,21 +7622,24 @@ fn math_items(
             Some((th, td)) if !b.empty => g.baseline_y + ((td - th) - (d - h)) / 2.0,
             _ => g.baseline_y,
         };
-        // Where the painted outline starts. `\overbrace`/`\underbrace`: Latin
-        // Modern Math's assembly parts stand for cmex's four pieces
-        // (`TexMathMetrics::otf_gid`), the left end at the first piece, the
-        // middle centred on the cusp between the two middle pieces, the right
-        // end flush with the last piece, each advancing by its own width.
-        // amsfonts' dashed-arrow head ("4B): the 1em arrow is right-aligned
-        // in the msam box. Everything else starts at its TeX box.
+        // Where the painted outline starts, and what it advances by. Both
+        // are properties of the drawn glyph, not of the box TeX laid out:
+        // the cluster's rectangle below keeps using `g.width`.
+        // `\overbrace`/`\underbrace`: Latin Modern Math's assembly parts
+        // stand for cmex's four pieces (`TexMathMetrics::otf_gid`), the left
+        // end at the first piece, the middle centred on the cusp between the
+        // two middle pieces, the right end flush with the last piece, each
+        // advancing by its own width. amsfonts' dashed-arrow head ("4B): the
+        // 1em arrow is right-aligned in the msam box. Everything else starts
+        // at its TeX box.
         let face_adv = face.pt(i64::from(face.face().advance(crate::ids::GlyphId(gid)).unwrap_or(0)), g.size);
         let ams = crate::mathfont::ams_of(g.ch);
-        let (paint_x, adv) = match (g.ch, g.gid) {
+        let (paint_x, paint_adv) = match (g.ch, g.gid) {
             ('\u{23DE}', 0x7D) | ('\u{23DF}', 0x7B) => (g.x + g.width - face_adv / 2.0, face_adv),
             ('\u{23DE}', 0x7B) | ('\u{23DF}', 0x7D) => (g.x + g.width - face_adv, face_adv),
             ('\u{23DE}' | '\u{23DF}', _) => (g.x, face_adv),
-            _ if ams.is_some_and(|a| a.name == "dashrightarrow@") => (g.x + g.width - face_adv, adv),
-            _ => (g.x, adv),
+            _ if ams.is_some_and(|a| a.name == "dashrightarrow@") => (g.x + g.width - face_adv, paint_adv),
+            _ => (g.x, paint_adv),
         };
         let start = r.text.len();
         match m.run_glyph(g) {
@@ -7565,13 +7654,28 @@ fn math_items(
             None => r.text.push(g.ch),
         }
         let ci = r.clusters.len() as u32;
-        let top = Tick::from_tex_pt(baseline_y - h);
-        let hh = Tick::from_tex_pt((h + d).max(0.01));
+        // The cluster's rectangle is the box math-layout laid out -- the one
+        // every surrounding atom was positioned from, and the one pdfTeX's
+        // `\showbox` reports. Reading `b` (the painted outline's ink) here
+        // instead is what made `\Bigg(` measure 29.90 pt inside its exact
+        // 30.00029 pt box and a lone cmex extension piece measure 12.02 pt
+        // inside 6.00006 pt. `.max` only ever binds on a genuinely empty
+        // box, and keeps such a cluster clickable.
+        //
+        // Indexed, not `get(...).unwrap_or(ink)`: falling back to ink here
+        // would put the old silent wrong answer back, and the two walks
+        // visit the same leaves of the same tree (pinned by
+        // `math_glyph_boxes_line_up_with_the_flattened_run`).
+        let (box_h, box_d) = boxes[gi];
+        let top = Tick::from_tex_pt(g.baseline_y - box_h);
+        let box_height = Tick::from_tex_pt((box_h + box_d).max(0.01));
+        let mut ink = InkBounds::default();
+        ink.add(&face, crate::ids::GlyphId(gid), Some(g.ch), paint_x, baseline_y, g.size);
         r.glyphs.push(Glyph {
             gid,
             origin_x: Tick::from_tex_pt(paint_x),
             baseline_y: Tick::from_tex_pt(baseline_y),
-            advance_x: Tick::from_tex_pt(adv),
+            advance_x: Tick::from_tex_pt(paint_adv),
             advance_y: Tick(0),
             cluster: ci,
         });
@@ -7585,9 +7689,11 @@ fn math_items(
             let sb = face.bounds(slash, Some('\u{0338}'));
             if !b.empty && !sb.empty {
                 let centre = |x0: i32, x1: i32| face.pt(i64::from(x0) + i64::from(x1), g.size) / 2.0;
+                let slash_x = paint_x + centre(b.x_min, b.x_max) - centre(sb.x_min, sb.x_max);
+                ink.add(&face, slash, Some('\u{0338}'), slash_x, baseline_y, g.size);
                 r.glyphs.push(Glyph {
                     gid: slash.0,
-                    origin_x: Tick::from_tex_pt(paint_x + centre(b.x_min, b.x_max) - centre(sb.x_min, sb.x_max)),
+                    origin_x: Tick::from_tex_pt(slash_x),
                     baseline_y: Tick::from_tex_pt(baseline_y),
                     advance_x: Tick(0),
                     advance_y: Tick(0),
@@ -7598,18 +7704,19 @@ fn math_items(
         r.clusters.push(Cluster {
             text_start_byte: start,
             text_end_byte: r.text.len(),
-            hit_rect: Rect {
+            box_rect: Rect {
                 x: Tick::from_tex_pt(g.x),
                 top,
-                width: Tick::from_tex_pt(adv),
-                height: hh,
+                width: Tick::from_tex_pt(g.width),
+                height: box_height,
             },
+            ink_rect: ink.rect(),
             carets: display::Carets {
                 first: Caret {
                     text_byte: start,
                     x: Tick::from_tex_pt(g.x),
                     top,
-                    height: hh,
+                    height: box_height,
                 },
                 last: None,
             },
@@ -7683,5 +7790,54 @@ mod math_paint_tests {
         // Partly outside every range, or before it: unpainted.
         assert_eq!(innermost_paint(&ranges, 5, 12), None);
         assert_eq!(innermost_paint(&ranges, 0, 1), None);
+    }
+}
+
+#[cfg(test)]
+mod math_box_tests {
+    use super::*;
+
+    fn glyph(width: f64, height: f64, depth: f64) -> ml::MathBox {
+        ml::MathBox::glyph(&ml::Glyph {
+            font_id: ml::FontId(0),
+            gid: 1,
+            ch: 'x',
+            size: 10.0,
+            width,
+            height,
+            depth,
+            italic: 0.0,
+            skew: 0.0,
+        })
+    }
+
+    /// [`math_glyph_boxes`] stands in for the `height`/`depth` that
+    /// math-layout's `PositionedGlyph` drops, so it must visit exactly the
+    /// glyph leaves [`ml::positioned_runs`] flattens, in the same order.
+    /// Rules, kerns and glue contribute no glyph to either.
+    #[test]
+    fn math_glyph_boxes_line_up_with_the_flattened_run() {
+        let tree = ml::MathBox::hbox(vec![
+            (0.0, glyph(1.0, 7.0, 2.0)),
+            (0.0, ml::MathBox::kern(3.0)),
+            (
+                0.0,
+                ml::MathBox::vbox(vec![
+                    (0.0, glyph(2.0, 8.0, 3.0)),
+                    (0.0, ml::MathBox::rule(4.0, 0.4, 0.0)),
+                    (0.0, ml::MathBox::hbox(vec![(0.0, glyph(3.0, 9.0, 4.0)), (0.0, glyph(4.0, 10.0, 5.0))])),
+                ]),
+            ),
+            (0.0, ml::MathBox::glue(1.0, 0.0)),
+            (0.0, glyph(5.0, 11.0, 6.0)),
+        ]);
+        let boxes = math_glyph_boxes(&tree);
+        let flat = ml::positioned_runs(&tree, (0.0, 0.0));
+        assert_eq!(boxes.len(), flat.glyphs.len(), "one box per flattened glyph");
+        // The widths pair the two walks up positionally: each flattened
+        // glyph's width is the one its box was built with.
+        let widths: Vec<f64> = flat.glyphs.iter().map(|g| g.width).collect();
+        assert_eq!(widths, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+        assert_eq!(boxes, vec![(7.0, 2.0), (8.0, 3.0), (9.0, 4.0), (10.0, 5.0), (11.0, 6.0)]);
     }
 }

@@ -103,6 +103,7 @@
     },
     "rect": {
       "type": "object",
+      "description": "An axis-aligned rectangle in ticks, top-left anchored, y downward. A rect carries no unit of meaning on its own: the field holding it says whether it measures a laid-out TeX box or the ink of a painted outline, and the two are different measurements of the same glyph.",
       "properties": {
         "x": {
           "$ref": "#/$defs/tick"
@@ -169,12 +170,17 @@
           "maximum": 9007199254740991
         },
         "hit_rects": {
+          "description": "The cluster's laid-out TeX boxes, never the extent of the outlines painted inside them: width is the advance TeX positions the next atom from (the TFM width, pdfTeX's /Widths), top is baseline minus the box height, height is box height plus box depth. This is the number to read when measuring against pdfTeX's \\showbox, and the target to hit-test and to draw a caret highlight over. A cluster broken across lines would carry several; the pipeline emits exactly one.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/rect"
           },
           "minItems": 1,
           "maxItems": 128
+        },
+        "ink_rect": {
+          "description": "PROPOSAL (protocol/proposals/display-list-v2-ink-rect.md, capability display-list-v2-ink-rect): the tight bounding box of the outline actually painted for the cluster. Absent unless negotiated, and absent rather than zero-sized when there is no ink. It is not a measurement of the box and may fall outside hit_rects on any side: Latin Modern Math's round paren ends stop short of their box, and a cmex extension piece is drawn past its own so that stacked copies overlap.",
+          "$ref": "#/$defs/rect"
         },
         "carets": {
           "type": "array",

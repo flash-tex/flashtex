@@ -23,7 +23,11 @@ fn doc(body: &str) -> String {
 const ROWS: &str = "\\begin{array}{c} a \\\\ b \\\\ c \\\\ d \\\\ e \\\\ f \\end{array}";
 
 /// The painted glyphs of the first cluster whose text is `ch`, as
-/// `(glyph id, baseline in TeX pt)`, plus the cluster's box top and height.
+/// `(glyph id, baseline in TeX pt)`, plus the top and height of its
+/// **laid-out TeX box** (`Cluster::box_rect`, the wire's `hit_rects`).
+///
+/// Not `ink_rect`: that is the extent of the outline painted inside the
+/// box, which for these fences is deliberately a different number.
 fn fence(body: &str, ch: char) -> (Vec<(u16, f64)>, f64, f64) {
     let r = render_one(&doc(body));
     for page in &r.v2.pages {
@@ -39,7 +43,7 @@ fn fence(body: &str, ch: char) -> (Vec<(u16, f64)>, f64, f64) {
                     .filter(|g| g.cluster as usize == ci)
                     .map(|g| (g.gid, g.baseline_y.to_bp() / BP))
                     .collect();
-                return (glyphs, c.hit_rect.top.to_bp() / BP, c.hit_rect.height.to_bp() / BP);
+                return (glyphs, c.box_rect.top.to_bp() / BP, c.box_rect.height.to_bp() / BP);
             }
         }
     }
