@@ -187,6 +187,7 @@ fn prepare<'a>(text: &'a str, document: DocumentId) -> Prepared<'a> {
     if !(has_labels
         || has_urls
         || text.contains("\\verb")
+        || text.contains("\\lstinline")
         || text.contains("verbatim")
         || text.contains("lstlisting"))
     {
@@ -203,6 +204,16 @@ fn prepare<'a>(text: &'a str, document: DocumentId) -> Prepared<'a> {
                 let (start, end) = (token.span.start, token.span.end);
                 prepared.verbs.insert(start, token.clone());
                 prepared.skip.push((start + 1, end));
+                // listings' `\lstinline[keys]<d>...<d>` is spelled over as
+                // `\verb` in the copy the engine reads. The engine then
+                // takes the same `\verb` path (the body is all blanks by
+                // then, so what it reads is one space-delimited empty
+                // argument), and the conversion below maps the position
+                // back to *this* token — the one the compiler's own lexer
+                // built, which carries the listing's real text. So
+                // `\lstinline` needs no expansion primitive of its own and
+                // its keys and delimiters never reach the engine.
+                bytes[start..start + 5].copy_from_slice(b"\\verb");
                 // `\verb` + blanks + `\/`: the engine reads one undefined
                 // control word (mapped back to this token) and a control
                 // symbol that restores mid-line state, so a space after the

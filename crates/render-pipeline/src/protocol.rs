@@ -298,13 +298,50 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
         .and_then(|v| v.as_str())
         .map(std::path::PathBuf::from)
         .filter(|p| p.is_absolute());
-    let with_root;
-    let options = match request_root {
-        Some(root) => {
-            with_root = RenderOptions { project_root: Some(root), ..options.clone() };
-            &with_root
+    // `payload.date` -- the civil date `\today` renders
+    // (protocol/proposals/runtime-v1-request-date.md). This worker never reads
+    // the clock: runtime-v1 requires byte-identical output for byte-identical
+    // input, so the caller reads it and sends the answer.
+    //
+    // Absent means the Unix epoch, exactly what this worker printed before the
+    // field existed, so old clients and committed fixtures are byte-identical.
+    // Malformed is an error -- never a silent fallback to some other date.
+    let request_date = match payload.get("date") {
+        None => None,
+        Some(v) => {
+            let Some(text) = v.as_str() else {
+                return Reply {
+                    line: json::write(&failed(&id, &project_id, revision,
+                        "compile payload 'date' must be a string in YYYY-MM-DD form", None)),
+                    extra_lines: Vec::new(),
+                    rendered: None,
+                    id,
+                };
+            };
+            match crate::date::TodayDate::parse_iso(text) {
+                Ok(date) => Some(date),
+                Err(error) => {
+                    return Reply {
+                        line: json::write(&failed(&id, &project_id, revision,
+                            &format!("compile payload 'date' is invalid ({text:?}): {error}"), None)),
+                        extra_lines: Vec::new(),
+                        rendered: None,
+                        id,
+                    };
+                }
+            }
         }
-        None => options,
+    };
+    let with_request_fields;
+    let options = if request_root.is_some() || request_date.is_some() {
+        with_request_fields = RenderOptions {
+            project_root: request_root.or_else(|| options.project_root.clone()),
+            today: request_date.unwrap_or(options.today),
+            ..options.clone()
+        };
+        &with_request_fields
+    } else {
+        options
     };
     let rendered = render_cached(&sources, &entry_path, revision.max(0) as u64, &project_id, fonts, options, cache);
     let limit = max_reply_bytes();

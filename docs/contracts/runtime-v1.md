@@ -69,6 +69,15 @@ a secure network implementation.
   and Pencil input are required for acceptance; generated fixtures are insufficient.
 - Commander: owns v1 changes until an interface owner is explicitly reassigned.
 
+## Proposed optional request date
+
+`payload.date` (a `YYYY-MM-DD` civil date) is proposed in
+[protocol/proposals/runtime-v1-request-date.md](../../protocol/proposals/runtime-v1-request-date.md):
+`\today` must print the real date, and the only way to do that without breaking
+the determinism rule above is for the caller to read the clock and send the
+answer as an ordinary request input. An absent field means the Unix epoch, so
+every request written against this document stays valid and byte-identical.
+
 ## Optional negotiated layout extension
 
 See [runtime-v1-layout-capabilities.md](runtime-v1-layout-capabilities.md) for per-request

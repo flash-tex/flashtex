@@ -399,7 +399,7 @@ enum EditorIntelligence {
         static let beyondCompiler: Set<String> = [
             "chapter", "part", "paragraph", "autoref", "cref", "citep", "citet",
             "def", "newline", "hline", "toprule", "midrule",
-            "bottomrule", "multicolumn", "verb", "today", "%", "$", "&", "#", "_", "{", "}",
+            "bottomrule", "multicolumn", "verb", "%", "$", "&", "#", "_", "{", "}",
             "geometry", "onehalfspacing", "doublespacing",
         ]
         static let environmentsBeyondCompiler: Set<String> = [
@@ -555,10 +555,27 @@ final class LineNumberGutter: NSRulerView {
     /// a faint grey tick, never a red or orange dot.
     private(set) var gapLines: Set<Int> = []
     /// Current line (caret), highlighted in the gutter.
-    var currentLine: Int? { didSet { if currentLine != oldValue { needsDisplay = true } } }
+    var currentLine: Int? { didSet { if currentLine != oldValue { setNeedsRedraw() } } }
+    /// Hybrid relative numbering for Vim users (`EditorPreferences.relativeLineNumbers`,
+    /// off by default and independent of whether Vim keybindings are on).
+    var relativeLineNumbers = false { didSet { if relativeLineNumbers != oldValue { setNeedsRedraw() } } }
+    /// Test seam, like `CaretFollow.enabledOverride`: a hosted editor reads the
+    /// shared preferences, which a test cannot inject into. Set it in `setUp`
+    /// and clear it in `tearDown`.
+    nonisolated(unsafe) static var relativeOverride: Bool?
     /// The model that answers "which line is this offset on".
     var lineTable: (() -> SyntaxHighlighter)?
     private var digits = 2
+    /// Counts the times the gutter has asked to be redrawn. `needsDisplay` is
+    /// not observable from a test — AppKit re-dirties a view that is in a
+    /// window, and ignores the flag on a view that is not — so the request
+    /// itself is counted, which is the thing the caller controls.
+    private(set) var redrawRequests = 0
+
+    private func setNeedsRedraw() {
+        redrawRequests += 1
+        needsDisplay = true
+    }
 
     init(scrollView: NSScrollView) {
         super.init(scrollView: scrollView, orientation: .verticalRuler)
@@ -581,7 +598,7 @@ final class LineNumberGutter: NSRulerView {
             if EditorDiagnostics.isGap(mark.message) { gaps.insert(line); continue }
             if result[line] != .error { result[line] = mark.severity }
         }
-        if result != severities || gaps != gapLines { severities = result; gapLines = gaps; needsDisplay = true }
+        if result != severities || gaps != gapLines { severities = result; gapLines = gaps; setNeedsRedraw() }
     }
 
     /// Adjusts the width to the line count and the editor font.
@@ -593,8 +610,21 @@ final class LineNumberGutter: NSRulerView {
         if wanted != digits || abs(thickness - ruleThickness) > 0.5 {
             digits = wanted
             ruleThickness = thickness
-            needsDisplay = true
+            setNeedsRedraw()
         }
+    }
+
+    /// The label for logical line `line` (0-based), given the caret's line.
+    ///
+    /// Vim's hybrid `number` + `relativenumber`: the caret's own line keeps its
+    /// absolute number, so you always know where you are, while every other
+    /// line shows its distance in *logical* lines — the count `5j` and `3k`
+    /// take. Plain `relativenumber` would print `0` on the current line, which
+    /// is the less useful of the two and not what most people mean by this.
+    /// Falls back to absolute numbering when there is no caret line.
+    static func label(line: Int, currentLine: Int?, relative: Bool) -> String {
+        guard relative, let current = currentLine, line != current else { return String(line + 1) }
+        return String(abs(line - current))
     }
 
     var numberFont: NSFont {
@@ -639,7 +669,7 @@ final class LineNumberGutter: NSRulerView {
                 if inRuler.minY > rect.maxY + 20 { break }
                 line += 1; continue
             }
-            let label = String(line + 1) as NSString
+            let label = Self.label(line: line, currentLine: currentLine, relative: relativeLineNumbers) as NSString
             let attrs = line == currentLine ? currentAttrs : numberAttrs
             let size = label.size(withAttributes: attrs)
             let baselineAdjust = (fragment.height - size.height) / 2

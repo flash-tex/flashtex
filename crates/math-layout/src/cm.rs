@@ -497,6 +497,58 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
         '\u{22C1}' => (Extension, 0x57),
         '\u{22C0}' => (Extension, 0x56),
         '\u{2210}' => (Extension, 0x60),
+        // fontmath.ltx 262/250: \bigsqcup and \biguplus, the two
+        // `largesymbols` \mathop operators the table was missing.
+        '\u{2A06}' => (Extension, 0x46),
+        '\u{2A04}' => (Extension, 0x55),
+        // LaTeX kernel \DeclareMathSymbol rows from the `symbols` family
+        // (cmsy), fontmath.ltx line in the comment.
+        '\u{2296}' => (Symbol, 0x09), // \ominus 289
+        '\u{2298}' => (Symbol, 0x0B), // \oslash 287
+        '\u{2299}' => (Symbol, 0x0C), // \odot 286
+        '\u{25EF}' => (Symbol, 0x0D), // \bigcirc 294
+        '\u{2219}' => (Symbol, 0x0F), // \bullet 283
+        '\u{22C4}' => (Symbol, 0x05), // \diamond 282
+        '\u{224D}' => (Symbol, 0x10), // \asymp 346
+        '\u{2AAF}' => (Symbol, 0x16), // \preceq 324
+        '\u{2AB0}' => (Symbol, 0x17), // \succeq 323
+        '\u{227A}' => (Symbol, 0x1E), // \prec 321
+        '\u{227B}' => (Symbol, 0x1F), // \succ 320
+        '\u{2197}' => (Symbol, 0x25), // \nearrow 307
+        '\u{2198}' => (Symbol, 0x26), // \searrow 308
+        '\u{2196}' => (Symbol, 0x2D), // \nwarrow 309
+        '\u{2199}' => (Symbol, 0x2E), // \swarrow 310
+        '\u{228E}' => (Symbol, 0x5D), // \uplus 280
+        '\u{2240}' => (Symbol, 0x6F), // \wr 284
+        '\u{221A}' => (Symbol, 0x70), // \surd 242 (\mathchar"1270, braced -> Ord)
+        '\u{2A3F}' => (Symbol, 0x71), // \amalg 281
+        '\u{2294}' => (Symbol, 0x74), // \sqcup 279
+        '\u{2293}' => (Symbol, 0x75), // \sqcap 278
+        '\u{2291}' => (Symbol, 0x76), // \sqsubseteq 301
+        '\u{2292}' => (Symbol, 0x77), // \sqsupseteq 302
+        '\u{00A7}' => (Symbol, 0x78), // \mathsection 508
+        '\u{2020}' => (Symbol, 0x79), // \dagger 277
+        '\u{2021}' => (Symbol, 0x7A), // \ddagger 276
+        '\u{00B6}' => (Symbol, 0x7B), // \mathparagraph 507
+        '\u{2663}' => (Symbol, 0x7C), // \clubsuit 237
+        '\u{2662}' => (Symbol, 0x7D), // \diamondsuit 238
+        '\u{2661}' => (Symbol, 0x7E), // \heartsuit 239
+        '\u{2660}' => (Symbol, 0x7F), // \spadesuit 240
+        // Kernel rows from the `letters` family (cmmi).
+        '\u{21BC}' => (Italic, 0x28), // \leftharpoonup 349
+        '\u{21BD}' => (Italic, 0x29), // \leftharpoondown 350
+        '\u{21C0}' => (Italic, 0x2A), // \rightharpoonup 351
+        '\u{21C1}' => (Italic, 0x2B), // \rightharpoondown 352
+        '\u{25B7}' => (Italic, 0x2E), // \triangleright 265
+        '\u{25C1}' => (Italic, 0x2F), // \triangleleft 264
+        '\u{22C6}' => (Italic, 0x3F), // \star 299
+        '\u{266D}' => (Italic, 0x5B), // \flat 234
+        '\u{266E}' => (Italic, 0x5C), // \natural 235
+        '\u{266F}' => (Italic, 0x5D), // \sharp 236
+        '\u{2323}' => (Italic, 0x5E), // \smile 347
+        '\u{2322}' => (Italic, 0x5F), // \frown 348
+        // Kernel row from the `operators` family (cmr): fontmath.ltx 509.
+        '$' => (Roman, 0x24), // \mathdollar
         // Accents (plain.tex \mathaccent slots).
         '^' | '\u{02C6}' => (Roman, 0x5E),
         '~' | '\u{02DC}' => (Roman, 0x7E),
@@ -509,8 +561,12 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
         '\u{02C7}' => (Roman, 0x14),
         '\u{20D7}' => (Italic, 0x7E),
         // \imath, \jmath
-        '\u{0131}' => (Italic, 0x7B),
-        '\u{0237}' => (Italic, 0x7C),
+        // Both the text dotless pair and the Mathematical Alphanumeric pair
+        // `unicode-math` names for these two commands, which is what the
+        // compiler emits (it is 0.322456 em / 0.384030 em wide in Latin Modern
+        // Math, cmmi10's width; the text pair is 14% and 20% narrow there).
+        '\u{0131}' | '\u{1D6A4}' => (Italic, 0x7B),
+        '\u{0237}' | '\u{1D6A5}' => (Italic, 0x7C),
         _ => return None,
     })
 }
@@ -631,9 +687,8 @@ impl MathFontMetrics for CmMathMetrics {
         self.extension_recipe(0x70, '\u{221A}', size)
     }
 
-    /// `\operator@font` is the roman family (cmr) at the current size.
-    fn extension_glyph(&self, code: u8, ch: char) -> Option<Glyph> {
-        self.make_glyph(Family::Extension, code, ch, SizeClass::Text)
+    fn extension_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
+        self.make_glyph(Family::Extension, code, ch, size)
     }
 
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
@@ -674,6 +729,48 @@ pub fn size_pt(m: &CmMathMetrics, size: SizeClass) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `\overbrace`/`\underbrace` set `\braceld`..`\braceru` inside
+    /// `\downbracefill`/`\upbracefill`'s own `$...$`, so the pieces always
+    /// come from `\textfont3` — never `\scriptfont3`, however deeply the
+    /// brace sits in scripts.
+    ///
+    /// The two differ only when family 3 is not one fixed font, which is
+    /// what amsmath's redeclaration does ([`ExtensionSizing::Designs`]). In
+    /// an 11 pt article loading amsmath, pdfTeX 3.141592653 (TeX Live 2025)
+    /// reports `\fontname\textfont3` = `cmex10 at 10.95pt` and
+    /// `\fontname\scriptfont3` = `cmex8`, and `\showbox` of `\overbrace{a+b}`,
+    /// `x^{\overbrace{a+b}}`, `x^{y^{\overbrace{a+b}}}` and an `\underbrace`
+    /// in a fraction numerator all place the same `\hbox(1.31396+0.0)` piece
+    /// from cmex10 at 10.95 pt.
+    #[test]
+    fn brace_pieces_come_from_textfont3_even_inside_scripts() {
+        use crate::mathlist::{Atom, MathList};
+        let m = CmMathMetrics::for_text_size(10.95).with_extension(ExtensionSizing::Designs);
+        assert_eq!(m.sizes, [10.95, 8.0, 6.0]);
+        let brace = || Atom::brace(MathList::new(vec![Atom::ord('a')]), false);
+        let bare = MathList::new(vec![brace()]);
+        let mut x = Atom::ord('x');
+        x.superscript = Some(MathList::new(vec![brace()]));
+        let mut y = Atom::ord('y');
+        y.superscript = Some(MathList::new(vec![x.clone()]));
+        for list in [bare, MathList::new(vec![x]), MathList::new(vec![y])] {
+            let root = crate::layout(&list, crate::Style::DISPLAY, &m);
+            let pieces: Vec<_> = crate::positioned_runs(&root, (0.0, 0.0))
+                .glyphs
+                .into_iter()
+                .filter(|g| g.ch == '\u{23DE}')
+                .collect();
+            assert_eq!(pieces.len(), 4, "four `\\downbracefill` pieces");
+            for p in pieces {
+                assert_eq!(p.font_id, font_id_of(&CMEX10), "cmex10, not cmex8");
+                assert_eq!(format!("{:.5}", p.size), "10.95000");
+                // cmex10 "7A height 0.119997 em: pdfTeX's 1.31396 pt piece.
+                let g = m.extension_glyph(0x7A, '\u{23DE}', SizeClass::Text).expect("piece");
+                assert_eq!(format!("{:.5}", g.height), "1.31396");
+            }
+        }
+    }
 
     /// `fontmath.ltx` 278-279 and 301-302 put the square relations in the
     /// `symbols` (cmsy) family, so they box from the cmsy TFM exactly as

@@ -43,6 +43,17 @@ public enum RuntimeV1 {
         /// producer (`project_root`, display-list-v2-images proposal §2).
         /// Optional; omitted from the wire when nil. Old producers ignore it.
         public var projectRoot: String?
+        /// The civil date `\today` renders, `YYYY-MM-DD`
+        /// (`date`, runtime-v1-request-date proposal).
+        ///
+        /// The compiler must never read the wall clock -- runtime-v1 requires
+        /// byte-identical output for byte-identical input -- so the app reads
+        /// it and sends the answer. A civil date rather than a timestamp
+        /// because `\today` is a local calendar date; see `RuntimeV1.localDate`.
+        ///
+        /// Optional; omitted from the wire when nil, and an omitted date
+        /// compiles as the Unix epoch exactly as before. Old workers ignore it.
+        public var date: String?
 
         public struct DisplayListBase: Codable, Equatable {
             public var requestId: String
@@ -63,14 +74,17 @@ public enum RuntimeV1 {
             case layoutCapabilities = "layout_capabilities"
             case displayListBase = "display_list_base"
             case projectRoot = "project_root"
+            case date
         }
         public init(projectId: String, revision: Int, entryPath: String, documents: [Document],
-                    layoutCapabilities: [String]? = nil, displayListBase: DisplayListBase? = nil, projectRoot: String? = nil) {
+                    layoutCapabilities: [String]? = nil, displayListBase: DisplayListBase? = nil, projectRoot: String? = nil,
+                    date: String? = nil) {
             self.projectId = projectId; self.revision = revision
             self.entryPath = entryPath; self.documents = documents
             self.layoutCapabilities = layoutCapabilities
             self.displayListBase = displayListBase
             self.projectRoot = projectRoot
+            self.date = date
         }
 
         public init(from decoder: Decoder) throws {
@@ -83,6 +97,8 @@ public enum RuntimeV1 {
             if let caps = layoutCapabilities { try LayoutCapabilities.validate(caps) }
             displayListBase = try c.decodeIfPresent(DisplayListBase.self, forKey: .displayListBase)
             projectRoot = try c.decodeIfPresent(String.self, forKey: .projectRoot)
+            date = try c.decodeIfPresent(String.self, forKey: .date)
+            if let date { try RuntimeV1.validateDate(date) }
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -97,7 +113,56 @@ public enum RuntimeV1 {
             }
             if let base = displayListBase { try c.encode(base, forKey: .displayListBase) }
             if let root = projectRoot { try c.encode(root, forKey: .projectRoot) }
+            if let date {
+                try RuntimeV1.validateDate(date)
+                try c.encode(date, forKey: .date)
+            }
         }
+    }
+
+    /// Rejects anything that is not exactly a `YYYY-MM-DD` civil date.
+    ///
+    /// Strict on purpose. The worker refuses a malformed date rather than
+    /// guessing, so catching it here turns a failed compile into a programming
+    /// error at the call site instead.
+    public static func validateDate(_ value: String) throws {
+        let bytes = Array(value.utf8)
+        guard bytes.count == 10, bytes[4] == UInt8(ascii: "-"), bytes[7] == UInt8(ascii: "-") else {
+            throw DecodeError.invalidDate(value)
+        }
+        func number(_ range: Range<Int>) throws -> Int {
+            var n = 0
+            for i in range {
+                guard bytes[i] >= UInt8(ascii: "0"), bytes[i] <= UInt8(ascii: "9") else {
+                    throw DecodeError.invalidDate(value)
+                }
+                n = n * 10 + Int(bytes[i] - UInt8(ascii: "0"))
+            }
+            return n
+        }
+        let year = try number(0..<4), month = try number(5..<7), day = try number(8..<10)
+        guard (1...9999).contains(year), (1...12).contains(month) else {
+            throw DecodeError.invalidDate(value)
+        }
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+        let lengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        guard (1...lengths[month - 1]).contains(day) else {
+            throw DecodeError.invalidDate(value)
+        }
+    }
+
+    /// Today's date in the user's own calendar and timezone, in the wire form.
+    ///
+    /// This is the clock read the engine is forbidden to make. `Calendar.current`
+    /// is deliberate: `\today` is a *local* calendar date, so a UTC instant
+    /// would print the neighbouring day for much of the world near midnight.
+    /// The Gregorian components are requested explicitly so a non-Gregorian
+    /// user calendar still yields the Gregorian date LaTeX renders.
+    public static func localDate(_ now: Date = Date(), timeZone: TimeZone = .current) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let c = calendar.dateComponents([.year, .month, .day], from: now)
+        return String(format: "%04d-%02d-%02d", c.year ?? 1970, c.month ?? 1, c.day ?? 1)
     }
 
     /// Negotiated layout capabilities (runtime-v1-layout-capabilities.md).
@@ -353,6 +418,10 @@ public enum RuntimeV1 {
         case unsupportedVersion(Int)
         case unexpectedType(expected: String, actual: String)
         case invalidLayoutCapabilities(String)
+        /// `payload.date` was not a `YYYY-MM-DD` civil date. The worker refuses
+        /// a malformed date rather than guessing at another one, so this is
+        /// caught here too rather than being sent and failing the compile.
+        case invalidDate(String)
     }
 
     /// Fast path first (FastJSON, same values for every valid frame); any

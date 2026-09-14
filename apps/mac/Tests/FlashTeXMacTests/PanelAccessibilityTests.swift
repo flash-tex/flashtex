@@ -187,10 +187,11 @@ final class PanelAccessibilityTests: XCTestCase {
 
     /// Switches EditorPreferencesView puts in the focus ring, in one place so a
     /// new toggle is updated once rather than in each Settings test: wrap long
-    /// lines, auto-close brackets, show completion list, check spelling, Vim
-    /// keybindings, preview follows the caret, and the two error-lens rows.
+    /// lines, auto-close brackets, show completion list, check spelling,
+    /// relative line numbers, Vim keybindings, preview follows the caret, and
+    /// the two error-lens rows.
     /// Both assertions below print the control list when this drifts.
-    static let preferencesSwitchCount = 8
+    static let preferencesSwitchCount = 9
 
     /// The Capture conversion section (ConversionPreferencesView.swift, shown
     /// in the app's Settings after the editor sections): its AppKit-backed
@@ -216,7 +217,8 @@ final class PanelAccessibilityTests: XCTestCase {
         let window = try await host(EditorPreferencesView(preferences: prefs), title: "Editor Preferences", size: NSSize(width: 480, height: 640))
         // Pop-up, slider, size stepper, wrap switch, tab-width stepper, segmented
         // control, then the Typing switches: auto-close, completion list, spelling,
-        // Vim keybindings, preview-follows-the-caret and the two error-lens rows.
+        // relative line numbers, Vim keybindings, preview-follows-the-caret and
+        // the two error-lens rows.
         let controls = assertControlsTakeKeyboardFocus(in: window, panel: "Settings", atLeast: 8)
         let kinds = controls.map { String(describing: type(of: $0)) }
         XCTAssertTrue(kinds.contains { $0.contains("PopupButton") || $0.contains("PopUpButton") }, kinds.description)

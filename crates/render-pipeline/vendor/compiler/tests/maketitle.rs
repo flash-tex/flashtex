@@ -7,7 +7,8 @@
 //! reproduces them without a dependency on that crate.
 use flashtex_compiler::incremental::compile_full_project;
 use flashtex_compiler::layout::{LayoutConstraints, LINE_SPACING, MARGIN_PT};
-use flashtex_compiler::parser::{parse, Block, Inline, SourceDocument, TODAY_TEXT};
+use flashtex_compiler::date::TodayDate;
+use flashtex_compiler::parser::{parse, Block, Inline, SourceDocument};
 
 fn doc(preamble: &str, body: &str) -> String {
     format!("\\documentclass{{article}}{preamble}\\begin{{document}}{body}\\end{{document}}")
@@ -63,8 +64,12 @@ fn maketitle_without_title_or_author_is_an_honest_error_not_a_placeholder() {
         .any(|b| matches!(b, Block::TitleBlock { .. })));
 }
 
+/// latex.ltx 17225 is `\gdef\@date{\today}`, so a document with no `\date` at
+/// all typesets exactly what `\date{\today}` does. Verified against pdflatex
+/// 3.141592653-2.6-1.40.27 (TeX Live 2025): `\the\pagetotal` immediately after
+/// `\maketitle` is 116.86673pt for both, to the scaled point.
 #[test]
-fn maketitle_defaults_the_date_to_the_fixed_today_text() {
+fn an_absent_date_is_exactly_date_today() {
     let default_date = doc("\\title{T}\\author{A}", "\\maketitle");
     let explicit_today = doc("\\title{T}\\author{A}\\date{\\today}", "\\maketitle");
     for source in [default_date, explicit_today] {
@@ -73,12 +78,18 @@ fn maketitle_defaults_the_date_to_the_fixed_today_text() {
         };
         let date = date.expect("date line present");
         assert!(
-            format!("{date:?}").contains(TODAY_TEXT),
-            "expected the fixed \\today text in {date:?}"
+            format!("{date:?}").contains(&TodayDate::EPOCH.latex_today()),
+            "expected the request date in {date:?}"
         );
     }
 }
 
+/// `\date{}` leaves `\@date` empty. article.cls still runs `\vskip 1em` and
+/// opens `{\large \@date}`, but an empty group typesets no material, so no
+/// line — and therefore no `\baselineskip` — is contributed. Verified against
+/// pdflatex (TeX Live 2025): `\the\pagetotal` after `\maketitle` is 95.2001pt
+/// with `\date{}` against 114.4001pt with `\date{Zz}`, a difference of exactly
+/// one `\large` baselineskip (19.2pt) and *not* the additional 1em, which stays.
 #[test]
 fn empty_date_suppresses_the_date_line() {
     let source = doc("\\title{T}\\author{A}\\date{}", "\\maketitle");

@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use crate::bib;
+use crate::date::TodayDate;
 use crate::color::{Colors, DeviceColor};
 use crate::diagnostics::Diagnostic;
 use crate::expansion::{self, ExpansionSite};
@@ -33,15 +34,23 @@ pub use lists::{
 /// Maximum number of active nested `\input`/`\include` calls.
 pub const INCLUDE_DEPTH_LIMIT: usize = 64;
 
-/// `\today`'s fixed, compile-deterministic substitution.
+/// Per-request inputs that are neither document text nor the entry path.
 ///
-/// Real `\today` reads the wall-clock date, which this compiler must never
-/// do: `docs/contracts/runtime-v1.md` requires byte-identical output for
-/// byte-identical input, and this project already fixes deterministic
-/// renders to the Unix epoch elsewhere (`SOURCE_DATE_EPOCH=0`, used by the
-/// corpus and visual-oracle harnesses under `docs/evidence/`). This is that
-/// same epoch, in the "Month Day, Year" form real LaTeX's `\today` prints.
-pub const TODAY_TEXT: &str = "January 1, 1970";
+/// Today this is only the date `\today` renders. It is an input rather than
+/// something this crate reads from the clock, because `docs/contracts/runtime-v1.md`
+/// requires byte-identical output for byte-identical input and a compiler that
+/// reads the clock is not a function of its inputs at all. The caller reads the
+/// clock and sends the answer; see `crate::date` and
+/// `protocol/proposals/runtime-v1-request-date.md`.
+///
+/// [`ParseOptions::default`] is the Unix epoch, so [`parse_project`] and
+/// [`parse`] behave exactly as they always have.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ParseOptions {
+    /// What `\today` expands to, and what `\maketitle` uses when the document
+    /// has no `\date` of its own.
+    pub today: TodayDate,
+}
 
 /// One project document supplied by the runtime compile payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -941,8 +950,19 @@ pub fn parse(text: &str) -> Parsed {
     parse_project(&[SourceDocument { path: "", text }], "")
 }
 
-/// Parse an entry document and every project document it includes.
+/// Parse an entry document and every project document it includes, with the
+/// epoch date. Kept for callers that have no date to supply; see
+/// [`parse_project_with`].
 pub fn parse_project(documents: &[SourceDocument<'_>], entry_path: &str) -> Parsed {
+    parse_project_with(documents, entry_path, &ParseOptions::default())
+}
+
+/// Parse an entry document and every project document it includes.
+pub fn parse_project_with(
+    documents: &[SourceDocument<'_>],
+    entry_path: &str,
+    options: &ParseOptions,
+) -> Parsed {
     let entry = documents
         .iter()
         .position(|document| document.path == entry_path)
@@ -1043,6 +1063,7 @@ pub fn parse_project(documents: &[SourceDocument<'_>], entry_path: &str) -> Pars
         title: None,
         author: None,
         date: None,
+        today: options.today,
         titlepage_option: false,
         twocolumn_option: false,
         column_types: HashMap::new(),
@@ -1228,6 +1249,9 @@ struct P<'a> {
     /// argument (`\date{}`) suppresses the date line entirely once
     /// `\maketitle` expands it.
     date: Option<(Vec<InputToken>, Span)>,
+    /// The date `\today` expands to, supplied by the caller in the compile
+    /// request rather than read from the clock here (`ParseOptions::today`).
+    today: TodayDate,
     /// Set by `\documentclass[titlepage]{...}`. Real `article.cls` then
     /// gives `\maketitle` an entirely different definition: a dedicated
     /// `titlepage` page, `\vfil`-centred vertically, with wider vskips (60pt,
@@ -1433,12 +1457,17 @@ impl P<'_> {
                     text,
                     starred,
                     terminated,
+                    listing,
                 } => {
                     let space_before = self.space_precedes(self.i);
                     self.i += 1;
                     if !terminated && render {
                         self.diags.push(Diagnostic::error(
-                            "\\verb has no closing delimiter on this line",
+                            if listing {
+                                "\\lstinline has no closing delimiter on this line"
+                            } else {
+                                "\\verb has no closing delimiter on this line"
+                            },
                             Some(tok.span),
                             Some("used the text through end of line and continued".into()),
                         ));
@@ -1517,6 +1546,53 @@ impl P<'_> {
                 self.date = Some((tokens, span.merge(argument_span)));
             }
             "maketitle" => self.maketitle(span, blocks, para),
+            // `\today` in ordinary body text. It had no arm here, so it fell
+            // through to `unsupported`, whose `debug_assert!(!BUILT_INS
+            // .contains(&name))` fires because `today` *is* a built-in: a
+            // debug-build panic on any document that simply writes the date in
+            // its prose (`tests/supported_latex.rs`'s
+            // `canonical_names_outside_the_inventory_are_diagnosed` hit exactly
+            // this). Real LaTeX expands `\today` the same way everywhere.
+            // `\thanks` and `\and` are meaningful only inside a `\title`/
+            // `\author`/`\date` argument, where `strip_thanks` and the `\and`
+            // author split consume them. `TEXT_CONTEXT_ONLY` has always claimed
+            // that "on their own they are diagnosed" -- but there was no arm,
+            // so they reached `unsupported`, whose `debug_assert` on
+            // `BUILT_INS` panicked the debug build instead. These arms make the
+            // documented behaviour real. Same latent bug as `\today` below,
+            // different command.
+            "thanks" => {
+                // `\thanks{...}` is `\footnotemark\footnotetext` (latex.ltx);
+                // this compiler has no footnote implementation, so the note
+                // text must not leak into the running prose either.
+                let (_, argument_span) = self.required_group(name, span);
+                self.diags.push(Diagnostic::command_error(
+                    name,
+                    "\\thanks outside \\title/\\author/\\date makes a footnote, which this compiler does not implement",
+                    Some(span.merge(argument_span)),
+                    Some("dropped the command and its note text rather than typesetting the note inline".into()),
+                ));
+            }
+            "and" => {
+                // latex.ltx defines `\and` only for the `\author` block's
+                // tabular; elsewhere real LaTeX produces spurious column
+                // material rather than anything meaningful.
+                self.diags.push(Diagnostic::command_error(
+                    name,
+                    "\\and separates authors inside \\author; outside it there is no author block to split",
+                    Some(span),
+                    Some("ignored the command".into()),
+                ));
+            }
+            "today" => {
+                let space_before = self.space_precedes(self.i - 1);
+                para.push(Inline::Text {
+                    text: self.today.latex_today(),
+                    span,
+                    style: self.style,
+                    space_before,
+                });
+            }
             // Preamble or body: amsmath's `\numberwithin` and the kernel's
             // `\counterwithin`/`\counterwithout` (handed to the parser by
             // `expansion::HOST_PRELUDE`).
@@ -2587,9 +2663,10 @@ impl P<'_> {
         let date_content = match self.date.clone() {
             None => {
                 // `\date` was never called: `article.cls`'s own preamble
-                // default is `\date{\today}`.
+                // default is `\date{\today}` (latex.ltx `\gdef\@date{\today}`),
+                // so this is the same date `\date{\today}` would print.
                 Some(vec![Inline::Text {
-                    text: TODAY_TEXT.to_string(),
+                    text: self.today.latex_today(),
                     span,
                     style: TextStyle::default(),
                     space_before: true,
@@ -3056,9 +3133,31 @@ impl P<'_> {
     /// `self.style` has already been saved onto `env_styles` by the caller
     /// (see `environment`), so mutating it here to the body's default style
     /// is correctly restored at the matching `\end`.
+    ///
+    /// The head is `\the\thm@headfont \thm@indent <name> <number> <note>
+    /// \the\thm@headpunct` (amsthm.sty `\@begintheorem`/`\thmhead@plain`):
+    /// everything but the note is set in the head font — including the
+    /// space tokens between the pieces and the trailing punctuation — while
+    /// the note itself is `\thm@notefont{\fontseries\mddefault\upshape}` and
+    /// the number is `\@upn` (upright). Measured against pdflatex (TeX Live
+    /// 2025, `\documentclass[11pt]{article}`): `Definition 1.1 (Divides).`
+    /// traces as `\T1/cmr/bx/n/10.95 D…n`, `\glue 4.17043 plus 2.08443
+    /// minus 1.3896` (the *bold* interword space), `1.1`, the same bold
+    /// glue, `\T1/cmr/m/n/10.95 (Divides)`, then `\T1/cmr/bx/n/10.95 .`;
+    /// a numbered `remark` traces as italic `Remark`, italic glue,
+    /// `\OT1/cmr/m/n/10.95 1`, italic `.`.
     fn begin_theorem(&mut self, def: &TheoremDef, span: Span, para: &mut Vec<Inline>) {
         let note = self.optional_bracket_argument();
+        let head_style = def.style.head_style();
+        // `\thmnumber{...\@upn{#2}}`: the number is `\textup`, so a
+        // `remark`-style head (`\thm@headfont{\itshape}`) numbers upright
+        // inside its italic name. For the bold heads `\@upn` is a no-op.
+        let number_style = TextStyle {
+            italic: false,
+            ..head_style
+        };
         let mut head = def.title.clone();
+        let mut number = None;
         if def.numbered {
             let counter = self
                 .theorem_counters
@@ -3066,36 +3165,72 @@ impl P<'_> {
                 .or_insert(0);
             *counter += 1;
             let n = *counter;
-            let number = if def.within_section {
+            let value = if def.within_section {
                 format!("{}.{}", self.counters.value("section").unwrap_or(0), n)
             } else {
                 n.to_string()
             };
-            self.current_counter = Some(number.clone());
-            head.push(' ');
-            head.push_str(&number);
+            self.current_counter = Some(value.clone());
+            // `\@ifnotempty{#1}{ }` sits outside `\@upn`, so the space token
+            // between the name and the number is read in the head font
+            // either way; the number only needs a run of its own where
+            // `\@upn` actually changes the shape (a `remark` head).
+            if number_style == head_style {
+                head.push(' ');
+                head.push_str(&value);
+            } else {
+                number = Some(value);
+            }
         }
         para.push(Inline::Text {
             text: head,
             span,
-            style: def.style.head_style(),
+            style: head_style,
             space_before: true,
         });
+        if let Some(number) = number {
+            para.push(Inline::Text {
+                text: " ".to_string(),
+                span,
+                style: head_style,
+                space_before: false,
+            });
+            para.push(Inline::Text {
+                text: number,
+                span,
+                style: number_style,
+                space_before: false,
+            });
+        }
         if let Some((note_text, note_span)) = note {
             let note_text = note_text.trim();
             if !note_text.is_empty() {
+                // `\thmnote{ {\the\thm@notefont(#3)}}`: the space is outside
+                // the `\thm@notefont` group, so it too is a head-font space;
+                // only the parenthesised note itself is `\fontseries
+                // \mddefault\upshape`.
                 para.push(Inline::Text {
-                    text: format!(" ({note_text})"),
+                    text: " ".to_string(),
+                    span,
+                    style: head_style,
+                    space_before: false,
+                });
+                para.push(Inline::Text {
+                    text: format!("({note_text})"),
                     span: note_span,
                     style: TextStyle::default(),
                     space_before: false,
                 });
             }
         }
+        // `\the\thm@headpunct` is typeset inside `\the\thm@headfont`'s
+        // group: pdflatex sets a `plain`/`definition` head's period from the
+        // bold face (`\T1/cmr/bx/n/10.95 .`) and a `remark`'s from the
+        // italic one, never from the body font.
         para.push(Inline::Text {
             text: ".".to_string(),
             span,
-            style: TextStyle::default(),
+            style: head_style,
             space_before: false,
         });
         self.style = def.style.body_style();
@@ -4359,10 +4494,10 @@ impl P<'_> {
                         });
                     }
                 }
-                // See `TODAY_TEXT`: a fixed, compile-deterministic date
-                // rather than the real wall-clock `\today`.
+                // The request's date (`ParseOptions::today`), not the wall
+                // clock: see `crate::date`.
                 TokenKind::Command(name) if name == "today" => content.push(Inline::Text {
-                    text: TODAY_TEXT.to_string(),
+                    text: self.today.latex_today(),
                     span: input.token.span,
                     style,
                     space_before,
@@ -7341,6 +7476,65 @@ mod tests {
         let source = "\\begin{lstlisting}\nplain\n\\end{lstlisting}";
         let parsed = parse(source);
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    }
+
+    /// listings' `\lstinline` reads a raw delimited argument like `\verb`,
+    /// after an optional `[<keys>]`. The keys set no text (listings.sty's
+    /// `\lstinline` does `\lstset{flexiblecolumns,#1}` and typesets
+    /// nothing), and `\lstinline{...}` closes on the brace.
+    #[test]
+    fn lstinline_reads_a_raw_delimited_argument_like_verb() {
+        for (source, want) in [
+            (r"A \lstinline|x y| B", "x y"),
+            (r"A \lstinline!int z! B", "int z"),
+            (r"A \lstinline[language=C]!int z! B", "int z"),
+            (r"A \lstinline{p q} B", "p q"),
+            // Blanks after the command are skipped (`\@ifnextchar`), unlike
+            // `\verb`, whose very next character is the delimiter.
+            (r"A \lstinline  |x| B", "x"),
+            // The body is raw: %, \, $, { and } are not reinterpreted.
+            (r"A \lstinline|a%b\c${}| B", r"a%b\c${}"),
+        ] {
+            let parsed = parse(source);
+            assert!(parsed.diagnostics.is_empty(), "{source:?}: {:?}", parsed.diagnostics);
+            let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+                panic!("{source:?}: expected a paragraph, got {:?}", parsed.blocks[0]);
+            };
+            let verbatim: Vec<&str> = inlines
+                .iter()
+                .filter_map(|i| match i {
+                    Inline::Verbatim { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(verbatim, vec![want], "{source:?}");
+        }
+    }
+
+    /// An unclosed `\lstinline` ends at the end of the line and says so
+    /// under its own name, not `\verb`'s.
+    #[test]
+    fn unterminated_lstinline_ends_at_end_of_line() {
+        let parsed = parse("A \\lstinline|x y\nB");
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.message.contains("\\lstinline has no closing delimiter")),
+            "{:?}",
+            parsed.diagnostics
+        );
+    }
+
+    /// A `[` that does not close on the same line is not an option list:
+    /// it is the delimiter.
+    #[test]
+    fn lstinline_bracket_that_does_not_close_on_the_line_is_the_delimiter() {
+        let parsed = parse("A \\lstinline[x[ B");
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks[0]);
+        };
+        assert!(
+            inlines.iter().any(|i| matches!(i, Inline::Verbatim { text, .. } if text == "x")),
+            "{inlines:?}"
+        );
     }
 
     #[test]

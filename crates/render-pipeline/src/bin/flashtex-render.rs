@@ -16,6 +16,9 @@
 //!                      the TeX Live defaults; `FLASHTEX_FONT_DIRS` too)
 //!   --class-options <opts>  class options assumed for body-only input
 //!                      (default `12pt`, the compiler's implicit preamble)
+//!   --date YYYY-MM-DD  what `\today` renders when a request carries no
+//!                      `payload.date` of its own (default 1970-01-01, the
+//!                      Unix epoch this binary has always printed)
 //!   --secnumdepth <n>  section numbering depth when the source does not
 //!                      set the counter (default 2; the oracle preamble is 0)
 //!   --timing           print per-request wall time to stderr
@@ -25,6 +28,7 @@ use std::path::{Path, PathBuf};
 
 use flashtex_compiler::json;
 
+use flashtex_render_pipeline::TodayDate;
 use flashtex_render_pipeline::{protocol, FontSet, RenderOptions, Rendered};
 
 /// Side outputs shared by both modes: `--v2` / `--pdf` of the last render.
@@ -100,10 +104,28 @@ fn main() {
                 // from when a request carries no `project_root`.
                 options.project_root = args.next().map(PathBuf::from);
             }
+            "--date" => {
+                // The date `\today` renders when a request carries no `date`
+                // of its own. This binary is a caller as well as a worker, so
+                // it may resolve the clock -- the pipeline itself may not.
+                // protocol/proposals/runtime-v1-request-date.md
+                match args.next().as_deref().map(TodayDate::parse_iso) {
+                    Some(Ok(date)) => options.today = date,
+                    Some(Err(error)) => {
+                        eprintln!("flashtex-render: --date {error}");
+                        std::process::exit(2);
+                    }
+                    None => {
+                        eprintln!("flashtex-render: --date needs a YYYY-MM-DD value");
+                        std::process::exit(2);
+                    }
+                }
+            }
             "--timing" => outputs.timing = true,
             "--device-color" => outputs.device_color = true,
             "-h" | "--help" => {
-                eprintln!("usage: flashtex-render [--tex main.tex] [--v2 out.json] [--pdf out.pdf] [--font-dir DIR]... [--class-options OPTS] [--secnumdepth N] [--timing] [--device-color]");
+                eprintln!("usage: flashtex-render [--tex main.tex] [--v2 out.json] [--pdf out.pdf] [--font-dir DIR]... [--class-options OPTS] [--secnumdepth N] [--date YYYY-MM-DD] [--timing] [--device-color]");
+                eprintln!("  --date: what \\today renders (default 1970-01-01); a request's own payload.date wins");
                 eprintln!("  without --tex: runtime-v1 JSON Lines worker (compile requests on stdin, one compile_result per line on stdout)");
                 return;
             }

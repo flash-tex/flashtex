@@ -874,7 +874,14 @@ final class ShellModel {
             displayListBase: displayListBase,
             // display-list-v2-images: the producer sizes `\includegraphics`
             // files under the open project's directory (V2ImageStore.swift).
-            projectRoot: capabilities.contains(RenderingV2.imagesCapability) ? project.projectRoot?.path : nil)
+            projectRoot: capabilities.contains(RenderingV2.imagesCapability) ? project.projectRoot?.path : nil,
+            // `\today` must print today's date, and the compiler is forbidden
+            // from reading a clock (runtime-v1 requires byte-identical output
+            // for byte-identical input). So the app reads it -- in the user's
+            // own timezone, which is the whole point of a *local* calendar date
+            // -- and sends it as an ordinary request input.
+            // protocol/proposals/runtime-v1-request-date.md
+            date: RuntimeV1.localDate())
         do {
             if TypingBench.isBenchActive { FlashTeXLog.write("compile: sending revision \(editorRevision) at \(MonotonicClock.nowNs())") }
             try worker.send(request, id: id)

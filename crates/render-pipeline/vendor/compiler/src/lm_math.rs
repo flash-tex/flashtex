@@ -6,7 +6,9 @@
 //! `\mapsto`, `\ell`, `\hbar`, `\circ`, `\parallel`, and the relations/order
 //! symbols below), and the HW2 follow-up (the remaining long double/single
 //! arrows, `\triangle`/`\bigtriangleup`/`\bigtriangledown`, and the proof QED
-//! mark) have no glyph in the base-14 Symbol face. Rather than
+//! mark), and the base LaTeX2e cmsy square relations
+//! (`\sqcup`/`\sqcap`/`\sqsubseteq`/`\sqsupseteq`), have no glyph in the
+//! base-14 Symbol face. Rather than
 //! substitute a look-alike, the compiler emits their real Unicode code points
 //! and binds them to the `lm.math` resource the font-engine manifest already
 //! pins (the same file the Mac app bundles as
@@ -80,6 +82,15 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{2271}', 778),  // \ngeq
     ('\u{228A}', 778),  // \subsetneq
     ('\u{228B}', 778),  // \supsetneq
+    // The kernel cmsy square relations (fontmath.ltx 278-279, 301-302). The
+    // base-14 Symbol face has no square cup/cap or square subset, so they are
+    // bound to this resource like the rest above. These advances match what
+    // pdfLaTeX sets from cmsy10 at 10pt (measured: `\sqcup` 6.66669pt against
+    // 667/1000 em, `\sqsubseteq` 7.7778pt against 778/1000 em).
+    ('\u{2294}', 667),  // \sqcup
+    ('\u{2293}', 667),  // \sqcap
+    ('\u{2291}', 778),  // \sqsubseteq
+    ('\u{2292}', 778),  // \sqsupseteq
     ('\u{2272}', 776),  // \lesssim
     ('\u{2273}', 776),  // \gtrsim
     ('\u{225C}', 778),  // \triangleq
@@ -183,7 +194,7 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 75);
+        assert_eq!(ADVANCES.len(), 79);
     }
 
     #[test]

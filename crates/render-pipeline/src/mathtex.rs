@@ -89,10 +89,12 @@ pub struct TexMathMetrics {
 pub const FRAKTUR_FONTS: [MathFontId; 3] = [MathFontId(0x100), MathFontId(0x101), MathFontId(0x102)];
 
 impl TexMathMetrics {
-    /// `base` is the document's body size (10/11/12). `otf` supplies the
-    /// glyph program; `fonts` supplies `rm-lmr<d>.tfm` (digest-bound for
-    /// the 12 pt set).
-    pub fn new(base: u32, otf: Rc<MathFonts>, fonts: &FontSet) -> TexMathMetrics {
+    /// `base` is the document's body size (10/11/12). `cmex_designs` is
+    /// [`crate::style::cmex_designs`]: with it family 3 is loaded at the
+    /// math size in amsfonts' designs, without it at `omxcmex.fd`'s
+    /// `sfixed` 10pt. `otf` supplies the glyph program; `fonts` supplies
+    /// `rm-lmr<d>.tfm` (digest-bound for the 12 pt set).
+    pub fn new(base: u32, cmex_designs: bool, otf: Rc<MathFonts>, fonts: &FontSet) -> TexMathMetrics {
         let (cm, roman_names) = match base {
             10 => (CmMathMetrics::latex_10pt(), ["rm-lmr10", "rm-lmr7", "rm-lmr5"]),
             11 => (
@@ -111,6 +113,7 @@ impl TexMathMetrics {
             ),
             _ => (CmMathMetrics::latex_12pt(), ["rm-lmr12", "rm-lmr8", "rm-lmr6"]),
         };
+        let cm = if cmex_designs { cm.with_extension(cm::ExtensionSizing::Designs) } else { cm };
         let sizes = MathSizes {
             text: cm.sizes[0],
             script: cm.sizes[1],
@@ -371,11 +374,26 @@ impl TexMathMetrics {
     /// variants drawn for them sit on the axis relative to their own
     /// origin, so the painter re-centres the drawn ink on this box.
     pub fn extension_box(&self, font: MathFontId, code: u8, size: f64) -> Option<(f64, f64)> {
-        if !self.cm.font_name(font).starts_with("cmex") {
+        let c = self.extension_design(font)?.char(code)?;
+        Some((mtfm::scale(c.height, size), mtfm::scale(c.depth, size)))
+    }
+
+    /// The `cmex` design a placed family-3 glyph was boxed from, `None` for
+    /// every other family.
+    ///
+    /// Under amsmath's declaration ([`crate::style::cmex_designs`]) that is
+    /// cmex7/8/9 as well as cmex10, and the designs are not scaled copies of
+    /// one another: cmex7 is up to 20% wider per em, and `\fontdimen8`
+    /// differs, so a delimiter's height/depth split differs (its height plus
+    /// depth does not). The painter must read the same design the layout
+    /// boxed the glyph from, or it re-centres and widens against the wrong
+    /// metrics.
+    fn extension_design(&self, font: MathFontId) -> Option<&'static mtfm::TfmFont> {
+        let name = self.cm.font_name(font);
+        if !name.starts_with("cmex") {
             return None;
         }
-        let c = cm_tfm::CMEX10.char(code)?;
-        Some((mtfm::scale(c.height, size), mtfm::scale(c.depth, size)))
+        cm::tfm_by_name(&name)
     }
 
     /// Glyphs the layout placed that have no OpenType counterpart
@@ -474,8 +492,13 @@ impl TexMathMetrics {
         // (drawn at the first, the second paints nothing, gid 0) and the
         // painter aligns the parts on the pieces (`typeset::math_items`).
         if name.starts_with("cmex") && matches!(ch, '\u{0302}' | '\u{0303}') {
-            let at = cm_tfm::CMEX10.design_size;
-            let wanted = cm_tfm::CMEX10.char(code).map(|c| mtfm::scale(c.width, at)).unwrap_or(0.0);
+            // The accent widths are the one place the cmex designs really
+            // diverge (cmex7 "63 is 1.139 em against cmex10's 1.000), so the
+            // nearest horizontal variant must be chosen from the design the
+            // glyph was boxed from.
+            let design = self.extension_design(font).unwrap_or(&cm_tfm::CMEX10);
+            let at = design.design_size;
+            let wanted = design.char(code).map(|c| mtfm::scale(c.width, at)).unwrap_or(0.0);
             let result = self.otf.hvariant_nearest(ch, at, wanted);
             if result.is_none() {
                 self.unmapped.borrow_mut().push((name, code, ch));
@@ -510,7 +533,11 @@ impl TexMathMetrics {
                 .or(if ch == '\u{221A}' { Some(0x70) } else { None });
             match (start, base(ch)) {
                 (Some(start), Some(base_gid)) => {
-                    let font = &cm_tfm::CMEX10;
+                    // The `next_larger` chains and the extensible recipes are
+                    // identical in cmex7/8/9/10, so the walk finds the same
+                    // step either way; the design is resolved so the `at`
+                    // below is the one `c`'s fixwords belong to.
+                    let font = self.extension_design(font).unwrap_or(&cm_tfm::CMEX10);
                     let mut cur = font.char(start);
                     let mut k = 0usize;
                     let mut found = None;
@@ -658,8 +685,8 @@ impl MathFontMetrics for TexMathMetrics {
         self.cm.accent_sizes(ch, size)
     }
 
-    fn extension_glyph(&self, code: u8, ch: char) -> Option<Glyph> {
-        self.cm.extension_glyph(code, ch)
+    fn extension_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
+        self.cm.extension_glyph(code, ch, size)
     }
 
     fn delimiter_extensible(&self, ch: char, size: SizeClass) -> Option<Extensible> {
@@ -718,6 +745,14 @@ fn script_capital_slot(ch: char) -> Option<u8> {
 
 /// The Latin Modern TFM that carries the same metrics as a CM table name
 /// (`cmmi12` → `lmmi12`), for provenance messages.
+///
+/// Latin Modern ships only `lmex10`: amsmath's `cmex7`/`cmex8`/`cmex9`
+/// ([`crate::style::cmex_designs`]) have no counterpart, and a document that
+/// loads them has by definition not loaded `lmodern`, so they are reported
+/// under their own names rather than as fonts that do not exist.
 fn lm_name(cm: &str) -> String {
+    if cm.starts_with("cmex") && cm != "cmex10" {
+        return cm.to_string();
+    }
     cm.replacen("cm", "lm", 1)
 }

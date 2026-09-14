@@ -98,6 +98,9 @@ struct Revision {
     documents: Vec<(String, String)>,
     entry_path: String,
     constraints: LayoutConstraints,
+    /// The per-request inputs this revision was compiled with. A warm session
+    /// must not hand yesterday's pages back when the request's date changes.
+    options: parser::ParseOptions,
     preamble_source: String,
     incremental_safe: bool,
     document_global_state: bool,
@@ -127,6 +130,23 @@ impl Session {
         entry_path: &str,
         constraints: LayoutConstraints,
     ) -> IncrementalResult {
+        self.compile_project_with(
+            documents,
+            entry_path,
+            constraints,
+            &parser::ParseOptions::default(),
+        )
+    }
+
+    /// Compile a complete supplied project with explicit per-request inputs
+    /// (today the date `\today` renders; see `parser::ParseOptions`).
+    pub fn compile_project_with(
+        &mut self,
+        documents: &[SourceDocument<'_>],
+        entry_path: &str,
+        constraints: LayoutConstraints,
+        options: &parser::ParseOptions,
+    ) -> IncrementalResult {
         let snapshot: Vec<(String, String)> = documents
             .iter()
             .map(|document| (document.path.to_string(), document.text.to_string()))
@@ -135,6 +155,7 @@ impl Session {
             if previous.documents == snapshot
                 && previous.entry_path == entry_path
                 && previous.constraints == constraints
+                && previous.options == *options
             {
                 let total = previous.output.blocks.len();
                 return IncrementalResult {
@@ -150,7 +171,7 @@ impl Session {
             }
         }
 
-        let mut parsed = parser::parse_project(documents, entry_path);
+        let mut parsed = parser::parse_project_with(documents, entry_path, options);
         let constraints = parsed.preamble_constraints(constraints);
         let same_document_set = self.previous.as_ref().is_some_and(|previous| {
             previous.entry_path == entry_path
@@ -208,6 +229,7 @@ impl Session {
                 pages,
             };
             self.previous = Some(Revision {
+                options: *options,
                 documents: snapshot,
                 entry_path: entry_path.to_string(),
                 constraints,
@@ -334,6 +356,7 @@ impl Session {
             pages,
         };
         self.previous = Some(Revision {
+            options: *options,
             documents: snapshot,
             entry_path: entry_path.to_string(),
             constraints,
@@ -358,7 +381,22 @@ pub fn compile_full_project(
     entry_path: &str,
     constraints: LayoutConstraints,
 ) -> CompileOutput {
-    let parsed = parser::parse_project(documents, entry_path);
+    compile_full_project_with(
+        documents,
+        entry_path,
+        constraints,
+        &parser::ParseOptions::default(),
+    )
+}
+
+/// Authoritative clean compile with explicit per-request inputs.
+pub fn compile_full_project_with(
+    documents: &[SourceDocument<'_>],
+    entry_path: &str,
+    constraints: LayoutConstraints,
+    options: &parser::ParseOptions,
+) -> CompileOutput {
+    let parsed = parser::parse_project_with(documents, entry_path, options);
     let constraints = parsed.preamble_constraints(constraints);
     let (pages, mut layout_diagnostics) = layout::layout_converged(&parsed.blocks, constraints);
     let mut diagnostics = parsed.diagnostics;
