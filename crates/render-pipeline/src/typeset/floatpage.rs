@@ -434,6 +434,15 @@ impl Placer<'_> {
         self.pages.push(BuiltPage { lines, overfull_by: 0.0 });
     }
 
+    /// A column opened by `\LT@output` (longtable.sty 513-516): it runs
+    /// `\@makecol\@outputpage \global\vsize\@colroom \copy\LT@head`, never
+    /// `\@opcol`/`\@startcolumn`, so no float page is tried and no deferred
+    /// float is added — the whole column is the table's, and what is
+    /// deferred stays deferred until the table ends.
+    fn start_longtable_column(&mut self) {
+        self.col = Col::new(self.colht);
+    }
+
     /// `\@opcol` + `\@startcolumn`.
     fn start_column(&mut self) {
         loop {
@@ -467,7 +476,12 @@ fn block_source(ctx: &Context, b: &BuiltBlock, items: impl Iterator<Item = usize
 
 /// Breaks the text into pages with the floats placed. Returns the pages,
 /// the image items per page number and the page of every float `\label`.
-pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams, list: &[VItem], specs: &[FloatSpec]) -> (Vec<BuiltPage>, Vec<(u32, display::Item)>, Vec<(String, u32)>) {
+/// `regions` are the document's longtable regions (`pagebuild::Region`
+/// resolved against `list`): inside one the column goal loses `\ht\LT@foot`
+/// and `\pageshrink` is zero (longtable.sty 223, 229), and a break inside
+/// one ends the page with `\LT@foot` and opens the next with `\LT@head`
+/// (`\LT@output`, 487-517).
+pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams, list: &[VItem], specs: &[FloatSpec], regions: &[pagebuild::ResolvedRegion]) -> (Vec<BuiltPage>, Vec<(u32, display::Item)>, Vec<(String, u32)>) {
     let text_blocks = blocks.len();
     // Marker positions, before caption blocks are appended.
     let vblocks: Vec<pagebuild::VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
@@ -497,6 +511,23 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
         markers.push((index, f));
     }
     markers.sort();
+    // longtable.sty 489-491: `\LT@output` answers a float or marginpar
+    // inside the table with `floats~ and~ marginpars~ not~ allowed~ in~ a~
+    // longtable`. The float still has to go somewhere, so it is placed as
+    // if the table were not there and the error is reported.
+    {
+        let inside = pagebuild::Regions::new(regions);
+        for &(index, f) in &markers {
+            if inside.contains(index) {
+                let src = vec![ctx.source(specs[f].span)];
+                ctx.diagnostics.push(Diagnostic::warning(
+                    "table_limitation",
+                    "floats and marginpars are not allowed in a longtable (longtable.sty \\LT@output); this one is placed as if the table were not there".to_string(),
+                    src,
+                ));
+            }
+        }
+    }
     let fp = FloatParams::for_size(ctx.style.body_size_pt);
     let boxes: Vec<FloatBox> = specs.iter().map(|s| build_box(ctx, blocks, s, &fp)).collect();
     let mut nodes: Vec<N> = Vec::with_capacity(list.len() + 4 * specs.len());
@@ -540,6 +571,18 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
             _ => None,
         }
     };
+    let regions = pagebuild::Regions::new(regions);
+    // The list index a node reports to the regions: a `V` node is at its
+    // own, anything the float machinery spliced in belongs to the last one
+    // seen (`\@specialoutput` runs between two items of the main list).
+    let list_index = |n: &N, cur: usize| -> usize {
+        match n {
+            N::V(j) => *j,
+            _ => cur,
+        }
+    };
+    // `\copy\LT@head\nobreak` at the top of a continuation page.
+    let mut pending_head: Option<pagebuild::Placed3> = None;
     let mut start = 0usize;
     loop {
         while start < nodes.len() {
@@ -555,6 +598,17 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
         }
         let vsize = pl.col.colroom;
         let (mut total, mut stretch, mut shrink, mut fil, mut depth, mut has_box) = (0.0f64, 0.0f64, 0.0f64, false, 0.0f64, false);
+        // The continuation head is on the page before any of its material.
+        let head = pending_head;
+        if let Some((h, d, _)) = head {
+            total = (p.topskip - h).max(0.0) + h;
+            depth = d;
+            has_box = true;
+        }
+        let mut cur_li = list_index(&nodes[start], 0);
+        // §987 `freeze_page_specs` with longtable.sty 230: `\maxdepth` is
+        // zero for a page a longtable opens (see `pagebuild::page_max_depth`).
+        let maxdepth = if head.is_none() && regions.starts_at(cur_li) { 0.0 } else { p.maxdepth };
         let mut lines_seen = 0usize;
         let mut best: Option<(usize, i64)> = None;
         let mut fired = None;
@@ -581,23 +635,27 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
                 i += 1;
                 continue;
             }
+            cur_li = list_index(&nodes[i], cur_li);
             let (legal, pi) = match nodes[i] {
                 N::Penalty(pen) => (pen < INF_PENALTY, pen),
                 N::Glue(..) => (prev_box, 0),
                 N::V(j) => (matches!(list[j], VItem::Glue { .. }) && prev_box, 0),
                 _ => (false, 0),
             };
+            // `\pagegoal` loses `\ht\LT@foot` while the page's material is
+            // inside a longtable (longtable.sty 229).
+            let goal = vsize - regions.reserved(cur_li);
             if legal && has_box {
-                let b = if total < vsize {
+                let b = if total < goal {
                     if fil {
                         0
                     } else {
-                        badness(vsize - total, stretch)
+                        badness(goal - total, stretch)
                     }
-                } else if total - vsize > shrink {
+                } else if total - goal > shrink {
                     AWFUL_BAD
                 } else {
-                    badness(total - vsize, shrink)
+                    badness(total - goal, shrink)
                 };
                 let c = if b < AWFUL_BAD {
                     if pi <= EJECT_PENALTY {
@@ -618,6 +676,11 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
                     break;
                 }
             }
+            // longtable.sty 223: `\LT@start` ends with
+            // `\ifdim\pageshrink>\z@\pageshrink\z@\fi`.
+            if regions.starts_at(cur_li) {
+                shrink = 0.0;
+            }
             let bx = match nodes[i] {
                 N::FBox(f) => Some((boxes[f].height, 0.0)),
                 ref n => box_of(n, list),
@@ -626,13 +689,13 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
                 total += if has_box { depth + h } else { (p.topskip - h).max(0.0) + h };
                 has_box = true;
                 depth = d;
-                if depth > p.maxdepth {
-                    total += depth - p.maxdepth;
-                    depth = p.maxdepth;
+                if depth > maxdepth {
+                    total += depth - maxdepth;
+                    depth = maxdepth;
                 }
                 lines_seen += 1;
                 prev_box = true;
-                if total > vsize + 1e-9 && lines_seen > 1 {
+                if total > goal + 1e-9 && lines_seen > 1 {
                     if let Some((bi, _)) = best {
                         fired = Some(bi);
                         break;
@@ -685,6 +748,16 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
         }
         let (mut total, mut depth, mut has_box) = (0.0f64, 0.0f64, false);
         let mut last_text: Option<Placed> = None;
+        // `\copy\LT@head\nobreak` opens a page continuing a longtable.
+        if let Some((h, d, payload)) = pending_head.take() {
+            let baseline = (p.topskip - h).max(0.0) + h;
+            total = baseline;
+            depth = d;
+            has_box = true;
+            let placed = Placed { payload, baseline: baseline + text_off, height: h, depth: d };
+            last_text = Some(placed);
+            lines.push(placed);
+        }
         for n in &nodes[start..end] {
             let bx = match n {
                 N::FBox(f) => Some((boxes[*f].height, 0.0, None, Some(*f))),
@@ -723,9 +796,31 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
                 }
             }
         }
+        // `\LT@output`: a page broken inside the table ends with `\LT@foot`
+        // and the next one opens with `\LT@head`.
+        let mut region_break = false;
+        if fired.is_some() {
+            let next_li = nodes[end..].iter().find_map(|n| match n {
+                N::V(j) if matches!(list[*j], VItem::Box { .. }) => Some(*j),
+                _ => None,
+            });
+            if let Some((foot, next_head)) = next_li.and_then(|li| regions.at_break(li)) {
+                region_break = true;
+                if let Some((h, d, payload)) = foot {
+                    let baseline = total + depth + h;
+                    total = baseline;
+                    depth = d;
+                    let placed = Placed { payload, baseline: baseline + text_off, height: h, depth: d };
+                    last_text = Some(placed);
+                    lines.push(placed);
+                }
+                pending_head = next_head;
+            }
+        }
+        let _ = (total, depth);
         let mut overfull_by = 0.0;
         if let Some(last) = last_text {
-            let bottom = last.baseline - text_off + (last.depth - p.maxdepth).max(0.0);
+            let bottom = last.baseline - text_off + (last.depth - maxdepth).max(0.0);
             if bottom > vsize + 1e-6 {
                 overfull_by = bottom - vsize;
             }
@@ -741,7 +836,11 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
         pl.pages.push(BuiltPage { lines, overfull_by });
         pl.col.mid.clear();
         start = end;
-        pl.start_column();
+        if region_break {
+            pl.start_longtable_column();
+        } else {
+            pl.start_column();
+        }
         if fired.is_none() {
             break;
         }
