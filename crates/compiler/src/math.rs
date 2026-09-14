@@ -3217,13 +3217,47 @@ fn layout_list_with(
     display: bool,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> MathBox {
+    let delimiter_scales = left_right_stretch_scales(list, size, root_size, level, display);
+    layout_list_with_scales(
+        list,
+        &delimiter_scales,
+        size,
+        root_size,
+        level,
+        display,
+        diagnostics,
+    )
+}
+
+/// The atom-by-atom half of [`layout_list_with`]: lays `list` out, stretching
+/// each matched `\left`/`\right` nucleus by the corresponding entry of
+/// `delimiter_scales` (one slot per atom, as returned by
+/// [`left_right_stretch_scales`]).
+///
+/// Split out so the stretch pre-pass can measure a pair's content with the
+/// already-computed inner scales instead of re-deriving them through a fresh
+/// recursive layout, which duplicated the whole inner layout once per
+/// enclosing level (exponential in nesting depth).
+fn layout_list_with_scales(
+    list: &MathList,
+    delimiter_scales: &[Option<f64>],
+    size: f64,
+    root_size: f64,
+    level: usize,
+    display: bool,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> MathBox {
+    debug_assert_eq!(
+        delimiter_scales.len(),
+        list.atoms.len(),
+        "one stretch slot per atom"
+    );
     let mut out = MathBox {
         items: Vec::new(),
         width: 0.0,
         ascent: size,
         descent: 0.2 * size,
     };
-    let delimiter_scales = left_right_stretch_scales(list, size, root_size, level, display);
     let classes = spacing_classes(list);
     let mut previous_class = None;
     for (index, (atom, class)) in list.atoms.iter().zip(classes).enumerate() {
@@ -3337,6 +3371,15 @@ fn layout_list_with(
 /// before it ever reaches this list — is left `None` and stays at its parsed
 /// scale of 1, the same as plain TeX leaves a runaway fence alone rather than
 /// guessing a size for it.
+///
+/// Pairs are measured innermost-first in a single pass: stack matching pops
+/// the inner `\right` before the outer one, so when a pair closes, every pair
+/// nested inside it already has its final scale in `scales` (stack matching
+/// never straddles pair boundaries, so no later pair can touch those slots).
+/// The content is therefore measured with [`layout_list_with_scales`] reusing
+/// those inner scales instead of a fresh recursive [`layout_list_with`] —
+/// each atom is measured once per enclosing level (quadratic in nesting
+/// depth), not re-derived once per level (exponential).
 fn left_right_stretch_scales(
     list: &MathList,
     size: f64,
@@ -3361,8 +3404,15 @@ fn left_right_stretch_scales(
                 // once, by the atom-by-atom pass below that actually lays
                 // this list out.
                 let mut scratch = Vec::new();
-                let content_box =
-                    layout_list_with(&content, size, root_size, level, display, &mut scratch);
+                let content_box = layout_list_with_scales(
+                    &content,
+                    &scales[left + 1..index],
+                    size,
+                    root_size,
+                    level,
+                    display,
+                    &mut scratch,
+                );
                 let scale = delimiter_stretch_scale(&content_box, size);
                 scales[left] = Some(scale);
                 scales[index] = Some(scale);
