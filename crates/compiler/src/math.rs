@@ -5414,6 +5414,13 @@ mod spacing_tests {
     }
 
     #[test]
+    fn odot_is_a_binary_operator() {
+        let b = laid_out(r"a\odot b", SIZE);
+        close(x(&b, "⊙"), width("a", SIZE) + 4.0);
+        close(x(&b, "b"), x(&b, "⊙") + width("⊙", SIZE) + 4.0);
+    }
+
+    #[test]
     fn a_leading_or_post_relation_minus_is_ordinary_and_a_real_minus_sign() {
         let b = laid_out("-x", SIZE);
         assert!(b.items.iter().all(|i| i.text != "-"), "{:?}", b.items);
