@@ -78,6 +78,14 @@ math-glyph-spans = []
 # all; the re-derivation stays as the fallback. Builds only against a
 # vendor/compiler that carries the public field; off until vendor/ is re-pinned.
 math-class-override = []
+# A paragraph's `\baselineskip` follows the size declaration in force when its
+# `\par` ran (`\begin{quote}\small ...\end{quote}`, `{\small ...\par}`),
+# which is what TeX reads in `append_to_vlist` (§679). Needs the compiler's
+# `Parsed::block_par_leading`; off until vendor/ is re-pinned past that change,
+# and with it off every paragraph keeps the body leading exactly as before.
+# Turning it on is then a one-line default-feature edit, like `amsmath-inline`
+# was.
+par-leading = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }

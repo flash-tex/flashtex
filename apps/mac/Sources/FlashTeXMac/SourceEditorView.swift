@@ -47,6 +47,16 @@ struct SourceEditorView: NSViewRepresentable {
     /// A pending edit the view could not apply (the buffer moved on since it
     /// was prepared, or its range no longer fits); never reported as applied.
     var onEditRefused: (ShellModel.PendingEdit, String) -> Void = { _, _ in }
+    /// The mechanical fix offered at the caret (`ShellModel.caretFix`).
+    /// Non-nil draws the inline hint *and* arms Tab, from the one value, so
+    /// the key can never accept something the author was not shown. Nil leaves
+    /// Tab exactly as it was: indent the selection, or insert an indent unit.
+    var caretFix: EditorDiagnostics.CaretFix?
+    /// Tab on a visible caret fix (`ShellModel.acceptCaretFix`).
+    var onAcceptCaretFix: () -> Void = {}
+    /// Esc while the hint is up (`ShellModel.dismissCaretFix`): the hint goes
+    /// down and Tab indents again until the caret moves onto another fix.
+    var onDismissCaretFix: () -> Void = {}
     /// Openers typed at the caret that get their closer inserted after it
     /// (`{`, `[`, `$`). Default: braces only; the owner passes its setting.
     /// Auto-close, type-over and empty-pair backspace never run while marked
@@ -69,6 +79,10 @@ struct SourceEditorView: NSViewRepresentable {
     /// The user's own definition of a command name for the hover peek
     /// (`ShellModel.definitionSummary`; EditorNavigation.swift).
     var userDefinition: (String) -> String? = { _ in nil }
+    /// What the hover resolves a `\ref`/`\cite`/`\includegraphics` against:
+    /// the project's other open documents and a file probe
+    /// (EditorHoverResolution.swift). Read once per hover, not per keystroke.
+    var hoverContext: () -> EditorIntelligence.HoverContext = { .init() }
     /// The current v2 preview, for the inline math hover preview
     /// (MathHoverPreview.swift); nil when there is no v2 frame to crop from.
     var mathPreviewContext: () -> MathHoverPreview.Context? = { nil }
@@ -166,6 +180,7 @@ struct SourceEditorView: NSViewRepresentable {
         co.marks.update(marks, in: tv, reset: textReset)
         co.gutter?.update(marks: marks)
         co.errorLens.update(marks: marks)
+        co.errorLens.update(caretFix: caretFix) // the hint Tab acts on, drawn whatever the lens preference is
         if textReset { co.refreshBraceHighlight(tv) }
         if let selection, selection.token != co.appliedToken {
             co.appliedToken = selection.token
@@ -793,6 +808,13 @@ struct SourceEditorView: NSViewRepresentable {
             hover.mathPreview = { [weak self] index in self?.mathPreview(at: index) }
             if let completing = tv as? CompletingTextView {
                 completing.commandClickHandler = { [weak self] index in self?.commandClick(at: index) ?? false }
+                // Math-mode ranking in the completion list (Completion.swift):
+                // answered from the in-sync syntax model, one line's lexing.
+                completing.mathModeAtCaret = { [weak self] index in
+                    guard let self, let text = self.textView?.textStorage?.string as NSString? else { return false }
+                    return Completion.isMathMode(in: text, caretUTF16: index,
+                                                 highlighter: self.syntax.highlighter.length == text.length ? self.syntax.highlighter : nil)
+                }
                 completing.backgroundDecorator = { [weak self] rect in self?.drawCurrentLine(in: rect) }
                 // GH74: a completion snippet's placeholder closer (`\section{}`)
                 // overtypes like a hand-typed `{` instead of doubling
@@ -803,6 +825,11 @@ struct SourceEditorView: NSViewRepresentable {
                 // supplies its own closer eats the one already sitting there
                 // instead of stranding it (`\begin{proof}` … `\end{proof}}`).
                 completing.isPendingCloser = { [weak self] offset in self?.pendingClosers.contains(offset) ?? false }
+                // Esc while the caret-fix hint is up takes it down, ahead of
+                // Esc's other meaning (open the completion list). Tab's side of
+                // the same state lives in `handleTab`.
+                completing.caretFixVisible = { [weak self] in self?.parent.caretFix != nil }
+                completing.dismissCaretFix = { [weak self] in self?.parent.onDismissCaretFix() }
             }
             errorLens.lineTable = { [weak self] in self?.syntax.highlighter ?? SyntaxHighlighter() }
             errorLens.attach(tv)
@@ -836,7 +863,8 @@ struct SourceEditorView: NSViewRepresentable {
             guard let tv = textView else { return nil }
             let text = tv.textStorage?.string as NSString? ?? ""
             let h = syntax.highlighter.length == text.length ? syntax.highlighter : nil
-            return EditorIntelligence.quickInfo(in: text, at: index, marks: marks.marks, highlighter: h, userDefinition: parent.userDefinition)
+            return EditorIntelligence.quickInfo(in: text, at: index, marks: marks.marks, highlighter: h,
+                                                userDefinition: parent.userDefinition, context: parent.hoverContext())
         }
 
         /// Inline math hover preview (MathHoverPreview.swift): the formula's

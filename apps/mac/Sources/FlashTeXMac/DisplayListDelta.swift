@@ -363,7 +363,7 @@ enum DisplayListDelta {
         let list = RenderingV2.DisplayList(renderFormat: d.renderFormat, coordinateUnit: d.coordinateUnit, colorSpace: d.colorSpace,
                                            textExtraction: d.textExtraction, projectId: d.projectId, revision: d.revision,
                                            requiredFeatures: d.requiredFeatures, documents: d.documents, fonts: d.fonts,
-                                           pages: pages, diagnostics: d.diagnostics)
+                                           pages: pages, diagnostics: d.diagnostics, navigation: installed.list.navigation)
         guard hex(listDigest(list, pageDigests: digests)) == d.listDigest else { throw Refusal.listDigestMismatch }
         return (RenderingV2.Envelope(protocolVersion: d.protocolVersion, id: d.id, type: RenderingV2.messageType, payload: list), d.pageBytes, target)
     }

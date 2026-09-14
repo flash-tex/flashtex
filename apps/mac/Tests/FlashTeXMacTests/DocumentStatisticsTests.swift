@@ -209,10 +209,11 @@ final class DocumentStatisticsTests: XCTestCase {
     }
 }
 
-/// `WordCountModel`'s debounce/background contract: a scheduled update lands
-/// on the main actor only after `debounceInterval`, and only the most recent
-/// schedule's result survives a burst — the same shape `DocumentWatcherTests`
-/// uses for its own coalesced-delivery assertions.
+/// `WordCountModel`'s debounce/background contract: a scheduled update is
+/// published on the main actor, and only the most recent schedule's result
+/// survives a burst — the same shape `DocumentWatcherTests` uses for its own
+/// coalesced-delivery assertions. These tests inject an immediate scheduler
+/// (no real wall-clock wait); production still debounces on the main queue.
 @MainActor
 final class WordCountModelTests: XCTestCase {
     private func settles(_ timeout: TimeInterval = 2, _ cond: () -> Bool) async -> Bool {
@@ -225,18 +226,23 @@ final class WordCountModelTests: XCTestCase {
     }
 
     func testScheduleUpdateEventuallyPublishesTotals() async {
-        setenv("FLASHTEX_WORDCOUNT_DEBOUNCE_MS", "20", 1)
-        defer { unsetenv("FLASHTEX_WORDCOUNT_DEBOUNCE_MS") }
         let model = WordCountModel()
+        // Deterministic scheduling: run the debounce work immediately
+        // instead of waiting on a real wall-clock timer (flaky under
+        // main-queue contention). The `settles` wait below only covers the
+        // background scan + MainActor hop, not a fixed-duration timer.
+        model.scheduleDebounce = { _, item in item.perform() }
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three.")])
         let ok = await settles { model.total?.totalWords == 3 }
         XCTAssertTrue(ok)
     }
 
     func testOnlyTheLastScheduledUpdateWins() async {
-        setenv("FLASHTEX_WORDCOUNT_DEBOUNCE_MS", "20", 1)
-        defer { unsetenv("FLASHTEX_WORDCOUNT_DEBOUNCE_MS") }
         let model = WordCountModel()
+        // Same deterministic scheduling: both updates are scheduled before
+        // either background result lands, so only the `generation` guard —
+        // the real coalescing mechanism — decides the winner.
+        model.scheduleDebounce = { _, item in item.perform() }
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One.")])
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three four.")])
         let ok = await settles { model.total?.totalWords == 4 }

@@ -548,6 +548,28 @@ struct SyntaxHighlighter {
         return h.runs(in: NSRange(location: 0, length: text.length), text: text)
     }
 
+    /// Mode **at** `utf16`, not the mode its line starts in: the caret's line
+    /// is re-lexed from its own start mode, so this costs one line rather than
+    /// a document and gives the right answer in the middle of `$x^2$`. `text`
+    /// must be the text this model was built from; anything else answers
+    /// `.text` rather than guessing from a stale line table.
+    ///
+    /// The highlighter is the app's authority on what is math and what is
+    /// verbatim, so `CaretContext` — which decides how a capture is wrapped —
+    /// is checked against this rather than being a second opinion
+    /// (`CaretContextTests.testAgreesWithTheSyntaxHighlighter`).
+    func mode(at utf16: Int, text: NSString) -> Mode {
+        guard text.length == length, length > 0 else { return .text }
+        let clamped = max(0, min(utf16, length))
+        let index = line(at: clamped)
+        let start = lineStarts[index]
+        guard clamped > start else { return modes[index] }
+        var runs: [Run] = []
+        return withUnits(of: text, range: NSRange(location: start, length: clamped - start)) { units in
+            Self.lex(units, from: 0, to: units.count, base: start, mode: modes[index], runs: &runs, collect: false)
+        }
+    }
+
     /// Kind of the run at `utf16` after a full lex (hover/tests), or nil for plain text.
     func kind(at utf16: Int, text: NSString) -> Kind? {
         guard utf16 >= 0, utf16 < length else { return nil }
@@ -739,10 +761,14 @@ final class SyntaxPainter {
         runsPainted += count
     }
 
-    private static func shifted(_ r: NSRange, edit: NSRange, replacementLength: Int) -> NSRange {
+    /// `r` after replacing `edit` with `replacementLength` characters. An edit
+    /// that touches `r` (ends at its start or starts at its end) joins it, so
+    /// text typed at either edge of a painted range is repainted with it
+    /// (GH#280: typing at the end of the painted window stayed uncoloured).
+    static func shifted(_ r: NSRange, edit: NSRange, replacementLength: Int) -> NSRange {
         let delta = replacementLength - edit.length
-        if NSMaxRange(edit) <= r.location { return NSRange(location: r.location + delta, length: r.length) }
-        if edit.location >= NSMaxRange(r) { return r }
+        if NSMaxRange(edit) < r.location { return NSRange(location: r.location + delta, length: r.length) }
+        if edit.location > NSMaxRange(r) { return r }
         let start = min(r.location, edit.location)
         let end = max(NSMaxRange(r), NSMaxRange(edit)) + delta
         return NSRange(location: start, length: max(0, end - start))

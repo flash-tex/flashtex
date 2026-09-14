@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F5ADC271C91EB24AF7D12A09 /* CameraFocus.swift in Sources */ = {
+			isa = PBXBuildFile;
+			fileRef = 30F147C413EB16F59C94E670;
+		};
 		E61ADC75D2613BC05A89C79F /* CaptureView.swift in Sources */ = {
 			isa = PBXBuildFile;
 			fileRef = DAB5331096CACE1D1611C89C;
@@ -59,6 +63,10 @@
 			isa = PBXBuildFile;
 			fileRef = 9350128EF36336405FA0A78F;
 		};
+		01628618D47C292D7DEAB7D8 /* CameraFocusTests.swift in Sources */ = {
+			isa = PBXBuildFile;
+			fileRef = B6E3658344378A345F18703C;
+		};
 		5D3BA29BB7D8E223A38ED5BC /* CaptureQueueTests.swift in Sources */ = {
 			isa = PBXBuildFile;
 			fileRef = 61E5796C7F96C2C8B3E99B01;
@@ -86,6 +94,10 @@
 		08E99B881C98B2D8077CD6F7 /* FlashTeXProtocol in Frameworks */ = {
 			isa = PBXBuildFile;
 			productRef = 58EED07B157162499BC602AE /* FlashTeXProtocol */;
+		};
+		578D97340F0ACA306E1FEFD2 /* CaptureFlowRealMacUITests.swift in Sources */ = {
+			isa = PBXBuildFile;
+			fileRef = DA47D6461AFA4DDD78A13236;
 		};
 		C7C127377FB47913308A63AC /* CaptureFlowUITests.swift in Sources */ = {
 			isa = PBXBuildFile;
@@ -123,6 +135,12 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		30F147C413EB16F59C94E670 /* CameraFocus.swift */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "CameraFocus.swift";
+			sourceTree = "<group>";
+		};
 		DAB5331096CACE1D1611C89C /* CaptureView.swift */ = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -196,6 +214,12 @@
 			path = "AcceptanceSliceTests.swift";
 			sourceTree = "<group>";
 		};
+		B6E3658344378A345F18703C /* CameraFocusTests.swift */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "CameraFocusTests.swift";
+			sourceTree = "<group>";
+		};
 		61E5796C7F96C2C8B3E99B01 /* CaptureQueueTests.swift */ = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -226,6 +250,12 @@
 			includeInIndex = 0;
 			path = "FlashTeXPadTests.xctest";
 			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		DA47D6461AFA4DDD78A13236 /* CaptureFlowRealMacUITests.swift */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "CaptureFlowRealMacUITests.swift";
+			sourceTree = "<group>";
 		};
 		350C61371C77C7DF6188D8F9 /* CaptureFlowUITests.swift */ = {
 			isa = PBXFileReference;
@@ -295,6 +325,7 @@
 		93831774EC18A36A0D602512 /* FlashTeXPad */ = {
 			isa = PBXGroup;
 			children = (
+				30F147C413EB16F59C94E670,
 				DAB5331096CACE1D1611C89C,
 				4FDDBCFB400C1F50ACD45711,
 				8154323B8EA2D5445564B276,
@@ -313,6 +344,7 @@
 			isa = PBXGroup;
 			children = (
 				9350128EF36336405FA0A78F,
+				B6E3658344378A345F18703C,
 				61E5796C7F96C2C8B3E99B01,
 				8EA2299F037B17191402BB8E,
 				03C01BAAABAAA9818C6D82F5,
@@ -324,6 +356,7 @@
 		F6DACFB5EF322A77BC9A2FCB /* FlashTeXPadUITests */ = {
 			isa = PBXGroup;
 			children = (
+				DA47D6461AFA4DDD78A13236,
 				350C61371C77C7DF6188D8F9,
 				52C5885AA93684C7DAB7FFF8,
 				7ED15C813756AF08F402B731,
@@ -494,6 +527,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F5ADC271C91EB24AF7D12A09,
 				E61ADC75D2613BC05A89C79F,
 				09CB227A124543638E92BA22,
 				045BB3308B2C5DD1D387C7D2,
@@ -507,6 +541,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8852E4C9E3130B7E00B73EA9,
+				01628618D47C292D7DEAB7D8,
 				5D3BA29BB7D8E223A38ED5BC,
 				72B8562FE1F50D30C56A9348,
 				914F0A91E37F25D4F61A6EE2,
@@ -518,6 +553,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				578D97340F0ACA306E1FEFD2,
 				C7C127377FB47913308A63AC,
 				B8893983D5B15983E38B2BD0,
 				3D8DF49128A8BFCD6B6033DF,

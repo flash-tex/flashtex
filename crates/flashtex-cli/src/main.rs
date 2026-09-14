@@ -17,11 +17,13 @@
 //! font subsets, images, links), the same bytes the Mac app's Export PDF
 //! produces. Exit status: 0 when the document rendered (`ok`, or
 //! `recovered` unless `--strict`), 1 when it failed, 2 for a usage error.
-//! Diagnostics go to stderr as `file:line:col: severity[code] message`,
-//! then one summary line. See docs/user/compiler.md.
+//! Diagnostics go to stderr, rustc-style with a source excerpt when stderr
+//! is a terminal and as `file:line:col: severity[code] message` otherwise
+//! (`--diagnostics`), then one summary line. See docs/user/compiler.md.
 
 mod compile;
 mod project;
+mod report;
 mod requestdate;
 
 use std::io::Write;
@@ -72,6 +74,9 @@ options:
   --strict             exit 1 when any error diagnostic was reported, even if
                        the document rendered (`recovered`)
   --json               (check/build) print the flashtex-check/1 report on stdout
+  --diagnostics STYLE  full (source excerpt and carets), short (one line each)
+                       or json (= --json); default full on a terminal, else short
+  --color WHEN         auto (default; off when NO_COLOR is set), always, never
   -j, --jobs N         accepted for compatibility; the engine is single-threaded
   --class-options OPTS class options assumed when the source has no \\documentclass
                        (default `12pt`)
@@ -82,10 +87,12 @@ exit status: 0 rendered (ok/recovered), 1 failed (or recovered with --strict),
 environment: FLASHTEX_FONT_DIRS, FLASHTEX_TFM_DIRS, FLASHTEX_LM_DIR (colon separated)
 ";
 
-/// `flashtex --version`: crate version and the Git revision it was built
-/// from (`build.rs`).
+/// `flashtex --version`: the release version and the Git revision it was
+/// built from (both from `build.rs`). `FLASHTEX_VERSION` in the build
+/// environment is the release tag; a plain checkout falls back to the crate
+/// version.
 pub fn version_string() -> String {
-    format!("flashtex {} ({})", env!("CARGO_PKG_VERSION"), env!("FLASHTEX_GIT_SHA"))
+    format!("flashtex {} ({})", env!("FLASHTEX_VERSION"), env!("FLASHTEX_GIT_SHA"))
 }
 
 fn main() {
@@ -138,6 +145,9 @@ struct Common {
     verbose: bool,
     strict: bool,
     json: bool,
+    /// `None`: full when stderr is a terminal, short otherwise.
+    diagnostics: Option<report::Style>,
+    color: Option<bool>,
     interval_ms: u64,
     render: RenderOptions,
 }
@@ -153,6 +163,8 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
         verbose: false,
         strict: false,
         json: false,
+        diagnostics: None,
+        color: None,
         interval_ms: 250,
         render: RenderOptions::default(),
     };
@@ -164,7 +176,11 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
         args.get(*i).cloned().ok_or_else(|| format!("{flag} needs a value"))
     };
     while i < args.len() {
-        let a = args[i].as_str();
+        // `--diagnostics=full` is `--diagnostics full`.
+        let (a, inline) = match args[i].split_once('=') {
+            Some((flag, v)) if flag == "--diagnostics" || flag == "--color" => (flag, Some(v.to_string())),
+            _ => (args[i].as_str(), None),
+        };
         match a {
             "-o" | "--output" => c.output = Some(PathBuf::from(value(&mut i, a)?)),
             "--project-root" => c.project_root = Some(PathBuf::from(value(&mut i, a)?)),
@@ -181,6 +197,18 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
             "-v" | "--verbose" => c.verbose = true,
             "--strict" => c.strict = true,
             "--json" => c.json = true,
+            "--diagnostics" => match inline.map_or_else(|| value(&mut i, a), Ok)?.as_str() {
+                "full" => c.diagnostics = Some(report::Style::Full),
+                "short" => c.diagnostics = Some(report::Style::Short),
+                "json" => c.json = true,
+                v => return Err(format!("--diagnostics is full, short or json, got {v:?}")),
+            },
+            "--color" => match inline.map_or_else(|| value(&mut i, a), Ok)?.as_str() {
+                "auto" => c.color = None,
+                "always" => c.color = Some(true),
+                "never" => c.color = Some(false),
+                v => return Err(format!("--color is auto, always or never, got {v:?}")),
+            },
             "-j" | "--jobs" => {
                 let n = value(&mut i, a)?;
                 n.parse::<usize>().map_err(|_| format!("{a} needs a number, got {n:?}"))?;
@@ -279,8 +307,23 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
 
     // Diagnostics, then the summary, on stderr; the JSON report on stdout.
     let mut err = std::io::stderr().lock();
-    for d in &outcome.diagnostics {
-        let _ = writeln!(err, "{}", d.line_text());
+    let terminal = std::io::IsTerminal::is_terminal(&err);
+    let style = c.diagnostics.unwrap_or(if terminal { report::Style::Full } else { report::Style::Short });
+    let color = c.color.unwrap_or(terminal && std::env::var_os("NO_COLOR").is_none());
+    let shown = match style {
+        report::Style::Full => report::collapse_repeats(&outcome.diagnostics),
+        report::Style::Short => outcome.diagnostics.clone(),
+    };
+    for d in &shown {
+        match style {
+            report::Style::Short => {
+                let _ = writeln!(err, "{}", d.line_text());
+            }
+            report::Style::Full => {
+                let text = project.documents.iter().find(|doc| doc.path == d.path).map(|doc| doc.text.as_str());
+                let _ = writeln!(err, "{}", report::render_full(d, text, color));
+            }
+        }
     }
     if c.verbose {
         for n in &pdf_notes {
@@ -375,6 +418,10 @@ fn watch(c: &Common, fonts: &FontSet) -> i32 {
             .collect();
         snapshot = now;
         revision += 1;
+        if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+            // Clear the screen so the latest rebuild is the only one on it.
+            eprint!("\x1b[2J\x1b[H");
+        }
         eprintln!("flashtex: change in {} -> rebuild #{revision}", changed.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
         if let Err(e) = build_once(&timed, fonts, Mode::Build, revision) {
             eprintln!("flashtex: {e}");
@@ -393,6 +440,8 @@ fn clone_common(c: &Common) -> Common {
         verbose: c.verbose,
         strict: c.strict,
         json: c.json,
+        diagnostics: c.diagnostics,
+        color: c.color,
         interval_ms: c.interval_ms,
         render: c.render.clone(),
     }
