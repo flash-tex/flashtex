@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/preamble-lengths",
-  "gh_ref": "#2",
+  "gh_ref": "473",
   "machine": "mac-m5pro-dq222",
   "note": "preamble \\setlength/\\addtolength/\\textwidth= page geometry + paragraph params; compiler + pipeline style; Cursor",
   "started_utc": "2026-09-14T16:19:51Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-PREAMBLE-LENGTHS",
-  "updated_utc": "2026-09-14T18:23:21Z"
+  "updated_utc": "2026-09-14T22:28:26Z"
 }
