@@ -126,6 +126,7 @@ impl Context<'_> {
             interline_penalty: if s.dotted { pagebuild::INF_PENALTY } else { 0 },
             club_penalty: CLUB_PENALTY,
             widow_penalty: WIDOW_PENALTY,
+            broken_penalty: broken_penalties(&lines),
             penalty_after: s.penalty_after,
             space_after: None,
             no_interline_first: false,

@@ -123,10 +123,17 @@ pub struct VBlock {
     pub parskip: Option<(f64, f64, f64)>,
     /// Penalty between line i and i+1 (§890): `\interlinepenalty` plus
     /// `\clubpenalty` after the first line, plus `\widowpenalty` before the
-    /// last line.
+    /// last line, plus `\brokenpenalty` (see `broken_penalty`).
     pub interline_penalty: i32,
     pub club_penalty: i32,
     pub widow_penalty: i32,
+    /// `\brokenpenalty` (LaTeX: 100) for line `i`, charged when that line's
+    /// own break was a discretionary (§890's `disc_break`). It goes into the
+    /// same penalty node as the three above, so a hyphenated line is a
+    /// *worse* place to end a page than the line after it — which is how
+    /// TeX fits one more line onto a page by shrinking its glue instead of
+    /// breaking at the hyphen. Entries past the end are 0.
+    pub broken_penalty: Vec<i32>,
     /// Penalty after the last line (`\nobreak` after a heading:
     /// `INF_PENALTY`; `\predisplaypenalty` handled by the display's own
     /// `penalty_before`).
@@ -268,6 +275,7 @@ pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
                 if li + 2 == n {
                     pen += b.widow_penalty;
                 }
+                pen += b.broken_penalty.get(li).copied().unwrap_or(0);
                 if pen != 0 {
                     out.push(VItem::Penalty(pen.min(INF_PENALTY)));
                 }
@@ -1452,7 +1460,7 @@ pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil:
 /// first box to the break): positive stretches by `ratio * stretch`,
 /// negative shrinks by `-ratio * shrink` (capped at the available shrink,
 /// TeX §676/§677). 0 when fil glue absorbs the excess or nothing stretches.
-fn glue_set(p: &PageParams, items: &[VItem]) -> f64 {
+pub(crate) fn glue_set(p: &PageParams, items: &[VItem]) -> f64 {
     let (mut total, mut depth, mut has_box, mut last_box) = (0.0, 0.0, false, false);
     let (mut stretch, mut shrink, mut fil) = (0.0, 0.0, false);
     for item in items {
@@ -1517,6 +1525,7 @@ mod tests {
             interline_penalty: 0,
             club_penalty: 150,
             widow_penalty: 150,
+            broken_penalty: Vec::new(),
             penalty_after: None,
             space_after: None,
             no_interline_first: false,
@@ -1671,6 +1680,7 @@ mod tests {
             interline_penalty: INF_PENALTY,
             club_penalty: 0,
             widow_penalty: 0,
+            broken_penalty: Vec::new(),
             penalty_after: Some(INF_PENALTY),
             space_after: Some((12.4, 1.0, 0.0)),
             no_interline_first: false,

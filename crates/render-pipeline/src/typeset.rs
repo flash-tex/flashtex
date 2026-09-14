@@ -337,6 +337,7 @@ thread_local! {
 /// LaTeX/plain penalties (article defaults).
 const CLUB_PENALTY: i32 = 150;
 const WIDOW_PENALTY: i32 = 150;
+const BROKEN_PENALTY: i32 = 100;
 const SEC_PENALTY: i32 = -300;
 const PREDISPLAY_PENALTY: i32 = pagebuild::INF_PENALTY;
 
@@ -2329,6 +2330,7 @@ impl<'a> Context<'a> {
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalty: 0,
+            broken_penalty: Vec::new(),
             penalty_after: Some(0),
             space_after: Some(skip_tuple(post)),
             no_interline_first: true,
@@ -2699,6 +2701,7 @@ impl<'a> Context<'a> {
             interline_penalty: 0,
             club_penalty: if after_heading { pagebuild::INF_PENALTY } else { CLUB_PENALTY },
             widow_penalty: WIDOW_PENALTY,
+            broken_penalty: broken_penalties(&lines),
             penalty_after: None,
             space_after: trailing_skip.map(|pt| {
                 // `\@xcentercr`: `\par \addvspace{-\parskip} \vskip <dimen>`;
@@ -2831,6 +2834,7 @@ impl<'a> Context<'a> {
             interline_penalty: pagebuild::INF_PENALTY,
             club_penalty: 0,
             widow_penalty: 0,
+            broken_penalty: broken_penalties(&lines),
             penalty_after: Some(pagebuild::INF_PENALTY),
             space_after: Some(skip_tuple(h.after)),
             no_interline_first: false,
@@ -2934,6 +2938,7 @@ impl<'a> Context<'a> {
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalty: 0,
+            broken_penalty: Vec::new(),
             penalty_after: None,
             space_after: None,
             no_interline_first: bracket,
@@ -3010,6 +3015,7 @@ impl<'a> Context<'a> {
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalty: 0,
+            broken_penalty: Vec::new(),
             penalty_after: None,
             space_after: None,
             no_interline_first: true,
@@ -3071,6 +3077,7 @@ impl<'a> Context<'a> {
                 interline_penalty: 0,
                 club_penalty: 0,
                 widow_penalty: 0,
+                broken_penalty: Vec::new(),
                 penalty_after: Some(pagebuild::INF_PENALTY),
                 space_after: Some((frame_pt(spec.top_space), 0.0, 0.0)),
                 no_interline_first: true,
@@ -3195,6 +3202,7 @@ impl<'a> Context<'a> {
             interline_penalty: pagebuild::INF_PENALTY,
             club_penalty: 0,
             widow_penalty: 0,
+            broken_penalty: broken_penalties(&lines),
             penalty_after: Some(pagebuild::INF_PENALTY),
             space_after: Some((after_pt, 0.0, 0.0)),
             no_interline_first: false,
@@ -3489,6 +3497,7 @@ impl<'a> Context<'a> {
         vertical.parskip = Some(skip_tuple(self.style.parskip));
         vertical.club_penalty = CLUB_PENALTY;
         vertical.widow_penalty = WIDOW_PENALTY;
+        vertical.broken_penalty = broken_penalties(&lines);
         vertical.baselineskip = Some(baselineskip_pt);
         vertical.vskip_after = vskips_of(&lines, &skips);
         Some(BuiltBlock {
@@ -3576,6 +3585,7 @@ impl<'a> Context<'a> {
                 interline_penalty: 0,
                 club_penalty: 0,
                 widow_penalty: 0,
+                broken_penalty: Vec::new(),
                 penalty_after: None,
                 space_after: None,
                 no_interline_first: true,
@@ -3695,6 +3705,7 @@ impl<'a> Context<'a> {
                 interline_penalty: 0,
                 club_penalty: 0,
                 widow_penalty: 0,
+                broken_penalty: Vec::new(),
                 penalty_after: None,
                 space_after: None,
                 no_interline_first: true,
@@ -3830,6 +3841,7 @@ impl<'a> Context<'a> {
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalty: 0,
+            broken_penalty: Vec::new(),
             penalty_after: None,
             space_after: None,
             no_interline_first: false,
@@ -3877,6 +3889,7 @@ impl<'a> Context<'a> {
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalty: 0,
+            broken_penalty: Vec::new(),
             penalty_after: None,
             space_after: None,
             no_interline_first: false,
@@ -4207,6 +4220,7 @@ impl<'a> Context<'a> {
             interline_penalty: if separate { pagebuild::INF_PENALTY } else { 0 },
             club_penalty: 0,
             widow_penalty: 0,
+            broken_penalty: Vec::new(),
             penalty_after: None,
             space_after,
             no_interline_first: false,
@@ -4629,6 +4643,7 @@ impl<'a> Context<'a> {
             interline_penalty: pagebuild::INF_PENALTY,
             club_penalty: 0,
             widow_penalty: 0,
+            broken_penalty: Vec::new(),
             penalty_after: None,
             space_after: Some(skip_tuple(below)),
             no_interline_first: false,
@@ -4723,6 +4738,10 @@ fn skip_tuple(s: crate::style::Skip) -> (f64, f64, f64) {
 }
 
 /// A table entry's lines as a block assembled like a paragraph's.
+///
+/// No `broken_penalty`: a cell's lines are not breakpoints of the page's
+/// vertical list (the row's box is), so charging `\brokenpenalty` here would
+/// move longtable's row breaks with no oracle behind it.
 fn table_cell_block(lines: pl::Lines, items: Vec<pl::Item>, recs: Vec<Option<usize>>, labels: Vec<(String, usize)>) -> BuiltBlock {
     let vertical = VBlock {
         lines: line_extents(&lines),
@@ -4732,6 +4751,7 @@ fn table_cell_block(lines: pl::Lines, items: Vec<pl::Item>, recs: Vec<Option<usi
         interline_penalty: 0,
         club_penalty: 0,
         widow_penalty: 0,
+        broken_penalty: Vec::new(),
         penalty_after: None,
         space_after: None,
         no_interline_first: false,
@@ -4749,6 +4769,23 @@ fn table_cell_block(lines: pl::Lines, items: Vec<pl::Item>, recs: Vec<Option<usi
 
 fn line_extents(lines: &pl::Lines) -> Vec<(f64, f64)> {
     lines.lines.iter().map(|l| (l.height, l.depth)).collect()
+}
+
+/// `\brokenpenalty` per line for [`pagebuild::VBlock::broken_penalty`]: 100
+/// (the LaTeX value; `\showthe\brokenpenalty` in any standard class) for a
+/// line whose break was a discretionary, 0 otherwise. `Line::hyphenated` is
+/// exactly §882's `disc_break` — the breakpoint that ended the line is a
+/// flagged penalty, i.e. a `\-` or an automatic hyphenation point.
+///
+/// Trailing zeros are trimmed: nothing is charged after the last line
+/// anyway (§890 appends no penalty there), and an all-zero paragraph keeps
+/// an empty vector.
+fn broken_penalties(lines: &pl::Lines) -> Vec<i32> {
+    let mut v: Vec<i32> = lines.lines.iter().map(|l| if l.hyphenated { BROKEN_PENALTY } else { 0 }).collect();
+    while v.last() == Some(&0) {
+        v.pop();
+    }
+    v
 }
 
 /// A trailing `\\` under `\centering`/`\raggedleft` (`\@centercr`) is
@@ -6063,6 +6100,7 @@ fn plain_vblock(lines: Vec<(f64, f64)>) -> VBlock {
         interline_penalty: 0,
         club_penalty: 0,
         widow_penalty: 0,
+        broken_penalty: Vec::new(),
         penalty_after: None,
         space_after: None,
         no_interline_first: false,

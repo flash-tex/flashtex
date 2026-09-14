@@ -1,0 +1,74 @@
+% A page whose best break is one line *past* a hyphenated line, so the page
+% has to shrink its glue to hold that line. Two engine behaviours meet here:
+%
+%   * TeX charges \brokenpenalty (100) on the penalty node after a line whose
+%     own break was a discretionary (tex.web 890), which makes ending the page
+%     at the hyphen cost more than carrying the line and shrinking;
+%   * \@makecol packs the column \vbox to\@colht, so the glue above every line
+%     under the first shrinkable skip is set, not left at its natural size.
+%
+% The `table` float (caption only) is what routes the page through the float
+% column builder rather than the plain page builder, which is where the second
+% behaviour was missing. The long Latinate words make almost every line break a
+% hyphenation, so the page boundary lands on one.
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\begin{document}
+\begin{table}[t]
+\caption{Throughput by facility.}
+\end{table}
+
+\section{Section 1}
+Interdisciplinary reorganization of transportation infrastructure
+implementation requires uncharacteristically comprehensive documentation,
+since transformational reconfiguration of distribution responsibilities
+inevitably complicates the administrative accountability that operational
+standardization presupposes throughout representative implementations of
+institutional responsibility.
+
+\section{Section 2}
+Interdisciplinary reorganization of transportation infrastructure
+implementation requires uncharacteristically comprehensive documentation,
+since transformational reconfiguration of distribution responsibilities
+inevitably complicates the administrative accountability that operational
+standardization presupposes throughout representative implementations of
+institutional responsibility.
+
+\section{Section 3}
+Interdisciplinary reorganization of transportation infrastructure
+implementation requires uncharacteristically comprehensive documentation,
+since transformational reconfiguration of distribution responsibilities
+inevitably complicates the administrative accountability that operational
+standardization presupposes throughout representative implementations of
+institutional responsibility.
+
+\section{Section 4}
+Interdisciplinary reorganization of transportation infrastructure
+implementation requires uncharacteristically comprehensive documentation,
+since transformational reconfiguration of distribution responsibilities
+inevitably complicates the administrative accountability that operational
+standardization presupposes throughout representative implementations of
+institutional responsibility.
+
+\section{Section 5}
+Interdisciplinary reorganization of transportation infrastructure
+implementation requires uncharacteristically comprehensive documentation,
+since transformational reconfiguration of distribution responsibilities
+inevitably complicates the administrative accountability that operational
+standardization presupposes throughout representative implementations of
+institutional responsibility.
+
+\section{Section 6}
+Interdisciplinary reorganization of transportation infrastructure
+implementation requires uncharacteristically comprehensive documentation,
+since transformational reconfiguration of distribution responsibilities
+inevitably complicates the administrative accountability that operational
+standardization presupposes throughout representative implementations of
+institutional responsibility and comparable considerations and comparable
+considerations and comparable considerations and comparable considerations
+and comparable considerations and comparable considerations and comparable
+considerations.
+
+\end{document}

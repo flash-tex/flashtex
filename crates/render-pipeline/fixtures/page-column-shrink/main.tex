@@ -1,0 +1,97 @@
+% A page whose column holds more material than `\@colht`.
+%
+% `\@makecol` packs every column `\vbox to\@colht`, so a page carrying more
+% than fits is set at a negative glue set: each shrinkable skip gives up its
+% share and everything below the first one moves up. The float column builder
+% was laying its pages out at their natural size instead, which left this page
+% low by the whole shrink and 4.81pt overfull.
+%
+% The shrink here is `\@maketitle`'s `center` (`\@endparenv` contributes
+% `\topsep` + `\partopsep` = 12pt plus 4pt minus 6pt at 11pt) plus every
+% `\section`'s `3.5ex plus 1ex minus .2ex` before-skip; the stretch that makes
+% stopping a line earlier look cheap is the run of one-line paragraphs, each
+% preceded by `\parskip 0pt plus 1pt`. The `table` float (caption only) routes
+% the document through the float column builder.
+%
+% Reduced from `fixtures/real-world/lmodern-report`, whose page 1 has the same
+% shape: 652.76431pt of material in 650.43001pt, which `\showoutput` reports as
+% `glue set - 0.26439`. No `\tableofcontents`: its page numbers need a third
+% pass to settle here, which would measure TOC convergence instead.
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+
+\title{Quarterly Operations Review: Warehouse Efficiency Initiative}
+\author{Operations Analytics Team}
+\date{Third Quarter, Fiscal Year 2026}
+
+\begin{document}
+\maketitle
+
+\section{Headline Figures}
+
+Median order-to-ship time fell by nineteen percent across the network.
+
+Northgate reduced its median cycle time from fourteen hours to ten.
+
+Riverside improved by five percent and remains the slowest facility.
+
+Fairview posted the largest single-quarter gain of the review period.
+
+Union Yard continues to lose afternoon capacity to dock congestion.
+
+Crestline completed its shelving retrofit ahead of the planned schedule.
+
+Ninety-day retention improved at every site that adopted the new model.
+
+Time to full productivity fell from three weeks to ten working days.
+
+Supervisor hours spent on coaching rose by roughly a fifth.
+
+Pick-path reorganization is complete at four of the five facilities.
+
+Two facilities still run the original shelving and routing layout.
+
+Outbound scheduling changes are pending a decision on staggered windows.
+
+A further facility note number 1 is recorded in the appendix.
+
+A further facility note number 2 is recorded in the appendix.
+
+A further facility note number 3 is recorded in the appendix.
+
+\section{Executive Summary}
+This report summarizes the findings of the warehouse efficiency initiative
+launched at the start of the fiscal year, covering staffing, equipment
+utilization, and fulfillment throughput across the five regional
+distribution centers. Overall, the initiative has delivered a measurable
+improvement in order-to-ship time, though results vary considerably by
+site, and several facilities have exceeded their targets while others
+continue to struggle with fixture and layout constraints that were only
+partially addressed during the mid-year renovation window.
+
+\section{Background}
+The warehouse efficiency initiative was chartered in response to a steady
+increase in order volume that had begun to outpace the capacity of existing
+fulfillment workflows. Waiting times at pick stations had crept upward over
+several consecutive quarters, and exit surveys from departing staff
+frequently cited workflow friction and unclear task prioritization as
+sources of frustration. Management commissioned a cross-functional working
+group, drawn from operations, facilities, and workforce planning, to
+diagnose the underlying causes and propose a coordinated set of fixes,
+and several sites reported the same pattern, and several sites reported
+the same pattern, and several sites reported the same pattern.
+
+\section{Throughput Improvements}
+Order-to-ship time by facility is summarized in the table below.
+
+\begin{table}[h]
+\centering
+\caption{Median order-to-ship time by facility (hours).}
+\end{table}
+
+\section{Conclusion}
+The warehouse efficiency initiative has delivered real, if uneven, gains.
+
+\end{document}
