@@ -181,6 +181,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("setlength", "{\\length}{dimension}", "preamble \\parskip, and \\parindent of 0pt; other lengths warn"),
     ("setlist", "[list]{options}", "enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn"),
     ("newcolumntype", "{X}[n]{spec}", "array column type expanded in later tabular specifications"),
+    ("arrayrulecolor", "[model]{colour}", "colortbl: colour of later table rules"),
+    ("doublerulesepcolor", "[model]{colour}", "colortbl: colour of the gap between double rules"),
     ("arraybackslash", "", "array no-op: \\\\ already ends the row inside p, m and b entries"),
     ("newcommand", "{\\name}[n]{body}", "defines a macro with 0-9 arguments; rejects an existing name"),
     ("renewcommand", "{\\name}[n]{body}", "redefines an existing macro"),
@@ -772,6 +774,26 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "array",
         "",
         "tabular >{} <{} !{} m b w columns, \\newcolumntype and \\extrarowheight",
+    ),
+    (
+        "booktabs",
+        "",
+        "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules",
+    ),
+    (
+        "longtable",
+        "",
+        "the page-breaking longtable environment: \\endfirsthead, \\endhead, \\endfoot, \\endlastfoot, \\caption, \\kill, \\\\*",
+    ),
+    (
+        "multirow",
+        "",
+        "\\multirow[vpos]{rows}[bigstruts]{width}[vmove]{text} in table entries",
+    ),
+    (
+        "colortbl",
+        "",
+        "\\rowcolor, \\cellcolor, >{\\columncolor}, \\arrayrulecolor, \\doublerulesepcolor",
     ),
     (
         "enumitem",

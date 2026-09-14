@@ -17,6 +17,7 @@ use crate::lexer::{apply_text_ligatures, tokenize_document, Token, TokenKind};
 #[cfg(test)]
 use crate::lexer::tokenize;
 use crate::math::{self, MathList, MathPackages};
+use crate::natbib;
 use crate::siunitx;
 use crate::text_builtins::{self, SymbolOutcome, TextDimen, TextLogo, TextRule};
 use crate::theorems::{self, TheoremDef, TheoremStyle};
@@ -775,6 +776,21 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "huge",
     "Huge",
     "cite",
+    "citet",
+    "citep",
+    "citealt",
+    "citealp",
+    "citeauthor",
+    "citefullauthor",
+    "citeyear",
+    "citeyearpar",
+    "citenum",
+    "citetext",
+    "Citet",
+    "Citep",
+    "Citealt",
+    "Citealp",
+    "Citeauthor",
     "nocite",
     "bibitem",
     "bibliography",
@@ -1058,6 +1074,8 @@ pub fn parse_project_with(
         table_rule_color: None,
         table_double_rule_sep_color: None,
         footnote_counter: 0,
+        mpfootnote_counter: 0,
+        chapter_class: false,
         current_counter: None,
         seen_labels: HashMap::new(),
         list_stack: Vec::new(),
@@ -1083,6 +1101,8 @@ pub fn parse_project_with(
         noted_unclickable_link: false,
         bibliography,
         bib_cursor: 0,
+        natbib_limitations: std::collections::BTreeSet::new(),
+        natbib_forced_numbers_reported: false,
         title: None,
         author: None,
         date: None,
@@ -1200,8 +1220,15 @@ struct P<'a> {
     /// colortbl `\arrayrulecolor`/`\doublerulesepcolor` (global assignments).
     table_rule_color: Option<crate::tabular::ColorSpec>,
     table_double_rule_sep_color: Option<crate::tabular::ColorSpec>,
-    /// LaTeX's `footnote` counter; article never resets it.
+    /// LaTeX's `footnote` counter; article never resets it, report and
+    /// book reset it at every numbered `\chapter` (`\@addtoreset`).
     footnote_counter: u32,
+    /// `mpfootnote`: `\footnote` inside a `minipage` (zeroed by every
+    /// `\begin{minipage}`, printed `\alph`).
+    mpfootnote_counter: u32,
+    /// The class is report or book: `\chapter` exists and numbers
+    /// sections, figures and equations within it.
+    chapter_class: bool,
     current_counter: Option<String>,
     seen_labels: HashMap<String, Span>,
     /// Environment name, item count, an enumitem label template if given,
@@ -1239,6 +1266,10 @@ struct P<'a> {
     /// reached so far; advanced by each real `\bibitem`, whose own displayed
     /// label is looked up at this index.
     bib_cursor: usize,
+    /// natbib options that are parsed but not applied, reported once each.
+    natbib_limitations: std::collections::BTreeSet<String>,
+    /// Whether natbib's `\NAT@force@numbers` fallback has been reported.
+    natbib_forced_numbers_reported: bool,
     /// Current text style; saved on `{` and environment entry, restored on
     /// the matching `}` or `\end`.
     style: TextStyle,
@@ -1666,6 +1697,7 @@ impl P<'_> {
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
+            "chapter" if self.chapter_class => self.chapter(span, blocks, para),
             "section" | "subsection" | "subsubsection" => {
                 let level = match name {
                     "section" => 1,
@@ -1747,15 +1779,19 @@ impl P<'_> {
                 self.finish_block_dependencies();
             }
             "cite" => {
-                let note = self.optional_bracket_argument().map(|(text, _)| text);
+                // natbib redefines `\cite` (natbib.sty line 693): with an
+                // optional argument it is `\citep`, without one `\citet`.
+                // That asymmetry is natbib's, not a simplification here.
+                let natbib = self.bibliography.natbib().cloned();
+                let star = natbib.is_some() && self.take_cite_star();
+                let (pre, note) = match &natbib {
+                    Some(_) => self.cite_notes(),
+                    // The kernel's `\cite` takes one optional argument only.
+                    None => (None, self.optional_bracket_argument().map(|(text, _)| text)),
+                };
                 let (tokens, argument_span) = self.required_group(name, span);
                 let full_span = span.merge(argument_span);
-                let keys: Vec<String> = token_text(&tokens)
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|key| !key.is_empty())
-                    .map(str::to_string)
-                    .collect();
+                let keys = cite_keys(&tokens);
                 self.document_global_state = true;
                 if keys.is_empty() {
                     self.diags.push(Diagnostic::warning(
@@ -1763,6 +1799,14 @@ impl P<'_> {
                         Some(full_span),
                         Some("rendered nothing for the empty citation".into()),
                     ));
+                } else if let Some(options) = natbib {
+                    let mut kind = if note.is_some() || options.numbers {
+                        natbib::CITE_WITH_NOTE
+                    } else {
+                        natbib::CITE_PLAIN
+                    };
+                    kind.full = star;
+                    self.push_natbib_cite(&options, kind, pre, note, &keys, full_span, para);
                 } else {
                     para.extend(bib::cite_inlines(
                         &keys,
@@ -1772,6 +1816,21 @@ impl P<'_> {
                         &mut self.diags,
                     ));
                 }
+            }
+            "citet" | "citep" | "citealt" | "citealp" | "citeauthor" | "citefullauthor"
+            | "citeyear" | "citeyearpar" | "citenum" | "Citet" | "Citep" | "Citealt"
+            | "Citealp" | "Citeauthor" => self.natbib_cite(name, span, para),
+            // `\citetext{...}`: natbib's delimiters around arbitrary text
+            // (natbib.sty line 741).
+            "citetext" => {
+                let options = self.natbib_options(name, span);
+                let (tokens, argument_span) = self.required_group(name, span);
+                let full_span = span.merge(argument_span);
+                para.extend(natbib::citetext_inlines(
+                    &options,
+                    token_text(&tokens).trim(),
+                    full_span,
+                ));
             }
             // Real LaTeX's `\nocite` only writes a BibTeX aux-file entry (to
             // pull an uncited reference into the printed bibliography); it
@@ -1879,22 +1938,26 @@ impl P<'_> {
                     let _ = self.optional_bracket_argument();
                     let _ = self.required_group(name, span);
                     self.document_global_state = true;
-                    let label = self
+                    // The printed marker, already bracketed — and empty under
+                    // natbib's author-year mode, whose `\@biblabel` is
+                    // `\hfill` (natbib.sty line 622), so the entry starts
+                    // flush at the margin with no `[1]` in front of it.
+                    let text = self
                         .bibliography
-                        .label_at(self.bib_cursor)
-                        .map(str::to_string);
-                    let label = label.unwrap_or_else(|| {
-                        // Should not happen: the pre-scan and this real parse
-                        // walk the same literal `\bibitem`s in lockstep (see
-                        // `bib::prescan`). Recover with a plain sequential
-                        // number rather than losing the entry.
-                        (self.bib_cursor + 1).to_string()
-                    });
+                        .marker_at(self.bib_cursor)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| {
+                            // Should not happen: the pre-scan and this real
+                            // parse walk the same literal `\bibitem`s in
+                            // lockstep (see `bib::prescan`). Recover with a
+                            // plain sequential number rather than losing the
+                            // entry.
+                            bib::label_bracket(&(self.bib_cursor + 1).to_string())
+                        });
                     self.bib_cursor += 1;
                     if let Some(list) = self.list_stack.last_mut() {
                         list.count += 1;
                     }
-                    let text = bib::label_bracket(&label);
                     self.pending_item = Some(ItemLabel::Template { text: text.clone() });
                     self.pending_item_label = Some((text, span));
                 }
@@ -2293,6 +2356,10 @@ impl P<'_> {
             ));
         } else if self.document_class.is_none() {
             self.math_packages.load_class(&class);
+            if matches!(class.as_str(), "report" | "book") {
+                self.chapter_class = true;
+                self.counters = crate::xref::Counters::report();
+            }
             self.document_class = Some(class);
         }
     }
@@ -2442,6 +2509,203 @@ impl P<'_> {
                 Some("lists use the compiler's default spacing for these keys".into()),
             ));
         }
+    }
+
+    /// natbib's `[pre][post]` optional arguments (`\NAT@citetp`/`\NAT@@citetp`,
+    /// natbib.sty lines 688-690). **One bracket is the post-note**: natbib
+    /// reads `[#1]` and, only if a second bracket follows, treats the first
+    /// as the pre-note; otherwise it calls `\@citex[][#1]`.
+    fn cite_notes(&mut self) -> (Option<String>, Option<String>) {
+        let Some(first) = self.cite_note_argument() else {
+            return (None, None);
+        };
+        match self.cite_note_argument() {
+            Some(second) => (Some(first), Some(second)),
+            None => (None, Some(first)),
+        }
+    }
+
+    /// One `[...]`, leaving whatever is glued to it after the `]` in the
+    /// stream. `[`, `]` and `*` are ordinary word characters to the lexer, so
+    /// `\citep[see][p.~7]` is a **single** `Word` token: the shared
+    /// [`P::optional_bracket_argument`], which consumes whole tokens, would
+    /// take "see" and swallow `[p.~7]` with it — the pre-note would silently
+    /// become the post-note and the post-note would vanish.
+    fn cite_note_argument(&mut self) -> Option<String> {
+        self.skip_spaces();
+        let word = match &self.t.get(self.i)?.token.kind {
+            TokenKind::Word(word) if word.starts_with('[') => word.clone(),
+            _ => return None,
+        };
+        match word.find(']') {
+            Some(close) => {
+                let note = word[1..close].to_string();
+                self.trim_word_prefix(close + 1);
+                Some(note)
+            }
+            // The note runs past this word (`[see this]`): the shared reader
+            // already accumulates tokens until the `]`, and nothing can be
+            // glued to that `]` inside the same word.
+            None => self.optional_bracket_argument().map(|(text, _)| text),
+        }
+    }
+
+    /// natbib's `\@ifstar` on a citation command, with the same word-splitting
+    /// as [`P::cite_note_argument`]: `\citet*[p.~7]` is one lexer word.
+    fn take_cite_star(&mut self) -> bool {
+        self.skip_spaces();
+        let starred = matches!(
+            self.t.get(self.i).map(|input| &input.token.kind),
+            Some(TokenKind::Word(word)) if word.starts_with('*')
+        );
+        if starred {
+            self.trim_word_prefix(1);
+        }
+        starred
+    }
+
+    /// Drops the first `len` bytes of the `Word` token at the cursor, moving
+    /// past the token when nothing is left (`skip_line_break_length` does the
+    /// same for `\\[3pt]Next`).
+    fn trim_word_prefix(&mut self, len: usize) {
+        let Some(input) = self.token_mut(self.i) else {
+            return;
+        };
+        let TokenKind::Word(word) = &input.token.kind else {
+            return;
+        };
+        let full = word.len();
+        let rest = word[len.min(full)..].to_string();
+        if rest.is_empty() {
+            self.i += 1;
+            return;
+        }
+        let span = input.token.span;
+        // Only a token whose span matches its text can be re-spanned; one a
+        // macro produced keeps the call site's span.
+        if span.end - span.start == full {
+            input.token.span = Span::in_document(span.document, span.start + len, span.end);
+        }
+        input.token.kind = TokenKind::Word(rest);
+    }
+
+    /// The natbib options in force, or natbib's own defaults plus one error
+    /// when the document never loaded the package — which is what pdfLaTeX
+    /// reports too, as an undefined control sequence.
+    fn natbib_options(&mut self, name: &str, span: Span) -> natbib::Options {
+        match self.bibliography.natbib() {
+            Some(options) => options.clone(),
+            None => {
+                self.diags.push(Diagnostic::error(
+                    format!("\\{name} is a natbib command, but this document does not \\usepackage{{natbib}}"),
+                    Some(span),
+                    Some("set the citation with natbib's default author-year style".into()),
+                ));
+                natbib::Options::default()
+            }
+        }
+    }
+
+    /// `\citet`, `\citep`, `\citealt`, `\citealp`, `\citeauthor`,
+    /// `\citefullauthor`, `\citeyear`, `\citeyearpar`, `\citenum` and their
+    /// starred and `\Cite`-capitalised forms.
+    fn natbib_cite(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let star = self.take_cite_star();
+        let command = if star { format!("{name}*") } else { name.to_string() };
+        let options = self.natbib_options(name, span);
+        let (pre, post) = self.cite_notes();
+        let (tokens, argument_span) = self.required_group(name, span);
+        let full_span = span.merge(argument_span);
+        let keys = cite_keys(&tokens);
+        self.document_global_state = true;
+        if keys.is_empty() {
+            self.diags.push(Diagnostic::warning(
+                format!("\\{name} was given an empty key list"),
+                Some(full_span),
+                Some("rendered nothing for the empty citation".into()),
+            ));
+            return;
+        }
+        let Some(kind) = natbib::kind(&command) else {
+            // `\citeyear*` and friends: natbib's `\citeyear` takes no star,
+            // so the `*` is ordinary text after the citation.
+            self.diags.push(Diagnostic::warning(
+                format!("\\{command} is not a natbib command"),
+                Some(full_span),
+                Some(format!("set it as \\{name}")),
+            ));
+            let kind = natbib::kind(name).expect("dispatch arm is a natbib command");
+            self.push_natbib_cite(&options, kind, pre, post, &keys, full_span, para);
+            return;
+        };
+        self.push_natbib_cite(&options, kind, pre, post, &keys, full_span, para);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_natbib_cite(
+        &mut self,
+        options: &natbib::Options,
+        kind: natbib::Kind,
+        pre: Option<String>,
+        post: Option<String>,
+        keys: &[String],
+        span: Span,
+        para: &mut Vec<Inline>,
+    ) {
+        if options.sort || options.compress {
+            self.note_natbib_limitation(
+                "natbib's sort/compress options are parsed but not applied; citations keep the order the document wrote them",
+                span,
+            );
+        }
+        if options.superscript {
+            self.note_natbib_limitation(
+                "natbib's super option is parsed but the numbers are set on the baseline, not raised",
+                span,
+            );
+        }
+        if options.longnamesfirst {
+            self.note_natbib_limitation(
+                "natbib's longnamesfirst option is parsed but every citation uses the short author list",
+                span,
+            );
+        }
+        if self.bibliography.natbib_forced_numbers() && !self.natbib_forced_numbers_reported {
+            self.natbib_forced_numbers_reported = true;
+            self.diags.push(Diagnostic::warning(
+                "Package natbib Error: Bibliography not compatible with author-year citations",
+                Some(span),
+                Some(
+                    "a \\bibitem has no [Author(Year)] label; continued in numerical citation style, as natbib's second pass does"
+                        .into(),
+                ),
+            ));
+        }
+        let bibliography = &self.bibliography;
+        let inlines = natbib::cite_inlines(
+            options,
+            kind,
+            pre.as_deref(),
+            post.as_deref(),
+            keys,
+            &|key: &str| bibliography.entry(key),
+            span,
+            &mut self.diags,
+        );
+        para.extend(inlines);
+    }
+
+    /// One diagnostic per natbib option this implementation does not apply,
+    /// however many citations the document has.
+    fn note_natbib_limitation(&mut self, message: &str, span: Span) {
+        if !self.natbib_limitations.insert(message.to_string()) {
+            return;
+        }
+        self.diags.push(Diagnostic::warning(
+            message,
+            Some(span),
+            Some("rendered the citation without it".into()),
+        ));
     }
 
     fn use_package(&mut self, span: Span) {
@@ -2675,8 +2939,9 @@ impl P<'_> {
             return;
         };
 
-        let stripped_title = self.strip_thanks(title_tokens);
-        let title_content = self.inlines_from_tokens(stripped_title, TextStyle::default());
+        // `\@maketitle` sets `\@title`, `\@author`, `\@date` in that
+        // order; each `\thanks` steps `footnote` there.
+        let title_content = self.thanks_inlines(title_tokens, TextStyle::default());
         if title_content.is_empty() {
             self.diags.push(Diagnostic::error(
                 "\\title was given an empty title",
@@ -2691,8 +2956,7 @@ impl P<'_> {
         let mut author_content: Vec<Inline> = Vec::new();
         let mut wrote_author = false;
         for group in author_groups {
-            let stripped = self.strip_thanks(group);
-            let inlines = self.inlines_from_tokens(stripped, TextStyle::default());
+            let inlines = self.thanks_inlines(group, TextStyle::default());
             if inlines.is_empty() {
                 // A blank `\and`-separated slot (`\author{A \and }`)
                 // contributes nothing, like an empty tabular column.
@@ -2733,8 +2997,7 @@ impl P<'_> {
                 }])
             }
             Some((date_tokens, _)) => {
-                let stripped = self.strip_thanks(date_tokens);
-                let inlines = self.inlines_from_tokens(stripped, TextStyle::default());
+                let inlines = self.thanks_inlines(date_tokens, TextStyle::default());
                 if inlines.is_empty() {
                     None // `\date{}`: suppressed, matching `DateField::Suppressed`.
                 } else {
@@ -2756,18 +3019,22 @@ impl P<'_> {
             authors: author_content,
             date: date_content,
         });
+        // `\maketitle` ends with `\setcounter{footnote}{0}`.
+        self.footnote_counter = 0;
         self.finish_block_dependencies();
     }
 
-    /// Strips `\thanks{...}` out of a captured `\title`/`\author`/`\date`
-    /// argument. Real `article.cls` turns `\thanks` into a footnote mark in
-    /// the title block plus footnote text at the page foot; this compiler
-    /// has no footnote implementation, so the honest recovery is to omit the
-    /// mark and its text — never leak the footnote prose into the centred
-    /// title/author/date line — and say so once per occurrence, per the
-    /// recovery policy documented on `unsupported` above.
-    fn strip_thanks(&mut self, tokens: Vec<InputToken>) -> Vec<InputToken> {
-        let mut out = Vec::with_capacity(tokens.len());
+    /// A captured `\title`/`\author`/`\date` argument as inline content
+    /// with every `\thanks{...}` turned into a footnote. article/report/
+    /// book's `\maketitle` sets `\thefootnote` to `\@fnsymbol\c@footnote`
+    /// and `\thanks` is `\footnotemark` plus a `\footnotetext[n]{...}`
+    /// queued in `\@thanks` (set after `\@maketitle`, in vertical mode):
+    /// the inline carries the symbol mark and the note text at the mark's
+    /// position; the layout decides where the text goes. The span is the
+    /// `\thanks` token.
+    fn thanks_inlines(&mut self, tokens: Vec<InputToken>, style: TextStyle) -> Vec<Inline> {
+        let mut out: Vec<Inline> = Vec::new();
+        let mut segment: Vec<InputToken> = Vec::new();
         let mut i = 0;
         while i < tokens.len() {
             let is_thanks = matches!(
@@ -2775,7 +3042,7 @@ impl P<'_> {
                 TokenKind::Command(name) if name == "thanks"
             );
             if !is_thanks {
-                out.push(tokens[i].clone());
+                segment.push(tokens[i].clone());
                 i += 1;
                 continue;
             }
@@ -2786,28 +3053,92 @@ impl P<'_> {
             {
                 j += 1;
             }
-            if j < tokens.len() && tokens[j].token.kind == TokenKind::LBrace {
-                let mut depth = 0usize;
-                while j < tokens.len() {
-                    match tokens[j].token.kind {
-                        TokenKind::LBrace => depth += 1,
-                        TokenKind::RBrace => depth -= 1,
-                        _ => {}
-                    }
-                    j += 1;
-                    if depth == 0 {
-                        break;
-                    }
+            if j >= tokens.len() || tokens[j].token.kind != TokenKind::LBrace {
+                self.diags.push(Diagnostic::warning(
+                    "\\thanks without a braced argument",
+                    Some(thanks_span),
+                    Some("omitted the footnote mark".into()),
+                ));
+                i += 1;
+                continue;
+            }
+            let open = j;
+            let mut depth = 0usize;
+            while j < tokens.len() {
+                match tokens[j].token.kind {
+                    TokenKind::LBrace => depth += 1,
+                    TokenKind::RBrace => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+                if depth == 0 {
+                    break;
                 }
             }
-            self.diags.push(Diagnostic::warning(
-                "\\thanks is recognised but footnotes are not implemented; the footnote mark and text were omitted",
-                Some(thanks_span),
-                Some("omitted the footnote mark and its text".into()),
-            ));
+            let close = if depth == 0 { j - 1 } else { j };
+            let argument = tokens[open + 1..close].to_vec();
+            let before = std::mem::take(&mut segment);
+            out.extend(self.inlines_from_tokens(before, style));
+            self.document_global_state = true;
+            self.footnote_counter += 1;
+            let number = match fnsymbol(self.footnote_counter) {
+                Some(symbol) => symbol.to_string(),
+                None => {
+                    self.diags.push(Diagnostic::error(
+                        format!(
+                            "\\thanks number {} is outside \\@fnsymbol's nine symbols",
+                            self.footnote_counter
+                        ),
+                        Some(thanks_span),
+                        Some("printed the number in arabic instead".into()),
+                    ));
+                    self.footnote_counter.to_string()
+                }
+            };
+            let text = self.footnote_inlines(argument, thanks_span);
+            out.push(Inline::Footnote {
+                number,
+                span: thanks_span,
+                mark: true,
+                text: Some(text),
+                space_before: false,
+            });
             i = j;
         }
+        out.extend(self.inlines_from_tokens(segment, style));
         out
+    }
+
+    /// `\chapter[*][<short>]{<title>}` in report/book:
+    /// `\refstepcounter{chapter}` for the numbered form, which resets
+    /// `section` (and below), `figure`, `table` and `equation` through the
+    /// counter table (report.cls/book.cls `\@addtoreset`), and `footnote`,
+    /// which this parser still counts in a field of its own. The head itself
+    /// (`\@makechapterhead`, the page break, the running marks) is layout:
+    /// the title is kept as a bold paragraph.
+    fn chapter(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let starred = self.take_optional_star();
+        if !starred {
+            let _short = self.optional_bracket_argument();
+        }
+        let (tokens, _) = self.required_group("chapter", span);
+        self.flush_paragraph(blocks, para);
+        self.document_global_state = true;
+        if !starred {
+            // Stepping `chapter` resets every counter registered within it
+            // (`Counters::report`), so `figure`/`table`/`equation` need no
+            // zeroing here; `footnote` is not in the counter table yet.
+            let number = self.counters.step("chapter").unwrap_or_default();
+            self.footnote_counter = 0;
+            self.current_counter = Some(number);
+        }
+        let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
+        if content.is_empty() {
+            self.current_dependencies.clear();
+        } else {
+            blocks.push(Block::Paragraph(content));
+            self.finish_block_dependencies();
+        }
     }
 
     fn environment(
@@ -2947,6 +3278,10 @@ impl P<'_> {
                     Some(span),
                     Some("typeset the body without the environment's formatting".into()),
                 ));
+            }
+            if is_minipage(&environment) {
+                // `\@iiiminipage`: `\c@mpfootnote\z@`.
+                self.mpfootnote_counter = 0;
             }
             self.env_stack
                 .push((environment.clone(), span.merge(argument_span)));
@@ -3895,6 +4230,11 @@ impl P<'_> {
         self.required_group_bounded(command, command_span, false)
     }
 
+    /// `long`: a `\long` argument (`\@footnotetext`), where a blank line is
+    /// an ordinary paragraph break inside the argument rather than its end.
+    /// An argument that is never closed at all is still closed at the end of
+    /// its first paragraph, so a missing brace cannot swallow the document.
+
     fn required_group_bounded(
         &mut self,
         command: &str,
@@ -4778,22 +5118,49 @@ impl P<'_> {
                 }
                 parsed
             });
-        let number = match explicit {
+        // Inside a `minipage`, `\footnote` and `\footnotetext` use
+        // `\@mpfn` = `mpfootnote` (`\thempfootnote`: `\alph`);
+        // `\footnotemark` always uses `footnote`.
+        let minipage =
+            name != "footnotemark" && self.env_stack.iter().any(|(env, _)| is_minipage(env));
+        let counter = if minipage {
+            &mut self.mpfootnote_counter
+        } else {
+            &mut self.footnote_counter
+        };
+        let value = match explicit {
             Some(number) => number,
-            None if name == "footnotetext" => self.footnote_counter,
+            None if name == "footnotetext" => *counter,
             None => {
-                self.footnote_counter += 1;
-                self.footnote_counter
+                *counter += 1;
+                *counter
             }
+        };
+        let number = if minipage {
+            match alph(value) {
+                Some(letter) => letter,
+                None => {
+                    self.diags.push(Diagnostic::error(
+                        format!("minipage footnote number {value} is outside \\alph's a-z"),
+                        Some(span),
+                        Some("printed the number in arabic instead".into()),
+                    ));
+                    value.to_string()
+                }
+            }
+        } else {
+            value.to_string()
         };
         let text = if name == "footnotemark" {
             None
         } else {
-            let (tokens, _) = self.required_group(name, span);
+            // `\@footnotetext` is `\long` (latex.ltx): a blank line inside
+            // the argument is a paragraph break in the note, not its end.
+            let (tokens, _) = self.required_group_bounded(name, span, true);
             Some(self.footnote_inlines(tokens, span))
         };
         para.push(Inline::Footnote {
-            number: number.to_string(),
+            number,
             span,
             mark: name != "footnotetext",
             text,
@@ -5564,6 +5931,13 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // array.sty's preamble builder, column types and row strut are
         // implemented (parser/tabular.rs, crate::tabular); no options.
         "array" => options.is_empty(),
+        // natbib citation commands (crate::natbib) with the delimiter,
+        // separator and citation-style options that decide the characters
+        // they set. `sort`/`compress`/`super`/`longnamesfirst` are parsed but
+        // change the output, so they keep the warning.
+        "natbib" => options
+            .iter()
+            .all(|option| crate::natbib::IMPLEMENTED_OPTIONS.contains(option)),
         // siunitx v3 numbers, units, quantities, lists, ranges and angles
         // (crate::siunitx); its options are \sisetup keys, and a key that
         // is not modelled gets its own diagnostic there.
@@ -5874,6 +6248,18 @@ fn bracket_inner(text: &str, open: usize) -> Option<&str> {
     None
 }
 
+/// The keys of a `\cite`-family argument: comma-separated, each trimmed
+/// (`\@for` over `\NAT@cite@list` does the same, which is why
+/// `\citep{a, b}` and `\citep{a,b}` set identically).
+fn cite_keys(tokens: &[InputToken]) -> Vec<String> {
+    token_text(tokens)
+        .split(',')
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 fn token_text(tokens: &[InputToken]) -> String {
     let mut result = String::new();
     for input in tokens {
@@ -6085,6 +6471,37 @@ fn document_begin_end(tokens: &[InputToken]) -> Option<usize> {
             _ => None,
         }
     })
+}
+
+/// `\@fnsymbol` (latex.ltx): `\textasteriskcentered`, `\textdagger`,
+/// `\textdaggerdbl`, `\textsection`, `\textparagraph`, `\textbardbl` and
+/// the doubled first three; `None` past nine (`\@ctrerr`).
+pub(crate) fn fnsymbol(n: u32) -> Option<&'static str> {
+    const SYMBOLS: [&str; 9] = [
+        "\u{2217}",
+        "\u{2020}",
+        "\u{2021}",
+        "\u{a7}",
+        "\u{b6}",
+        "\u{2016}",
+        "\u{2217}\u{2217}",
+        "\u{2020}\u{2020}",
+        "\u{2021}\u{2021}",
+    ];
+    SYMBOLS.get(n.checked_sub(1)? as usize).copied()
+}
+
+/// `minipage`, whose footnotes number `mpfootnote` (the environment itself
+/// is not implemented: its body is set as running text).
+fn is_minipage(environment: &str) -> bool {
+    environment == "minipage"
+}
+
+/// `\@alph`: 1-26 as a-z; `None` otherwise (`\@ctrerr`).
+pub(crate) fn alph(n: u32) -> Option<String> {
+    (1..=26)
+        .contains(&n)
+        .then(|| char::from(b'a' + (n - 1) as u8).to_string())
 }
 
 #[cfg(test)]

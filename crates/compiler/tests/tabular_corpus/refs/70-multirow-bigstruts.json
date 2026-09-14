@@ -1,0 +1,86 @@
+{
+ "fixture": "70-multirow-bigstruts.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "one",
+    "x": 107.328,
+    "y_top": 95.063
+   },
+   {
+    "text": "Big",
+    "x": 77.978,
+    "y_top": 105.275
+   },
+   {
+    "text": "two",
+    "x": 107.328,
+    "y_top": 109.509
+   },
+   {
+    "text": "three",
+    "x": 107.328,
+    "y_top": 123.955
+   },
+   {
+    "text": "TB",
+    "x": 77.978,
+    "y_top": 131.178
+   },
+   {
+    "text": "four",
+    "x": 107.328,
+    "y_top": 138.401
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 151.967
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 151.967
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 151.967
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 151.967
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  []
+ ]
+}

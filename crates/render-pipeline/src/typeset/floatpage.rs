@@ -21,11 +21,11 @@ use std::rc::Rc;
 
 use flashtex_compiler::Span;
 
-use crate::adapter::{Item as AItem, ParaStyle};
+use crate::adapter::{self, Item as AItem, ParaStyle};
 use crate::display::{self, Diagnostic, ImageResource, Provenance, Tick};
-use crate::floats::FloatKind;
+use crate::floats::{Align, FloatKind};
 use crate::graphics::{GraphicBox, BP_PER_PT};
-use crate::pagebuild::{self, badness, BuiltPage, PageParams, Placed, VItem, AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY};
+use crate::pagebuild::{self, badness, BuiltPage, InsertArea, InsertState, Insertions, PageIns, PageParams, Placed, VBlock, VItem, AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY};
 
 use super::{BoxRec, BuiltBlock, Context};
 
@@ -45,9 +45,16 @@ pub struct FloatSpec {
 
 #[derive(Debug, Clone)]
 pub enum FloatPart {
-    Centering,
+    /// `\centering`/`\raggedright`/`\raggedleft`: the line a run of
+    /// graphics is set on follows it (the body's own paragraphs carry the
+    /// declaration through the compiler instead).
+    Align(Align),
     ParBreak,
     Graphic(PreparedGraphic),
+    /// Body material as ordinary blocks, set by `Context::box_blocks`;
+    /// `end_skip` is the `\endtrivlist` glue of a list the run closes
+    /// (`adapter::list_end_skip`), which LaTeX contributes after it.
+    Content { blocks: Vec<adapter::Block>, end_skip: f64 },
     /// The caption paragraph's items, `Figure~N: ` prefix included.
     Caption { items: Vec<AItem> },
 }
@@ -56,10 +63,29 @@ pub enum FloatPart {
 pub struct PreparedGraphic {
     pub gbox: GraphicBox,
     /// `None` when the file could not be read but its size was known from
-    /// `width` and `height` (space is kept, nothing is painted).
+    /// `width` and `height` (space is kept, nothing is painted), and
+    /// whenever `placeholder` is set.
     pub resource: Option<Rc<ImageResource>>,
+    /// What graphicx draws in place of the file under `draft`/`demo`.
+    pub placeholder: Option<Placeholder>,
     pub span: Span,
 }
+
+/// The ink a graphic that was never read still puts on the page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placeholder {
+    /// `demo`: `\rule{..}{..}` fills the whole box.
+    DemoRule,
+    /// `draft`: `\Gin@setfile` sets `\hb@xt@\Gin@req@width{\vrule\hss\vbox
+    /// to \Gin@req@height{\hrule..\vss\rlap{ \ttfamily <file>}\vss\hrule}
+    /// \hss\vrule}` -- a frame of default-thickness rules around the
+    /// reserved space. The `\rlap`ped file name inside it is not set yet;
+    /// it is centred in the box and contributes no dimension.
+    DraftFrame,
+}
+
+/// TeX's default `\vrule`/`\hrule` thickness (`\p@` / 2.5), in TeX points.
+const RULE_PT: f64 = 0.4;
 
 #[derive(Clone, Copy)]
 struct Skip {
@@ -91,7 +117,7 @@ impl FloatParams {
 enum Elem {
     /// A caption line: block/line in `blocks`, baseline from the box top.
     Line { block: usize, line: usize, baseline: f64, height: f64, depth: f64 },
-    Image { x: f64, baseline: f64, gbox: GraphicBox, resource: Option<Rc<ImageResource>>, provenance: Provenance },
+    Image { x: f64, baseline: f64, gbox: GraphicBox, resource: Option<Rc<ImageResource>>, placeholder: Option<Placeholder>, provenance: Provenance },
 }
 
 struct FloatBox {
@@ -101,79 +127,116 @@ struct FloatBox {
     labels: Vec<String>,
 }
 
-/// Sets the float's box (see the module docs).
-fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, fp: &FloatParams) -> FloatBox {
-    let s = ctx.style;
-    let (bs, ls, lsl, tw) = (s.baselineskip_pt, s.lineskip_pt, s.lineskiplimit_pt, s.text_width_pt);
-    let mut y = 0.0;
-    let mut prev_depth: Option<f64> = None;
-    let mut elems = Vec::new();
+/// One entry of the float box's vertical list: either a block set through
+/// the ordinary block path (indexed into the page's `blocks`), or a line of
+/// graphics set side by side.
+enum BoxEntry {
+    Block(usize),
+    Images { graphics: Vec<PreparedGraphic>, centered: bool },
+}
+
+/// Sets the float's box (see the module docs): `\@xfloat` opens a `\vbox` of
+/// `\hsize\columnwidth` under `\@parboxrestore`, the body contributes to its
+/// vertical list, and `\@makecaption` adds the caption. The list is the
+/// page builder's own (`pagebuild::vlist`) laid out at natural size, so
+/// interline glue, `\parskip`, `\topsep` and a display's skips inside a
+/// float follow the same rules as on the page.
+fn build_box(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, spec: &FloatSpec, fp: &FloatParams, p: &PageParams) -> FloatBox {
+    let tw = ctx.style.text_width_pt;
+    let mut entries: Vec<BoxEntry> = Vec::new();
+    let mut vblocks: Vec<VBlock> = Vec::new();
     let mut centered = false;
-    let mut pending: Vec<&PreparedGraphic> = Vec::new();
-    let add_box = |h: f64, d: f64, y: &mut f64, prev: &mut Option<f64>| -> f64 {
-        if let Some(pd) = *prev {
-            let mut g = bs - pd - h;
-            if g < lsl {
-                g = ls;
+    let mut pending: Vec<PreparedGraphic> = Vec::new();
+    // `\@setminipage`: `\addvspace` is suppressed until the box's first
+    // paragraph has begun (a graphics line and a caption are paragraphs too).
+    let mut minipage = true;
+    // A run of graphics with no paragraph break between them is one line.
+    macro_rules! flush {
+        () => {
+            if !pending.is_empty() {
+                minipage = false;
+                let h = pending.iter().map(|g| g.gbox.height).fold(0.0, f64::max);
+                let d = pending.iter().map(|g| g.gbox.depth).fold(0.0, f64::max);
+                vblocks.push(super::plain_vblock(vec![(h, d)]));
+                entries.push(BoxEntry::Images { graphics: std::mem::take(&mut pending), centered });
             }
-            *y += g;
-        }
-        let b = *y + h;
-        *y = b + d;
-        *prev = Some(d);
-        b
-    };
-    let flush = |pending: &mut Vec<&PreparedGraphic>, centered: bool, y: &mut f64, prev: &mut Option<f64>, elems: &mut Vec<Elem>, ctx: &Context| {
-        if pending.is_empty() {
-            return;
-        }
-        let w: f64 = pending.iter().map(|g| g.gbox.width).sum();
-        let h = pending.iter().map(|g| g.gbox.height).fold(0.0, f64::max);
-        let d = pending.iter().map(|g| g.gbox.depth).fold(0.0, f64::max);
-        let mut x = if centered { ((tw - w) / 2.0).max(0.0) } else { 0.0 };
-        let b = add_box(h, d, y, prev);
-        for g in pending.drain(..) {
-            elems.push(Elem::Image { x, baseline: b, gbox: g.gbox, resource: g.resource.clone(), provenance: Provenance::Source(ctx.source(g.span)) });
-            x += g.gbox.width;
-        }
-    };
+        };
+    }
     for part in &spec.parts {
         match part {
-            FloatPart::Centering => centered = true,
-            FloatPart::Graphic(g) => pending.push(g),
-            FloatPart::ParBreak => flush(&mut pending, centered, &mut y, &mut prev_depth, &mut elems, ctx),
+            FloatPart::Align(a) => centered = matches!(a, Align::Center),
+            FloatPart::Graphic(g) => pending.push(g.clone()),
+            FloatPart::ParBreak => flush!(),
+            FloatPart::Content { blocks: body, end_skip } => {
+                flush!();
+                let range = ctx.box_blocks(body, blocks, spec.span, minipage);
+                minipage = minipage && range.is_empty();
+                if *end_skip != 0.0 {
+                    if let Some(last) = range.clone().last().and_then(|i| blocks.get_mut(i)) {
+                        let s = last.vertical.space_after.unwrap_or((0.0, 0.0, 0.0));
+                        last.vertical.space_after = Some((s.0 + end_skip, s.1, s.2));
+                    }
+                }
+                for i in range {
+                    vblocks.push(blocks[i].vertical.clone());
+                    entries.push(BoxEntry::Block(i));
+                }
+            }
             FloatPart::Caption { items } => {
-                flush(&mut pending, centered, &mut y, &mut prev_depth, &mut elems, ctx);
-                y += fp.abovecaptionskip;
-                let Some(mut block) = ctx.paragraph_block(items, false, true, false, ParaStyle::Plain, None) else { continue };
+                flush!();
+                minipage = false;
+                let Some(mut block) = ctx.paragraph_block(items, false, true, false, ParaStyle::Plain, None, None) else { continue };
                 let lines = &block.block.lines.lines;
                 // `\@caption` runs `\@parboxrestore` before `\@makecaption`, so
                 // `\centering` does not reach a caption set as a paragraph:
                 // only the one-line `\hbox to\hsize{\hfil...\hfil}` is centred.
                 let fits = lines.len() == 1 && lines[0].natural_width <= tw + 1e-6;
                 if fits {
-                    if let Some(b) = ctx.paragraph_block(items, false, true, false, ParaStyle::Center, None) {
+                    if let Some(b) = ctx.paragraph_block(items, false, true, false, ParaStyle::Center, None, None) {
                         block = b;
                     }
                 }
-                let bi = blocks.len();
-                for (li, line) in block.block.lines.lines.iter().enumerate() {
-                    let b = add_box(line.height, line.depth, &mut y, &mut prev_depth);
-                    elems.push(Elem::Line { block: bi, line: li, baseline: b, height: line.height, depth: line.depth });
-                }
+                // `\@makecaption`: `\vskip\abovecaptionskip`, the caption,
+                // `\vskip\belowcaptionskip` (0pt in the standard classes).
+                // `\parskip` is 0 inside the float's `\@parboxrestore`.
+                block.vertical.space_before = Some((fp.abovecaptionskip, 0.0, 0.0));
+                block.vertical.parskip = None;
+                vblocks.push(block.vertical.clone());
+                entries.push(BoxEntry::Block(blocks.len()));
                 blocks.push(block);
             }
         }
     }
-    flush(&mut pending, centered, &mut y, &mut prev_depth, &mut elems, ctx);
-    let mut height = y;
-    if height > s.text_height_pt {
+    flush!();
+    let list = pagebuild::vlist(p, &vblocks);
+    let (placed, mut height) = pagebuild::natural_layout(p, &list, false);
+    // `\vbox`: the depth of the last box is the box's depth unless glue
+    // follows it, and the float is placed by its height *and* depth.
+    if matches!(list.iter().rev().find(|i| !matches!(i, VItem::Penalty(_))), Some(VItem::Box { .. })) {
+        height += placed.last().map_or(0.0, |l| l.depth);
+    }
+    let mut elems = Vec::new();
+    for line in &placed {
+        let (entry, li) = line.payload;
+        match &entries[entry] {
+            BoxEntry::Block(bi) => elems.push(Elem::Line { block: *bi, line: li, baseline: line.baseline, height: line.height, depth: line.depth }),
+            BoxEntry::Images { graphics, centered } => {
+                let w: f64 = graphics.iter().map(|g| g.gbox.width).sum();
+                let mut x = if *centered { ((tw - w) / 2.0).max(0.0) } else { 0.0 };
+                for g in graphics {
+                    elems.push(Elem::Image { x, baseline: line.baseline, gbox: g.gbox, resource: g.resource.clone(), placeholder: g.placeholder, provenance: Provenance::Source(ctx.source(g.span)) });
+                    x += g.gbox.width;
+                }
+            }
+        }
+    }
+    if height > ctx.style.text_height_pt {
         ctx.diagnostics.push(Diagnostic::warning(
             "float_too_large",
-            format!("{} {} is {:.2}pt taller than the text area", spec.kind.name(), spec.number, height - s.text_height_pt),
+            format!("{} {} is {:.2}pt taller than the text area", spec.kind.name(), spec.number, height - ctx.style.text_height_pt),
             vec![ctx.source(spec.span)],
         ));
-        height = s.text_height_pt;
+        height = ctx.style.text_height_pt;
     }
     FloatBox { height, elems, type_bit: spec.kind.type_bit(), labels: spec.labels.clone() }
 }
@@ -393,10 +456,45 @@ impl Placer<'_> {
         for e in &b.elems {
             match e {
                 Elem::Line { block, line, baseline, height, depth } => lines.push(Placed { payload: (*block, *line), baseline: top + baseline, height: *height, depth: *depth }),
-                Elem::Image { x, baseline, gbox, resource, provenance } => {
-                    let Some(resource) = resource else { continue };
+                Elem::Image { x, baseline, gbox, resource, placeholder, provenance } => {
                     let left = self.text_x + x;
                     let base = self.text_y + top + baseline;
+                    // `draft`/`demo` never read a file; what they paint is
+                    // rules. Both are laid out in the box's own axes, so a
+                    // rotated box is left as reserved space only.
+                    if let Some(kind) = placeholder {
+                        let m = gbox.matrix;
+                        if m[1] == 0.0 && m[2] == 0.0 && m[0] > 0.0 && m[3] > 0.0 {
+                            let (t, w, h) = (base - gbox.height, gbox.width, gbox.height + gbox.depth);
+                            let bars: &[(f64, f64, f64, f64)] = match kind {
+                                Placeholder::DemoRule => &[(left, t, w, h)],
+                                // `\hrule`s across the top and bottom,
+                                // `\vrule`s up the sides, which the two
+                                // `\hss`es pull inside the requested width.
+                                Placeholder::DraftFrame => &[
+                                    (left, t, w, RULE_PT),
+                                    (left, t + h - RULE_PT, w, RULE_PT),
+                                    (left, t, RULE_PT, h),
+                                    (left + w - RULE_PT, t, RULE_PT, h),
+                                ],
+                            };
+                            for (x, y, w, h) in bars.iter().copied().filter(|(_, _, w, h)| *w > 0.0 && *h > 0.0) {
+                                self.images.push((
+                                    page,
+                                    display::Item::Rule(display::Rule {
+                                        x: Tick::from_tex_pt(x),
+                                        top: Tick::from_tex_pt(y),
+                                        width: Tick::from_tex_pt(w),
+                                        height: Tick::from_tex_pt(h),
+                                        paint: display::Paint::BLACK,
+                                        provenance: provenance.clone(),
+                                    }),
+                                ));
+                            }
+                        }
+                        continue;
+                    }
+                    let Some(resource) = resource else { continue };
                     let m = gbox.matrix;
                     let k = BP_PER_PT;
                     self.images.push((
@@ -434,6 +532,15 @@ impl Placer<'_> {
         self.pages.push(BuiltPage { lines, overfull_by: 0.0 });
     }
 
+    /// A column opened by `\LT@output` (longtable.sty 513-516): it runs
+    /// `\@makecol\@outputpage \global\vsize\@colroom \copy\LT@head`, never
+    /// `\@opcol`/`\@startcolumn`, so no float page is tried and no deferred
+    /// float is added — the whole column is the table's, and what is
+    /// deferred stays deferred until the table ends.
+    fn start_longtable_column(&mut self) {
+        self.col = Col::new(self.colht);
+    }
+
     /// `\@opcol` + `\@startcolumn`.
     fn start_column(&mut self) {
         loop {
@@ -447,6 +554,17 @@ impl Placer<'_> {
             }
         }
         self.add_to_next_col();
+    }
+}
+
+/// The column's float material for `\@makecol` (`\@cflt`/`\@cflb`).
+fn column_floats(boxes: &[FloatBox], tops: &[usize], bots: &[usize], fp: &FloatParams) -> pagebuild::ColumnFloats {
+    let sk = |s: Skip| (s.n, s.st, s.sh);
+    pagebuild::ColumnFloats {
+        tops: tops.iter().map(|f| boxes[*f].height).collect(),
+        bots: bots.iter().map(|f| boxes[*f].height).collect(),
+        floatsep: sk(fp.floatsep),
+        textfloatsep: sk(fp.textfloatsep),
     }
 }
 
@@ -465,9 +583,40 @@ fn block_source(ctx: &Context, b: &BuiltBlock, items: impl Iterator<Item = usize
 }
 
 /// Breaks the text into pages with the floats placed. Returns the pages,
-/// the image items per page number and the page of every float `\label`.
-pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams, list: &[VItem], specs: &[FloatSpec]) -> (Vec<BuiltPage>, Vec<(u32, display::Item)>, Vec<(String, u32)>) {
-    let text_blocks = blocks.len();
+/// the image items per page number, the page of every float `\label` and
+/// each page's footnote area.
+///
+/// `regions` are the document's longtable regions (`pagebuild::Region`
+/// resolved against `list`): inside one the column goal loses `\ht\LT@foot`
+/// and `\pageshrink` is zero (longtable.sty 223, 229), and a break inside
+/// one ends the page with `\LT@foot` and opens the next with `\LT@head`
+/// (`\LT@output`, 487-517).
+///
+/// `text_blocks` is the number of body blocks (the blocks `list` was made
+/// from; footnote blocks follow them) and `ins` the footnote insertions,
+/// charged against the page goal (`\@colroom`) as TeX's page builder does
+/// and set below the text and above bottom floats (`\@makecol`:
+/// `\@outputbox@appendfootnotes` before `\@outputbox@attachfloats`).
+///
+/// A page can carry both at once. `\pagegoal` takes the two charges
+/// together -- `\LT@start` subtracts `\ht\LT@foot` (longtable.sty 229) and
+/// the insertion machinery subtracts `\skip\footins` and the notes (section
+/// 1009) -- so a continuation foot and a note compete for the same page.
+/// And because `\LT@output` puts `\copy\LT@head`/`\copy\LT@foot` inside
+/// `\box\@cclv` *before* calling `\@makecol` (487-517), the head and foot
+/// are part of the column body that the notes are set under and that the
+/// floats are wrapped around.
+#[allow(clippy::type_complexity)]
+pub fn paginate(
+    ctx: &mut Context,
+    blocks: &mut Vec<BuiltBlock>,
+    p: &PageParams,
+    list: &[VItem],
+    specs: &[FloatSpec],
+    regions: &[pagebuild::ResolvedRegion],
+    text_blocks: usize,
+    ins: Option<&Insertions>,
+) -> (Vec<BuiltPage>, Vec<(u32, display::Item)>, Vec<(String, u32)>, Vec<Option<InsertArea>>) {
     // Marker positions, before caption blocks are appended.
     let vblocks: Vec<pagebuild::VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
     let mut markers: Vec<(usize, usize)> = Vec::new();
@@ -496,8 +645,25 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
         markers.push((index, f));
     }
     markers.sort();
+    // longtable.sty 489-491: `\LT@output` answers a float or marginpar
+    // inside the table with `floats~ and~ marginpars~ not~ allowed~ in~ a~
+    // longtable`. The float still has to go somewhere, so it is placed as
+    // if the table were not there and the error is reported.
+    {
+        let inside = pagebuild::Regions::new(regions);
+        for &(index, f) in &markers {
+            if inside.contains(index) {
+                let src = vec![ctx.source(specs[f].span)];
+                ctx.diagnostics.push(Diagnostic::warning(
+                    "table_limitation",
+                    "floats and marginpars are not allowed in a longtable (longtable.sty \\LT@output); this one is placed as if the table were not there".to_string(),
+                    src,
+                ));
+            }
+        }
+    }
     let fp = FloatParams::for_size(ctx.style.body_size_pt);
-    let boxes: Vec<FloatBox> = specs.iter().map(|s| build_box(ctx, blocks, s, &fp)).collect();
+    let boxes: Vec<FloatBox> = specs.iter().map(|s| build_box(ctx, blocks, s, &fp, p)).collect();
     let mut nodes: Vec<N> = Vec::with_capacity(list.len() + 4 * specs.len());
     let mut mi = 0;
     for i in 0..=list.len() {
@@ -539,6 +705,22 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
             _ => None,
         }
     };
+    let regions = pagebuild::Regions::new(regions);
+    // The list index a node reports to the regions: a `V` node is at its
+    // own, anything the float machinery spliced in belongs to the last one
+    // seen (`\@specialoutput` runs between two items of the main list).
+    let list_index = |n: &N, cur: usize| -> usize {
+        match n {
+            N::V(j) => *j,
+            _ => cur,
+        }
+    };
+    // `\copy\LT@head\nobreak` at the top of a continuation page.
+    let mut pending_head: Option<pagebuild::Placed3> = None;
+    let no_ins = Insertions::default();
+    let insr = ins.unwrap_or(&no_ins);
+    let mut held: Vec<PageIns> = Vec::new();
+    let mut areas: Vec<Option<InsertArea>> = Vec::new();
     let mut start = 0usize;
     loop {
         while start < nodes.len() {
@@ -554,17 +736,79 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
         }
         let vsize = pl.col.colroom;
         let (mut total, mut stretch, mut shrink, mut fil, mut depth, mut has_box) = (0.0f64, 0.0f64, 0.0f64, false, 0.0f64, false);
+        // The continuation head is on the page before any of its material.
+        let head = pending_head;
+        if let Some((h, d, _)) = head {
+            total = (p.topskip - h).max(0.0) + h;
+            depth = d;
+            has_box = true;
+        }
+        let mut cur_li = list_index(&nodes[start], 0);
+        // §987 `freeze_page_specs` with longtable.sty 230: `\maxdepth` is
+        // zero for a page a longtable opens (see `pagebuild::page_max_depth`).
+        let maxdepth = if head.is_none() && regions.starts_at(cur_li) { 0.0 } else { p.maxdepth };
+        // Held-over notes are contributed ahead of the page's material, and
+        // above whatever `\ht\LT@foot` the region already reserves: the head
+        // is already in `total`, so they see it as `\pagetotal`. `held` is
+        // only cleared once the page is settled, because the float machinery
+        // can `restart` this page and the notes must survive that.
+        let mut is = InsertState::new(insr, vsize);
+        let head_reserve = regions.reserved(cur_li);
+        for h in &held {
+            is.append(h.list.clone(), h.height_plus_depth, None, total, depth, head_reserve, &mut stretch, &mut shrink);
+        }
+        let mut best_ins = is.last_ins;
         let mut lines_seen = 0usize;
         let mut best: Option<(usize, i64)> = None;
         let mut fired = None;
         let mut restart = false;
         let mut prev_box = false;
         let mut i = start;
+        // `\pagegoal` carries both charges at once: the insertions have
+        // already taken `\skip\footins` and the notes off `is.goal`
+        // (section 1009), and `reserve` is the `\ht\LT@foot` a longtable
+        // region holds back on top of that (longtable.sty 229).
+        #[allow(clippy::too_many_arguments)]
+        let cost = |total: f64, stretch: f64, shrink: f64, fil: bool, is: &InsertState, pi: i32, reserve: f64| -> i64 {
+            let goal = is.goal - reserve;
+            let b = if total < goal {
+                if fil {
+                    0
+                } else {
+                    badness(goal - total, stretch)
+                }
+            } else if total - goal > shrink {
+                AWFUL_BAD
+            } else {
+                badness(total - goal, shrink)
+            };
+            let c = if b < AWFUL_BAD {
+                if pi <= EJECT_PENALTY {
+                    i64::from(pi)
+                } else if b < INF_BAD {
+                    b + i64::from(pi) + is.penalties
+                } else {
+                    DEPLORABLE
+                }
+            } else {
+                b
+            };
+            if is.penalties >= i64::from(INF_PENALTY) {
+                AWFUL_BAD
+            } else {
+                c
+            }
+        };
         while i < nodes.len() {
             if let N::Marker(f) = nodes[i] {
                 if !processed[f] {
                     processed[f] = true;
-                    let pageht = if has_box { total + depth } else { 0.0 };
+                    // `\@specialoutput`: `\@pageht` is the held page plus
+                    // `\ht\footins + \skip\footins + \dp\footins`.
+                    let mut pageht = if has_box { total + depth } else { 0.0 };
+                    if is.started && is.height > 0.0 {
+                        pageht += is.height + insr.skip.0;
+                    }
                     let before = pl.col.colroom;
                     let here = pl.add_to_cur_col(f, pageht, !specs[f].hmode);
                     let mut ins = here.unwrap_or_default();
@@ -580,42 +824,30 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
                 i += 1;
                 continue;
             }
+            cur_li = list_index(&nodes[i], cur_li);
             let (legal, pi) = match nodes[i] {
                 N::Penalty(pen) => (pen < INF_PENALTY, pen),
                 N::Glue(..) => (prev_box, 0),
                 N::V(j) => (matches!(list[j], VItem::Glue { .. }) && prev_box, 0),
                 _ => (false, 0),
             };
+            // What `\ht\LT@foot` the region holds back at this index.
+            let reserve = regions.reserved(cur_li);
             if legal && has_box {
-                let b = if total < vsize {
-                    if fil {
-                        0
-                    } else {
-                        badness(vsize - total, stretch)
-                    }
-                } else if total - vsize > shrink {
-                    AWFUL_BAD
-                } else {
-                    badness(total - vsize, shrink)
-                };
-                let c = if b < AWFUL_BAD {
-                    if pi <= EJECT_PENALTY {
-                        i64::from(pi)
-                    } else if b < INF_BAD {
-                        b + i64::from(pi)
-                    } else {
-                        DEPLORABLE
-                    }
-                } else {
-                    b
-                };
+                let c = cost(total, stretch, shrink, fil, &is, pi, reserve);
                 if best.is_none_or(|(_, lc)| c <= lc) {
                     best = Some((i, c));
+                    best_ins = is.last_ins;
                 }
                 if c == AWFUL_BAD || pi <= EJECT_PENALTY {
                     fired = Some(best.map_or(i, |(bi, _)| bi));
                     break;
                 }
+            }
+            // longtable.sty 223: `\LT@start` ends with
+            // `\ifdim\pageshrink>\z@\pageshrink\z@\fi`.
+            if regions.starts_at(cur_li) {
+                shrink = 0.0;
             }
             let bx = match nodes[i] {
                 N::FBox(f) => Some((boxes[f].height, 0.0)),
@@ -625,16 +857,31 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
                 total += if has_box { depth + h } else { (p.topskip - h).max(0.0) + h };
                 has_box = true;
                 depth = d;
-                if depth > p.maxdepth {
-                    total += depth - p.maxdepth;
-                    depth = p.maxdepth;
+                if depth > maxdepth {
+                    total += depth - maxdepth;
+                    depth = maxdepth;
                 }
                 lines_seen += 1;
                 prev_box = true;
-                if total > vsize + 1e-9 && lines_seen > 1 {
+                // §1005: the page is hopeless only once the excess passes
+                // what the glue can shrink. In a body of `\parskip 0pt
+                // plus 1pt` that shrink is zero, but `\skip\footins`'s
+                // `minus 2pt` (and an `h` float's `\intextsep`) buys the
+                // column a line TeX keeps. Inside a longtable `\pageshrink`
+                // is zeroed above, so there the allowance is nil again.
+                if total > is.goal - reserve + shrink + 1e-9 && lines_seen > 1 {
                     if let Some((bi, _)) = best {
                         fired = Some(bi);
                         break;
+                    }
+                }
+                if let N::V(j) = nodes[i] {
+                    if let VItem::Box { payload, .. } = list[j] {
+                        for &n in insr.after.get(&payload).map(Vec::as_slice).unwrap_or(&[]) {
+                            let note = insr.notes[n].clone();
+                            let hd = pagebuild::natural_height_plus_depth(&note);
+                            is.append(note, hd, Some(i), total, depth, reserve, &mut stretch, &mut shrink);
+                        }
                     }
                 }
             } else {
@@ -667,7 +914,21 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
         if restart {
             continue;
         }
+        // The document's end is a breakpoint like any other once notes are
+        // on the page.
+        if fired.is_none() && !is.page.is_empty() {
+            if cost(total, stretch, shrink, fil, &is, EJECT_PENALTY, regions.reserved(cur_li)) == AWFUL_BAD {
+                if let Some((bi, _)) = best {
+                    fired = Some(bi);
+                }
+            } else {
+                best_ins = is.last_ins;
+            }
+        }
         let end = fired.unwrap_or(nodes.len());
+        let ejected = matches!(nodes.get(end), Some(N::Penalty(pen)) if *pen <= EJECT_PENALTY);
+        held.clear();
+        let notes = pagebuild::settle_inserts(is, end, best_ins, insr.split_top_skip, &mut held);
         let page_no = pl.pages.len() as u32 + 1;
         let tops = std::mem::take(&mut pl.col.top);
         let bots = std::mem::take(&mut pl.col.bot);
@@ -677,73 +938,206 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
             tops.iter().map(|f| boxes[*f].height).sum::<f64>() + (tops.len() as f64 - 1.0) * fp.floatsep.n + fp.textfloatsep.n
         };
         let mut lines: Vec<Placed> = Vec::new();
-        let mut y = 0.0;
-        for &f in &tops {
-            pl.emit(f, y, page_no, &mut lines);
-            y += boxes[f].height + fp.floatsep.n;
+        // `\LT@output`: a page broken inside the table ends with `\LT@foot`
+        // and the next one opens with `\LT@head`. Both boxes go *inside*
+        // `\box\@cclv` (longtable.sty 487-517 builds it before calling
+        // `\@makecol`), so the break has to be settled here, before the
+        // column is assembled and the notes are set under it.
+        pending_head = None;
+        let mut region_break = false;
+        let mut region_foot: Option<pagebuild::Placed3> = None;
+        if fired.is_some() {
+            let next_li = nodes[end..].iter().find_map(|n| match n {
+                N::V(j) if matches!(list[*j], VItem::Box { .. }) => Some(*j),
+                _ => None,
+            });
+            if let Some((foot, next_head)) = next_li.and_then(|li| regions.at_break(li)) {
+                region_break = true;
+                region_foot = foot;
+                pending_head = next_head;
+            }
         }
-        let (mut total, mut depth, mut has_box) = (0.0f64, 0.0f64, false);
-        let mut last_text: Option<Placed> = None;
-        for n in &nodes[start..end] {
-            let bx = match n {
-                N::FBox(f) => Some((boxes[*f].height, 0.0, None, Some(*f))),
-                N::V(j) => match list[*j] {
-                    VItem::Box { height, depth, payload } => Some((height, depth, Some(payload), None)),
-                    VItem::Glue { width, .. } => {
+        let mut overfull_by = 0.0;
+        if notes.iter().any(|l| !l.is_empty()) {
+            // `\@makecol` with `\footins` and floats, over a `\box\@cclv`
+            // the longtable output routine may already have built. The notes
+            // attach to `\box\@cclv` first (the default
+            // `build/column/outputbox` plug is `footnotes-floats-legacy`)
+            // and `\@combinefloats` wraps the floats around that, so the
+            // column reads: top floats, `\textfloatsep`, [`\LT@head`], the
+            // body, [`\LT@foot`], `\skip\footins`, the `\footnoterule`, the
+            // notes, `\textfloatsep`, the bottom floats. `\@cflt`/`\@cflb`
+            // are plain `\vbox`es and only `\@make@normalcolbox` packs
+            // `\vbox to\@colht`, so one glue set ratio covers the body's
+            // glue, `\skip\footins` and both float separations together:
+            // `\@colht`, not `\@colroom`, is the size to reach.
+            let mut body: Vec<VItem> = Vec::with_capacity(end - start + 2);
+            if let Some((h, d, payload)) = head {
+                body.push(VItem::Box { height: h, depth: d, payload });
+            }
+            for n in &nodes[start..end] {
+                match n {
+                    N::FBox(f) => body.push(VItem::Box { height: boxes[*f].height, depth: 0.0, payload: (usize::MAX, *f) }),
+                    N::V(j) => body.push(list[*j].clone()),
+                    N::Glue(w, st, sh) => body.push(VItem::Glue { width: *w, stretch: *st, shrink: *sh, fil: false }),
+                    N::Penalty(pen) => body.push(VItem::Penalty(*pen)),
+                    N::Marker(_) => {}
+                }
+            }
+            if let Some((h, d, payload)) = region_foot {
+                body.push(VItem::Box { height: h, depth: d, payload });
+            }
+            // `\LT@output` builds `\box\@cclv` as `\vbox{\unvbox\@cclv
+            // \copy\LT@foot \vss}` and only then calls `\@makecol`: that
+            // `\vss` is inside the body, ahead of `\skip\footins`, so it
+            // takes the column's slack and pushes the note block to the foot
+            // of the page, leaving every finite glue at its natural size.
+            let vfil = region_break || ejected || fired.is_none();
+            let colp = PageParams { vsize: pl.colht, maxdepth, ..*p };
+            let cf = column_floats(&boxes, &tops, &bots, &fp);
+            let (page, area, placed) = pagebuild::make_column(&colp, &body, false, vfil, &notes, insr, &cf);
+            overfull_by = page.overfull_by;
+            for (&f, &y) in tops.iter().zip(&placed.tops) {
+                pl.emit(f, y, page_no, &mut lines);
+            }
+            for l in page.lines {
+                if l.payload.0 == usize::MAX {
+                    pl.emit(l.payload.1, l.baseline - l.height, page_no, &mut lines);
+                } else {
+                    lines.push(l);
+                }
+            }
+            for (&f, &y) in bots.iter().zip(&placed.bots) {
+                pl.emit(f, y, page_no, &mut lines);
+            }
+            areas.resize(pl.pages.len(), None);
+            areas.push(Some(area));
+        } else {
+            let mut y = 0.0;
+            for &f in &tops {
+                pl.emit(f, y, page_no, &mut lines);
+                y += boxes[f].height + fp.floatsep.n;
+            }
+            let (mut total, mut depth, mut has_box) = (0.0f64, 0.0f64, false);
+            let mut last_text: Option<Placed> = None;
+            // `\copy\LT@head\nobreak` opens a page continuing a longtable.
+            if let Some((h, d, payload)) = head {
+                let baseline = (p.topskip - h).max(0.0) + h;
+                total = baseline;
+                depth = d;
+                has_box = true;
+                let placed = Placed { payload, baseline: baseline + text_off, height: h, depth: d };
+                last_text = Some(placed);
+                lines.push(placed);
+            }
+            for n in &nodes[start..end] {
+                let bx = match n {
+                    N::FBox(f) => Some((boxes[*f].height, 0.0, None, Some(*f))),
+                    N::V(j) => match list[*j] {
+                        VItem::Box { height, depth, payload } => Some((height, depth, Some(payload), None)),
+                        VItem::Glue { width, .. } => {
+                            if has_box {
+                                total += depth + width;
+                                depth = 0.0;
+                            }
+                            None
+                        }
+                        VItem::Penalty(_) => None,
+                    },
+                    N::Glue(w, ..) => {
                         if has_box {
-                            total += depth + width;
+                            total += depth + w;
                             depth = 0.0;
                         }
                         None
                     }
-                    VItem::Penalty(_) => None,
-                },
-                N::Glue(w, ..) => {
-                    if has_box {
-                        total += depth + w;
-                        depth = 0.0;
+                    _ => None,
+                };
+                if let Some((h, d, payload, float)) = bx {
+                    let baseline = if has_box { total + depth + h } else { (p.topskip - h).max(0.0) + h };
+                    total = baseline;
+                    depth = d;
+                    has_box = true;
+                    if let Some(payload) = payload {
+                        let placed = Placed { payload, baseline: baseline + text_off, height: h, depth: d };
+                        last_text = Some(placed);
+                        lines.push(placed);
                     }
-                    None
+                    if let Some(f) = float {
+                        pl.emit(f, baseline - h + text_off, page_no, &mut lines);
+                    }
                 }
-                _ => None,
-            };
-            if let Some((h, d, payload, float)) = bx {
-                let baseline = if has_box { total + depth + h } else { (p.topskip - h).max(0.0) + h };
+            }
+            // `\copy\LT@foot` closes a page broken inside the table.
+            if let Some((h, d, payload)) = region_foot {
+                let baseline = total + depth + h;
                 total = baseline;
                 depth = d;
-                has_box = true;
-                if let Some(payload) = payload {
-                    let placed = Placed { payload, baseline: baseline + text_off, height: h, depth: d };
-                    last_text = Some(placed);
-                    lines.push(placed);
-                }
-                if let Some(f) = float {
-                    pl.emit(f, baseline - h + text_off, page_no, &mut lines);
+                let placed = Placed { payload, baseline: baseline + text_off, height: h, depth: d };
+                last_text = Some(placed);
+                lines.push(placed);
+            }
+            let _ = (total, depth);
+            if let Some(last) = last_text {
+                let bottom = last.baseline - text_off + (last.depth - maxdepth).max(0.0);
+                if bottom > vsize + 1e-6 {
+                    overfull_by = bottom - vsize;
                 }
             }
-        }
-        let mut overfull_by = 0.0;
-        if let Some(last) = last_text {
-            let bottom = last.baseline - text_off + (last.depth - p.maxdepth).max(0.0);
-            if bottom > vsize + 1e-6 {
-                overfull_by = bottom - vsize;
-            }
-        }
-        if !bots.is_empty() {
-            let span: f64 = bots.iter().map(|f| boxes[*f].height).sum::<f64>() + (bots.len() as f64 - 1.0) * fp.floatsep.n;
-            let mut y = pl.colht - span;
-            for &f in &bots {
-                pl.emit(f, y, page_no, &mut lines);
-                y += boxes[f].height + fp.floatsep.n;
+            if !bots.is_empty() {
+                let span: f64 = bots.iter().map(|f| boxes[*f].height).sum::<f64>() + (bots.len() as f64 - 1.0) * fp.floatsep.n;
+                let mut y = pl.colht - span;
+                for &f in &bots {
+                    pl.emit(f, y, page_no, &mut lines);
+                    y += boxes[f].height + fp.floatsep.n;
+                }
             }
         }
         pl.pages.push(BuiltPage { lines, overfull_by });
         pl.col.mid.clear();
         start = end;
-        pl.start_column();
+        if region_break {
+            pl.start_longtable_column();
+        } else {
+            pl.start_column();
+        }
         if fired.is_none() {
             break;
         }
+    }
+    // `\@doclearpage` with `\footins` not void: `\vbox{}` and the held notes
+    // (with the floats already queued for the column) make a page of their
+    // own before the deferred floats are flushed.
+    while !held.is_empty() {
+        let vsize = pl.col.colroom;
+        let mut is = InsertState::new(insr, vsize);
+        let (mut stretch, mut shrink) = (0.0, 0.0);
+        for h in std::mem::take(&mut held) {
+            is.append(h.list, h.height_plus_depth, None, p.topskip, 0.0, 0.0, &mut stretch, &mut shrink);
+        }
+        let best_ins = is.last_ins;
+        let notes = pagebuild::settle_inserts(is, 0, best_ins, insr.split_top_skip, &mut held);
+        if !notes.iter().any(|l| !l.is_empty()) {
+            break;
+        }
+        let page_no = pl.pages.len() as u32 + 1;
+        let tops = std::mem::take(&mut pl.col.top);
+        let bots = std::mem::take(&mut pl.col.bot);
+        let mut lines: Vec<Placed> = Vec::new();
+        let colp = PageParams { vsize: pl.colht, ..*p };
+        let cf = column_floats(&boxes, &tops, &bots, &fp);
+        let (_, area, placed) = pagebuild::make_column(&colp, &[], true, true, &notes, insr, &cf);
+        for (&f, &y) in tops.iter().zip(&placed.tops) {
+            pl.emit(f, y, page_no, &mut lines);
+        }
+        for (&f, &y) in bots.iter().zip(&placed.bots) {
+            pl.emit(f, y, page_no, &mut lines);
+        }
+        areas.resize(pl.pages.len(), None);
+        areas.push(Some(area));
+        pl.pages.push(BuiltPage { lines, overfull_by: 0.0 });
+        pl.col.mid.clear();
+        pl.start_column();
     }
     // `\end{document}` -> `\clearpage` -> `\@doclearpage`: floats already
     // queued for the unstarted column go back to the deferred list, then
@@ -765,5 +1159,6 @@ pub fn paginate(ctx: &mut Context, blocks: &mut Vec<BuiltBlock>, p: &PageParams,
         }
     }
     let _ = FloatKind::Figure;
-    (pl.pages, pl.images, pl.labels)
+    areas.resize(pl.pages.len(), None);
+    (pl.pages, pl.images, pl.labels, areas)
 }
