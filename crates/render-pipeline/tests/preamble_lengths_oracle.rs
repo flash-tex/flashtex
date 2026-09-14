@@ -1,9 +1,11 @@
-//! Preamble page-geometry and paragraph lengths against pdflatex
-//! (TeX Live 2026, `/Library/TeX/texbin/pdflatex`).
+//! Pinned preamble page-geometry and paragraph-length checks.
 //!
-//! Positions are `\pdfsavepos` of the first `H` with `\parindent=0pt`,
-//! from the page lower-left, converted to the display list's top-left
-//! origin with `\pdfpageheight`. Line width is `\the\textwidth`.
+//! This file does not invoke pdflatex. Glyph `(x, y)` integers are
+//! `\pdfsavepos` measurements of the first `H` (`\parindent=0pt`), taken
+//! once with TeX Live 2026 and recorded at commit `245fc959`. y is converted
+//! from page-lower-left to the display list's top-left origin with the
+//! pinned US Letter `\pdfpageheight`. Line-width expects are TeX/class
+//! arithmetic (`Sp::parse`, article `size10.clo` `\textwidth 345\p@`).
 //! Tolerance is 0.1 bp (the acceptance gate).
 
 mod common;
@@ -20,7 +22,8 @@ fn bp(sp: i64) -> f64 {
     sp as f64 * SP_BP
 }
 
-/// pdflatex: `\pdfpageheight=794.96999pt` (52099153 sp) on US Letter.
+/// Pinned at `245fc959`: TeX Live 2026 `\pdfpageheight=794.96999pt` (52099153 sp)
+/// on US Letter.
 const LETTER_HEIGHT_SP: i64 = 52_099_153;
 
 fn first_xy_and_measure(src: &str) -> (f64, f64, f64, flashtex_render_pipeline::adapter::Doc) {
@@ -38,7 +41,7 @@ fn assert_within_0_1bp(got_bp: f64, want_sp: i64, what: &str) {
     let d = (got_bp - bp(want_sp)).abs();
     assert!(
         d < 0.1,
-        "{what}: got {got_bp} bp, pdflatex {} bp ({d} bp off)",
+        "{what}: got {got_bp} bp, pinned {} bp ({d} bp off)",
         bp(want_sp)
     );
 }
@@ -49,8 +52,8 @@ fn wrap(preamble: &str) -> String {
     )
 }
 
-/// pdflatex: `\textwidth=433.62pt`, `\oddsidemargin=25.865pt`,
-/// first glyph x=6431375sp, y from bottom=43234099sp.
+/// Pinned at `245fc959`: first glyph x=6431375sp, y from bottom=43234099sp.
+/// `\textwidth` expect is `Sp::parse("6in")` (6in = 433.62pt).
 #[test]
 fn setlength_textwidth_and_addtolength_oddsidemargin() {
     if !lm_available() {
@@ -65,8 +68,8 @@ fn setlength_textwidth_and_addtolength_oddsidemargin() {
     assert_within_0_1bp(tw, Sp::parse("6in").unwrap().0, "line width / textwidth");
 }
 
-/// pdflatex: `\textwidth=469.75499pt`, `\oddsidemargin=0pt`,
-/// first glyph x=4736286sp (`1in`).
+/// Pinned at `245fc959`: first glyph x=4736286sp (`1in` left).
+/// `\textwidth` expect is `Sp::parse("6.5in")`.
 #[test]
 fn tex_assignments_textwidth_paperwidth_oddsidemargin() {
     if !lm_available() {
@@ -81,8 +84,8 @@ fn tex_assignments_textwidth_paperwidth_oddsidemargin() {
     assert_within_0_1bp(tw, Sp::parse("6.5in").unwrap().0, "line width / textwidth");
 }
 
-/// pdflatex: `\parindent=0pt`, `\parskip=6.0pt`; first glyph stays at
-/// the class text left (8799518sp) because indent is zero.
+/// Pinned at `245fc959`: class text left x=8799518sp with `\parindent=0pt`.
+/// `\textwidth` expect is article `size10.clo` `345pt`.
 #[test]
 fn setlength_parindent_zero_and_parskip_six() {
     if !lm_available() {
@@ -101,8 +104,8 @@ fn setlength_parindent_zero_and_parskip_six() {
     );
 }
 
-/// pdflatex: `\textheight=650.43pt` (9in), `\topmargin=-36.135pt`,
-/// first glyph y from bottom=46650818sp.
+/// Pinned at `245fc959`: first glyph y from bottom=46650818sp after
+/// `\textheight=9in` and `\topmargin=-.5in`. x is class text left (8799518sp).
 #[test]
 fn setlength_textheight_and_topmargin() {
     if !lm_available() {
@@ -116,8 +119,8 @@ fn setlength_textheight_and_topmargin() {
     assert_within_0_1bp(y, LETTER_HEIGHT_SP - 46_650_818, "first baseline");
 }
 
-/// geometry after a manual `\setlength{\textwidth}` overwrites it;
-/// a later `\setlength` overwrites geometry.
+/// geometry `[margin=1in]` on letter is 8.5in − 2in = 6.5in (`Sp::parse`);
+/// a later `\setlength{\textwidth}{6in}` overwrites that (source order).
 #[test]
 fn geometry_and_setlength_last_in_source_order_wins() {
     if !lm_available() {
