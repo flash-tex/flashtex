@@ -370,7 +370,7 @@ fn mathbb_paints_from_new_computer_modern_when_bundled() {
             let ps = r.v2.fonts.iter().find(|f| f.font_id == run.font_id).map(|f| f.postscript_name.clone()).unwrap_or_default();
             for g in &run.glyphs {
                 let c = &run.clusters[g.cluster as usize];
-                let text = run.text[c.text_start_byte..c.text_end_byte].to_string();
+                let text = run.text[c.text_start_byte as usize..c.text_end_byte as usize].to_string();
                 if text.chars().any(|c| matches!(c, 'ℤ' | 'ℝ' | 'ℚ' | 'ℕ')) {
                     continue;
                 }
@@ -435,7 +435,7 @@ fn mathcal_sets_at_cmsy_metrics_and_paints_from_new_computer_modern_when_bundled
             let f = r.v2.fonts.iter().find(|f| f.font_id == run.font_id).expect("run font is a fonts entry");
             for g in &run.glyphs {
                 let c = &run.clusters[g.cluster as usize];
-                let text = run.text[c.text_start_byte..c.text_end_byte].to_string();
+                let text = run.text[c.text_start_byte as usize..c.text_end_byte as usize].to_string();
                 if text.chars().any(is_cal) {
                     out.push((text, f.postscript_name.clone(), f.sha256.clone(), g.origin_x, run.font_size));
                 }
@@ -549,7 +549,7 @@ fn varnothing_sets_at_msbm_width_and_paints_from_new_computer_modern_when_bundle
             let f = r.v2.fonts.iter().find(|f| f.font_id == run.font_id).expect("run font is a fonts entry");
             for g in &run.glyphs {
                 let c = &run.clusters[g.cluster as usize];
-                let t = run.text[c.text_start_byte..c.text_end_byte].to_string();
+                let t = run.text[c.text_start_byte as usize..c.text_end_byte as usize].to_string();
                 out.push((t, f.postscript_name.clone(), f.sha256.clone(), g.origin_x, run.font_size));
             }
         }

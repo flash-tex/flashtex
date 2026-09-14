@@ -139,7 +139,7 @@ fn ours(r: &flashtex_render_pipeline::Rendered) -> Vec<Seg> {
                 let cluster_text = if first_of_cluster {
                     run.clusters
                         .get(glyph.cluster as usize)
-                        .and_then(|c| run.text.get(c.text_start_byte..c.text_end_byte))
+                        .and_then(|c| run.text.get(c.text_start_byte as usize..c.text_end_byte as usize))
                         .unwrap_or("")
                 } else {
                     ""

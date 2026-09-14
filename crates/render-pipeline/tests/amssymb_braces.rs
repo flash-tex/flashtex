@@ -32,7 +32,7 @@ fn glyphs(r: &Rendered) -> Vec<(String, u16, f64, f64, u32)> {
         for g in &run.glyphs {
             let c = &run.clusters[g.cluster as usize];
             out.push((
-                run.text[c.text_start_byte..c.text_end_byte].to_string(),
+                run.text[c.text_start_byte as usize..c.text_end_byte as usize].to_string(),
                 g.gid,
                 g.advance_x.to_bp() * 72.27 / 72.0,
                 run.font_size.to_bp() * 72.27 / 72.0,

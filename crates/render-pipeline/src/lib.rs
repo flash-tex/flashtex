@@ -210,18 +210,14 @@ pub fn render_cached(
             .iter()
             .filter(|d| !d.span.as_ref().is_some_and(&in_picture))
             .filter(|d| !d.span.as_ref().is_some_and(&is_superseded))
-            .map(|d| display::Diagnostic::from_compiler(d, &paths))
+            .map(|d| display::Diagnostic::from_compiler(d))
             .collect();
         diagnostics.extend(doc.diagnostics.iter().cloned());
         diagnostics.extend(doc.limitations.iter().map(|(code, span, message)| {
             display::Diagnostic::warning(
                 code,
                 message.clone(),
-                vec![display::SourceRange {
-                    path: std::rc::Rc::from(paths.get(span.document.0).copied().unwrap_or("")),
-                    start_byte: span.start,
-                    end_byte: span.end,
-                }],
+                vec![display::SourceRange::new(display::DocId(span.document.0 as u32), span.start, span.end)],
             )
         }));
         let (mut float_specs, float_diagnostics) = if any_floats {

@@ -62,19 +62,21 @@ impl Canon {
         let v = if x == 0.0 { 0.0 } else { x };
         self.0.extend_from_slice(&v.to_bits().to_le_bytes());
     }
-    fn ranges(&mut self, rs: &[SourceRange]) {
+    /// Hashes the document's *path*, not its index: the digest is the
+    /// wire form's identity, and the wire still carries paths.
+    fn ranges(&mut self, rs: &[SourceRange], docs: &display::DocumentPaths) {
         self.u(rs.len());
         for r in rs {
-            self.s(&r.path);
-            self.u(r.start_byte);
-            self.u(r.end_byte);
+            self.s(docs.path(r.document));
+            self.u(r.start());
+            self.u(r.end());
         }
     }
-    fn provenance(&mut self, p: &Provenance) {
+    fn provenance(&mut self, p: &Provenance, docs: &display::DocumentPaths) {
         match p {
             Provenance::Source(_) | Provenance::Sources(_) => {
                 self.0.push(0x10);
-                self.ranges(p.sources());
+                self.ranges(p.sources(), docs);
             }
             Provenance::Synthetic(reason) => {
                 self.0.push(0x11);
@@ -121,6 +123,7 @@ impl Canon {
 /// are on the wire only when negotiated, so they are digested only then).
 pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
     let mut c = Canon::new("flashtex:dl2:page:1");
+    let docs: &display::DocumentPaths = &p.documents;
     c.u(p.number as usize);
     c.t(p.width);
     c.t(p.height);
@@ -144,8 +147,8 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
                 }
                 c.u(r.clusters.len());
                 for (ci, cl) in r.clusters.iter().enumerate() {
-                    c.u(cl.text_start_byte);
-                    c.u(cl.text_end_byte);
+                    c.u(cl.text_start_byte as usize);
+                    c.u(cl.text_end_byte as usize);
                     let rects = cl.hit_rects();
                     c.u(rects.len());
                     for h in rects {
@@ -162,7 +165,7 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
                         c.t(k.top);
                         c.t(k.height);
                     }
-                    c.provenance(&cl.provenance);
+                    c.provenance(&cl.provenance, docs);
                 }
                 c.paint(&r.paint);
             }
@@ -173,7 +176,7 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
                 c.t(r.width);
                 c.t(r.height);
                 c.paint(&r.paint);
-                c.provenance(&r.provenance);
+                c.provenance(&r.provenance, docs);
             }
             Item::Image(i) => {
                 c.0.push(0x03);
@@ -191,7 +194,7 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
                 c.s(&i.resource.sha256);
                 c.s(&i.resource.path);
                 c.u(if i.resource.pdf_box.is_some() { i.resource.pdf_page as usize } else { 0 });
-                c.provenance(&i.provenance);
+                c.provenance(&i.provenance, docs);
             }
             Item::Path(p) => {
                 c.0.push(0x04);
@@ -232,7 +235,7 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
                     c.commands(&clip.commands);
                 }
                 c.paint(&p.paint);
-                c.provenance(&p.provenance);
+                c.provenance(&p.provenance, docs);
             }
         }
     }
@@ -277,7 +280,7 @@ pub fn header_digest(l: &DisplayList, wire: Wire) -> [u8; 32] {
             Severity::Warning => "warning",
             Severity::Error => "error",
         });
-        c.ranges(&d.sources);
+        c.ranges(&d.sources, &l.document_paths);
     }
     c.sha()
 }
@@ -324,12 +327,12 @@ impl Relocation {
 
     /// The moved range, or `None` when it intersects the edited region.
     pub fn apply(&self, r: &SourceRange) -> Option<SourceRange> {
-        if r.end_byte <= self.edit_start {
-            Some(r.clone())
-        } else if r.start_byte >= self.edit_end {
-            let s = r.start_byte as isize + self.delta;
-            let e = r.end_byte as isize + self.delta;
-            (s >= 0 && e >= s).then(|| SourceRange { path: r.path.clone(), start_byte: s as usize, end_byte: e as usize })
+        if r.end() <= self.edit_start {
+            Some(*r)
+        } else if r.start() >= self.edit_end {
+            let s = r.start() as isize + self.delta;
+            let e = r.end() as isize + self.delta;
+            (s >= 0 && e >= s).then(|| SourceRange::new(r.document, s as usize, e as usize))
         } else {
             None
         }
@@ -347,24 +350,36 @@ fn digits(n: usize) -> usize {
 /// Lockstep comparison of a base page's provenance against a new page's:
 /// equal after relocation. Accumulates the decimal-width change of the moved
 /// offsets (the exact `page_bytes` arithmetic of §6.2) in `width_delta`.
-fn ranges_match(base: &[SourceRange], new: &[SourceRange], relocs: &[Relocation], width_delta: &mut isize) -> bool {
+#[allow(clippy::too_many_arguments)]
+fn ranges_match(
+    base: &[SourceRange],
+    base_docs: &display::DocumentPaths,
+    new: &[SourceRange],
+    new_docs: &display::DocumentPaths,
+    relocs: &[Relocation],
+    width_delta: &mut isize,
+) -> bool {
     if base.len() != new.len() {
         return false;
     }
     for (b, n) in base.iter().zip(new) {
-        if b.path != n.path {
+        // The two pages come from different display lists, whose document
+        // tables hold the same set in a possibly different order, so this
+        // compares paths and not indices.
+        let bp = base_docs.path(b.document);
+        if bp != new_docs.path(n.document) {
             return false;
         }
-        match relocs.iter().find(|r| *r.path == *b.path) {
+        match relocs.iter().find(|r| r.path == bp) {
             None => {
-                if b != n {
+                if b.start_byte != n.start_byte || b.end_byte != n.end_byte {
                     return false;
                 }
             }
             Some(rl) => match rl.apply(b) {
-                Some(moved) if moved == *n => {
-                    *width_delta += digits(n.start_byte) as isize - digits(b.start_byte) as isize;
-                    *width_delta += digits(n.end_byte) as isize - digits(b.end_byte) as isize;
+                Some(moved) if moved.start_byte == n.start_byte && moved.end_byte == n.end_byte => {
+                    *width_delta += digits(n.start()) as isize - digits(b.start()) as isize;
+                    *width_delta += digits(n.end()) as isize - digits(b.end()) as isize;
                 }
                 _ => return false,
             },
@@ -373,11 +388,19 @@ fn ranges_match(base: &[SourceRange], new: &[SourceRange], relocs: &[Relocation]
     true
 }
 
-fn provenance_matches(base: &Provenance, new: &Provenance, relocs: &[Relocation], width_delta: &mut isize) -> bool {
+#[allow(clippy::too_many_arguments)]
+fn provenance_matches(
+    base: &Provenance,
+    base_docs: &display::DocumentPaths,
+    new: &Provenance,
+    new_docs: &display::DocumentPaths,
+    relocs: &[Relocation],
+    width_delta: &mut isize,
+) -> bool {
     match (base, new) {
         (Provenance::Synthetic(a), Provenance::Synthetic(b)) => a == b,
         (Provenance::Synthetic(_), _) | (_, Provenance::Synthetic(_)) => false,
-        _ => ranges_match(base.sources(), new.sources(), relocs, width_delta),
+        _ => ranges_match(base.sources(), base_docs, new.sources(), new_docs, relocs, width_delta),
     }
 }
 
@@ -388,6 +411,7 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
     if base.number != new.number || base.width != new.width || base.height != new.height {
         return None;
     }
+    let (base_docs, new_docs): (&display::DocumentPaths, &display::DocumentPaths) = (&base.documents, &new.documents);
     let on_wire = |it: &&Item| wire.images || !matches!(it, Item::Image(_));
     let (bi, ni): (Vec<&Item>, Vec<&Item>) = (base.items.iter().filter(on_wire).collect(), new.items.iter().filter(on_wire).collect());
     if bi.len() != ni.len() {
@@ -411,16 +435,16 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
                         c.text_start_byte == d.text_start_byte
                             && c.text_end_byte == d.text_end_byte
                             && c.hit_rect == d.hit_rect
-                            && provenance_matches(&c.provenance, &d.provenance, relocs, &mut width_delta)
+                            && provenance_matches(&c.provenance, base_docs, &d.provenance, new_docs, relocs, &mut width_delta)
                     })
             }
             (Item::Rule(x), Item::Rule(y)) => {
-                x.x == y.x && x.top == y.top && x.width == y.width && x.height == y.height && x.paint == y.paint && provenance_matches(&x.provenance, &y.provenance, relocs, &mut width_delta)
+                x.x == y.x && x.top == y.top && x.width == y.width && x.height == y.height && x.paint == y.paint && provenance_matches(&x.provenance, base_docs, &y.provenance, new_docs, relocs, &mut width_delta)
             }
             (Item::Image(x), Item::Image(y)) => {
-                x.x == y.x && x.top == y.top && x.width == y.width && x.height == y.height && x.transform == y.transform && x.resource == y.resource && provenance_matches(&x.provenance, &y.provenance, relocs, &mut width_delta)
+                x.x == y.x && x.top == y.top && x.width == y.width && x.height == y.height && x.transform == y.transform && x.resource == y.resource && provenance_matches(&x.provenance, base_docs, &y.provenance, new_docs, relocs, &mut width_delta)
             }
-            (Item::Path(x), Item::Path(y)) => x.op == y.op && x.commands == y.commands && x.clips == y.clips && x.paint == y.paint && provenance_matches(&x.provenance, &y.provenance, relocs, &mut width_delta),
+            (Item::Path(x), Item::Path(y)) => x.op == y.op && x.commands == y.commands && x.clips == y.clips && x.paint == y.paint && provenance_matches(&x.provenance, base_docs, &y.provenance, new_docs, relocs, &mut width_delta),
             _ => false,
         };
         if !ok {
@@ -434,40 +458,41 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
 /// reconstruction, used by the producer gate); `None` when a span intersects
 /// the edited region.
 pub fn relocate_page(base: &Page, relocs: &[Relocation]) -> Option<Page> {
-    fn prov(p: &Provenance, relocs: &[Relocation]) -> Option<Provenance> {
+    fn prov(p: &Provenance, relocs: &[Relocation], docs: &display::DocumentPaths) -> Option<Provenance> {
         match p {
             Provenance::Synthetic(_) => Some(p.clone()),
             _ => {
                 let mut out = Vec::with_capacity(p.sources().len());
                 for r in p.sources() {
-                    out.push(match relocs.iter().find(|rl| *rl.path == *r.path) {
+                    out.push(match relocs.iter().find(|rl| rl.path == docs.path(r.document)) {
                         Some(rl) => rl.apply(r)?,
-                        None => r.clone(),
+                        None => *r,
                     });
                 }
                 Some(match p {
                     Provenance::Source(_) if out.len() == 1 => Provenance::Source(out.pop().unwrap()),
-                    _ => Provenance::Sources(out),
+                    _ => Provenance::of_sources(out),
                 })
             }
         }
     }
+    let docs: &display::DocumentPaths = &base.documents;
     let mut items = Vec::with_capacity(base.items.len());
     for it in &base.items {
         items.push(match it {
             Item::GlyphRun(r) => {
                 let mut r = r.clone();
                 for c in &mut r.clusters {
-                    c.provenance = prov(&c.provenance, relocs)?;
+                    c.provenance = prov(&c.provenance, relocs, docs)?;
                 }
                 Item::GlyphRun(r)
             }
-            Item::Rule(r) => Item::Rule(display::Rule { provenance: prov(&r.provenance, relocs)?, ..r.clone() }),
-            Item::Image(i) => Item::Image(display::Image { provenance: prov(&i.provenance, relocs)?, ..i.clone() }),
-            Item::Path(p) => Item::Path(display::PathItem { provenance: prov(&p.provenance, relocs)?, ..p.clone() }),
+            Item::Rule(r) => Item::Rule(display::Rule { provenance: prov(&r.provenance, relocs, docs)?, ..r.clone() }),
+            Item::Image(i) => Item::Image(display::Image { provenance: prov(&i.provenance, relocs, docs)?, ..i.clone() }),
+            Item::Path(p) => Item::Path(display::PathItem { provenance: prov(&p.provenance, relocs, docs)?, ..p.clone() }),
         });
     }
-    Some(Page { number: base.number, width: base.width, height: base.height, items })
+    Some(Page::new(base.number, base.width, base.height, items, base.documents.clone()))
 }
 
 // ---------------------------------------------------------------- snapshots
@@ -662,7 +687,7 @@ pub fn try_delta(state: &DeltaState, id: &str, list: &DisplayList, wire: Wire, b
     o.push_str("],\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":");
     let mut header_len = 0;
     let start = o.len();
-    display::write_diagnostics(&mut o, &list.diagnostics);
+    display::write_diagnostics(&mut o, &list.diagnostics, &list.document_paths);
     header_len += o.len() - start;
     o.push_str(",\"digest_scheme\":\"dl2-canon-1\",\"documents\":");
     let start = o.len();
@@ -766,7 +791,7 @@ mod tests {
     #[test]
     fn apply_moves_or_refuses() {
         let rl = Relocation { path: "m".into(), edit_start: 10, edit_end: 12, delta: 3 };
-        let sr = |s, e| SourceRange { path: std::rc::Rc::from("m"), start_byte: s, end_byte: e };
+        let sr = |s, e| SourceRange::new(display::DocId(0), s, e);
         assert_eq!(rl.apply(&sr(0, 10)), Some(sr(0, 10)));
         assert_eq!(rl.apply(&sr(12, 20)), Some(sr(15, 23)));
         assert_eq!(rl.apply(&sr(9, 11)), None);

@@ -7,6 +7,7 @@ use common::*;
 use flashtex_render_pipeline::v1::{Capabilities, V1Item};
 
 fn text_items(payload: &flashtex_render_pipeline::v1::V1Payload) -> Vec<(String, String, usize, usize, f64, f64)> {
+    let docs = payload.documents.clone();
     payload
         .pages
         .iter()
@@ -18,7 +19,7 @@ fn text_items(payload: &flashtex_render_pipeline::v1::V1Payload) -> Vec<(String,
                 x_pt,
                 baseline_y_pt,
                 ..
-            } => Some((text.clone(), source.path.to_string(), source.start_byte, source.end_byte, *x_pt, *baseline_y_pt)),
+            } => Some((text.clone(), docs.path(source.document).to_string(), source.start(), source.end(), *x_pt, *baseline_y_pt)),
             V1Item::Rule { .. } => None,
         })
         .collect()

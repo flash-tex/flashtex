@@ -111,18 +111,22 @@ fn vec_cap_bytes<T>(v: &Vec<T>) -> u64 {
 /// `Cluster` already pays for.
 fn provenance_heap(p: &Provenance, r: &mut Report) {
     match p {
-        // The `Rc<str>` path is shared across the whole document; the
-        // walk charges each distinct allocation once.
-        Provenance::Source(s) => {
-            let addr = std::rc::Rc::as_ptr(&s.path) as *const u8 as usize;
-            if r.first_time(addr) {
-                r.add("SourceRange.path Rc<str> (shared)", s.path.len() as u64 + 16, 1);
-            }
-        }
+        // A source range is now an index and two offsets: 12 bytes inline,
+        // no heap at all. The document paths are one table per display
+        // list, charged with the list rather than per cluster.
+        Provenance::Source(_) => {}
         Provenance::Sources(v) => {
-            r.add("Provenance::Sources spill", vec_cap_bytes(v), v.len() as u64);
+            r.add(
+                "Provenance::Sources spill (boxed)",
+                std::mem::size_of::<Vec<crate::display::SourceRange>>() as u64 + vec_cap_bytes(v),
+                v.len() as u64,
+            );
         }
-        Provenance::Synthetic(s) => r.add("Provenance::Synthetic string", s.capacity() as u64, 1),
+        Provenance::Synthetic(s) => r.add(
+            "Provenance::Synthetic string (boxed)",
+            std::mem::size_of::<String>() as u64 + s.capacity() as u64,
+            1,
+        ),
     }
 }
 
