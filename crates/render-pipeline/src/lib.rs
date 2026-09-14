@@ -16,6 +16,7 @@ pub mod cff;
 pub mod delta;
 pub mod display;
 pub mod floats;
+pub mod fontdiag;
 pub mod fonts;
 pub mod graphics;
 pub mod ids;

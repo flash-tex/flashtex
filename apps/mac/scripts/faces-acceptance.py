@@ -12,11 +12,17 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
 import time
 
 REPO=Path(__file__).resolve().parents[3]
-MISSING={'tfm_missing','required_metrics_unavailable','font_unavailable','math_font_unavailable',
-         'ec_metrics_unavailable','font_outline_substituted'}
+# The missing-font-resource codes, derived from the one place they live
+# (crates/render-pipeline/src/fontdiag.rs, via its generated manifest) rather
+# than hand-copied here. A failure to read them is fatal by design: a gate
+# that cannot state its own criteria must stop, not count zero.
+sys.path.insert(0, str(REPO/'scripts'))
+from font_diagnostics import codes as _font_codes  # noqa: E402
+MISSING=set(_font_codes('substitution'))
 
 def sha(path): return hashlib.sha256(path.read_bytes()).hexdigest()
 def missing(d):

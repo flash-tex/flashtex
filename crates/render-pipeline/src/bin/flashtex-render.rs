@@ -22,6 +22,11 @@
 //!   --secnumdepth <n>  section numbering depth when the source does not
 //!                      set the counter (default 2; the oracle preamble is 0)
 //!   --timing           print per-request wall time to stderr
+//!   --font-diagnostics json
+//!                      print the font/metric diagnostic classification and
+//!                      exit: the one list every acceptance gate and oracle
+//!                      reads instead of keeping its own copy. Regenerates
+//!                      `supported/font-diagnostics.json`.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -123,8 +128,28 @@ fn main() {
             }
             "--timing" => outputs.timing = true,
             "--device-color" => outputs.device_color = true,
+            "--font-diagnostics" => {
+                // The font/metric diagnostic classification every acceptance
+                // gate and oracle reads, so none of them keeps its own copy.
+                // Regenerates supported/font-diagnostics.json; drift-gated by
+                // tests/fontdiag.rs.
+                match args.next().as_deref() {
+                    Some("json") => {
+                        print!("{}", flashtex_render_pipeline::fontdiag::render_json());
+                        return;
+                    }
+                    other => {
+                        eprintln!(
+                            "flashtex-render: --font-diagnostics takes `json` (got {})",
+                            other.unwrap_or("nothing")
+                        );
+                        std::process::exit(2);
+                    }
+                }
+            }
             "-h" | "--help" => {
-                eprintln!("usage: flashtex-render [--tex main.tex] [--v2 out.json] [--pdf out.pdf] [--font-dir DIR]... [--class-options OPTS] [--secnumdepth N] [--date YYYY-MM-DD] [--timing] [--device-color]");
+                eprintln!("usage: flashtex-render [--tex main.tex] [--v2 out.json] [--pdf out.pdf] [--font-dir DIR]... [--class-options OPTS] [--secnumdepth N] [--date YYYY-MM-DD] [--timing] [--device-color] [--font-diagnostics json]");
+                eprintln!("  --font-diagnostics json: the font/metric diagnostic classification acceptance gates read (supported/font-diagnostics.json)");
                 eprintln!("  --date: what \\today renders (default 1970-01-01); a request's own payload.date wins");
                 eprintln!("  without --tex: runtime-v1 JSON Lines worker (compile requests on stdin, one compile_result per line on stdout)");
                 return;
