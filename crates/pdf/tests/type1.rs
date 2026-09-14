@@ -1,7 +1,11 @@
 //! Type 1 subsetting (`flashtex_pdf::type1`): identity of retained
-//! charstrings, blanked subroutines, `Length1/2/3`, and (oracle only,
-//! skipped without MacTeX) the apples-to-apples comparison with pdfTeX's
-//! own Latin Modern Type 1 subset.
+//! charstrings, blanked subroutines, `Length1/2/3`, and (oracle only) the
+//! apples-to-apples comparison with pdfTeX's own Latin Modern Type 1 subset.
+//! The oracle and `lmr12.pfb` are located by `tests/common/mod.rs` --
+//! `$FLASHTEX_PDFLATEX` / `PATH` / MacTeX for the binary, `kpsewhich` for the
+//! font -- and their absence is announced, never silently swallowed.
+
+mod common;
 
 use flashtex_pdf::compare;
 use flashtex_pdf::exact::{
@@ -212,35 +216,31 @@ fn type1_subset_embeds_as_a_simple_font_and_reads_back() {
 }
 
 fn lm_type1(name: &str) -> Option<PathBuf> {
-    [
-        "/usr/local/texlive/2026/texmf-dist/fonts/type1/public/lm",
-        "/usr/local/texlive/2025/texmf-dist/fonts/type1/public/lm",
-        "/usr/share/texmf/fonts/type1/public/lm",
-        "/usr/share/texlive/texmf-dist/fonts/type1/public/lm",
-    ]
-    .iter()
-    .map(|d| Path::new(d).join(name))
-    .find(|p| p.is_file())
+    common::lm_type1(name)
 }
 
 fn pdflatex() -> Option<PathBuf> {
-    [
-        "/usr/local/texlive/2026/bin/universal-darwin/pdflatex",
-        "/Library/TeX/texbin/pdflatex",
-    ]
-    .iter()
-    .map(PathBuf::from)
-    .find(|p| p.is_file())
+    common::pdflatex()
 }
 
 /// Oracle only: pdfTeX's Latin Modern subset and this crate's subset of the
 /// same `lmr12.pfb` for the same glyphs must decrypt to the same charstrings.
 #[test]
 fn latin_modern_subset_matches_pdftex_charstring_for_charstring() {
+    const TEST: &str = "latin_modern_subset_matches_pdftex_charstring_for_charstring";
     let (Some(tex), Some(pfb_path)) = (pdflatex(), lm_type1("lmr12.pfb")) else {
-        eprintln!("skipped: pdflatex oracle or lmr12.pfb not installed");
+        common::skip(
+            TEST,
+            "no pdflatex found, or lmr12.pfb is not resolvable via \
+             FLASHTEX_LM_TYPE1_DIR / kpsewhich / the fixed TeX Live directories",
+        );
         return;
     };
+    common::announce(&format!(
+        "ORACLE {TEST}: pdflatex = {}, lmr12.pfb = {}",
+        tex.display(),
+        pfb_path.display()
+    ));
     let dir = std::env::temp_dir().join(format!("flashtex-pdf-type1-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -254,8 +254,14 @@ fn latin_modern_subset_matches_pdftex_charstring_for_charstring() {
         .output()
         .unwrap();
     if !status.status.success() || !dir.join("main.pdf").is_file() {
-        eprintln!("skipped: pdflatex failed");
-        return;
+        let detail = format!(
+            "exit {:?}\nstdout:\n{}\nstderr:\n{}\nlog:\n{}",
+            status.status.code(),
+            String::from_utf8_lossy(&status.stdout),
+            String::from_utf8_lossy(&status.stderr),
+            std::fs::read_to_string(dir.join("main.log")).unwrap_or_default()
+        );
+        common::oracle_failed(TEST, "pdflatex did not produce main.pdf", &detail);
     }
     let reference = PdfFile::parse(&std::fs::read(dir.join("main.pdf")).unwrap()).unwrap();
     let doc = compare::reemit(&reference).unwrap();

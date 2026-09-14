@@ -1,7 +1,11 @@
 //! Exact export route: original-GID glyph runs, verbatim decimals, typed
 //! operators, bounded font subset identity, deterministic serialisation,
-//! and (oracle only, skipped when MacTeX is absent) the pdfTeX reference
-//! round trip with difference classification.
+//! and (oracle only) the pdfTeX/xdvipdfmx reference round trip with
+//! difference classification. The oracle is located by `common::pdflatex`
+//! and friends -- `$FLASHTEX_PDFLATEX`, then `PATH`, then MacTeX -- and its
+//! absence is announced rather than swallowed; see `tests/common/mod.rs`.
+
+mod common;
 
 use flashtex_pdf::cff::CffFont;
 use flashtex_pdf::compare::{self, Category};
@@ -547,15 +551,17 @@ fn classify_reports_operand_and_program_differences_by_category() {
 }
 
 fn latin_modern() -> Option<PathBuf> {
-    flashtex_pdf::embed::candidate_paths()
-        .into_iter()
-        .find(|p| p.ends_with(flashtex_pdf::embed::LATIN_MODERN_FILE) && p.is_file())
+    common::latin_modern_otf()
 }
 
 #[test]
 fn latin_modern_cff_subset_preserves_gids_and_renders_in_coregraphics() {
     let Some(path) = latin_modern() else {
-        eprintln!("skipped: Latin Modern not installed");
+        common::skip(
+            "latin_modern_cff_subset_preserves_gids_and_renders_in_coregraphics",
+            "Latin Modern lmroman10-regular.otf is not resolvable (FLASHTEX_LM_DIR, \
+             a TeX Live root or kpsewhich)",
+        );
         return;
     };
     let font = TrueTypeFont::load(&path).unwrap();
@@ -644,7 +650,11 @@ fn latin_modern_cff_subset_preserves_gids_and_renders_in_coregraphics() {
     let out = render_exact(&doc).unwrap();
     verify::check_structure(&out.bytes).unwrap();
     if !cfg!(target_os = "macos") || !Path::new("/usr/bin/sips").exists() {
-        eprintln!("skipped raster check: not macOS");
+        common::announce(
+            "NOTE latin_modern_cff_subset_preserves_gids_and_renders_in_coregraphics: \
+             CoreGraphics raster check skipped, /usr/bin/sips is macOS-only. The \
+             subsetting assertions above did run.",
+        );
         return;
     }
     let dir = std::env::temp_dir().join(format!("flashtex-pdf-exact-lm-{}", std::process::id()));
@@ -691,23 +701,19 @@ fn latin_modern_cff_subset_preserves_gids_and_renders_in_coregraphics() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Oracle only: MacTeX pdflatex, never part of the product path.
+/// Oracle only: pdflatex, never part of the product path.
 fn pdflatex() -> Option<PathBuf> {
-    [
-        "/usr/local/texlive/2026/bin/universal-darwin/pdflatex",
-        "/Library/TeX/texbin/pdflatex",
-    ]
-    .iter()
-    .map(PathBuf::from)
-    .find(|p| p.is_file())
+    common::pdflatex()
 }
 
 #[test]
 fn pdflatex_reference_reemits_with_identical_content_and_font_programs() {
+    const TEST: &str = "pdflatex_reference_reemits_with_identical_content_and_font_programs";
     let Some(tex) = pdflatex() else {
-        eprintln!("skipped: pdflatex oracle not installed");
+        common::skip(TEST, "no pdflatex found");
         return;
     };
+    common::announce(&format!("ORACLE {TEST}: pdflatex = {}", tex.display()));
     let dir =
         std::env::temp_dir().join(format!("flashtex-pdf-exact-oracle-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -723,12 +729,15 @@ fn pdflatex_reference_reemits_with_identical_content_and_font_programs() {
         .unwrap();
     let reference = dir.join("main.pdf");
     if !status.status.success() || !reference.is_file() {
-        eprintln!(
-            "skipped: pdflatex failed ({})",
-            String::from_utf8_lossy(&status.stdout)
+        let log = dir.join("main.log");
+        let detail = format!(
+            "exit {:?}\nstdout:\n{}\nstderr:\n{}\nlog:\n{}",
+            status.status.code(),
+            String::from_utf8_lossy(&status.stdout),
+            String::from_utf8_lossy(&status.stderr),
+            std::fs::read_to_string(&log).unwrap_or_default()
         );
-        let _ = std::fs::remove_dir_all(&dir);
-        return;
+        common::oracle_failed(TEST, "pdflatex did not produce main.pdf", &detail);
     }
     let bytes = std::fs::read(&reference).unwrap();
     let file = PdfFile::parse(&bytes).unwrap();
@@ -776,21 +785,24 @@ fn pdflatex_reference_reemits_with_identical_content_and_font_programs() {
 /// `Type0`/`Identity-H`, the same font form this crate's exact route
 /// produces, so its output exercises the CID side of the reader/re-emit.
 fn xelatex() -> Option<PathBuf> {
-    [
-        "/usr/local/texlive/2026/bin/universal-darwin/xelatex",
-        "/Library/TeX/texbin/xelatex",
-    ]
-    .iter()
-    .map(PathBuf::from)
-    .find(|p| p.is_file())
+    common::xelatex()
 }
 
 #[test]
 fn xelatex_reference_with_cid_keyed_cff_reemits_identically() {
+    const TEST: &str = "xelatex_reference_with_cid_keyed_cff_reemits_identically";
     let (Some(tex), Some(lm)) = (xelatex(), latin_modern()) else {
-        eprintln!("skipped: xelatex oracle or Latin Modern not installed");
+        common::skip(
+            TEST,
+            "no xelatex on PATH, or Latin Modern lmroman10-regular.otf is not resolvable",
+        );
         return;
     };
+    common::announce(&format!(
+        "ORACLE {TEST}: xelatex = {}, Latin Modern = {}",
+        tex.display(),
+        lm.display()
+    ));
     let lm_dir = lm.parent().unwrap().to_string_lossy().into_owned();
     let dir = std::env::temp_dir().join(format!("flashtex-pdf-exact-xe-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -808,12 +820,14 @@ fn xelatex_reference_with_cid_keyed_cff_reemits_identically() {
         .unwrap();
     let reference = dir.join("main.pdf");
     if !status.status.success() || !reference.is_file() {
-        eprintln!(
-            "skipped: xelatex failed ({})",
-            String::from_utf8_lossy(&status.stdout)
+        let detail = format!(
+            "exit {:?}\nstdout:\n{}\nstderr:\n{}\nlog:\n{}",
+            status.status.code(),
+            String::from_utf8_lossy(&status.stdout),
+            String::from_utf8_lossy(&status.stderr),
+            std::fs::read_to_string(dir.join("main.log")).unwrap_or_default()
         );
-        let _ = std::fs::remove_dir_all(&dir);
-        return;
+        common::oracle_failed(TEST, "xelatex did not produce main.pdf", &detail);
     }
     let file = PdfFile::parse(&std::fs::read(&reference).unwrap()).unwrap();
     let doc = compare::reemit(&file).unwrap();
