@@ -801,6 +801,21 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "xcolor 3.02 definitions, expressions and target models with pdfTeX's exact operator values; hsb models, colour series and table colours are diagnosed",
     ),
     (
+        "amsmath",
+        "centertags, sumlimits, nointlimits, namelimits, reqno",
+        "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\sideset, \\shoveleft, \\smash, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used",
+    ),
+    (
+        "amssymb",
+        "",
+        "the full AMSa/AMSb (msam/msbm) inventory of amssymb.sty -- 203 names base LaTeX2e leaves undefined (\\square, \\nleq, ...) -- plus everything amsfonts declares; loading the package is what makes the names exist, and a name whose file was not loaded is diagnosed",
+    ),
+    (
+        "amsfonts",
+        "",
+        "amsfonts.sty's 22-name symbol subset (\\ulcorner, \\square, \\yen, the dashed arrows) and the \\mathbb and \\mathfrak alphabets; the rest of amssymb stays undefined without \\usepackage{amssymb}",
+    ),
+    (
         "amsthm",
         "",
         "\\newtheorem, \\theoremstyle and the proof environment",

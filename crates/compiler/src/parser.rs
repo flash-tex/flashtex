@@ -6433,10 +6433,55 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // and spacing, longtable page-breaking tables, multirow entries and
         // colortbl row/column/cell colours and rule colours.
         "booktabs" | "longtable" | "multirow" | "colortbl" => options.is_empty(),
-        // amsmath/amssymb (math typesetting: \mathbb, \forall, gather,
-        // align, ...) and microtype (character protrusion/expansion kerning)
-        // are genuinely unimplemented and change real output; they must keep
-        // warning rather than being silently matched here.
+        // amsmath/amssymb/amsfonts: implemented here, not merely recognised.
+        // `crate::math` parses the constructs into their own nuclei and
+        // `math::layout_nucleus` sets them — `GenFraction`
+        // (\dfrac/\tfrac/\binom/\genfrac), `Phantom`, `Operator`
+        // (\operatorname, \DeclareMathOperator), `SubArray` (\substack),
+        // `ExtArrow` and `Framed` (\boxed) — while the align/gather/multline
+        // /cases/matrix families reach `layout::display_rows`, and
+        // `takes_display_limits` gives the \lim family, \sum and \prod their
+        // display limits. The symbol inventory is gated on which file
+        // declared each name (`MathPackages::provides`, `crate::amssymb`:
+        // amsfonts' 22-name subset with \mathbb/\mathfrak, amssymb's full
+        // 203), so loading the package is what makes those names exist at
+        // all, and \colon takes amsmath's wider definition
+        // (`MathPackages::amsmath`).
+        //
+        // Like `siunitx` and `enumitem` above, the gaps that remain report
+        // themselves where they are used rather than at \usepackage:
+        // \sideset, \shoveleft, \smash, \mspace, \hdotsfor and the
+        // \varinjlim family each raise "\X is not supported in math mode" at
+        // their own span. A blanket package warning on top of that is false
+        // for every document that stays inside the implemented set --
+        // `fixtures/real-world/hw1` and `hw2` are exactly that -- and adds
+        // nothing to a document that does not, which already has a precise
+        // error pointing at the construct.
+        //
+        // Only the options that are amsmath's own defaults are accepted: they
+        // select behaviour this crate already produces. `leqno`, `fleqn`,
+        // `tbtags`, `nosumlimits`, `intlimits` and `nonamelimits` each move
+        // real output and are not read here, so they keep the warning (the
+        // same rule `natbib` and `geometry` follow). amssymb and amsfonts
+        // take no options of their own.
+        "amsmath" => options.iter().all(|option| {
+            matches!(
+                *option,
+                "centertags" | "sumlimits" | "nointlimits" | "namelimits" | "reqno"
+            )
+        }),
+        "amssymb" | "amsfonts" => options.is_empty(),
+        // microtype (character protrusion and font expansion) is genuinely
+        // absent from this crate: it has no dependency on
+        // `flashtex-microtype`, and nothing here protrudes a character or
+        // expands a font, so the warning is true of the output this crate
+        // lays out and must stay. The render pipeline, which does set it
+        // (`typeset.rs` calls `paragraph_layout::layout_paragraph_microtype`),
+        // drops this line for its own consumers in
+        // `render_pipeline::packages::supersede_message` -- which is where
+        // route-specific knowledge belongs, because this crate's display list
+        // is consumed by both `flashtex-render` and the plain
+        // `flashtex-compiler` worker and it cannot tell which is asking.
         // hyperref: its options are PDF annotation, outline and metadata
         // settings, and none of them moves a glyph (see
         // `hyperref_option_is_layout_neutral`). `\url`/`\href`/`\nolinkurl`
