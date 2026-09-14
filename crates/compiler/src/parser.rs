@@ -969,11 +969,9 @@ pub(crate) const BUILT_INS: &[&str] = &[
 /// Parses a LaTeX dimension (`12pt`, `1.5em`, `0.5in`, `2cm`, `10mm`, `2ex`,
 /// `12bp`) to points. `em`/`ex` are relative to the compiler's fixed body size
 /// because the layout does not yet carry a current font size into dimension
-/// parsing; `ex` uses the common TeX-metrics approximation of half an em,
-/// since no real x-height is read from the font. `bp` ("big point") is exactly this compiler's own
-/// internal point (both are 1/72 inch, matching the 612×792pt page in
-/// `layout.rs`), unlike `in`/`cm`/`mm` below, which follow TeX's own
-/// 72.27-per-inch point.
+/// parsing. Physical units follow TeX `scan_dimen` §458 (`1bp` = 72.27/72 pt,
+/// not 1pt). `ex` uses [`CMR_EX_PER_EM`] (cmr x-height/em, the same constant
+/// as ulem `\sout`); this crate has no TFM, unlike the pipeline's `ec_em_ex`.
 pub(crate) fn parse_dimen_pt(text: &str) -> Option<f64> {
     parse_dimen_pt_at(text, crate::layout::BODY_SIZE_PT)
 }
@@ -1041,13 +1039,19 @@ pub(crate) fn parse_dimen_pt_at(text: &str, body_pt: f64) -> Option<f64> {
     let split = text.len() - unit_len;
     let (number, unit) = text.split_at(split);
     let value: f64 = number.trim().parse().ok()?;
+    // TeX: The Program §458. `in`/`cm`/`mm`/`bp` share the 7227 numerator
+    // (72.27 pt per inch); `dd`/`cc` are Didot; `sp` is 2^-16 pt.
     let per_pt = match unit {
-        "pt" | "bp" => 1.0,
+        "pt" => 1.0,
+        "bp" => 72.27 / 72.0,
         "in" => 72.27,
         "cm" => 72.27 / 2.54,
         "mm" => 72.27 / 25.4,
+        "dd" => 1238.0 / 1157.0,
+        "cc" => 14856.0 / 1157.0,
+        "sp" => 1.0 / 65536.0,
         "em" => body_pt,
-        "ex" => body_pt * 0.5,
+        "ex" => body_pt * CMR_EX_PER_EM,
         _ => return None,
     };
     Some(value * per_pt)
