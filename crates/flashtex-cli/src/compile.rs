@@ -119,7 +119,8 @@ pub fn compile(project: &Project, fonts: &FontSet, options: &RenderOptions, revi
             recovery: d.recovery.clone(),
         };
         // Project discovery already reports this missing include; retain its canonical diagnostic and carry over only the compiler's recovery note.
-        if diagnostic.code == "compiler" && diagnostic.message.starts_with("included file not found") {
+        // The pipeline labels every compiler diagnostic "compiler" today; once it forwards the compiler's own code this one is "recovered_input".
+        if matches!(diagnostic.code.as_str(), "compiler" | "recovered_input") && diagnostic.message.starts_with("included file not found") {
             if let Some(existing) = diagnostics.iter_mut().find(|existing| {
                 existing.path == diagnostic.path && existing.start_byte == diagnostic.start_byte && existing.code == "missing_file"
             }) {
