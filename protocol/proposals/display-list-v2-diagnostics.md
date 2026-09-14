@@ -1,7 +1,7 @@
 # Proposal: `display-list-v2-diagnostics` — structured fields on v2 diagnostics
 
 Status: **PROPOSAL ONLY** (issue #277 v2 transport; lane
-`agent/daniel-parent/v2-structured-diagnostics`, stacked on PR #354). Additive
+`agent/daniel-parent/v2-structured-diagnostics`; #354 is on main). Additive
 and opt-in. It changes no frozen contract: `protocol/rendering-v2.schema.json`,
 `docs/contracts/**` and the `display_list` / `display_list_delta` bytes of a
 request that does not ask for this capability stay byte-for-byte as they are.
