@@ -41,7 +41,7 @@ final class ShellModel {
     var problemsVisible = true
     var problemsSeverityFilter: RuntimeV1.Severity?
     var commandPaletteShown = false
-    /// Rename Symbol / Wrap in Environment / Go to Symbol sheets (ShellModel+EditorNavigation.swift).
+    /// Rename Symbol / Wrap in Environment / Go to Symbol / Go to Line sheets (ShellModel+EditorNavigation.swift).
     var editorNavigation = EditorNavigationState()
     let problemsPanel = DiagnosticsPanelState()
     /// Debounced, background word/document-statistics scan (GH68), read by

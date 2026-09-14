@@ -153,4 +153,75 @@ final class GoToLineTests: XCTestCase {
             XCTAssertEqual(h.message, EN.emptyLineTargetHint)
         } else { XCTFail("expected failure") }
     }
+
+    // MARK: palette :N routing
+
+    func testPaletteListsGoToLineAndColonQueryJumpsDirectly() {
+        XCTAssertTrue(CommandPaletteModel.isRunnable(.goToLine))
+        XCTAssertEqual(AccessibilityCommand.goToLine.entry.menu, "Navigate")
+        XCTAssertEqual(AccessibilityCommand.goToLine.entry.menuItem, "Go to Line…")
+        XCTAssertEqual(AccessibilityCommand.goToLine.entry.shortcuts, ["⌘L"])
+        XCTAssertEqual(CommandPaletteModel.rows(matching: "go to line").first?.id, .goToLine)
+        XCTAssertEqual(CommandPaletteModel.rows(matching: "⌘L").first?.id, .goToLine)
+
+        XCTAssertEqual(CommandPaletteModel.lineJumpInput(from: ":42"), ":42")
+        XCTAssertEqual(CommandPaletteModel.lineJumpInput(from: " :42:7 "), ":42:7")
+        XCTAssertEqual(CommandPaletteModel.lineJumpInput(from: ":+5"), ":+5")
+        XCTAssertEqual(CommandPaletteModel.lineJumpInput(from: ":-3"), ":-3")
+        XCTAssertNil(CommandPaletteModel.lineJumpInput(from: "42"), "without a colon, the palette still filters commands")
+        XCTAssertNil(CommandPaletteModel.lineJumpInput(from: ":"))
+        XCTAssertNil(CommandPaletteModel.lineJumpInput(from: ":nope"))
+        XCTAssertNil(CommandPaletteModel.lineJumpInput(from: "go to line"))
+
+        let m = ShellModel()
+        m.replaceProject(entryText: "a\nb\nc\n")
+        m.caretUTF16 = 0
+        XCTAssertTrue(CommandPaletteModel.performLineJump(":2", model: m))
+        XCTAssertEqual(m.caretUTF16, 2)
+        XCTAssertEqual(m.selection?.nsRange, NSRange(location: 2, length: 0))
+        XCTAssertEqual(m.navigationNote, "Line 2, column 1.")
+        XCTAssertTrue(CommandPaletteModel.performLineJump(":3:1", model: m))
+        XCTAssertEqual(m.caretUTF16, 4)
+        XCTAssertFalse(CommandPaletteModel.performLineJump("2", model: m), "not a colon query")
+        XCTAssertEqual(m.caretUTF16, 4, "a non-colon query must not move")
+        m.caretUTF16 = 2
+        XCTAssertTrue(CommandPaletteModel.performLineJump(":+1", model: m))
+        XCTAssertEqual(m.caretUTF16, 4, ":+1 from line 2 is line 3")
+    }
+
+    // MARK: model apply / cancel
+
+    func testApplyGoToLineSelectsAndCancelRestores() {
+        let m = ShellModel()
+        m.replaceProject(entryText: "aa\nbb\ncc")
+        m.caretUTF16 = 0
+        m.caretLengthUTF16 = 2
+        m.selection = .init(path: "main.tex", nsRange: NSRange(location: 0, length: 2), token: 1)
+        m.presentGoToLine()
+        XCTAssertTrue(m.editorNavigation.goToLineShown)
+        XCTAssertEqual(m.editorNavigation.goToLineHint, EN.emptyLineTargetHint)
+        m.editorNavigation.goToLineInput = "nope"
+        m.refreshGoToLineHint()
+        XCTAssertEqual(m.editorNavigation.goToLineHint, EN.invalidLineTargetHint)
+        XCTAssertFalse(m.applyGoToLine(), "invalid text stays in the sheet")
+        XCTAssertTrue(m.editorNavigation.goToLineShown)
+        XCTAssertEqual(m.caretUTF16, 0, "caret unmoved until a valid Return")
+        m.editorNavigation.goToLineInput = "2:2"
+        XCTAssertTrue(m.applyGoToLine())
+        XCTAssertFalse(m.editorNavigation.goToLineShown)
+        XCTAssertEqual(m.caretUTF16, 4)
+        XCTAssertEqual(m.selection?.nsRange, NSRange(location: 4, length: 0))
+        XCTAssertEqual(m.navigationNote, "Line 2, column 2.")
+
+        m.caretUTF16 = 4
+        m.caretLengthUTF16 = 0
+        m.selection = .init(path: "main.tex", nsRange: NSRange(location: 4, length: 0), token: 3)
+        m.presentGoToLine()
+        m.editorNavigation.goToLineInput = "1"
+        m.cancelGoToLine()
+        XCTAssertFalse(m.editorNavigation.goToLineShown)
+        XCTAssertEqual(m.caretUTF16, 4, "Esc restores the caret from when the sheet opened")
+        XCTAssertEqual(m.selection?.nsRange, NSRange(location: 4, length: 0))
+        XCTAssertNil(m.editorNavigation.goToLineRestore)
+    }
 }

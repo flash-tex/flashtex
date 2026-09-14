@@ -16,7 +16,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case zoomIn, zoomOut, actualSize, fitWidth, increaseEditorFontSize, decreaseEditorFontSize, resetEditorFontSize
     case completion, completionList, toggleComment, signatureHelp, toggleVimKeybindings
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
-    case goToDefinition, goToSymbol, selectEnvironment, wrapInEnvironment, renameSymbol
+    case goToDefinition, goToSymbol, goToLine, selectEnvironment, wrapInEnvironment, renameSymbol
     case selectPreviewItemSource
     case accessibilityHelp
     case durableHistory, findInProject, nextSearchMatch, renameCitation
@@ -207,6 +207,10 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Go to symbol", shortcuts: ["⌘⇧T"], menu: "Navigate",
                          description: "Opens the symbol picker: fuzzy search over every heading, environment and label of the open documents; ↑/↓ choose, Return goes there, Esc closes.",
                          menuItem: "Go to Symbol…")
+        case .goToLine:
+            return Entry(command: self, title: "Go to line", shortcuts: ["⌘L"], menu: "Navigate",
+                         description: "Opens a field for a 1-based line, line:column, or +N/−N relative to the caret; out-of-range numbers clamp, invalid text shows an inline hint. Return selects the caret and centres it, Esc cancels. Typing :42 in the command palette jumps directly.",
+                         menuItem: "Go to Line…")
         case .selectEnvironment:
             return Entry(command: self, title: "Select environment", shortcuts: ["⌘⇧A"], menu: "Navigate",
                          description: "Selects the innermost \\begin{X}…\\end{X} around the caret (nesting and unbalanced text tolerated); again selects the enclosing one. The caret on a \\begin or \\end also highlights its partner like a bracket.",

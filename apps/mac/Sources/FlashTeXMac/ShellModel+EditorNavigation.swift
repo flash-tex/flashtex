@@ -3,7 +3,7 @@ import SwiftUI
 import FlashTeXProtocol
 
 /// Sheet state for the editor navigation commands (EditorNavigation.swift):
-/// Rename Symbol…, Wrap Selection in Environment…, Go to Symbol….
+/// Rename Symbol…, Wrap Selection in Environment…, Go to Symbol…, Go to Line….
 struct EditorNavigationState: Equatable {
     var renameShown = false
     var renameSymbol: EditorNavigation.Symbol?
@@ -12,8 +12,20 @@ struct EditorNavigationState: Equatable {
     var renameStatus = ""
     var wrapShown = false
     var symbolPickerShown = false
+    var goToLineShown = false
+    var goToLineInput = ""
+    var goToLineHint = ""
+    /// Caret/selection when the Go to Line sheet opened, restored on Esc.
+    var goToLineRestore: GoToLineCaret?
     /// Evidence for tests: rename plans applied (label, count).
     var renamesApplied: [String] = []
+}
+
+/// Snapshot of the editor caret used to restore on Esc from Go to Line.
+struct GoToLineCaret: Equatable {
+    var caret: Int
+    var length: Int
+    var selection: ShellModel.Selection?
 }
 
 /// One entry of the Go to Symbol picker: an outline item of one document.
@@ -228,6 +240,63 @@ extension ShellModel {
         reveal(outlineItem: entry.item, in: entry.path)
     }
 
+    // MARK: go to line
+
+    /// ⌘L: open the Go to Line field, remembering the caret so Esc can restore it.
+    func presentGoToLine() {
+        editorNavigation.goToLineRestore = GoToLineCaret(caret: caretUTF16, length: caretLengthUTF16, selection: selection)
+        editorNavigation.goToLineInput = ""
+        editorNavigation.goToLineHint = EditorNavigation.emptyLineTargetHint
+        editorNavigation.goToLineShown = true
+    }
+
+    /// Live hint as the sheet field changes; does not move the caret.
+    func refreshGoToLineHint() {
+        let input = editorNavigation.goToLineInput
+        switch EditorNavigation.resolveLineTarget(activeText, input: input, caret: caretUTF16) {
+        case .success(let t): editorNavigation.goToLineHint = "Line \(t.line), column \(t.column)"
+        case .failure(let h): editorNavigation.goToLineHint = h.message
+        }
+    }
+
+    /// Return: select the resolved caret (clamped) and ask the editor to centre
+    /// it the same way Jump to Selection does. False when the field is invalid
+    /// (the sheet stays open with the hint).
+    @discardableResult
+    func applyGoToLine(_ input: String? = nil) -> Bool {
+        let typed = input ?? editorNavigation.goToLineInput
+        switch EditorNavigation.resolveLineTarget(activeText, input: typed, caret: caretUTF16) {
+        case .failure(let h):
+            editorNavigation.goToLineHint = h.message
+            return false
+        case .success(let target):
+            editorNavigation.goToLineRestore = nil
+            editorNavigation.goToLineShown = false
+            editorNavigation.goToLineInput = ""
+            editorNavigation.goToLineHint = ""
+            selectInEditor(NSRange(location: target.utf16, length: 0))
+            navigationNote = "Line \(target.line), column \(target.column)."
+            DispatchQueue.main.async { EditorFindAction.centerSelection() }
+            return true
+        }
+    }
+
+    /// Esc: close without moving, restoring the caret/selection from when the sheet opened.
+    func cancelGoToLine() {
+        let saved = editorNavigation.goToLineRestore
+        editorNavigation.goToLineRestore = nil
+        editorNavigation.goToLineShown = false
+        editorNavigation.goToLineInput = ""
+        editorNavigation.goToLineHint = ""
+        if let saved {
+            caretUTF16 = saved.caret
+            caretLengthUTF16 = saved.length
+            if let sel = saved.selection {
+                selection = .init(path: sel.path, nsRange: sel.nsRange, token: (selection?.token ?? 0) + 1)
+            }
+        }
+    }
+
     // MARK: hover peek
 
     /// The user's own definition of `\name`, for the hover (EditorIntelligence quick info).
@@ -239,7 +308,7 @@ extension ShellModel {
 
 // MARK: - sheets
 
-/// The three sheets, attached to the main window with one modifier (ContentView.swift).
+/// The four sheets, attached to the main window with one modifier (ContentView.swift).
 struct EditorNavigationSheets: ViewModifier {
     @Environment(ShellModel.self) var model
 
@@ -249,6 +318,9 @@ struct EditorNavigationSheets: ViewModifier {
             .sheet(isPresented: $model.editorNavigation.renameShown) { RenameSymbolSheet().environment(model) }
             .sheet(isPresented: $model.editorNavigation.wrapShown) { WrapEnvironmentSheet().environment(model) }
             .sheet(isPresented: $model.editorNavigation.symbolPickerShown) { SymbolPickerSheet().environment(model) }
+            .sheet(isPresented: $model.editorNavigation.goToLineShown, onDismiss: {
+                if model.editorNavigation.goToLineRestore != nil { model.cancelGoToLine() }
+            }) { GoToLineSheet().environment(model) }
     }
 }
 
@@ -406,5 +478,46 @@ struct SymbolPickerSheet: View {
         guard !rows.isEmpty else { return }
         let i = rows.firstIndex { $0.id == selected } ?? 0
         selected = rows[(i + delta + rows.count) % rows.count].id
+    }
+}
+
+/// Go to Line: a single field styled like the command palette. Return jumps
+/// and centres; Esc restores the caret from when the sheet opened.
+struct GoToLineSheet: View {
+    @Environment(ShellModel.self) var model
+    @FocusState private var focused: Bool
+    static let identifier = "goto.line"
+
+    var body: some View {
+        @Bindable var model = model
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "number").foregroundStyle(.secondary)
+                TextField("Line, line:column, or +N/−N", text: $model.editorNavigation.goToLineInput)
+                    .textFieldStyle(.plain).font(.title3)
+                    .focused($focused)
+                    .accessibilityLabel("Go to line")
+                    .onSubmit { _ = model.applyGoToLine() }
+                    .onKeyPress(.escape) { model.cancelGoToLine(); return .handled }
+                    .onChange(of: model.editorNavigation.goToLineInput) { _, _ in model.refreshGoToLineHint() }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            Divider()
+            HStack {
+                Text(model.editorNavigation.goToLineHint)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier(Self.identifier + ".hint")
+                Spacer()
+                hint("⏎", "go"); hint("esc", "cancel")
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
+        }
+        .frame(width: 420)
+        .onAppear { focused = true; model.refreshGoToLineHint() }
+        .accessibilityIdentifier(Self.identifier)
+    }
+
+    private func hint(_ key: String, _ what: String) -> some View {
+        HStack(spacing: 3) { KeyCap(key); Text(what).font(.caption2).foregroundStyle(.secondary) }
     }
 }

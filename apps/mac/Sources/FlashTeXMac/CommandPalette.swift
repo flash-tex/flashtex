@@ -53,6 +53,23 @@ enum CommandPaletteModel {
         return ranked.sorted { ($0.rank, $0.index) < ($1.rank, $1.index) }.map(\.row)
     }
 
+    /// A leading-colon line jump (`:42`, `:42:7`, `:+5` / `:-5`). Nil when the
+    /// query is not that form, so ordinary command filtering still runs.
+    static func lineJumpInput(from query: String) -> String? {
+        let t = query.trimmingCharacters(in: .whitespaces)
+        guard t.hasPrefix(":"), t.count > 1 else { return nil }
+        if case .success = EditorNavigation.parseLineTarget(t) { return t }
+        return nil
+    }
+
+    /// Palette `:N` route: resolve against the active buffer and select. False
+    /// when `query` is not a colon jump (the caller should run a command row).
+    @MainActor
+    static func performLineJump(_ query: String, model: ShellModel) -> Bool {
+        guard let input = lineJumpInput(from: query) else { return false }
+        return model.applyGoToLine(input)
+    }
+
     /// Runs `command` through the same model operations its menu item uses.
     /// Returns false for commands that cannot be run from the palette.
     @MainActor
@@ -91,6 +108,7 @@ enum CommandPaletteModel {
         case .goToMatching: model.goToMatching()
         case .goToDefinition: model.goToDefinition() // ShellModel+EditorNavigation.swift
         case .goToSymbol: model.editorNavigation.symbolPickerShown = true
+        case .goToLine: model.presentGoToLine()
         case .selectEnvironment: model.selectEnvironment()
         case .wrapInEnvironment: model.editorNavigation.wrapShown = true
         case .renameSymbol: model.presentRenameSymbol()
@@ -143,13 +161,34 @@ struct CommandPalette: View {
                     .accessibilityLabel("Command palette search")
                     .onKeyPress(.downArrow) { move(1, in: rows); return .handled }
                     .onKeyPress(.upArrow) { move(-1, in: rows); return .handled }
-                    .onKeyPress(.return) { run(selectedRow(in: rows)); return .handled }
+                    .onKeyPress(.return) {
+                        if CommandPaletteModel.lineJumpInput(from: query) != nil {
+                            let q = query
+                            dismiss()
+                            DispatchQueue.main.async { _ = CommandPaletteModel.performLineJump(q, model: model) }
+                            return .handled
+                        }
+                        run(selectedRow(in: rows)); return .handled
+                    }
                     .onKeyPress(.escape) { dismiss(); return .handled }
                 Text("\(rows.count)").font(.caption).foregroundStyle(.tertiary).monospacedDigit()
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
             Divider()
-            if rows.isEmpty {
+            if let jump = CommandPaletteModel.lineJumpInput(from: query) {
+                let preview: String = {
+                    switch EditorNavigation.resolveLineTarget(model.activeText, input: jump, caret: model.caretUTF16) {
+                    case .success(let t): return "Go to line \(t.line), column \(t.column)"
+                    case .failure(let h): return h.message
+                    }
+                }()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(preview).font(.body)
+                    Text("⏎ jumps · esc closes").font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else if rows.isEmpty {
                 ContentUnavailableView.search(text: query)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
