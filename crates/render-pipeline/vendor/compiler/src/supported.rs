@@ -466,6 +466,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         "upright named operator (\\mathop); starred and withlimits forms take limits",
         true,
     ),
+    (
+        &["colon"],
+        "",
+        "function-arrow colon: punctuation (0mu/3mu) as the kernel declares it, amsmath's 2mu/6mu when amsmath is loaded",
+        true,
+    ),
     (&["bmod", "mod"], "", "upright mod", true),
     (&["pmod"], "{n}", "parenthesised (mod n)", true),
     (
@@ -925,12 +931,22 @@ pub fn inventory() -> Inventory {
             crate::amssymb::SymbolFont::Msbm => "msbm",
         };
         let class = format!("{:?}", ams.class).to_lowercase();
+        // Which `\usepackage` the document has to load: base LaTeX2e defines
+        // none of these names, and `math::command_atom` diagnoses the command
+        // when its package is absent, so the inventory has to say so.
+        let package = match ams.provider {
+            crate::amssymb::Provider::Amsfonts => "amsfonts",
+            crate::amssymb::Provider::Amssymb => "amssymb",
+        };
         commands.push(Command {
             name,
             mode: Mode::Math,
             origin: Origin::MathSymbol,
             arguments: "",
-            description: format!("symbol {} (\\math{class}, {font} \"{:02X})", ams.text, ams.slot),
+            description: format!(
+                "symbol {} (\\math{class}, {font} \"{:02X}; needs {package})",
+                ams.text, ams.slot
+            ),
             glyph: Some(ams.text),
             renders: true,
         });

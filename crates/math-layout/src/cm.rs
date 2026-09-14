@@ -687,9 +687,8 @@ impl MathFontMetrics for CmMathMetrics {
         self.extension_recipe(0x70, '\u{221A}', size)
     }
 
-    /// `\operator@font` is the roman family (cmr) at the current size.
-    fn extension_glyph(&self, code: u8, ch: char) -> Option<Glyph> {
-        self.make_glyph(Family::Extension, code, ch, SizeClass::Text)
+    fn extension_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
+        self.make_glyph(Family::Extension, code, ch, size)
     }
 
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
@@ -730,6 +729,48 @@ pub fn size_pt(m: &CmMathMetrics, size: SizeClass) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `\overbrace`/`\underbrace` set `\braceld`..`\braceru` inside
+    /// `\downbracefill`/`\upbracefill`'s own `$...$`, so the pieces always
+    /// come from `\textfont3` — never `\scriptfont3`, however deeply the
+    /// brace sits in scripts.
+    ///
+    /// The two differ only when family 3 is not one fixed font, which is
+    /// what amsmath's redeclaration does ([`ExtensionSizing::Designs`]). In
+    /// an 11 pt article loading amsmath, pdfTeX 3.141592653 (TeX Live 2025)
+    /// reports `\fontname\textfont3` = `cmex10 at 10.95pt` and
+    /// `\fontname\scriptfont3` = `cmex8`, and `\showbox` of `\overbrace{a+b}`,
+    /// `x^{\overbrace{a+b}}`, `x^{y^{\overbrace{a+b}}}` and an `\underbrace`
+    /// in a fraction numerator all place the same `\hbox(1.31396+0.0)` piece
+    /// from cmex10 at 10.95 pt.
+    #[test]
+    fn brace_pieces_come_from_textfont3_even_inside_scripts() {
+        use crate::mathlist::{Atom, MathList};
+        let m = CmMathMetrics::for_text_size(10.95).with_extension(ExtensionSizing::Designs);
+        assert_eq!(m.sizes, [10.95, 8.0, 6.0]);
+        let brace = || Atom::brace(MathList::new(vec![Atom::ord('a')]), false);
+        let bare = MathList::new(vec![brace()]);
+        let mut x = Atom::ord('x');
+        x.superscript = Some(MathList::new(vec![brace()]));
+        let mut y = Atom::ord('y');
+        y.superscript = Some(MathList::new(vec![x.clone()]));
+        for list in [bare, MathList::new(vec![x]), MathList::new(vec![y])] {
+            let root = crate::layout(&list, crate::Style::DISPLAY, &m);
+            let pieces: Vec<_> = crate::positioned_runs(&root, (0.0, 0.0))
+                .glyphs
+                .into_iter()
+                .filter(|g| g.ch == '\u{23DE}')
+                .collect();
+            assert_eq!(pieces.len(), 4, "four `\\downbracefill` pieces");
+            for p in pieces {
+                assert_eq!(p.font_id, font_id_of(&CMEX10), "cmex10, not cmex8");
+                assert_eq!(format!("{:.5}", p.size), "10.95000");
+                // cmex10 "7A height 0.119997 em: pdfTeX's 1.31396 pt piece.
+                let g = m.extension_glyph(0x7A, '\u{23DE}', SizeClass::Text).expect("piece");
+                assert_eq!(format!("{:.5}", g.height), "1.31396");
+            }
+        }
+    }
 
     /// `fontmath.ltx` 278-279 and 301-302 put the square relations in the
     /// `symbols` (cmsy) family, so they box from the cmsy TFM exactly as

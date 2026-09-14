@@ -69,14 +69,18 @@ a secure network implementation.
   and Pencil input are required for acceptance; generated fixtures are insufficient.
 - Commander: owns v1 changes until an interface owner is explicitly reassigned.
 
-## Proposed optional request date
+## Optional request date
 
-`payload.date` (a `YYYY-MM-DD` civil date) is proposed in
-[protocol/proposals/runtime-v1-request-date.md](../../protocol/proposals/runtime-v1-request-date.md):
-`\today` must print the real date, and the only way to do that without breaking
-the determinism rule above is for the caller to read the clock and send the
-answer as an ordinary request input. An absent field means the Unix epoch, so
-every request written against this document stays valid and byte-identical.
+`payload.date` (a `YYYY-MM-DD` civil date) is specified in
+[protocol/proposals/runtime-v1-request-date.md](../../protocol/proposals/runtime-v1-request-date.md)
+(implemented, despite the filename): `\today` prints the real date, and the only
+way to do that without breaking the determinism rule above is for the caller to
+read the clock and send the answer as an ordinary request input. `apps/mac`
+already sends it on every compile request (`RuntimeV1.localDate()` in
+`ShellModel.swift`); `crates/render-pipeline` threads it to the compiler by
+default (`request-date` is a default Cargo feature). An absent field means the
+Unix epoch, so every request written against this document stays valid and
+byte-identical.
 
 ## Optional negotiated layout extension
 

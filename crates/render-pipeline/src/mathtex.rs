@@ -84,6 +84,42 @@ pub struct TexMathMetrics {
     alphabets: Vec<(crate::mathalpha::MathAlphabet, usize, Rc<LoadedFace>, Rc<Tfm>)>,
 }
 
+/// Where a piece sits in cmex's extensible recipe (`[top, mid, bot, rep]`,
+/// tex.web §713) and so which part of the OpenType vertical glyph assembly
+/// paints it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PiecePlace {
+    Top,
+    Middle,
+    Bottom,
+    /// cmex's `rep`: the piece TeX repeats to reach the wanted size.
+    Extender,
+}
+
+/// The cmex slot a character's `next_larger` size chain starts at: a
+/// delimiter's large variant, a symbol that lives in family 3 (`\sum`), or
+/// the radical sign.
+fn cmex_chain_start(ch: char) -> Option<u8> {
+    cm::delimiter_slot(ch)
+        .map(|(_, large)| large)
+        .or_else(|| cm::symbol_slot(ch).filter(|(f, _)| *f == Family::Extension).map(|(_, c)| c))
+        .or(if ch == '\u{221A}' { Some(0x70) } else { None })
+}
+
+/// The extensible recipe (`[top, mid, bot, rep]`, 0 where cmex has no such
+/// piece) at the end of `ch`'s cmex size chain, when it has one.
+fn cmex_recipe(ch: char) -> Option<[u8; 4]> {
+    let font = &cm_tfm::CMEX10;
+    let mut cur = font.char(cmex_chain_start(ch)?)?;
+    for _ in 0..9 {
+        if font.is_extensible(cur) {
+            return Some(cur.extensible);
+        }
+        cur = font.next_larger(cur)?;
+    }
+    None
+}
+
 /// Font ids of fraktur glyphs laid out from `eufm` at the three sizes: far
 /// below the `\text` run ids and above math-layout's embedded CM ids.
 pub const FRAKTUR_FONTS: [MathFontId; 3] = [MathFontId(0x100), MathFontId(0x101), MathFontId(0x102)];
@@ -458,6 +494,61 @@ impl TexMathMetrics {
         })
     }
 
+    /// Which piece of cmex's extensible recipe for `ch` slot `code` is, when
+    /// it is one: the pieces tex.web §713 stacks once no fixed size in the
+    /// `next_larger` chain is tall enough. TeX never sets the extensible
+    /// character itself as a delimiter (`var_delimiter` switches to the
+    /// recipe as soon as it reaches an `ext_tag` character), so a placed
+    /// glyph carrying one of these slots is always a stacked piece.
+    pub fn extensible_piece(&self, font: MathFontId, code: u8, ch: char) -> Option<PiecePlace> {
+        if !self.cm.font_name(font).starts_with("cmex") {
+            return None;
+        }
+        let [top, mid, bot, rep] = cmex_recipe(ch)?;
+        let is = |slot: u8| slot != 0 && slot != u8::MAX && slot == code;
+        if is(rep) {
+            Some(PiecePlace::Extender)
+        } else if is(bot) {
+            Some(PiecePlace::Bottom)
+        } else if is(mid) {
+            Some(PiecePlace::Middle)
+        } else if is(top) {
+            Some(PiecePlace::Top)
+        } else {
+            None
+        }
+    }
+
+    /// The Latin Modern Math assembly part that plays `place` in `ch`'s
+    /// vertical glyph assembly. The roles line up with cmex's recipe because
+    /// both describe the same delimiter: the assembly lists its parts bottom
+    /// to top with the repeatable ones flagged, so the extender is cmex's
+    /// `rep`, the outermost fixed parts are its `bot` and `top`, and the one
+    /// between two extenders is its `mid` (Latin Modern Math's `{`). A
+    /// delimiter cmex builds without an end piece has none there either
+    /// (`\lceil`: extender then top, `\lfloor`: bottom then extender).
+    fn assembly_part(&self, ch: char, place: PiecePlace) -> Option<u16> {
+        let parts = self.otf.vassembly_parts(ch);
+        match place {
+            PiecePlace::Extender => parts.iter().find(|p| p.extender).map(|p| p.gid),
+            PiecePlace::Bottom => parts.first().filter(|p| !p.extender).map(|p| p.gid),
+            PiecePlace::Top => parts.last().filter(|p| !p.extender).map(|p| p.gid),
+            PiecePlace::Middle => {
+                let fixed: Vec<u16> = parts.iter().filter(|p| !p.extender).map(|p| p.gid).collect();
+                (fixed.len() == 3).then(|| fixed[1])
+            }
+        }
+    }
+
+    /// The Latin Modern Math vertical assembly that paints a run of cmex
+    /// extensible pieces spanning `span` pt at `size` pt: `(glyph id, the
+    /// rise of its ink bottom above the bottom of the run)`, bottom to top.
+    /// The parts overlap by the font's own connector geometry, so the ink is
+    /// continuous and ends exactly where TeX's stacked boxes do.
+    pub fn vertical_assembly(&self, ch: char, span: f64, size: f64) -> Option<Vec<(u16, f64)>> {
+        self.otf.vertical_assembly(ch, span, size)
+    }
+
     /// The Latin Modern Math glyph id for a placed TFM glyph.
     pub fn otf_gid(&self, font: MathFontId, code: u8, ch: char) -> Option<u16> {
         let name = self.cm.font_name(font);
@@ -524,13 +615,22 @@ impl TexMathMetrics {
                 }
             };
         }
+        // A piece of cmex's extensible recipe: the part with the same role in
+        // Latin Modern Math's vertical glyph assembly. `typeset::math_items`
+        // then lays the whole stacked run out with the font's connector
+        // geometry ([`TexMathMetrics::vertical_assembly`]); this mapping is
+        // what each piece paints on its own.
+        if let Some(place) = self.extensible_piece(font, code, ch) {
+            let gid = self.assembly_part(ch, place);
+            if gid.is_none() {
+                self.unmapped.borrow_mut().push((name, code, ch));
+            }
+            return gid;
+        }
         let result = if name.starts_with("cmex") {
             // Size chain in lmex: steps from the character's first cmex code
             // to `code` select the same-index vertical variant in MATH.
-            let start = cm::delimiter_slot(ch)
-                .map(|(_, large)| large)
-                .or_else(|| cm::symbol_slot(ch).filter(|(f, _)| *f == Family::Extension).map(|(_, c)| c))
-                .or(if ch == '\u{221A}' { Some(0x70) } else { None });
+            let start = cmex_chain_start(ch);
             match (start, base(ch)) {
                 (Some(start), Some(base_gid)) => {
                     // The `next_larger` chains and the extensible recipes are
@@ -685,8 +785,8 @@ impl MathFontMetrics for TexMathMetrics {
         self.cm.accent_sizes(ch, size)
     }
 
-    fn extension_glyph(&self, code: u8, ch: char) -> Option<Glyph> {
-        self.cm.extension_glyph(code, ch)
+    fn extension_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
+        self.cm.extension_glyph(code, ch, size)
     }
 
     fn delimiter_extensible(&self, ch: char, size: SizeClass) -> Option<Extensible> {

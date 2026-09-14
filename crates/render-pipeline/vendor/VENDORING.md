@@ -1,10 +1,22 @@
 # Vendored sibling crates (pinned mirrors)
 
 These directories are byte-for-byte copies (`git archive <sha>:crates/<name>`)
-of sibling crates at the revisions the pipeline is built against. Most are
-task-branch tips that are **ahead of `main`**; they exist only so
-`crates/render-pipeline` builds standalone from a `git archive` of this
-directory alone (which is how the visual-oracle harness builds it). They are
+of sibling crates at the revisions the pipeline was built against when each
+was last re-pinned. **These are frozen snapshots, not live mirrors**: as of
+this writing every pinned SHA checked (`compiler`/`math-layout` `ea4ee5c8`,
+`font-resources`/`project-files` `d5440b0`, `font-engine` `f418238`, `pdf`
+`bffd168a`, `document-style` `bfc980d`, `paragraph-layout`/`tex-text-encoding`/
+`tex-boxes`/`tex-expansion` `87a513de`, `microtype` `8193d5db`) is an ancestor
+of `main` — i.e. `main` has since moved on, by anywhere from ~150 commits
+(`compiler`, `math-layout`) to over 2500 (`document-style`, `font-engine`) —
+so these pins are **behind `main`**, not ahead of it, except where a
+directory's own row says its source branch is still unmerged (`vector-graphics`
+is pinned from `agent/kabir-claude/tikz-min`, but even that pin's content is
+currently byte-identical to `main`'s `crates/vector-graphics`). Re-verify with
+`git merge-base --is-ancestor <pin-sha> HEAD` before trusting either direction,
+since both sides move. They exist only so `crates/render-pipeline` builds
+standalone from a `git archive` of this directory alone (which is how the
+visual-oracle harness builds it). They are
 read-only here: no edits, no fixes; requested API changes go to the owning
 agent through `docs/proposals/rendering-abi.md` and are listed in the
 render-pipeline README. Each directory carries a `PIN` file with the full
@@ -35,9 +47,11 @@ names next to it.
 (the first external crates in this build); everything else is path-only.
 
 **Delete this directory and point `Cargo.toml` path dependencies at
-`../<name>` once the siblings are integrated on `main`** (`main` currently
-carries older revisions of font-engine, paragraph-layout, math-layout and
-pdf than the pins above). Nothing binary is vendored; Latin Modern's OTFs
+`../<name>` once render-pipeline's own build no longer needs a standalone
+`git archive` of pinned sources** — as of this writing `main` is already
+*ahead* of every pin here (see the note above), so the blocker is not that
+`main` lacks these changes; it's that `render-pipeline` still depends on
+frozen copies instead of the live `../<name>` siblings. Nothing binary is vendored; Latin Modern's OTFs
 and TFMs are read from the local TeX Live installation at run time, never
 committed; the 12 pt TFM set is digest-bound to the official Latin Modern
 2.004 release (`REQUIRED_TFMS` in `src/fonts.rs`).
