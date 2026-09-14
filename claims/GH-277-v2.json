@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/v2-structured-diagnostics",
-  "gh_ref": "#277",
+  "gh_ref": "#358",
   "machine": "mac-m5pro-dq222",
-  "note": "v2 transport: display-list-v2-diagnostics capability proposal + render-pipeline producer",
+  "note": "published as #358; review follow-ups on the PR",
   "started_utc": "2026-09-14T08:00:29Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-277-v2",
-  "updated_utc": "2026-09-14T08:15:54Z"
+  "updated_utc": "2026-09-14T08:36:10Z"
 }
