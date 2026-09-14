@@ -454,12 +454,21 @@ final class WordCountModel {
         }
     }
 
+    /// Fires on the main actor after every `recompute` cycle reaches its
+    /// publish decision — whether it actually published or was superseded.
+    /// Production leaves this `nil` (no cost, no behavior change). Tests use
+    /// it to wait on the real publication itself instead of assuming
+    /// unstructured `Task { @MainActor }` jobs run in enqueue order, which
+    /// is not a documented Swift concurrency guarantee.
+    @ObservationIgnored var onRecomputeSettled: (() -> Void)?
+
     private func recompute(_ documents: [(path: String, text: String)], generation gen: Int) {
         recomputeExecutor { [weak self] in
             let start = DispatchTime.now()
             let result = DocumentStatistics.analyze(documents: documents)
             let ms = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
             Task { @MainActor [weak self] in
+                defer { self?.onRecomputeSettled?() }
                 guard let self, gen == self.generation else { return } // superseded by a later edit
                 self.total = result.total
                 self.sections = result.sections

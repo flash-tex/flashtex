@@ -229,20 +229,33 @@ final class WordCountModelTests: XCTestCase {
         return model
     }
 
-    /// Deterministically drains that publish hop: awaiting an unstructured
-    /// `Task { @MainActor }` enqueued *after* `recompute`'s publish task
-    /// means the publish has run by the time this returns — no wall-clock
-    /// polling, so no flake window under full-suite load. (Deliberately not
-    /// `MainActor.run`, which may execute inline without yielding when the
-    /// caller is already on the main actor and so would not flush the queue.)
-    private func published() async {
-        await Task { @MainActor in }.value
+    /// Deterministically waits on the publication itself, via
+    /// `onRecomputeSettled` — not on unstructured `Task { @MainActor }`
+    /// jobs running in enqueue order, which Swift concurrency does not
+    /// document as guaranteed. `settles` counts every `recompute` cycle
+    /// that has reached its publish decision (published or superseded), not
+    /// just successful publishes, so a caller that triggered N updates
+    /// should await exactly N settles even when only the last one publishes.
+    /// Must be called after the trigger(s) it is waiting on and before any
+    /// other `await` in the same test, so the hook is armed before the
+    /// already-enqueued Task(s) get a chance to run.
+    private func published(_ model: WordCountModel, settles: Int = 1) async {
+        var remaining = settles
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            model.onRecomputeSettled = {
+                remaining -= 1
+                if remaining <= 0 {
+                    model.onRecomputeSettled = nil
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     func testScheduleUpdateEventuallyPublishesTotals() async {
         let model = makeModel()
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three.")])
-        await published()
+        await published(model)
         XCTAssertEqual(model.total?.totalWords, 3)
     }
 
@@ -253,7 +266,7 @@ final class WordCountModelTests: XCTestCase {
         // decides the winner.
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One.")])
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three four.")])
-        await published()
+        await published(model, settles: 2)
         XCTAssertEqual(model.total?.totalWords, 4)
     }
 }
