@@ -78,9 +78,11 @@ pub fn collect_edits(diagnostics: &[Diagnostic], project: &Project) -> Vec<Edit>
         .iter()
         .filter_map(|d| {
             let replacement = d.suggestion.clone()?;
+            // A suggestion replaces its span; without both ends it would turn
+            // into an insertion at `start`, which is not what the compiler offered.
             let start = d.start_byte?;
-            let end = d.end_byte.unwrap_or(start);
-            if end < start {
+            let end = d.end_byte?;
+            if end <= start {
                 return None;
             }
             if !project.documents.iter().any(|doc| doc.path == d.path) {
@@ -435,6 +437,18 @@ mod tests {
         d.suggestion = None;
         let dir = tmp("none");
         let project = project_at(dir.clone(), vec![("main.tex", "x\n")]);
+        assert!(collect_edits(&[d], &project).is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_suggestion_without_a_full_span_is_not_turned_into_an_insertion() {
+        let mut d = diag_at("main.tex", "x\n", "x", "y");
+        d.end_byte = None;
+        let dir = tmp("no-end");
+        let project = project_at(dir.clone(), vec![("main.tex", "x\n")]);
+        assert!(collect_edits(&[d.clone()], &project).is_empty());
+        d.end_byte = d.start_byte;
         assert!(collect_edits(&[d], &project).is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
