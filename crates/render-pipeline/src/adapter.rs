@@ -6229,6 +6229,20 @@ mod tests {
         assert_eq!(wo, letter, "without geometry the MediaBox is unchanged");
     }
 
+    #[test]
+    fn subparagraph_indent_follows_final_parindent() {
+        let src = "\\documentclass{article}\n\\setlength{\\parindent}{0pt}\n\\begin{document}\n\\subparagraph{Heading} body\n\\end{document}";
+        let indent = adapted(src)
+            .style
+            .class_geometry
+            .as_ref()
+            .unwrap()
+            .heading("subparagraph")
+            .unwrap()
+            .indent;
+        assert_eq!(indent, flashtex_class_geometry::Sp::ZERO);
+    }
+
     /// Shorthand for an item list: `W` word, `S` space, `F` fill, `Q` quad.
     fn shape(items: &[Item]) -> String {
         items
