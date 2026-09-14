@@ -64,16 +64,22 @@ const GATED: [&str; 15] = [
 /// tree and the follow-up is visible rather than forgotten.
 const NOT_YET: [(&str, &str); 2] = [
     ("15-verbatim-small",
-     "The size declaration in force. pdfTeX sets the body in CMTT9 (per-character advance 4.7073 bp \
-      against CMTT10's 5.2303); the pipeline sets CMTT10. The compiler's `Inline::Verbatim` and \
-      `Block::Verbatim` carry no `style`, so the declaration never reaches the pipeline, and \
-      `declared_size` is explicit that the pipeline must not re-derive sizes from the source \
-      (pin `b38e1884`). Fixed compiler-side in PR #261; needs that plus a vendor re-pin."),
+     "The `\\small` in force. Verified by swapping PR #261's compiler into `vendor/compiler` \
+      (uncommitted, restored after): with it the horizontal geometry is exact -- the body sets in \
+      CMTT9 and the line's last glyph lands at 194.964 against pdfTeX's 194.964 -- and the whole \
+      block is left exactly 1.0 pt low. `\\showoutput` says why: pdfTeX's skip above the block is \
+      `\\glue 10.0 plus 4.0 minus 5.0` (`\\topsep` 8+2-4, `\\partopsep` 2+1-1, `\\parskip` 0+1) and \
+      its `\\glue(\\baselineskip) 3.55557` is `\\small`'s 11 pt baselineskip minus the previous \
+      depth 1.94444 and the line's height 5.49998. The pipeline sets the block at the body's 12 pt \
+      baselineskip, which is the entire remaining pound. Needs the re-pin, the pipeline's \
+      conversion arms for the new `style` field, and the block's baselineskip to follow its size."),
     ("28-lstinline",
      "The compiler typesets `\\lstset`'s argument as prose: 126 glyphs against pdfTeX's 115, the \
       extra 11 being the characters `basicstyle=` at the head of the first line. `\\lstinline` \
       itself is lexed correctly (PR #188, already in the vendored mirror). Fixed compiler-side in \
-      PR #261; needs that plus a vendor re-pin."),
+      PR #261: verified by swapping that compiler into `vendor/compiler` (uncommitted, restored \
+      after), where this fixture matches at 115 glyphs, worst 0.005 bp. Needs the re-pin plus the \
+      four pipeline arms for the new `style` field."),
 ];
 
 fn fixtures_dir() -> PathBuf {
