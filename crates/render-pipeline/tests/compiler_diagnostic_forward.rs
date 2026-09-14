@@ -5,12 +5,18 @@
 
 mod common;
 
+use std::sync::Mutex;
+
 use common::*;
 use flashtex_compiler::json::{self, Value};
 use flashtex_render_pipeline::display;
 use flashtex_render_pipeline::protocol::handle_line;
 use flashtex_render_pipeline::v1::{self, Capabilities};
 use flashtex_render_pipeline::{FontSet, RenderOptions};
+
+/// `FLASHTEX_MAX_REPLY_BYTES` is process-global; tests that call `handle_line`
+/// must not run over a sibling that temporarily lowers it.
+static REPLY_LIMIT: Mutex<()> = Mutex::new(());
 
 fn doc(body: &str) -> String {
     format!("\\documentclass{{article}}\\begin{{document}}{body}\\end{{document}}")
@@ -135,6 +141,7 @@ fn negotiated_v2_diagnostics_emits_suggestion() {
         eprintln!("skipping: Latin Modern not installed");
         return;
     }
+    let _limit = REPLY_LIMIT.lock().unwrap();
     let fonts = FontSet::with_default_dirs(&[]);
     let options = RenderOptions::default();
     let text = doc(r"Text \alpah here.");
@@ -171,6 +178,41 @@ fn negotiated_v2_diagnostics_emits_suggestion() {
     let alone = handle_line(&compile_line("alone", &text, &["display-list-v2-diagnostics"]), &fonts, &options, None);
     assert!(alone.extra_lines.is_empty(), "diagnostics cap without display-list-v2 is rejected");
     assert!(!echoed_caps(&alone.line).iter().any(|c| c == "display-list-v2-diagnostics"));
+}
+
+struct ReplyBytesGuard(Option<String>);
+
+impl Drop for ReplyBytesGuard {
+    fn drop(&mut self) {
+        match self.0.take() {
+            Some(v) => std::env::set_var("FLASHTEX_MAX_REPLY_BYTES", v),
+            None => std::env::remove_var("FLASHTEX_MAX_REPLY_BYTES"),
+        }
+    }
+}
+
+#[test]
+fn declining_display_list_also_drops_dependent_diagnostics_capability() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let _limit = REPLY_LIMIT.lock().unwrap();
+    let _restore = ReplyBytesGuard(std::env::var("FLASHTEX_MAX_REPLY_BYTES").ok());
+    std::env::set_var("FLASHTEX_MAX_REPLY_BYTES", "6000");
+    let fonts = FontSet::with_default_dirs(&[]);
+    let options = RenderOptions::default();
+    let text = "\\begin{document}Hello $\\frac{1}{2}$ wörld.\\end{document}";
+    let reply = handle_line(
+        &compile_line("big", text, &["display-list-v2", "display-list-v2-diagnostics"]),
+        &fonts,
+        &options,
+        None,
+    );
+    assert!(reply.extra_lines.is_empty(), "no display-list sibling: {:?}", reply.extra_lines.len());
+    let caps = echoed_caps(&reply.line);
+    assert!(!caps.iter().any(|c| c == "display-list-v2"), "{caps:?}");
+    assert!(!caps.iter().any(|c| c == "display-list-v2-diagnostics"), "dependent cap must drop with display-list-v2: {caps:?}");
 }
 
 #[test]

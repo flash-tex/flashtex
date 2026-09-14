@@ -834,6 +834,9 @@ mod tests {
         let some = diag_list(Some(r"\alpha"));
         assert_eq!(header_digest(&none, off), header_digest(&some, off));
         assert_ne!(header_digest(&none, on), header_digest(&some, on));
+        // Diagnostics-off is the old canonical form: a present suggestion must
+        // not change the digest relative to stripping it.
+        assert_eq!(header_digest(&some, off), header_digest(&none, off));
 
         let docs = vec![("notes.tex".into(), r"\alpah".into())];
         let state = DeltaState::new();
@@ -844,5 +847,11 @@ mod tests {
         let line = try_delta(&state, "b", &some, on, &base, &docs, usize::MAX).expect("delta for suggestion-only change");
         assert!(line.contains(r#""suggestion":"\\alpha""#), "{line}");
         assert!(line.contains("\"type\":\"display_list_delta\""), "{line}");
+    }
+
+    #[test]
+    fn empty_suggestion_is_not_hashed_when_diagnostics_are_on() {
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        assert_eq!(header_digest(&diag_list(Some("")), on), header_digest(&diag_list(None), on));
     }
 }

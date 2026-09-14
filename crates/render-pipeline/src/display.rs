@@ -493,9 +493,16 @@ impl DisplayList {
     /// serialising a line it would then throw away (the exact check still
     /// runs on the serialised line when the estimate is under the limit).
     pub fn estimated_json_bytes(&self) -> usize {
+        self.estimated_json_bytes_for(Wire { images: true, device_color: true, diagnostics: true })
+    }
+
+    /// [`estimated_json_bytes`](Self::estimated_json_bytes) under a negotiated
+    /// [`Wire`]: `suggestion` is charged only when it would be serialised.
+    pub fn estimated_json_bytes_for(&self, wire: Wire) -> usize {
         let mut n = 512 + self.fonts.len() * 400 + self.documents.len() * 200;
         for d in &self.diagnostics {
             n += 160 + d.message.len() + d.sources.len() * 80 + d.suggestion.as_ref().map(|s| s.len() + 20).unwrap_or(0);
+            let _ = wire;
         }
         for p in &self.pages {
             n += 64;
@@ -1669,5 +1676,29 @@ mod tests {
         assert_eq!(on_with, json::write(&with.to_json_wire("r1", on)));
         assert_eq!(on_without, json::write(&without.to_json_wire("r1", on)));
         assert_eq!(on_without, off_without);
+    }
+
+    #[test]
+    fn estimate_omits_suggestion_when_diagnostics_are_off() {
+        let off = Wire::default();
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        let with = diag_list(Some(r"\alpha"));
+        let stripped = diag_list(None);
+        let off_bytes = with.write_json_wire("r1", off);
+        assert_eq!(off_bytes, stripped.write_json_wire("r1", off));
+        assert_eq!(with.estimated_json_bytes_for(off), stripped.estimated_json_bytes_for(off), "old-client estimate must match a suggestion-stripped list");
+        assert!(with.estimated_json_bytes_for(on) > stripped.estimated_json_bytes_for(on));
+    }
+
+    #[test]
+    fn empty_suggestion_is_omitted_even_when_diagnostics_are_on() {
+        let on = Wire { diagnostics: true, ..Wire::default() };
+        let empty = diag_list(Some(""));
+        let none = diag_list(None);
+        let empty_bytes = empty.write_json_wire("r1", on);
+        assert_eq!(empty_bytes, none.write_json_wire("r1", on));
+        assert!(!empty_bytes.contains("suggestion"), "{empty_bytes}");
+        assert_eq!(empty.to_json_wire("r1", on), none.to_json_wire("r1", on));
+        assert!(empty.to_json_wire("r1", on).get("payload").unwrap().get("diagnostics").unwrap().as_arr().unwrap()[0].get("suggestion").is_none());
     }
 }
