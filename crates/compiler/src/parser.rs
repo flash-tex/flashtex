@@ -783,6 +783,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "section",
     "subsection",
     "subsubsection",
+    "paragraph",
+    "subparagraph",
     "tableofcontents",
     "textbf",
     "textmd",
@@ -800,6 +802,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "par",
     "documentclass",
     "setlength",
+    "addtolength",
     "usepackage",
     "definecolor",
     "providecolor",
@@ -1033,18 +1036,95 @@ pub(crate) const BUILT_INS: &[&str] = &[
 /// Parses a LaTeX dimension (`12pt`, `1.5em`, `0.5in`, `2cm`, `10mm`, `2ex`,
 /// `12bp`) to points. `em`/`ex` are relative to the compiler's fixed body size
 /// because the layout does not yet carry a current font size into dimension
-/// parsing; `ex` uses the common TeX-metrics approximation of half an em,
-/// since no real x-height is read from the font. `bp` ("big point") is exactly this compiler's own
-/// internal point (both are 1/72 inch, matching the 612×792pt page in
-/// `layout.rs`), unlike `in`/`cm`/`mm` below, which follow TeX's own
-/// 72.27-per-inch point.
+/// parsing. Physical units follow TeX `scan_dimen` §458 (`1bp` = 72.27/72 pt,
+/// not 1pt). `ex` uses [`CMR_EX_PER_EM`] (cmr x-height/em, the same constant
+/// as ulem `\sout`); this crate has no TFM, unlike the pipeline's `ec_em_ex`.
 pub(crate) fn parse_dimen_pt(text: &str) -> Option<f64> {
     parse_dimen_pt_at(text, crate::layout::BODY_SIZE_PT)
 }
 
+/// Page and paragraph lengths a preamble may assign (`\setlength`,
+/// `\addtolength`, or a TeX `\len=<dimen>` / `\len <dimen>` assignment).
+const PREAMBLE_LENGTHS: &[&str] = &[
+    "paperwidth",
+    "paperheight",
+    "textwidth",
+    "textheight",
+    "oddsidemargin",
+    "evensidemargin",
+    "topmargin",
+    "headheight",
+    "headsep",
+    "footskip",
+    "marginparwidth",
+    "marginparsep",
+    "columnsep",
+    "parindent",
+    "parskip",
+];
+
+fn is_preamble_length(name: &str) -> bool {
+    PREAMBLE_LENGTHS.contains(&name)
+}
+
+fn is_length_reference(raw: &str) -> bool {
+    let s = raw.trim().trim_start_matches('=').trim();
+    s.contains('\\') || is_preamble_length(s.trim_start_matches('\\'))
+}
+
+fn length_reference_parts(raw: &str) -> Option<(f64, &str)> {
+    let s = raw.trim().trim_start_matches('=').trim();
+    if let Some(bs) = s.find('\\') {
+        let (factor, rest) = s.split_at(bs);
+        let name = rest[1..].trim();
+        if !is_preamble_length(name) && !matches!(name, "linewidth" | "columnwidth" | "hsize") {
+            return None;
+        }
+        let f = factor.trim();
+        let scale = if f.is_empty() || f == "+" {
+            1.0
+        } else if f == "-" {
+            -1.0
+        } else {
+            f.parse().ok()?
+        };
+        return Some((scale, name));
+    }
+    let stripped = s.trim_start_matches('\\');
+    if is_preamble_length(stripped) {
+        return Some((1.0, stripped));
+    }
+    None
+}
+
 /// `parse_dimen_pt` with `em`/`ex` relative to `body_pt`.
+///
+/// Also accepts an optional leading `=`, a leading sign, and a factor times
+/// a known length (`\textwidth`, `-.5\textwidth`). A bare length name (with
+/// or without the backslash) is a factor of 1. The referenced length is not
+/// looked up here: the render pipeline applies real page geometry from the
+/// source; a zero is enough for the compiler to accept the assignment.
 pub(crate) fn parse_dimen_pt_at(text: &str, body_pt: f64) -> Option<f64> {
-    let text = text.trim();
+    let text = text.trim().trim_start_matches('=').trim();
+    if text.is_empty() {
+        return None;
+    }
+    if let Some(bs) = text.find('\\') {
+        let (factor, rest) = text.split_at(bs);
+        let name = rest[1..].trim();
+        if !is_preamble_length(name) && !matches!(name, "linewidth" | "columnwidth" | "hsize") {
+            return None;
+        }
+        let factor = factor.trim();
+        if !factor.is_empty() {
+            let _: f64 = factor.parse().ok()?;
+        }
+        return Some(0.0);
+    }
+    let stripped = text.trim_start_matches('\\');
+    if is_preamble_length(stripped) {
+        return Some(0.0);
+    }
     let unit_len = text
         .chars()
         .rev()
@@ -1056,13 +1136,19 @@ pub(crate) fn parse_dimen_pt_at(text: &str, body_pt: f64) -> Option<f64> {
     let split = text.len() - unit_len;
     let (number, unit) = text.split_at(split);
     let value: f64 = number.trim().parse().ok()?;
+    // TeX: The Program §458. `in`/`cm`/`mm`/`bp` share the 7227 numerator
+    // (72.27 pt per inch); `dd`/`cc` are Didot; `sp` is 2^-16 pt.
     let per_pt = match unit {
-        "pt" | "bp" => 1.0,
+        "pt" => 1.0,
+        "bp" => 72.27 / 72.0,
         "in" => 72.27,
         "cm" => 72.27 / 2.54,
         "mm" => 72.27 / 25.4,
+        "dd" => 1238.0 / 1157.0,
+        "cc" => 14856.0 / 1157.0,
+        "sp" => 1.0 / 65536.0,
         "em" => body_pt,
-        "ex" => body_pt * 0.5,
+        "ex" => body_pt * CMR_EX_PER_EM,
         _ => return None,
     };
     Some(value * per_pt)
@@ -1762,6 +1848,7 @@ impl P<'_> {
         match name {
             "documentclass" => self.document_class(span),
             "setlength" => self.set_length(span),
+            "addtolength" => self.add_to_length(span),
             "usepackage" => self.use_package(span),
             "definecolor" | "providecolor" | "xdefinecolor" | "colorlet" | "definecolorset"
             | "DefineNamedColor" => self.define_color(name, span),
@@ -1959,10 +2046,37 @@ impl P<'_> {
             // `keywordstyle=`, `commentstyle=` and `numberstyle=`.
             "lstset" => self.lstset(span),
             "crefname" | "Crefname" => self.cleveref_name(name, span),
+            _ if self.has_document && !self.in_body && is_preamble_length(name) => {
+                self.length_assignment(name, span)
+            }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
             "chapter" if self.chapter_class => self.chapter(span, blocks, para),
+            // `\paragraph`/`\subparagraph` are `\@startsection` with a
+            // *negative* after-skip (article.cls 406-414), and `\@xsect`'s
+            // negative branch never sets the head as a block of its own: it
+            // arms `\everypar`, throws away the following paragraph's
+            // `\parindent` box and sets the head into that paragraph's first
+            // line instead. So the right thing for this layer is to take the
+            // star and the optional short title and then get out of the way:
+            // the braced title falls through to the main token loop as
+            // ordinary body text, which is exactly the material LaTeX runs
+            // into that paragraph, in the right place with the right spans.
+            //
+            // `flush_paragraph` is deliberately NOT called for the same
+            // reason — a run-in head does not start a new paragraph.
+            //
+            // The head's weight, indent, `\hskip 1em` and `\addvspace` come
+            // from the render pipeline, which reads the command back from the
+            // source at that position (`adapter::run_in_heading_at`). This
+            // arm only retires the `\paragraph is not supported by this
+            // compiler version` error, which has been stale since the
+            // pipeline started laying these heads out correctly.
+            "paragraph" | "subparagraph" => {
+                let _ = self.take_optional_star();
+                let _ = self.optional_bracket_argument();
+            }
             "section" | "subsection" | "subsubsection" => {
                 let level = match name {
                     "section" => 1,
@@ -2635,46 +2749,147 @@ impl P<'_> {
     /// `\setlength{\parskip}{..}` and `\setlength{\parindent}{..}` in the
     /// preamble. `em`/`ex` resolve against the class body size. This engine
     /// never indents paragraphs, so only a zero `\parindent` is exact.
+    /// Page-geometry lengths (`\textwidth`, `\oddsidemargin`, ...) are
+    /// accepted in the preamble without a diagnostic; the render pipeline
+    /// applies them from the source.
     fn set_length(&mut self, span: Span) {
-        let (target_tokens, _) = self.required_group("setlength", span);
-        let (value_tokens, value_span) = self.required_group("setlength", span);
+        self.length_command("setlength", span, false);
+    }
+
+    fn add_to_length(&mut self, span: Span) {
+        self.length_command("addtolength", span, true);
+    }
+
+    fn length_command(&mut self, command: &str, span: Span, add: bool) {
+        let (target_tokens, _) = self.required_group(command, span);
+        let (value_tokens, value_span) = self.required_group(command, span);
         let span = span.merge(value_span);
         let target = token_text(&target_tokens)
             .trim()
             .trim_start_matches('\\')
             .to_string();
-        let raw = token_text(&value_tokens);
+        let raw = dimen_source(&value_tokens);
+        self.apply_length_value(command, &target, &raw, span, add);
+    }
+
+    /// A TeX assignment `\textwidth=6in` / `\textwidth 6in` in the preamble.
+    fn length_assignment(&mut self, name: &str, span: Span) {
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-        let Some(pt) = parse_dimen_pt_at(&raw, body) else {
+        let mut raw = String::new();
+        let mut end = span;
+        loop {
+            self.skip_spaces();
+            let Some(input) = self.t.get(self.i).cloned() else {
+                break;
+            };
+            let tok = &input.token;
+            match &tok.kind {
+                TokenKind::Word(word) => {
+                    raw.push_str(word);
+                    end = end.merge(tok.span);
+                    self.i += 1;
+                    if parse_dimen_pt_at(&raw, body).is_some() {
+                        break;
+                    }
+                }
+                TokenKind::Command(cmd)
+                    if is_preamble_length(cmd)
+                        || matches!(cmd.as_str(), "linewidth" | "columnwidth" | "hsize") =>
+                {
+                    raw.push('\\');
+                    raw.push_str(cmd);
+                    end = end.merge(tok.span);
+                    self.i += 1;
+                    if parse_dimen_pt_at(&raw, body).is_some() {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+            if raw.len() > 64 {
+                break;
+            }
+        }
+        self.apply_length_value("", name, &raw, end, false);
+    }
+
+    fn resolve_known_length_ref(&self, raw: &str) -> Option<f64> {
+        let (scale, name) = length_reference_parts(raw)?;
+        let base = match name {
+            "parskip" => self.parskip_pt?,
+            "fboxsep" => self.fboxsep_pt,
+            "fboxrule" => self.fboxrule_pt,
+            _ => return None,
+        };
+        Some(scale * base)
+    }
+
+    fn apply_length_value(&mut self, command: &str, target: &str, raw: &str, span: Span, add: bool) {
+        let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+        let Some(pt) = parse_dimen_pt_at(raw, body) else {
+            let who = if command.is_empty() {
+                format!("\\{target}")
+            } else {
+                format!("\\{command}")
+            };
             self.diags.push(Diagnostic::error(
-                format!(
-                    "\\setlength requires a recognised dimension, got '{}'",
-                    raw.trim()
-                ),
+                format!("{who} requires a recognised dimension, got '{}'", raw.trim()),
                 Some(span),
                 Some("ignored the length assignment".into()),
             ));
             return;
         };
         let in_preamble = self.has_document && !self.in_body;
-        match target.as_str() {
+        let pt = if is_length_reference(raw) {
+            match self.resolve_known_length_ref(raw) {
+                Some(v) => v,
+                None => {
+                    // Page geometry (`\textwidth`, `\paperwidth`, ...) is
+                    // applied by the pipeline; the compiler must not pretend
+                    // the value is 0pt or drop the assignment with no diagnostic.
+                    self.diags.push(Diagnostic::warning(
+                        "unsupported length expression",
+                        Some(span),
+                        Some("ignored the length assignment".into()),
+                    ));
+                    return;
+                }
+            }
+        } else {
+            pt
+        };
+        match target {
             // Read by `\colorbox`/`\fcolorbox` (not group-scoped here).
-            "fboxsep" => self.fboxsep_pt = pt,
-            "fboxrule" => self.fboxrule_pt = pt,
+            "fboxsep" => {
+                self.fboxsep_pt = if add { self.fboxsep_pt + pt } else { pt };
+            }
+            "fboxrule" => {
+                self.fboxrule_pt = if add { self.fboxrule_pt + pt } else { pt };
+            }
             // longtable's lengths are read from the source by the render
             // pipeline's longtable layout.
             "LTleft" | "LTright" | "LTpre" | "LTpost" | "LTcapwidth" => {}
-            "parskip" if in_preamble => self.parskip_pt = Some(pt),
+            "parskip" if in_preamble => {
+                self.parskip_pt = Some(if add {
+                    self.parskip_pt.unwrap_or(0.0) + pt
+                } else {
+                    pt
+                });
+            }
             "parindent" if in_preamble && pt == 0.0 => {}
+            // A TeX assignment or `\addtolength` is accepted without noise
+            // (the layout still does not indent). `\setlength{\parindent}{nonzero}`
+            // keeps the existing "not implemented" warning.
+            "parindent" if in_preamble && (add || command.is_empty()) => {}
             "parindent" if in_preamble => self.diags.push(Diagnostic::warning(
                 "\\parindent is recognised but paragraph indentation is not implemented",
                 Some(span),
                 Some("paragraphs are not indented".into()),
             )),
+            name if in_preamble && is_preamble_length(name) => {}
             _ => self.diags.push(Diagnostic::warning(
                 format!(
-                    "\\setlength{{\\{}}} is recognised but not implemented here",
-                    target
+                    "\\{command}{{\\{target}}} is recognised but not implemented here"
                 ),
                 Some(span),
                 Some("ignored the length assignment".into()),
@@ -7520,8 +7735,25 @@ mod tests {
         assert_eq!(parse_dimen_pt("12pt"), Some(12.0));
         assert_eq!(parse_dimen_pt(" 1em "), Some(crate::layout::BODY_SIZE_PT));
         assert_eq!(parse_dimen_pt("1in"), Some(72.27));
+        assert_eq!(parse_dimen_pt("-.5in"), Some(-0.5 * 72.27));
+        assert_eq!(parse_dimen_pt("=6in"), Some(6.0 * 72.27));
+        assert_eq!(parse_dimen_pt("\\textwidth"), Some(0.0));
+        assert_eq!(parse_dimen_pt("0.5\\textwidth"), Some(0.0));
         assert!(parse_dimen_pt("banana").is_none());
         assert!(parse_dimen_pt("").is_none());
+        // TeXbook Appendix B / scan_dimen §458 ratios, in TeX points.
+        assert_eq!(parse_dimen_pt("1bp"), Some(72.27 / 72.0));
+        assert_eq!(parse_dimen_pt("1dd"), Some(1238.0 / 1157.0));
+        assert_eq!(parse_dimen_pt("1cc"), Some(14856.0 / 1157.0));
+        assert_eq!(parse_dimen_pt("1sp"), Some(1.0 / 65536.0));
+        assert_eq!(parse_dimen_pt("1mm"), Some(72.27 / 25.4));
+        assert_eq!(parse_dimen_pt("1cm"), Some(72.27 / 2.54));
+        // `ex` uses cmr's x-height/em (same constant as ulem); the compiler
+        // has no TFM metrics, unlike the pipeline's `ec_em_ex`.
+        assert_eq!(
+            parse_dimen_pt("1ex"),
+            Some(crate::layout::BODY_SIZE_PT * CMR_EX_PER_EM)
+        );
     }
 
     #[test]
@@ -7566,6 +7798,37 @@ mod tests {
                 > two_baseline.baseline_y_pt - one.baseline_y_pt,
             "\\vspace{{50pt}} should push the following text further down than an ordinary paragraph break"
         );
+    }
+
+    #[test]
+    fn run_in_headings_are_accepted_and_keep_their_title_as_body_text() {
+        // `\@xsect`'s negative-after-skip branch sets the head into the
+        // following paragraph's first line, so the title belongs in the body
+        // text stream exactly where it stands. The render pipeline reads the
+        // command back from the source there and gives it its weight, indent
+        // and `\hskip 1em`; this layer must only stop erroring, take the star
+        // and the optional short title, and leave the title alone.
+        // `\paragraph*[short]{...}` is not in the list: `\@startsection`'s
+        // starred form takes no optional argument, and pdflatex itself
+        // typesets the brackets there (`[Short]Solution.`), so there is no
+        // oracle behaviour to match.
+        for source in [
+            r"\paragraph{Solution.} Body text.",
+            r"\subparagraph{Solution.} Body text.",
+            r"\paragraph*{Solution.} Body text.",
+            r"\paragraph[Short]{Solution.} Body text.",
+            r"\subparagraph*{Solution.} Body text.",
+        ] {
+            let parsed = parse(source);
+            assert!(parsed.diagnostics.is_empty(), "{source}: {:?}", parsed.diagnostics);
+            let text: String = items(source).1.iter().map(|i| i.text.as_str()).collect::<Vec<_>>().join(" ");
+            assert!(text.contains("Solution."), "{source}: title kept as body text, got {text:?}");
+            assert!(text.contains("Body"), "{source}: body text kept, got {text:?}");
+            // The star and the short title are the command's parameters, not
+            // prose: neither may reach the page.
+            assert!(!text.contains('*'), "{source}: the star is not set, got {text:?}");
+            assert!(!text.contains("Short"), "{source}: the short title is not set, got {text:?}");
+        }
     }
 
     #[test]
