@@ -6610,6 +6610,23 @@ pub enum TitleForm {
 /// `\tabcolsep` (article.cls line 444, report.cls/book.cls the same).
 const TABCOLSEP_PT: f64 = 6.0;
 
+/// `\dbltextfloatsep` (latex.ltx, and `size10/11/12.clo` all keep 20pt): the
+/// gap `\@combinedblfloats` leaves between the `\@dbltoplist` material and
+/// the two-column box, and the amount `\@topnewpage`'s `\vskip
+/// -\dbltextfloatsep` takes back off its own box.
+const DBLTEXTFLOATSEP_PT: f64 = 20.0;
+
+/// Reports a `\twocolumn[<material>]` case `\@topnewpage` handles and this
+/// page builder does not, against the title block's first source span.
+fn top_title_warning(ctx: &mut Context, blocks: &[BuiltBlock], first: usize, message: &str) {
+    let span = blocks.get(first).and_then(|b| b.recs.iter().flatten().next().copied()).and_then(|r| match &ctx.recs[r] {
+        BoxRec::Text { clusters, .. } => clusters.first().map(|c| c.span),
+        _ => None,
+    });
+    let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
+    ctx.diagnostics.push(Diagnostic::warning("unsupported_block", message.to_string(), src));
+}
+
 fn add_skip_before(v: &mut pagebuild::VBlock, skip: Option<(f64, f64, f64)>) {
     let Some((n, s, k)) = skip else { return };
     v.space_before = Some(match v.space_before {
@@ -6967,10 +6984,59 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     // (`\@colht`); `\@outputdblcol` ships the first column and the second
     // side by side, the second `\columnwidth + \columnsep` to the right.
     let columns = n_columns;
-    let (mut built, images, float_labels) = if let Some(b) = multicol::paginate(ctx, doc, &mut blocks, &params) {
+    // `\@topnewpage` (latex.ltx 20466-20505). `\twocolumn[<material>]` sets
+    // the material in `\vbox{\hsize\textwidth \@parboxrestore \col@number\@ne
+    // <material> \vskip -\dbltextfloatsep}`: the trailing negative skip makes
+    // `\ht\@currbox` the material's natural height *less* `\dbltextfloatsep`
+    // (and zero depth, the last list item being glue). `\@colht` then loses
+    // `\ht\@currbox + \dbltextfloatsep` -- exactly the natural height -- and
+    // `\vsize`/`\@colroom` follow it, so **both** columns of this page are
+    // that much shorter; `\@outputpage` restores `\global\@colht\textheight`
+    // when the page ships, so only this page is affected.
+    //
+    // The box is `\@cons`ed to `\@dbltoplist`, and `\@combinedblfloats`
+    // (21019) stacks `\ht\@currbox`, `\vskip\dbltextfloatsep` and the
+    // two-column box inside a `\vbox to\textheight` -- so the columns begin
+    // the same natural height below the top of the text area that `\@colht`
+    // lost. That is why one number, `top_title`'s height, is both the page's
+    // shortening and the column material's shift.
+    //
+    // `\@topnewpage` also sets `\global\@dbltopnum\m@ne`, which suppresses
+    // `\dblfigrule` and makes `\@addtodblcol` (21280) defer every later
+    // full-width float off this page. Full-width floats are not modelled as
+    // `\@dbltoplist` entries here at all (`figure*` is placed as `figure`,
+    // floats.rs), so that part is not reproduced; see the module note.
+    let (short_cols, short) = match top_title.as_ref() {
+        None => (0, 0.0),
+        Some(&(first, _, height)) => {
+            // `\ifdim \ht\@currbox>\textheight \ht\@currbox\textheight \fi`
+            // caps the box, so the shortening is capped the same way.
+            let capped = height.min(params.vsize + DBLTEXTFLOATSEP_PT);
+            if capped < params.vsize {
+                if params.vsize - capped < 2.5 * s.baselineskip_pt {
+                    top_title_warning(
+                        ctx,
+                        &blocks,
+                        first,
+                        "the optional argument of \\twocolumn is too tall for page 1 (\\@topnewpage leaves \\@colht under 2.5\\baselineskip); LaTeX would ship empty columns here, which is not implemented",
+                    );
+                }
+                (columns, capped)
+            } else {
+                top_title_warning(
+                    ctx,
+                    &blocks,
+                    first,
+                    "the optional argument of \\twocolumn is taller than \\textheight; the first page's columns are not shortened by it",
+                );
+                (0, 0.0)
+            }
+        }
+    };
+    let (mut built, mut images, float_labels) = if let Some(b) = multicol::paginate(ctx, doc, &mut blocks, &params) {
         (b, Vec::new(), Vec::new())
     } else if floats.is_empty() {
-        let (short_pages, short) = top_title.as_ref().map_or((0, 0.0), |t| (columns, t.2));
+        let (short_pages, short) = (short_cols, short);
         match &insertions {
             Some(ins) => {
                 let regions = pagebuild::resolve_regions(&list, &longtables);
@@ -6984,35 +7050,41 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             }
         }
     } else {
-        if let Some((first, ..)) = &top_title {
-            let span = blocks.get(*first).and_then(|b| b.recs.iter().flatten().next().copied()).and_then(|r| match &ctx.recs[r] {
-                BoxRec::Text { clusters, .. } => clusters.first().map(|c| c.span),
-                _ => None,
-            });
-            let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
-            ctx.diagnostics.push(Diagnostic::warning(
-                "unsupported_block",
-                "\\twocolumn[\\@maketitle] with floats: the float placement does not shorten the first page's columns by the title box".to_string(),
-                src,
-            ));
-        }
         let regions = pagebuild::resolve_regions(&list, &longtables);
-        let (mut pages, images, labels, areas) = floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref());
+        let (mut pages, images, labels, areas) =
+            floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref(), short_cols, short);
         if insertions.is_some() {
             footnotes::place(ctx, &mut blocks, &mut pages, areas);
         }
         (pages, images, labels)
     };
     // The `\twocolumn[...]` box sits at the top of the first page
-    // (`\@combinedblfloats`), both columns `\dbltextfloatsep` below it.
-    if let Some((first, placed, height)) = top_title.take() {
+    // (`\@combinedblfloats`), both columns `\dbltextfloatsep` below it --
+    // that is, the material's natural height below the top of the text area,
+    // which is what `\@colht` lost above. `short` is that number after
+    // `\@topnewpage`'s cap, so the shift and the shortening cannot disagree.
+    if let Some((first, placed, _)) = top_title.take() {
         if built.is_empty() {
             built.push(pagebuild::BuiltPage::default());
         }
-        let shift = if floats.is_empty() { height } else { 0.0 };
+        let shift = short;
         for bp in built.iter_mut().take(columns) {
             for l in &mut bp.lines {
                 l.baseline += shift;
+            }
+        }
+        // A float's caption lines are in `built` and move with them, but its
+        // graphics are display-list items the float placer already put in
+        // page coordinates (`floatpage::Placer::emit`). They belong to the
+        // same column box, so they take the same shift; `n` numbers the
+        // page-builder column, and the first `columns` of them are this page.
+        for (n, it) in &mut images {
+            if (*n as usize) <= columns {
+                if let display::Item::Image(img) = it {
+                    let dy = Tick::from_tex_pt(shift);
+                    img.top = Tick(img.top.0 + dy.0);
+                    img.transform[5] += dy.to_bp();
+                }
             }
         }
         let mut lines: Vec<pagebuild::Placed> = placed
