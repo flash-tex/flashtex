@@ -296,7 +296,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 290 text-mode and 546 math-mode command entries, 48 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 290 text-mode and 551 math-mode command entries, 48 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -685,6 +685,11 @@ Canonical sources:
 | `\operatorname` | `{name}` | upright named operator (\mathop); starred and withlimits forms take limits |
 | `\operatornamewithlimits` | `{name}` | upright named operator (\mathop); starred and withlimits forms take limits |
 | `\colon` |  | function-arrow colon: punctuation (0mu/3mu) as the kernel declares it, amsmath's 2mu/6mu when amsmath is loaded |
+| `\eqqcolon` |  | mathtools =: (reverse of \coloneqq) as a relation; needs mathtools |
+| `\Coloneqq` |  | mathtools ::= and =:: (each three real glyphs) as one relation; needs mathtools |
+| `\Eqqcolon` |  | mathtools ::= and =:: (each three real glyphs) as one relation; needs mathtools |
+| `\vcentcolon` |  | mathtools vertically centred colon: the same glyph as \colon as a relation; needs mathtools |
+| `\dblcolon` |  | mathtools double vertically centred colon (two \vcentcolon) as one relation; needs mathtools |
 | `\bmod` |  | upright mod |
 | `\mod` |  | upright mod |
 | `\pmod` | `{n}` | parenthesised (mod n) |
