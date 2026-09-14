@@ -1671,6 +1671,17 @@ impl<'a> Context<'a> {
         if glyphs.len() != run.glyphs.len() || !glyphs.iter().any(|g| g.tfm_code.is_some()) {
             return None;
         }
+        // microtype's default `patch` list includes `verbatim`, which turns
+        // protrusion off inside `\verb` and `\@verbatim` (the log says
+        // "Applying patch `verbatim'"). It is the *construct* and not the
+        // family: measured with microtype under pdflatex TL2025, a line
+        // starting `--` sets at x 133.7680 inside `verbatim` (no protrusion)
+        // but at 131.1530 as `\texttt{--...}` in ordinary text, and at
+        // 131.7760 in roman. Expansion needs no rule here -- microtype's
+        // default expansion set is `alltext-nott`, which excludes `tt*`.
+        if style.literal {
+            return None;
+        }
         let (face, size, style) = (face.clone(), *size, *style);
         let z = (size * 65536.0).round() as i32;
         let scaled = |fix: i32| flashtex_microtype::arith::tfm_scaled(fix, z);
