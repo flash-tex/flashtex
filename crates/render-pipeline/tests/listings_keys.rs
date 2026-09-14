@@ -7,10 +7,10 @@
 //! oracle only and never runs in the product path.
 //!
 //! Every test but `environment_keys_do_not_escape_their_listing` (which
-//! asserts an absence) fails on main at b529e9d3, where the compiler's
-//! plain typewriter lowering is all there is. Built from a `git archive` of
-//! `origin/main:crates/render-pipeline` with this file dropped in, main
-//! reports:
+//! asserts an absence) fails on main, where the compiler's plain typewriter
+//! lowering is all there is — checked at b529e9d3 and again at 9d50d312.
+//! Built from a `git archive` of `origin/main:crates` with this file dropped
+//! in, main reports:
 //!
 //! - `code_lines_use_basicstyle_size_and_that_sizes_baselineskip`:
 //!   `three code lines: []` — nothing is set at 10pt, because the block is
