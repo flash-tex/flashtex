@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/cli-rich-diagnostics",
-  "gh_ref": "https://github.com/flash-tex/flashtex/issues/277",
+  "gh_ref": "#303",
   "machine": "mac-m5pro-dq222",
-  "note": "daniel-parent (Max 20x session, NOT daniel-vpclaude): #277 part (2) only - flashtex CLI renderer: source excerpt, gutter, carets, notes/recovery lines, --diagnostics=short|full|json, --color=auto|always|never. No compiler message rewrites (parts 1+3), no Mac (part 4).",
+  "note": "published as #303; review follow-ups on the PR",
   "started_utc": "2026-09-14T04:22:27Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-277-cli",
-  "updated_utc": "2026-09-14T04:22:27Z"
+  "updated_utc": "2026-09-14T08:35:59Z"
 }
