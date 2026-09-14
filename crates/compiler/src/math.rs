@@ -911,7 +911,11 @@ impl MathParser<'_> {
                 Some(symbol(ch.to_string(), span))
             }
             TokenKind::Command(name) => Some(self.command_atom(name, token.span)),
-            TokenKind::DisplayMathOpen | TokenKind::DisplayMathClose | TokenKind::MathShift => {
+            TokenKind::DisplayMathOpen
+            | TokenKind::DisplayMathClose
+            | TokenKind::InlineMathOpen
+            | TokenKind::InlineMathClose
+            | TokenKind::MathShift => {
                 self.diagnostics.push(Diagnostic::error(
                     "unexpected math delimiter inside math mode",
                     Some(token.span),
@@ -2190,6 +2194,8 @@ impl MathParser<'_> {
                 TokenKind::MathShift
                 | TokenKind::DisplayMathOpen
                 | TokenKind::DisplayMathClose
+                | TokenKind::InlineMathOpen
+                | TokenKind::InlineMathClose
                 | TokenKind::Superscript
                 | TokenKind::Subscript => {
                     self.diagnostics.push(Diagnostic::error(
@@ -2201,6 +2207,8 @@ impl MathParser<'_> {
                         TokenKind::MathShift => "$",
                         TokenKind::DisplayMathOpen => "\\[",
                         TokenKind::DisplayMathClose => "\\]",
+                        TokenKind::InlineMathOpen => "\\(",
+                        TokenKind::InlineMathClose => "\\)",
                         TokenKind::Superscript => "^",
                         TokenKind::Subscript => "_",
                         _ => unreachable!(),

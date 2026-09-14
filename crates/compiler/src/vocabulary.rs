@@ -59,7 +59,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "value", "arabic", "roman", "Roman", "alph", "Alph", "fnsymbol", "the", "makeatletter",
     "makeatother", "ifthenelse", "newif", "relax", "expandafter", "csname", "endcsname",
     "newlength", "addtolength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
-    "verb", "hyphenation", "graphicspath", "geometry", "hypersetup", "RequirePackage",
+    "verb", "hyphenation", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "RequirePackage",
     "PassOptionsToPackage", "AtBeginDocument",
     // Cross-references and links.
     "eqref", "autoref", "cref", "Cref", "nameref", "url", "href", "hyperref", "hyperlink",

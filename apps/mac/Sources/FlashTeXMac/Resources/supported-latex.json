@@ -79,6 +79,7 @@
     {"name": "reflectbox", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "graphics.sty box mirrored left to right", "renders": true},
     {"name": "graphicspath", "mode": "text", "origin": "text_dispatch", "arguments": "{{dir/}...}", "description": "image search directories; no material", "renders": true},
     {"name": "hypersetup", "mode": "text", "origin": "text_dispatch", "arguments": "{key=value,...}", "description": "hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them", "renders": true},
+    {"name": "allowdisplaybreaks", "mode": "text", "origin": "text_dispatch", "arguments": "[0-4]", "description": "amsmath page-break permission inside displays; no material", "renders": true},
     {"name": "url", "mode": "text", "origin": "text_dispatch", "arguments": "{url}", "description": "monospaced URL text, breaking as url.sty does; links are not clickable", "renders": true},
     {"name": "href", "mode": "text", "origin": "text_dispatch", "arguments": "{url}{text}", "description": "link text; links are not clickable", "renders": true},
     {"name": "nolinkurl", "mode": "text", "origin": "text_dispatch", "arguments": "{url}", "description": "monospaced URL text without a link, breaking as url.sty does", "renders": true},
@@ -234,6 +235,14 @@
     {"name": "textgreater", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textgreater: OT1 >, T1 > (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "textbraceleft", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textbraceleft: OT1 {, T1 { (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "textbraceright", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textbraceright: OT1 }, T1 } (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
+    {"name": "c", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "cedilla text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
+    {"name": "v", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "caron text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
+    {"name": "u", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "breve text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
+    {"name": "H", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "double acute text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
+    {"name": "r", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "ring text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
+    {"name": "k", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "ogonek text accent (T1 only; OT1 reports it unavailable): the precomposed character the dfu tables declare; without one the bare letter and a warning", "renders": true},
+    {"name": "d", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "dot-below text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning", "renders": true},
+    {"name": "b", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "bar-below text accent: no dfu declarations, so the bare letter and a warning", "renders": true},
     {"name": "uline", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)", "renders": true},
     {"name": "underline", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox", "renders": true},
     {"name": "sout", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)", "renders": true},
@@ -900,9 +909,9 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 166, "percent": 40.5},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 174, "percent": 42.4},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 17, "percent": 56.7},
-      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 40, "percent": 39.2},
+      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 41, "percent": 40.2},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
       {"set": "amssymb", "kind": "command", "canonical": 229, "supported": 225, "percent": 98.3},
       {"set": "enumitem", "kind": "command", "canonical": 17, "supported": 1, "percent": 5.9},
@@ -915,6 +924,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 17, "percent": 7.1}
     ],
-    "total": {"canonical": 1314, "supported": 506, "percent": 38.5}
+    "total": {"canonical": 1314, "supported": 515, "percent": 39.2}
   }
 }
