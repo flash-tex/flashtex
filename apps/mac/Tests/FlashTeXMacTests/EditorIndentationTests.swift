@@ -16,6 +16,20 @@ final class EditorIndentationTests: XCTestCase {
 
     func join(_ lines: [String]) -> String { lines.joined(separator: "\n") }
 
+    func apply(_ plan: EI.Plan, to text: String) -> String {
+        (text as NSString).replacingCharacters(in: plan.range, with: plan.replacement)
+    }
+
+    func bodyLines(_ text: String, env: String) -> [String] {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let open = "\\begin{\(env)}"
+        let close = "\\end{\(env)}"
+        guard let b = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix(open) }),
+              let e = lines.lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix(close) }),
+              e > b else { return [] }
+        return Array(lines[(b + 1)..<e])
+    }
+
     // MARK: nesting
 
     func testNestingIncreasesAfterBeginAndDecreasesOnEnd() {
@@ -68,8 +82,11 @@ final class EditorIndentationTests: XCTestCase {
     // MARK: verbatim preservation
 
     func testPreservedBodiesStayByteIdentical() {
-        XCTAssertEqual(EI.preservedBodyEnvironments, ["verbatim", "lstlisting", "minted", "comment"])
-        for env in ["verbatim", "lstlisting", "minted", "comment"] {
+        XCTAssertEqual(EI.preservedBodyEnvironments, SyntaxHighlighter.verbatimEnvironments.union(["comment"]))
+        XCTAssertTrue(EI.preservedBodyEnvironments.contains("verbatim*"))
+        XCTAssertTrue(EI.preservedBodyEnvironments.contains("Verbatim"))
+        XCTAssertTrue(EI.preservedBodyEnvironments.contains("BVerbatim"))
+        for env in ["verbatim", "verbatim*", "Verbatim", "BVerbatim", "lstlisting", "minted", "comment"] {
             let src = """
             \\begin{itemize}
             \\begin{\(env)}
@@ -80,6 +97,7 @@ final class EditorIndentationTests: XCTestCase {
             \\end{itemize}
             """
             let out = join(reindent(src))
+            XCTAssertEqual(bodyLines(out, env: env), bodyLines(src, env: env), env)
             XCTAssertTrue(out.contains("\n  keep  tabs\tand spaces\n"), env)
             XCTAssertTrue(out.contains("% \\end{\(env)} is text here"), env)
             XCTAssertTrue(out.contains("\n  \\item after\n"), env)
@@ -191,9 +209,10 @@ final class EditorIndentationTests: XCTestCase {
         let text = "\\begin{itemize}\r\n\\item a\r\n\\end{itemize}\r\n"
         let plan = EI.plan(in: text, selection: NSRange(location: 0, length: (text as NSString).length),
                            unit: "  ", tabWidth: 4, wholeDocument: true)!
-        XCTAssertEqual(plan.replacement, "\\begin{itemize}\r\n  \\item a\r\n\\end{itemize}\r\n")
-        XCTAssertTrue(plan.replacement.contains("\r\n"))
-        XCTAssertFalse(plan.replacement.contains("\n\n"))
+        let out = apply(plan, to: text)
+        XCTAssertEqual(out, "\\begin{itemize}\r\n  \\item a\r\n\\end{itemize}\r\n")
+        XCTAssertTrue(out.contains("\r\n"))
+        XCTAssertFalse(out.contains("\n\n"))
     }
 
     // MARK: partial selection with context
@@ -205,8 +224,10 @@ final class EditorIndentationTests: XCTestCase {
         let text = "\\begin{itemize}\n\\item a\n        inner\n\\end{itemize}\n"
         let inner = (text as NSString).range(of: "        inner")
         let plan = EI.plan(in: text, selection: inner, unit: "  ", tabWidth: 4, wholeDocument: false)!
-        XCTAssertEqual((text as NSString).substring(with: plan.range).hasPrefix("        inner"), true)
-        XCTAssertEqual(plan.replacement, "  inner\n")
+        let line = (text as NSString).lineRange(for: inner)
+        XCTAssertTrue(NSLocationInRange(plan.range.location, line))
+        XCTAssertLessThanOrEqual(NSMaxRange(plan.range), NSMaxRange(line))
+        XCTAssertEqual(apply(plan, to: text), "\\begin{itemize}\n\\item a\n  inner\n\\end{itemize}\n")
     }
 
     func testPartialSelectionInsideVerbatimLeavesTheBodyAlone() {
@@ -225,7 +246,7 @@ final class EditorIndentationTests: XCTestCase {
         let f = (text as NSString).range(of: "foo")
         let plan = EI.plan(in: text, selection: NSRange(location: f.location, length: 0),
                            unit: "  ", tabWidth: 4, wholeDocument: false)!
-        let new = (text as NSString).replacingCharacters(in: plan.range, with: plan.replacement) as NSString
+        let new = apply(plan, to: text) as NSString
         XCTAssertEqual(new.substring(with: NSRange(location: plan.selection.location, length: 3)), "foo")
         XCTAssertEqual(plan.selection.length, 0)
     }
@@ -233,6 +254,37 @@ final class EditorIndentationTests: XCTestCase {
     func testEmptyUnitFallsBackToTwoSpaces() {
         XCTAssertEqual(EI.reindent(["\\begin{a}", "x", "\\end{a}"].map { $0[...] }, baseDepth: 0, unit: ""),
                        ["\\begin{a}", "  x", "\\end{a}"])
+    }
+
+    // MARK: minimal replacement
+
+    func testAlreadyIndentedDocumentProducesNoPlan() {
+        let text = "\\begin{itemize}\n  \\item a\n\\end{itemize}\n"
+        XCTAssertNil(EI.plan(in: text, selection: NSRange(location: 0, length: 0),
+                             unit: "  ", tabWidth: 4, wholeDocument: true))
+        XCTAssertNil(EI.trimmedReplacement(old: text, new: text,
+                                           range: NSRange(location: 0, length: (text as NSString).length)))
+    }
+
+    func testOneLineChangeReplacesOnlyThatLineSpan() {
+        let text = "\\begin{itemize}\n  \\item a\n\\item b\n\\end{itemize}\n"
+        let plan = EI.plan(in: text, selection: NSRange(location: 0, length: 0),
+                           unit: "  ", tabWidth: 4, wholeDocument: true)!
+        let itemB = (text as NSString).range(of: "\\item b")
+        let line = (text as NSString).lineRange(for: itemB)
+        XCTAssertTrue(NSLocationInRange(plan.range.location, line),
+                      "range \(plan.range) must sit on the \\item b line \(line)")
+        XCTAssertLessThanOrEqual(NSMaxRange(plan.range), NSMaxRange(line))
+        XCTAssertEqual(apply(plan, to: text), "\\begin{itemize}\n  \\item a\n  \\item b\n\\end{itemize}\n")
+    }
+
+    func testTrimmedReplacementDropsCommonUTF16Affixes() {
+        let old = "aaaXbbb"
+        let new = "aaaYbbb"
+        let trimmed = EI.trimmedReplacement(old: old, new: new,
+                                            range: NSRange(location: 10, length: (old as NSString).length))!
+        XCTAssertEqual(trimmed.range, NSRange(location: 13, length: 1))
+        XCTAssertEqual(trimmed.replacement, "Y")
     }
 }
 
@@ -292,6 +344,42 @@ final class EditorIndentationHostTests: XCTestCase {
         XCTAssertEqual(tv.string, "\\begin{a}\n\(unit)x\n\\end{a}\n")
         XCTAssertEqual(tv.selectedRange().length, 0)
         XCTAssertEqual((tv.string as NSString).substring(with: NSRange(location: tv.selectedRange().location, length: 1)), "x")
+    }
+
+    func testAlreadyIndentedDocumentIsNoTextChangeAndNoUndo() throws {
+        let unit = EditorPreferences.shared.indentString
+        let text = "\\begin{itemize}\n\(unit)\\item foo\n\\end{itemize}\n"
+        let (window, tv) = try host(text)
+        defer { window.orderOut(nil) }
+        tv.setSelectedRange(NSRange(location: 0, length: 0))
+        tv.undoManager?.removeAllActions()
+        XCTAssertEqual(tv.undoManager?.canUndo, false)
+        tv.reindentWholeDocument(nil)
+        XCTAssertEqual(tv.string, text)
+        XCTAssertEqual(tv.undoManager?.canUndo, false)
+    }
+
+    func testReindentDoesNotWrapThroughCaretContextWhenCaretIsInMath() throws {
+        let (window, tv) = try host("\\begin{itemize}\n\\item $a + b$\n\\end{itemize}\n")
+        defer { window.orderOut(nil) }
+        let plus = (tv.string as NSString).range(of: "+")
+        tv.setSelectedRange(NSRange(location: plus.location, length: 0))
+        // ASCII document: UTF-16 offset == UTF-8 byte offset.
+        let caret = CaretContext.derive(tv.string, caretByte: plus.location)
+        XCTAssertEqual(caret.wrap, .alreadyMath)
+        let unit = EditorPreferences.shared.indentString
+        let plan = try XCTUnwrap(EditorIndentation.plan(in: tv.string, selection: tv.selectedRange(),
+                                                        unit: unit, tabWidth: EditorPreferences.shared.tabWidth,
+                                                        wholeDocument: false))
+        let wrapped = caret.normalize(plan.replacement)
+        XCTAssertTrue(wrapped.text != plan.replacement,
+                      "caret-context wrapping would alter this replacement; reindent must insert it raw")
+        tv.undoManager?.removeAllActions()
+        tv.reindentSelectedLines(nil)
+        XCTAssertEqual(tv.string, "\\begin{itemize}\n\(unit)\\item $a + b$\n\\end{itemize}\n")
+        XCTAssertTrue(tv.string.contains("$a + b$"))
+        XCTAssertFalse(tv.string.contains("\\text{"))
+        XCTAssertFalse(tv.string.contains("\\mbox{"))
     }
 }
 

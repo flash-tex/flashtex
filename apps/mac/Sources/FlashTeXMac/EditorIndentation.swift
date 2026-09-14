@@ -11,10 +11,12 @@ import AppKit
 /// View ▸ Toggle Captures. Re-indent Document has no key equivalent.
 enum EditorIndentation {
     /// Bodies of these environments are copied byte-for-byte, including their
-    /// existing indentation. Starred / package variants are not in this set.
-    static let preservedBodyEnvironments: Set<String> = [
-        "verbatim", "lstlisting", "minted", "comment",
-    ]
+    /// existing indentation. Canonical with the highlighter: starred / fancyvrb
+    /// / listings variants live on `SyntaxHighlighter.verbatimEnvironments`;
+    /// `comment` is the same extra name `EditorNavigation` and `CaretContext`
+    /// already treat as inert (Highlighter does not list it).
+    static let preservedBodyEnvironments: Set<String> =
+        SyntaxHighlighter.verbatimEnvironments.union(["comment"])
 
     /// These environments do not indent their body. Indenting a whole
     /// `document` body is the common complaint this constant exists to avoid.
@@ -136,10 +138,32 @@ enum EditorIndentation {
         }
         let range = NSRange(location: loc, length: end - loc)
         guard (oldBlock as NSString).length == range.length else { return nil }
-        if oldBlock == newBlock { return nil }
+        guard let trimmed = trimmedReplacement(old: oldBlock, new: newBlock, range: range) else { return nil }
 
         let mapped = mapSelection(sel, replaceStart: loc, oldLines: Array(lines[first...last]), newContents: newContents)
-        return Plan(range: range, replacement: newBlock, selection: mapped)
+        return Plan(range: trimmed.range, replacement: trimmed.replacement, selection: mapped)
+    }
+
+    /// The span of `old`/`new` that actually differs, comparing UTF-16 code
+    /// units. `range` is the planned replacement of `old` in the buffer. Nil
+    /// when they are identical (callers register no undo step).
+    static func trimmedReplacement(old: String, new: String, range: NSRange) -> (range: NSRange, replacement: String)? {
+        let oldNS = old as NSString
+        let newNS = new as NSString
+        guard oldNS.length == range.length else { return nil }
+        var prefix = 0
+        let shared = min(oldNS.length, newNS.length)
+        while prefix < shared, oldNS.character(at: prefix) == newNS.character(at: prefix) {
+            prefix += 1
+        }
+        var suffix = 0
+        while prefix + suffix < oldNS.length, prefix + suffix < newNS.length,
+              oldNS.character(at: oldNS.length - 1 - suffix) == newNS.character(at: newNS.length - 1 - suffix) {
+            suffix += 1
+        }
+        if prefix == oldNS.length, prefix == newNS.length { return nil }
+        return (NSRange(location: range.location + prefix, length: oldNS.length - prefix - suffix),
+                newNS.substring(with: NSRange(location: prefix, length: newNS.length - prefix - suffix)))
     }
 
     // MARK: line rewrite
@@ -491,8 +515,14 @@ extension CompletingTextView {
         let tabWidth = EditorPreferences.shared.tabWidth
         guard let plan = EditorIndentation.plan(in: string, selection: selectedRange(), unit: unit,
                                                 tabWidth: tabWidth, wholeDocument: wholeDocument) else { return }
+        let current = (string as NSString).substring(with: plan.range)
+        guard let edit = EditorIndentation.trimmedReplacement(old: current, new: plan.replacement, range: plan.range) else { return }
+        // Structural rewrite of existing source. `insertText` is AppKit's
+        // unwrapped edit path; do not send this through `CaretContext.normalize`
+        // / `Insertion.captureInsertion` — those wrap recognised math at the
+        // caret, which would refuse or strip `$…$` when the caret sits in math.
         breakUndoCoalescing()
-        insertText(plan.replacement, replacementRange: plan.range)
+        insertText(edit.replacement, replacementRange: edit.range)
         setSelectedRange(plan.selection)
         undoManager?.setActionName(wholeDocument ? "Re-indent Document" : "Re-indent Lines")
         breakUndoCoalescing()
