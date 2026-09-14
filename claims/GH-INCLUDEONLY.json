@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/includeonly",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/424",
   "machine": "Overpriced-Hardware",
   "note": null,
   "started_utc": "2026-09-14T16:41:33Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-INCLUDEONLY",
-  "updated_utc": "2026-09-14T16:41:33Z"
+  "updated_utc": "2026-09-14T17:36:57Z"
 }
