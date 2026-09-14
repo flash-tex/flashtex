@@ -793,6 +793,13 @@ struct SourceEditorView: NSViewRepresentable {
             hover.mathPreview = { [weak self] index in self?.mathPreview(at: index) }
             if let completing = tv as? CompletingTextView {
                 completing.commandClickHandler = { [weak self] index in self?.commandClick(at: index) ?? false }
+                // Math-mode ranking in the completion list (Completion.swift):
+                // answered from the in-sync syntax model, one line's lexing.
+                completing.mathModeAtCaret = { [weak self] index in
+                    guard let self, let text = self.textView?.textStorage?.string as NSString? else { return false }
+                    return Completion.isMathMode(in: text, caretUTF16: index,
+                                                 highlighter: self.syntax.highlighter.length == text.length ? self.syntax.highlighter : nil)
+                }
                 completing.backgroundDecorator = { [weak self] rect in self?.drawCurrentLine(in: rect) }
                 // GH74: a completion snippet's placeholder closer (`\section{}`)
                 // overtypes like a hand-typed `{` instead of doubling
