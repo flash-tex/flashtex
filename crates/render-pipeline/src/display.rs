@@ -443,9 +443,14 @@ impl Diagnostic {
 
     /// Converts a compiler diagnostic; `paths` is indexed by `DocumentId`.
     pub fn from_compiler(d: &flashtex_compiler::diagnostics::Diagnostic, paths: &[&str]) -> Diagnostic {
-        use flashtex_compiler::diagnostics::Severity as S;
+        use flashtex_compiler::diagnostics::{default_code, Severity as S};
         Diagnostic {
-            code: "compiler".into(),
+            code: d
+                .code
+                .or_else(|| default_code(&d.message))
+                .map(|c| c.as_str())
+                .unwrap_or("compiler")
+                .into(),
             message: d.message.clone(),
             severity: match d.severity {
                 S::Error => Severity::Error,
@@ -462,7 +467,7 @@ impl Diagnostic {
                 })
                 .unwrap_or_default(),
             recovery: d.recovery.clone(),
-            suggestion: None,
+            suggestion: d.suggestion.clone(),
         }
     }
 }

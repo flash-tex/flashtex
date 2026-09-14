@@ -72,6 +72,10 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(harness.diag_key("overfull line: 4.76pt too wide"), "overfull line: <N>pt too wide")
         self.assertIn("crates/compiler", harness.owner_for({"message": "\\foo is not supported in the document preamble"}))
         self.assertIn("math-layout", harness.owner_for({"code": "compiler", "message": "\\in is not supported in math mode"}))
+        self.assertIn("crates/compiler", harness.owner_for({"code": "unknown_command", "message": "\\alpah is not supported"}))
+        self.assertIn("math-layout", harness.owner_for({"code": "unsupported_feature", "message": "\\in is not supported in math mode"}))
+        self.assertIn("crates/compiler", harness.owner_for({"code": "syntax_error", "message": "unmatched '{'"}))
+        self.assertIn("crates/compiler", harness.owner_for({"code": "recovered_input", "message": "included file not found"}))
         self.assertTrue(harness.owner_for({"code": "overfull_hbox", "message": "overfull line"}).startswith("crates/render-pipeline"))
         self.assertIn(("package", "amssymb"), harness.named_constructs("packages amsmath, amssymb are recognised but not implemented"))
 

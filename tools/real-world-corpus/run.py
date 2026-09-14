@@ -599,6 +599,19 @@ COMPILER_MSG_RE = re.compile(
     r"unknown|recognised but|outside math mode|missing|unclosed|unexpected|undefined|cannot|invalid|is not a"
 )
 
+# Codes the compiler (and the pipeline's from_compiler fallback) emit. Keep
+# the literal "compiler" so older display-list bytes still classify.
+COMPILER_CODES = frozenset({
+    "compiler",
+    "protocol_error",
+    "unknown_command",
+    "unsupported_feature",
+    "syntax_error",
+    "export_limitation",
+    "fidelity_note",
+    "recovered_input",
+})
+
 
 def owner_for(diag):
     """Owning crate for a diagnostic. The `compiler` producer on main emits no
@@ -608,7 +621,7 @@ def owner_for(diag):
     mac-claude-a. No workaround layer is suggested for parser gaps."""
     code = diag.get("code") or ""
     msg = diag.get("message") or ""
-    if code == "compiler" or code == "protocol_error" or (not code and COMPILER_MSG_RE.search(msg)):
+    if code in COMPILER_CODES or (not code and COMPILER_MSG_RE.search(msg)):
         if "in math mode" in msg or "requires math mode" in msg or "outside math mode" in msg:
             return "crates/compiler (math parser src/math.rs; Commander/main) — downstream typesetting: crates/math-layout (FT-020)"
         return "crates/compiler (parser/expansion; Commander/main)"
