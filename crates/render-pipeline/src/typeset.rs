@@ -7269,6 +7269,14 @@ pub fn assemble_windowed(
     // item kinds and paints. So it is harvested here, in the same pass, from
     // every block — including the blocks whose only pages are elided and
     // whose items are about to be dropped.
+    //
+    // The harvest walks every block, and a block placed on no page at all
+    // would contribute a feature no page paints. That direction is the safe
+    // one — a consumer told to support `rule` when nothing draws one loses
+    // nothing, while a consumer *not* told is the failure this exists to
+    // prevent — and §9's equality gate pins the two together for every
+    // document it covers, so an over-announcement would show up as a windowed
+    // reply differing from the unwindowed one rather than passing silently.
     let mut doc_features = display::DocumentFeatures::default();
     // `default_color` writes a device colour into every glyph run and rule
     // that carries none, after placement; whether the document has one to
