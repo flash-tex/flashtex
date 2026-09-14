@@ -307,6 +307,7 @@ extension ShellModel {
         // the base so the next request asks for a full frame.
         let isDelta = RenderingV2Fast.header(line)?.type == DisplayListDelta.messageType
         let installed = deltaInstalled
+        let hashDiagnostics = negotiation.accepted.contains(RenderingV2.diagnosticsCapability)
         if isDelta {
             guard negotiation.accepted.contains(DisplayListDelta.capability) else {
                 let msg = "display_list_delta \(id) arrived but \(DisplayListDelta.capability) was not accepted for that result (accepted: \(negotiation.accepted.joined(separator: ", ")))"
@@ -328,9 +329,10 @@ extension ShellModel {
             if isDelta, let installed {
                 do {
                     let delta = try RenderingV2Fast.delta(line, maxPages: DisplayListDelta.maxSnapshotPages)
-                    let (envelope, pageBytes, target) = try DisplayListDelta.apply(delta, to: installed)
+                    let (envelope, pageBytes, target) = try DisplayListDelta.apply(delta, to: installed, diagnosticsCapability: hashDiagnostics)
                     var frame = try V2Frame.prepare(envelope)
-                    frame.installedBase = DisplayListDelta.installed(from: envelope, pageBytes: pageBytes, lineBytes: target)
+                    frame.installedBase = DisplayListDelta.installed(from: envelope, pageBytes: pageBytes, lineBytes: target,
+                                                                     diagnosticsCapability: hashDiagnostics)
                     frame.reusedPages = delta.pageCount - delta.changedPages.count
                     outcome = .loaded(frame)
                 } catch let refusal as DisplayListDelta.Refusal {
@@ -354,7 +356,8 @@ extension ShellModel {
                 }
                 if !isDelta, DisplayListDelta.enabled, frame.installedBase == nil, let pageBytes = frame.pageBytes {
                     let envelope = RenderingV2.Envelope(protocolVersion: RenderingV2.protocolVersion, id: frame.id, type: RenderingV2.messageType, payload: frame.list)
-                    frame.installedBase = DisplayListDelta.installed(from: envelope, pageBytes: pageBytes, lineBytes: line.count)
+                    frame.installedBase = DisplayListDelta.installed(from: envelope, pageBytes: pageBytes, lineBytes: line.count,
+                                                                     diagnosticsCapability: hashDiagnostics)
                 }
                 return .loaded(frame)
             case .failed: return outcome

@@ -134,10 +134,7 @@ enum DisplayListDelta {
         for f in l.fonts { c.s(f.fontId); c.s(f.sha256); c.i(f.byteLength); c.s(f.format); c.u(f.faceIndex); c.u(f.unitsPerEm); c.u(f.glyphCount); c.s(f.postscriptName) }
         c.u(l.diagnostics.count); for d in l.diagnostics {
             c.s(d.code); c.s(d.message); c.s(d.severity.rawValue); c.ranges(d.sources)
-            // WIP: still hashes a present suggestion regardless of the flag so
-            // the Appendix A capability-off golden can fail first.
-            if let s = d.suggestion { c.s(s) }
-            _ = diagnosticsCapability
+            if diagnosticsCapability, let s = d.suggestion { c.s(s) }
         }
         return c.bytes
     }
@@ -269,11 +266,13 @@ enum DisplayListDelta {
     }
 
     /// The snapshot a validated FULL frame installs; nil when it exceeds the retention caps.
-    static func installed(from envelope: RenderingV2.Envelope, pageBytes: [Int], lineBytes: Int) -> Installed? {
+    static func installed(from envelope: RenderingV2.Envelope, pageBytes: [Int], lineBytes: Int,
+                          diagnosticsCapability: Bool = false) -> Installed? {
         let list = envelope.payload
         guard list.pages.count <= maxSnapshotPages, pageBytes.count == list.pages.count, lineBytes <= maxSnapshotBytes else { return nil }
         let digests = list.pages.map(pageDigest)
-        return Installed(requestId: envelope.id, list: list, pageDigests: digests, listDigest: listDigest(list, pageDigests: digests),
+        return Installed(requestId: envelope.id, list: list, pageDigests: digests,
+                         listDigest: listDigest(list, pageDigests: digests, diagnosticsCapability: diagnosticsCapability),
                          pageBytes: pageBytes, serialisedBytes: lineBytes)
     }
 
@@ -320,7 +319,8 @@ enum DisplayListDelta {
     /// Charges the target exactly, then reconstructs. Returns the full
     /// envelope (type `display_list`) and the verified per-page lengths; the
     /// caller runs the unchanged full validation (`V2Frame.prepare`) on it.
-    static func apply(_ d: RenderingV2Fast.DeltaEnvelope, to installed: Installed, cap: Int = maxSnapshotBytes) throws -> (envelope: RenderingV2.Envelope, pageBytes: [Int], targetBytes: Int) {
+    static func apply(_ d: RenderingV2Fast.DeltaEnvelope, to installed: Installed, cap: Int = maxSnapshotBytes,
+                      diagnosticsCapability: Bool = false) throws -> (envelope: RenderingV2.Envelope, pageBytes: [Int], targetBytes: Int) {
         guard d.digestScheme == digestScheme else { throw Refusal.unsupportedScheme(d.digestScheme) }
         let ack = installed.acknowledgement
         guard d.base.requestId == ack.requestId, d.base.projectId == ack.projectId, d.base.revision == ack.revision,
@@ -374,7 +374,7 @@ enum DisplayListDelta {
                                            textExtraction: d.textExtraction, projectId: d.projectId, revision: d.revision,
                                            requiredFeatures: d.requiredFeatures, documents: d.documents, fonts: d.fonts,
                                            pages: pages, diagnostics: d.diagnostics, navigation: installed.list.navigation)
-        guard hex(listDigest(list, pageDigests: digests)) == d.listDigest else { throw Refusal.listDigestMismatch }
+        guard hex(listDigest(list, pageDigests: digests, diagnosticsCapability: diagnosticsCapability)) == d.listDigest else { throw Refusal.listDigestMismatch }
         return (RenderingV2.Envelope(protocolVersion: d.protocolVersion, id: d.id, type: RenderingV2.messageType, payload: list), d.pageBytes, target)
     }
 }

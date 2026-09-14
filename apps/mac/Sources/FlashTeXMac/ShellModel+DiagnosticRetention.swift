@@ -27,7 +27,9 @@ extension ShellModel {
     /// applied — what `editorMarkReport` memoizes for the active document
     /// and what diagnostic navigation reads for the others.
     func diagnosticReport(for path: String, currentText: String) -> EditorDiagnostics.Report {
-        guard let result else { return .empty }
+        guard var result else { return .empty }
+        let producer = producerDiagnostics
+        if result.diagnostics != producer { result.diagnostics = producer }
         return EditorDiagnostics.report(for: result, resultID: resultID, retained: retainedMarks, path: path,
                                         compiledText: compiledDocuments[path], currentText: currentText)
     }
