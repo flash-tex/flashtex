@@ -1,0 +1,82 @@
+{
+  "schema": "flashtex-font-diagnostics/1",
+  "generated_by": "flashtex-render --font-diagnostics json",
+  "source": "crates/render-pipeline/src/fontdiag.rs",
+  "codes": [
+    {
+      "code": "font_unavailable",
+      "substitution": true,
+      "geometry_void": true,
+      "note": "Latin Modern face unavailable; Times metrics substituted, so this is not the requested document"
+    },
+    {
+      "code": "required_metrics_unavailable",
+      "substitution": true,
+      "geometry_void": true,
+      "note": "the pinned Latin Modern 2.004 metrics this size requires were not found; OpenType advances were used"
+    },
+    {
+      "code": "tfm_missing",
+      "substitution": true,
+      "geometry_void": true,
+      "note": "a .tfm the face needs was not found; OpenType advances are used instead of TeX metrics"
+    },
+    {
+      "code": "ec_metrics_unavailable",
+      "substitution": true,
+      "geometry_void": true,
+      "note": "T1/EC metrics missing for this face, e.g. no ectt* for a texttt fixture"
+    },
+    {
+      "code": "math_font_unavailable",
+      "substitution": true,
+      "geometry_void": true,
+      "note": "Latin Modern Math unavailable; math is not typeset at all"
+    },
+    {
+      "code": "math_metrics_opentype",
+      "substitution": true,
+      "geometry_void": true,
+      "note": "rm-lmr*.tfm unavailable; math is laid out from the OpenType MATH table rather than TeX metrics"
+    },
+    {
+      "code": "font_outline_substituted",
+      "substitution": true,
+      "geometry_void": false,
+      "note": "the outline differs but the metrics are the reference ones, so positions still compare"
+    },
+    {
+      "code": "font_shape_substituted",
+      "substitution": false,
+      "geometry_void": false,
+      "note": "LaTeX's own NFSS shape substitution; pdflatex substitutes identically, so nothing is missing and the geometry is the reference geometry"
+    }
+  ],
+  "not_font_diagnostics": [
+    "display_list_declined",
+    "float_content_unsupported",
+    "float_placement",
+    "float_too_large",
+    "graphics_option",
+    "image_unavailable",
+    "labels_unstable",
+    "math_glyph_unmapped",
+    "math_limitation",
+    "math_resource_profile",
+    "math_text_overflow",
+    "microtype_unsupported",
+    "missing_glyph",
+    "multicol",
+    "overfull_display",
+    "overfull_hbox",
+    "overfull_vbox",
+    "paragraph_layout_error",
+    "tfm_run_error",
+    "tikz_display_list_only",
+    "tikz_error",
+    "tikz_text_transform",
+    "tikz_unsupported",
+    "unsupported_block",
+    "unsupported_script"
+  ]
+}
