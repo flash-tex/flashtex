@@ -533,6 +533,12 @@ as you type it; the caret is a block outside insert mode.
   a composition is in progress). ⌘-shortcuts always work.
 - Counts; motions `h j k l w b e W B E 0 ^ $ gg G { } ( ) f F t T ; , % H M L`,
   ⌃D ⌃U ⌃F ⌃B (`%` also jumps between `\begin` and `\end`).
+- Visual-row motions `gj gk g0 g^ g$`: one *screen* row rather than one logical
+  line. Line wrapping is on by default, so a wrapped paragraph is many rows but
+  one line, and plain `j` jumps over all of it; `gj` moves the way the text
+  looks. They keep their own remembered column, so mixing `j` and `gj` does not
+  make either drift, and they take counts and operators (`3gj`, `dgj`). With
+  wrapping off — or on a line that does not wrap — `gj` is exactly `j`.
 - Operators `d c y > <` with motions, `dd cc yy >> <<`, and text objects
   `iw aw i( a( i[ a[ i{ a{ i" a" i$ a$` (inline math) and `ie ae` (LaTeX environment).
 - `x X D C Y p P J u ⌃R . ~`, marks `m a` / `'a` / `` `a ``, registers `"a`–`"z`
