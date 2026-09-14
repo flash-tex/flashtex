@@ -2173,17 +2173,33 @@ impl<'a> Context<'a> {
         // `\labelwidth` keeps its own width and pushes the text right.
         let mut hang_pt = 0.0;
         if let Some(geom) = list_geom {
-            let (hang, labelwidth) = self.list_geometry(geom, size);
+            let (hang, labelwidth, inner_margin) = self.list_geometry_inner(geom, size);
             hang_pt = hang;
+            let description = geom.label_style == adapter::ItemLabel::Description;
             if let Some((text, span)) = geom.label.as_ref().filter(|_| starts_paragraph) {
-                if let Some((run, rec)) = self.label_box(text, *span, size) {
+                // `description` sets the term in `\normalfont\bfseries`
+                // (`\descriptionlabel`); every other `\list` uses the body
+                // face.
+                let label_style = TextStyle {
+                    bold: description,
+                    ..TextStyle::default()
+                };
+                let (boxes, label_width) = self.label_items(text, *span, size, label_style);
+                if !boxes.is_empty() {
                     let labelsep = self.style.labelsep_pt;
                     let protrude = self.item_left_protrusion(&list, &recs);
-                    let mut lead = vec![
-                        (pl::Item::kern(-(labelsep + run.width.min(labelwidth))), None),
-                        (pl::Item::Box(run), Some(rec)),
-                        (pl::Item::kern(labelsep), None),
-                    ];
+                    // `\@item`: `\hskip\itemindent \hskip-\labelwidth
+                    // \hskip-\labelsep <label box> \hskip\labelsep`.
+                    // `description` has `\labelwidth\z@` and
+                    // `\itemindent-\leftmargin`, and its label box opens
+                    // with `\hspace\labelsep`, so the two `\labelsep`s
+                    // cancel and the term starts one whole `\leftmargin`
+                    // left of the item text's own margin; the box is wider
+                    // than `\labelwidth`, so it keeps its natural width.
+                    let before = if description { -inner_margin } else { -(labelsep + label_width.min(labelwidth)) };
+                    let mut lead = vec![(pl::Item::kern(before), None)];
+                    lead.extend(boxes);
+                    lead.push((pl::Item::kern(labelsep), None));
                     if protrude != 0.0 {
                         lead.push((pl::Item::kern(-protrude), None));
                     }
@@ -2240,9 +2256,18 @@ impl<'a> Context<'a> {
     /// list's label width (`\leftmargin - \labelsep` for a class margin;
     /// the widest label's own width under enumitem's `leftmargin=*`).
     fn list_geometry(&mut self, geom: &ListGeom, size: f64) -> (f64, f64) {
+        let (hang, labelwidth, _) = self.list_geometry_inner(geom, size);
+        (hang, labelwidth)
+    }
+
+    /// As [`Self::list_geometry`], plus the innermost list's own
+    /// `\leftmargin`, which `description` takes back off the first line
+    /// through `\itemindent-\leftmargin`.
+    fn list_geometry_inner(&mut self, geom: &ListGeom, size: f64) -> (f64, f64, f64) {
         let labelsep = self.style.labelsep_pt;
         let mut hang = 0.0;
         let mut labelwidth = 0.0;
+        let mut inner = 0.0;
         for margin in &geom.margins {
             let (m, w) = match margin {
                 ListMargin::Fixed(pt) => (*pt, (pt - labelsep).max(0.0)),
@@ -2253,8 +2278,9 @@ impl<'a> Context<'a> {
             };
             hang += m;
             labelwidth = w;
+            inner = m;
         }
-        (hang, labelwidth)
+        (hang, labelwidth, inner)
     }
 
     /// Width of `text` shaped in the body font at `size`, in points.
@@ -2289,6 +2315,34 @@ impl<'a> Context<'a> {
     /// `\item` command's bytes (article's `\labelenumi`/`\labelitemi` in
     /// the body font).
     fn label_box(&mut self, text: &str, span: Span, size: f64) -> Option<(pl::GlyphRun, usize)> {
+        self.label_box_styled(text, span, size, TextStyle::default())
+    }
+
+    /// `\makelabel`'s box: the label's words set in `style` at `size` and
+    /// separated by the face's own interword space (`\fontdimen2` — an
+    /// `\hbox` is packed at its natural width, so the glue between the
+    /// words takes its natural value and nothing stretches). Shaping the
+    /// whole label as one run instead would set the spaces at the font's
+    /// own `space` advance, which is not `\fontdimen2` in every face.
+    /// Returns the items in order and the box's natural width, in points.
+    fn label_items(&mut self, text: &str, span: Span, size: f64, style: TextStyle) -> (Vec<(pl::Item, Option<usize>)>, f64) {
+        let space = self.text_params(style, size).space;
+        let mut items: Vec<(pl::Item, Option<usize>)> = Vec::new();
+        let mut width = 0.0;
+        for word in text.split_whitespace() {
+            if !items.is_empty() {
+                items.push((pl::Item::kern(space), None));
+                width += space;
+            }
+            if let Some((run, rec)) = self.label_box_styled(word, span, size, style) {
+                width += run.width;
+                items.push((pl::Item::Box(run), Some(rec)));
+            }
+        }
+        (items, width)
+    }
+
+    fn label_box_styled(&mut self, text: &str, span: Span, size: f64, style: TextStyle) -> Option<(pl::GlyphRun, usize)> {
         let seg = adapter::Segment {
             text: text.to_string(),
             chars: text
@@ -2299,7 +2353,7 @@ impl<'a> Context<'a> {
                     end: span.end,
                 })
                 .collect(),
-            style: TextStyle::default(),
+            style,
         };
         let boxed = self.text_box(&seg, size);
         if let Some((_, rec)) = &boxed {

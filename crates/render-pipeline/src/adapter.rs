@@ -434,6 +434,27 @@ pub struct ListGeom {
     /// the glue every paragraph of the item adds. Article's `\@list<i>`
     /// value for the nesting level, or an enumitem `parsep=` key.
     pub parsep: crate::style::Skip,
+    /// The innermost list's `\makelabel` and label geometry.
+    pub label_style: ItemLabel,
+}
+
+/// How the innermost `\list` sets an `\item`'s label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ItemLabel {
+    /// `itemize`/`enumerate`/`thebibliography` (latex.ltx `\@mklab`,
+    /// `\makelabel##1{\hss\llap{##1}}`): right-aligned in `\labelwidth`,
+    /// its right edge `\labelsep` before the text.
+    #[default]
+    Llap,
+    /// `description` (article.cls lines 360-365):
+    /// `\list{}{\labelwidth\z@ \itemindent-\leftmargin
+    /// \let\makelabel\descriptionlabel}` with `\descriptionlabel#1` =
+    /// `\hspace\labelsep\normalfont\bfseries #1`. The label is set at its
+    /// natural width in the bold body face, starting at the *enclosing*
+    /// margin (`\itemindent` takes this list's own `\leftmargin` back off
+    /// the first line), and the item text follows one `\labelsep` later;
+    /// continuation lines still hang at `\@totalleftmargin`.
+    Description,
 }
 
 /// One list level's `\leftmargin`.
@@ -803,7 +824,21 @@ pub fn adapt_cached(
     if let Some(pt) = setlength_in(source, "parskip", size, em_ex) {
         style.parskip = crate::style::Skip::fixed(pt);
     }
-    let secnumdepth = counter(source, "secnumdepth").unwrap_or(options.default_secnumdepth);
+    // `\c@secnumdepth`: the class's own `\setcounter{secnumdepth}{...}`
+    // (article.cls line 255 `{3}`, report.cls/book.cls `{2}`), which
+    // `class-geometry` resolves as `ResolvedDocument::secnumdepth`. A
+    // document-only input (no `\documentclass`) keeps the caller's default.
+    // Before this, the body headings used `options.default_secnumdepth` (2)
+    // for every class, so `\subsubsection` was never numbered in `article`
+    // while the contents list (which already read the class value below)
+    // numbered it -- the two now read one value.
+    let class_secnumdepth = style
+        .class_geometry
+        .as_ref()
+        .filter(|_| explicit_class.is_some())
+        .and_then(|d| u8::try_from(d.secnumdepth).ok())
+        .unwrap_or(options.default_secnumdepth);
+    let secnumdepth = counter(source, "secnumdepth").unwrap_or(class_secnumdepth);
     style.nfss = crate::nfss::Scheme::for_document(&parsed.packages, t1_encoding(source));
     let styles: Vec<Styles> = texts.iter().map(|t| Styles::new(style_intervals(t), style.nfss)).collect();
     let labels_fp = {
@@ -866,13 +901,10 @@ pub fn adapt_cached(
     // the next block. Nothing is collected without a list.
     let toc_active = commands.iter().any(|c| matches!(c.kind, BodyKind::ContentsList(_)));
     let toc_settings = crate::toc::Settings::read(source, has_chapters);
-    // `\@sect` writes `\numberline` up to the class's `secnumdepth`
-    // (article.cls 3, report/book.cls 2) when the document declares one.
-    let toc_secnumdepth = counter(source, "secnumdepth").unwrap_or(match (explicit_class.is_some(), has_chapters) {
-        (true, true) => 2,
-        (true, false) => 3,
-        (false, _) => options.default_secnumdepth,
-    });
+    // `\@sect` writes `\numberline` up to the same `\c@secnumdepth` the
+    // heading itself is numbered by (article.cls 3, report/book.cls 2 when
+    // the document declares a class): one counter, one value.
+    let toc_secnumdepth = secnumdepth;
     let mut toc_records: Vec<crate::toc::Record> = Vec::new();
     let mut toc_lists: Vec<(usize, crate::toc::ListKind, Span, bool)> = Vec::new();
     let mut toc_pending: Vec<String> = Vec::new();
@@ -1836,6 +1868,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [CBlock], size: u32, sty
                     margins: list_margins(src, at.start, size),
                     label: label.clone(),
                     parsep: seps.parsep_skip,
+                    label_style: if env == "description" { ItemLabel::Description } else { ItemLabel::Llap },
                 });
             }
         }
@@ -2477,7 +2510,7 @@ fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Styl
 /// Whether `rest` (starting at a `\begin`) opens `itemize`/`enumerate`.
 fn list_env_after_begin(rest: &str) -> bool {
     let after = rest.strip_prefix("\\begin").unwrap_or(rest).trim_start();
-    after.starts_with("{itemize}") || after.starts_with("{enumerate}") || after.starts_with("{thebibliography}")
+    after.starts_with("{itemize}") || after.starts_with("{enumerate}") || after.starts_with("{description}") || after.starts_with("{thebibliography}")
 }
 
 /// `\endtrivlist` for every `\end{itemize}`/`\end{enumerate}` in `gap`
@@ -2510,7 +2543,7 @@ fn list_end_adjust(source: &str, gap_start: usize, gap: &str, size: u32, style: 
 fn gap_has_list_end(gap: &str) -> Option<&'static str> {
     let end = rfind_command(gap, "end")?;
     let rest = gap[end + "\\end".len()..].trim_start();
-    ["itemize", "enumerate", "thebibliography"].into_iter().find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}"))))
+    ["itemize", "enumerate", "description", "thebibliography"].into_iter().find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}"))))
 }
 
 /// The `\setlist[<envs>]{<keys>}` calls of `source`, in order:
@@ -2573,7 +2606,7 @@ fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str)> {
         let Some(inner) = rest.strip_prefix('{') else { continue };
         let Some(close) = inner.find('}') else { continue };
         let env = inner[..close].trim();
-        if !matches!(env, "itemize" | "enumerate" | "thebibliography") {
+        if !matches!(env, "itemize" | "enumerate" | "description" | "thebibliography") {
             continue;
         }
         if is_begin {
