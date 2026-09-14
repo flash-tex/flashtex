@@ -59,9 +59,13 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(dbl.first?.detail, "line break; an optional [length] is consumed")
 
         // Math commands say so and show the glyph the compiler renders.
+        // `\allowdisplaybreaks` matches `al` too and is not a symbol; it sorts
+        // ahead of the two by inventory order, which is what this asserts.
         let math = Completion.suggestions(in: "$\\al", caretUTF16: 4, result: nil)
-        XCTAssertEqual(labels(math), ["\\alpha", "\\aleph"], "inventory (math_symbol) order")
-        XCTAssertEqual(math.map(\.detail), ["math · symbol α", "math · symbol ℵ"])
+        XCTAssertEqual(labels(math), ["\\allowdisplaybreaks[0-4]", "\\alpha", "\\aleph"],
+                       "inventory (math_symbol) order")
+        XCTAssertEqual(math.map(\.detail), ["amsmath page-break permission inside displays; no material",
+                                            "math · symbol α", "math · symbol ℵ"])
         XCTAssertEqual(Completion.Vocabulary.symbols.count, Completion.Vocabulary.inventory.commands.filter { $0.origin == .mathSymbol && $0.renders }.count)
         XCTAssertGreaterThan(Completion.Vocabulary.entries.count, Completion.Vocabulary.symbols.count)
         // Math-only commands are marked once, by the `math ·` prefix of `Entry.detail`.

@@ -997,7 +997,13 @@ impl<'a> Context<'a> {
     fn text_box(&mut self, seg: &adapter::Segment, size: f64) -> Option<(pl::GlyphRun, usize)> {
         let span = seg_span(seg)?;
         let face = self.face(seg.style, size, span);
-        let shaped = self.shaper.shape(&face, &seg.text);
+        // Verbatim runs the font's ligature/kern program not at all
+        // (`\@noligs`); every other run runs it as TeX does.
+        let shaped = if seg.style.literal {
+            self.shaper.shape_literal(&face, &seg.text)
+        } else {
+            self.shaper.shape(&face, &seg.text)
+        };
         if let Some(e) = &shaped.tfm_error {
             let src = self.source(span);
             self.report_once(
@@ -1953,6 +1959,25 @@ impl<'a> Context<'a> {
                             push(&mut out, &mut recs, item, rec);
                         }
                     }
+                }
+                AItem::LeaveVmode => {
+                    // The empty `\hbox` `\leavevmode` starts a paragraph
+                    // with; its only job is to be undiscardable so the
+                    // verbatim blank behind it survives the line break.
+                    // Every box needs a record (see `NoteParBreak`), so it
+                    // is a rule of no width, height or depth: nothing is
+                    // shipped for it.
+                    self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    let run = pl::GlyphRun {
+                        font: MATH_SENTINEL,
+                        size,
+                        glyphs: Vec::new(),
+                        width: 0.0,
+                        height: 0.0,
+                        depth: 0.0,
+                        source: 0..0,
+                    };
+                    push(&mut out, &mut recs, pl::Item::Box(run), Some(self.recs.len() - 1));
                 }
                 AItem::LineBreak { skip_pt } => {
                     if fills {
@@ -5406,6 +5431,9 @@ fn merge_style(base: TextStyle, s: TextStyle) -> TextStyle {
         slanted: s.slanted || base.slanted,
         caps: s.caps || base.caps,
         family: if s.family != crate::nfss::FamilyKind::Rm { s.family } else { base.family },
+        // Verbatim is a property of the text, so it never comes from the
+        // block's base style; it is carried, not merged away.
+        literal: s.literal,
         undefined: s.undefined.or(base.undefined),
         color: s.color.or(base.color),
     }
@@ -5421,6 +5449,7 @@ fn merge_base(style: TextStyle, base: TextStyle) -> TextStyle {
         slanted: style.slanted || base.slanted,
         caps: style.caps || base.caps,
         family: if style.family != crate::nfss::FamilyKind::Rm { style.family } else { base.family },
+        literal: style.literal,
         undefined: style.undefined.or(base.undefined),
         color: style.color.or(base.color),
     }

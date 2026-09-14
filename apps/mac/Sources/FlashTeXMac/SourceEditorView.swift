@@ -69,6 +69,10 @@ struct SourceEditorView: NSViewRepresentable {
     /// The user's own definition of a command name for the hover peek
     /// (`ShellModel.definitionSummary`; EditorNavigation.swift).
     var userDefinition: (String) -> String? = { _ in nil }
+    /// What the hover resolves a `\ref`/`\cite`/`\includegraphics` against:
+    /// the project's other open documents and a file probe
+    /// (EditorHoverResolution.swift). Read once per hover, not per keystroke.
+    var hoverContext: () -> EditorIntelligence.HoverContext = { .init() }
     /// The current v2 preview, for the inline math hover preview
     /// (MathHoverPreview.swift); nil when there is no v2 frame to crop from.
     var mathPreviewContext: () -> MathHoverPreview.Context? = { nil }
@@ -836,7 +840,8 @@ struct SourceEditorView: NSViewRepresentable {
             guard let tv = textView else { return nil }
             let text = tv.textStorage?.string as NSString? ?? ""
             let h = syntax.highlighter.length == text.length ? syntax.highlighter : nil
-            return EditorIntelligence.quickInfo(in: text, at: index, marks: marks.marks, highlighter: h, userDefinition: parent.userDefinition)
+            return EditorIntelligence.quickInfo(in: text, at: index, marks: marks.marks, highlighter: h,
+                                                userDefinition: parent.userDefinition, context: parent.hoverContext())
         }
 
         /// Inline math hover preview (MathHoverPreview.swift): the formula's

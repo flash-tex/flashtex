@@ -32,7 +32,9 @@ final class EditorIntelligenceTests: XCTestCase {
         XCTAssertEqual(frac?.documentation, "\\frac{num}{den}: a fraction.")
         let ref = EI.quickInfo(in: s, at: 18)
         XCTAssertEqual(ref?.title, "eq:1"); XCTAssertEqual(ref?.detail, "Label reference")
-        XCTAssertEqual(ref?.documentation, "⌘-click to go to \\label{eq:1}.")
+        // The resolved target comes first (EditorHoverResolution.swift); there
+        // is no \label{eq:1} in this snippet, which the hover says outright.
+        XCTAssertEqual(ref?.documentation, "No \\label{eq:1} in this document or the open ones.\n⌘-click to go to \\label{eq:1}.")
         let env = EI.quickInfo(in: s, at: 31)
         XCTAssertEqual(env?.title, "itemize"); XCTAssertEqual(env?.detail, "Environment")
         XCTAssertEqual(env?.documentation, "Bulleted list of \\item entries.")
