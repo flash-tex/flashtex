@@ -3402,7 +3402,8 @@ impl<'a> Context<'a> {
     fn display_opener_block(&mut self, bracket: bool, list_geom: Option<&ListGeom>) -> (BuiltBlock, f64) {
         let s = self.style;
         let size = s.body_size_pt;
-        let (hang, labelwidth, _) = list_geom.map_or((0.0, 0.0, 0.0), |g| self.list_geometry(g, size));
+        let (hang, labelwidth, inner) = list_geom.map_or((0.0, 0.0, 0.0), |g| self.list_geometry(g, size));
+        let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
         let label = list_geom
             .and_then(|g| g.label.as_ref().map(|l| (l, g.description)))
@@ -3415,7 +3416,20 @@ impl<'a> Context<'a> {
                 // `\hskip-\labelwidth \hskip-\labelsep \hbox to\labelwidth
                 // {\hss <label>} \hskip\labelsep`: the label's right edge
                 // ends `\labelsep` before the text edge.
-                let x0 = hang - s.labelsep_pt - nb.width.min(labelwidth);
+                //
+                // `description` instead has `\labelwidth\z@
+                // \itemindent-\leftmargin`, and `\descriptionlabel`'s own
+                // leading `\hspace\labelsep` cancels the `\hskip-\labelsep`,
+                // so the term sets flush at `\leftmargin + \itemindent` —
+                // the same rule [`Self::paragraph_block`] applies when the
+                // item opens with text rather than a display.
+                let x0 = if description {
+                    // `\itemindent-\leftmargin`: `inner` is the innermost
+                    // list's `\leftmargin`, so this is `hang + \itemindent`.
+                    hang - inner
+                } else {
+                    hang - s.labelsep_pt - nb.width.min(labelwidth)
+                };
                 height = nb.height;
                 depth = nb.depth;
                 for (run, rec, dx) in nb.pieces {

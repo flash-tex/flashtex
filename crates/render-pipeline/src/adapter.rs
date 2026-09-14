@@ -964,7 +964,25 @@ pub fn adapt_cached(
     if let Some(pt) = setlength_in(source, "parskip", size, em_ex) {
         style.parskip = crate::style::Skip::fixed(pt);
     }
-    let secnumdepth = counter(source, "secnumdepth").unwrap_or(options.default_secnumdepth);
+    // `\c@secnumdepth`. LaTeX has exactly one such counter and `\@sect` reads
+    // it twice: `\ifnum #2>\c@secnumdepth` suppresses the printed number, and
+    // the same test suppresses the `\numberline` written to the contents
+    // list. Its value is the class's own (`article.cls` line 255
+    // `\setcounter{secnumdepth}{3}`; `report.cls`/`book.cls` 2) unless the
+    // document sets the counter itself.
+    //
+    // This used to be a flat `options.default_secnumdepth` (2), so every
+    // `\subsubsection` in an `article` came out unnumbered while the contents
+    // list — which already derived the class default below — wrote `1.1.1`
+    // for the same heading. `\documentclass`-less input (the visual-oracle
+    // harness and the Mac app send body-only documents, and `resolve` hands
+    // those article geometry regardless) keeps the caller's default.
+    let secnumdepth = counter(source, "secnumdepth").unwrap_or_else(|| {
+        match (&style.class_geometry, explicit_class.is_some()) {
+            (Some(d), true) => d.secnumdepth.clamp(0, i32::from(u8::MAX)) as u8,
+            _ => options.default_secnumdepth,
+        }
+    });
     style.nfss = crate::nfss::Scheme::for_document(&parsed.packages, t1_encoding(source));
     let styles: Vec<Styles> = texts.iter().map(|t| Styles::new(t, style_intervals(t), style.nfss)).collect();
     let labels_fp = {
@@ -1027,13 +1045,9 @@ pub fn adapt_cached(
     // the next block. Nothing is collected without a list.
     let toc_active = commands.iter().any(|c| matches!(c.kind, BodyKind::ContentsList(_)));
     let toc_settings = crate::toc::Settings::read(source, has_chapters);
-    // `\@sect` writes `\numberline` up to the class's `secnumdepth`
-    // (article.cls 3, report/book.cls 2) when the document declares one.
-    let toc_secnumdepth = counter(source, "secnumdepth").unwrap_or(match (explicit_class.is_some(), has_chapters) {
-        (true, true) => 2,
-        (true, false) => 3,
-        (false, _) => options.default_secnumdepth,
-    });
+    // `\@sect` writes `\numberline` up to the same `\c@secnumdepth` that
+    // decides the printed number; the two are one counter, resolved above.
+    let toc_secnumdepth = secnumdepth;
     let mut toc_records: Vec<crate::toc::Record> = Vec::new();
     let mut toc_lists: Vec<(usize, crate::toc::ListKind, Span, bool)> = Vec::new();
     let mut toc_pending: Vec<String> = Vec::new();
@@ -1307,15 +1321,43 @@ pub fn adapt_cached(
                     items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
                 }
                 items.extend(content_items);
-                blocks.push(Block::Heading {
-                    level,
-                    items,
-                    eject_before,
-                    vspace_before,
-                    number,
-                    title,
-                    span: number_span,
-                });
+                // report.cls/book.cls open `thebibliography` with
+                // `\chapter*{\bibname\@mkboth{...}}`, not article.cls's
+                // `\section*{\refname}`: a `\clearpage`, the `\@makeschapterhead`
+                // drop and the name `Bibliography`. The compiler synthesises one
+                // unnumbered level-1 heading reading `References` for every class
+                // (`parser.rs`, `thebibliography`), so a `report` bibliography was
+                // set in the flow of the preceding page under the wrong name —
+                // which is why `fixtures/real-world/thesis-chapter` came out 4
+                // pages against pdflatex's 5.
+                if has_chapters && bibliography_heading(texts, level, &number, number_span) {
+                    // Keep whatever `\label`s the contents-list machinery put
+                    // in front of the title; replace the compiler's
+                    // `References` text with `\bibname`.
+                    let mut head: Vec<Item> = items.into_iter().take_while(|i| matches!(i, Item::Label { .. })).collect();
+                    head.extend(command_words(BIBNAME, number_span));
+                    blocks.push(Block::Chapter {
+                        number: None,
+                        appendix,
+                        items: head,
+                        title: BIBNAME.to_string(),
+                        span: number_span,
+                        // `\chapter*` issues no `\chaptermark`; `thebibliography`'s
+                        // own `\@mkboth` sets both marks, which only a `headings`
+                        // page style would show (report/book default to `plain`).
+                        mark: false,
+                    });
+                } else {
+                    blocks.push(Block::Heading {
+                        level,
+                        items,
+                        eject_before,
+                        vspace_before,
+                        number,
+                        title,
+                        span: number_span,
+                    });
+                }
                 after_heading = true;
                 prev_para_end = None;
             }
@@ -4424,6 +4466,26 @@ pub(crate) fn words_at(text: &str, document: DocumentId, start: usize) -> Vec<It
         push_segment(&mut items, word.to_string(), chars, TextStyle::default());
     }
     items
+}
+
+/// `\bibname` (report.cls line 665, book.cls line 690). article.cls has
+/// `\refname` = `References` instead, which is what the compiler puts in
+/// the heading it synthesises for `thebibliography` whatever the class is.
+const BIBNAME: &str = "Bibliography";
+
+/// Whether this heading is the one the compiler synthesises for
+/// `\begin{thebibliography}`: unnumbered, level 1, and its span — which the
+/// compiler sets to the `\begin` merged with its widest-label argument —
+/// really does start there in the source.
+fn bibliography_heading(texts: &[&str], level: u8, number: &str, span: Span) -> bool {
+    if level != 1 || !number.is_empty() {
+        return false;
+    }
+    texts
+        .get(span.document.0)
+        .and_then(|t| t.get(span.start..span.end))
+        .and_then(|t| t.strip_prefix("\\begin"))
+        .is_some_and(|r| r.trim_start().starts_with("{thebibliography}"))
 }
 
 /// Words of generated text (`Chapter 1`) whose characters all point at
