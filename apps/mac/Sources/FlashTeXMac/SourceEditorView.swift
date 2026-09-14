@@ -175,7 +175,16 @@ struct SourceEditorView: NSViewRepresentable {
         // Fold triangles: never a whole-buffer region scan from SwiftUI's
         // per-frame update (marks / diagnostics while typing). Text changes
         // debounce a rescan in `textDidChange` → `scheduleFoldGutterRefresh`.
-        if textReset { co.refreshFoldGutter(rescan: false) }
+        // A programmatic `tv.string` replace (revert / reload / other document)
+        // posts no `textDidChange`, and `textWasReset` leaves the fold cache
+        // cold, so `rescan: false` would keep the previous document's triangles
+        // (or none, if the highlighter table has not caught up with the new
+        // length — that guard clears the gutter). Rescan now if the line table
+        // already matches; the debounce retries if it does not.
+        if textReset {
+            co.refreshFoldGutter(rescan: true)
+            co.scheduleFoldGutterRefresh()
+        }
         if let selection, selection.token != co.appliedToken {
             co.appliedToken = selection.token
             co.applySelection(selection, to: tv)
@@ -936,6 +945,9 @@ struct SourceEditorView: NSViewRepresentable {
             guard table.length == length, length > 0 else {
                 gutter.foldableLines = []
                 gutter.foldedLines = []
+                // The line table lags a whole-buffer replace: retry after the
+                // highlighter catches up rather than leaving the gutter empty.
+                if rescan, length > 0, table.length != length { scheduleFoldGutterRefresh() }
                 return
             }
             func lineOf(_ loc: Int) -> Int { table.line(at: min(max(0, loc), length - 1)) }
@@ -945,7 +957,9 @@ struct SourceEditorView: NSViewRepresentable {
             }
         }
 
-        private func scheduleFoldGutterRefresh() {
+        /// Debounced whole-buffer fold-triangle rescan. Also called from
+        /// `updateNSView` on a text reset: that path posts no `textDidChange`.
+        func scheduleFoldGutterRefresh() {
             foldGutterWork?.cancel()
             let work = DispatchWorkItem { [weak self] in self?.refreshFoldGutter(rescan: true) }
             foldGutterWork = work

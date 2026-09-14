@@ -382,24 +382,25 @@ final class EditorFoldingTests: XCTestCase {
         probe!.text = documentB
         hosting!.rootView = FoldHost(probe: probe!)
         let resetDeadline = Date().addingTimeInterval(2)
-        while Date() < resetDeadline, gutter.foldableLines != expectedB {
+        while Date() < resetDeadline, tv.string != documentB || gutter.foldableLines != expectedB {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
+        XCTAssertEqual(tv.string, documentB, "updateNSView must apply the bound text reset")
         XCTAssertEqual(gutter.foldableLines, expectedB,
                        "text reset must show B's foldable lines, not A's \(expectedA)")
     }
 
-    private final class FoldHostProbe {
-        var text: String
-        var marks: [EditorDiagnostics.Mark] = []
+    private final class FoldHostProbe: ObservableObject {
+        @Published var text: String
+        @Published var marks: [EditorDiagnostics.Mark] = []
         init(text: String) { self.text = text }
     }
 
     private struct FoldHost: View {
-        var probe: FoldHostProbe
+        @ObservedObject var probe: FoldHostProbe
         var body: some View {
             SourceEditorView(
-                text: Binding(get: { probe.text }, set: { probe.text = $0 }),
+                text: $probe.text,
                 marks: probe.marks
             )
         }
