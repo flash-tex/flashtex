@@ -767,13 +767,11 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                         // The break owns the bytes between the lines so no
                         // interword space is read across it.
                         let prev = lines[i - 1].span;
-                        content.push(Inline::LineBreak {
-                            span: Span {
-                                document: line.span.document,
-                                start: prev.end.min(line.span.start),
-                                end: line.span.start,
-                            },
-                        });
+                        content.push(line_break_inline(Span {
+                            document: line.span.document,
+                            start: prev.end.min(line.span.start),
+                            end: line.span.start,
+                        }));
                     }
                     content.push(Inline::Text {
                         text: line.text.clone(),
@@ -878,7 +876,7 @@ type StashedTitle = (Vec<Inline>, Vec<Inline>, Option<Vec<Inline>>);
 fn author_groups(texts: &[&str], authors: &[Inline]) -> Vec<Vec<Inline>> {
     let mut groups: Vec<Vec<Inline>> = vec![Vec::new()];
     for inline in authors {
-        if let Inline::LineBreak { span } = inline {
+        if let Inline::LineBreak { span, .. } = inline {
             let at = texts.get(span.document.0).and_then(|t| t.get(span.start..)).unwrap_or("");
             if at.starts_with("\\author") {
                 groups.push(Vec::new());
@@ -1846,7 +1844,7 @@ fn clear_page_blocks(texts: &[&str], blocks: &[Block]) -> Vec<usize> {
 fn inline_span(i: &Inline) -> Span {
     match i {
         Inline::Text { span, .. }
-        | Inline::LineBreak { span }
+        | Inline::LineBreak { span, .. }
         | Inline::Math { span, .. }
         | Inline::MathRows { span, .. }
         | Inline::Label { span, .. }
@@ -5026,6 +5024,40 @@ fn line_break_skip(source: &str, after: usize, size: u32) -> Option<f64> {
     parse_dimen(&inner[..close], size)
 }
 
+/// An `Inline::LineBreak` the pipeline makes up itself (a `verbatim` line
+/// ending), written through one constructor so the crate builds against a
+/// pinned compiler with or without the `skip_pt` field.
+fn line_break_inline(span: Span) -> Inline {
+    #[cfg(feature = "linebreak-skip")]
+    {
+        Inline::LineBreak { span, skip_pt: None }
+    }
+    #[cfg(not(feature = "linebreak-skip"))]
+    {
+        Inline::LineBreak { span }
+    }
+}
+
+/// The `\\[<dimen>]` skip the compiler itself parsed, when the pinned
+/// compiler reports one (`parser::Inline::LineBreak::skip_pt`).
+///
+/// [`line_break_skip`] below re-reads the `[...]` out of the source bytes
+/// after the node's span, which is right only for a `\\` written literally in
+/// the document. A `\\` that came out of a macro body carries the *invocation*
+/// as its span (`expansion::Converter::place`), so those bytes are the call's
+/// own arguments -- `{Education}` of `\\cvsection{Education}` -- and the skip
+/// is unreachable from the source. The compiler reads it off the expanded
+/// token stream, like TeX, so its value is preferred and the byte scan stays
+/// as the fallback for a vendor pin that predates the field.
+#[allow(unused_variables)]
+fn reported_line_break_skip(inline: &Inline) -> Option<f64> {
+    #[cfg(feature = "linebreak-skip")]
+    if let Inline::LineBreak { skip_pt, .. } = inline {
+        return *skip_pt;
+    }
+    None
+}
+
 fn matching_brace(bytes: &[u8], open: usize) -> Option<usize> {
     let mut depth = 0usize;
     let mut i = open;
@@ -5979,7 +6011,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 push_gap(&mut items, gap, gap_style, factor);
                 let note = text.as_ref().map(|t| {
                     let mut note = Vec::new();
-                    for (k, part) in t.split(|i| matches!(i, Inline::LineBreak { span: at } if at == span)).enumerate() {
+                    for (k, part) in t.split(|i| matches!(i, Inline::LineBreak { span: at, .. } if at == span)).enumerate() {
                         if k > 0 {
                             note.push(Item::NoteParBreak);
                         }
@@ -6050,8 +6082,10 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 prev_span = Some(span);
                 factor = 1000;
             }
-            Inline::LineBreak { span } => {
-                let skip_pt = line_break_skip(text_of(span.document), span.end, size).unwrap_or(0.0);
+            Inline::LineBreak { span, .. } => {
+                let skip_pt = reported_line_break_skip(inline)
+                    .or_else(|| line_break_skip(text_of(span.document), span.end, size))
+                    .unwrap_or(0.0);
                 items.push(Item::LineBreak { skip_pt });
                 prev_end = Some(span.end);
                 prev_span = Some(*span);

@@ -86,6 +86,18 @@ math-class-override = []
 # Turning it on is then a one-line default-feature edit, like `amsmath-inline`
 # was.
 par-leading = []
+# `\\[<dimen>]`'s skip is read off the compiler's own `Inline::LineBreak`
+# (`skip_pt`) instead of being re-scanned out of the source bytes after the
+# node's span. The byte scan cannot see the argument of a `\\` that came from a
+# macro body -- there the span is the invocation, so the bytes after it are the
+# call's arguments -- which silently drops every `\\[-6pt]` inside a
+# `\newcommand` (`fixtures/real-world/cv`: +5.98bp per `\cvsection`,
+# `tests/line_break_skip_macro.rs`). Needs the compiler's
+# `parser::Inline::LineBreak::skip_pt`; off until vendor/ is re-pinned past
+# that change, and with it off the byte scan behaves exactly as before.
+# Turning it on is then a one-line default-feature edit, like `amsmath-inline`
+# was.
+linebreak-skip = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }
