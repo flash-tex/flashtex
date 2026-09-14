@@ -2134,6 +2134,9 @@ final class CompletingTextView: NSTextView {
     /// line's lexing. Unwired — a bare text view in a test — it says no, and
     /// the list keeps the plain text-mode order.
     var mathModeAtCaret: (Int) -> Bool = { _ in false }
+    /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
+    let folds = EditorFoldStore()
+
     /// Whether a mechanical fix hint is showing at the caret (the owner
     /// answers from `ShellModel.caretFix`). Only Esc is handled here; Tab
     /// accepts the fix in `SourceEditorView.handleTab`, after this view has
@@ -2475,6 +2478,7 @@ final class CompletingTextView: NSTextView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         foregroundDecorator?(dirtyRect)
+        folds.drawPlaceholders(in: dirtyRect, textView: self)
     }
 
     /// Scroll view + text view pair, like `NSTextView.scrollableTextView()`

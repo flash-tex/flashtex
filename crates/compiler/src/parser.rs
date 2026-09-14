@@ -980,7 +980,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textgreater",
     "textbraceleft",
     "textbraceright",
-    // `text_builtins::TEXT_ACCENTS`.
+    // `text_builtins::TEXT_ACCENTS` and the
+    // `text_builtins::CAPITAL_ACCENT_ALIASES` alias names.
     "c",
     "v",
     "u",
@@ -989,6 +990,12 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "k",
     "d",
     "b",
+    "capitalcaron",
+    "capitalbreve",
+    "capitalring",
+    "capitalogonek",
+    "capitalhungarumlaut",
+    "capitalcedilla",
     "uline",
     "underline",
     "sout",
@@ -2385,8 +2392,14 @@ impl P<'_> {
             | "textgreater" | "textbraceleft" | "textbraceright" => {
                 self.text_symbol(name, span, para)
             }
-            // `text_builtins::TEXT_ACCENTS`.
-            "c" | "v" | "u" | "H" | "r" | "k" | "d" | "b" => self.text_accent(name, span, para),
+            // `text_builtins::TEXT_ACCENTS` and the
+            // `text_builtins::CAPITAL_ACCENT_ALIASES` names that resolve to
+            // one of them; the alias reaches the same implementation under
+            // its canonical name.
+            "c" | "v" | "u" | "H" | "r" | "k" | "d" | "b" | "capitalcaron" | "capitalbreve"
+            | "capitalring" | "capitalogonek" | "capitalhungarumlaut" | "capitalcedilla" => {
+                self.text_accent(text_builtins::canonical_accent_name(name), span, para)
+            }
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
             // ulem `\uline`/`\sout` (need the package). Kernel text-mode
             // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook

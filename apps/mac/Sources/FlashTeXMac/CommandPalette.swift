@@ -108,6 +108,10 @@ enum CommandPaletteModel {
         case .wrapInEnvironment: model.editorNavigation.wrapShown = true
         case .changeEnvironment: model.presentChangeEnvironment()
         case .renameSymbol: model.presentRenameSymbol()
+        case .fold: EditorFoldAction.fold()
+        case .unfold: EditorFoldAction.unfold()
+        case .foldAll: EditorFoldAction.foldAll()
+        case .unfoldAll: EditorFoldAction.unfoldAll()
         case .nextDiagnostic: model.goToDiagnostic(forward: true)
         case .previousDiagnostic: model.goToDiagnostic(forward: false)
         case .nextOccurrence: model.stepOccurrence(forward: true, panel: model.problemsPanel)

@@ -999,6 +999,10 @@ explain that nothing is loaded.
 | Editor > Trim Trailing Whitespace | Trim Trailing Whitespace of the whole document (verbatim bodies and a line that is only `\\` plus spaces are left alone) |
 | ⌃I | Re-indent Lines (selected lines, or the caret's line; LaTeX-aware; one undo step). Not Tab; Vim does not bind ⌃I; ⌘⇧I is Toggle Captures |
 | Edit > Re-indent Document | Re-indent Document (same rules over the whole buffer; one undo step; no shortcut) |
+| ⌘⌥← | Fold the innermost environment or section at the caret (first line stays visible with an inline …; hidden characters stay in the buffer) |
+| ⌘⌥→ | Unfold the innermost folded region at the caret |
+| ⌘⌥⇧← | Fold All environments and sectioning blocks |
+| ⌘⌥⇧→ | Unfold All folded regions |
 | ⌘⇧D | Go to matching `\begin`/`\end` or `\label`/`\ref` |
 | ⌃⌘J | Go to definition of the command/environment under the caret (`\newcommand`, `\def`, `\DeclareMathOperator`, `\newenvironment`; ⌘-click does the same, hover peeks the body) |
 | ⌘⇧T | Go to symbol: fuzzy picker over every heading, environment and label of the open documents |
