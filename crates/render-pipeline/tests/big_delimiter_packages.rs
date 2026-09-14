@@ -39,7 +39,7 @@ fn big_bracket(class_option: &str, amsmath: bool) -> (u16, String) {
     let docs = [SourceDocument { path: "main.tex", text: &text }];
     let r = render(&docs, "main.tex", 1, "p", &fonts, &RenderOptions::default());
     for page in &r.v2.pages {
-        for it in &page.items {
+        for it in page.resident_items() {
             if let Item::GlyphRun(run) = it {
                 for g in &run.glyphs {
                     let c = &run.clusters[g.cluster as usize];

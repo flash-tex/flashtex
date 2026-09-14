@@ -27,7 +27,7 @@ const ROWS: &str = "\\begin{array}{c} a \\\\ b \\\\ c \\\\ d \\\\ e \\\\ f \\end
 fn fence(body: &str, ch: char) -> (Vec<(u16, f64)>, f64, f64) {
     let r = render_one(&doc(body));
     for page in &r.v2.pages {
-        for it in &page.items {
+        for it in page.resident_items() {
             let Item::GlyphRun(run) = it else { continue };
             for (ci, c) in run.clusters.iter().enumerate() {
                 if run.text.as_bytes()[c.text_start_byte..c.text_end_byte] != *ch.to_string().as_bytes() {

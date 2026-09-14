@@ -29,7 +29,7 @@ use flashtex_paragraph_layout::Hyphenator as _;
 
 use crate::adapter::{self, Block, Doc, Item as AItem, ListGeom, ListMargin, ParaPart, ParaStyle, TextStyle};
 use crate::display::{
-    self, Caret, Cluster, Diagnostic, DisplayList, DocumentResource, FontResource, Glyph, GlyphRun, Paint, Provenance,
+    self, Cluster, Diagnostic, DisplayList, DocumentResource, FontResource, Glyph, GlyphRun, Paint, Provenance,
     Rect, Rule, SourceRange, Tick,
 };
 use crate::fonts::{Family, FontSet, LoadedFace, Role};
@@ -7576,15 +7576,10 @@ fn math_items(
                     width: Tick::from_tex_pt(g.width),
                     height: hh,
                 },
-                carets: display::Carets {
-                    first: Caret {
-                        text_byte: start,
-                        x: Tick::from_tex_pt(g.x),
-                        top,
-                        height: hh,
-                    },
-                    last: None,
-                },
+                // The carets are derived from `text_start_byte` and
+                // `hit_rect` (`Cluster::first_caret`), and the run's
+                // `end_caret` is `None`, so this cluster's carets are what
+                // the explicit `first`/`last: None` used to spell out.
                 provenance: Provenance::Source(glyph_src),
             });
             continue;
