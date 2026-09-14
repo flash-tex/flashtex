@@ -2730,6 +2730,13 @@ impl<'a> Context<'a> {
         if let (true, Some(em)) = (indent, sized.and_then(|s| s.parindent_em)) {
             params.parindent = em * self.text_params(TextStyle::default(), size).quad;
         }
+        // `\itemindent`: `\@labels` opens the item's first line with
+        // `\hskip\itemindent`, so that line alone starts `\leftmargin +
+        // \itemindent` in. Only natbib's author-year bibliography sets it
+        // (to `-\bibhang`), and only the line the `\item` starts.
+        if let Some(geom) = list_geom.filter(|g| g.itemindent_em != 0.0 && starts_paragraph) {
+            params.parindent += geom.itemindent_em * self.text_params(TextStyle::default(), size).quad;
+        }
         let lines = self.break_paragraph(&list, &params, items, Some(&recs))?;
         self.report_overfull(&lines, &list, &recs);
         // `\vspace{<n>em}` inside the paragraph's last group (the abstract
@@ -2894,6 +2901,7 @@ impl<'a> Context<'a> {
                     match m {
                         ListMargin::Fixed(pt) => pt.to_bits().hash(&mut h),
                         ListMargin::Widest(text) => text.hash(&mut h),
+                        ListMargin::Em(em) => em.to_bits().hash(&mut h),
                     }
                 }
                 if let Some((text, span)) = &g.label {
@@ -3184,9 +3192,13 @@ impl<'a> Context<'a> {
         let labelsep = self.style.labelsep_pt;
         let mut hang = 0.0;
         let mut labelwidth = 0.0;
+        let quad = self.text_params(TextStyle::default(), size).quad;
         for margin in &geom.margins {
             let (m, w) = match margin {
                 ListMargin::Fixed(pt) => (*pt, (pt - labelsep).max(0.0)),
+                // natbib's `\bibhang`: `1em` of the body font, and no label
+                // to measure (`\@biblabel` is `\hfill`).
+                ListMargin::Em(em) => (em * quad, 0.0),
                 ListMargin::Widest(text) => {
                     let w = self.text_width(text, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
                     (w + labelsep, w)
