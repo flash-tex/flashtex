@@ -300,6 +300,7 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "setlist" => "\\setlist{itemsep=1pt}".into(),
         "item" => "\\begin{itemize}\\item x\\end{itemize}".into(),
         "caption" => "\\begin{figure}\\caption{x}\\end{figure}".into(),
+        "uline" => "\\usepackage{ulem}\\uline{x}".into(),
         _ => with_arguments(name, arguments, "1pt"),
     }
 }

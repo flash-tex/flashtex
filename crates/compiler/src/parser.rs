@@ -197,6 +197,11 @@ pub enum Inline {
     },
     /// xcolor `\colorbox`/`\fcolorbox` (see [`ColorBox`]).
     ColorBox(Box<ColorBox>),
+    /// ulem `\uline{...}`: the argument as one fragment with a rule under
+    /// it. First step: the fragment does not break across lines (ulem's
+    /// leaders can). Kernel text-mode `\underline` is not this wrapper
+    /// (latex.ltx: `$\underline{\hbox{#1}}$`, math-rule geometry).
+    Underline(Box<Underline>),
     /// `\includegraphics` in running text: an image box (see
     /// `crate::graphics`). Figures and tables re-derive their graphics from
     /// the source instead.
@@ -204,6 +209,29 @@ pub enum Inline {
     /// `\scalebox`, `\resizebox`, `\rotatebox`, `\reflectbox` around
     /// horizontal material (see `crate::graphics`).
     Transform(Box<crate::graphics::TransformBox>),
+}
+
+/// ulem.sty `\def\ULthickness{.4pt}`.
+pub const UL_THICKNESS_PT: f64 = 0.4;
+
+/// An underline wrapper (`Inline::Underline`).
+///
+/// Geometry follows ulem.sty `\uline` via `\ULset`: thickness is
+/// `\ULthickness` (0.4pt). Default `\ULdepth` is `\maxdimen`;
+/// `\UL@setULdepth` sets it from `\dp` of `\hbox{{(j}}` (max depth of `(`
+/// and `j` in the current text font) plus 0.4pt. The painted rule is
+/// `\hrule height -\dp((j) depth (\dp((j)+0.4pt)`: top at that font depth
+/// below the baseline, thickness 0.4pt. For cmr/lmr the `(` depth is
+/// 0.25em (pdflatex 10pt: `rule(-2.5+2.9)`; 12pt: `rule(-3.0+3.4)`). This
+/// Core 14 layout has no per-glyph TFM, so it uses that 0.25em default.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Underline {
+    pub content: Vec<Inline>,
+    pub thickness_pt: f64,
+    /// From the command through the argument's closing brace.
+    pub span: Span,
+    /// See `Inline::Text::space_before`.
+    pub space_before: bool,
 }
 
 /// `\colorbox[model]{fill}{text}` or `\fcolorbox[model]{frame}{fill}{text}`
@@ -828,6 +856,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textgreater",
     "textbraceleft",
     "textbraceright",
+    "uline",
 ];
 
 /// Parses a LaTeX dimension (`12pt`, `1.5em`, `0.5in`, `2cm`, `10mm`, `2ex`,
@@ -2125,6 +2154,11 @@ impl P<'_> {
                 self.text_symbol(name, span, para)
             }
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
+            // ulem `\uline` (needs the package). Kernel text-mode
+            // `\underline` stays unsupported here (latex.ltx:
+            // `$\underline{\hbox{#1}}$`); math-mode `\underline` is in
+            // `math.rs`.
+            "uline" => self.text_uline(span, para),
             "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
             | "negthickspace" | "enspace" => {
                 if let Some(amount) = text_builtins::text_kern(name, self.math_packages.amsmath) {
@@ -4673,6 +4707,31 @@ impl P<'_> {
         siunitx::raw_text(tokens.iter().map(|t| &t.token))
     }
 
+    /// `\uline{...}` (ulem). Without the package, diagnoses that it is
+    /// required and typesets the argument as plain text.
+    fn text_uline(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let (tokens, argument_span) = self.required_group("uline", span);
+        let full = span.merge(argument_span);
+        if !self.packages.iter().any(|package| package == "ulem") {
+            self.diags.push(Diagnostic::command_error(
+                "uline",
+                "\\uline needs \\usepackage{ulem}",
+                Some(full),
+                Some("typeset the argument as plain text".into()),
+            ));
+            para.extend(self.box_inlines(tokens));
+            return;
+        }
+        let content = self.box_inlines(tokens);
+        para.push(Inline::Underline(Box::new(Underline {
+            content,
+            thickness_pt: UL_THICKNESS_PT,
+            span: full,
+            space_before,
+        })));
+    }
+
     fn text_logo(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
         let space_before = self.space_precedes(self.i - 1);
         if let Some(logo) = TextLogo::from_command(name) {
@@ -5558,6 +5617,9 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // Colour packages (crate::color) with every option replayed.
         "xcolor" => crate::color::Colors::xcolor(&options.join(","), None).1.is_empty(),
         "color" => crate::color::Colors::color_sty(&options.join(",")).1.is_empty(),
+        // `\uline` is implemented; `\emph` is not redefined (ulem's default
+        // `ULforem`) and `\sout`/`\uuline` stay unsupported if used.
+        "ulem" => options.iter().all(|option| *option == "normalem"),
         _ => false,
     }
 }

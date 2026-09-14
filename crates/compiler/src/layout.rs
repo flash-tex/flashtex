@@ -2100,6 +2100,7 @@ fn visit_inline_references(inlines: &[Inline], visitor: &mut impl FnMut(&str, Sp
                 }
             }
             Inline::Transform(b) => visit_inline_references(&b.content, visitor),
+            Inline::Underline(u) => visit_inline_references(&u.content, visitor),
             _ => {}
         }
     }
@@ -2286,6 +2287,42 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     size_declaration_pt(level, c.constraints.font_size_pt)
                 });
                 c.place_rule(rule, text_size, *span, style_font(*style), *space_before)
+            }
+            Inline::Underline(u) => {
+                if !u.space_before {
+                    c.x = c.content_end;
+                }
+                let start_x = c.x;
+                emit(c, &u.content, size, font);
+                let width = c.content_end - start_x;
+                let baseline = c.y;
+                // ulem.sty `\UL@setULdepth`: `\dp` of `\hbox{{(j}}` is the
+                // max of `(` and `j`. For cmr/lmr that is `(` at 0.25em.
+                // Core 14 has no per-glyph TFM, so this layout uses 0.25em.
+                // The rule is `\hrule height -0.25em depth (0.25em+0.4pt)`:
+                // top at 0.25em below the baseline (pdflatex 10pt
+                // `rule(-2.5+2.9)`; 12pt `rule(-3.0+3.4)`).
+                let ul_depth = 0.25 * size;
+                c.ensure_extents(0.0, ul_depth + u.thickness_pt);
+                if width > 0.0 && u.thickness_pt > 0.0 {
+                    c.pages
+                        .last_mut()
+                        .expect("at least one page")
+                        .items
+                        .push(TextItem {
+                            text: math::FRACTION_RULE_CHAR.to_string(),
+                            x_pt: round2(start_x),
+                            baseline_y_pt: round2(baseline),
+                            font_size_pt: size,
+                            span: u.span,
+                            font,
+                            rule: Some(RuleGeometry {
+                                y_pt: round2(baseline + ul_depth),
+                                width_pt: round2(width),
+                                height_pt: round2(u.thickness_pt),
+                            }),
+                        });
+                }
             }
         }
     }

@@ -276,6 +276,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("LaTeX", "", "latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \\TeX"),
     ("LaTeXe", "", "\\LaTeX, kern .15em, 2 and a text-style subscript varepsilon"),
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
+    ("uline", "{...}", "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)"),
     ("thinspace", "", "text kern .16667em (math: thin muskip)"),
     ("negthinspace", "", "text kern -.16667em"),
     ("medspace", "", "text kern .2222em"),
@@ -814,6 +815,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "multicol",
         "",
         "multicols and multicols* with preface, \\columnbreak, \\raggedcolumns (columns set by the render pipeline)",
+    ),
+    (
+        "ulem",
+        "normalem",
+        "\\uline: 0.4pt rule under the argument (single-line); \\emph is not redefined",
     ),
 ];
 
