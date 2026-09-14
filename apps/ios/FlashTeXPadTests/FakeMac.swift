@@ -49,7 +49,17 @@ final class FakeMac {
     /// Runs on `queue`.
     private var destinationJSON: Any {
         guard let d = _destination else { return NSNull() }
-        return ["destination_id": d.destinationId, "project_id": d.projectId, "path": d.path, "base_revision": d.baseRevision]
+        var payload: [String: Any] = ["destination_id": d.destinationId, "project_id": d.projectId, "path": d.path, "base_revision": d.baseRevision]
+        if let caret = d.caretContext {
+            // Absent optionals are omitted, not written as null: JSONSerialization
+            // refuses a Swift `Optional` and the decoder treats both the same.
+            var context: [String: Any] = ["mode": caret.mode, "wrap": caret.wrap,
+                                          "environments": caret.environments, "amsmath": caret.amsmath]
+            if let delimiter = caret.delimiter { context["delimiter"] = delimiter }
+            if let environment = caret.environment { context["environment"] = environment }
+            payload["caret_context"] = context
+        }
+        return payload
     }
 
     init(keys: [Key], macName: String = "Fake Mac", destination: NearbyWire.Destination? = nil, port: UInt16 = 0) throws {
