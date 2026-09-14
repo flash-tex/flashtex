@@ -466,7 +466,24 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         "upright named operator (\\mathop); starred and withlimits forms take limits",
         true,
     ),
-    (&["bmod", "mod"], "", "upright mod", true),
+    (
+        &["colon"],
+        "",
+        "function-arrow colon: punctuation (0mu/3mu) as the kernel declares it, amsmath's 2mu/6mu when amsmath is loaded",
+        true,
+    ),
+    (
+        &["bmod"],
+        "",
+        "upright mod as a \\mathbin, with the kernel's 5mu in place of \\medmuskip",
+        true,
+    ),
+    (
+        &["mod"],
+        "{n}",
+        "amsmath upright mod: 12mu, an ordinary mod, 6mu, then the argument",
+        true,
+    ),
     (&["pmod"], "{n}", "parenthesised (mod n)", true),
     (
         &["mathbb"],
@@ -925,12 +942,22 @@ pub fn inventory() -> Inventory {
             crate::amssymb::SymbolFont::Msbm => "msbm",
         };
         let class = format!("{:?}", ams.class).to_lowercase();
+        // Which `\usepackage` the document has to load: base LaTeX2e defines
+        // none of these names, and `math::command_atom` diagnoses the command
+        // when its package is absent, so the inventory has to say so.
+        let package = match ams.provider {
+            crate::amssymb::Provider::Amsfonts => "amsfonts",
+            crate::amssymb::Provider::Amssymb => "amssymb",
+        };
         commands.push(Command {
             name,
             mode: Mode::Math,
             origin: Origin::MathSymbol,
             arguments: "",
-            description: format!("symbol {} (\\math{class}, {font} \"{:02X})", ams.text, ams.slot),
+            description: format!(
+                "symbol {} (\\math{class}, {font} \"{:02X}; needs {package})",
+                ams.text, ams.slot
+            ),
             glyph: Some(ams.text),
             renders: true,
         });
@@ -971,6 +998,21 @@ pub fn inventory() -> Inventory {
             mode: Mode::Math,
             description: format!("math grid, {align} cells{fences}"),
         });
+    }
+
+    // Which `\usepackage` a math construct of the amsmath bundle needs. Base
+    // LaTeX2e defines none of `math::MATH_CONSTRUCTS`, and `command_atom`
+    // diagnoses each one when its file is absent, so the inventory has to say
+    // so — the same "needs {package}" the amssymb/amsfonts symbols carry.
+    // Applied as a pass over the finished list rather than at each push site,
+    // because these 37 names arrive through three different loops.
+    for command in &mut commands {
+        if command.mode != Mode::Math {
+            continue;
+        }
+        if let Some(provider) = math::construct_provider(command.name) {
+            command.description = format!("{} (needs {})", command.description, provider.package());
+        }
     }
 
     let packages = PACKAGES
