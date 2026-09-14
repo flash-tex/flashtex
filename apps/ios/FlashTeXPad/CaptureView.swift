@@ -169,6 +169,13 @@ struct CaptureView: View {
 
 /// In-app camera (AVFoundation through `UIImagePickerController`), shown only
 /// where `isSourceTypeAvailable(.camera)`; the simulator gets the Photos picker.
+///
+/// `UIImagePickerController` owns its capture session, so — as in
+/// `PairingScannerView` — continuous autofocus is asserted on the shared
+/// `AVCaptureDevice` once the picker's session has started, and re-asserted
+/// on subject-area changes. Unlike the QR scanner this does NOT restrict the
+/// range to `.near`: a capture may be a whiteboard across the room as easily
+/// as a page on the desk.
 struct CameraPicker: UIViewControllerRepresentable {
     let onImage: (UIImage) -> Void
     let onCancel: () -> Void
@@ -178,14 +185,35 @@ struct CameraPicker: UIViewControllerRepresentable {
         c.sourceType = .camera
         c.cameraCaptureMode = .photo
         c.delegate = context.coordinator
+        context.coordinator.startFocusing(after: PairingScannerView.focusSettleDelay)
         return c
     }
     func updateUIViewController(_ c: UIImagePickerController, context: Context) {}
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
+    static func dismantleUIViewController(_ c: UIImagePickerController, coordinator: Coordinator) {
+        coordinator.stopFocusing()
+    }
+
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
         let parent: CameraPicker
+        private var focus: CameraFocus.Reapplier?
+        private var focusWork: DispatchWorkItem?
         init(_ p: CameraPicker) { parent = p }
+
+        func startFocusing(after delay: TimeInterval) {
+            let work = DispatchWorkItem { [weak self] in
+                self?.focus = CameraFocus.Reapplier(nearRange: false)
+            }
+            focusWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        }
+
+        func stopFocusing() {
+            focusWork?.cancel()
+            focusWork = nil
+            focus = nil
+        }
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
             if let img = (info[.editedImage] ?? info[.originalImage]) as? UIImage { parent.onImage(img) } else { parent.onCancel() }
         }

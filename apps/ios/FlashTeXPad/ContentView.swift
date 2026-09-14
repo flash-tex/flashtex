@@ -298,6 +298,7 @@ struct MacLinkPanel: View {
     @State private var instructions = "Transcribe this capture"
     @State private var qrText = ""
     @State private var scanning = false
+    @State private var focusNote: String?
 
     var body: some View {
         Form {
@@ -366,10 +367,25 @@ struct MacLinkPanel: View {
             }
             .sheet(isPresented: $scanning) {
                 NavigationStack {
-                    PairingScannerView { text in qrText = text; scanning = false; Task { await model.pair(bootstrapText: text, host: host, port: port) } }
+                    PairingScannerView(onPayload: { text in
+                        qrText = text; scanning = false
+                        Task { await model.pair(bootstrapText: text, host: host, port: port) }
+                    }, onFocus: { outcome in focusNote = outcome.note })
                         .navigationTitle("Scan the Mac's pairing QR")
                         .toolbar { Button("Cancel") { scanning = false } }
+                        // Only set when the camera cannot autofocus, so the
+                        // owner is told rather than left wondering why the
+                        // code will not resolve.
+                        .safeAreaInset(edge: .bottom) {
+                            if let n = focusNote {
+                                Text(n).font(.footnote).padding(8)
+                                    .frame(maxWidth: .infinity)
+                                    .background(.bar)
+                                    .accessibilityIdentifier("pair.qr.focusNote")
+                            }
+                        }
                 }
+                .onDisappear { focusNote = nil }
             }
             Section("Nearby-v1 pairing by typed code (apps/mac/docs/nearby-v1-proposal.md §2, §7)") {
                 Text("Or enter what the Mac's Nearby window shows (Edit > Nearby Companion… > Show Pairing Code): host/port, TXT salt and fp, and the code.")
