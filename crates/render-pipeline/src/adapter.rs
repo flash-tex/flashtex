@@ -644,11 +644,34 @@ pub struct SizedPara {
 pub type ParLeading = Option<flashtex_compiler::parser::FontSizeLevel>;
 
 /// How a paragraph-shape environment began (see [`Block::Paragraph`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EnvOpen {
     /// `\begin{...}` was read in vertical mode (after a blank line, a
     /// heading, a rule or at the document start): `\partopsep` is added.
     pub vmode: bool,
+    /// The environment's own `\@topsep`/`\@topsepadd`, when the package
+    /// assigns them outright instead of letting `\@trivlist` derive them
+    /// from `\topsep`, `\partopsep` and `\parskip` (see [`EnvSkips`]).
+    /// `None` keeps the `\@trivlist` derivation, which is what `center`,
+    /// `quote` and `abstract` get.
+    pub skips: Option<EnvSkips>,
+}
+
+/// An environment that sets `\@topsep` (the opening `\addvspace` in
+/// `\@item`) and `\@topsepadd` (the closing one in `\@endparenv`) itself,
+/// so neither is the `\@trivlist` computation.
+///
+/// amsthm does this for every theorem-like environment: `\@thm` assigns
+/// `\@topsep\thm@preskip` and `\@topsepadd\thm@postskip`, and
+/// `\thm@space@setup` sets both of those to `\topsep`. That is why a
+/// theorem never picks up `\partopsep` or `\parskip`, however it was
+/// entered.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EnvSkips {
+    /// `\@topsep`: the skip before the environment's first line.
+    pub open: crate::style::Skip,
+    /// `\@topsepadd`: the skip after its last.
+    pub close: crate::style::Skip,
 }
 
 #[derive(Debug)]
@@ -1125,10 +1148,31 @@ pub fn adapt_cached(
     let mut toc_pending: Vec<String> = Vec::new();
     let mut chapter_starts: Vec<(usize, String)> = Vec::new();
     let mut after_heading = false;
+    // The block that is, so far, the last one inside an open theorem-like
+    // environment. `\endtrivlist`'s `\@endparenv` puts `\@topsepadd` after
+    // the *last* paragraph of the environment, and only the next unit says
+    // whether there is one: a block still inside the same environment
+    // continues the run, anything else closes it. The flag is set on the
+    // block itself, so the `toc_lists` splice below cannot shift it.
+    let mut open_theorem: Option<usize> = None;
     // Last source span of the previous paragraph block (None after a
     // heading or rule), for rejoining a display with its paragraph.
     let mut prev_para_end: Option<Span> = None;
     for unit in split_at_page_breaks(texts, &lowered, size, &style) {
+        // Does this unit continue the theorem-like environment that the
+        // previous block left open? Only a paragraph inside it that is not
+        // itself a fresh `\item` does.
+        let continues_theorem = matches!(
+            unit.kind,
+            UnitKind::Paragraph { in_theorem: true, theorem_item: false, .. }
+        );
+        if !continues_theorem {
+            if let Some(at) = open_theorem.take() {
+                if let Some(Block::Paragraph { env_close, .. }) = blocks.get_mut(at) {
+                    *env_close = true;
+                }
+            }
+        }
         let mut eject_before = unit.eject_before;
         let vspace_before = unit.vspace_before;
         limitations.extend(unit.limitations);
@@ -1689,8 +1733,18 @@ pub fn adapt_cached(
                     sized: None,
                     leading_pt: par_leading_pt(par_leading, style.base),
                 });
+                if in_theorem {
+                    open_theorem = Some(blocks.len() - 1);
+                }
                 after_heading = false;
             }
+        }
+    }
+    // A theorem-like environment that runs to the end of the document still
+    // closes: `\end{document}` is not what ended it.
+    if let Some(at) = open_theorem.take() {
+        if let Some(Block::Paragraph { env_close, .. }) = blocks.get_mut(at) {
+            *env_close = true;
         }
     }
     // The contents lists, now that every record is known.
@@ -1715,6 +1769,9 @@ pub fn adapt_cached(
         .collect();
     for (i, block) in blocks.iter_mut().enumerate() {
         if let Block::Paragraph { style, env_close, .. } = block {
+            // `ParaStyle::Plain` includes every theorem-like environment,
+            // whose `env_close` the unit loop above has already set from the
+            // `\end{<theorem>}` that actually closed it.
             if *style != ParaStyle::Plain {
                 *env_close = styles.get(i + 1).is_none_or(|next| *next != *style);
             }
@@ -2269,7 +2326,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
             let begin = rfind_command(gap, "begin")?;
             let before = &gap[..begin];
             let vmode = prev_vmode || prev_end.is_none() || has_blank_line(before) || find_command(before, "par").is_some();
-            Some(EnvOpen { vmode })
+            Some(EnvOpen { vmode, skips: None })
         });
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
         // or `\par` between them) is not indented.
@@ -2288,19 +2345,31 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
         // The `\item` of an amsthm theorem-like environment: the gap before
         // this block holds its `\begin{...}` (only the environment's first
         // paragraph, so later ones keep the ambient `\parindent`).
-        let theorem_item = list.is_none()
-            && styled.is_none()
-            && first.is_some_and(|f| {
+        // `Some(is_proof)` when this block is the `\item` that opens a
+        // theorem-like environment; `proof` is told apart because its closing
+        // `\@topsepadd` is not `\topsep` (see [`theorem_skips`]).
+        let theorem_open: Option<bool> = (list.is_none() && styled.is_none())
+            .then(|| {
+                let f = first?;
                 let gap_start = match prev_end {
                     Some(p) if p.document == f.document && p.end <= f.start => Some(p.end),
                     Some(_) => None,
                     None => Some(0),
                 };
-                match (texts.get(f.document.0), gap_start) {
-                    (Some(t), Some(g)) => opens_theorem_item(t, g, f.start, &theorem_envs),
-                    _ => false,
-                }
-            });
+                let t = texts.get(f.document.0)?;
+                opens_theorem_item(t, gap_start?, f.start, &theorem_envs).map(|name| name == "proof")
+            })
+            .flatten();
+        let theorem_item = theorem_open.is_some();
+        // amsthm's `\@item` opens the `\trivlist` with `\addvspace\@topsep`
+        // exactly as `center`/`quote` do, so the theorem reuses the
+        // environment machinery rather than a second one beside it.
+        let env_open = env_open.or_else(|| {
+            theorem_open.map(|proof| EnvOpen {
+                vmode: false,
+                skips: Some(theorem_skips(style, proof)),
+            })
+        });
         let in_theorem = theorem_item
             || first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| in_theorem_environment(t, f.start, &theorem_envs)));
         // `\paragraph{...}`/`\subparagraph{...}`: the compiler set the title
@@ -4036,6 +4105,39 @@ fn brace_depth(prefix: &str) -> i64 {
     depth
 }
 
+/// The `\@topsep`/`\@topsepadd` of a theorem-like environment, read off
+/// pdfTeX's own vertical list (TeX Live 2025; oracle only, never in the
+/// product path — the quoted `\showoutput` glue is in
+/// `tests/amsthm_topsep.rs`).
+///
+/// * a `\newtheorem` environment gets `\topsep` on both sides, because
+///   `\@thm` assigns `\@topsep`/`\@topsepadd` from `\thm@preskip`/
+///   `\thm@postskip` and `\thm@space@setup` sets both to `\topsep`. The
+///   trace is `\glue 8.0 plus 2.0 minus 4.0` / `9.0 plus 3.0 minus 5.0` /
+///   `10.0 plus 4.0 minus 6.0` at a 10/11/12pt base: `\topsep` exactly, with
+///   no `\partopsep` and no `\parskip`.
+/// * `proof` is not a `\@thm`. It is an ordinary `\trivlist` opened after
+///   an explicit `\par` (so in vertical mode) under amsthm's own
+///   `\topsep6\p@\@plus6\p@`, so its closing `\@topsepadd` is that 6pt
+///   plus `\partopsep`: the trace is `8.0 plus 7.0 minus 1.0`,
+///   `9.0 plus 7.0 minus 1.0`, `9.0 plus 8.0 minus 2.0` — equal to `\topsep`
+///   at a 10pt and 11pt base and 1pt short of it at 12pt.
+///
+/// Its *opening* skip is left at `\topsep`: `\addvspace` keeps the larger of
+/// the new skip and `\lastskip`, and the closing skip of whatever precedes a
+/// `proof` is at least that in every arrangement measured here.
+fn theorem_skips(style: &Stylesheet, proof: bool) -> EnvSkips {
+    let topsep = style.topsep;
+    if !proof {
+        return EnvSkips { open: topsep, close: topsep };
+    }
+    let p = style.partopsep;
+    EnvSkips {
+        open: topsep,
+        close: crate::style::Skip::new(6.0 + p.natural, 6.0 + p.stretch, p.shrink),
+    }
+}
+
 /// The environments amsthm sets as a `\trivlist` holding a single `\item`:
 /// every `\newtheorem`/`\newtheorem*` declaration in the sources plus the
 /// fixed `proof`. See [`opens_theorem_item`] for what that costs the first
@@ -4071,9 +4173,9 @@ fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
 /// the `\hskip\labelsep` the head box starts with. So the head sits flush on
 /// the left margin and the first line is *not* indented; only the following
 /// paragraphs of the same environment take the ambient `\parindent`.
-fn opens_theorem_item(text: &str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> Option<&'t str> {
     if gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
-        return false;
+        return None;
     }
     // The compiler gives the theorem head inline the `\begin` command's own
     // span, so the opener is usually *at* the paragraph's first span rather
@@ -4083,13 +4185,12 @@ fn opens_theorem_item(text: &str, gap_start: usize, at: usize, envs: &std::colle
     } else {
         rfind_command(&text[gap_start..at], "begin").map(|r| gap_start + r)
     };
-    let Some(begin) = begin else {
-        return false;
-    };
+    let begin = begin?;
     text[begin..]
         .split_once('{')
         .and_then(|(_, rest)| rest.split_once('}'))
-        .is_some_and(|(name, _)| envs.contains(name.trim()))
+        .map(|(name, _)| name.trim())
+        .filter(|name| envs.contains(*name))
 }
 
 /// Whether byte `at` lies inside a theorem-like environment: the `\begin`/

@@ -365,6 +365,11 @@ struct ParaState {
     /// The open paragraph-shape environment began in vertical mode
     /// (`\@topsepadd` keeps `\partopsep` for the closing skip too).
     env_vmode: bool,
+    /// The open environment's own `\@topsep`/`\@topsepadd`, when it set
+    /// them itself (`adapter::EnvSkips`: every amsthm theorem-like
+    /// environment does). Carried from the block that opened the
+    /// environment to the one that closes it, like `env_vmode`.
+    env_skips: Option<crate::adapter::EnvSkips>,
 }
 
 /// LaTeX/plain penalties (article defaults).
@@ -3070,6 +3075,7 @@ impl<'a> Context<'a> {
             };
             if let Some(e) = env_open {
                 st.env_vmode = e.vmode;
+                st.env_skips = e.skips;
             }
             // `\@item` opens the environment with `\addvspace{\@topsep}`,
             // not `\vskip`, and only when `\if@nobreak` is false:
@@ -3090,7 +3096,10 @@ impl<'a> Context<'a> {
             // Both are read off pdfTeX's vertical list; the probes and the
             // quoted `\showoutput` glue are in `tests/abstract_env.rs`.
             let mut env_before = env_open.map(|e| {
-                let (n, stretch, shrink) = env_skip(e.vmode);
+                let (n, stretch, shrink) = match e.skips {
+                    Some(s) => (s.open.natural, s.open.stretch, s.open.shrink),
+                    None => env_skip(e.vmode),
+                };
                 let last = blocks.last().and_then(|b| b.vertical.space_after).map_or(0.0, |s| s.0);
                 if st.after_heading || last >= n {
                     (0.0, 0.0, 0.0)
@@ -3101,9 +3110,10 @@ impl<'a> Context<'a> {
             // `\endlist` of a list opened at another size takes *that*
             // size's `\@listi` (`abstract`'s `quotation` under `\small`),
             // not the class's `\normalsize` one.
-            let env_after = env_close.then(|| match sized.and_then(|s| s.close_skip) {
-                Some(s) => (s.natural, s.stretch, s.shrink),
-                None => env_skip(st.env_vmode),
+            let env_after = env_close.then(|| match (sized.and_then(|s| s.close_skip), st.env_skips) {
+                (Some(s), _) => (s.natural, s.stretch, s.shrink),
+                (None, Some(e)) => (e.close.natural, e.close.stretch, e.close.shrink),
+                (None, None) => env_skip(st.env_vmode),
             });
             let first_block = blocks.len();
             // TeX's pre_display_size: the width of the line before a
@@ -3278,7 +3288,36 @@ impl<'a> Context<'a> {
             if let Some(skip) = env_after {
                 if blocks.len() > first_block {
                     if let Some(last) = blocks.last_mut() {
+                        // `\@endparenv` is `\addvspace\@topsepadd`, and
+                        // `\addvspace` keeps whichever of the new skip and
+                        // `\lastskip` is the larger, *whole* -- it does not
+                        // add them (`\@xaddvskip`: `\vskip-\lastskip
+                        // \vskip\@tempskipb`, or nothing at all). That is
+                        // visible the moment an environment ends in a display:
+                        // a theorem whose last thing is `\[...\]` leaves
+                        // `\belowdisplayskip` (11pt at an 11pt base), which
+                        // beats `\topsep` (9pt) and absorbs it. pdfTeX's own
+                        // vertical list for `fixtures/real-world/lecture-notes`
+                        // shows `\glue(\belowdisplayskip) 11.0 plus 3.0
+                        // minus 6.0`, then `\glue -11.0 ...` and
+                        // `\glue 11.0 ...` again: net 11.0, not 20.0.
+                        //
+                        // Only an environment that declares its own skips
+                        // (`adapter::EnvSkips`, i.e. amsthm's) takes that
+                        // path. For the rest, `space_after` is not
+                        // necessarily `\lastskip` at all: the abstract head's
+                        // `\vspace{-.5em}` reaches the page through
+                        // `\vadjust`, *before* the penalty and the closing
+                        // skip, so `\addvspace` cannot see it and the two do
+                        // add up (`adapter::SizedPara::vspace_after_em`).
+                        // Telling those two apart for every environment needs
+                        // `VBlock` to carry them separately, which is a
+                        // change of its own; a theorem block never has a
+                        // `sized` vspace, so this one is exact as it stands.
+                        let absorbs = st.env_skips.is_some();
                         last.vertical.space_after = Some(match last.vertical.space_after {
+                            Some(prev) if absorbs && prev.0 >= skip.0 => prev,
+                            Some(_) if absorbs => skip,
                             Some((n, s, k)) => (n + skip.0, s + skip.1, k + skip.2),
                             None => skip,
                         });
@@ -3306,7 +3345,7 @@ impl<'a> Context<'a> {
         // `\footnote` inside a float box: `footnotes::prepare` has already
         // run, so a note raised here would set its mark and never be placed.
         let (notes, anchors) = (self.notes.len(), self.note_anchors.len());
-        let mut st = ParaState { after_heading: false, env_vmode: false };
+        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None };
         let outer = std::mem::replace(&mut self.parbox, true);
         // `\@floatboxreset` runs `\@setminipage`, and `\addvspace` does
         // nothing while `\if@minipage` holds (latex.ltx: it is cleared by
@@ -7672,7 +7711,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 events.push((blocks.len(), event.clone(), *span));
             }
             Block::Paragraph { .. } => {
-                let mut st = ParaState { after_heading, env_vmode };
+                let mut st = ParaState { after_heading, env_vmode, env_skips: None };
                 ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp, quad);
                 (after_heading, env_vmode) = (st.after_heading, st.env_vmode);
             }
