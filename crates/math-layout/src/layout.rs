@@ -5,7 +5,9 @@
 //! numbers below are TeX's when the Computer Modern adapter is used.
 
 use crate::boxes::{BoxKind, Child, Flex, MathBox};
-use crate::mathlist::{Atom, AtomClass, BigSizing, Limits, MathList, Nucleus};
+use crate::mathlist::{
+    Atom, AtomClass, BigSizing, Limits, MathList, Nucleus, TextPiece, TextStyle,
+};
 use crate::metrics::{Extensible, Glyph, MathFontMetrics, MathParams};
 use crate::source::SourceTag;
 use crate::spacing::{Space, between};
@@ -340,6 +342,7 @@ impl Engine<'_> {
                 return self.atom(&inner, class, style);
             }
             Nucleus::Text(text) => (self.make_text(text, style), 0.0, false),
+            Nucleus::TextRun(pieces) => (self.make_text_run(pieces, style), 0.0, false),
             Nucleus::Overline(body) => (self.make_over(body, style), 0.0, false),
             Nucleus::Underline(body) => (self.make_under(body, style), 0.0, false),
             Nucleus::Styled { style: inner, body } => (self.clean_box(body, *inner), 0.0, false),
@@ -409,6 +412,55 @@ impl Engine<'_> {
             items.push(MathBox::kern(last_italic));
         }
         MathBox::hlist(items)
+    }
+
+    fn make_text_styled(&mut self, text: &str, style: Style, text_style: TextStyle) -> MathBox {
+        let mut items = Vec::new();
+        let mut last_italic = 0.0;
+        for ch in text.chars() {
+            if ch == ' ' {
+                items.push(MathBox::kern(self.m.text_space(style.size_class())));
+                last_italic = 0.0;
+                continue;
+            }
+            match self
+                .m
+                .text_glyph_with_style(ch, style.size_class(), text_style)
+            {
+                Some(g) => {
+                    last_italic = g.italic;
+                    items.push(MathBox::glyph(&g));
+                }
+                None => self.limitations.push(Limitation::MissingGlyph(ch)),
+            }
+        }
+        if last_italic != 0.0 {
+            items.push(MathBox::kern(last_italic));
+        }
+        MathBox::hlist(items)
+    }
+
+    fn make_text_run(&mut self, pieces: &[TextPiece], style: Style) -> MathBox {
+        let inline_style = Style {
+            level: match style.level {
+                crate::style::StyleLevel::Display | crate::style::StyleLevel::Text => {
+                    crate::style::StyleLevel::Text
+                }
+                crate::style::StyleLevel::Script => crate::style::StyleLevel::Script,
+                crate::style::StyleLevel::ScriptScript => crate::style::StyleLevel::ScriptScript,
+            },
+            cramped: style.cramped,
+        };
+        let boxes = pieces
+            .iter()
+            .map(|piece| match piece {
+                TextPiece::Text { text, style } => {
+                    self.make_text_styled(text, inline_style, *style)
+                }
+                TextPiece::Math(list) => self.list(list, inline_style),
+            })
+            .collect();
+        MathBox::hlist(boxes)
     }
 
     /// Rule 9 and `make_over`: `overbar(x, 3θ, θ)` with x in cramped style.

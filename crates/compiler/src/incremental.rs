@@ -679,6 +679,13 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
     {
         match nucleus {
             Nucleus::Symbol(_) | Nucleus::Text(_) | Nucleus::Bold(_) => {}
+            Nucleus::TextRun(pieces) => {
+                for piece in pieces {
+                    if let crate::math::TextPiece::Math(list) = piece {
+                        shift_math_list(list, changes, deltas)?;
+                    }
+                }
+            }
             Nucleus::SizedDelimiter { .. } => {}
             Nucleus::Space { .. } => {}
             Nucleus::Rule(_) => {}
