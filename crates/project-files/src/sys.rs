@@ -140,6 +140,60 @@ mod imp {
         check(unsafe { libc::linkat(fd, o.as_ptr(), fd, n.as_ptr(), 0) })
     }
 
+    /// A new name `new` in `dir` for the open file `file` itself, not for
+    /// whatever a name currently points to, so no rename or swap of the
+    /// file's old name can redirect it. Fails with `EEXIST`, atomically, if
+    /// `new` exists.
+    ///
+    /// Linux only: `linkat(fd, "", dirfd, new, AT_EMPTY_PATH)`, which older
+    /// kernels allow only with `CAP_DAC_READ_SEARCH`, then
+    /// `linkat(AT_FDCWD, "/proc/self/fd/N", dirfd, new, AT_SYMLINK_FOLLOW)`.
+    /// Any other failure (and every call on macOS, which has neither) means
+    /// "not available here"; callers fall back to a checked name-based link.
+    pub fn link_fd_at(file: &File, dir: &File, new: &str) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            let n = cstr(new)?;
+            // SAFETY: an open file descriptor, an empty C string, an open
+            // directory descriptor and a valid C string.
+            let rc = unsafe {
+                libc::linkat(
+                    file.as_raw_fd(),
+                    c"".as_ptr(),
+                    dir.as_raw_fd(),
+                    n.as_ptr(),
+                    libc::AT_EMPTY_PATH,
+                )
+            };
+            let first = match check(rc) {
+                Ok(()) => return Ok(()),
+                Err(e) if e.raw_os_error() == Some(EEXIST) => return Err(e),
+                Err(e) => e,
+            };
+            let proc_path = cstr(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
+            // SAFETY: valid C strings and an open directory descriptor.
+            let rc = unsafe {
+                libc::linkat(
+                    libc::AT_FDCWD,
+                    proc_path.as_ptr(),
+                    dir.as_raw_fd(),
+                    n.as_ptr(),
+                    libc::AT_SYMLINK_FOLLOW,
+                )
+            };
+            match check(rc) {
+                Ok(()) => Ok(()),
+                Err(e) if e.raw_os_error() == Some(EEXIST) => Err(e),
+                Err(_) => Err(first),
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = (file, dir, new);
+            Err(io::Error::from_raw_os_error(ENOTSUP))
+        }
+    }
+
     /// Whether a [`link_at`] failure means the filesystem has no hard links
     /// (Linux reports `EPERM`, others `ENOTSUP`/`EOPNOTSUPP`/`ENOSYS`).
     pub fn link_unsupported(err: &io::Error) -> bool {
@@ -235,6 +289,51 @@ mod imp {
         })
     }
 
+    /// Fills `buf` from the OS cryptographic random source:
+    /// `arc4random_buf` on macOS; on Linux the `getrandom` system call
+    /// (called directly, so no minimum libc version is needed), falling back
+    /// to reading `/dev/urandom` on kernels without it. Errors if no source
+    /// is available; callers fail rather than use a predictable value.
+    pub fn random_bytes(buf: &mut [u8]) -> io::Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            // SAFETY: `buf` is writable for `buf.len()` bytes;
+            // `arc4random_buf` cannot fail.
+            unsafe { libc::arc4random_buf(buf.as_mut_ptr().cast(), buf.len()) };
+            Ok(())
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let mut filled = 0;
+            while filled < buf.len() {
+                let rest = &mut buf[filled..];
+                // SAFETY: `rest` is writable for `rest.len()` bytes.
+                let n = unsafe {
+                    libc::syscall(
+                        libc::SYS_getrandom,
+                        rest.as_mut_ptr(),
+                        rest.len(),
+                        0 as libc::c_uint,
+                    )
+                };
+                if n > 0 {
+                    filled += n as usize;
+                    continue;
+                }
+                let err = io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                if err.raw_os_error() == Some(libc::ENOSYS) {
+                    use std::io::Read;
+                    return File::open("/dev/urandom")?.read_exact(&mut buf[filled..]);
+                }
+                return Err(err);
+            }
+            Ok(())
+        }
+    }
+
     /// Advisory exclusive lock; `Ok(false)` when another open file
     /// description (any process, or another handle in this one) holds it.
     pub fn try_lock_exclusive(file: &File) -> io::Result<bool> {
@@ -315,6 +414,9 @@ mod imp {
     pub fn link_unsupported(_: &io::Error) -> bool {
         false
     }
+    pub fn link_fd_at(_: &File, _: &File, _: &str) -> io::Result<()> {
+        Err(unsupported())
+    }
     pub fn list_dir(_: &File) -> io::Result<Vec<Vec<u8>>> {
         Err(unsupported())
     }
@@ -325,6 +427,9 @@ mod imp {
         Err(unsupported())
     }
     pub fn try_lock_exclusive(_: &File) -> io::Result<bool> {
+        Err(unsupported())
+    }
+    pub fn random_bytes(_: &mut [u8]) -> io::Result<()> {
         Err(unsupported())
     }
     pub fn unlock(_: &File) {}

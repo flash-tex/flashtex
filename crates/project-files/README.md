@@ -163,8 +163,12 @@ mtime, identity and mode from the same open descriptor.
    Unless `force`, compare with `expected` → `ModifiedExternally`,
    `DeletedExternally` or `AlreadyExists`, nothing written.
 3. `openat(O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW)` a temp file
-   `.<name>.flashtex-tmp-<pid>-<n>` in the same directory, write, `fsync`,
-   `fchmod` to the existing mode.
+   `.<name>.flashtex-tmp-<32 hex digits>` in the same directory — 128 bits
+   from the OS random source (`arc4random_buf` on macOS, the `getrandom`
+   system call or `/dev/urandom` on Linux), so the name cannot be predicted
+   or pre-planted — then write, `fsync`, `fchmod` to the existing mode. Its
+   device/inode is taken from the descriptor, which stays open. Cleanup on
+   any failure unlinks the temp name only while it still names that file.
 4. Re-observe the target. If it is now a symlink → `Refused` (temp removed).
    If, unless `force`, anything changed since step 2 (a file appeared,
    disappeared, or its identity/size/mtime/hash moved) →
@@ -174,16 +178,34 @@ mtime, identity and mode from the same open descriptor.
 5. Classify the target once more with `fstatat(AT_SYMLINK_NOFOLLOW)`: a
    symlink or special file is refused (with `force` or without), and unless
    `force` a different file than step 4 saw is `ModifiedDuringSave`.
+   Immediately before every name-based install call, `fstatat` the temp name:
+   it must still name the file from step 3 (same device/inode), otherwise the
+   save is refused and nothing is installed. Immediately after the install,
+   the target must name that file, otherwise `ModifiedDuringSave` (never
+   success).
    - **Absent target (fail-closed no-clobber):** install the temp file with
      `renameat2(RENAME_NOREPLACE)` (Linux) / `renameatx_np(RENAME_EXCL)`
-     (macOS). Where the filesystem does not support that, use
-     `linkat(temp, target)` — which also fails with `EEXIST` atomically —
-     then `unlinkat(temp)`. An entry that appeared after the check is never
+     (macOS). Where the filesystem does not support that, hard-link it —
+     `linkat` also fails with `EEXIST` atomically. On Linux the link is bound
+     to the open descriptor (`linkat(fd, "", AT_EMPTY_PATH)`, else
+     `/proc/self/fd/N` with `AT_SYMLINK_FOLLOW`), so a swap of the temp name
+     cannot redirect it; otherwise, and on macOS, `linkat` of the re-checked
+     temp name. Then `unlinkat(temp)`, only while the temp name still names
+     the saved file, retried once; if it still fails the save returns an
+     error naming the leftover link (the file is installed and verified, but
+     success is not reported). An entry that appeared after the check is never
      replaced: it is refused if it is a symlink or special file, otherwise
      `ModifiedDuringSave` unless `force`. If neither primitive is supported,
      a non-forced save fails with an `Unsupported` I/O error and writes
      nothing; only `force` falls back to a plain `renameat`.
    - **Existing target:** `renameat` temp over target.
+
+   Residual of the temp check: `renameat` (and the name-based `linkat`) binds
+   a name, so a process that can write the directory, has listed the random
+   temp name, and swaps it between the check and the call gets its entry
+   moved or linked to the target — as a directory entry, never followed —
+   and the save reports a conflict; that process could have replaced the
+   target entry directly anyway.
 
    Then `fsync` the directory. A directory
    fsync failure is `SaveError::DirectorySync` — a hard error; the rename has
@@ -367,11 +389,14 @@ with its `check()` result.
   driver's open side effect are **best-effort** for devices: they rest on
   `O_NONBLOCK`, the pre-open `fstatat` and the post-open `fstat`, and
   whether the driver honours `O_NONBLOCK` is up to the driver.
-- **Race tests.** Each check-then-use window in `save.rs` calls a hidden,
+- **Race tests.** Each check-then-use window in `save.rs` calls a
   thread-local test hook (`save::race_hook`, not API). The tests swap the
   entry from inside the hook, so the worst interleaving is exercised
-  deterministically on every run. The older timing-based stress tests are
-  kept as extra coverage.
+  deterministically on every run. The hook module and every firing point
+  are compiled only under `cfg(test)` or the non-default `race-hook` cargo
+  feature, which the crate's own integration tests enable through a self
+  dev-dependency; normal and release builds contain no hook code. The older
+  timing-based stress tests are kept as extra coverage.
 - **Not the compiler.** The scanner does no macro expansion, no catcode
   changes, no `\import`/`\subfile`/`\InputIfFileExists`, and does not follow
   references inside `\newcommand` bodies or conditionals. Arguments containing

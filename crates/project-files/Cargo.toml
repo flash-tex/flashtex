@@ -13,3 +13,12 @@ path = "src/lib.rs"
 [dependencies]
 libc = "0.2.189"
 unicode-normalization = "0.1.25"
+
+[features]
+# Deterministic race-test hooks (`save::race_hook`). Test-only and never on by
+# default: a normal or release build contains no hook code. This crate's own
+# integration tests turn it on through the self dev-dependency below.
+race-hook = []
+
+[dev-dependencies]
+flashtex-project-files = { path = ".", features = ["race-hook"] }
