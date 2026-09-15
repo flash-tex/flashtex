@@ -338,6 +338,8 @@ enum N {
     Glue(f64, f64, f64),
     Marker(usize),
     FBox(usize),
+    /// `\enlargethispage`'s `\insert\@kludgeins` (index into `enlarge`).
+    Enlarge(usize),
 }
 
 struct Col {
@@ -832,6 +834,54 @@ fn column_floats(boxes: &[FloatBox], tops: &[usize], bots: &[usize], fp: &FloatP
     }
 }
 
+/// The vertical-list index of a float marker that would stand at `index`,
+/// right after block `b` (`list[index]` starts the next block): past the
+/// next block's leading penalty when the command that put it there was
+/// written between `b` and the float `at` (`First.\par\clearpage` then an
+/// `[h]` figure). The penalty is stored on the block after it, so without
+/// this the float would be read before the page break.
+fn after_break_written_before(ctx: &Context, b: &BuiltBlock, at: Span, list: &[VItem], index: usize) -> usize {
+    let mut i = index;
+    if matches!(list.get(i), Some(VItem::Glue { fil: true, .. })) {
+        i += 1;
+    }
+    if !matches!(list.get(i), Some(VItem::Penalty(_))) {
+        return index;
+    }
+    let Some(from) = block_end(ctx, b, at.document) else { return index };
+    let Some(gap) = ctx.texts.get(at.document.0).and_then(|t| t.get(from..at.start)) else { return index };
+    const VERTICAL_BREAKS: [&str; 9] = ["newpage", "clearpage", "cleardoublepage", "pagebreak", "nopagebreak", "goodbreak", "filbreak", "penalty", "nobreak"];
+    if !VERTICAL_BREAKS.iter().any(|c| adapter::find_command(gap, c).is_some()) {
+        return index;
+    }
+    i += 1;
+    // `\filbreak`'s `\vfilneg` follows its penalty.
+    if matches!(list.get(i), Some(VItem::Glue { fil: true, .. })) {
+        i += 1;
+    }
+    i
+}
+
+/// Where block `b`'s material in `document` ends in the source.
+fn block_end(ctx: &Context, b: &BuiltBlock, document: flashtex_compiler::DocumentId) -> Option<usize> {
+    b.recs
+        .iter()
+        .flatten()
+        .filter_map(|&r| match &ctx.recs[r] {
+            BoxRec::Text { clusters, .. } => clusters.last().map(|c| c.span),
+            BoxRec::Math(m) => Some(ctx.maths[*m].span),
+            BoxRec::Rule { span, .. } => Some(*span),
+            BoxRec::Picture(p) => Some(p.span),
+            BoxRec::Table(t) => Some(t.span),
+            BoxRec::ColorBox(c) => Some(c.span),
+            BoxRec::Leader { .. } => None,
+            BoxRec::Underline(u) => Some(u.span),
+        })
+        .filter(|s| s.document == document)
+        .map(|s| s.end)
+        .max()
+}
+
 fn block_source(ctx: &Context, b: &BuiltBlock, items: impl Iterator<Item = usize>) -> Vec<Span> {
     items
         .filter_map(|i| b.recs.get(i).copied().flatten())
@@ -886,6 +936,7 @@ pub fn paginate(
     short: f64,
     columns: usize,
     clears: &[usize],
+    enlarge: &[pagebuild::Enlarge],
 ) -> (Vec<BuiltPage>, Vec<(u32, display::Item)>, Vec<(String, u32)>, Vec<Option<InsertArea>>) {
     // Marker positions, before caption blocks are appended.
     let vblocks: Vec<pagebuild::VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
@@ -907,10 +958,10 @@ pub fn paginate(
                 let line = b.block.lines.lines.iter().position(|l| block_source(ctx, b, l.items.clone()).iter().any(|s| s.document == at.document && s.end > at.start));
                 match line.and_then(|li| list.iter().position(|v| matches!(v, VItem::Box { payload, .. } if *payload == (bi, li)))) {
                     Some(i) => i + 1,
-                    None => pagebuild::vlist(p, &vblocks[..=bi]).len(),
+                    None => after_break_written_before(ctx, &blocks[bi], at, list, pagebuild::vlist(p, &vblocks[..=bi]).len()),
                 }
             }
-            Some(bi) => pagebuild::vlist(p, &vblocks[..=bi]).len(),
+            Some(bi) => after_break_written_before(ctx, &blocks[bi], at, list, pagebuild::vlist(p, &vblocks[..=bi]).len()),
         };
         markers.push((index, f));
     }
@@ -950,9 +1001,16 @@ pub fn paginate(
             _ => build_box(ctx, blocks, s, &fp, p),
         })
         .collect();
-    let mut nodes: Vec<N> = Vec::with_capacity(list.len() + 4 * specs.len());
+    let mut nodes: Vec<N> = Vec::with_capacity(list.len() + 4 * specs.len() + enlarge.len());
     let mut mi = 0;
+    let mut ei = 0;
     for i in 0..=list.len() {
+        // An `\enlargethispage` at the same place as a float is taken to
+        // come first.
+        while ei < enlarge.len() && enlarge[ei].at <= i {
+            nodes.push(N::Enlarge(ei));
+            ei += 1;
+        }
         while mi < markers.len() && markers[mi].0 == i {
             nodes.push(N::Marker(markers[mi].1));
             mi += 1;
@@ -1019,6 +1077,9 @@ pub fn paginate(
     let mut held: Vec<PageIns> = Vec::new();
     let mut areas: Vec<Option<InsertArea>> = Vec::new();
     let mut start = 0usize;
+    // Where the page being built began (its enlargements may precede its
+    // first box: an insertion is never discarded, §1000).
+    let mut page_from = 0usize;
     loop {
         while start < nodes.len() {
             match nodes[start] {
@@ -1050,6 +1111,16 @@ pub fn paginate(
         // only cleared once the page is settled, because the float machinery
         // can `restart` this page and the notes must survive that.
         let mut is = InsertState::new(insr, vsize);
+        // `\@kludgeins`: `\pagegoal` grows with each enlargement, and the
+        // column is packed with the box as it stood at the best break.
+        let mut kludge = pagebuild::Kludge::default();
+        for n in &nodes[page_from..start] {
+            if let N::Enlarge(k) = *n {
+                kludge.add(&enlarge[k]);
+            }
+        }
+        is.goal += kludge.pt;
+        let mut best_kludge = kludge;
         let head_reserve = regions.reserved(cur_li);
         for h in &held {
             is.append(h.list.clone(), h.height_plus_depth, None, total, depth, head_reserve, &mut stretch, &mut shrink);
@@ -1097,14 +1168,25 @@ pub fn paginate(
             }
         };
         while i < nodes.len() {
+            if let N::Enlarge(k) = nodes[i] {
+                kludge.add(&enlarge[k]);
+                is.goal += enlarge[k].pt;
+                i += 1;
+                continue;
+            }
             if let N::Marker(f) = nodes[i] {
                 if !processed[f] {
                     processed[f] = true;
                     // `\@specialoutput`: `\@pageht` is the held page plus
-                    // `\ht\footins + \skip\footins + \dp\footins`.
+                    // `\ht\footins + \skip\footins + \dp\footins`, plus
+                    // `\ht\@kludgeins` (the enlargement, negative) when that
+                    // box has no width (no `\enlargethispage*`).
                     let mut pageht = if has_box { total + depth } else { 0.0 };
                     if is.started && is.height > 0.0 {
                         pageht += is.height + insr.skip.0;
+                    }
+                    if !kludge.star {
+                        pageht -= kludge.pt;
                     }
                     let before = pl.col.colroom;
                     let here = pl.add_to_cur_col(f, pageht, !specs[f].hmode);
@@ -1135,6 +1217,7 @@ pub fn paginate(
                 if best.is_none_or(|(_, lc)| c <= lc) {
                     best = Some((i, c));
                     best_ins = is.last_ins;
+                    best_kludge = kludge;
                 }
                 if c == AWFUL_BAD || pi <= EJECT_PENALTY {
                     fired = Some(best.map_or(i, |(bi, _)| bi));
@@ -1223,7 +1306,9 @@ pub fn paginate(
             }
         }
         let end = fired.unwrap_or(nodes.len());
-        let ejected = matches!(nodes.get(end), Some(N::Penalty(pen)) if *pen <= EJECT_PENALTY);
+        // `\newpage`'s `\vfil\penalty-\@M`; a bare forced penalty the
+        // document wrote (`pagebuild::BARE_EJECT_PENALTY`) has no `\vfil`.
+        let ejected = matches!(nodes.get(end), Some(N::Penalty(pen)) if *pen == EJECT_PENALTY);
         held.clear();
         let notes = pagebuild::settle_inserts(is, end, best_ins, insr.split_top_skip, &mut held);
         let page_no = pl.pages.len() as u32 + 1;
@@ -1282,7 +1367,7 @@ pub fn paginate(
                 N::V(j) => body.push(list[*j].clone()),
                 N::Glue(w, st, sh) => body.push(VItem::Glue { width: *w, stretch: *st, shrink: *sh, fil: false }),
                 N::Penalty(pen) => body.push(VItem::Penalty(*pen)),
-                N::Marker(_) => {}
+                N::Marker(_) | N::Enlarge(_) => {}
             }
         }
         if let Some((h, d, payload)) = region_foot {
@@ -1296,7 +1381,7 @@ pub fn paginate(
         // `\@doclearpage`'s `\box\@cclv\vfil` and `\newpage`'s `\vfil` do
         // the same for an ejected or final column.
         let vfil = region_break || ejected || fired.is_none();
-        let colp = PageParams { vsize: pl.colht, maxdepth, ..*p };
+        let colp = if fired.is_some() { best_kludge } else { kludge }.params(&PageParams { vsize: pl.colht, maxdepth, ..*p }, shrink);
         let cf = column_floats(&boxes, &tops, &bots, &fp);
         let (page, area, placed) = pagebuild::make_column(&colp, &body, false, vfil, &notes, insr, &cf);
         let overfull_by = page.overfull_by;
@@ -1337,6 +1422,7 @@ pub fn paginate(
                 })
                 .is_some_and(|b| clears.binary_search(&b).is_ok());
         start = end;
+        page_from = end;
         if region_break {
             pl.start_longtable_column();
         } else {

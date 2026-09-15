@@ -7508,6 +7508,17 @@ fn block_key(cache: Option<&RenderCache>, style_fp: u64, tag: u8, items: &[AItem
     (Some(h.finish()), Some((document, base)))
 }
 
+/// The page-break penalty before block `doc_index` of `doc` whose
+/// `eject_before` is set: `\newpage`'s, or a bare forced penalty the
+/// document wrote (`adapter::Doc::bare_ejects`).
+fn eject_penalty(doc: &Doc, doc_index: usize) -> i32 {
+    if doc.bare_ejects.binary_search(&doc_index).is_ok() {
+        pagebuild::BARE_EJECT_PENALTY
+    } else {
+        pagebuild::EJECT_PENALTY
+    }
+}
+
 fn page_params(s: &Stylesheet) -> pagebuild::PageParams {
     pagebuild::PageParams {
         vsize: s.text_height_pt,
@@ -7517,6 +7528,7 @@ fn page_params(s: &Stylesheet) -> pagebuild::PageParams {
         lineskip: s.lineskip_pt,
         lineskiplimit: s.lineskiplimit_pt,
         flushbottom: !s.raggedbottom,
+        squeeze: 0.0,
     }
 }
 
@@ -7632,7 +7644,7 @@ fn line_source(recs: &[BoxRec], b: &BuiltBlock, li: usize) -> Option<Span> {
 /// follows that line; one between paragraphs precedes the next block.
 fn enlarge_marks(ctx: &Context, blocks: &[BuiltBlock], list: &[pagebuild::VItem], starts: &[usize]) -> Vec<pagebuild::Enlarge> {
     let mut out = Vec::new();
-    for &(span, pt) in &ctx.style.enlarge_this_page {
+    for &(span, pt, star) in &ctx.style.enlarge_this_page {
         let after = |s: &Span| s.document == span.document && s.start >= span.end;
         let found = blocks.iter().enumerate().find_map(|(bi, b)| (0..b.block.lines.lines.len()).find(|&li| line_source(&ctx.recs, b, li).is_some_and(|s| after(&s))).map(|li| (bi, li)));
         let at = match found {
@@ -7641,7 +7653,7 @@ fn enlarge_marks(ctx: &Context, blocks: &[BuiltBlock], list: &[pagebuild::VItem]
             None => None,
         };
         if let Some(at) = at {
-            out.push(pagebuild::Enlarge { at, pt });
+            out.push(pagebuild::Enlarge { at, pt, star });
         }
     }
     out.sort_by_key(|e| e.at);
@@ -7752,7 +7764,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 let (key, origin) = key_for(b'H', items, &[u64::from(*level)]);
                 if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.heading_block(*level, items)) {
                     if *eject_before {
-                        b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                        b.vertical.penalty_before = Some(eject_penalty(doc, doc_index));
                     }
                     // `\@startsection`: `\addvspace{<before>}` — right after
                     // another heading (`\@nobreak`) no skip at all; otherwise
@@ -7956,7 +7968,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             } => {
                 let mut b = ctx.rule_block(*span);
                 if *eject_before {
-                    b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                    b.vertical.penalty_before = Some(eject_penalty(doc, doc_index));
                 }
                 add_vspace(&mut b.vertical, *vspace_before);
                 blocks.push(b);
@@ -7972,7 +7984,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 let _ = labels;
                 if let Some((mut b, region)) = ctx.longtable_block(table, lengths) {
                     if *eject_before {
-                        b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                        b.vertical.penalty_before = Some(eject_penalty(doc, doc_index));
                     }
                     add_vspace(&mut b.vertical, *vspace_before);
                     longtables.push((blocks.len(), region));
@@ -7989,7 +8001,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             } => {
                 let mut b = ctx.picture_block(*document, picture, *centered);
                 if *eject_before {
-                    b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                    b.vertical.penalty_before = Some(eject_penalty(doc, doc_index));
                 }
                 add_vspace(&mut b.vertical, *vspace_before);
                 blocks.push(b);
@@ -8098,7 +8110,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     } else {
         let regions = pagebuild::resolve_regions(&list, &longtables);
         let (mut pages, images, labels, areas) =
-            floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref(), short_cols, short, columns, &clear_starts);
+            floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref(), short_cols, short, columns, &clear_starts, &enlarge);
         if insertions.is_some() {
             footnotes::place(ctx, &mut blocks, &mut pages, areas);
         }

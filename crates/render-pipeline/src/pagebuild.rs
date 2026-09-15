@@ -67,6 +67,12 @@ pub struct PageParams {
     /// (TeX §676). Pages ended by `\newpage`/`\clearpage` (whose `\vfil`
     /// absorbs the difference) and the last page keep natural glue.
     pub flushbottom: bool,
+    /// `\enlargethispage*` on this page (`\@make@specialcolbox` with a
+    /// `\@kludgeins` of positive width): the column is `\vbox to\@colht`
+    /// holding the material and `\vskip\@colht-\ht\@outputbox+\pageshrink`,
+    /// so its glue shrinks by `\pageshrink` (this value, the page builder's
+    /// shrink when it fired) whatever `vsize` is. 0 otherwise.
+    pub squeeze: f64,
 }
 
 /// A line placed on a page: baseline measured downward from the text
@@ -355,10 +361,41 @@ pub fn vlist_starts(p: &PageParams, blocks: &[VBlock]) -> (Vec<VItem>, Vec<usize
 /// negative insertion of `\count` 1000, so `\pagegoal` (and the size the
 /// column is packed to) grows by `pt` on whatever page contributes it. An
 /// insertion is never discarded at the top of a page (§1000).
+///
+/// `star`: `\enlargethispage*`, whose box holds `\hbox{\kern\p@}` too.
+/// The goal grows the same; the column is squeezed (see
+/// [`PageParams::squeeze`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Enlarge {
     pub at: usize,
     pub pt: f64,
+    pub star: bool,
+}
+
+/// A page's `\@kludgeins` box: the enlargements contributed to it so far
+/// (`pt` their sum), and whether one was starred (the box then has width).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct Kludge {
+    pub(crate) pt: f64,
+    pub(crate) star: bool,
+}
+
+impl Kludge {
+    pub(crate) fn add(&mut self, e: &Enlarge) {
+        self.pt += e.pt;
+        self.star |= e.star;
+    }
+
+    /// The parameters a page with this box is packed with: `\vsize` grown
+    /// by the enlargements, and `\enlargethispage*`'s squeeze by
+    /// `pageshrink` (`\pageshrink` in the output routine).
+    pub(crate) fn params(self, p: &PageParams, pageshrink: f64) -> PageParams {
+        PageParams {
+            vsize: p.vsize + self.pt,
+            squeeze: if self.star { pageshrink.max(0.0) } else { 0.0 },
+            ..*p
+        }
+    }
 }
 
 /// The enlargements contributed to a page whose previous page ended at
@@ -611,7 +648,7 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
         // `\pagegoal` grows with each `\enlargethispage` contributed; the
         // page is packed to the goal in force at its best break.
         let mut next_enlarge = first_enlarge(enlarge, prev_end);
-        let (mut enlarged, mut best_enlarged) = (0.0f64, 0.0f64);
+        let (mut enlarged, mut best_enlarged) = (Kludge::default(), Kludge::default());
         if let Some((h, d, _)) = head {
             st.total = (p.topskip - h).max(0.0) + h;
             st.depth = d;
@@ -619,7 +656,7 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
         }
         while i < list.len() {
             while let Some(e) = enlarge.get(next_enlarge).filter(|e| e.at <= i) {
-                enlarged += e.pt;
+                enlarged.add(e);
                 next_enlarge += 1;
             }
             let legal = match &list[i] {
@@ -633,7 +670,7 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
             };
             if legal && st.has_box {
                 // §1005: page badness and cost at this breakpoint.
-                let goal = p.vsize + enlarged - reserved(i);
+                let goal = p.vsize + enlarged.pt - reserved(i);
                 let b = if st.total < goal {
                     if st.fil {
                         0
@@ -705,7 +742,7 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
                     // page_shrink` is `awful_bad` at the next breakpoint):
                     // TeX fires at the best break so far. Material that the
                     // shrink absorbs stays a candidate.
-                    if st.total > p.vsize + enlarged - reserved(i) + st.shrink + 1e-9 && st.lines.len() > 1 {
+                    if st.total > p.vsize + enlarged.pt - reserved(i) + st.shrink + 1e-9 && st.lines.len() > 1 {
                         if let Some((bi, _)) = best {
                             fired = Some(bi);
                             break;
@@ -729,7 +766,7 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
             Some(bi) => bi,
             None => list.len(),
         };
-        let page_params = PageParams { vsize: p.vsize + if fired.is_some() { best_enlarged } else { enlarged }, ..*p };
+        let page_params = if fired.is_some() { best_enlarged } else { enlarged }.params(p, st.shrink);
         let p = &page_params;
         let ejected = vfil_ejected(list, end);
         // A page the longtable output routine ends carries `\vss` after
@@ -1135,7 +1172,7 @@ pub fn break_pages_inserts_regions(
         // `\@kludgeins` takes its (negative) height off `\pagegoal` like
         // any insertion; see [`Enlarge`].
         let mut next_enlarge = first_enlarge(enlarge, prev_end);
-        let (mut enlarged, mut best_enlarged) = (0.0f64, 0.0f64);
+        let (mut enlarged, mut best_enlarged) = (Kludge::default(), Kludge::default());
         let cost = |st: &PageState, is: &InsertState, pi: i32, reserve: f64| -> i64 {
             let goal = is.goal - reserve;
             let b = if st.total < goal {
@@ -1168,7 +1205,7 @@ pub fn break_pages_inserts_regions(
         };
         while i < list.len() && !body_less {
             while let Some(e) = enlarge.get(next_enlarge).filter(|e| e.at <= i) {
-                enlarged += e.pt;
+                enlarged.add(e);
                 is.goal += e.pt;
                 next_enlarge += 1;
             }
@@ -1248,7 +1285,7 @@ pub fn break_pages_inserts_regions(
             Some(bi) => bi,
             None => list.len(),
         };
-        let page_params = PageParams { vsize: p.vsize + if fired.is_some() { best_enlarged } else { enlarged }, ..*p };
+        let page_params = if fired.is_some() { best_enlarged } else { enlarged }.params(p, st.shrink);
         let p = &page_params;
         let ejected = vfil_ejected(list, end);
         let placed_notes = settle_inserts(is, end, best_ins, ins.split_top_skip, &mut held);
@@ -1471,7 +1508,7 @@ pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil:
     // `\vskip-\@outputbox@depth`: the box's height ends at the last
     // baseline.
     let natural = x;
-    let excess = p.vsize - natural;
+    let excess = if p.squeeze > 0.0 { -p.squeeze } else { p.vsize - natural };
     let fil_total = f64::from(u8::from(vfil)) + if p.flushbottom { 0.0 } else { 0.0001 } + f64::from(u8::from(fil_in_body));
     // (stretch ratio for finite glue, shift given to the `\vfil`)
     let (ratio, vfil_shift) = if excess > 0.0 {
@@ -1600,7 +1637,7 @@ fn glue_set(p: &PageParams, items: &[VItem]) -> f64 {
     }
     // `\boxmaxdepth`: depth beyond `\maxdepth` counts as height.
     let natural = total + if last_box { (depth - p.maxdepth).max(0.0) } else { 0.0 };
-    let excess = p.vsize - natural;
+    let excess = if p.squeeze > 0.0 { -p.squeeze } else { p.vsize - natural };
     if excess > 0.0 {
         if fil || stretch <= 0.0 {
             0.0
@@ -1627,6 +1664,7 @@ mod tests {
             lineskip: 1.0,
             lineskiplimit: 0.0,
             flushbottom: false,
+            squeeze: 0.0,
         }
     }
 

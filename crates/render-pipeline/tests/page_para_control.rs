@@ -394,3 +394,148 @@ fn flushbottom_stretches_a_page_ended_by_pagebreak_not_newpage() {
         assert!(((stretched - newpage) - (675.0 - 484.0)).abs() < 1.5, "{command}: {newpage} -> {stretched}");
     }
 }
+
+/// The lines of each page, in page order.
+fn pages_of(pre: &str, body: &str) -> Vec<Vec<String>> {
+    let r = render_one(&doc(pre, body));
+    let mut out: Vec<(u32, Vec<String>)> = Vec::new();
+    for (p, l) in lines(&r) {
+        match out.last_mut() {
+            Some((page, ls)) if *page == p => ls.push(l),
+            _ => out.push((p, vec![l])),
+        }
+    }
+    out.into_iter().map(|(_, ls)| ls).collect()
+}
+
+/// Distance from the first to the last baseline of each page, in bp.
+fn page_spans(pre: &str, body: &str) -> Vec<f64> {
+    let r = render_one(&doc(pre, body));
+    let words = words_of(&r);
+    let mut pages: Vec<u32> = words.iter().map(|w| w.page).collect();
+    pages.sort_unstable();
+    pages.dedup();
+    pages
+        .iter()
+        .map(|&p| {
+            let ys = words.iter().filter(|w| w.page == p).map(|w| w.baseline);
+            ys.clone().fold(f64::MIN, f64::max) - ys.fold(f64::MAX, f64::min)
+        })
+        .collect()
+}
+
+const HERE_FIGURE: &str = "\\begin{figure}[h]\\centering\\rule{1cm}{1cm}\\caption{Here}\\end{figure}\n";
+
+/// A page break written right before a float is contributed before the
+/// float's marker, so `\@addtocurcol` sees the new page. pdflatex: after
+/// `First.` and `\clearpage`, `\newpage` or a vertical `\pagebreak`, the
+/// `[h]` (or `[t]`) figure opens page 2 above `Second.`; written after the
+/// figure the break leaves it on page 1 (the control).
+#[test]
+fn a_float_after_a_page_break_is_read_on_the_new_page() {
+    if !lm_available() {
+        return;
+    }
+    for command in ["\\clearpage\n", "\\newpage\n", "\n\\pagebreak\n\n"] {
+        let after = pages_of("", &format!("\\noindent First.\n{command}{HERE_FIGURE}\\noindent Second."));
+        assert_eq!(after, [vec!["First."], vec!["Figure 1: Here", "Second."]], "{command:?}");
+        let before = pages_of("", &format!("\\noindent First.\n{HERE_FIGURE}{command}\\noindent Second."));
+        assert_eq!(before, [vec!["First.", "Figure 1: Here"], vec!["Second."]], "{command:?}");
+    }
+    let top = pages_of("", &format!("\\noindent First.\n\\clearpage\n{}\\noindent Second.", HERE_FIGURE.replace("[h]", "[t]")));
+    assert_eq!(top, [vec!["First."], vec!["Figure 1: Here", "Second."]]);
+    let lines = pages_of("", &format!("{}\\clearpage\n{HERE_FIGURE}{}", filler(1, 5), filler(6, 8)));
+    assert_eq!(lines[1], ["Figure 1: Here", "Line 6.", "Line 7.", "Line 8."]);
+}
+
+/// `\pagebreak` before `\section` is still `\penalty-\@M` with no `\vfil`,
+/// so a `\flushbottom` page it ends is stretched (`\parskip`'s `plus 1pt`).
+/// pdflatex, 30 one-line paragraphs: 537.98bp from the first to the last
+/// baseline of page 1 (346.70 after `\newpage`); with a `[t]` figure on the
+/// page, 469.33 before `\section` and before a paragraph alike.
+#[test]
+fn flushbottom_stretches_a_page_ended_by_pagebreak_before_a_heading() {
+    if !lm_available() {
+        return;
+    }
+    let near = |got: f64, want: f64| (got - want).abs() < 0.5;
+    for heading in ["\\section{Next}", "\\subsection{Next}"] {
+        let spans = page_spans("\\flushbottom\n", &format!("{}\\pagebreak\n{heading}\n{}", filler(1, 30), filler(31, 32)));
+        assert!(near(spans[0], 537.98), "{heading}: {spans:?}");
+    }
+    let newpage = page_spans("\\flushbottom\n", &format!("{}\\newpage\n\\section{{Next}}\n{}", filler(1, 30), filler(31, 32)));
+    assert!(near(newpage[0], 346.70), "{newpage:?}");
+    let figure = "\\begin{figure}[t]\\centering\\rule{1cm}{2cm}\\caption{Top}\\end{figure}\n";
+    for next in ["\n", "\\section{Next}\n"] {
+        let spans = page_spans("\\flushbottom\n", &format!("{}{figure}{}\n\\pagebreak\n{next}{}", filler(1, 3), filler(4, 25), filler(31, 32)));
+        assert!(near(spans[0], 469.33), "{next:?}: {spans:?}");
+    }
+}
+
+/// `\enlargethispage` on a page the float machinery builds: `\pagegoal`
+/// grows, and `\@specialoutput` counts `\ht\@kludgeins` (negative) in
+/// `\@pageht` when the box has no width. pdflatex, one-line paragraphs:
+/// with a `[t]` figure after `Line 3.`, page 1 holds 40 lines of text and
+/// caption after `\enlargethispage{2\baselineskip}` or its star form (38
+/// without); written on page 2, that page holds 41 (38 without, the figure
+/// deferred there); `{-5\baselineskip}` before an `[h]` figure leaves 35;
+/// `{3\baselineskip}` inside the paragraph before an `[h]` figure lets the
+/// figure stay on page 1 (control: it goes to page 2).
+#[test]
+fn enlargethispage_is_applied_in_a_document_with_floats() {
+    if !lm_available() {
+        return;
+    }
+    let counts = |body: &str| pages_of("", body).iter().map(Vec::len).collect::<Vec<_>>();
+    let top = "\\begin{figure}[t]\\centering\\rule{1cm}{2cm}\\caption{Top}\\end{figure}\n";
+    for command in ["\\enlargethispage{2\\baselineskip}", "\\enlargethispage*{2\\baselineskip}", ""] {
+        let want: &[usize] = if command.is_empty() { &[38, 13] } else { &[40, 11] };
+        assert_eq!(counts(&format!("{command}{}{top}{}", filler(1, 3), filler(4, 50))), want, "{command:?}");
+    }
+    assert_eq!(counts(&format!("{}\\enlargethispage{{3\\baselineskip}}{}{top}{}", filler(1, 50), filler(51, 53), filler(54, 100))), [46, 41, 14]);
+    assert_eq!(counts(&format!("{}\\enlargethispage{{-5\\baselineskip}}{HERE_FIGURE}{}", filler(1, 10), filler(11, 50))), [35, 16]);
+    let in_par = |command: &str| counts(&format!("{}\\noindent Text {command} more.\\par\n{HERE_FIGURE}{}", filler(1, 40), filler(42, 100)));
+    assert_eq!(in_par("\\enlargethispage{3\\baselineskip}"), [43, 46, 12]);
+    assert_eq!(in_par(""), [46, 40, 15]);
+    let noted = pages_of("", &format!("\\enlargethispage{{2\\baselineskip}}{}\\noindent Note\\footnote{{A note.}}\\par\n{top}{}", filler(1, 3), filler(5, 50)));
+    assert_eq!(noted.len(), 2);
+    assert_eq!(noted[1][0], "Line 39.");
+}
+
+/// `\enlargethispage*`: `\@make@specialcolbox` sets the column `\vbox
+/// to\@colht` over the material and `\vskip\@colht-\ht\@outputbox
+/// +\pageshrink`, which squeezes the page's glue by `\pageshrink` -- the
+/// shrink the page builder had gathered when it fired, which usually uses
+/// all of it. pdflatex, one-line paragraphs under `\parskip 4pt minus 4pt`
+/// (first to last baseline of the page, bp): 37 lines in 430.39 (561.89
+/// unstarred), ended by `\pagebreak` after 36 lines 418.43 (557.91), by
+/// `\newpage` after 20 lines 227.15 (302.87), a second page enlarged after
+/// `Line 40.` 442.34 (573.85), and with a `[t]` figure 386.49.
+#[test]
+fn enlargethispage_star_squeezes_the_page() {
+    if !lm_available() {
+        return;
+    }
+    let pre = "\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{4pt plus 0pt minus 4pt}\n";
+    let plain = |from: usize, to: usize| (from..=to).map(|i| format!("Line {i}.\\par\n")).collect::<String>();
+    let near = |got: f64, want: f64| (got - want).abs() < 0.5;
+    for flush in ["", "\\flushbottom\n"] {
+        let pre = format!("{flush}{pre}");
+        for (star, whole, pagebreak, newpage) in [("*", 430.39, 418.43, 227.15), ("", 561.89, 557.91, 302.87)] {
+            let e = format!("\\enlargethispage{star}{{2\\baselineskip}}\n");
+            let spans = page_spans(&pre, &format!("{e}{}", plain(1, 69)));
+            assert!(near(spans[0], whole), "{flush:?} {star:?}: {spans:?}");
+            let spans = page_spans(&pre, &format!("{e}{}\n\\pagebreak\n\n{}", plain(1, 36), plain(37, 40)));
+            assert!(near(spans[0], pagebreak), "{flush:?} {star:?} pagebreak: {spans:?}");
+            let spans = page_spans(&pre, &format!("{e}{}\\newpage\n{}", plain(1, 20), plain(21, 24)));
+            assert!(near(spans[0], newpage), "{flush:?} {star:?} newpage: {spans:?}");
+        }
+        for (star, second) in [("*", 442.34), ("", 573.85)] {
+            let spans = page_spans(&pre, &format!("{}\\enlargethispage{star}{{3\\baselineskip}}\n{}", plain(1, 40), plain(41, 100)));
+            assert!(near(spans[1], second), "{flush:?} {star:?} page 2: {spans:?}");
+        }
+        let figure = "\\begin{figure}[t]\\centering\\rule{1cm}{2cm}\\caption{Top}\\end{figure}\n";
+        let spans = page_spans(&pre, &format!("\\enlargethispage*{{2\\baselineskip}}\n{}{figure}{}", plain(1, 3), plain(4, 69)));
+        assert!(near(spans[0], 386.49), "{flush:?} figure: {spans:?}");
+    }
+}
