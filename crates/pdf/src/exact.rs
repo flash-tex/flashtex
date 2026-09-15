@@ -26,9 +26,12 @@
 //! caller does any flip before handing operands over, so no arithmetic
 //! happens here. Image and form XObjects are painted with `/Name Do`
 //! against [`ExactDocument::images`] (`crate::images`); a page declares
-//! exactly the XObjects it paints. Alpha (ExtGState), shading and inline
-//! images are outside the bounded operator set and are reported as errors,
-//! never dropped.
+//! exactly the XObjects it paints. Constant alpha is [`Op::StrokeAlpha`] /
+//! [`Op::FillAlpha`]: `/pgf@CA<a> gs` / `/pgf@ca<a> gs`, the ExtGState
+//! names and one-key dictionaries pgf's pdfTeX driver writes; a page
+//! declares exactly the states it selects, once each, inline in its
+//! `/Resources`. Any other ExtGState, shading and inline images are outside
+//! the bounded operator set and are reported as errors, never dropped.
 //!
 //! Output is deterministic: the same [`ExactDocument`] serialises to the
 //! same bytes (no timestamps, no `/ID`), which the tests check.
@@ -243,6 +246,24 @@ pub enum Op {
     ShowTextArray(Vec<TjElement>),
     /// `/Name Do`: paint an image or form XObject of the document.
     Do(String),
+    /// `/pgf@CA<alpha> gs`: constant stroking alpha in `[0, 1]`, through the
+    /// ExtGState `<< /CA <alpha> >>` (pgf's pdfTeX driver's name and
+    /// dictionary, measured with pdflatex 1.40 for `draw opacity`).
+    StrokeAlpha(Decimal),
+    /// `/pgf@ca<alpha> gs`: constant non-stroking alpha, `<< /ca <alpha> >>`
+    /// (`fill opacity`, `text opacity`).
+    FillAlpha(Decimal),
+}
+
+/// The ExtGState resource name and dictionary an alpha operator selects:
+/// `("pgf@ca0.4", "<< /ca 0.4 >>")`. `None` for every other operator.
+pub fn ext_gstate(op: &Op) -> Option<(String, String)> {
+    let (key, a) = match op {
+        Op::StrokeAlpha(a) => ("CA", a),
+        Op::FillAlpha(a) => ("ca", a),
+        _ => return None,
+    };
+    Some((format!("pgf@{key}{a}"), format!("<< /{key} {a} >>")))
 }
 
 impl Op {
@@ -286,6 +307,7 @@ impl Op {
             Op::ShowText(_) => "Tj",
             Op::ShowTextArray(_) => "TJ",
             Op::Do(_) => "Do",
+            Op::StrokeAlpha(_) | Op::FillAlpha(_) => "gs",
         }
     }
 
@@ -343,6 +365,12 @@ impl Op {
                 nums(out, std::slice::from_ref(size));
             }
             Op::Do(name) => {
+                out.push(b'/');
+                out.extend_from_slice(name.as_bytes());
+                out.push(b' ');
+            }
+            Op::StrokeAlpha(_) | Op::FillAlpha(_) => {
+                let (name, _) = ext_gstate(self).expect("alpha operator");
                 out.push(b'/');
                 out.extend_from_slice(name.as_bytes());
                 out.push(b' ');
@@ -783,6 +811,26 @@ fn build_op(name: &str, operands: &[Operand]) -> Result<Op, String> {
         "Do" => match operands {
             [Operand::Name(n)] => Op::Do(n.clone()),
             _ => return Err("Do takes one name".into()),
+        },
+        "gs" => match operands {
+            [Operand::Name(n)] => {
+                let (stroke, value) = match (n.strip_prefix("pgf@CA"), n.strip_prefix("pgf@ca")) {
+                    (Some(v), _) => (true, v),
+                    (_, Some(v)) => (false, v),
+                    _ => {
+                        return Err(format!(
+                            "ExtGState /{n} is outside the exact export's bounded set (only pgf@CA<alpha> and pgf@ca<alpha>)"
+                        ));
+                    }
+                };
+                let a = Decimal::new(value).map_err(|e| format!("ExtGState /{n}: {e}"))?;
+                if stroke {
+                    Op::StrokeAlpha(a)
+                } else {
+                    Op::FillAlpha(a)
+                }
+            }
+            _ => return Err("gs takes one name".into()),
         },
         other => {
             return Err(format!(
@@ -1534,6 +1582,15 @@ fn validate(
                     return Err(err(i, "clip without a path".into()));
                 }
             }
+            Op::StrokeAlpha(a) | Op::FillAlpha(a) => {
+                if has_path {
+                    return Err(err(i, "gs while a path is under construction".into()));
+                }
+                let v = a.approx();
+                if !(0.0..=1.0).contains(&v) {
+                    return Err(err(i, format!("alpha {a} is not in [0, 1]")));
+                }
+            }
             Op::LineCap(_)
             | Op::LineJoin(_)
             | Op::LineWidth(_)
@@ -1703,14 +1760,18 @@ pub fn render_exact_with(
             })
             .collect()
     };
+    // ExtGStates a page selects, by name (sorted, each once).
+    let used_ext_gstates = |ops: &[Op]| -> BTreeMap<String, String> {
+        ops.iter().filter_map(ext_gstate).collect()
+    };
     for (i, page) in doc.pages.iter().enumerate() {
-        let (bytes, xobjects) = match &page.content {
+        let (bytes, xobjects, ext_gstates) = match &page.content {
             Content::Ops(ops) => {
                 if ops.len() > MAX_OPERATORS {
                     return Err(ExactError::Limit("operators per page"));
                 }
                 validate(i, ops, &doc.fonts, page.fonts.as_deref(), &doc.images)?;
-                (serialize(ops), used_xobjects(ops))
+                (serialize(ops), used_xobjects(ops), used_ext_gstates(ops))
             }
             Content::Verbatim(bytes) => {
                 let ops = parse(bytes).map_err(|e| match e {
@@ -1722,9 +1783,17 @@ pub fn render_exact_with(
                     other => other,
                 })?;
                 validate(i, &ops, &doc.fonts, page.fonts.as_deref(), &doc.images)?;
-                (bytes.clone(), used_xobjects(&ops))
+                (bytes.clone(), used_xobjects(&ops), used_ext_gstates(&ops))
             }
         };
+        if !ext_gstates.is_empty() {
+            let mut s = String::from(" /ExtGState <<");
+            for (name, dict) in &ext_gstates {
+                let _ = write!(s, " /{name} {dict}");
+            }
+            s.push_str(" >>");
+            page_resources[i].push_str(&s);
+        }
         let mut group = false;
         if !xobjects.is_empty() {
             let mut s = String::from(" /XObject <<");
@@ -2447,8 +2516,11 @@ mod tests {
 
     #[test]
     fn rejects_operators_outside_the_bounded_set() {
+        let e = parse(b"BT /F1 12 Tf ET /Sh0 sh").unwrap_err();
+        assert!(e.to_string().contains("\"sh\" is outside"), "{e}");
+        // `gs` only selects pgf's alpha states.
         let e = parse(b"BT /F1 12 Tf ET /GS0 gs").unwrap_err();
-        assert!(e.to_string().contains("\"gs\" is outside"), "{e}");
+        assert!(e.to_string().contains("ExtGState /GS0 is outside"), "{e}");
         assert!(
             parse(b"1 2 3 re f")
                 .unwrap_err()
