@@ -499,7 +499,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             }
             shift_inlines(content, changes, deltas)
         }
-        Block::VSpace { pt: _ } => Some(()),
+        Block::VSpace { .. } => Some(()),
         Block::Rule { span } => map_span(span, changes, deltas),
         Block::PageBreak => Some(()),
         Block::Verbatim { lines, span } => {
