@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 308 text-mode and 551 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 308 text-mode and 552 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -616,7 +616,7 @@ Canonical sources:
 | `\capitalcedilla` | `{letter}` | capital cedilla text accent: an alias of \c, the precomposed character the dfu tables declare |
 | `\uline` | `{...}` | ulem underline: 0.4pt rule under the argument (single-line; needs ulem) |
 | `\underline` | `{...}` | kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox |
-| `\underbar` | `{...}` | kernel text underline: same Rule 10 unbreakable-hbox rule as \underline |
+| `\underbar` | `{...}` | kernel text underline: Rule 10 rule like \underline but content depth zeroed (fixed position) |
 | `\sout` | `{...}` | ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem) |
 | `\newtheorem` | `{env}[counter]{name}` | defines a numbered theorem-like environment (amsthm) |
 | `\theoremstyle` | `{style}` | selects the amsthm style for following \newtheorem |
@@ -746,9 +746,10 @@ Canonical sources:
 | `\textit` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\textnormal` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\text` | `{text}` | literal text in math |
-| `\boxed` | `{...}` | real rule around, over or under the body |
-| `\overline` | `{...}` | real rule around, over or under the body |
-| `\underline` | `{...}` | real rule around, over or under the body |
+| `\boxed` | `{...}` | real rule around, over or under the body (underbar works in math like underline) |
+| `\overline` | `{...}` | real rule around, over or under the body (underbar works in math like underline) |
+| `\underline` | `{...}` | real rule around, over or under the body (underbar works in math like underline) |
+| `\underbar` | `{...}` | real rule around, over or under the body (underbar works in math like underline) |
 | `\overbrace` | `{body}` | cmex brace pieces with rule fills over or under a display-style body; scripts are limits |
 | `\underbrace` | `{body}` | cmex brace pieces with rule fills over or under a display-style body; scripts are limits |
 | `\overrightarrow` | `{body}` | amsmath \arrowfill@ as wide as the body, over or under it |
