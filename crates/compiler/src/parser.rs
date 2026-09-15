@@ -1142,6 +1142,17 @@ const PREAMBLE_LENGTHS: &[&str] = &[
     "parskip",
 ];
 
+/// The table lengths a document may assign anywhere: the kernel's
+/// `\tabcolsep`, `\arrayrulewidth` and `\doublerulesep`, and array.sty's
+/// `\extrarowheight`. This crate's templates keep the defaults; the render
+/// pipeline's table layout reads each assignment from the source with its
+/// group scope (`TableLengths`), so accepting one here is not ignoring it.
+const TABLE_LENGTHS: &[&str] = &["tabcolsep", "arrayrulewidth", "doublerulesep", "extrarowheight"];
+
+fn is_table_length(name: &str) -> bool {
+    TABLE_LENGTHS.contains(&name)
+}
+
 fn is_preamble_length(name: &str) -> bool {
     PREAMBLE_LENGTHS.contains(&name)
 }
@@ -2253,6 +2264,9 @@ impl P<'_> {
             _ if self.has_document && !self.in_body && is_preamble_length(name) => {
                 self.length_assignment(name, span)
             }
+            // `\tabcolsep=2pt`, in the preamble or the body (see
+            // `TABLE_LENGTHS`).
+            _ if is_table_length(name) => self.length_assignment(name, span),
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
@@ -3108,6 +3122,7 @@ impl P<'_> {
                 Some("paragraphs are not indented".into()),
             )),
             name if in_preamble && is_preamble_length(name) => {}
+            name if is_table_length(name) => {}
             _ => self.diags.push(Diagnostic::warning(
                 format!(
                     "\\{command}{{\\{target}}} is recognised but not implemented here"
