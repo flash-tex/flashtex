@@ -7,9 +7,9 @@
 //! tokens plus any control sequences we don't recognize (left untouched
 //! for the typesetting layer, e.g. `\section`, `\hskip`, font commands).
 //!
-//! All mutable engine state that influences future expansion lives in
-//! [`State`], which is `Clone` so the incremental expander
-//! (`incremental.rs`) can snapshot it at safe points.
+//! Assignment and control state lives in [`State`], which is `Clone` so the
+//! incremental expander (`incremental.rs`) can snapshot it at safe points.
+//! Font-relative metrics are checkpointed alongside that state.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -400,10 +400,28 @@ pub struct Checkpoint {
     /// `Engine::last_origin` at the snapshot. The step limit's diagnostic is
     /// reported there when the very next step is over the limit.
     pub(crate) last_origin: Option<Span>,
+    /// Font-relative units in force when this checkpoint was taken.
+    pub(crate) quad_sp: i64,
+    pub(crate) x_height_sp: i64,
     /// Number of output tokens / diagnostics / labels produced so far.
     pub out_len: usize,
     pub diag_len: usize,
     pub label_len: usize,
+}
+
+struct FixedFontMetrics {
+    quad_sp: i64,
+    x_height_sp: i64,
+}
+
+impl FontMetrics for FixedFontMetrics {
+    fn quad_sp(&self) -> i64 {
+        self.quad_sp
+    }
+
+    fn x_height_sp(&self) -> i64 {
+        self.x_height_sp
+    }
 }
 
 pub struct Engine {
@@ -1140,6 +1158,8 @@ impl Engine {
             state: self.st.clone(),
             steps: self.steps,
             last_origin: self.last_origin,
+            quad_sp: self.metrics.quad_sp(),
+            x_height_sp: self.metrics.x_height_sp(),
             out_len,
             diag_len: self.diagnostics.len(),
             label_len: self.labels.len(),
@@ -1151,6 +1171,10 @@ impl Engine {
         let mut e = Self::from_parts(src, cp.pos, cp.lex_state, cp.state.clone(), limits);
         e.steps = cp.steps;
         e.last_origin = cp.last_origin;
+        e.metrics = Rc::new(FixedFontMetrics {
+            quad_sp: cp.quad_sp,
+            x_height_sp: cp.x_height_sp,
+        });
         e
     }
 

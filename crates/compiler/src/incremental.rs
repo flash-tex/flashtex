@@ -631,7 +631,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             } => map_span(span, changes, deltas)?,
             Inline::CleverReference { span, .. } => map_span(span, changes, deltas)?,
             Inline::HFill { span, .. } => map_span(span, changes, deltas)?,
-            Inline::HSpace { pt: _, span } => map_span(span, changes, deltas)?,
+            Inline::HSpace { span, .. } => map_span(span, changes, deltas)?,
             Inline::Footnote {
                 number: _,
                 span,
