@@ -139,15 +139,18 @@ fn restart_from_a_checkpoint_carried_past_a_converged_edit_hits_the_step_limit()
 
 /// A macro whose argument is delimited by the end of the line leaves its
 /// invocation as the engine's last origin at the next safe point, which is
-/// where a step limit hit on the next step is reported.
+/// where a step limit hit on the next step is reported. Every cut of the step
+/// limit stops the run somewhere in the document, and the edit after the stop
+/// restarts from the last checkpoint before it, so some cut restarts exactly
+/// one step before the limit.
 #[test]
 fn step_limit_right_after_a_checkpoint_reports_the_last_origin() {
-    let doc = format!("\\def\\d#1 {{[#1]}}\n{}", (0..40).map(|i| format!("\\d w{i}\n")).collect::<String>());
+    let doc = format!("\\def\\d#1 {{[#1]}}\n{}end\n", (0..40).map(|i| format!("\\d w{i}\n")).collect::<String>());
     let base = full(&doc, Limits::default()).steps;
-    for cut in 1..60 {
+    for cut in 1..base - 20 {
         let limits = Limits { max_expansion_steps: base - cut, ..Limits::default() };
-        let mut inc = IncrementalExpander::with_options(&doc, limits, 8);
-        let at = doc.find("\\d w3").unwrap();
+        let mut inc = IncrementalExpander::with_options(&doc, limits, 1);
+        let at = doc.len() - 2;
         inc.edit(&Edit { start: at, end: at, replacement: "x".into() });
         assert_same(&inc, limits, &|| format!("cut {cut}"));
     }
@@ -270,7 +273,7 @@ fn incremental_matches_full_on_fuzz_seeds_with_small_limits() {
     assert!(seeds.len() > 100, "found only {} seeds", seeds.len());
     let edits = env_u64("FLASHTEX_INC_STOP_EDITS", 6) as usize;
     let prng = env_u64("FLASHTEX_INC_STOP_SEED", 0x5EED_1A57);
-    let (mut stops, mut converged, mut checked) = (0usize, 0usize, 0usize);
+    let (mut stops, mut nesting, mut converged, mut checked) = (0usize, 0usize, 0usize, 0usize);
     for (n, (name, text)) in seeds.iter().enumerate() {
         let mut rng = Rng((prng ^ (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)) | 1);
         let natural = full(text, Limits { max_expansion_steps: 60_000, max_output_tokens: 60_000, ..Limits::default() });
@@ -296,13 +299,24 @@ fn incremental_matches_full_on_fuzz_seeds_with_small_limits() {
             let stats = inc.edit(&edit);
             converged += stats.converged_at.is_some() as usize;
             checked += 1;
-            if inc.diagnostics().iter().any(|d| d.message.contains("limit exceeded") || d.message.starts_with("TeX capacity exceeded")) {
+            let messages = || inc.diagnostics().iter().map(|d| d.message.as_str());
+            if messages().any(|m| {
+                m.starts_with("expansion step limit exceeded")
+                    || m == "output token limit exceeded"
+                    || m.starts_with("TeX capacity exceeded")
+            }) {
                 stops += 1;
+            }
+            if messages().any(|m| m.ends_with("nesting limit exceeded")) {
+                nesting += 1;
             }
             assert_same(&inc, limits, &|| format!("{name}: edit #{i} {edit:?}, {limits:?} interval {interval}"));
         }
     }
-    eprintln!("{} seeds, {checked} edits: {stops} ended at a stop or past a nesting limit, {converged} converged", seeds.len());
-    assert!(stops > checked / 10, "too few edits reached a limit ({stops}/{checked})");
+    eprintln!(
+        "{} seeds, {checked} edits: {stops} ended at a stop, {nesting} went past a nesting limit, {converged} converged",
+        seeds.len()
+    );
+    assert!(stops > checked / 10, "too few edits reached a stop ({stops}/{checked})");
     assert!(converged > 0);
 }
