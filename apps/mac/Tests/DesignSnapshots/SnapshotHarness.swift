@@ -93,7 +93,11 @@ private func assertHostedSurface<V: View>(
     controller.view.frame = CGRect(origin: .zero, size: size)
     window.contentViewController = controller
     window.setContentSize(size)
-    window.makeKeyAndOrderFront(nil)
+    // Never key: whether a parked window wins key status is a race against
+    // the app's other windows (it differed between record and verify runs
+    // once the tab fill followed `controlActiveState`), so every surface is
+    // captured in the deterministic non-key state.
+    window.orderFrontRegardless()
     // Real run-loop turns: List/NSTableView rows only populate in a window,
     // `.toolbar` installs asynchronously, and `.task`s need to run.
     RunLoop.main.run(until: Date(timeIntervalSinceNow: settle))
