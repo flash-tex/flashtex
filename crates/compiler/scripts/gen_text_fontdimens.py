@@ -13,7 +13,7 @@ quad 11.74988pt and cmr9's 9.24994pt. Which TFM a style loads depends on the
 `.fd` files (substitutions, `<10.95>cmr10`, `<14.4>cmr12`, ...), so rather
 than re-implementing NFSS this asks pdflatex itself: for each font setup
 (OT1/T1 encoding, Computer Modern/`lmodern`), family (rm/sf/tt), series
-(m/bx), shape (n/it) and each standard LaTeX size it selects the font and
+(m/bx), shape (n/it/sl/sc) and each standard LaTeX size it selects the font and
 records `\fontname\font`, `\number\fontdimen6\font` and
 `\number\fontdimen5\font` (scaled points, exactly as TeX holds them).
 
@@ -43,7 +43,7 @@ FAMILIES = [("Roman", r"\rmdefault"), ("Sans", r"\sfdefault"), ("Mono", r"\ttdef
 # `\bfseries` selects `\bfseries@rm`/`@sf`/`@tt`, all `bx`; `\bfdefault` is `b`
 # (cmb10) in current LaTeX, so the series and shapes are spelled literally.
 SERIES = [(False, "m"), (True, "bx")]
-SHAPES = [(False, "n"), (True, "it")]
+SHAPES = [("upright", "n"), ("italic", "it"), ("slanted", "sl"), ("small_caps", "sc")]
 
 
 def measure(texbin, packages):
@@ -92,8 +92,8 @@ def main():
             s if "." in s else s + ".0" for s in SIZES)),
         "",
         "/// The row of `FONTDIMENS` for a font setup and face.",
-        "pub(crate) const fn row(latin_modern: bool, t1: bool, family: usize, bold: bool, italic: bool) -> usize {",
-        "    ((((latin_modern as usize * 2 + t1 as usize) * 3 + family) * 2 + bold as usize) * 2) + italic as usize",
+        "pub(crate) const fn row(latin_modern: bool, t1: bool, family: usize, bold: bool, shape: usize) -> usize {",
+        "    ((((latin_modern as usize * 2 + t1 as usize) * 3 + family) * 2 + bold as usize) * 4) + shape",
         "}",
         "",
         "/// `(quad_sp, x_height_sp)` per [`SIZES_PT`] entry. Families are",
@@ -105,12 +105,12 @@ def main():
         rows = iter(measure(args.texbin, packages))
         for family, _ in FAMILIES:
             for bold, _ in SERIES:
-                for italic, _ in SHAPES:
+                for shape, _ in SHAPES:
                     cells = [next(rows) for _ in SIZES]
                     names = sorted({re.sub(r" at .*", "", name) for name, _, _ in cells})
                     out.append(
-                        "    // lm=%s t1=%s %s bold=%s italic=%s: %s" % (
-                            latin_modern, t1, family, bold, italic, ", ".join(names)))
+                        "    // lm=%s t1=%s %s bold=%s shape=%s: %s" % (
+                            latin_modern, t1, family, bold, shape, ", ".join(names)))
                     out.append("    [%s]," % ", ".join(f"({q}, {x})" for _, q, x in cells))
     out.append("];")
     with open(OUT, "w") as f:
