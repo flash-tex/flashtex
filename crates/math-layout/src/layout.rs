@@ -6,7 +6,7 @@
 
 use crate::boxes::{BoxKind, Child, Flex, MathBox};
 use crate::mathlist::{
-    Atom, AtomClass, BigSizing, Limits, MathList, Nucleus, TextPiece, TextStyle,
+    Atom, AtomClass, BigSizing, LeftScripts, Limits, MathList, Nucleus, TextPiece, TextStyle,
 };
 use crate::metrics::{Extensible, Glyph, MathFontMetrics, MathParams};
 use crate::source::SourceTag;
@@ -102,6 +102,7 @@ fn is_glue(atom: &Atom) -> bool {
     matches!(atom.nucleus, Nucleus::Glue { .. })
         && atom.superscript.is_none()
         && atom.subscript.is_none()
+        && atom.left_scripts.is_none()
 }
 
 /// TeX §1186: when a math group closes holding exactly one ordinary atom
@@ -125,6 +126,7 @@ fn unpacked(nucleus: &Nucleus) -> (&Nucleus, SourceTag) {
             [a] if a.class == AtomClass::Ord
                 && a.superscript.is_none()
                 && a.subscript.is_none()
+                && a.left_scripts.is_none()
                 && !matches!(a.nucleus, Nucleus::Glue { .. }) =>
             {
                 n = &a.nucleus;
@@ -210,6 +212,9 @@ impl Engine<'_> {
     }
 
     fn atom(&mut self, atom: &Atom, class: AtomClass, style: Style) -> MathBox {
+        if let Some(left) = &atom.left_scripts {
+            return self.make_sideset(atom, left);
+        }
         if class == AtomClass::Op {
             return self.make_op(atom, style);
         }
@@ -370,6 +375,7 @@ impl Engine<'_> {
                 nucleus: Nucleus::Symbol(ch),
                 superscript: None,
                 subscript: None,
+                left_scripts: None,
                 ..
             },
         ] = base.atoms.as_slice()
@@ -386,6 +392,7 @@ impl Engine<'_> {
             // inherits the accent atom's when the caller's list tags it.
             tag: base.atoms[0].tag,
             delimiter_tags: [SourceTag::NONE; 2],
+            left_scripts: None,
         };
         let g = self.m.glyph(*ch, style.size_class())?;
         Some(self.make_accent(accent, &MathList::from(scripted), Some((*ch, g)), style))
@@ -544,6 +551,7 @@ impl Engine<'_> {
                     limits: Limits::default(),
                     tag: atom.tag,
                     delimiter_tags: atom.delimiter_tags,
+                    left_scripts: None,
                 };
                 (self.atom(&inner, AtomClass::Ord, style), 0.0)
             }
@@ -551,6 +559,54 @@ impl Engine<'_> {
         let mut nucleus = nucleus;
         nucleus.inherit_tag(unpacked_tag);
         self.op_scripts(nucleus, delta, limits, atom, style)
+    }
+
+    /// amsmath `\sideset{#1}{#2}{#3}` (`amsmath.sty` 921-929) for an atom
+    /// that is `#3` with its scripts `#2` and `left` `#1` (see
+    /// [`Atom::left_scripts`]): `\mathop{\box4\box6}` without the
+    /// `\kern-\dimen@` that cancels the ordinary `\hbox to\dimen@{}`
+    /// the list's builder puts in front.
+    fn make_sideset(&mut self, atom: &Atom, left: &LeftScripts) -> MathBox {
+        // Every `\@mathmeasure` is a fresh `$\displaystyle ..$` in an
+        // `\hbox`: display style (text size, uncramped) at any depth.
+        let style = Style::DISPLAY;
+        let bare = |superscript: Option<MathList>, subscript: Option<MathList>| Atom {
+            class: AtomClass::Op,
+            superscript,
+            subscript,
+            limits: Limits::NoLimits,
+            left_scripts: None,
+            ..atom.clone()
+        };
+        // `\@mathmeasure\z@\displaystyle{#3}`: only box 0's height and
+        // depth are used, so its glyph lookups are reported once, by box 6.
+        let reported = self.limitations.len();
+        let measured = self.make_op(&bare(None, None), style);
+        self.limitations.truncate(reported);
+        // `\vbox to\ht\z@{}\dp\@ne\dp\z@`, then `{\copy\tw@#1}`: a box
+        // nucleus, so Rule 18a starts the shifts from its height and depth.
+        let strut = MathBox {
+            tag: SourceTag::NONE,
+            kind: BoxKind::VBox(Vec::new()),
+            width: 0.0,
+            height: measured.height,
+            depth: measured.depth,
+        };
+        let carrier = Atom {
+            class: AtomClass::Ord,
+            nucleus: Nucleus::Empty,
+            superscript: left.superscript.clone(),
+            subscript: left.subscript.clone(),
+            limits: Limits::default(),
+            tag: SourceTag::NONE,
+            delimiter_tags: [SourceTag::NONE; 2],
+            left_scripts: None,
+        };
+        let left_box = self.make_scripts(strut, 0.0, false, &carrier, style);
+        // `\@mathmeasure6\displaystyle{#3\nolimits#2}`.
+        let right = bare(atom.superscript.clone(), atom.subscript.clone());
+        let right_box = self.make_op(&right, style);
+        MathBox::hlist(vec![left_box, right_box])
     }
 
     /// The rest of `make_op` once the nucleus is boxed: scripts beside it,
@@ -703,6 +759,7 @@ impl Engine<'_> {
             limits: Limits::Limits,
             tag: SourceTag::NONE,
             delimiter_tags: [SourceTag::NONE; 2],
+            left_scripts: None,
         };
         self.op_scripts(nucleus, 0.0, true, &op, style)
     }
@@ -1287,6 +1344,7 @@ impl Engine<'_> {
                         nucleus: Nucleus::Symbol(ch),
                         superscript: None,
                         subscript: None,
+                        left_scripts: None,
                         ..
                     },
                 ],

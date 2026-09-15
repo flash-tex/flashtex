@@ -355,6 +355,7 @@
     {"name": "overset", "mode": "math", "origin": "math_structure", "arguments": "{script}{base}", "description": "script-size list centred above or below a base", "renders": true},
     {"name": "stackrel", "mode": "math", "origin": "math_structure", "arguments": "{script}{base}", "description": "script-size list centred above or below a base", "renders": true},
     {"name": "underset", "mode": "math", "origin": "math_structure", "arguments": "{script}{base}", "description": "script-size list centred above or below a base", "renders": true},
+    {"name": "sideset", "mode": "math", "origin": "math_structure", "arguments": "{left scripts}{right scripts}{operator}", "description": "scripts on both sides of a large operator, set in \\displaystyle (\\mathop)", "renders": true},
     {"name": "operatorname", "mode": "math", "origin": "math_structure", "arguments": "{name}", "description": "upright named operator (\\mathop); starred and withlimits forms take limits", "renders": true},
     {"name": "operatornamewithlimits", "mode": "math", "origin": "math_structure", "arguments": "{name}", "description": "upright named operator (\\mathop); starred and withlimits forms take limits", "renders": true},
     {"name": "colon", "mode": "math", "origin": "math_structure", "arguments": "", "description": "function-arrow colon: punctuation (0mu/3mu) as the kernel declares it, amsmath's 2mu/6mu when amsmath is loaded", "renders": true},
@@ -921,7 +922,7 @@
     {"name": "cleveref", "silent_options": "capitalise, noabbrev", "description": "named cross-references with compressed ranges; unknown package options are silently ignored"},
     {"name": "color", "silent_options": "dvipsnames, usenames", "description": "color.sty colours with pdfTeX's exact operator values"},
     {"name": "xcolor", "silent_options": "natural, rgb, cmy, cmyk, gray, dvipsnames, svgnames, x11names, table", "description": "xcolor 3.02 definitions, expressions and target models with pdfTeX's exact operator values; hsb models, colour series and table colours are diagnosed"},
-    {"name": "amsmath", "silent_options": "centertags, sumlimits, nointlimits, namelimits, reqno", "description": "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\sideset, \\shoveleft, \\smash, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used"},
+    {"name": "amsmath", "silent_options": "centertags, sumlimits, nointlimits, namelimits, reqno", "description": "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, \\sideset, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\shoveleft, \\smash, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used"},
     {"name": "amssymb", "silent_options": "", "description": "the full AMSa/AMSb (msam/msbm) inventory of amssymb.sty -- 203 names base LaTeX2e leaves undefined (\\square, \\nleq, ...) -- plus everything amsfonts declares; loading the package is what makes the names exist, and a name whose file was not loaded is diagnosed"},
     {"name": "amsfonts", "silent_options": "", "description": "amsfonts.sty's 22-name symbol subset (\\ulcorner, \\square, \\yen, the dashed arrows) and the \\mathbb and \\mathfrak alphabets; the rest of amssymb stays undefined without \\usepackage{amssymb}"},
     {"name": "amsthm", "silent_options": "", "description": "\\newtheorem, \\theoremstyle and the proof environment"},
@@ -954,7 +955,7 @@
     "rows": [
       {"set": "kernel", "kind": "command", "canonical": 410, "supported": 183, "percent": 44.6},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 17, "percent": 56.7},
-      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 41, "percent": 40.2},
+      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 42, "percent": 41.2},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
       {"set": "amssymb", "kind": "command", "canonical": 229, "supported": 225, "percent": 98.3},
       {"set": "enumitem", "kind": "command", "canonical": 17, "supported": 1, "percent": 5.9},
@@ -967,6 +968,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 18, "percent": 7.5}
     ],
-    "total": {"canonical": 1314, "supported": 525, "percent": 40}
+    "total": {"canonical": 1314, "supported": 526, "percent": 40}
   }
 }
