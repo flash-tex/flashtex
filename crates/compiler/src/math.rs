@@ -1071,6 +1071,22 @@ impl MathParser<'_> {
             // enum's own doc comment on `Nucleus`), leaving exactly the
             // written kern between the two glyphs, not kern-plus-Rel-Rel-gap.
             //
+            // `\coloneqq` (":=") = `\vcentcolon \mathrel{\mkern-1.2mu} =`
+            // (`\MATHT@coloneq`, mathtools.sty 487/506/531). Only when
+            // mathtools is loaded: without it the command keeps the
+            // precomposed U+2254 glyph from `command_glyph` below. pdfLaTeX
+            // with mathtools (12pt lmodern, measured): the colon is raised
+            // 0.415bp like `\vcentcolon`, the `=` starts 0.797bp (1.2mu)
+            // before the colon's advance ends, and `$a\coloneqq b$` is
+            // 29.43333pt wide — the same as `\eqqcolon`.
+            "coloneqq" if self.packages.mathtools => {
+                let atoms = vec![vcentcolon_atom(span), mkern(-1.2, span), symbol("=".into(), span)];
+                MathAtom {
+                    nucleus: Nucleus::Group(MathList { atoms }),
+                    class_override: Some(AtomClass::Rel),
+                    ..symbol(String::new(), span)
+                }
+            }
             // `\eqqcolon` ("=:") = `= \mathrel{\mkern-1.2mu} \vcentcolon`.
             "eqqcolon" => {
                 let atoms = vec![symbol("=".into(), span), mkern(-1.2, span), vcentcolon_atom(span)];
@@ -5774,6 +5790,7 @@ mod spacing_tests {
             close(x(&b, "b"), x(&b, glyph) + own + 5.0);
         }
         for (command, glyphs, own) in [
+            ("coloneqq", vec![":", "="], colon + equals - 1.2),
             ("Coloneqq", vec![":", ":", "="], 2.0 * colon + equals - 0.9 - 1.2),
             ("Eqqcolon", vec!["=", ":", ":"], equals + 2.0 * colon - 1.2 - 0.9),
             ("dblcolon", vec![":", ":"], 2.0 * colon - 0.9),
@@ -5827,7 +5844,7 @@ mod spacing_tests {
         // The fix lives in `vcentcolon_atom`'s atoms, so every family member
         // built from them carries raised colons — each `":"` item, not just
         // the first.
-        for command in ["vcentcolon", "eqqcolon", "Coloneqq", "Eqqcolon", "dblcolon"] {
+        for command in ["vcentcolon", "coloneqq", "eqqcolon", "Coloneqq", "Eqqcolon", "dblcolon"] {
             let b = laid_out_with(&format!(r"\{command}"), size, MATHTOOLS);
             let colons: Vec<_> = b.items.iter().filter(|i| i.text == ":").collect();
             assert!(!colons.is_empty(), "\\{command} lays out no colon");
@@ -6515,6 +6532,33 @@ mod package_gating_tests {
         };
         assert_eq!(inner.atoms.len(), 3, ": <kern> : -- {inner:?}");
         assert!(matches!(&inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 0.9 / 18.0).abs() < 1e-9));
+
+        // `\coloneqq` = `\vcentcolon \mathrel{\mkern-1.2mu} =` once mathtools
+        // is loaded: one Rel group whose colon is a real `vcentcolon_atom`
+        // (so layout raises it), not the precomposed U+2254 glyph.
+        let (list, diagnostics) = parsed(r"\coloneqq", MATHTOOLS);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 1, "\\coloneqq");
+        assert_eq!(list.atoms[0].class_override, Some(AtomClass::Rel), "\\coloneqq");
+        let Nucleus::Group(inner) = &list.atoms[0].nucleus else {
+            panic!("\\coloneqq is not a group: {:?}", list.atoms[0].nucleus);
+        };
+        assert_eq!(inner.atoms.len(), 3, ": <kern> = -- {inner:?}");
+        assert!(matches!(&inner.atoms[0].nucleus, Nucleus::Symbol(g) if g == ":"));
+        assert_eq!(inner.atoms[0].class_override, Some(AtomClass::Rel));
+        assert!(matches!(&inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 1.2 / 18.0).abs() < 1e-9));
+        assert!(matches!(&inner.atoms[2].nucleus, Nucleus::Symbol(g) if g == "="));
+
+        // Without mathtools it keeps the precomposed glyph it always had.
+        for packages in [MathPackages::KERNEL, AMSSYMB] {
+            let (list, diagnostics) = parsed(r"\coloneqq", packages);
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            assert!(
+                matches!(&list.atoms[0].nucleus, Nucleus::Symbol(g) if g == "≔"),
+                "\\coloneqq without mathtools: {:?}",
+                list.atoms[0].nucleus
+            );
+        }
     }
 
     /// The two math alphabets and the dashed arrows are `amsfonts.sty`'s too,
