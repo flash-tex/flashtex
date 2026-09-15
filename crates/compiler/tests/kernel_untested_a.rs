@@ -307,6 +307,19 @@ fn newcounter_allocates_a_zero_counter_printed_as_arabic() {
 }
 
 #[test]
+fn newcounter_within_kernel_counter_compiles_and_counts() {
+    // GH-NEWCOUNTER-WITHIN: `section` (like every class counter) is a valid
+    // `[within]` parent without an explicit `\newcounter{section}`.
+    let source = "\\section{First}\\newcounter{c}[section]\\stepcounter{c}\\arabic{c}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    assert_eq!(paragraphs(source), ["1"]);
+    // Another kernel counter as the `[within]` target.
+    let sub = "\\newcounter{d}[subsection]\\stepcounter{d}\\arabic{d}";
+    assert!(messages(sub).is_empty(), "{:?}", messages(sub));
+    assert_eq!(paragraphs(sub), ["1"]);
+}
+
+#[test]
 fn newlength_allocates_a_skip_register_set_and_read_in_pt() {
     let source = "\\newlength{\\mylen}\\mylen=7pt\\begin{document}\\the\\mylen\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));

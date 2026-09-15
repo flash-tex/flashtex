@@ -1,5 +1,5 @@
 //! Contents lists against pdflatex: `\tableofcontents`, `\listoffigures`,
-//! `\listoftables` in article/report/book (latex.ltx `\@dottedtocline`,
+//! `\listoftables` and `\lstlistoflistings` in article/report/book (latex.ltx `\@dottedtocline`,
 //! article.cls `\l@section`, report/book.cls `\l@chapter`).
 //!
 //! Expected data: `fixtures/toc/expected/*.txt`, every word's origin and
@@ -54,6 +54,11 @@ pub const FIXTURES: &[&str] = &[
     "31-report-twocolumn",
     "32-book-twocolumn",
     "33-article-twocolumn-newpage",
+    "34-article-three-figures-two-tables",
+    "35-report-three-figures-two-tables",
+    "36-article-lstlistoflistings",
+    "37-report-lstlistoflistings",
+    "38-article-list-only",
 ];
 
 /// Entry page numbers that follow a body page break the pipeline places
@@ -165,7 +170,7 @@ fn check(name: &str) -> Outcome {
     let mut out = Outcome::default();
     for d in &r.v2.diagnostics {
         let m = &d.message;
-        if m.contains("tableofcontents") || m.contains("listoffigures") || m.contains("listoftables") || m.contains("addcontentsline") || m.contains("appendix") || m.contains("contentsname") || d.code == "labels_unstable" {
+        if m.contains("tableofcontents") || m.contains("listoffigures") || m.contains("listoftables") || m.contains("lstlistoflistings") || m.contains("addcontentsline") || m.contains("appendix") || m.contains("contentsname") || d.code == "labels_unstable" {
             out.failures.push(format!("{name}: diagnostic {}: {m}", d.code));
         }
     }
