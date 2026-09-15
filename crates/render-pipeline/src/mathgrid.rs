@@ -115,6 +115,14 @@ impl GridSpec {
                 spec.gaps = Gaps::Quads(1.0);
                 spec.trim_outer = true;
             }
+            // mathtools.sty `\newcases{rcases}` runs the same
+            // `\MT_start_cases:nnnn` machinery as `cases` (including
+            // `\spread@equation`), so its spacing is identical.
+            "rcases" => {
+                spec.stretch = 1.2;
+                spec.gaps = Gaps::Quads(1.0);
+                spec.trim_outer = true;
+            }
             // mathtools.sty `\MT_start_cases:nnnn` (lines 995-1026): `\left\lbrace
             // \vcenter{\spread@equation \ialign{\strut@$\displaystyle##$\hfil
             // &\quad\strut@$\displaystyle##$\hfil}}\right.`.
@@ -461,6 +469,23 @@ mod tests {
         let src = "\\begin{pmatrix} 1 & 2 \\end{pmatrix}";
         let spec = GridSpec::from_source(src, Span::in_document(Default::default(), 0, 6), 10);
         assert!(spec.trim_outer && spec.gaps == Gaps::ColSep);
+    }
+
+    #[test]
+    fn rcases_spacing_matches_cases_not_array() {
+        let spec_for = |env: &str| {
+            let src = format!("\\begin{{{env}}} a & b \\\\ c & d \\end{{{env}}}");
+            GridSpec::from_source(&src, Span::in_document(Default::default(), 0, 6), 10)
+        };
+        let cases = spec_for("cases");
+        let rcases = spec_for("rcases");
+        let array = spec_for("array");
+        assert_eq!(rcases.stretch, cases.stretch);
+        assert_eq!(rcases.gaps, cases.gaps);
+        assert_eq!(rcases.trim_outer, cases.trim_outer);
+        assert_eq!((rcases.stretch, rcases.gaps, rcases.trim_outer), (1.2, Gaps::Quads(1.0), true));
+        assert_ne!((rcases.stretch, rcases.gaps), (array.stretch, array.gaps));
+        assert_eq!((array.stretch, array.gaps, array.trim_outer), (1.0, Gaps::ColSep, false));
     }
 
     #[test]

@@ -909,6 +909,7 @@
     {"name": "Vmatrix", "mode": "math", "description": "math grid, centred cells in ‖ ‖"},
     {"name": "cases", "mode": "math", "description": "math grid, left-aligned cells with a left {"},
     {"name": "dcases", "mode": "math", "description": "math grid, left-aligned cells with a left {"},
+    {"name": "rcases", "mode": "math", "description": "math grid, left-aligned cells in  }"},
     {"name": "aligned", "mode": "math", "description": "math grid, centred cells"},
     {"name": "alignedat", "mode": "math", "description": "math grid, centred cells"},
     {"name": "split", "mode": "math", "description": "math grid, centred cells"},
