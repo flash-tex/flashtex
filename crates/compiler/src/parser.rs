@@ -12,7 +12,7 @@ use crate::bib;
 use crate::date::TodayDate;
 use crate::color::{Colors, DeviceColor};
 use crate::diagnostics::Diagnostic;
-use crate::expansion::{self, ExpansionSite};
+use crate::expansion::{self, ExpansionSite, LabelItemOverride};
 use crate::lexer::{apply_text_ligatures, tokenize_document, Token, TokenKind};
 #[cfg(test)]
 use crate::lexer::tokenize;
@@ -1297,7 +1297,7 @@ struct P<'a> {
     arraystretch: HashMap<(usize, usize), String>,
     /// `\labelitemi`..`\labelitemiv` at each `\begin{itemize}`, from the
     /// expansion pass (see `expansion::Expansion::labelitem_overrides`).
-    labelitem_overrides: HashMap<(usize, usize), [String; 4]>,
+    labelitem_overrides: HashMap<(usize, usize), LabelItemOverride>,
     has_document: bool,
     in_body: bool,
     document_ended: bool,
@@ -6062,20 +6062,39 @@ impl P<'_> {
     fn itemize_default_label(&mut self, environment: ListEnvironment, kind_depth: u8, begin: Span) -> ItemLabel {
         if environment == ListEnvironment::Itemize {
             let index = kind_depth.clamp(1, 4) as usize - 1;
-            if let Some(texts) = self.labelitem_overrides.get(&(begin.document.0, begin.start)) {
-                let text = texts[index].trim();
+            if let Some(recorded) = self.labelitem_overrides.get(&(begin.document.0, begin.start)) {
+                let raw = &recorded.texts[index];
+                let text = raw.trim();
                 if !lists::is_kernel_labelitem_text(kind_depth, text) {
                     // The capture is LaTeX source (see `LabelCapture`), not
                     // rendered text: re-lex it and parse it as inline
                     // content, mirroring the `\item[<label>]` explicit
                     // branch above (same `Explicit` shape, same plain-text
                     // derivation; `span` is the capturing `\begin`).
+                    //
+                    // Re-lexing starts the body at byte 0 of a throwaway
+                    // copy, so shift every token by the body's real source
+                    // offset (its first captured token, past any trimmed
+                    // leading whitespace): diagnostics land on the actual
+                    // `\renewcommand` site instead of the document start.
+                    // Without a recorded offset the old byte-0 spans stand.
+                    let lead = raw.len() - raw.trim_start().len();
+                    let base = recorded.starts[index].map(|start| (start.document, start.start + lead));
                     let tokens = tokenize_document(text, begin.document)
                         .into_iter()
-                        .map(|token| InputToken {
-                            token,
-                            definition: None,
-                            maps_to_invocation: false,
+                        .map(|mut token| {
+                            if let Some((document, base)) = base {
+                                token.span = Span::in_document(
+                                    document,
+                                    token.span.start + base,
+                                    token.span.end + base,
+                                );
+                            }
+                            InputToken {
+                                token,
+                                definition: None,
+                                maps_to_invocation: false,
+                            }
                         })
                         .collect::<Vec<_>>();
                     let content = self.argument_inlines(tokens, begin, TextStyle::default());

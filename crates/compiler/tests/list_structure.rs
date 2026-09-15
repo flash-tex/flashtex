@@ -445,6 +445,32 @@ fn labelitem_override_math_body_becomes_a_math_nucleus() {
 }
 
 #[test]
+fn labelitem_override_diagnostic_span_lands_on_the_body_command() {
+    // The re-lexed override body must point at the real call site: the
+    // diagnostic for the unsupported command inside
+    // `\renewcommand{\labelitemi}{...}` lands on that command's source
+    // bytes, not at byte 0 of the document.
+    let body = "\\renewcommand{\\labelitemi}{\\textendash}\\begin{itemize}\\item A\\end{itemize}";
+    let source = doc(body);
+    let parsed = parser::parse(&source);
+    let command = "\\textendash";
+    let cmd_at = source.find(command).expect("command");
+    assert!(cmd_at > 0, "the command must not itself sit at byte 0");
+    let diagnostic = parsed
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains(command))
+        .expect("expected the \\textendash diagnostic");
+    let span = diagnostic.span.expect("diagnostic must carry a span");
+    assert_eq!(span.document.0, 0);
+    assert_eq!(
+        (span.start, span.end),
+        (cmd_at, cmd_at + command.len()),
+        "diagnostic span {span:?} must land on the override body command at byte {cmd_at}"
+    );
+}
+
+#[test]
 fn labelitem_override_textendash_body_gets_the_usual_diagnostic() {
     // `\textendash` is not a supported text-symbol command in this compiler
     // version (running text reports the same error), so the marker carries
