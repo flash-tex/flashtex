@@ -2531,7 +2531,15 @@ impl P<'_> {
             // the owned copy below (a `String` clone per word). Each branch is
             // exactly the matching arm of the `match` further down.
             match &self.t[self.i].token.kind {
-                TokenKind::Space | TokenKind::Comment => {
+                // `\obeylines` turns a source newline folded into a `Space`
+                // into a line break (the arm below), so under it a space is
+                // not the trivial token this borrowed path assumes. A comment
+                // is always just skipped.
+                TokenKind::Comment => {
+                    self.i += 1;
+                    continue;
+                }
+                TokenKind::Space if !self.obeylines => {
                     self.i += 1;
                     continue;
                 }
