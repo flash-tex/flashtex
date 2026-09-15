@@ -106,6 +106,15 @@ pub struct Expansion {
 /// host command the converter maps back, so the parser sees the original
 /// name with its argument still a control sequence, not consumed as a
 /// skip assignment, which would yield `\\addtolength{\\}`.
+///
+/// `\\setlist` routes through a host primitive that absorbs `[<names>]`
+/// and `{<options>}` with one expansion pass but no execution, then pushes
+/// the reconstructed command back for the main loop. Without this, a bare
+/// length register in a value (`leftmargin=\mylen`) reaches the stomach
+/// as a register assignment, whose dimension scan reports "Missing number"
+/// and "Illegal unit of measure" on whatever follows it; real enumitem
+/// stores the keyval text unexecuted, where the bare register is already a
+/// complete dimension. The star is preserved for the parser.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
@@ -113,6 +122,7 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\counterwithout\\flashtexundefined
 \\def\\setlength#1#2{\\ifdefined#1#1 #2\\relax\\else\\flashtexsetlength{#1}{#2}\\fi}%
 \\def\\addtolength#1#2{\\ifdefined#1\\advance#1 #2\\relax\\else\\flashtexaddtolength{#1}{#2}\\fi}%
+\\def\\setlist{\\flashtexsetlist}%
 \\long\\def\\flashtexdeclaremathop#1#2#3{\\newcommand#2{\\operatorname#1{#3}}}%
 \\expandafter\\def\\expandafter\\DeclareMathOperator\\expandafter{\\csname @ifstar\\endcsname{\\flashtexdeclaremathop*}{\\flashtexdeclaremathop{}}}%
 \\def\\arraystretch{1}%
@@ -643,6 +653,7 @@ fn configure(engine: &mut Engine) {
     engine.declare_host_command("include");
     engine.declare_host_command("flashtexsetlength");
     engine.declare_host_command("flashtexaddtolength");
+    engine.declare_host_command("flashtexsetlistdone");
 }
 
 fn has_includes(text: &str) -> bool {
@@ -751,6 +762,8 @@ impl<'d> Converter<'d> {
                     "flashtexaddtolength" => {
                         conv.push(TokenKind::Command("addtolength".to_string()), at)
                     }
+                    // `do_flashtex_setlist`'s absorbed-and-spliced command.
+                    "flashtexsetlistdone" => conv.push(TokenKind::Command("setlist".to_string()), at),
                     "flashtexbegintabular" | "flashtexbegintabularstar" | "flashtexbeginarray" => {
                         let env = match name.as_str() {
                             "flashtexbegintabular" => "tabular",

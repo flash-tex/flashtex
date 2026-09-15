@@ -196,6 +196,16 @@ pub enum Primitive {
     SetToDepth,
     DefineKey,
     SetKeys,
+    /// Host pass-through for enumitem's `\setlist` (and `\setlist*`):
+    /// absorbs the star, the optional `[<names>]`, and the `{<options>}`
+    /// the way `\expanded` absorbs its body (expandable tokens expanded
+    /// once, nothing executed), splices length-register references to
+    /// their current `\the` text, and pushes the reconstructed command
+    /// back for the main loop, so a bare `\newlength` register in a value
+    /// never reaches the stomach as a register assignment (real enumitem
+    /// stores the keyval text unexecuted and assigns it later, where a
+    /// bare register is a complete `<internal dimen>` that takes no unit).
+    FlashtexSetlist,
     /// `\verb` (reads raw characters from the source).
     Verb,
     /// Internal: stop reading all input (`\end{document}`).

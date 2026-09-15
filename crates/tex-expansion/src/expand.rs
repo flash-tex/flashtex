@@ -341,6 +341,7 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("settodepth", Primitive::SetToDepth),
     ("define@key", Primitive::DefineKey),
     ("setkeys", Primitive::SetKeys),
+    ("flashtexsetlist", Primitive::FlashtexSetlist),
     ("verb", Primitive::Verb),
     ("flashtex@stop", Primitive::StopInput),
 ];
@@ -2417,6 +2418,10 @@ impl Engine {
                 self.do_setkeys(tok.span);
                 Step::Continue
             }
+            FlashtexSetlist => {
+                self.do_flashtex_setlist(tok);
+                Step::Continue
+            }
         }
     }
 
@@ -3150,6 +3155,165 @@ impl Engine {
         }
         self.finish_assignment();
         Step::Continue
+    }
+
+    /// enumitem's `\setlist` (or `\setlist*`), reached through the host
+    /// prelude shim (a direct alias, so the invocation span survives as
+    /// this call's origin undisturbed by any lookahead). The star, the
+    /// optional `[<names>]`, and the `{<options>}` are absorbed with one
+    /// expansion pass but nothing is executed (the way `\expanded` absorbs
+    /// its body): user macros and `\the` expand exactly as they would
+    /// reaching the main loop, while a bare length register never becomes
+    /// a register assignment there. Real enumitem stores the keyval text
+    /// unexecuted and assigns it later, where a bare register is a
+    /// complete `<internal dimen>` needing no unit; the stomach instead
+    /// scans the token after the register for a number and a unit and
+    /// reports "Missing number" + "Illegal unit of measure" on it.
+    ///
+    /// So each dimen/skip register reference inside the options (the same
+    /// shortcut `scan_dimen` itself takes: a `\newlength` skip or
+    /// `\newdimen` dimen alias, or `\dimen<n>`) is spliced to its current
+    /// `\the` text before the reconstructed command is pushed back for
+    /// the main loop, making `leftmargin=\mylen` behave exactly like
+    /// the already-working `leftmargin=\the\mylen`. A register with a
+    /// `<factor>` before it (`2\mylen`) is left alone: splicing there
+    /// would silently misread it, while the main loop reports it as
+    /// before. Missing/unclosed arguments push back only what was read,
+    /// so the parser reports those exactly as it would without this shim.
+    fn do_flashtex_setlist(&mut self, tok: Token) {
+        // Span for synthesized structural tokens: the `\setlist`
+        // invocation, so diagnostics map back to the source command. The
+        // command itself is pushed back as an opaque done-marker (mapped
+        // back to `\setlist` by the host converter): pushing back a real
+        // `\setlist` would re-enter this shim's own macro forever.
+        let at = self.last_origin.unwrap_or(tok.span);
+        let synth = |kind: TokenKind| Pending {
+            tok: Token::new(kind, at),
+            frozen: false,
+            origin: Some(at),
+        };
+        let mut out = vec![synth(TokenKind::ControlSequence("flashtexsetlistdone".into()))];
+        // A `*` directly after the command (spaces skipped, as
+        // `\@ifstar` does) is re-emitted so the host parser sees the star
+        // exactly as it did before.
+        self.skip_spaces();
+        if matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char('*', _))) {
+            self.next_raw_token();
+            out.push(synth(TokenKind::Char('*', CatCode::Other)));
+        }
+        // Optional `[<names>]`: absorb with expansion, keep every token
+        // verbatim (targets are names, never dimensions).
+        self.skip_spaces();
+        if matches!(self.peek_one().map(|t| t.kind), Some(TokenKind::Char('[', _))) {
+            out.push(Pending { tok: self.next_raw_token().unwrap(), frozen: false, origin: None });
+            let mut depth = 0i32;
+            while let Some(p) = self.next_expanding_raw() {
+                let (keep, done) = match &p.tok.kind {
+                    TokenKind::Char(_, CatCode::BeginGroup) => {
+                        depth += 1;
+                        (true, false)
+                    }
+                    TokenKind::Char(_, CatCode::EndGroup) if depth > 0 => {
+                        depth -= 1;
+                        (true, false)
+                    }
+                    TokenKind::Char(']', _) if depth == 0 => (true, true),
+                    TokenKind::Char(_, CatCode::EndGroup) => {
+                        // Unbalanced close: not ours; leave it for the main
+                        // loop's own recovery.
+                        self.push_pending(vec![p]);
+                        break;
+                    }
+                    _ => (true, false),
+                };
+                if keep {
+                    out.push(p);
+                }
+                if done {
+                    break;
+                }
+            }
+        }
+        // Required `{<options>}`. Without one, hand the command (and any
+        // bracket) back untouched so the parser reports the missing brace
+        // exactly as it would without this shim.
+        self.skip_spaces();
+        if !matches!(
+            self.peek_one().map(|t| t.kind),
+            Some(TokenKind::Char(_, CatCode::BeginGroup))
+        ) {
+            self.push_pending(out);
+            return;
+        }
+        out.push(Pending { tok: self.next_raw_token().unwrap(), frozen: false, origin: None });
+        // Last two absorbed token kinds, for the `<factor><register>`
+        // guard below.
+        let mut prev: [Option<TokenKind>; 2] = [None, None];
+        let mut depth = 0i32;
+        while let Some(p) = self.next_expanding_raw() {
+            match &p.tok.kind {
+                TokenKind::Char(_, CatCode::BeginGroup) => {
+                    depth += 1;
+                    push_absorbed(&mut out, p, &mut prev);
+                }
+                TokenKind::Char(_, CatCode::EndGroup) => {
+                    if depth == 0 {
+                        push_absorbed(&mut out, p, &mut prev);
+                        break;
+                    }
+                    depth -= 1;
+                    push_absorbed(&mut out, p, &mut prev);
+                }
+                TokenKind::ControlSequence(_) | TokenKind::ActiveChar(_) => {
+                    match self.setlist_register_text(&p.tok, &prev) {
+                        Some(text) => {
+                            let (span, origin) = (p.tok.span, p.origin);
+                            for t in chars_as_other(&text, span) {
+                                push_absorbed(
+                                    &mut out,
+                                    Pending { tok: t, frozen: false, origin },
+                                    &mut prev,
+                                );
+                            }
+                        }
+                        None => push_absorbed(&mut out, p, &mut prev),
+                    }
+                }
+                _ => push_absorbed(&mut out, p, &mut prev),
+            }
+        }
+        // End of input inside the group pushes back without a synthesized
+        // `}`; the parser closes at end of input as it would without the
+        // shim.
+        self.push_pending(out);
+    }
+
+    /// The current `\the`-style text of a dimen/skip register reference
+    /// for [`Engine::do_flashtex_setlist`], or `None` when `tok` is not
+    /// one. Mirrors `scan_dimen`'s register shortcut: a `\newlength`
+    /// skip or `\newdimen` dimen alias (through `\let`, like
+    /// `register_ref_of`), or primitive `\dimen<n>` (whose index reads
+    /// from the live input with real error recovery). A `<factor>` may
+    /// precede the register (`2\mylen`, inside or outside spaces), in
+    /// which case splicing would silently misread the value, so `None`
+    /// keeps it flowing to the main loop, which reports it as before.
+    fn setlist_register_text(&mut self, tok: &Token, prev: &[Option<TokenKind>; 2]) -> Option<String> {
+        if setlist_factor_before(prev) {
+            return None;
+        }
+        match strip_let(self.meaning_of_token(tok)) {
+            Meaning::RegisterAlias(RegisterKind::Dimen, idx) => {
+                Some(format!("{}pt", print_scaled(self.st.scopes.dimen(idx))))
+            }
+            Meaning::RegisterAlias(RegisterKind::Skip, idx) => {
+                Some(glue_to_string(self.st.scopes.skip(idx)))
+            }
+            Meaning::Primitive(Primitive::Dimen) => {
+                let idx = self.scan_number() as u16;
+                Some(format!("{}pt", print_scaled(self.st.scopes.dimen(idx))))
+            }
+            _ => None,
+        }
     }
 
     fn expect_equals(&mut self) {
@@ -4622,6 +4786,7 @@ fn primitive_name(p: Primitive) -> &'static str {
         SetToDepth => "settodepth",
         DefineKey => "define@key",
         SetKeys => "setkeys",
+        FlashtexSetlist => "flashtexsetlist",
         Verb => "verb",
         StopInput => "flashtex@stop",
         Host => "flashtex@host",
@@ -4796,6 +4961,35 @@ fn substitute_body(body: &[BodyPart], args: &HashMap<u8, Vec<Token>>) -> Vec<Tok
     expansion
 }
 
+/// Push one absorbed `\setlist` argument token for
+/// [`Engine::do_flashtex_setlist`], remembering the last two token kinds
+/// so a `<factor>` directly before a length register (`2\mylen`, with or
+/// without an intervening space) can be told apart from a bare register
+/// (`leftmargin=\mylen`).
+fn push_absorbed(out: &mut Vec<Pending>, p: Pending, prev: &mut [Option<TokenKind>; 2]) {
+    prev[0] = prev[1].take();
+    prev[1] = Some(p.tok.kind.clone());
+    out.push(p);
+}
+
+/// True when the absorbed tokens so far end where TeX would read a
+/// `<factor>` before a register: a digit (or `.`/`,`, which `scan_dimen`
+/// also accepts in the fractional part), optionally followed by a space.
+fn setlist_factor_before(prev: &[Option<TokenKind>; 2]) -> bool {
+    fn is_number_char(kind: &TokenKind) -> bool {
+        matches!(kind, TokenKind::Char(c, _) if c.is_ascii_digit() || *c == '.' || *c == ',')
+    }
+    match prev {
+        [_, Some(last)] if is_number_char(last) => true,
+        [Some(second), Some(last)]
+            if matches!(last, TokenKind::Char(_, CatCode::Space)) && is_number_char(second) =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn chars_as_other(s: &str, span: Span) -> Vec<Token> {
     s.chars()
         .map(|c| {
@@ -4917,7 +5111,7 @@ fn is_format_level(p: Primitive) -> bool {
             | NewEnvironment | RenewEnvironment | Begin | End | NewCounter | SetCounter | AddToCounter | StepCounter
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
             | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetToWidth | SetToHeight
-            | SetToDepth | DefineKey | SetKeys | Verb | StopInput
+            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | Verb | StopInput
     )
 }
 
