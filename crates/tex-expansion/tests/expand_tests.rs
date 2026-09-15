@@ -244,6 +244,23 @@ fn newcounter_and_setcounter_stepcounter() {
 }
 
 #[test]
+fn newcounter_within_kernel_counter_resets_when_parent_steps() {
+    // Class counters (`section`, `chapter`, ...) exist without an explicit
+    // `\newcounter`, as in any standard document class.
+    assert_eq!(run(r"\newcounter{c}[section]\stepcounter{c}\arabic{c}"), "1");
+    assert_eq!(run(r"\newcounter{c}[section]\stepcounter{c}\stepcounter{section}\arabic{c}"), "0");
+    assert_eq!(run(r"\newcounter{c}[chapter]\stepcounter{c}\arabic{c}"), "1");
+}
+
+#[test]
+fn counterwithout_kernel_parent_stops_resetting() {
+    assert_eq!(
+        run(r"\newcounter{c}[section]\stepcounter{c}\counterwithout{c}{section}\stepcounter{section}\arabic{c}"),
+        "1"
+    );
+}
+
+#[test]
 fn addtocounter_and_value() {
     assert_eq!(run(r"\newcounter{foo}\setcounter{foo}{3}\addtocounter{foo}{4}\arabic{foo}"), "7");
 }
