@@ -282,6 +282,9 @@ final class ShellModel {
         var projectId: String; var revision: Int; var documents: [RuntimeV1.Document]; var sentAt: Date
         /// `layout_capabilities` this request carried; the reply is checked against it.
         var layoutCapabilities: [String] = []
+        /// `display_list_window` this request carried (display-list-v2-window
+        /// consumer, V2PageWindow.swift); nil for an unwindowed request.
+        var window: RuntimeV1.CompileRequest.DisplayListWindow?
     }
     private(set) var inFlightRequests: [String: InFlight] = [:]
     /// `display-list-v2-delta`: the live v2 frame currently published, as the
@@ -289,6 +292,11 @@ final class ShellModel {
     /// frame is published after full validation; cleared by any refusal,
     /// worker exit or relaunch, or a result that did not accept `display-list-v2`.
     @ObservationIgnored var deltaInstalled: DisplayListDelta.Installed?
+    /// `display-list-v2-window` consumer state (V2PageWindow.swift): engaged
+    /// on demand after an over-limit failure/decline, anchored by the pane's
+    /// scroll position. Never engaged by default — an unwindowed reply stays
+    /// byte-for-byte what it is today.
+    @ObservationIgnored var v2Window = V2Window.Controller()
     /// Id of the most recently sent compile request. A reply to any older
     /// request is valid but stale (`scripts/check_runtime.py`: `stale_ignore`):
     /// it is checked, logged and dropped, and never changes the preview or the
@@ -965,8 +973,9 @@ final class ShellModel {
             }
             log("layout capability switch while \(latestID) is in flight: re-requesting revision \(editorRevision) under \(LayoutNegotiation.describe(capabilities))")
         } else if let current = result, previewSource != .fixture, current.revision == editorRevision,
-                  negotiation.requested == capabilities, previewV2 || !v1PagesElided {
-            return // buffers and capability set unchanged since the applied result
+                  negotiation.requested == capabilities, previewV2 || !v1PagesElided,
+                  !v2WindowResendNeeded {
+            return // buffers, capability set and window unchanged since the applied result
         }
         let id = "mac-\(nextRequestID)"
         nextRequestID += 1
@@ -981,9 +990,17 @@ final class ShellModel {
         // v2 frame is acknowledged so the producer may answer with a delta.
         var sent = capabilities
         var displayListBase: RuntimeV1.CompileRequest.DisplayListBase?
+        var displayListWindow: RuntimeV1.CompileRequest.DisplayListWindow?
         if previewV2, capabilities.contains(V2Live.capability) {
             if DisplayListDelta.v2OnlyEnabled { sent.append(DisplayListDelta.v2OnlyCapability) }
-            if DisplayListDelta.enabled, let installed = deltaInstalled, installed.list.projectId == projectId {
+            if let window = v2WindowDesired(capabilities: capabilities) {
+                // display-list-v2-window (§7): mutually exclusive with -delta
+                // in r1 — a windowed producer cannot digest pages it has not
+                // materialised — so an engaged window suppresses the delta
+                // acknowledgement; it composes with -only above.
+                sent.append(V2Window.capability)
+                displayListWindow = window
+            } else if DisplayListDelta.enabled, let installed = deltaInstalled, installed.list.projectId == projectId {
                 sent.append(DisplayListDelta.capability)
                 displayListBase = installed.acknowledgement
             }
@@ -996,6 +1013,7 @@ final class ShellModel {
             documents: sendDocuments,
             layoutCapabilities: sent.isEmpty ? nil : sent,
             displayListBase: displayListBase,
+            displayListWindow: displayListWindow,
             // display-list-v2-images: the producer sizes `\includegraphics`
             // files under the open project's directory (V2ImageStore.swift).
             projectRoot: capabilities.contains(RenderingV2.imagesCapability) ? project.projectRoot?.path : nil,
@@ -1010,7 +1028,8 @@ final class ShellModel {
             if TypingBench.isBenchActive { FlashTeXLog.write("compile: sending revision \(editorRevision) at \(MonotonicClock.nowNs())") }
             try worker.send(request, id: id)
             inFlightRequests[id] = InFlight(projectId: request.projectId, revision: request.revision,
-                                            documents: sendDocuments, sentAt: Date(), layoutCapabilities: sent)
+                                            documents: sendDocuments, sentAt: Date(), layoutCapabilities: sent,
+                                            window: displayListWindow)
             latestRequestID = id
             inFlightRevision = editorRevision
             workerStatus = "compiling revision \(editorRevision) (\(id))…"
@@ -1101,9 +1120,15 @@ final class ShellModel {
             let latencyText = String(format: " in %.0f ms", ms)
             workerStatus = "revision \(incoming.revision): \(incoming.status.rawValue), \(incoming.diagnostics.count) diagnostics\(latencyText)"
             if selection != nil { selection = nil } // the editor observes `selection`; a nil-to-nil write still invalidates it
+            // display-list-v2-window (V2PageWindow.swift): bind the applied
+            // request's window, engage after an over-limit failure/decline,
+            // and re-request the same buffers under the now-desired window.
+            let windowRetry = v2WindowNote(applied: incoming, sentWindow: sent.window)
             if compileQueued {
                 compileQueued = false
                 compile() // no-op when buffers and capability set are unchanged
+            } else if windowRetry {
+                compile() // same buffers, new window: a new id at the same revision
             }
         case .displayList(let id, let line):
             receiveDisplayListV2(id: id, line: line) // negotiated live v2 frame (PreviewV2View.swift)
@@ -1131,6 +1156,7 @@ final class ShellModel {
         case .exited(let code):
             inFlightRequests.removeAll()
             deltaInstalled = nil // a restarted producer holds no snapshot
+            v2Window.applied = nil // the next request states its window afresh
             latestRequestID = nil
             inFlightRevision = nil
             compileQueued = false
