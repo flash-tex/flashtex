@@ -203,7 +203,7 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   item. Display math (`$$…$$`, `\[…\]`) and math environments are not covered.
   Debounced like other hover (the same 0.45 s timer; nothing while typing).
   Tests: `MathHoverTests`.
-- Dark preview toggle in the toolbar (page and text colors only).
+- Dark preview toggle in the preview header (page and text colors only).
 - Stale offsets are never applied. Each `compile_result` remembers the exact
   document text it was produced for; after edits, a span is rebased through the
   common prefix/suffix of old vs new text (`SourceMapping`), verified against the
@@ -247,7 +247,11 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   (`RuleGeometry.pdfRect`). It exports the layout the Rust compiler reported,
   not a TeX-engine PDF: no fonts beyond Latin Modern/Times, no images, no links
   or metadata. The dark toggle only changes page/text colors. Disabled when no
-  result is loaded.
+  result is loaded. `File > Print…` (⌘P) prints those same bytes through
+  PDFKit's system print panel (`PrintController.swift`); it is also disabled
+  when the compile failed or produced no pages (a blank PDF is not printed).
+  `File > Print Source…` prints the editor buffer with line numbers from a copy
+  and is disabled when no document is open.
 
 ## Capture bridge (transfer-v1)
 
@@ -945,18 +949,21 @@ explain that nothing is loaded.
 | ⌘B | Compile now (auto-compile also runs 250 ms after edits) |
 | ⌘⇧E | Export PDF… (CoreGraphics, always white) |
 | ⌘⌥E | Export PDF via Rust writer… (`flashtex-pdf --verify`, always white) |
+| ⌘P | Print… (compiled document PDF, same CoreGraphics bytes as Export PDF…; system print panel; page size follows the PDF) |
+| File > Print Source… | Print Source… (editor text with line numbers, monospaced, from a copy so the live editor is untouched) |
 | ⌘⌥P | Pin insertion point at caret (capture destination anchor) |
 | Edit > Open Capture Proposal… | Open capture proposal… file (review sheet; ⏎ approves, inserts one undoable edit; no shortcut since ⌘⇧I moved to the Captures inspector) |
 | ⌘⇧I | Toggle Captures inspector (View; also the toolbar's Captures button): captures from the paired iPad with image, instruction and state (received → converting → proposal ready → inserted), the proposed LaTeX/TikZ, Insert at caret / Edit / Review… / Reject; opening it starts advertising and attaches the bridge; Pairing code… is one click |
 | ⌘⇧U | Submit sample capture… (PNG/JPEG → `capture_submit` through the attached bridge) |
 | ⌘⇧G | Convert capture (`capture_convert` for the latest received capture) |
 | ⌘⇧N | Nearby Companion… (advertise, pairing code, paired devices, received captures; Return shows or resumes a pairing code, Esc cancels it or dismisses a banner, Tab walks Advertise → pairing controls → Forget → Clear; the step indicator, status row and every transition are VoiceOver text) |
-| Edit > Rename Citation… | Rename citation window (reviewed `plan_citation_rename` across the project → one `apply_group`; also in the toolbar) |
-| ⌘⇧P | Command palette (View; also the toolbar's Commands button): every command in this table with its menu and shortcut; type to filter, ↑/↓ choose, Return runs, Esc closes |
+| Edit > Rename Citation… | Rename citation window (reviewed `plan_citation_rename` across the project → one `apply_group`) |
+| ⌘⇧P | Command palette (View; also the toolbar's Commands button): scope tabs for Files, Sections, Labels, Citations and every command in this table; type to filter, Tab cycles scopes, ↑/↓ choose, Return opens or runs, Esc closes |
 | ⌘= | Zoom in preview (View; also the preview header's + button or a pinch): multiply the fit-width zoom by 1.25, up to 4x; wide pages scroll horizontally |
 | ⌘- | Zoom out preview (View; also the header's − button): divide by 1.25, down to 0.25x fit width |
 | ⌘0 | Actual size preview (View): 1 PDF point per screen point when the 0.25x…4x zoom bounds permit it |
 | ⌘9 | Fit width preview (View): reset zoom to 1x so the widest page fits the pane; double-click the header percentage does the same |
+| ⌘⇧9 | Fit page preview (View): zooms so the tallest page's full height fits the pane (within the 0.25x…4x bounds); also in the preview header on hover |
 | ⌘⌥= | Increase editor font size (View; also a pinch over the editor): +1 pt up to 36 pt, persisted as the Settings font-size preference; gutter and highlighting follow |
 | ⌘⌥- | Decrease editor font size (View): -1 pt down to 8 pt |
 | ⌘⌥0 | Reset editor font size (View): back to the default 13 pt |
@@ -977,6 +984,12 @@ explain that nothing is loaded.
 | ⌘⇧Space | Signature help for the command whose argument the caret is in (also opens on `{`/`[` typed after a command name; `}`, Esc or leaving the argument closes it) |
 | ⌥⇧↓ / ⌥⇧↑ | Duplicate the caret's line — or every line the selection touches — below / above itself, caret on the copy so the key repeats |
 | ⌘/ | Toggle `% ` line comment on the selection's lines |
+| ⌃I | Re-indent Lines (selected lines, or the caret's line; LaTeX-aware; one undo step). Not Tab; Vim does not bind ⌃I; ⌘⇧I is Toggle Captures |
+| Edit > Re-indent Document | Re-indent Document (same rules over the whole buffer; one undo step; no shortcut) |
+| ⌘⌥← | Fold the innermost environment or section at the caret (first line stays visible with an inline …; hidden characters stay in the buffer) |
+| ⌘⌥→ | Unfold the innermost folded region at the caret |
+| ⌘⌥⇧← | Fold All environments and sectioning blocks |
+| ⌘⌥⇧→ | Unfold All folded regions |
 | ⌘⇧D | Go to matching `\begin`/`\end` or `\label`/`\ref` |
 | ⌃⌘J | Go to definition of the command/environment under the caret (`\newcommand`, `\def`, `\DeclareMathOperator`, `\newenvironment`; ⌘-click does the same, hover peeks the body) |
 | ⌘⇧T | Go to symbol: fuzzy picker over every heading, environment and label of the open documents |
@@ -1206,8 +1219,8 @@ not replace, negotiate, or change the v1 path.
   decode, prepare and paint red at the disc centre).
 - Input, file: a `display_list` JSON envelope written by `flashtex-render --v2 out.json`.
   Open it with `File > Open Display List (v2)…`, or launch with `FLASHTEX_V2_FILE=<json>`
-  (`FLASHTEX_PREVIEW_V2=1` starts with the toolbar toggle on). The toolbar's
-  "v2 preview" switch flips between the v1 and v2 panes.
+  (`FLASHTEX_PREVIEW_V2=1` starts with the switch on). The preview header's
+  "v2 pane" switch flips between the v1 and v2 panes.
 - Keeping up with typing (`docs/evidence/mac-preview-v2-live-2026-09-12.md`): one
   preparation in flight, the newest arrival waits and lists in between are dropped
   undecoded (coalescing; strict supersession alone starved visible progress: only the last

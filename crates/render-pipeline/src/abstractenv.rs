@@ -286,7 +286,7 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
         // `\begin{abstract}` is always read in vertical mode: the compiler
         // only emits a body block for it after `\par`, and `\@trivlist`
         // takes `\partopsep` whenever it is.
-        env_open: Some(EnvOpen { vmode: true }),
+        env_open: Some(EnvOpen { vmode: true, skips: None }),
         env_close: true,
         eject_before: false,
         vspace_before: 0.0,
@@ -368,7 +368,7 @@ fn abstract_name(texts: &[&str]) -> Option<String> {
 }
 
 /// The first source position a block sets material at.
-fn block_span(block: &Block) -> Option<Span> {
+pub(crate) fn block_span(block: &Block) -> Option<Span> {
     match block {
         Block::Paragraph { parts, .. } => parts.iter().find_map(part_span),
         Block::Heading { span, .. } | Block::Chapter { span, .. } | Block::Part { span, .. } | Block::Title { span, .. } | Block::Rule { span, .. } => Some(*span),

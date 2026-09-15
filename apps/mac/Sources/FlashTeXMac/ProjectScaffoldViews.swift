@@ -181,7 +181,7 @@ struct NewProjectSheet: View {
 
     var body: some View {
         @Bindable var state = model.scaffold
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Space.l) {
             Text("New Project").font(.title2.bold())
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 10) {
                 GridRow {
@@ -215,7 +215,7 @@ struct NewProjectSheet: View {
                 Text("Creates \(folder.appendingPathComponent(state.projectName.trimmingCharacters(in: .whitespacesAndNewlines)).path)/\(state.template.files(projectName: state.projectName).map(\.path).joined(separator: ", "))")
                     .font(.caption2).foregroundStyle(.tertiary).lineLimit(2).truncationMode(.middle)
             }
-            if let note = state.note { Text(note).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if let note = state.note { Text(note).font(.callout).foregroundStyle(DS.Colors.severityWarning).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()
                 Button("Cancel") { state.sheet = nil }.keyboardShortcut(.cancelAction)
@@ -225,8 +225,8 @@ struct NewProjectSheet: View {
                     .accessibilityIdentifier("project.new.create")
             }
         }
-        .padding(20)
-        .frame(width: 520)
+        .padding(DS.Space.xl)
+        .frame(width: DS.Layout.sheetWidth)
     }
 
     private func create() {
@@ -255,7 +255,7 @@ struct NewFileSheet: View {
     var body: some View {
         @Bindable var state = model.scaffold
         let resolved = NewFilePath.resolve(state.newFileName)
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Space.l) {
             Text("New File").font(.title2.bold())
             Text("In \(model.project.projectRoot?.path ?? "the project folder")").font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             TextField("Name (e.g. sections/results)", text: $state.newFileName)
@@ -265,11 +265,11 @@ struct NewFileSheet: View {
                 .onSubmit { if case .success = resolved { Task { await state.createFile() } } }
             switch resolved {
             case .success(let path): Text("Creates \(path)").font(.caption).foregroundStyle(.secondary)
-            case .failure(let f): Text(state.newFileName.isEmpty ? "A .tex name, subfolders allowed, inside the project folder." : f.text).font(.caption).foregroundStyle(state.newFileName.isEmpty ? Color.secondary : Color.orange)
+            case .failure(let f): Text(state.newFileName.isEmpty ? "A .tex name, subfolders allowed, inside the project folder." : f.text).font(.caption).foregroundStyle(state.newFileName.isEmpty ? Color.secondary : DS.Colors.severityWarning)
             }
             Toggle("Insert \\input{…} at the caret in \(model.activePath)", isOn: $state.insertReference)
                 .accessibilityIdentifier("project.newfile.insert")
-            if let note = state.note { Text(note).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if let note = state.note { Text(note).font(.callout).foregroundStyle(DS.Colors.severityWarning).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()
                 Button("Cancel") { state.sheet = nil }.keyboardShortcut(.cancelAction)
@@ -279,8 +279,8 @@ struct NewFileSheet: View {
                     .accessibilityIdentifier("project.newfile.create")
             }
         }
-        .padding(20)
-        .frame(width: 440)
+        .padding(DS.Space.xl)
+        .frame(width: DS.Layout.sheetNarrowWidth)
         .onAppear { nameFocused = true }
     }
 }
@@ -293,7 +293,7 @@ struct RenameSheet: View {
         @Bindable var state = model.scaffold
         let resolved = NewFilePath.resolve(state.renameTo)
         let references = ReferenceRewrite.plan(oldPath: path, newPath: (try? resolved.get()) ?? path, documents: model.documents)
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Space.l) {
             Text("Rename \(path)").font(.title2.bold())
             TextField("New name", text: $state.renameTo)
                 .textFieldStyle(.roundedBorder)
@@ -304,9 +304,9 @@ struct RenameSheet: View {
                 let n = references.reduce(0) { $0 + $1.count }
                 Text("Moves the file to \(p)" + (n == 0 ? "; no open document references it." : "; rewrites \(n) \\input/\\include reference\(n == 1 ? "" : "s") in \(references.map(\.path).joined(separator: ", ")) (one undoable edit each)."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            case .failure(let f): Text(f.text).font(.caption).foregroundStyle(.orange)
+            case .failure(let f): Text(f.text).font(.caption).foregroundStyle(DS.Colors.severityWarning)
             }
-            if let note = state.note { Text(note).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if let note = state.note { Text(note).font(.callout).foregroundStyle(DS.Colors.severityWarning).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()
                 Button("Cancel") { state.sheet = nil }.keyboardShortcut(.cancelAction)
@@ -316,8 +316,8 @@ struct RenameSheet: View {
                     .accessibilityIdentifier("project.rename.apply")
             }
         }
-        .padding(20)
-        .frame(width: 460)
+        .padding(DS.Space.xl)
+        .frame(width: DS.Layout.settingsWidth)
     }
 }
 
@@ -327,11 +327,11 @@ struct DeleteSheet: View {
 
     var body: some View {
         @Bindable var state = model.scaffold
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Space.l) {
             Text("Move \(path) to the Trash?").font(.title2.bold())
             Text("The file leaves the project and goes to the Trash (recoverable in Finder). References to it in other documents are left as they are and show as missing in the sidebar.")
                 .font(.callout).fixedSize(horizontal: false, vertical: true)
-            if let note = state.note { Text(note).font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if let note = state.note { Text(note).font(.callout).foregroundStyle(DS.Colors.severityWarning).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()
                 Button("Cancel") { state.sheet = nil }.keyboardShortcut(.cancelAction)
@@ -340,7 +340,7 @@ struct DeleteSheet: View {
                     .accessibilityIdentifier("project.delete.apply")
             }
         }
-        .padding(20)
-        .frame(width: 440)
+        .padding(DS.Space.xl)
+        .frame(width: DS.Layout.sheetNarrowWidth)
     }
 }

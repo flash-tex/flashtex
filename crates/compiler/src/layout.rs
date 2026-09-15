@@ -12,9 +12,9 @@ use crate::bib;
 use crate::diagnostics::Diagnostic;
 use crate::export::{self, ExportFont};
 use crate::math::{self, MathBox};
-use crate::parser::{FillLeader, 
-    Block, FontSizeLevel, Inline, ListLeftMargin, MathRow, ParagraphStyle, TextFamily, TextStyle,
-    CMR_EX_PER_EM,
+use crate::parser::{
+    Block, FillLeader, FontSizeLevel, Inline, LetterPart, ListLeftMargin, MathRow, ParagraphStyle,
+    TextFamily, TextStyle, CMR_EX_PER_EM,
 };
 use crate::Span;
 use flashtex_font_engine::core14::Core14;
@@ -70,6 +70,7 @@ pub const REFERENCE_ITERATION_LIMIT: usize = 5;
 struct ReferenceValue {
     number: String,
     page: u32,
+    kind: String,
 }
 
 /// article.cls `\l@section`/`\l@subsection`/`\l@subsubsection` geometry:
@@ -525,6 +526,7 @@ pub struct LayoutCursor {
     constraints: LayoutConstraints,
     resolved_labels: BTreeMap<String, ReferenceValue>,
     collected_labels: BTreeMap<String, ReferenceValue>,
+    cleveref: crate::xref::CleverefConfig,
     /// Contents entries from the previous pass, typeset by
     /// `Block::TableOfContents`.
     resolved_toc: Vec<TocEntry>,
@@ -581,6 +583,7 @@ impl LayoutCursor {
             constraints,
             resolved_labels,
             collected_labels: BTreeMap::new(),
+            cleveref: crate::xref::CleverefConfig::default(),
             resolved_toc: Vec::new(),
             collected_toc: Vec::new(),
             collect_toc: false,
@@ -1405,6 +1408,23 @@ impl LayoutCursor {
                     self.vertical_gap(PARAGRAPH_GAP_PT);
                 }
             }
+            // Every letter block starts a paragraph of its own, so it takes
+            // the ordinary `\parskip` on top of the class's own `\vspace`
+            // before it (`gap_before_pt`). The previous block may already
+            // have closed its line and laid down its own `\vspace`
+            // (`gap_after_pt`, reported through `closed_line_skip`), in which
+            // case only the skips are still owed.
+            Block::LetterBlock { gap_before_pt, .. } if closed.is_some() => {
+                self.vertical_gap(parskip + gap_before_pt);
+            }
+            Block::LetterBlock { gap_before_pt, .. } => {
+                if !self.first_block {
+                    self.newline(body_size);
+                    self.vertical_gap(parskip + gap_before_pt);
+                } else {
+                    self.vertical_gap(*gap_before_pt);
+                }
+            }
             Block::PageBreak => {
                 if !self.first_block {
                     self.force_page_break();
@@ -1459,6 +1479,65 @@ impl LayoutCursor {
             Block::Paragraph(inlines) => {
                 self.justify = true;
                 emit(self, inlines, body_size, Font::TimesRoman);
+            }
+            // `\opening`'s return-address box and `\closing`'s signature
+            // parbox. Both are *boxes*: every line is set flush left inside
+            // the box and the whole box is then placed horizontally, which
+            // is why neither is a `ParagraphStyle`. `\raggedleft` around a
+            // `tabular` moves the box, not its lines — in the committed
+            // `fixtures/real-world/letter/reference.pdf` all three lines of
+            // the address block start at the same x (437.195bp), even though
+            // they are different lengths.
+            Block::LetterBlock {
+                part,
+                lines,
+                extra_gap_after_pt,
+                gap_after_pt,
+                indent_pt,
+                ..
+            } => {
+                self.style = None;
+                self.justify = false;
+                let starts: Vec<usize> = self.pages.iter().map(|page| page.items.len()).collect();
+                let mut widest_end: f64 = self.left_edge();
+                for (index, line) in lines.iter().enumerate() {
+                    self.x = self.left_edge();
+                    self.content_end = self.x;
+                    emit(self, line, body_size, Font::TimesRoman);
+                    widest_end = widest_end.max(self.content_end);
+                    let last = index + 1 == lines.len();
+                    if !last {
+                        self.newline(body_size);
+                        if let Some(gap) = extra_gap_after_pt.get(index) {
+                            self.vertical_gap(*gap);
+                        }
+                    }
+                }
+                let shift = match part {
+                    // `{\raggedleft <box> \par}`: the box's right edge is the
+                    // right margin.
+                    LetterPart::ReturnAddress => (self.right_edge() - widest_end).max(0.0),
+                    // The left margin, or `\hspace*{\longindentation}`,
+                    // already resolved by the parser from the class size.
+                    LetterPart::Recipient | LetterPart::Closing => *indent_pt,
+                };
+                if shift > 0.0 {
+                    for (page, start) in self.pages.iter_mut().zip(starts) {
+                        for item in page.items.iter_mut().skip(start) {
+                            item.x_pt = round2(item.x_pt + shift);
+                        }
+                    }
+                    self.x += shift;
+                    self.content_end += shift;
+                }
+                // The class's `\vspace` after the block. Reporting it as a
+                // closed-line skip is what stops the next block from opening
+                // a second line of its own (see `prepare_block`).
+                if *gap_after_pt > 0.0 {
+                    self.newline(body_size);
+                    self.vertical_gap(*gap_after_pt);
+                    self.closed_line_skip = Some(*gap_after_pt);
+                }
             }
             Block::Styled { style, content, .. } => {
                 self.style = Some(*style);
@@ -1737,6 +1816,7 @@ impl LayoutCursor {
             std::mem::take(&mut self.resolved_labels),
             self.emit_heading_numbers,
         );
+        inner.cleveref = self.cleveref.clone();
         let left = inner.left_edge();
         let mut first_y = inner.y;
         let mut natural: f64 = 0.0;
@@ -2063,6 +2143,18 @@ pub fn layout_converged(
     blocks: &[Block],
     constraints: LayoutConstraints,
 ) -> (Vec<Page>, Vec<Diagnostic>) {
+    layout_converged_with_options(
+        blocks,
+        constraints,
+        &crate::xref::CleverefConfig::default(),
+    )
+}
+
+pub fn layout_converged_with_options(
+    blocks: &[Block],
+    constraints: LayoutConstraints,
+    cleveref: &crate::xref::CleverefConfig,
+) -> (Vec<Page>, Vec<Diagnostic>) {
     let collect_toc = blocks
         .iter()
         .any(|block| matches!(block, Block::TableOfContents { .. }));
@@ -2074,6 +2166,7 @@ pub fn layout_converged(
     let mut oscillating = false;
     for _ in 0..REFERENCE_ITERATION_LIMIT {
         let mut cursor = LayoutCursor::with_labels(constraints, state.0.clone(), true);
+        cursor.cleveref = cleveref.clone();
         cursor.resolved_toc = state.1.clone();
         cursor.collect_toc = collect_toc;
         for block in blocks {
@@ -2154,6 +2247,11 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
                     visit_inline_references(date, visitor);
                 }
             }
+            Block::LetterBlock { lines, .. } => {
+                for line in lines {
+                    visit_inline_references(line, visitor);
+                }
+            }
             Block::VSpace { .. }
             | Block::Rule { .. }
             | Block::PageBreak
@@ -2168,6 +2266,13 @@ fn visit_inline_references(inlines: &[Inline], visitor: &mut impl FnMut(&str, Sp
     for inline in inlines {
         match inline {
             Inline::Reference { key, span, .. } => visitor(key, *span),
+            Inline::CleverReference { keys, span, .. } => {
+                for key in keys {
+                    if !key.is_empty() {
+                        visitor(key, *span);
+                    }
+                }
+            }
             Inline::Footnote {
                 text: Some(text), ..
             } => visit_inline_references(text, visitor),
@@ -2180,6 +2285,219 @@ fn visit_inline_references(inlines: &[Inline], visitor: &mut impl FnMut(&str, Sp
             Inline::Underline(u) => visit_inline_references(&u.content, visitor),
             _ => {}
         }
+    }
+}
+
+#[derive(Clone)]
+struct CleverReferenceItem {
+    number: String,
+    page: u32,
+    kind: String,
+    raw_kind: String,
+}
+
+fn clever_reference_text(
+    keys: &[String],
+    labels: &BTreeMap<String, ReferenceValue>,
+    config: &crate::xref::CleverefConfig,
+    page: bool,
+    range: bool,
+    label_only: bool,
+    capitalise: bool,
+) -> (String, bool) {
+    let mut items = Vec::with_capacity(keys.len());
+    let mut unresolved = false;
+    for key in keys {
+        if key.is_empty() {
+            continue;
+        }
+        match labels.get(key) {
+            Some(value) => items.push(CleverReferenceItem {
+                number: value.number.clone(),
+                page: value.page,
+                kind: crate::xref::cleveref_kind(&value.kind).to_string(),
+                raw_kind: value.kind.clone(),
+            }),
+            None => unresolved = true,
+        }
+    }
+    if items.is_empty() {
+        return ("??".into(), true);
+    }
+    if range {
+        if items.len() != 2 || items[0].kind != items[1].kind {
+            return ("??".into(), true);
+        }
+        let name = crate::xref::cleveref_name(config, &items[0].raw_kind, true, capitalise);
+        return include_unresolved(
+            format!(
+                "{} {} to {}",
+                name,
+                clever_number(&items[0]),
+                clever_number(&items[1])
+            ),
+            unresolved,
+        );
+    }
+    if page {
+        items.sort_by_key(|item| item.page);
+        let name = crate::xref::cleveref_name(config, "page", items.len() != 1, capitalise);
+        return include_unresolved(
+            format!("{} {}", name, format_page_numbers(&items)),
+            unresolved,
+        );
+    }
+    if label_only {
+        items.sort_by(compare_items);
+        return include_unresolved(
+            format_clever_numbers(&items),
+            unresolved,
+        );
+    }
+
+    let mut groups: Vec<(String, Vec<CleverReferenceItem>)> = Vec::new();
+    for item in items {
+        if let Some((_, group)) = groups.iter_mut().find(|(kind, _)| kind == &item.kind) {
+            group.push(item);
+        } else {
+            groups.push((item.kind.clone(), vec![item]));
+        }
+    }
+    for (_, group) in &mut groups {
+        group.sort_by(compare_items);
+    }
+    let group_text = groups
+        .iter()
+        .map(|(_, group)| {
+            let name = crate::xref::cleveref_name(
+                config,
+                &group[0].raw_kind,
+                group.len() != 1,
+                capitalise,
+            );
+            format!("{} {}", name, format_clever_numbers(group))
+        })
+        .collect::<Vec<_>>();
+    let text = join_group_parts(&group_text);
+    include_unresolved(text, unresolved)
+}
+
+fn format_clever_numbers(items: &[CleverReferenceItem]) -> String {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while start < items.len() {
+        let mut end = start;
+        while end + 1 < items.len() && consecutive(&items[end], &items[end + 1]) {
+            end += 1;
+        }
+        if end - start >= 2 {
+            parts.push(format!(
+                "{} to {}",
+                clever_number(&items[start]),
+                clever_number(&items[end])
+            ));
+        } else {
+            parts.extend(items[start..=end].iter().map(clever_number));
+        }
+        start = end + 1;
+    }
+    join_cref_parts(&parts)
+}
+
+fn format_page_numbers(items: &[CleverReferenceItem]) -> String {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while start < items.len() {
+        let mut end = start;
+        while end + 1 < items.len() && items[end].page + 1 == items[end + 1].page {
+            end += 1;
+        }
+        if end - start >= 2 {
+            parts.push(format!("{} to {}", items[start].page, items[end].page));
+        } else {
+            parts.extend(items[start..=end].iter().map(|item| item.page.to_string()));
+        }
+        start = end + 1;
+    }
+    join_cref_parts(&parts)
+}
+
+fn consecutive(first: &CleverReferenceItem, second: &CleverReferenceItem) -> bool {
+    let Some((prefix, value)) = first.number.rsplit_once('.') else {
+        return first.number.parse::<u32>().ok().is_some_and(|value| {
+            value
+                .checked_add(1)
+                .and_then(|next| second.number.parse::<u32>().ok().map(|number| (next, number)))
+                .is_some_and(|(next, number)| next == number)
+        });
+    };
+    let Some(value) = value.parse::<u32>().ok() else {
+        return false;
+    };
+    let Some((second_prefix, second_value)) = second.number.rsplit_once('.') else {
+        return false;
+    };
+    second_prefix == prefix
+        && value
+            .checked_add(1)
+            .zip(second_value.parse::<u32>().ok())
+            .is_some_and(|(next, number)| next == number)
+}
+
+fn compare_items(first: &CleverReferenceItem, second: &CleverReferenceItem) -> std::cmp::Ordering {
+    let first_parts = first
+        .number
+        .split('.')
+        .map(str::parse::<u32>)
+        .collect::<Result<Vec<_>, _>>();
+    let second_parts = second
+        .number
+        .split('.')
+        .map(str::parse::<u32>)
+        .collect::<Result<Vec<_>, _>>();
+    match (first_parts, second_parts) {
+        (Ok(first), Ok(second)) => first.cmp(&second),
+        _ => first.number.cmp(&second.number),
+    }
+}
+
+fn clever_number(item: &CleverReferenceItem) -> String {
+    if item.kind == "equation" {
+        format!("({})", item.number)
+    } else {
+        item.number.clone()
+    }
+}
+
+fn join_cref_parts(parts: &[String]) -> String {
+    match parts {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, second] => format!("{first} and {second}"),
+        _ => {
+            let last = parts.last().expect("more than two parts");
+            format!("{} and {last}", parts[..parts.len() - 1].join(", "))
+        }
+    }
+}
+
+fn join_group_parts(parts: &[String]) -> String {
+    match parts {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, second] => format!("{first} and {second}"),
+        _ => {
+            let last = parts.last().expect("more than two groups");
+            format!("{}, and {last}", parts[..parts.len() - 1].join(", "))
+        }
+    }
+}
+
+fn include_unresolved(text: String, unresolved: bool) -> (String, bool) {
+    if unresolved && text != "??" {
+        (format!("{text} and ??"), true)
+    } else {
+        (text, unresolved)
     }
 }
 
@@ -2250,12 +2568,13 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 }
             }
             Inline::MathRows { rows, aligned, .. } => c.display_rows(rows, *aligned, size),
-            Inline::Label { key, value, .. } => {
+            Inline::Label { key, value, kind, .. } => {
                 c.collected_labels.insert(
                     key.clone(),
                     ReferenceValue {
                         number: value.clone(),
                         page: c.pages.len() as u32,
+                        kind: kind.clone(),
                     },
                 );
             }
@@ -2289,6 +2608,33 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     *space_before,
                 ),
             },
+            Inline::CleverReference {
+                keys,
+                page,
+                range,
+                label_only,
+                capitalise,
+                span,
+                space_before,
+                ..
+            } => {
+                let (text, unresolved) = clever_reference_text(
+                    keys,
+                    &c.resolved_labels,
+                    &c.cleveref,
+                    *page,
+                    *range,
+                    *label_only,
+                    *capitalise,
+                );
+                c.place(
+                    text,
+                    size,
+                    *span,
+                    if unresolved { Font::TimesBold } else { font },
+                    *space_before,
+                );
+            }
             Inline::HFill { leader, span } => c.mark_hfill(*leader, size, font, *span),
             Inline::HSpace { pt, .. } => c.hspace(*pt),
             Inline::Footnote {

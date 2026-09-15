@@ -31,6 +31,24 @@ final class FastJSONTests: XCTestCase {
         return Data(json.utf8)
     }
 
+    /// Both decoders must accept the shape the compiler actually emits, where
+    /// the replacement's range is nested in `source` and there is no flat
+    /// `start_byte`. FastJSON parsed `source` for its path and threw the range
+    /// away, so it failed the same way the reference decoder did.
+    func testNestedReplacementRangeDecodesIdenticallyInBothDecoders() throws {
+        let diag = #"{"severity":"error","code":"unknown_command","message":"`\\foo` is unknown","source":{"path":"main.tex","start_byte":5,"end_byte":11},"help":{"message":"did you mean \\alpha?","replacement":{"source":{"end_byte":11,"path":"main.tex","start_byte":5},"text":"\\alpha"}}}"#
+        let json = #"{"protocol_version":1,"id":"r-1","type":"compile_result","payload":{"project_id":"demo","revision":1,"status":"ok","pages":[],"diagnostics":[\#(diag)],"pdf_path":null}}"#
+        let data = Data(json.utf8)
+        let fast = try FastJSON.compileResultEnvelope(data)
+        let reference = try RuntimeV1.decodeCompileResultReference(data)
+        XCTAssertEqual(fast.payload, reference.payload)
+        let r = try XCTUnwrap(fast.payload.diagnostics.first?.help?.replacement)
+        XCTAssertEqual(r.startByte, 5)
+        XCTAssertEqual(r.endByte, 11)
+        XCTAssertEqual(r.text, "\\alpha")
+        XCTAssertEqual(r.path, "main.tex")
+    }
+
     func testFixtureDecodesIdentically() throws {
         let data = try Data(contentsOf: Self.fixtures.appendingPathComponent("compile-result.json"))
         let fast = try FastJSON.compileResultEnvelope(data)

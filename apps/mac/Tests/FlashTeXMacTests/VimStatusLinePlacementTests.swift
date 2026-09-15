@@ -1,4 +1,5 @@
 import AppKit
+import HostedWindows
 import SwiftUI
 import XCTest
 @testable import FlashTeXMac
@@ -86,8 +87,8 @@ final class VimStatusLinePlacementTests: XCTestCase {
 
     private func host(_ model: ShellModel) async throws -> NSTextView {
         HostedWindowSupport.prepare()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900), styleMask: [.titled],
+                                                backing: .buffered, defer: false)
         let hosting = NSHostingView(rootView: ContentView().environment(model).environmentObject(NearbyState()))
         window.contentView = hosting
         window.orderFrontRegardless()
