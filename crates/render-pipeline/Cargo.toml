@@ -117,6 +117,9 @@ linebreak-skip = []
 # as before. Turning it on is then a one-line default-feature edit, like
 # `amsmath-inline` was.
 math-font-kerns = []
+# Emit the optional `path_fill.pattern` display-list-v2 extension consumed by
+# the TikZ-pattern-aware pdf sibling. Off keeps the existing wire bytes.
+tikz-patterns = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }
