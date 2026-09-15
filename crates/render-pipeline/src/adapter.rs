@@ -2597,6 +2597,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
     // `tikzpicture` environments per document, and those already emitted.
     let pictures: Vec<Vec<flashtex_vector_graphics::tikz::PictureSource>> = texts.iter().map(|t| flashtex_vector_graphics::tikz::find_pictures(t)).collect();
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
+    // List and theorem nesting per document, read at each block's offset.
+    let indexes = SourceIndexes::new(texts, &theorem_envs);
     for (block, par_leading) in blocks {
         let par_leading = *par_leading;
         match block {
@@ -2692,15 +2694,15 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
         if prev_list && !is_heading {
             if let Some(gap) = first.and_then(gap_before) {
                 if let Some(env) = gap_has_list_end(gap) {
-                    let src = texts.get(prev_end.map_or(0, |p| p.document.0)).copied().unwrap_or("");
-                    let stack = prev_end.map(|p| list_stack_at(src, p.end)).unwrap_or_default();
+                    let index = indexes.get(prev_end.map_or(0, |p| p.document.0));
+                    let stack = prev_end.map_or(&[][..], |p| index.list_stack(p.end));
                     let begin_keys = stack.last().map_or("", |(e, keys)| if *e == env && *e != "thebibliography" { keys } else { "" });
-                    let seps = list_seps_with(src, env, 1, size, style, begin_keys);
+                    let seps = list_seps_from(&index.setlist, env, 1, size, style, begin_keys);
                     addvspace_before += seps.topsep + if list_vmode { seps.partopsep } else { 0.0 };
                     addvspace_flex.0 += seps.topsep_skip.stretch + if list_vmode { seps.partopsep_skip.stretch } else { 0.0 };
                     addvspace_flex.1 += seps.topsep_skip.shrink + if list_vmode { seps.partopsep_skip.shrink } else { 0.0 };
                     if let Some(p) = prev_end {
-                        endlist_adjust = list_end_adjust(src, p.end, gap, size, style);
+                        endlist_adjust = list_end_adjust(index, p.end, gap, size, style);
                     }
                 }
             }
@@ -2709,14 +2711,17 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
         if let CBlock::ListItem { level, label, .. } = block {
             let anchor = label.as_ref().map(|(_, span)| *span).or(first);
             if let Some(at) = anchor {
+                let index = indexes.get(at.document.0);
+                // #623 memoised the per-source indexes but `list_style_nextline`
+                // still reads the raw source: keep the pre-refactor binding.
                 let src = texts.get(at.document.0).copied().unwrap_or("");
-                let stack = list_stack_at(src, at.start);
+                let stack = index.list_stack(at.start);
                 let (env, begin_keys) = stack.last().map_or(("enumerate", ""), |(env, keys)| (env, if *env == "thebibliography" { "" } else { keys }));
-                let seps = list_seps_with(src, env, stack.len().max(1), size, style, begin_keys);
+                let seps = list_seps_from(&index.setlist, env, stack.len().max(1), size, style, begin_keys);
                 // `\@outerparskip`: the `\parskip` in force when `\begin`
                 // was read — the enclosing list's `\parsep` when nested.
                 let outer_parskip_skip = match stack.len() {
-                    n if n > 1 => list_seps(src, stack[n - 2].0, n - 1, size, style).parsep_skip,
+                    n if n > 1 => list_seps_from(&index.setlist, stack[n - 2].0, n - 1, size, style, "").parsep_skip,
                     _ => style.parskip,
                 };
                 let outer_parskip = outer_parskip_skip.natural;
@@ -2776,11 +2781,11 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                 // entries keeps the class's label-width geometry, so this
                 // never draws a `[1]` on top of the hanging indent.
                 let natbib_bib = env == "thebibliography"
-                    && natbib_author_year(src)
+                    && index.natbib_author_year
                     && label.as_ref().is_none_or(|(text, _)| text.is_empty());
                 list = Some(ListGeom {
                     level: *level,
-                    margins: list_margins(src, at.start, size, natbib_bib),
+                    margins: list_margins(index, at.start, size, natbib_bib),
                     label: label.clone(),
                     description: env == "description",
                     nextline: list_style_nextline(src, env, begin_keys),
@@ -2857,7 +2862,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
             })
         });
         let in_theorem = theorem_item
-            || first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| in_theorem_environment(t, f.start, &theorem_envs)));
+            || first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_theorem(t.is_char_boundary(f.start), f.start)));
         // `\paragraph{...}`/`\subparagraph{...}`: the compiler set the title
         // as body text at the front of this very paragraph, so the head is
         // recognised from the bytes immediately before its first word.
@@ -3955,7 +3960,24 @@ fn lone_longtable(parts: &mut Vec<ParaPart>) -> Option<Box<crate::table::TableIt
 }
 
 fn setlength(source: &str, name: &str, size: u32) -> Option<f64> {
-    setlength_in(source, name, size, None)
+    // Within an adapt call each answer is read once per document: every
+    // `tabular` asks for four lengths, and a scan of the whole source per
+    // table made a warm 450-section request spend 0.8 s here (#613).
+    let key = (source.as_ptr() as usize, source.len());
+    let memo = |scope: &mut Vec<MacroDefsEntry>| scope.iter_mut().find(|e| (e.ptr, e.len) == key).map(|e| e.setlengths.get(&(name.to_string(), size)).copied());
+    match MACRO_DEFS.with(|scope| memo(&mut scope.borrow_mut())) {
+        Some(Some(found)) => found,
+        Some(None) => {
+            let found = setlength_in(source, name, size, None);
+            MACRO_DEFS.with(|scope| {
+                if let Some(entry) = scope.borrow_mut().iter_mut().find(|e| (e.ptr, e.len) == key) {
+                    entry.setlengths.insert((name.to_string(), size), found);
+                }
+            });
+            found
+        }
+        None => setlength_in(source, name, size, None),
+    }
 }
 
 /// [`setlength`] with the document's own `em`/`ex` ([`ec_em_ex`]).
@@ -4077,6 +4099,11 @@ fn list_seps(source: &str, env: &str, depth: usize, size: u32, style: &Styleshee
 /// zeroes `topsep`/`partopsep`/`itemsep`/`parsep`, `noitemsep` zeroes
 /// `itemsep`/`parsep`).
 fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Stylesheet, begin_keys: &str) -> ListSeps {
+    list_seps_from(&setlist_calls(source), env, depth, size, style, begin_keys)
+}
+
+/// [`list_seps_with`] given the source's [`setlist_calls`].
+fn list_seps_from(calls: &[(&str, &str)], env: &str, depth: usize, size: u32, style: &Stylesheet, begin_keys: &str) -> ListSeps {
     let base = match size {
         12 => flashtex_document_style::BaseSize::Pt12,
         11 => flashtex_document_style::BaseSize::Pt11,
@@ -4106,7 +4133,6 @@ fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Styl
         seps.itemsep_skip = style.parsep;
         seps.itemsep = style.parsep.natural;
     }
-    let calls = setlist_calls(source);
     let all_keys = calls.iter().filter(|(envs, _)| setlist_names(envs, env)).map(|(_, keys)| *keys).chain(std::iter::once(begin_keys));
     for keys in all_keys {
         for (key, value) in list_keys(keys) {
@@ -4206,7 +4232,7 @@ fn list_env_after_begin(rest: &str) -> bool {
 /// \parskip - \@outerparskip` — the closing list's `\parsep` less the
 /// `\parskip` outside it (the enclosing list's `\parsep`, or the
 /// document's). The summed change, in points.
-fn list_end_adjust(source: &str, gap_start: usize, gap: &str, size: u32, style: &Stylesheet) -> f64 {
+fn list_end_adjust(index: &SourceIndex, gap_start: usize, gap: &str, size: u32, style: &Stylesheet) -> f64 {
     let mut adjust = 0.0;
     let mut from = 0;
     while let Some(at) = find_command(&gap[from..], "end") {
@@ -4216,11 +4242,11 @@ fn list_end_adjust(source: &str, gap_start: usize, gap: &str, size: u32, style: 
         if !LIST_ENVS.iter().any(|env| rest.starts_with(&format!("{{{env}}}"))) {
             continue;
         }
-        let stack = list_stack_at(source, gap_start + abs);
+        let stack = index.list_stack(gap_start + abs);
         let Some(&(env, _)) = stack.last() else { continue };
         let depth = stack.len();
-        let parsep = list_seps(source, env, depth, size, style).parsep;
-        let outer = if depth > 1 { list_seps(source, stack[depth - 2].0, depth - 1, size, style).parsep } else { style.parskip.natural };
+        let parsep = list_seps_from(&index.setlist, env, depth, size, style, "").parsep;
+        let outer = if depth > 1 { list_seps_from(&index.setlist, stack[depth - 2].0, depth - 1, size, style, "").parsep } else { style.parskip.natural };
         adjust += parsep - outer;
     }
     adjust
@@ -4356,6 +4382,167 @@ fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str)> {
         }
     }
     stack
+}
+
+/// Every `\begin` and `\end` control word of `source` outside comments, in
+/// order: `(byte offset, is_begin)`. The lexing is [`find_command`]'s, so
+/// this is exactly what repeated `find_command` calls restarted one byte
+/// past each match report.
+fn begin_end_commands(source: &str) -> Vec<(usize, bool)> {
+    let bytes = source.as_bytes();
+    let word = |i: usize, needle: &str| bytes[i..].starts_with(needle.as_bytes()) && bytes.get(i + needle.len()).is_none_or(|b| !b.is_ascii_alphabetic());
+    let mut out = Vec::new();
+    let (mut i, mut in_comment) = (0, false);
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\n' if in_comment => in_comment = false,
+            _ if in_comment => {}
+            b'%' => in_comment = true,
+            b'\\' => {
+                if word(i, "\\begin") {
+                    out.push((i, true));
+                } else if word(i, "\\end") {
+                    out.push((i, false));
+                }
+                i += 2;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
+/// What [`split_at_page_breaks`] reads from one source document for every
+/// block, computed in one forward pass per call.
+///
+/// [`list_stack_at`] and `in_theorem_environment` rescan the source from
+/// byte 0 each time, and [`setlist_calls`] and [`natbib_author_year`] scan
+/// all of it, so asking them once per block made the split quadratic in the
+/// document's length (#613: 16 s of adapt time at 450 sections). The index
+/// answers the same questions from prefix snapshots with a binary search,
+/// and returns what those functions return at every byte offset
+/// (`source_index_matches_prefix_scans` checks this).
+struct SourceIndex<'t> {
+    /// [`setlist_calls`] of the source.
+    setlist: Vec<(&'t str, &'t str)>,
+    /// [`natbib_author_year`] of the source.
+    natbib_author_year: bool,
+    /// For each `\begin`/`\end` of a [`LIST_ENVS`] environment, in source
+    /// order, the byte just past its control word: [`list_stack_at`] reads
+    /// the command at offset `at` when this is `<= at`.
+    list_marks: Vec<usize>,
+    /// `list_stacks[k]`: the list stack after the first `k` list marks.
+    list_stacks: Vec<Vec<(&'t str, &'t str)>>,
+    /// For each named `\begin{..}`/`\end{..}`, in source order, the byte of
+    /// the `}` closing its name: `in_theorem_environment` matches the
+    /// command at offset `at` only when the name is complete before `at`.
+    /// The marks never decrease.
+    theorem_marks: Vec<usize>,
+    /// `in_theorem[k]`: a theorem-like environment is open after the first
+    /// `k` named commands.
+    in_theorem: Vec<bool>,
+}
+
+impl<'t> SourceIndex<'t> {
+    fn new(source: &'t str, theorem_envs: &std::collections::HashSet<String>) -> Self {
+        let commands = begin_end_commands(source);
+        // `list_stack_at`: the environment name must follow the command
+        // directly (after blanks), and the `\begin` options come after it.
+        let mut stack: Vec<(&str, &str)> = Vec::new();
+        let (mut list_marks, mut list_stacks) = (Vec::new(), vec![Vec::new()]);
+        for &(pos, is_begin) in &commands {
+            let len = if is_begin { "\\begin".len() } else { "\\end".len() };
+            let rest = source[pos + len..].trim_start();
+            let Some(inner) = rest.strip_prefix('{') else { continue };
+            let Some(close) = inner.find('}') else { continue };
+            let env = inner[..close].trim();
+            if !LIST_ENVS.contains(&env) {
+                continue;
+            }
+            if is_begin {
+                let after = inner[close + 1..].trim_start();
+                let options = match (env, after.strip_prefix('['), after.strip_prefix('{')) {
+                    ("thebibliography", _, Some(o)) => o.find('}').map_or("", |c| &o[..c]),
+                    ("thebibliography", _, None) => "",
+                    (_, Some(o), _) => o.find(']').map_or("", |c| &o[..c]),
+                    _ => "",
+                };
+                stack.push((env, options));
+            } else if stack.last().is_some_and(|(open, _)| *open == env) {
+                stack.pop();
+            }
+            list_marks.push(pos + len);
+            list_stacks.push(stack.clone());
+        }
+        // `in_theorem_environment`: the name is between the first `{` after
+        // the command and the first `}` after that, wherever they are.
+        let mut open: Vec<&str> = Vec::new();
+        let mut theorems_open = 0usize;
+        let (mut theorem_marks, mut in_theorem) = (Vec::new(), vec![false]);
+        for &(pos, is_begin) in &commands {
+            let Some(brace) = source[pos..].find('{').map(|b| pos + b) else { break };
+            let Some(close) = source[brace + 1..].find('}').map(|c| brace + 1 + c) else { break };
+            let name = source[brace + 1..close].trim();
+            if is_begin {
+                open.push(name);
+                theorems_open += usize::from(theorem_envs.contains(name));
+            } else if open.last() == Some(&name) {
+                open.pop();
+                theorems_open -= usize::from(theorem_envs.contains(name));
+            }
+            theorem_marks.push(close);
+            in_theorem.push(theorems_open > 0);
+        }
+        SourceIndex {
+            setlist: setlist_calls(source),
+            natbib_author_year: natbib_author_year(source),
+            list_marks,
+            list_stacks,
+            theorem_marks,
+            in_theorem,
+        }
+    }
+
+    /// [`list_stack_at`]`(source, at)`.
+    fn list_stack(&self, at: usize) -> &[(&'t str, &'t str)] {
+        &self.list_stacks[self.list_marks.partition_point(|&mark| mark <= at)]
+    }
+
+    /// `in_theorem_environment(source, at, theorem_envs)`, given
+    /// whether `at` is a char boundary within the source.
+    fn in_theorem(&self, at_in_bounds: bool, at: usize) -> bool {
+        at_in_bounds && self.in_theorem[self.theorem_marks.partition_point(|&mark| mark < at)]
+    }
+}
+
+/// One lazily built [`SourceIndex`] per document of a `split_at_page_breaks`
+/// call; a document index past `texts` reads as the empty source, as the
+/// per-block code did.
+struct SourceIndexes<'a, 't> {
+    texts: &'a [&'t str],
+    theorem_envs: &'a std::collections::HashSet<String>,
+    cells: Vec<std::cell::OnceCell<SourceIndex<'t>>>,
+    empty: std::cell::OnceCell<SourceIndex<'t>>,
+}
+
+impl<'a, 't> SourceIndexes<'a, 't> {
+    fn new(texts: &'a [&'t str], theorem_envs: &'a std::collections::HashSet<String>) -> Self {
+        SourceIndexes {
+            texts,
+            theorem_envs,
+            cells: texts.iter().map(|_| std::cell::OnceCell::new()).collect(),
+            empty: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn get(&self, document: usize) -> &SourceIndex<'t> {
+        match self.texts.get(document) {
+            Some(text) => self.cells[document].get_or_init(|| SourceIndex::new(text, self.theorem_envs)),
+            None => self.empty.get_or_init(|| SourceIndex::new("", self.theorem_envs)),
+        }
+    }
 }
 
 /// Whether the text at `span` was generated by a `\cite`-family command
@@ -4503,10 +4690,11 @@ fn widest_label(env: &str, depth: usize, label_key: Option<&str>, template: Opti
 /// class's `\leftmargin<i>` unless a `\setlist` naming the environment or
 /// the `\begin` options set enumitem's `leftmargin` (`*` = the widest
 /// label's width plus `\labelsep`; a `<dimen>` as given).
-fn list_margins(source: &str, at: usize, size: u32, natbib_bib: bool) -> Vec<ListMargin> {
-    let calls = setlist_calls(source);
+fn list_margins(index: &SourceIndex, at: usize, size: u32, natbib_bib: bool) -> Vec<ListMargin> {
+    let calls = &index.setlist;
     let class_margin = |depth: usize| ListMargin::Fixed(parse_dimen(&format!("{}em", article_leftmargin_em(depth)), size).unwrap_or(0.0));
-    list_stack_at(source, at)
+    index
+        .list_stack(at)
         .iter()
         .enumerate()
         .map(|(i, (env, options))| {
@@ -4716,6 +4904,8 @@ fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &std
 /// not written in the source at the head's span, so the weights of a
 /// theorem's words come from the compiler's scoping instead of the source's
 /// own brace groups.
+// The per-offset reference that [`SourceIndex::in_theorem`] reproduces.
+#[cfg_attr(not(test), allow(dead_code))]
 fn in_theorem_environment(text: &str, at: usize, envs: &std::collections::HashSet<String>) -> bool {
     if at > text.len() || !text.is_char_boundary(at) {
         return false;
@@ -4988,32 +5178,33 @@ fn text_font_command(name: &str) -> Option<&'static [crate::nfss::Command]> {
     })
 }
 
-/// The NFSS commands of a font declaration, and whether the end of its
-/// group is recorded for italic correction (the declarations the pipeline
-/// read before NFSS selection existed keep that behaviour). The LaTeX
+/// The NFSS commands of a font declaration. Its group's end never takes an
+/// italic correction: LaTeX adds `\/` only through `\text@command`'s
+/// `\maybe@ic` (`\textit`, `\emph`, ...), and `{\itshape leaf} then` sets
+/// no kern after `leaf` (pdfLaTeX). The LaTeX
 /// 2.09 forms reset first: `\bf` is `\normalfont\bfseries` (latex.ltx
 /// `\DeclareOldFontCommand`).
-fn font_declaration(name: &str) -> Option<(&'static [crate::nfss::Command], bool)> {
+fn font_declaration(name: &str) -> Option<&'static [crate::nfss::Command]> {
     use crate::nfss::{Command as C, FamilyKind as F, Series as S, ShapeRequest as R};
     Some(match name {
-        "bfseries" => (&[C::Series(S::Bx)], true),
-        "itshape" => (&[C::Shape(R::It)], true),
-        "slshape" => (&[C::Shape(R::Sl)], true),
-        "em" => (&[C::Emph], true),
-        "mdseries" => (&[C::Series(S::M)], false),
-        "scshape" => (&[C::Shape(R::Sc)], false),
-        "upshape" => (&[C::Shape(R::Up)], false),
-        "rmfamily" => (&[C::Family(F::Rm)], false),
-        "sffamily" => (&[C::Family(F::Sf)], false),
-        "ttfamily" => (&[C::Family(F::Tt)], false),
-        "normalfont" => (&[C::Normal], false),
-        "bf" => (&[C::Normal, C::Series(S::Bx)], false),
-        "it" => (&[C::Normal, C::Shape(R::It)], false),
-        "sl" => (&[C::Normal, C::Shape(R::Sl)], false),
-        "sc" => (&[C::Normal, C::Shape(R::Sc)], false),
-        "rm" => (&[C::Normal, C::Family(F::Rm)], false),
-        "sf" => (&[C::Normal, C::Family(F::Sf)], false),
-        "tt" => (&[C::Normal, C::Family(F::Tt)], false),
+        "bfseries" => &[C::Series(S::Bx)],
+        "itshape" => &[C::Shape(R::It)],
+        "slshape" => &[C::Shape(R::Sl)],
+        "em" => &[C::Emph],
+        "mdseries" => &[C::Series(S::M)],
+        "scshape" => &[C::Shape(R::Sc)],
+        "upshape" => &[C::Shape(R::Up)],
+        "rmfamily" => &[C::Family(F::Rm)],
+        "sffamily" => &[C::Family(F::Sf)],
+        "ttfamily" => &[C::Family(F::Tt)],
+        "normalfont" => &[C::Normal],
+        "bf" => &[C::Normal, C::Series(S::Bx)],
+        "it" => &[C::Normal, C::Shape(R::It)],
+        "sl" => &[C::Normal, C::Shape(R::Sl)],
+        "sc" => &[C::Normal, C::Shape(R::Sc)],
+        "rm" => &[C::Normal, C::Family(F::Rm)],
+        "sf" => &[C::Normal, C::Family(F::Sf)],
+        "tt" => &[C::Normal, C::Family(F::Tt)],
         _ => return None,
     })
 }
@@ -5104,6 +5295,22 @@ fn declared_size(level: Option<flashtex_compiler::parser::FontSizeLevel>, base: 
 /// character, and reading it as LaTeX silently drops the style of everything
 /// after it.
 fn literal_spans(source: &str) -> Vec<VerbatimSpan> {
+    literal_spans_of(source, verbatim_environment)
+}
+
+/// The byte ranges a scan for LaTeX markup must not look inside: every
+/// [`literal_spans`] construct plus the environments whose body pdflatex
+/// never reads as markup though the compiler does not set them literally —
+/// `minted` (a listing) and `comment` (verbatim.sty's discarded body).
+/// `%` comments are not included; callers skip those line by line.
+pub(crate) fn opaque_regions(source: &str) -> Vec<(usize, usize)> {
+    literal_spans_of(source, |name| verbatim_environment(name) || matches!(name, "minted" | "comment"))
+        .into_iter()
+        .map(|s| s.whole)
+        .collect()
+}
+
+fn literal_spans_of(source: &str, environment: fn(&str) -> bool) -> Vec<VerbatimSpan> {
     let bytes = source.as_bytes();
     let mut out: Vec<VerbatimSpan> = Vec::new();
     let mut i = 0;
@@ -5137,7 +5344,7 @@ fn literal_spans(source: &str) -> Vec<VerbatimSpan> {
             }
         } else if name == "begin" {
             if let Some((env, after)) = environment_name(source, word_end) {
-                if verbatim_environment(env) {
+                if environment(env) {
                     if let Some(span) = verbatim_environment_span(source, i, env, after) {
                         i = span.whole.1;
                         out.push(span);
@@ -5215,7 +5422,7 @@ fn macro_argument_intervals(source: &str) -> Vec<StyleInterval> {
         let mut params: Vec<(usize, Vec<(crate::nfss::Command, bool, bool)>)> = Vec::new();
         for k in 1..=9usize {
             let Some(p) = body.find(&format!("#{k}")) else { continue };
-            let chain: Vec<_> = body_intervals.iter().filter(|(s, e, _, _)| *s <= p && p < *e).map(|(_, e, c, _)| (*c, *e == p + 2, *e >= body.len())).collect();
+            let chain: Vec<_> = body_intervals.iter().filter(|(s, e, _, _)| *s <= p && p < *e).map(|(_, e, c, ic)| (*c, *ic && *e == p + 2, *e >= body.len())).collect();
             if !chain.is_empty() {
                 params.push((k, chain));
             }
@@ -5373,12 +5580,12 @@ fn source_style_intervals(source: &str) -> Vec<StyleInterval> {
                     i = word_end;
                     continue;
                 }
-                if let Some((commands, correction)) = font_declaration(name) {
+                if let Some(commands) = font_declaration(name) {
                     let end = match groups.last() {
                         Some(&open) => matching_brace(bytes, open).unwrap_or(bytes.len()),
                         None => find_command(&source[word_end..], "end").map_or(bytes.len(), |e| word_end + e),
                     };
-                    out.extend(commands.iter().map(|c| (word_end, end, *c, correction)));
+                    out.extend(commands.iter().map(|c| (word_end, end, *c, false)));
                 }
                 i = word_end.max(i + 2);
             }
@@ -5466,6 +5673,8 @@ struct MacroDefsEntry {
     ptr: usize,
     len: usize,
     index: Option<HashMap<String, Vec<MacroDef>>>,
+    /// [`setlength`] answers already read, by length name and class size.
+    setlengths: HashMap<(String, u32), Option<f64>>,
 }
 
 thread_local! {
@@ -5485,6 +5694,7 @@ impl MacroDefsScope {
                 ptr: t.as_ptr() as usize,
                 len: t.len(),
                 index: None,
+                setlengths: HashMap::new(),
             })
             .collect();
         MacroDefsScope {
@@ -5603,6 +5813,20 @@ fn macro_arg_index(source: &str, inv: Span, at: usize) -> Option<(&str, usize)> 
 struct BodyCursor {
     inv: Span,
     at: usize,
+    /// Where the last token was found in the body (`None` when its place is
+    /// not known), for the font the body's own commands put it in
+    /// ([`Styles::in_body`]).
+    word: Option<usize>,
+    /// The first blank of the gap read before the last token, when that gap
+    /// lies wholly inside the body: the interword space is set in the font in
+    /// force there.
+    blank: Option<usize>,
+}
+
+impl BodyCursor {
+    fn new(inv: Span, at: usize) -> BodyCursor {
+        BodyCursor { inv, at, word: None, blank: None }
+    }
 }
 
 /// The bytes TeX read between the previous token and this one, in the
@@ -5638,7 +5862,7 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
             let Some(text) = text else {
                 // Glue or math of a replacement: its place is not searched;
                 // separate tokens of one replacement are taken as spaced.
-                *cursor = Some(BodyCursor { inv: span, at: start });
+                *cursor = Some(BodyCursor::new(span, start));
                 return prev_end.map(|_| " ".to_string());
             };
             // A control word (the glue arms pass `\hfill`/`\quad`/...) is
@@ -5650,8 +5874,9 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
             match body.get(start..).and_then(find_text) {
                 Some(p) => {
                     let pos = start + p;
-                    *cursor = Some(BodyCursor { inv: span, at: pos + text.len() });
                     let gap = &body[start..pos];
+                    let blank = gap.find(|c: char| c.is_whitespace()).filter(|_| prefix.is_none()).map(|off| start + off);
+                    *cursor = Some(BodyCursor { inv: span, at: pos + text.len(), word: Some(pos), blank });
                     return Some(match prefix {
                         Some(before) => format!("{before}{gap}"),
                         None => gap.to_string(),
@@ -5659,7 +5884,7 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
                 }
                 None => {
                     // Not found verbatim (ligatures rewrote it).
-                    *cursor = Some(BodyCursor { inv: span, at: start });
+                    *cursor = Some(BodyCursor::new(span, start));
                     return prev_end.map(|_| " ".to_string());
                 }
             }
@@ -5672,11 +5897,13 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
                 if let Some(p) = body.get(c.at..).and_then(|rest| rest.find(&format!("#{k}"))) {
                     let pos = c.at + p;
                     let gap = body[c.at..pos].to_string();
-                    *cursor = Some(BodyCursor { inv: c.inv, at: pos + digits(k) });
+                    let blank = gap.find(|c: char| c.is_whitespace()).map(|off| c.at + off);
+                    *cursor = Some(BodyCursor { blank, ..BodyCursor::new(c.inv, pos + digits(k)) });
                     return Some(gap);
                 }
                 // Further tokens of the same argument: the source between
                 // them (the cursor stays after `#k`).
+                *cursor = Some(BodyCursor::new(c.inv, c.at));
                 return prev_end.zip(prev_span).and_then(|(pe, ps)| source_gap(pe, ps));
             }
         }
@@ -6334,6 +6561,23 @@ impl Styles {
     /// selection (`crate::nfss::apply`), so order matters exactly as in
     /// LaTeX (`\textsc{\emph{x}}` is not `\emph{\textsc{x}}`).
     fn at(&self, at: usize) -> TextStyle {
+        self.at_then(at, std::iter::empty())
+    }
+
+    /// The style of a token of a user macro's replacement text, invoked at
+    /// byte `at`, that sits at byte `offset` of the definition `body`: the
+    /// call site's font, then the body's own groups and commands around the
+    /// token (`\newcommand{\x}{\textbf{Note:}}` sets `Note:` bold — the
+    /// compiler spans the token at the invocation, whose bytes are not in
+    /// the `\textbf` group).
+    fn in_body(&self, at: usize, body: &str, offset: usize) -> TextStyle {
+        let inner = source_style_intervals(body);
+        self.at_then(at, inner.into_iter().filter(|(s, e, _, _)| *s <= offset && offset < *e).map(|(_, _, c, _)| c))
+    }
+
+    /// [`Styles::at`] with `extra` commands applied after the chain in force
+    /// at `at`.
+    fn at_then(&self, at: usize, extra: impl Iterator<Item = crate::nfss::Command>) -> TextStyle {
         let p = self.intervals.partition_point(|(start, _, _)| *start <= at);
         let mut chain = Vec::new();
         let mut i = p;
@@ -6347,9 +6591,11 @@ impl Styles {
                 chain.push(command);
             }
         }
+        chain.reverse();
+        chain.extend(extra);
         let mut key = crate::nfss::FontKey::default();
         let mut undefined = None;
-        for command in chain.into_iter().rev() {
+        for command in chain {
             let s = crate::nfss::apply(self.scheme, key, command);
             key = s.key;
             undefined = s.undefined.or(undefined);
@@ -6360,8 +6606,12 @@ impl Styles {
     /// Whether the font in force at byte `at` is slanted (`\fontdimen1 >
     /// 0`): the loaded shape after `sub*`/`ssub*`.
     fn slanted_at(&self, at: usize) -> bool {
-        let key = self.at(at).key();
-        crate::nfss::terminal(self.scheme, crate::nfss::select(self.scheme, key).key).0.slanted()
+        self.slanted(self.at(at))
+    }
+
+    /// Whether `style`'s loaded font is slanted (see [`Styles::slanted_at`]).
+    fn slanted(&self, style: TextStyle) -> bool {
+        crate::nfss::terminal(self.scheme, crate::nfss::select(self.scheme, style.key()).key).0.slanted()
     }
 
     /// Whether a style group's content ends exactly at `at`.
@@ -6698,7 +6948,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
     let styles_of = |d: DocumentId| -> &Styles { styles.get(d.0).unwrap_or(&no_styles) };
 
     // Where the reader stands in a macro's replacement text (`token_gap`).
-    let mut cursor: Option<BodyCursor> = None;
+    let cursor: std::cell::Cell<Option<BodyCursor>> = std::cell::Cell::new(None);
     // Whether the previous token was a glue control word (`\hfill`,
     // `\quad`, `\hspace`): TeX eats the whitespace right after it, and
     // the gap read next starts at that whitespace.
@@ -6710,7 +6960,10 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
     // bodies), so the gap is never scanned for fills here.
     let mut space_between = |prev_end: Option<usize>, prev_span: Option<Span>, span: Span, text: Option<&str>, after_control_word: bool| -> bool {
         let src = text_of(span.document);
-        match token_gap(src, prev_end, prev_span, span, text, &mut cursor) {
+        let mut c = cursor.get();
+        let gap = token_gap(src, prev_end, prev_span, span, text, &mut c);
+        cursor.set(c);
+        match gap {
             None => false,
             Some(gap) if after_control_word => gap_has_space_after_control_word(&gap),
             Some(gap) => gap_has_space(&gap),
@@ -7104,7 +7357,15 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 } else {
                     None
                 };
-                let mut style = style_at(styles_of(span.document), span.start);
+                let has_space = space_between(prev_end, prev_span, *span, Some(text), after_control_word);
+                after_control_word = false;
+                // A word of a user macro's replacement text, found in the
+                // definition body: the body's own font commands apply to it.
+                let in_body = cursor.get().filter(|c| c.inv == *span).and_then(|c| Some((macro_body(source, control_word_at(source, span.start, span.end)?, span.start)?, c.word?)));
+                let mut style = match in_body {
+                    Some((body, offset)) => styles_of(span.document).in_body(span.start, body, offset),
+                    None => style_at(styles_of(span.document), span.start),
+                };
                 // Verbatim text: no ligatures, no kerns, rigid blanks. The
                 // span of a `\verb|...|` starts at the backslash, so the
                 // body byte is what decides — `span.start` is the `\`.
@@ -7125,14 +7386,23 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     style.bold = compiler_style.bold;
                     style.italic = compiler_style.italic;
                 }
-                let has_space = space_between(prev_end, prev_span, *span, Some(text), after_control_word);
-                after_control_word = false;
                 if has_space || pending_head_sep.get().is_some() {
                     // TeX sizes an interword space with the font current
                     // where the space token is read ("Plain, \textbf{bold}"
                     // gets a regular space, "\textbf{bold words}" a bold one,
-                    // "\textbf{\emph{x}} y" a regular one).
-                    let mut gap_style = space_style(texts, styles, prev_end, *span, style);
+                    // "\textbf{\emph{x}} y" a regular one). A blank of a
+                    // macro body is read in the body's font there.
+                    let body_blank = cursor.get().and_then(|c| {
+                        let blank = c.blank?;
+                        let body = macro_body(source, control_word_at(source, c.inv.start, c.inv.end)?, c.inv.start)?;
+                        Some(styles_of(span.document).in_body(c.inv.start, body, blank))
+                    });
+                    let mut gap_style = match body_blank {
+                        // A heading's weight comes from the compiler at the
+                        // word (`medium`), as for the word itself.
+                        Some(blank_style) => TextStyle { size_cpt: style.size_cpt, color: style.color, medium: style.medium, ..blank_style },
+                        None => space_style(texts, styles, prev_end, *span, style),
+                    };
                     if compiler_weight {
                         gap_style.bold = style.bold;
                         gap_style.italic = style.italic;
@@ -7298,7 +7568,21 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 // \text@command appends \/ (`\maybe@ic`) unless the next
                 // token is in \nocorrlist (`,` and `.`) or the enclosing
                 // font is itself slanted (`\fontdimen1 > 0`).
-                if styles_of(span.document).closes_at(span.end)
+                if let Some((body, offset)) = in_body {
+                    // The same inside a macro body (`\newcommand{\x}{\textit{Note}}`):
+                    // the group closes in the body, and the next token is the
+                    // body's next byte, or what follows the invocation.
+                    let end = offset + text.len();
+                    let next = body.as_bytes().get(end + 1).or(source.as_bytes().get(span.end));
+                    if source_style_intervals(body).iter().any(|i| i.3 && i.1 == end)
+                        && body.as_bytes().get(end) == Some(&b'}')
+                        && !matches!(next, Some(b'.') | Some(b','))
+                        && !styles_of(span.document).slanted(styles_of(span.document).in_body(span.start, body, end + 1))
+                        && matches!(items.last(), Some(Item::Word(_)))
+                    {
+                        items.push(Item::ItalicCorrection);
+                    }
+                } else if styles_of(span.document).closes_at(span.end)
                     && source.as_bytes().get(span.end) == Some(&b'}')
                     && !matches!(source.as_bytes().get(span.end + 1), Some(b'.') | Some(b','))
                     && !styles_of(span.document).slanted_at(span.end + 1)
@@ -7483,6 +7767,36 @@ mod tests {
             },
             Block::Heading { items, .. } => items.clone(),
             _ => panic!("a rule, picture, chapter or page-style block holds no items"),
+        }
+    }
+
+    /// [`SourceIndex`] answers exactly what the prefix scans it replaces
+    /// (`list_stack_at`, `in_theorem_environment`) answer, at every byte
+    /// offset, including offsets inside control words and names, comments,
+    /// escaped `\%`, unclosed braces and mismatched `\end`s.
+    #[test]
+    fn source_index_matches_prefix_scans() {
+        let envs: std::collections::HashSet<String> = ["proof", "theorem", "lemma"].iter().map(|s| s.to_string()).collect();
+        let sources = [
+            "",
+            "\\begin{itemize}\\item a\\end{itemize}",
+            "\\newtheorem{theorem}{Theorem}\n\\begin{document}\n\\begin{theorem}[Name] text \\begin{itemize}[nosep, leftmargin=*]\n\\item x\n\\begin{enumerate}[(a)]\\item y\\end{enumerate}\\end{itemize}\n\\end{theorem}\n\\begin{proof}p\\end{proof}\\end{document}",
+            "% \\begin{theorem}\n\\begin {lemma} a \\% \\begin{proof} b\\end{lemma}\\beginning{x}\\endgroup \\begin{description}\\item[k] v\\end{itemize}\\end{description}",
+            "\\begin{thebibliography}{99}\\bibitem{a} A\\end{thebibliography}\\begin{theorem} \\end{lemma} \\end{theorem}",
+            "\\begin{theorem} unclosed \\begin{itemize \\item \\end{itemize",
+            "\\begin[x]{theorem} é \\\\begin{proof} \\begin{enumerate}\\item ü\\end{enumerate} \\begin",
+        ];
+        for source in sources {
+            let index = SourceIndex::new(source, &envs);
+            for at in 0..=source.len() {
+                let boundary = source.is_char_boundary(at);
+                assert_eq!(index.in_theorem(boundary, at), in_theorem_environment(source, at, &envs), "in_theorem at {at} of {source:?}");
+                if boundary {
+                    assert_eq!(index.list_stack(at), &list_stack_at(source, at)[..], "list stack at {at} of {source:?}");
+                }
+            }
+            assert_eq!(index.setlist, setlist_calls(source));
+            assert_eq!(index.natbib_author_year, natbib_author_year(source));
         }
     }
 

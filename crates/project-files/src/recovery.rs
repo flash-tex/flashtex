@@ -6,7 +6,6 @@
 //! the recorded base.
 
 use std::fmt;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -184,18 +183,19 @@ impl<'r> RecoveryJournal<'r> {
     }
 
     /// Lists all entries. Files that are not valid entries are reported, not
-    /// deleted. Directory listing uses the OS path; each file is then read
-    /// through the rooted reader.
+    /// deleted. The journal directory is listed from its pinned descriptor
+    /// through the rooted walk (a symlinked `.flashtex` or `recovery` is
+    /// refused, not enumerated); each file is then read through the rooted
+    /// reader.
     pub fn list(&self) -> Result<Listing, RecoveryError> {
         let mut listing = Listing::default();
-        let read_dir = match fs::read_dir(self.dir()) {
-            Ok(r) => r,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(listing),
-            Err(e) => return Err(e.into()),
+        let probe = ProjectPath::normalize(&format!("{RECOVERY_DIR}/entry.json"))
+            .expect("constant recovery path");
+        let Some(names) = self.root.list_parent_of(&probe)? else {
+            return Ok(listing);
         };
-        for entry in read_dir {
-            let entry = entry?;
-            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+        for raw in names {
+            let Ok(name) = String::from_utf8(raw) else {
                 continue;
             };
             if name.starts_with('.') || !name.ends_with(".json") {
@@ -204,7 +204,7 @@ impl<'r> RecoveryJournal<'r> {
             let Ok(journal_path) = ProjectPath::normalize(&format!("{RECOVERY_DIR}/{name}")) else {
                 continue;
             };
-            let file = entry.path();
+            let file = journal_path.to_os_path(self.root.path());
             match self.read_entry(&journal_path) {
                 Ok(Some(e)) => listing.entries.push(e),
                 Ok(None) => {}
