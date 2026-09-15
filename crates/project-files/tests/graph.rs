@@ -276,6 +276,38 @@ fn symlink_escaping_root_is_rejected() {
     assert!(
         matches!(&g.diagnostics()[0].kind, DiagnosticKind::EscapesRootViaSymlink { target } if target == &pp("link.tex"))
     );
+    assert_eq!(
+        g.diagnostics()[0].message,
+        "\\input{link}: link.tex is a symbolic link; project files are read without following symlinks"
+    );
+}
+
+/// Symlinks are refused wherever they point, so the diagnostic must not
+/// claim an in-root link leaves the root; an ancestor link is named.
+#[cfg(unix)]
+#[test]
+fn symlink_inside_root_is_refused_with_truthful_wording() {
+    let t = TempDir::new("symlink-inside");
+    t.write("main.tex", "\\input{link}\n\\input{alias/one}");
+    t.write("real.tex", "Real.");
+    t.write("chapters/one.tex", "One.");
+    std::os::unix::fs::symlink(t.root().join("real.tex"), t.root().join("link.tex")).unwrap();
+    std::os::unix::fs::symlink(t.root().join("chapters"), t.root().join("alias")).unwrap();
+    let g = ProjectGraph::discover(t.root(), &pp("main.tex")).unwrap();
+    assert_eq!(paths(&g), ["main.tex"]);
+    let messages: Vec<&str> = g.diagnostics().iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(
+        messages,
+        [
+            "\\input{link}: link.tex is a symbolic link; project files are read without following symlinks",
+            "\\input{alias/one}: alias/one.tex: `alias` is a symbolic link; project files are read without following symlinks",
+        ]
+    );
+    assert!(
+        g.diagnostics()
+            .iter()
+            .all(|d| matches!(d.kind, DiagnosticKind::EscapesRootViaSymlink { .. }))
+    );
 }
 
 /// Issue #45 finding 1: `escapes_via_symlink` (canonicalize) and `load`
