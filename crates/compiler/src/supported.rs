@@ -286,6 +286,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("footnotemark", "[n]", "footnote mark only"),
     ("footnotetext", "[n]{...}", "footnote text without a mark"),
     ("fnsymbol", "{counter}", "a counter's value 1-9 as a footnote symbol"),
+    ("marginpar", "[left]{right}", "margin note set in the right margin at footnotesize; always the right side, with no collision avoidance between close notes"),
     ("includegraphics", "*[keys]{file}", "image box in running text (graphicx keys as written)"),
     ("scalebox", "{x}[y]{...}", "graphics.sty scaled box of the content"),
     ("resizebox", "*{width}{height}{...}", "graphics.sty box scaled to a width and/or height; ! keeps the aspect ratio"),
