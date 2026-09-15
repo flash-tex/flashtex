@@ -1505,10 +1505,11 @@ impl LayoutCursor {
                     self.vertical_gap(PARAGRAPH_GAP_PT);
                 }
             }
-            Block::VSpace { pt } => {
+            Block::VSpace { pt, .. } => {
                 // Only end a line that has content: after a rule or another
                 // vertical block there is no text line to finish, and TeX adds
-                // no interline glue there either.
+                // no interline glue there either. Only the natural length is
+                // set: this layout has no page-stretch model for the rubber.
                 if !self.first_block && self.state().trailing_line_items > 0 {
                     self.newline(body_size);
                 }

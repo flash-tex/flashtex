@@ -565,6 +565,15 @@ pub struct ListGeom {
     /// is zero, and `\descriptionlabel` sets it as `\hspace\labelsep
     /// \normalfont\bfseries <label>`.
     pub description: bool,
+    /// The innermost list's effective enumitem `style` is `nextline`
+    /// (`enumitem.sty` `\enit@style@nextline` sets `\enit@nextline` and
+    /// `\labelwidth` from the narrowest fit, so `\enit@postlabel@i` breaks
+    /// after every label in practice): the typesetter forces a break after
+    /// the label, like `\\`, so the body starts on its own line at the
+    /// hanging indent. `sameline`/`standard`/`normal` are the default and
+    /// need nothing; `multiline`/`unboxed` are a follow-up (label alignment
+    /// and `\itemindent` nuances, not a plain break).
+    pub nextline: bool,
 }
 
 /// One list level's `\leftmargin`.
@@ -2771,6 +2780,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                     margins: list_margins(src, at.start, size, natbib_bib),
                     label: label.clone(),
                     description: env == "description",
+                    nextline: list_style_nextline(src, env, begin_keys),
                     parsep: seps.parsep_skip,
                     // `\NAT@bibsetup`: `\itemindent-\leftmargin`, so the
                     // entry's first line is flush at the margin and the rest
@@ -4140,6 +4150,36 @@ fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Styl
         }
     }
     seps
+}
+
+/// Whether the innermost list's effective enumitem `style` is `nextline`:
+/// the last `style=` key among the `\setlist`s naming `env` (document
+/// order) and the list's own `\begin{<env>}[<keys>]` wins, exactly like
+/// [`list_seps_with`]; `sameline`/`standard`/`normal` (and no key at all)
+/// keep the default same-line label, so only `nextline` returns true.
+/// Read from the source rather than the compiler's `ListFrame` because this
+/// pipeline builds against a `vendor/compiler` pin that predates
+/// `ListOption::Style` (see [`ListGeom::nextline`]).
+fn list_style_nextline(source: &str, env: &str, begin_keys: &str) -> bool {
+    let calls = setlist_calls(source);
+    let all_keys = calls
+        .iter()
+        .filter(|(envs, _)| setlist_names(envs, env))
+        .map(|(_, keys)| *keys)
+        .chain(std::iter::once(begin_keys));
+    let mut style: Option<&str> = None;
+    for keys in all_keys {
+        for (key, value) in list_keys(keys) {
+            if key == "style" {
+                style = Some(value);
+            }
+        }
+    }
+    style.is_some_and(|v| {
+        let v = v.trim();
+        let v = v.strip_prefix('{').and_then(|v| v.strip_suffix('}')).map_or(v, str::trim);
+        v == "nextline"
+    })
 }
 
 /// The `\list`/`\trivlist` environments whose `\item`s the compiler reports
