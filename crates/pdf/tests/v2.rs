@@ -810,3 +810,67 @@ fn only_pgf_alpha_ext_gstates_are_accepted() {
     .unwrap_err();
     assert!(e.contains("paint.a: 1.5 is not in [0, 1]"), "{e}");
 }
+
+/// The three periods of an ellipsis are one cluster whose text is `…`. The
+/// period glyph must not take that text into ToUnicode: every period of the
+/// document would extract as `…` and the ellipsis as `………`. A glyph seen
+/// only in clusters of several glyphs maps to its own `cmap` character (`.`,
+/// as pdfTeX's `. . .` extracts); a one-glyph cluster still names its glyph.
+#[test]
+fn ellipsis_periods_keep_the_period_in_to_unicode() {
+    let Some(font_path) = lm12() else {
+        eprintln!("skipped: Latin Modern 12 not installed");
+        return;
+    };
+    let bytes = std::fs::read(&font_path).unwrap();
+    let font = TrueTypeFont::load(&font_path).unwrap();
+    let sha = sha256::hex(&bytes);
+    let gid_a = font.glyph_id('a').unwrap();
+    let gid_dot = font.glyph_id('.').unwrap();
+    assert_eq!(font.char_for_glyph(gid_dot), Some('.'));
+    let size: i64 = 12_500_000;
+    let step: i64 = 4 << 20;
+    let x0: i64 = 72 << 20;
+    let y: i64 = 100 << 20;
+    let glyph = |gid: u16, i: i64, cluster: usize| {
+        format!(
+            r#"{{"gid":{gid},"origin_x":{x},"baseline_y":{y},"advance_x":{adv},"advance_y":0,"cluster":{cluster}}}"#,
+            x = x0 + i * step,
+            adv = i64::from(font.advance(gid)) * size / 1000,
+        )
+    };
+    // "a…": `a` is cluster 0 (one glyph), the ellipsis cluster 1 (three
+    // periods, bytes 1..4).
+    let glyphs = [glyph(gid_a, 0, 0), glyph(gid_dot, 1, 1), glyph(gid_dot, 2, 1), glyph(gid_dot, 3, 1)].join(",");
+    let envelope = format!(
+        r#"{{"protocol_version":2,"id":"t","type":"display_list","payload":{{
+        "render_format":"display-list-v2","coordinate_unit":"bp_2pow20","color_space":"srgb","text_extraction":"cluster-actualtext",
+        "project_id":"t","revision":1,"required_features":["glyph_run"],"documents":[],
+        "fonts":[{{"font_id":"{sha}","sha256":"{sha}","byte_length":{len},"format":"opentype-cff","face_index":0,"units_per_em":1000,"glyph_count":{gc},"postscript_name":"LMRoman12-Regular"}}],
+        "pages":[{{"number":1,"width":{pw},"height":{ph},"items":[
+          {{"kind":"glyph_run","font_id":"{sha}","font_size":{size},"text":"a…","paint":{{"r":0,"g":0,"b":0,"a":1}},
+           "glyphs":[{glyphs}],
+           "clusters":[{{"text_start_byte":0,"text_end_byte":1}},{{"text_start_byte":1,"text_end_byte":4}}]}}
+        ]}}],"diagnostics":[]}}}}"#,
+        len = bytes.len(),
+        gc = font.num_glyphs(),
+        pw = 612i64 << 20,
+        ph = 792i64 << 20,
+    );
+    let dir = std::env::temp_dir().join(format!("flashtex-pdf-v2-ellipsis-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(&font_path, dir.join("lm.otf")).unwrap();
+    let (doc, report) = v2::from_v2(&envelope, &V2Options { font_dirs: vec![dir.clone()] }).unwrap();
+    assert!(!report.notes.iter().any(|n| n.contains("different cluster text")), "{:?}", report.notes);
+    let out = exact::render_exact(&doc).unwrap();
+    let file = PdfFile::parse(&out.bytes).unwrap();
+    let page = file.pages().unwrap()[0];
+    let fonts = file.page_fonts(page);
+    let exact::ExactFont::CidCff(cid) = flashtex_pdf::compare::font_from_dict(&file, fonts["F1"]).unwrap() else {
+        panic!("expected CIDFontType0C")
+    };
+    let tu = exact::parse_to_unicode(cid.to_unicode_verbatim.as_deref().unwrap()).unwrap();
+    assert_eq!(tu.get(&gid_dot).map(String::as_str), Some("."), "{tu:?}");
+    assert_eq!(tu.get(&gid_a).map(String::as_str), Some("a"), "{tu:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
