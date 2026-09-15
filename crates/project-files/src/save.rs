@@ -19,7 +19,6 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use crate::path::ProjectPath;
@@ -345,7 +344,7 @@ impl ProjectRoot {
         if Self::stat_regular(dir, name)?.is_none() {
             return Ok(None);
         }
-        race_hook::fire(race_hook::Window::BeforeOpen, name);
+        race_point!(BeforeOpen, name);
         let file = match sys::open_at(dir, name, sys::O_RDONLY | sys::O_NOFOLLOW, 0) {
             Ok(f) => f,
             Err(e) if sys::errno_is(&e, sys::ENOENT) => return Ok(None),
@@ -579,10 +578,12 @@ impl ProjectRoot {
     }
 }
 
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Deterministic race-test support. **Not API**: hidden from the docs, no
-/// stability promise, and inert unless a test installs a hook.
+/// Deterministic race-test support. **Not API**, and **not compiled into
+/// normal builds**: the module and every firing point exist only under
+/// `cfg(test)` or the non-default `race-hook` cargo feature, which this
+/// crate's own integration tests enable through a self dev-dependency. A
+/// release build of the library (or of any crate depending on it without
+/// that feature) contains no hook code.
 ///
 /// Every check-then-use pair in this module that POSIX cannot make atomic
 /// calls [`fire`] in the exact window between the check and the syscall it
@@ -591,6 +592,7 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// the security property is tested at the worst interleaving every run
 /// instead of by timing. The hook is thread-local: a hook installed by one
 /// test never fires in another thread's operation.
+#[cfg(any(test, feature = "race-hook"))]
 #[doc(hidden)]
 pub mod race_hook {
     use std::cell::RefCell;
@@ -602,6 +604,12 @@ pub mod race_hook {
         /// An existing entry was classified as a regular file with
         /// `fstatat(AT_SYMLINK_NOFOLLOW)`; `openat` is next.
         BeforeOpen,
+        /// A save verified that the temp name still names the file it wrote;
+        /// the rename that installs it is next. Fired with the target name.
+        BeforeRename,
+        /// A save's install syscall returned; the check that the target now
+        /// names the written file is next. Fired with the target name.
+        AfterInstall,
     }
 
     type Hook = Rc<dyn Fn(Window, &str)>;
@@ -638,6 +646,16 @@ pub mod race_hook {
     }
 }
 
+/// Fires [`race_hook`] at a check-then-use window; expands to nothing unless
+/// `cfg(test)` or the `race-hook` feature is on.
+macro_rules! race_point {
+    ($window:ident, $name:expr) => {
+        #[cfg(any(test, feature = "race-hook"))]
+        race_hook::fire(race_hook::Window::$window, $name);
+    };
+}
+use race_point;
+
 /// Injection points for tests; production uses [`Hooks::default`].
 pub(crate) struct Hooks<'h> {
     /// Runs after the temp file is fsynced and before the pre-rename
@@ -667,13 +685,18 @@ impl ProjectLock<'_> {
     ///    refusing any symlink component.
     /// 2. Observe the target with `O_NOFOLLOW` (identity, size, mtime, hash,
     ///    mode). Compare with `expected` unless `force`.
-    /// 3. Write a temp file in the same directory (`O_CREAT|O_EXCL|O_NOFOLLOW`),
-    ///    `fsync` it, copy the existing permission bits.
+    /// 3. Write a temp file with an unpredictable name in the same directory
+    ///    (`O_CREAT|O_EXCL|O_NOFOLLOW`), `fsync` it, copy the existing
+    ///    permission bits. The descriptor stays open until the save ends.
     /// 4. Re-observe the target; if it changed since step 2 (unless `force`),
     ///    remove the temp file and return `ModifiedDuringSave`. A target that
     ///    became a symlink is refused regardless of `force`.
-    /// 5. `renameat` temp over target; `fsync` the directory (a failure here
-    ///    is `DirectorySync`, durability unknown).
+    /// 5. Check with `fstatat(AT_SYMLINK_NOFOLLOW)` that the temp name still
+    ///    names the file written in step 3 (same device/inode as the open
+    ///    descriptor), refusing otherwise; `renameat` temp over target; check
+    ///    that the target now names that file, returning an error otherwise;
+    ///    `fsync` the directory (a failure here is `DirectorySync`,
+    ///    durability unknown). See `TempFile::verify` for the residual.
     /// 6. Re-open the target with `O_NOFOLLOW` and verify device/inode equal
     ///    the temp file's and the bytes hash to what was written; otherwise
     ///    `ModifiedDuringSave`.
@@ -711,26 +734,38 @@ impl ProjectLock<'_> {
         }
 
         // Step 3: temp write.
-        let temp_name = temp_name(name);
+        let temp_name = temp_name(name)?;
         let mode = before.as_ref().map_or(0o644, |o| o.mode);
         let flags = sys::O_WRONLY | sys::O_CREAT | sys::O_EXCL | sys::O_NOFOLLOW;
         let mut temp = sys::open_at(&dir, &temp_name, flags, mode)
             .map_err(|e| classify_open(e, &temp_name))?;
-        let temp_identity = match (|| -> io::Result<FileIdentity> {
+        // Identity of the file we created, from its descriptor: every later
+        // use of the temp *name* is checked against it.
+        let temp_identity = match temp.metadata() {
+            Ok(meta) => identity(&meta),
+            Err(e) => {
+                // Without the identity the name cannot be recognised safely,
+                // so it is left in place rather than risk unlinking an entry
+                // someone swapped in.
+                return Err(e.into());
+            }
+        };
+        let tmp = TempFile {
+            dir: &dir,
+            name: &temp_name,
+            identity: temp_identity,
+        };
+        if let Err(e) = (|| -> io::Result<()> {
             temp.write_all(bytes)?;
             temp.sync_all()?;
             if before.is_some() {
                 temp.set_permissions(std::fs::Permissions::from_mode(mode))?;
             }
-            Ok(identity(&temp.metadata()?))
+            Ok(())
         })() {
-            Ok(id) => id,
-            Err(e) => {
-                let _ = sys::unlink_at(&dir, &temp_name);
-                return Err(e.into());
-            }
-        };
-        drop(temp);
+            tmp.discard();
+            return Err(e.into());
+        }
 
         if let Some(hook) = hooks.after_temp_write {
             hook();
@@ -740,12 +775,12 @@ impl ProjectLock<'_> {
         let recheck = match ProjectRoot::observe(&dir, name, DEFAULT_READ_LIMIT) {
             Ok(o) => o.map(|(o, _)| o),
             Err(e) => {
-                let _ = sys::unlink_at(&dir, &temp_name);
+                tmp.discard();
                 return Err(e);
             }
         };
         if !force && recheck != before {
-            let _ = sys::unlink_at(&dir, &temp_name);
+            tmp.discard();
             return Err(SaveError::Conflict(Box::new(SaveConflict {
                 path: path.clone(),
                 kind: SaveConflictKind::ModifiedDuringSave,
@@ -756,11 +791,19 @@ impl ProjectLock<'_> {
             })));
         }
 
-        // Step 5: rename + directory fsync.
+        // Step 5: verified rename + directory fsync.
+        if let Err(e) = tmp.verify(path) {
+            tmp.discard();
+            return Err(e);
+        }
+        race_point!(BeforeRename, name);
         if let Err(e) = sys::rename_at(&dir, &temp_name, name) {
-            let _ = sys::unlink_at(&dir, &temp_name);
+            tmp.discard();
             return Err(e.into());
         }
+        race_point!(AfterInstall, name);
+        verify_installed(&dir, name, path, temp_identity, bytes)?;
+        drop(temp);
         (hooks.sync_dir)(&dir).map_err(SaveError::DirectorySync)?;
 
         // Step 6: post-rename verification.
@@ -829,9 +872,123 @@ fn check_expected(
     })))
 }
 
-fn temp_name(name: &str) -> String {
-    let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!(".{name}.flashtex-tmp-{}-{n}", std::process::id())
+/// A temp file name no other process can predict: 128 bits from the OS
+/// random source (see [`sys::random_bytes`]). Together with
+/// `O_CREAT|O_EXCL|O_NOFOLLOW` this means the name cannot be pre-planted, and
+/// a writer who wants to swap it has to discover it by listing the directory
+/// first.
+fn temp_name(name: &str) -> io::Result<String> {
+    let mut random = [0u8; 16];
+    sys::random_bytes(&mut random)?;
+    let suffix: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!(".{name}.flashtex-tmp-{suffix}"))
+}
+
+/// The temp file of one save: its name in the pinned directory and the
+/// identity of the file this save created there.
+struct TempFile<'a> {
+    dir: &'a File,
+    name: &'a str,
+    identity: FileIdentity,
+}
+
+impl TempFile<'_> {
+    /// Whether the temp name still names the file this save wrote (regular
+    /// file, same device and inode), classified with
+    /// `fstatat(AT_SYMLINK_NOFOLLOW)` so nothing is followed or opened.
+    fn still_ours(&self) -> io::Result<bool> {
+        match sys::stat_at_nofollow(self.dir, self.name.as_bytes()) {
+            Ok(st) => Ok(st.is_file()
+                && FileIdentity {
+                    dev: st.dev,
+                    ino: st.ino,
+                } == self.identity),
+            Err(e) if sys::errno_is(&e, sys::ENOENT) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The check around a save's install, and its residual.
+    ///
+    /// Immediately before the temp file is renamed (or linked) into place, the
+    /// temp name is classified with `fstatat(AT_SYMLINK_NOFOLLOW)` and must name
+    /// the regular file this save created and fsynced (same device and inode as
+    /// the still-open descriptor); otherwise the save is refused and nothing is
+    /// installed. Immediately after, the target name must name that same file;
+    /// otherwise the save is `ModifiedDuringSave` and never reports success.
+    ///
+    /// **Residual (not closable with POSIX `renameat`):** the rename binds a
+    /// *name*. A process that can write the project directory, has discovered
+    /// the random temp name, and swaps it in the window between the check and
+    /// the rename gets its entry moved to the target name. That entry is never
+    /// followed or opened by the rename (a symlink is moved as a link), nothing
+    /// outside the pinned directory is touched, the post-install check turns the
+    /// save into a conflict, and that process could have created or replaced the
+    /// target entry directly anyway.
+    fn verify(&self, path: &ProjectPath) -> Result<(), SaveError> {
+        if self.still_ours()? {
+            return Ok(());
+        }
+        Err(SaveError::Io(io::Error::other(format!(
+            "save of {path} refused: its temp file {} was replaced or removed by \
+             another process before it was installed; nothing was installed",
+            self.name
+        ))))
+    }
+
+    /// Best-effort cleanup on a failed save: unlinks the temp name only if it
+    /// still names our file, so an entry someone else put there is left
+    /// alone. (The same check-then-unlink residual as `remove` applies.)
+    fn discard(&self) {
+        if let Ok(true) = self.still_ours() {
+            let _ = sys::unlink_at(self.dir, self.name);
+        }
+    }
+}
+
+/// After the install syscall: the target must now name the file this save
+/// wrote. Checked with `fstatat(AT_SYMLINK_NOFOLLOW)` first; on a mismatch
+/// the save is `ModifiedDuringSave` (never success), describing whatever is
+/// there now through the no-follow, regular-files-only observer.
+fn verify_installed(
+    dir: &File,
+    name: &str,
+    path: &ProjectPath,
+    written: FileIdentity,
+    bytes: &[u8],
+) -> Result<(), SaveError> {
+    let installed = match sys::stat_at_nofollow(dir, name.as_bytes()) {
+        Ok(st) => {
+            st.is_file()
+                && FileIdentity {
+                    dev: st.dev,
+                    ino: st.ino,
+                } == written
+        }
+        Err(e) if sys::errno_is(&e, sys::ENOENT) => false,
+        Err(e) => return Err(e.into()),
+    };
+    if installed {
+        Ok(())
+    } else {
+        Err(modified_during_save(dir, name, path, bytes))
+    }
+}
+
+/// The `ModifiedDuringSave` conflict for whatever is at `name` now.
+fn modified_during_save(dir: &File, name: &str, path: &ProjectPath, bytes: &[u8]) -> SaveError {
+    let theirs = match ProjectRoot::observe(dir, name, DEFAULT_READ_LIMIT) {
+        Ok(o) => o.map(|(o, _)| o),
+        Err(e) => return e,
+    };
+    SaveError::Conflict(Box::new(SaveConflict {
+        path: path.clone(),
+        kind: SaveConflictKind::ModifiedDuringSave,
+        ours: Some(sha256(bytes)),
+        theirs: theirs.as_ref().map(|o| o.sha256),
+        mtime: theirs.as_ref().map(|o| o.mtime),
+        size: theirs.as_ref().map(|o| o.size),
+    }))
 }
 
 /// Convenience: open `root`, lock, save, unlock.
@@ -860,6 +1017,9 @@ pub fn save_atomic_bytes(
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     struct Temp(PathBuf);
     impl Temp {
@@ -1165,5 +1325,149 @@ mod tests {
             err2,
             SaveError::Conflict(c) if c.kind == SaveConflictKind::DeletedExternally
         ));
+    }
+
+    fn temp_entries(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n.contains("flashtex-tmp"))
+            .collect()
+    }
+
+    /// Temp names carry 128 random bits, not a pid and a counter.
+    #[test]
+    fn temp_names_are_unpredictable() {
+        let (a, b) = (temp_name("a.tex").unwrap(), temp_name("a.tex").unwrap());
+        assert_ne!(a, b);
+        for n in [&a, &b] {
+            let suffix = n.strip_prefix(".a.tex.flashtex-tmp-").unwrap();
+            assert_eq!(suffix.len(), 32, "{n}");
+            assert!(suffix.bytes().all(|c| c.is_ascii_hexdigit()), "{n}");
+        }
+    }
+
+    /// Third review, finding 1: a temp name swapped for a symlink (or any
+    /// other entry) after the write is refused before the rename. Nothing is
+    /// installed, the target keeps its content, and the swapped-in entry is
+    /// not unlinked by the cleanup.
+    #[cfg(unix)]
+    #[test]
+    fn temp_name_swapped_before_install_is_refused() {
+        for force in [false, true] {
+            let outside = Temp::new("temp-swap-outside");
+            let victim = outside.0.join("victim.tex");
+            fs::write(&victim, "untouchable").unwrap();
+            let t = Temp::new("temp-swap");
+            fs::write(t.0.join("a.tex"), "base").unwrap();
+            let root = ProjectRoot::open(&t.0).unwrap();
+            let lock = root.lock().unwrap();
+            let (dir, victim2) = (t.0.clone(), victim.clone());
+            let swap = move || {
+                let [name] = temp_entries(&dir).try_into().unwrap();
+                fs::remove_file(dir.join(&name)).unwrap();
+                std::os::unix::fs::symlink(&victim2, dir.join(&name)).unwrap();
+            };
+            let hooks = Hooks {
+                after_temp_write: Some(&swap),
+                ..Hooks::default()
+            };
+            let err = lock
+                .save_with(
+                    &pp("a.tex"),
+                    b"mine",
+                    Expected::Hash(sha256(b"base")),
+                    force,
+                    &hooks,
+                )
+                .unwrap_err();
+            assert!(
+                matches!(&err, SaveError::Io(e) if e.to_string().contains("temp file")),
+                "force={force}: {err:?}"
+            );
+            assert_eq!(fs::read_to_string(t.0.join("a.tex")).unwrap(), "base");
+            assert_eq!(fs::read_to_string(&victim).unwrap(), "untouchable");
+            let [left] = temp_entries(&t.0).try_into().unwrap();
+            assert!(
+                fs::symlink_metadata(t.0.join(left))
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
+                "the swapped-in entry is not ours to unlink"
+            );
+        }
+    }
+
+    /// Third review, finding 1, residual: a temp name swapped in the window
+    /// between the temp check and the rename is moved to the target as an
+    /// entry (never followed), and the save is a conflict, never success.
+    #[cfg(unix)]
+    #[test]
+    fn temp_name_swapped_in_the_rename_window_is_never_reported_as_saved() {
+        let outside = Temp::new("rename-window-outside");
+        let victim = outside.0.join("victim.tex");
+        fs::write(&victim, "untouchable").unwrap();
+        let t = Temp::new("rename-window-temp");
+        fs::write(t.0.join("a.tex"), "base").unwrap();
+        let root = ProjectRoot::open(&t.0).unwrap();
+        let lock = root.lock().unwrap();
+        let (dir, victim2) = (t.0.clone(), victim.clone());
+        let _guard = race_hook::install(move |w, name| {
+            if w == race_hook::Window::BeforeRename && name == "a.tex" {
+                let [temp] = temp_entries(&dir).try_into().unwrap();
+                fs::remove_file(dir.join(&temp)).unwrap();
+                std::os::unix::fs::symlink(&victim2, dir.join(&temp)).unwrap();
+            }
+        });
+        let result = lock.save(
+            &pp("a.tex"),
+            b"mine",
+            Expected::Hash(sha256(b"base")),
+            false,
+        );
+        assert!(
+            matches!(
+                &result,
+                Err(SaveError::Refused(Refused::SymlinkComponent { .. }))
+            ),
+            "{result:?}"
+        );
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "untouchable");
+        assert!(
+            fs::symlink_metadata(t.0.join("a.tex"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    /// Third review, finding 1: if the target stops naming the written file
+    /// right after the install, the save is `ModifiedDuringSave`.
+    #[test]
+    fn target_replaced_right_after_install_is_a_conflict() {
+        let t = Temp::new("after-install");
+        fs::write(t.0.join("a.tex"), "base").unwrap();
+        let root = ProjectRoot::open(&t.0).unwrap();
+        let lock = root.lock().unwrap();
+        let dir = t.0.clone();
+        let _guard = race_hook::install(move |w, name| {
+            if w == race_hook::Window::AfterInstall && name == "a.tex" {
+                fs::write(dir.join("theirs.tmp"), "theirs").unwrap();
+                fs::rename(dir.join("theirs.tmp"), dir.join("a.tex")).unwrap();
+            }
+        });
+        let err = lock
+            .save(
+                &pp("a.tex"),
+                b"mine",
+                Expected::Hash(sha256(b"base")),
+                false,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&err, SaveError::Conflict(c) if c.kind == SaveConflictKind::ModifiedDuringSave
+                && c.theirs == Some(sha256(b"theirs"))),
+            "{err:?}"
+        );
     }
 }

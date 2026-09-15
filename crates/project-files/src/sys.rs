@@ -126,6 +126,51 @@ mod imp {
         })
     }
 
+    /// Fills `buf` from the OS cryptographic random source:
+    /// `arc4random_buf` on macOS; on Linux the `getrandom` system call
+    /// (called directly, so no minimum libc version is needed), falling back
+    /// to reading `/dev/urandom` on kernels without it. Errors if no source
+    /// is available; callers fail rather than use a predictable value.
+    pub fn random_bytes(buf: &mut [u8]) -> io::Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            // SAFETY: `buf` is writable for `buf.len()` bytes;
+            // `arc4random_buf` cannot fail.
+            unsafe { libc::arc4random_buf(buf.as_mut_ptr().cast(), buf.len()) };
+            Ok(())
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let mut filled = 0;
+            while filled < buf.len() {
+                let rest = &mut buf[filled..];
+                // SAFETY: `rest` is writable for `rest.len()` bytes.
+                let n = unsafe {
+                    libc::syscall(
+                        libc::SYS_getrandom,
+                        rest.as_mut_ptr(),
+                        rest.len(),
+                        0 as libc::c_uint,
+                    )
+                };
+                if n > 0 {
+                    filled += n as usize;
+                    continue;
+                }
+                let err = io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                if err.raw_os_error() == Some(libc::ENOSYS) {
+                    use std::io::Read;
+                    return File::open("/dev/urandom")?.read_exact(&mut buf[filled..]);
+                }
+                return Err(err);
+            }
+            Ok(())
+        }
+    }
+
     /// Advisory exclusive lock; `Ok(false)` when another open file
     /// description (any process, or another handle in this one) holds it.
     pub fn try_lock_exclusive(file: &File) -> io::Result<bool> {
@@ -201,6 +246,9 @@ mod imp {
         Err(unsupported())
     }
     pub fn try_lock_exclusive(_: &File) -> io::Result<bool> {
+        Err(unsupported())
+    }
+    pub fn random_bytes(_: &mut [u8]) -> io::Result<()> {
         Err(unsupported())
     }
     pub fn unlock(_: &File) {}

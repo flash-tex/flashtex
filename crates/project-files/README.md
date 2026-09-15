@@ -163,15 +163,28 @@ mtime, identity and mode from the same open descriptor.
    Unless `force`, compare with `expected` → `ModifiedExternally`,
    `DeletedExternally` or `AlreadyExists`, nothing written.
 3. `openat(O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW)` a temp file
-   `.<name>.flashtex-tmp-<pid>-<n>` in the same directory, write, `fsync`,
-   `fchmod` to the existing mode.
+   `.<name>.flashtex-tmp-<32 hex digits>` in the same directory — 128 bits
+   from the OS random source (`arc4random_buf` on macOS, the `getrandom`
+   system call or `/dev/urandom` on Linux), so the name cannot be predicted
+   or pre-planted — then write, `fsync`, `fchmod` to the existing mode. Its
+   device/inode is taken from the descriptor, which stays open. Cleanup on
+   any failure unlinks the temp name only while it still names that file.
 4. Re-observe the target. If it is now a symlink → `Refused` (temp removed).
    If, unless `force`, anything changed since step 2 (a file appeared,
    disappeared, or its identity/size/mtime/hash moved) →
    `Conflict{ModifiedDuringSave, ours: hash we wrote, theirs: observed}`,
    temp removed, target untouched. This is where `Expected::NewFile` refuses
    to clobber a target created meanwhile.
-5. `renameat` temp over target, then `fsync` the directory. A directory
+5. `fstatat(AT_SYMLINK_NOFOLLOW)` the temp name: it must still name the
+   file written in step 3 (same device/inode), otherwise the save is refused
+   and nothing is installed. `renameat` temp over target. `fstatat` the
+   target: it must now name that file, otherwise `ModifiedDuringSave` (never
+   success). Residual: `renameat` binds a name, so a process that can write
+   the directory, has listed the random temp name, and swaps it between the
+   check and the rename gets its entry moved to the target — as a directory
+   entry, never followed — and the save reports a conflict; that process
+   could have replaced the target entry directly anyway. Then `fsync` the
+   directory. A directory
    fsync failure is `SaveError::DirectorySync` — a hard error; the rename has
    already happened and durability is unknown, so re-read before trusting.
 6. Re-open the target with `O_NOFOLLOW`; its device/inode must equal the temp
@@ -339,11 +352,14 @@ with its `check()` result.
   driver's open side effect are **best-effort** for devices: they rest on
   `O_NONBLOCK`, the pre-open `fstatat` and the post-open `fstat`, and
   whether the driver honours `O_NONBLOCK` is up to the driver.
-- **Race tests.** Each check-then-use window in `save.rs` calls a hidden,
+- **Race tests.** Each check-then-use window in `save.rs` calls a
   thread-local test hook (`save::race_hook`, not API). The tests swap the
   entry from inside the hook, so the worst interleaving is exercised
-  deterministically on every run. The older timing-based stress tests are
-  kept as extra coverage.
+  deterministically on every run. The hook module and every firing point
+  are compiled only under `cfg(test)` or the non-default `race-hook` cargo
+  feature, which the crate's own integration tests enable through a self
+  dev-dependency; normal and release builds contain no hook code. The older
+  timing-based stress tests are kept as extra coverage.
 - **Not the compiler.** The scanner does no macro expansion, no catcode
   changes, no `\import`/`\subfile`/`\InputIfFileExists`, and does not follow
   references inside `\newcommand` bodies or conditionals. Arguments containing
