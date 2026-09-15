@@ -168,6 +168,9 @@ pub enum Nucleus {
         em: f64,
         font_em: bool,
     },
+    /// A plain-TeX infix fraction (`\over`/`\atop`) or LaTeX `\frac`.
+    /// The parser marks `\frac` as `Ord` because its outer group wraps the
+    /// infix `\over`; the ungrouped infix forms remain `Inner`.
     Fraction {
         numerator: MathList,
         denominator: MathList,
@@ -219,7 +222,8 @@ pub enum Nucleus {
     /// (parentheses, zero thickness). `thickness_pt` `None` is the default
     /// rule; empty `left`/`right` are null delimiters; `style` `None` keeps
     /// the current style. amsmath wraps the result in a group (an ordinary
-    /// atom), unlike the plain `\frac`'s inner [`Nucleus::Fraction`].
+    /// atom), matching LaTeX's outer group around `\frac`; bare infix
+    /// `\over`/`\atop` fractions remain [`AtomClass::Inner`].
     GenFraction {
         numerator: MathList,
         denominator: MathList,
@@ -2029,14 +2033,12 @@ impl MathParser<'_> {
                     // fontmath.ltx: `\mathrm` is the `operators` font (OT1
                     // cmr/m/n), the upright roman `Text` sets, so `\mathrm{K}`
                     // is upright; math ignores the spaces in the argument.
+                    // `-` keeps mathcode "2200 (a Bin cmsy minus) inside the
+                    // alphabet, so it splits out into its own Symbol atoms.
                     let (text, argument_span) = self.required_text_group_string(&name, span);
                     let span = span.merge(argument_span);
                     let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-                    if letters.is_empty() {
-                        space(0.0, span)
-                    } else {
-                        text_atom(letters, span)
-                    }
+                    self.first_queued(split_hyphen_runs(&letters, span, text_atom), span)
                 } else if matches!(&*name, "mathit" | "mathsf" | "mathtt") && self.plain_text_argument() {
                     let (text, argument_span) = self.required_text_group_string(&name, span);
                     let span = span.merge(argument_span);
@@ -2045,11 +2047,7 @@ impl MathParser<'_> {
                         .filter(|c| !c.is_whitespace())
                         .map(|c| math_alphabet_char(&name, c))
                         .collect();
-                    if glyphs.is_empty() {
-                        space(0.0, span)
-                    } else {
-                        symbol(glyphs, span)
-                    }
+                    self.first_queued(split_hyphen_runs(&glyphs, span, symbol), span)
                 } else {
                     let body = self.required_group(&name, span);
                     self.group_atom(body, span)
@@ -2215,7 +2213,7 @@ impl MathParser<'_> {
                     span,
                     superscript: None,
                     subscript: None,
-                    class_override: None,
+                    class_override: Some(AtomClass::Ord),
                     width_em: None,
                     ams_symbol: None,
                 }
@@ -2268,19 +2266,22 @@ impl MathParser<'_> {
             "mathbf" | "textbf" => {
                 let (pieces, argument_span) =
                     self.required_text_group_styled(&name, span, TextStyle::BOLD);
-                let nucleus = if let Some(text) = text_run_plain_text(&pieces) {
-                    Nucleus::Bold(text)
+                let span = span.merge(argument_span);
+                if let Some(text) = text_run_plain_text(&pieces) {
+                    // Like `\mathrm`, `-` stays a Bin cmsy minus (mathcode
+                    // "2200), not a bold text hyphen: only the hyphen runs
+                    // split out.
+                    self.first_queued(split_hyphen_runs(&text, span, bold), span)
                 } else {
-                    Nucleus::TextRun(pieces)
-                };
-                MathAtom {
-                    nucleus,
-                    span: span.merge(argument_span),
-                    superscript: None,
-                    subscript: None,
-                    class_override: None,
-                    width_em: None,
-                    ams_symbol: None,
+                    MathAtom {
+                        nucleus: Nucleus::TextRun(pieces),
+                        span,
+                        superscript: None,
+                        subscript: None,
+                        class_override: None,
+                        width_em: None,
+                        ams_symbol: None,
+                    }
                 }
             }
             "boxed" | "Aboxed" | "overline" | "underline" | "underbar" | "overbrace" | "underbrace"
@@ -2437,11 +2438,7 @@ impl MathParser<'_> {
                     .filter(|c| !c.is_whitespace())
                     .map(|c| math_alphabet_char("mathfrak", c))
                     .collect();
-                if glyphs.is_empty() {
-                    space(0.0, span)
-                } else {
-                    symbol(glyphs, span)
-                }
+                self.first_queued(split_hyphen_runs(&glyphs, span, symbol), span)
             }
             "mathcal" => {
                 let (text, argument_span) = self.required_text_group_string("mathcal", span);
@@ -2706,6 +2703,22 @@ impl MathParser<'_> {
     /// flattens into the surrounding list exactly like a bare `{...}` group.
     fn group_atom(&mut self, body: MathList, span: Span) -> MathAtom {
         let mut atoms = body.atoms.into_iter();
+        match atoms.next() {
+            Some(first) => {
+                self.pending.extend(atoms);
+                first
+            }
+            None => space(0.0, span),
+        }
+    }
+
+    /// Returns the first of a split alphabet argument's atoms and queues the
+    /// rest, so `\mathrm{a-b}` flattens into the surrounding list exactly
+    /// like `group_atom`'s braced body does. An empty split (an argument of
+    /// only whitespace, or nothing) is a zero space, matching the fused arms'
+    /// old empty-argument result.
+    fn first_queued(&mut self, atoms: Vec<MathAtom>, span: Span) -> MathAtom {
+        let mut atoms = atoms.into_iter();
         match atoms.next() {
             Some(first) => {
                 self.pending.extend(atoms);
@@ -3743,6 +3756,52 @@ fn symbol(text: String, span: Span) -> MathAtom {
         width_em: None,
         ams_symbol: None,
     }
+}
+
+fn bold(text: String, span: Span) -> MathAtom {
+    MathAtom {
+        nucleus: Nucleus::Bold(text),
+        span,
+        superscript: None,
+        subscript: None,
+        class_override: None,
+        width_em: None,
+        ams_symbol: None,
+    }
+}
+
+/// Splits a fused math-alphabet run at ASCII `-`, emitting one `Symbol("-")`
+/// atom per hyphen between the alphabet's own runs.
+///
+/// In real TeX `-` keeps mathcode "2200 (a Bin cmsy minus) inside
+/// `\mathrm`/`\mathit`/`\mathbf`: the alphabet declaration changes letter
+/// shapes, not `-`'s class. Keeping `a-b` in one run would set a text hyphen
+/// — and `--` an en-dash ligature — about 9.8bp off pdflatex; one Symbol per
+/// hyphen reproduces `$a-b$` (and `$a--b$`) exactly, including the Bin
+/// spacing the class pass derives from the same neighbours. Runs without a
+/// hyphen come back as the single atom the caller built before, so
+/// letter/digit behaviour is untouched.
+fn split_hyphen_runs(
+    text: &str,
+    span: Span,
+    mut run: impl FnMut(String, Span) -> MathAtom,
+) -> Vec<MathAtom> {
+    let mut atoms = Vec::new();
+    let mut buf = String::new();
+    for ch in text.chars() {
+        if ch == '-' {
+            if !buf.is_empty() {
+                atoms.push(run(std::mem::take(&mut buf), span));
+            }
+            atoms.push(symbol("-".into(), span));
+        } else {
+            buf.push(ch);
+        }
+    }
+    if !buf.is_empty() {
+        atoms.push(run(buf, span));
+    }
+    atoms
 }
 
 /// mathtools' `\vcentcolon`: the plain `":"` with `\mathrel` spacing. Shared
@@ -6479,6 +6538,70 @@ mod unbraced_argument_tests {
     }
 
     #[test]
+    fn hyphens_inside_math_alphabets_split_out_as_math_minuses() {
+        // TeX gives `-` mathcode "2200 (a Bin cmsy minus) even inside
+        // `\mathrm`/`\mathit`/`\mathbf`: the alphabet changes letter shapes,
+        // not `-`'s class. Fusing `a-b` into one run would set a text hyphen
+        // (`--` an en-dash ligature) instead of a math minus.
+        let parse = |src: &str| {
+            let mut diagnostics = Vec::new();
+            let list = parse_tokens(
+                &crate::lexer::tokenize(src),
+                MathPackages::KERNEL,
+                &mut diagnostics,
+            );
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            list
+        };
+        let plain = parse("a-b");
+        assert_eq!(plain.atoms.len(), 3, "{:?}", plain.atoms);
+        assert_eq!(plain.atoms[1].nucleus, Nucleus::Symbol("-".into()));
+        assert_eq!(atom_class(&plain.atoms[1]), Some(AtomClass::Bin));
+        let check_minus = |list: &MathList, index: usize, src: &str| {
+            assert_eq!(
+                list.atoms[index].nucleus, plain.atoms[1].nucleus,
+                "{src}: {:?}",
+                list.atoms
+            );
+            assert_eq!(
+                atom_class(&list.atoms[index]),
+                atom_class(&plain.atoms[1]),
+                "{src}"
+            );
+        };
+        let list = parse(r"\mathrm{a-b}");
+        assert_eq!(list.atoms.len(), 3, "{:?}", list.atoms);
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Text("a".into()));
+        check_minus(&list, 1, r"\mathrm{a-b}");
+        assert_eq!(list.atoms[2].nucleus, Nucleus::Text("b".into()));
+
+        let list = parse(r"\mathit{a-b}");
+        assert_eq!(list.atoms.len(), 3, "{:?}", list.atoms);
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Symbol("\u{1D44E}".into()));
+        check_minus(&list, 1, r"\mathit{a-b}");
+        assert_eq!(list.atoms[2].nucleus, Nucleus::Symbol("\u{1D44F}".into()));
+
+        let list = parse(r"\mathbf{a-b}");
+        assert_eq!(list.atoms.len(), 3, "{:?}", list.atoms);
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Bold("a".into()));
+        check_minus(&list, 1, r"\mathbf{a-b}");
+        assert_eq!(list.atoms[2].nucleus, Nucleus::Bold("b".into()));
+
+        // `--` is two minus atoms, exactly like `$a--b$`; runs without a
+        // hyphen stay one fused atom exactly as before.
+        let list = parse(r"\mathrm{a--b}");
+        assert_eq!(list.atoms.len(), 4, "{:?}", list.atoms);
+        check_minus(&list, 1, r"\mathrm{a--b}");
+        check_minus(&list, 2, r"\mathrm{a--b}");
+        let list = parse(r"\mathrm{mod}");
+        assert_eq!(list.atoms.len(), 1, "{:?}", list.atoms);
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Text("mod".into()));
+        let list = parse(r"\mathbf{v}");
+        assert_eq!(list.atoms.len(), 1, "{:?}", list.atoms);
+        assert_eq!(list.atoms[0].nucleus, Nucleus::Bold("v".into()));
+    }
+
+    #[test]
     fn unbraced_mathbb_and_mathbf_take_one_letter() {
         // The issue's own examples: `\mathbb R` and `\mathbf v`.
         let mut diagnostics = Vec::new();
@@ -7055,6 +7178,33 @@ mod spacing_tests {
         let b = laid_out("a+b", SIZE);
         close(x(&b, "+"), width("a", SIZE) + 4.0);
         close(x(&b, "b"), x(&b, "+") + width("+", SIZE) + 4.0);
+    }
+
+    /// pdfLaTeX (TeX Live 2026, 10pt) measures `$a\frac12b$` as the exact
+    /// sum of the standalone `a`, `\frac12`, and `b` boxes: 15.96367pt.
+    /// The outer group in LaTeX's `\frac` macro therefore contributes no
+    /// inter-atom spacing, unlike a bare infix `\over` fraction.
+    #[test]
+    fn frac_is_ordinary_around_neighbors_like_pdflatex() {
+        let b = laid_out(r"a\frac12b", SIZE);
+        let fraction = laid_out(r"\frac12", SIZE);
+        close(x(&b, "b"), width("a", SIZE) + fraction.width);
+        close(
+            b.width,
+            width("a", SIZE) + fraction.width + width("b", SIZE),
+        );
+
+        let (infix, diagnostics) = {
+            let mut diagnostics = Vec::new();
+            let list = parse_tokens(
+                &crate::lexer::tokenize(r"{1\over2}"),
+                MathPackages::KERNEL,
+                &mut diagnostics,
+            );
+            (list, diagnostics)
+        };
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(atom_class(&infix.atoms[0]), Some(AtomClass::Inner));
     }
 
     #[test]
