@@ -136,6 +136,39 @@ fn large_dot_fill_uses_large_dots() {
 }
 
 #[test]
+fn closed_group_dot_fill_uses_ambient_dots() {
+    if !common::lm_available() {
+        return;
+    }
+    // pdflatex oracle for `{\Large A}\dotfill B` (same 10pt article and
+    // 200pt box as above, TeX Live 2026 `\showbox` of the paragraph):
+    // `\hbox(9.84+0.0)x200.0, glue set 182.34674fill` with A in
+    // OT1/cmr/m/n/14.4 but the cleaders in OT1/cmr/m/n/10 -- the size group
+    // closed before the fill, so the dots are ambient, unlike
+    // `{\Large A\dotfill B}` above where the group is still open. Each of
+    // the 41 cleader boxes is 4.40002pt (`.44em` of the 10.00002pt quad)
+    // holding a 2.77779pt dot. The 1.94592pt leftover splits 0.97296pt at
+    // each end, so the first dot origin is 1.78408pt and the last
+    // 177.78488pt from the glue start.
+    let rendered = rendered("{\\Large A}\\dotfill B");
+    let items = &rendered.v2.pages[0].items;
+    let dots = synthetic_run(items, "\\dotfill");
+    let a = text_run(items, "A");
+    let b = text_run(items, "B");
+    let glue_start = a.glyphs[0].origin_x.0 + a.glyphs[0].advance_x.0;
+    let first = (dots.glyphs[0].origin_x.0 - glue_start) as f64 / flashtex_render_pipeline::display::TICKS_PER_BP * PT_PER_BP;
+    let last = (dots.glyphs.last().unwrap().origin_x.0 - glue_start) as f64 / flashtex_render_pipeline::display::TICKS_PER_BP * PT_PER_BP;
+    let b_start = (b.glyphs[0].origin_x.0 - glue_start) as f64 / flashtex_render_pipeline::display::TICKS_PER_BP * PT_PER_BP;
+    assert_eq!(dots.text, ".".repeat(41));
+    assert_eq!(dots.glyphs.len(), 41);
+    assert_eq!(dots.clusters.len(), 41);
+    assert!((pt(dots.glyphs[0].advance_x) - 2.77779).abs() <= TOL, "dot width: {}pt", pt(dots.glyphs[0].advance_x));
+    assert!((first - 1.78408).abs() <= TOL, "first dot: {first}pt");
+    assert!((last - 177.78488).abs() <= TOL, "last dot: {last}pt");
+    assert!((b_start - 182.34674).abs() <= TOL, "glue width: {b_start}pt");
+}
+
+#[test]
 fn leader_inside_text_keeps_both_sides() {
     if !common::lm_available() {
         return;

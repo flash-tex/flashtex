@@ -6651,14 +6651,19 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 // after the word, not before it.
                 // The font the fill's leader is set in: the family, series
                 // and shape at the fill's own bytes (like `Kern`), with the
-                // size declaration in force at the previous text inline.
+                // size declaration in force at the fill's own span. Like
+                // every other gap-style site here, that size goes through
+                // `space_size`, not the raw previous-text size: a size group
+                // that already closed before the fill (`{\Large A}\dotfill`)
+                // leaves the fill at the ambient size.
                 // `Inline::HFill` carries no compiler style of its own, and
                 // the source scan is family/series/shape only, so there is
                 // no per-position size to resolve with `declared_size`; the
-                // previous text's size is what TeX has in force here whenever
-                // the size was established before the fill, not after it.
+                // `next_cpt` is 0 (no declared size: ambient), and the size
+                // is only the previous text's when no group closed in
+                // between -- never a size established after the fill.
                 let mut fill_style = style_at(styles_of(span.document), span.start);
-                fill_style.size_cpt = prev_size_cpt;
+                fill_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 let (item, word) = match &**inline {
                     Inline::HSpace { pt, .. } => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
                     Inline::TextGlue { em, .. } => (Item::Quad { em: *em }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
