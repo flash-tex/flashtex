@@ -133,8 +133,10 @@ pub enum Inline {
         /// the colour of the range containing its span, else `color`.
         color_ranges: Vec<(Span, DeviceColor)>,
     },
-    /// A multi-row amsmath display (`gather`, `align` and their starred forms).
-    /// `aligned` cells alternate right/left alignment around shared tab stops.
+    /// A multi-row display (`gather`, `align`, `eqnarray` and starred forms).
+    /// `aligned` cells share tab stops across rows (`align` alternates
+    /// right/left around them; `eqnarray` is right/centred/left, resolved
+    /// from the environment name where it is laid out).
     MathRows {
         rows: Vec<MathRow>,
         aligned: bool,
@@ -4182,6 +4184,8 @@ impl P<'_> {
                     | "flalign*"
                     | "multline"
                     | "multline*"
+                    | "eqnarray"
+                    | "eqnarray*"
             ) && self.in_body
             {
                 self.multirow_environment(span, &environment, blocks, para);
@@ -4876,9 +4880,12 @@ impl P<'_> {
         self.flush_paragraph(blocks, para);
     }
 
-    /// amsmath `gather`/`align` (and starred forms): rows split on top-level
-    /// `\\`, `align` cells split on top-level `&`. Numbered forms number every
-    /// row except those carrying `\nonumber`/`\notag`.
+    /// amsmath `gather`/`align` (and starred forms) and LaTeX's `eqnarray`:
+    /// rows split on top-level `\\`, `align`/`eqnarray` cells split on
+    /// top-level `&`. Numbered forms number every row except those carrying
+    /// `\nonumber`/`\notag`. `eqnarray` shares tab stops across rows (its
+    /// three columns are right/centred/left in the renderer, which re-reads
+    /// the environment name from source), so it counts as aligned here.
     fn multirow_environment(
         &mut self,
         open: Span,
@@ -4888,7 +4895,8 @@ impl P<'_> {
     ) {
         self.flush_paragraph(blocks, para);
         let numbered = !name.ends_with('*');
-        let aligned = name.starts_with("align") || name.starts_with("flalign");
+        let aligned =
+            name.starts_with("align") || name.starts_with("flalign") || name.starts_with("eqnarray");
         if name.starts_with("alignat") {
             // The column-pair count; cells are split on `&` regardless.
             let _ = self.required_group("alignat", open);
@@ -5089,6 +5097,14 @@ impl P<'_> {
                 span,
                 intertext,
             });
+        }
+        if name == "eqnarray" || name == "eqnarray*" {
+            // ltmath.dtx `\eqnarray` opens with `\stepcounter{equation}` on
+            // top of `\@@eqncr`'s per-row `\refstepcounter`, so N rows
+            // consume N+1 numbers (the `*` form still consumes its one).
+            // Each row prints before its own step, so the extra step lands
+            // here at the end, where it moves no visible number.
+            let _ = self.counters.step("equation");
         }
         para.push(Inline::MathRows {
             rows: math_rows,
@@ -8871,6 +8887,70 @@ mod tests {
         assert!(inlines.iter().any(
             |inline| matches!(inline, Inline::Label { key, value, .. } if key == "a" && value == "1")
         ));
+    }
+
+    #[test]
+    fn eqnarray_rows_are_three_column_displays_on_the_equation_counter() {
+        let source = "\\begin{eqnarray} x^{2} &=& y \\\\ 2xyz &=& 1 \\nonumber \\\\ w &=& 3 \\end{eqnarray}";
+        let (parsed, items) = items(source);
+        // The body is math now: no `unsupported_feature`, no plain text.
+        assert!(
+            !parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.code == Some(crate::diagnostics::DiagnosticCode::UnsupportedFeature)),
+            "{:?}",
+            parsed.diagnostics
+        );
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph");
+        };
+        let Inline::MathRows { rows, aligned, .. } = &inlines[0] else {
+            panic!("expected multi-row math, got {inlines:?}");
+        };
+        assert!(aligned, "eqnarray columns share tab stops like align");
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|row| row.cells.len() == 3), "{rows:?}");
+        // `\nonumber` suppresses exactly one row's number.
+        assert_eq!(
+            rows.iter().map(|r| r.number.as_deref()).collect::<Vec<_>>(),
+            [Some("1"), None, Some("2")]
+        );
+        let equals: Vec<_> = items.iter().filter(|i| i.text == "=").collect();
+        assert_eq!(equals.len(), 3);
+        assert!(equals.iter().all(|i| (i.x_pt - equals[0].x_pt).abs() < 0.01));
+    }
+
+    #[test]
+    fn eqnarray_star_is_unnumbered_but_still_consumes_an_equation_number() {
+        // ltmath.dtx: `\eqnarray` opens with `\stepcounter{equation}` on top
+        // of `\@@eqncr`'s per-row `\refstepcounter`, so N rows consume N+1
+        // numbers however they print; the `*` form still consumes its one.
+        let source = "\\begin{eqnarray*} a &=& b \\\\ c &=& d \\end{eqnarray*}\\begin{equation} e \\end{equation}";
+        let (parsed, items) = items(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let rows = parsed
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .flatten()
+            .find_map(|i| match i {
+                Inline::MathRows { rows, .. } => Some(rows),
+                _ => None,
+            })
+            .expect("eqnarray* rows");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row.cells.len() == 3));
+        assert!(rows.iter().all(|row| row.number.is_none()));
+        let numbers: Vec<_> = items
+            .iter()
+            .filter(|i| i.text.starts_with('('))
+            .map(|i| i.text.as_str())
+            .collect();
+        assert_eq!(numbers, ["(2)"]);
     }
 
     #[test]
