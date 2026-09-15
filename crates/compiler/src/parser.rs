@@ -2011,6 +2011,14 @@ impl P<'_> {
         }
     }
 
+    /// Dispatches one control word.
+    ///
+    /// This frame is on the stack once per nested sub-parse (a table cell,
+    /// box or footnote re-enters [`P::parse_stream`]), and an unoptimised
+    /// build gives every local of every arm its own stack slot. So each arm
+    /// is a single call: a command's work, with its locals, lives in an
+    /// `#[inline(never)]` handler below. Inline arm bodies here grew this
+    /// frame to 23 KB in debug.
     fn command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         if self.document_ended {
             return;
@@ -2035,20 +2043,7 @@ impl P<'_> {
             "arraybackslash" => {}
             // colortbl.sty 156-165: global colour of later rules and
             // `\doublerulesep` gaps (inside a table the row scanner takes them).
-            "arrayrulecolor" | "doublerulesepcolor" => {
-                let color = self.table_color_argument(name, span);
-                if !self.colortbl() {
-                    self.diags.push(Diagnostic::error(
-                        format!("\\{name} needs the colortbl package (or xcolor with the table option)"),
-                        Some(span),
-                        Some("ignored the colour".into()),
-                    ));
-                } else if name == "arrayrulecolor" {
-                    self.table_rule_color = Some(color);
-                } else {
-                    self.table_double_rule_sep_color = Some(color);
-                }
-            }
+            "arrayrulecolor" | "doublerulesepcolor" => self.table_rule_color_command(name, span),
             "setlist" => self.set_list(span),
             // Definitions run in the expansion pass (`crate::expansion`); the
             // parser only sees their expansions, never these names.
@@ -2077,18 +2072,7 @@ impl P<'_> {
             // real LaTeX also accepts them in the body before `\maketitle`;
             // this arm runs in either place, unlike the preamble catch-all
             // just below.
-            "title" => {
-                let (tokens, argument_span) = self.required_group(name, span);
-                self.title = Some((tokens, span.merge(argument_span)));
-            }
-            "author" => {
-                let (tokens, argument_span) = self.required_group(name, span);
-                self.author = Some((tokens, span.merge(argument_span)));
-            }
-            "date" => {
-                let (tokens, argument_span) = self.required_group(name, span);
-                self.date = Some((tokens, span.merge(argument_span)));
-            }
+            "title" | "author" | "date" => self.title_block_command(name, span),
             "maketitle" => self.maketitle(span, blocks, para),
             // letter.cls's preamble declarations (lines 154-163). Each is
             // `\def`ined to empty by the class, so writing one simply
@@ -2112,10 +2096,7 @@ impl P<'_> {
             // left margin). Consuming the argument here would silently
             // delete the author's sentence.
             "ps" | "startbreaks" | "stopbreaks" | "stopletter" => {
-                if self.letter_command_available(name, span) && name == "ps" {
-                    self.flush_paragraph(blocks, para);
-                    self.finish_block_dependencies();
-                }
+                self.letter_break_command(name, span, blocks, para)
             }
             // `\makelabels` (letter.cls 165-173) writes an address-label
             // page from the `.aux` at the end of the document. There is no
@@ -2139,91 +2120,15 @@ impl P<'_> {
             // `BUILT_INS` panicked the debug build instead. These arms make the
             // documented behaviour real. Same latent bug as `\today` below,
             // different command.
-            "thanks" => {
-                // `\thanks{...}` is `\footnotemark\footnotetext` (latex.ltx);
-                // this compiler has no footnote implementation, so the note
-                // text must not leak into the running prose either.
-                let (_, argument_span) = self.required_group(name, span);
-                self.diags.push(Diagnostic::command_error(
-                    name,
-                    "\\thanks outside \\title/\\author/\\date makes a footnote, which this compiler does not implement",
-                    Some(span.merge(argument_span)),
-                    Some("dropped the command and its note text rather than typesetting the note inline".into()),
-                ));
-            }
-            "and" => {
-                // latex.ltx defines `\and` only for the `\author` block's
-                // tabular; elsewhere real LaTeX produces spurious column
-                // material rather than anything meaningful.
-                self.diags.push(Diagnostic::command_error(
-                    name,
-                    "\\and separates authors inside \\author; outside it there is no author block to split",
-                    Some(span),
-                    Some("ignored the command".into()),
-                ));
-            }
-            "today" => {
-                let space_before = self.space_precedes(self.i - 1);
-                para.push(Inline::Text {
-                    text: self.today.latex_today(),
-                    span,
-                    style: self.style,
-                    space_before,
-                });
-            }
+            "thanks" | "and" | "today" => self.title_text_command(name, span, para),
             // Preamble or body: amsmath's `\numberwithin` and the kernel's
             // `\counterwithin`/`\counterwithout` (handed to the parser by
             // `expansion::HOST_PRELUDE`).
             "numberwithin" => self.counter_numbering(name, span),
             "counterwithin" | "counterwithout" => self.counter_numbering(name, span),
-            // siunitx settings are ordinary preamble material (`crate::siunitx`).
-            "sisetup" => {
-                let (tokens, argument_span) = self.required_group(name, span);
-                let keys = siunitx::raw_text(tokens.iter().map(|t| &t.token));
-                siunitx::sisetup(&keys, span.merge(argument_span), &mut self.diags);
-            }
-            "DeclareSIUnit" => {
-                let _ = self.siunitx_bracket();
-                let unit = self.command_or_group(name, span);
-                let (tokens, _) = self.required_group(name, span);
-                siunitx::declare_unit(&unit, &siunitx::raw_text(tokens.iter().map(|t| &t.token)));
-            }
-            // `\def\graphicspath#1{\def\Ginput@path{#1}}` (graphics.sty): no
-            // material. The search list is re-read from the source by the
-            // consumer that loads image files (see `crate::graphics`).
-            "graphicspath" => {
-                let _ = self.required_group(name, span);
-            }
-            // amsmath's `\allowdisplaybreaks[<0-4>]` only changes where a
-            // page may break inside a display: nothing typeset, no material.
-            "allowdisplaybreaks" => {
-                let _ = self.optional_bracket_argument();
-            }
-            // Preamble or body (GH#321: the preamble is where documents usually
-            // declare them).
-            "pagestyle" => {
-                // No header/footer rendering exists yet, so every style is
-                // accepted with the same (honest) effect: none. `empty` and
-                // `plain` both describe "no footer content beyond a page
-                // number", which is already what happens.
-                let _ = self.required_group(name, span);
-            }
-            // `\thispagestyle` differs from `\pagestyle` only in scope
-            // (current page vs. every later one); since no style ever
-            // renders anything either way, the same honest no-op covers it.
-            "thispagestyle" => {
-                let _ = self.required_group(name, span);
-            }
-            // `\pagenumbering{arabic|roman}` resets the page counter and its
-            // display style. With no footer rendering to show a number in
-            // (see `\pagestyle` above) and no separate "displayed page
-            // number" distinct from `Page::number` for `\pageref` to read,
-            // there is nothing observable left for it to change; accepted
-            // with the same honest no-op rather than faking a counter reset
-            // whose only visible effect would be through those two missing
-            // features.
-            "pagenumbering" => {
-                let _ = self.required_group(name, span);
+            "sisetup" | "DeclareSIUnit" => self.siunitx_setup_command(name, span),
+            "graphicspath" | "allowdisplaybreaks" | "pagestyle" | "thispagestyle" | "pagenumbering" => {
+                self.argument_only_command(name, span)
             }
             // `\hypersetup{key=value,...}` (hyperref): the same keys the
             // package options take, settable anywhere. Every key this
@@ -2278,487 +2183,37 @@ impl P<'_> {
             // arm only retires the `\paragraph is not supported by this
             // compiler version` error, which has been stale since the
             // pipeline started laying these heads out correctly.
-            "paragraph" | "subparagraph" => {
-                let _ = self.take_optional_star();
-                let _ = self.optional_bracket_argument();
-            }
-            "section" | "subsection" | "subsubsection" => {
-                let level = match name {
-                    "section" => 1,
-                    "subsection" => 2,
-                    _ => 3,
-                };
-                let starred = self.take_optional_star();
-                let (tokens, _) = self.required_group(name, span);
-                self.flush_paragraph(blocks, para);
-                let number = if starred {
-                    String::new()
-                } else {
-                    if level == 1 {
-                        theorems::reset_within_section(&self.theorems, &mut self.theorem_counters);
-                    }
-                    self.counters.step(name).unwrap_or_default()
-                };
-                if !starred {
-                    self.set_current_counter(name, Some(number.clone()));
-                }
-                let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
-                if content.is_empty() {
-                    // A missing/empty heading is already diagnosed where
-                    // applicable and has nothing to position. Do not create an
-                    // empty block: incremental block spans require real source.
-                    self.current_dependencies.clear();
-                } else {
-                    blocks.push(Block::Heading {
-                        level,
-                        number,
-                        number_span: span,
-                        content,
-                    });
-                    self.finish_block_dependencies();
-                }
-            }
-            "label" => {
-                let (tokens, argument_span) = self.required_group(name, span);
-                let key = token_text(&tokens).trim().to_string();
-                self.document_global_state = true;
-                if key.is_empty() {
-                    self.diags.push(Diagnostic::warning(
-                        "\\label was given an empty key",
-                        Some(span.merge(argument_span)),
-                        Some("ignored the empty label".into()),
-                    ));
-                } else {
-                    if self.seen_labels.insert(key.clone(), span).is_some() {
-                        self.diags.push(Diagnostic::warning(
-                            format!("duplicate \\label{{{key}}}; the second definition wins"),
-                            Some(span.merge(argument_span)),
-                            Some("replaced the earlier label definition".into()),
-                        ));
-                    }
-                    para.push(Inline::Label {
-                        key,
-                        value: self.current_counter.clone().unwrap_or_default(),
-                        kind: self.current_counter_kind.clone().unwrap_or_default(),
-                        span,
-                    });
-                }
-            }
-            "ref" | "pageref" | "eqref" => {
-                let space_before = self.space_precedes(self.i - 1);
-                let (tokens, argument_span) = self.required_group(name, span);
-                let key = token_text(&tokens).trim().to_string();
-                self.document_global_state = true;
-                para.push(Inline::Reference {
-                    key,
-                    page: name == "pageref",
-                    equation: name == "eqref",
-                    span: span.merge(argument_span),
-                    space_before,
-                });
-            }
+            "paragraph" | "subparagraph" => self.run_in_heading_command(),
+            "section" | "subsection" | "subsubsection" => self.section_command(name, span, blocks, para),
+            "label" | "ref" | "pageref" | "eqref" => self.label_or_reference_command(name, span, para),
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
             | "labelcref" => self.clever_reference(name, span, para),
-            "tableofcontents" => {
-                self.flush_paragraph(blocks, para);
-                self.document_global_state = true;
-                blocks.push(Block::TableOfContents { span });
-                self.finish_block_dependencies();
-            }
-            "cite" => {
-                // natbib redefines `\cite` (natbib.sty line 693): with an
-                // optional argument it is `\citep`, without one `\citet`.
-                // That asymmetry is natbib's, not a simplification here.
-                let natbib = self.bibliography.natbib().cloned();
-                let star = natbib.is_some() && self.take_cite_star();
-                let (pre, note) = match &natbib {
-                    Some(_) => self.cite_notes(),
-                    // The kernel's `\cite` takes one optional argument only.
-                    None => (None, self.optional_bracket_argument().map(|(text, _)| text)),
-                };
-                let (tokens, argument_span) = self.required_group(name, span);
-                let full_span = span.merge(argument_span);
-                let keys = cite_keys(&tokens);
-                self.document_global_state = true;
-                if keys.is_empty() {
-                    self.diags.push(Diagnostic::warning(
-                        "\\cite was given an empty key list",
-                        Some(full_span),
-                        Some("rendered nothing for the empty citation".into()),
-                    ));
-                } else if let Some(options) = natbib {
-                    let mut kind = if note.is_some() || options.numbers {
-                        natbib::CITE_WITH_NOTE
-                    } else {
-                        natbib::CITE_PLAIN
-                    };
-                    kind.full = star;
-                    self.push_natbib_cite(&options, kind, pre, note, &keys, full_span, para);
-                } else {
-                    para.extend(bib::cite_inlines(
-                        &keys,
-                        note,
-                        &self.bibliography,
-                        full_span,
-                        &mut self.diags,
-                    ));
-                }
+            "tableofcontents" => self.table_of_contents_command(span, blocks, para),
+            "cite" | "citetext" | "nocite" | "bibliography" | "bibliographystyle" => {
+                self.citation_command(name, span, para)
             }
             "citet" | "citep" | "citealt" | "citealp" | "citeauthor" | "citefullauthor"
             | "citeyear" | "citeyearpar" | "citenum" | "Citet" | "Citep" | "Citealt"
             | "Citealp" | "Citeauthor" => self.natbib_cite(name, span, para),
-            // `\citetext{...}`: natbib's delimiters around arbitrary text
-            // (natbib.sty line 741).
-            "citetext" => {
-                let options = self.natbib_options(name, span);
-                let (tokens, argument_span) = self.required_group(name, span);
-                let full_span = span.merge(argument_span);
-                para.extend(natbib::citetext_inlines(
-                    &options,
-                    token_text(&tokens).trim(),
-                    full_span,
-                ));
-            }
-            // Real LaTeX's `\nocite` only writes a BibTeX aux-file entry (to
-            // pull an uncited reference into the printed bibliography); it
-            // has no visible output of its own either way, and this compiler
-            // has no `.bib`/aux-file pipeline to feed (see `bibliography`
-            // below), so consuming the argument is the whole honest behaviour.
-            "nocite" => {
-                let _ = self.required_group(name, span);
-            }
-            "bibliography" => {
-                let _ = self.required_group(name, span);
-                self.diags.push(Diagnostic::warning(
-                    "\\bibliography requires BibTeX/biblatex .bib input, which this compiler does not read",
-                    Some(span),
-                    Some("write the bibliography by hand with thebibliography and \\bibitem".into()),
-                ));
-            }
-            "bibliographystyle" => {
-                let _ = self.required_group(name, span);
-                self.diags.push(Diagnostic::warning(
-                    "\\bibliographystyle has no effect without BibTeX/biblatex .bib support",
-                    Some(span),
-                    Some("ignored the style and continued".into()),
-                ));
-            }
-            "caption" => {
-                let (tokens, _) = self.required_group(name, span);
-                if self.env_stack.last().map(|(name, _)| name.as_str()) != Some("figure") {
-                    self.diags.push(Diagnostic::error(
-                        "\\caption is only supported inside a figure environment",
-                        Some(span),
-                        Some("typeset the caption text as an ordinary paragraph".into()),
-                    ));
-                    let style = self.style;
-                    para.extend(self.inlines_from_tokens(tokens, style));
-                } else {
-                    self.flush_paragraph(blocks, para);
-                    let number = self.counters.step("figure").unwrap_or_default();
-                    self.set_current_counter("figure", Some(number.clone()));
-                    let mut content = vec![Inline::Text {
-                        text: format!("Figure {number}:"),
-                        span,
-                        style: TextStyle::default(),
-                        space_before: true,
-                    }];
-                    content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
-                    blocks.push(Block::FigureCaption { content });
-                    self.finish_block_dependencies();
-                }
-            }
-            "item" => {
-                let gap_before = self
-                    .list_stack
-                    .last()
-                    .map(|list| {
-                        if list.count <= 1 {
-                            list.spacing.topsep_pt
-                        } else {
-                            list.spacing.itemsep_pt
-                        }
-                    })
-                    .unwrap_or(0.0);
-                self.flush_list_item(blocks, para, gap_before, 0.0);
-                match self.list_stack.last() {
-                    Some(_) => {
-                        let explicit = self.item_label_argument();
-                        self.begin_item(span, explicit);
-                    }
-                    None => self.diags.push(Diagnostic::error(
-                        "\\item is only supported inside itemize or enumerate",
-                        Some(span),
-                        Some("ignored the item marker and continued".into()),
-                    )),
-                }
-            }
-            "bibitem" => {
-                let in_bibliography =
-                    matches!(self.list_stack.last(), Some(list) if list.kind == "thebibliography");
-                if !in_bibliography {
-                    self.diags.push(Diagnostic::error(
-                        "\\bibitem is only supported inside thebibliography",
-                        Some(span),
-                        Some("ignored the entry and continued".into()),
-                    ));
-                    let _ = self.optional_bracket_argument();
-                    let _ = self.required_group(name, span);
-                } else {
-                    let gap_before = self
-                        .list_stack
-                        .last()
-                        .map(|list| {
-                            if list.count <= 1 {
-                                list.spacing.topsep_pt
-                            } else {
-                                list.spacing.itemsep_pt
-                            }
-                        })
-                        .unwrap_or(0.0);
-                    self.flush_list_item(blocks, para, gap_before, 0.0);
-                    // The optional `[label]`/required `{key}` were already
-                    // read by `bib::prescan`, which resolved this occurrence
-                    // (by document order, via `bib_cursor`) to its label
-                    // before this parse began; only the token positions need
-                    // consuming here.
-                    let _ = self.optional_bracket_argument();
-                    let _ = self.required_group(name, span);
-                    self.document_global_state = true;
-                    // The printed marker, already bracketed — and empty under
-                    // natbib's author-year mode, whose `\@biblabel` is
-                    // `\hfill` (natbib.sty line 622), so the entry starts
-                    // flush at the margin with no `[1]` in front of it.
-                    let text = self
-                        .bibliography
-                        .marker_at(self.bib_cursor)
-                        .map(str::to_string)
-                        .unwrap_or_else(|| {
-                            // Should not happen: the pre-scan and this real
-                            // parse walk the same literal `\bibitem`s in
-                            // lockstep (see `bib::prescan`). Recover with a
-                            // plain sequential number rather than losing the
-                            // entry.
-                            bib::label_bracket(&(self.bib_cursor + 1).to_string())
-                        });
-                    self.bib_cursor += 1;
-                    if let Some(list) = self.list_stack.last_mut() {
-                        list.count += 1;
-                    }
-                    self.pending_item = Some(ItemLabel::Template { text: text.clone() });
-                    self.pending_item_label = Some((text, span));
-                }
-            }
+            "caption" => self.caption_command(name, span, blocks, para),
+            "item" | "bibitem" => self.item_command(name, span, blocks, para),
             "includegraphics" => self.include_graphics(span, para),
             "scalebox" | "resizebox" | "rotatebox" | "reflectbox" => {
                 self.transform_box(name, span, para)
             }
-            // See `url_argument` for why the URL is read from raw source
-            // bytes rather than the ordinary token stream, and
-            // `note_links_unclickable` for the once-per-document diagnostic.
-            "url" => {
-                let space_before = self.space_precedes(self.i - 1);
-                let (text, arg_span) = self.url_argument(name, span);
-                let full_span = span.merge(arg_span);
-                self.note_links_unclickable(full_span);
-                self.push_url_text(&text, full_span, space_before, para);
-            }
-            // `\nolinkurl`: url.sty-style literal, monospaced text with no
-            // hyperlink at all, so it never needs the "not clickable" notice
-            // — nothing here was ever meant to be clickable.
-            "nolinkurl" => {
-                let space_before = self.space_precedes(self.i - 1);
-                let (text, arg_span) = self.url_argument(name, span);
-                self.push_url_text(&text, span.merge(arg_span), space_before, para);
-            }
-            "href" => {
-                let (_url, url_span) = self.url_argument(name, span);
-                let (text_tokens, text_span) = self.required_group(name, span.merge(url_span));
-                self.note_links_unclickable(span.merge(text_span));
-                let style = self.style;
-                para.extend(self.inlines_from_tokens(text_tokens, style));
-            }
-            _ if style_command(name) => {
-                self.skip_spaces();
-                let next = apply_style(self.style, name);
-                if let Some(open) = self.closed_group_start() {
-                    // Re-enter the argument as an ordinary group so math and
-                    // other commands inside it are parsed normally.
-                    self.i += 1;
-                    self.open_group(open);
-                    self.style = next;
-                } else {
-                    let (tokens, _) = self.required_group(name, span);
-                    para.extend(self.inlines_from_tokens(tokens, next));
-                }
-            }
+            "url" | "nolinkurl" | "href" => self.url_command(name, span, para),
+            _ if style_command(name) => self.style_command_argument(name, span, para),
             _ if style_declaration(name) => self.style = apply_style(self.style, name),
-            "hfill" | "hfil" => para.push(Inline::HFill { span, leader: FillLeader::None }),
-            "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule }),
-            "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots }),
+            "hfill" | "hfil" | "hrulefill" | "dotfill" | "linebreak" | "nolinebreak" | "hspace"
+            | "noindent" | "indent" | "quad" | "qquad" | "thinspace" | "negthinspace" | "medspace"
+            | "negmedspace" | "thickspace" | "negthickspace" | "enspace" | "enskip" => {
+                self.horizontal_command(name, span, para)
+            }
             "footnote" | "footnotemark" | "footnotetext" => self.footnote(name, span, para),
-            // `\linebreak[n]`/`\nolinebreak[n]`: real TeX's 0-4 priority only
-            // ever hints a badness-based line-breaking algorithm this greedy
-            // layout does not have. An absent bracket or an explicit `4` is
-            // TeX's own "you must break here", which is exactly what `\\`
-            // already forces (see `Inline::LineBreak`), so that priority
-            // alone gets a real break; anything lower is honestly left alone
-            // rather than guessing whether a real engine would have broken
-            // there. `\nolinebreak` can only ever discourage a break this
-            // layout was never going to insert on its own initiative, so
-            // honouring it exactly means doing nothing beyond consuming its
-            // bracket.
-            "linebreak" => {
-                if self.mandatory_break_requested() {
-                    para.push(Inline::LineBreak { span, skip_pt: None });
-                }
-            }
-            "nolinebreak" => {
-                let _ = self.optional_bracket_argument();
-            }
-            "hspace" => {
-                // The star only affects whether the glue survives being
-                // discarded at a line break in real TeX, which this layout
-                // never does anyway (see the `Inline::HSpace` comment), so
-                // both forms are parsed identically.
-                let _starred = self.take_optional_star();
-                let (tokens, argument_span) = self.required_group(name, span);
-                let raw = token_text(&tokens);
-                match parse_dimen_pt(&raw) {
-                    Some(pt) => para.push(Inline::HSpace {
-                        pt,
-                        span: span.merge(argument_span),
-                    }),
-                    None => self.diags.push(Diagnostic::error(
-                        format!(
-                            "\\hspace requires a recognised dimension, got '{}'",
-                            raw.trim()
-                        ),
-                        Some(span.merge(argument_span)),
-                        Some("ignored the malformed \\hspace argument".into()),
-                    )),
-                }
-            }
-            // No paragraph is ever given a first-line indent in this layout
-            // model, so there is nothing for \noindent to suppress: an honest
-            // no-op rather than a fabricated indent to cancel.
-            "noindent" => {}
-            // The opposite request: unlike \noindent above, this one is not a
-            // coincidental match with real LaTeX's output — \indent asks for
-            // a first-line indent that this layout has no way to draw (see
-            // `set_length`'s `\parindent` handling), so it is named honestly
-            // via a diagnostic rather than silently accepted.
-            "indent" => self.diags.push(Diagnostic::warning(
-                "\\indent is recognised but paragraph indentation is not implemented",
-                Some(span),
-                Some("the paragraph was not given a first-line indent".into()),
-            )),
-            // Text-mode horizontal glue. `\quad`/`\qquad` are also implemented
-            // in math mode (`src/math.rs`); this arm covers the same commands
-            // used directly in running text, 1em/2em of the body text size.
-            "quad" => para.push(Inline::TextGlue {
-                em: math::QUAD_EM,
-                span,
-            }),
-            "qquad" => para.push(Inline::TextGlue {
-                em: 2.0 * math::QUAD_EM,
-                span,
-            }),
             "par" => self.flush_paragraph(blocks, para),
-            "bigskip" | "medskip" | "smallskip" => {
-                let pt = match name {
-                    "bigskip" => BIG_SKIP_PT,
-                    "medskip" => MEDIUM_SKIP_PT,
-                    _ => SMALL_SKIP_PT,
-                };
-                self.flush_paragraph(blocks, para);
-                blocks.push(Block::VSpace { pt });
-                self.finish_block_dependencies();
-            }
-            "vspace" => {
-                // The star only affects whether the glue survives being
-                // discarded at a page break in real TeX, which this layout
-                // never does anyway (see `hspace`'s identical star), so both
-                // forms are parsed identically. Consuming it here (as
-                // `hspace` already does for itself) is the fix: left alone,
-                // `required_group` sees `*` where it expects `{` and reports
-                // a missing argument instead of reading the dimension after it.
-                let _starred = self.take_optional_star();
-                let (tokens, argument_span) = self.required_group(name, span);
-                let raw = token_text(&tokens);
-                let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-                match parse_dimen_pt_at(&raw, body) {
-                    Some(pt) => {
-                        self.flush_paragraph(blocks, para);
-                        blocks.push(Block::VSpace { pt });
-                        self.finish_block_dependencies();
-                    }
-                    None => self.diags.push(Diagnostic::error(
-                        format!(
-                            "\\vspace requires a recognised dimension, got '{}'",
-                            raw.trim()
-                        ),
-                        Some(span.merge(argument_span)),
-                        Some("ignored the vertical space and continued".into()),
-                    )),
-                }
-            }
-            "hrule" => {
-                self.flush_paragraph(blocks, para);
-                blocks.push(Block::Rule { span });
-                self.finish_block_dependencies();
-            }
-            "newpage" => {
-                self.flush_paragraph(blocks, para);
-                blocks.push(Block::PageBreak);
-                self.finish_block_dependencies();
-            }
-            // `\clearpage`/`\cleardoublepage` also flush any queued floats
-            // and, for `\cleardoublepage` in a `twoside` class, insert a
-            // blank page to land back on an odd one. Neither float queuing
-            // nor the oneside/twoside distinction exists in this compiler
-            // (article defaults to oneside, where the two commands are
-            // already identical in real LaTeX), so both reduce honestly to
-            // the same unconditional break as `\newpage`.
-            "clearpage" | "cleardoublepage" => {
-                self.flush_paragraph(blocks, para);
-                blocks.push(Block::PageBreak);
-                self.finish_block_dependencies();
-            }
-            // `\pagebreak[n]`: see the `\linebreak[n]` comment above for why
-            // only the mandatory priority (absent or `4`) forces a break.
-            "pagebreak" => {
-                if self.mandatory_break_requested() {
-                    self.flush_paragraph(blocks, para);
-                    blocks.push(Block::PageBreak);
-                    self.finish_block_dependencies();
-                }
-            }
-            "nopagebreak" => {
-                let _ = self.optional_bracket_argument();
-            }
-            "vfill" => {
-                self.flush_paragraph(blocks, para);
-                blocks.push(Block::VFill);
-                self.finish_block_dependencies();
-            }
-            // multicol.sty 919-950: `\columnbreak[n]` and `\newcolumn` end a
-            // column of `multicols` (set by the render pipeline); outside the
-            // environment multicol raises an error.
-            "columnbreak" | "newcolumn" => {
-                if name == "columnbreak" {
-                    let _ = self.optional_bracket_argument();
-                }
-                if !self.env_stack.iter().any(|(environment, _)| environment == "multicols" || environment == "multicols*") {
-                    self.diags.push(Diagnostic::error(
-                        format!("Package multicol Error: \\{name} outside multicols; this command can only be used within a multicols or multicols* environment"),
-                        Some(span),
-                        Some("ignored the command".into()),
-                    ));
-                }
-            }
-            // multicol.sty 564-567: column heights at output time.
-            "raggedcolumns" | "flushcolumns" => {}
+            "bigskip" | "medskip" | "smallskip" | "vspace" | "hrule" | "newpage" | "clearpage"
+            | "cleardoublepage" | "pagebreak" | "nopagebreak" | "vfill" | "columnbreak" | "newcolumn"
+            | "raggedcolumns" | "flushcolumns" => self.vertical_command(name, span, blocks, para),
             // Kernel text symbols (`text_builtins::TEXT_SYMBOLS`; the
             // `text_symbol_arms_match_the_builtin_table` test keeps them equal).
             "AA" | "aa" | "AE" | "ae" | "OE" | "oe" | "O" | "o" | "L" | "l" | "ss" | "SS"
@@ -2782,36 +2237,732 @@ impl P<'_> {
             // ulem `\uline`/`\sout` (need the package). Kernel text-mode
             // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
             // Rule 10); math-mode `\underline` is in `math.rs`.
-            "uline" | "underline" | "sout" => {
-                let geom = match name {
-                    "underline" => UnderlineGeom::MathUnderline,
-                    "sout" => UnderlineGeom::Strike,
-                    _ => UnderlineGeom::UlemDescender,
-                };
-                self.text_underline_cmd(name, span, para, geom);
-            }
-            "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
-            | "negthickspace" | "enspace" => {
-                if let Some(amount) = text_builtins::text_kern(name, self.math_packages.amsmath) {
-                    para.push(Inline::Kern {
-                        amount,
-                        span,
-                        style: self.style,
-                    });
-                }
-            }
-            // `\def\enskip{\hskip.5em\relax}` (latex.ltx 9434): glue, like `\quad`.
-            "enskip" => para.push(Inline::TextGlue { em: 0.5, span }),
+            "uline" | "underline" | "sout" => self.underline_command(name, span, para),
             "rule" => self.text_rule(span, para),
-            "frac" | "sqrt" => self.diags.push(Diagnostic::error(
+            "frac" | "sqrt" => self.text_mode_math_command(name, span),
+            other => self.unsupported(other, span),
+        }
+    }
+
+    /// `\arrayrulecolor`/`\doublerulesepcolor` (see [`P::command`]).
+    #[inline(never)]
+    fn table_rule_color_command(&mut self, name: &str, span: Span) {
+        let color = self.table_color_argument(name, span);
+        if !self.colortbl() {
+            self.diags.push(Diagnostic::error(
+                format!("\\{name} needs the colortbl package (or xcolor with the table option)"),
+                Some(span),
+                Some("ignored the colour".into()),
+            ));
+        } else if name == "arrayrulecolor" {
+            self.table_rule_color = Some(color);
+        } else {
+            self.table_double_rule_sep_color = Some(color);
+        }
+    }
+
+    /// `\title`, `\author` and `\date`.
+    #[inline(never)]
+    fn title_block_command(&mut self, name: &str, span: Span) {
+        match name {
+        "title" => {
+            let (tokens, argument_span) = self.required_group(name, span);
+            self.title = Some((tokens, span.merge(argument_span)));
+        }
+        "author" => {
+            let (tokens, argument_span) = self.required_group(name, span);
+            self.author = Some((tokens, span.merge(argument_span)));
+        }
+        "date" => {
+            let (tokens, argument_span) = self.required_group(name, span);
+            self.date = Some((tokens, span.merge(argument_span)));
+        }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// letter.cls `\ps`, `\startbreaks`, `\stopbreaks` and `\stopletter`.
+    #[inline(never)]
+    fn letter_break_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        if self.letter_command_available(name, span) && name == "ps" {
+            self.flush_paragraph(blocks, para);
+            self.finish_block_dependencies();
+        }
+    }
+
+    /// `\thanks`, `\and` and `\today` outside the title block.
+    #[inline(never)]
+    fn title_text_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        match name {
+        "thanks" => {
+            // `\thanks{...}` is `\footnotemark\footnotetext` (latex.ltx);
+            // this compiler has no footnote implementation, so the note
+            // text must not leak into the running prose either.
+            let (_, argument_span) = self.required_group(name, span);
+            self.diags.push(Diagnostic::command_error(
+                name,
+                "\\thanks outside \\title/\\author/\\date makes a footnote, which this compiler does not implement",
+                Some(span.merge(argument_span)),
+                Some("dropped the command and its note text rather than typesetting the note inline".into()),
+            ));
+        }
+        "and" => {
+            // latex.ltx defines `\and` only for the `\author` block's
+            // tabular; elsewhere real LaTeX produces spurious column
+            // material rather than anything meaningful.
+            self.diags.push(Diagnostic::command_error(
+                name,
+                "\\and separates authors inside \\author; outside it there is no author block to split",
+                Some(span),
+                Some("ignored the command".into()),
+            ));
+        }
+        "today" => {
+            let space_before = self.space_precedes(self.i - 1);
+            para.push(Inline::Text {
+                text: self.today.latex_today(),
+                span,
+                style: self.style,
+                space_before,
+            });
+        }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// siunitx preamble settings: `\sisetup` and `\DeclareSIUnit`.
+    #[inline(never)]
+    fn siunitx_setup_command(&mut self, name: &str, span: Span) {
+        match name {
+        // siunitx settings are ordinary preamble material (`crate::siunitx`).
+        "sisetup" => {
+            let (tokens, argument_span) = self.required_group(name, span);
+            let keys = siunitx::raw_text(tokens.iter().map(|t| &t.token));
+            siunitx::sisetup(&keys, span.merge(argument_span), &mut self.diags);
+        }
+        "DeclareSIUnit" => {
+            let _ = self.siunitx_bracket();
+            let unit = self.command_or_group(name, span);
+            let (tokens, _) = self.required_group(name, span);
+            siunitx::declare_unit(&unit, &siunitx::raw_text(tokens.iter().map(|t| &t.token)));
+        }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// Commands whose arguments are read and dropped: `\graphicspath`,
+    /// `\allowdisplaybreaks`, `\pagestyle`, `\thispagestyle` and `\pagenumbering`.
+    #[inline(never)]
+    fn argument_only_command(&mut self, name: &str, span: Span) {
+        match name {
+        // `\def\graphicspath#1{\def\Ginput@path{#1}}` (graphics.sty): no
+        // material. The search list is re-read from the source by the
+        // consumer that loads image files (see `crate::graphics`).
+        "graphicspath" => {
+            let _ = self.required_group(name, span);
+        }
+        // amsmath's `\allowdisplaybreaks[<0-4>]` only changes where a
+        // page may break inside a display: nothing typeset, no material.
+        "allowdisplaybreaks" => {
+            let _ = self.optional_bracket_argument();
+        }
+        // Preamble or body (GH#321: the preamble is where documents usually
+        // declare them).
+        "pagestyle" => {
+            // No header/footer rendering exists yet, so every style is
+            // accepted with the same (honest) effect: none. `empty` and
+            // `plain` both describe "no footer content beyond a page
+            // number", which is already what happens.
+            let _ = self.required_group(name, span);
+        }
+        // `\thispagestyle` differs from `\pagestyle` only in scope
+        // (current page vs. every later one); since no style ever
+        // renders anything either way, the same honest no-op covers it.
+        "thispagestyle" => {
+            let _ = self.required_group(name, span);
+        }
+        // `\pagenumbering{arabic|roman}` resets the page counter and its
+        // display style. With no footer rendering to show a number in
+        // (see `\pagestyle` above) and no separate "displayed page
+        // number" distinct from `Page::number` for `\pageref` to read,
+        // there is nothing observable left for it to change; accepted
+        // with the same honest no-op rather than faking a counter reset
+        // whose only visible effect would be through those two missing
+        // features.
+        "pagenumbering" => {
+            let _ = self.required_group(name, span);
+        }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// Run-in `\paragraph`/`\subparagraph` (see the comment in [`P::command`]).
+    #[inline(never)]
+    fn run_in_heading_command(&mut self) {
+        let _ = self.take_optional_star();
+        let _ = self.optional_bracket_argument();
+    }
+
+    /// `\section`, `\subsection` and `\subsubsection`.
+    #[inline(never)]
+    fn section_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let level = match name {
+            "section" => 1,
+            "subsection" => 2,
+            _ => 3,
+        };
+        let starred = self.take_optional_star();
+        let (tokens, _) = self.required_group(name, span);
+        self.flush_paragraph(blocks, para);
+        let number = if starred {
+            String::new()
+        } else {
+            if level == 1 {
+                theorems::reset_within_section(&self.theorems, &mut self.theorem_counters);
+            }
+            self.counters.step(name).unwrap_or_default()
+        };
+        if !starred {
+            self.set_current_counter(name, Some(number.clone()));
+        }
+        let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
+        if content.is_empty() {
+            // A missing/empty heading is already diagnosed where
+            // applicable and has nothing to position. Do not create an
+            // empty block: incremental block spans require real source.
+            self.current_dependencies.clear();
+        } else {
+            blocks.push(Block::Heading {
+                level,
+                number,
+                number_span: span,
+                content,
+            });
+            self.finish_block_dependencies();
+        }
+    }
+
+    /// `\label`, `\ref`, `\pageref` and `\eqref`.
+    #[inline(never)]
+    fn label_or_reference_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        match name {
+        "label" => {
+            let (tokens, argument_span) = self.required_group(name, span);
+            let key = token_text(&tokens).trim().to_string();
+            self.document_global_state = true;
+            if key.is_empty() {
+                self.diags.push(Diagnostic::warning(
+                    "\\label was given an empty key",
+                    Some(span.merge(argument_span)),
+                    Some("ignored the empty label".into()),
+                ));
+            } else {
+                if self.seen_labels.insert(key.clone(), span).is_some() {
+                    self.diags.push(Diagnostic::warning(
+                        format!("duplicate \\label{{{key}}}; the second definition wins"),
+                        Some(span.merge(argument_span)),
+                        Some("replaced the earlier label definition".into()),
+                    ));
+                }
+                para.push(Inline::Label {
+                    key,
+                    value: self.current_counter.clone().unwrap_or_default(),
+                    kind: self.current_counter_kind.clone().unwrap_or_default(),
+                    span,
+                });
+            }
+        }
+        "ref" | "pageref" | "eqref" => {
+            let space_before = self.space_precedes(self.i - 1);
+            let (tokens, argument_span) = self.required_group(name, span);
+            let key = token_text(&tokens).trim().to_string();
+            self.document_global_state = true;
+            para.push(Inline::Reference {
+                key,
+                page: name == "pageref",
+                equation: name == "eqref",
+                span: span.merge(argument_span),
+                space_before,
+            });
+        }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// `\tableofcontents`.
+    #[inline(never)]
+    fn table_of_contents_command(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        self.flush_paragraph(blocks, para);
+        self.document_global_state = true;
+        blocks.push(Block::TableOfContents { span });
+        self.finish_block_dependencies();
+    }
+
+    /// `\cite`, `\citetext`, `\nocite`, `\bibliography` and `\bibliographystyle`.
+    #[inline(never)]
+    fn citation_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        match name {
+        "cite" => {
+            // natbib redefines `\cite` (natbib.sty line 693): with an
+            // optional argument it is `\citep`, without one `\citet`.
+            // That asymmetry is natbib's, not a simplification here.
+            let natbib = self.bibliography.natbib().cloned();
+            let star = natbib.is_some() && self.take_cite_star();
+            let (pre, note) = match &natbib {
+                Some(_) => self.cite_notes(),
+                // The kernel's `\cite` takes one optional argument only.
+                None => (None, self.optional_bracket_argument().map(|(text, _)| text)),
+            };
+            let (tokens, argument_span) = self.required_group(name, span);
+            let full_span = span.merge(argument_span);
+            let keys = cite_keys(&tokens);
+            self.document_global_state = true;
+            if keys.is_empty() {
+                self.diags.push(Diagnostic::warning(
+                    "\\cite was given an empty key list",
+                    Some(full_span),
+                    Some("rendered nothing for the empty citation".into()),
+                ));
+            } else if let Some(options) = natbib {
+                let mut kind = if note.is_some() || options.numbers {
+                    natbib::CITE_WITH_NOTE
+                } else {
+                    natbib::CITE_PLAIN
+                };
+                kind.full = star;
+                self.push_natbib_cite(&options, kind, pre, note, &keys, full_span, para);
+            } else {
+                para.extend(bib::cite_inlines(
+                    &keys,
+                    note,
+                    &self.bibliography,
+                    full_span,
+                    &mut self.diags,
+                ));
+            }
+        }
+        // `\citetext{...}`: natbib's delimiters around arbitrary text
+        // (natbib.sty line 741).
+        "citetext" => {
+            let options = self.natbib_options(name, span);
+            let (tokens, argument_span) = self.required_group(name, span);
+            let full_span = span.merge(argument_span);
+            para.extend(natbib::citetext_inlines(
+                &options,
+                token_text(&tokens).trim(),
+                full_span,
+            ));
+        }
+        // Real LaTeX's `\nocite` only writes a BibTeX aux-file entry (to
+        // pull an uncited reference into the printed bibliography); it
+        // has no visible output of its own either way, and this compiler
+        // has no `.bib`/aux-file pipeline to feed (see `bibliography`
+        // below), so consuming the argument is the whole honest behaviour.
+        "nocite" => {
+            let _ = self.required_group(name, span);
+        }
+        "bibliography" => {
+            let _ = self.required_group(name, span);
+            self.diags.push(Diagnostic::warning(
+                "\\bibliography requires BibTeX/biblatex .bib input, which this compiler does not read",
+                Some(span),
+                Some("write the bibliography by hand with thebibliography and \\bibitem".into()),
+            ));
+        }
+        "bibliographystyle" => {
+            let _ = self.required_group(name, span);
+            self.diags.push(Diagnostic::warning(
+                "\\bibliographystyle has no effect without BibTeX/biblatex .bib support",
+                Some(span),
+                Some("ignored the style and continued".into()),
+            ));
+        }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// `\caption`.
+    #[inline(never)]
+    fn caption_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let (tokens, _) = self.required_group(name, span);
+        if self.env_stack.last().map(|(name, _)| name.as_str()) != Some("figure") {
+            self.diags.push(Diagnostic::error(
+                "\\caption is only supported inside a figure environment",
+                Some(span),
+                Some("typeset the caption text as an ordinary paragraph".into()),
+            ));
+            let style = self.style;
+            para.extend(self.inlines_from_tokens(tokens, style));
+        } else {
+            self.flush_paragraph(blocks, para);
+            let number = self.counters.step("figure").unwrap_or_default();
+            self.set_current_counter("figure", Some(number.clone()));
+            let mut content = vec![Inline::Text {
+                text: format!("Figure {number}:"),
+                span,
+                style: TextStyle::default(),
+                space_before: true,
+            }];
+            content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
+            blocks.push(Block::FigureCaption { content });
+            self.finish_block_dependencies();
+        }
+    }
+
+    /// `\item` and `\bibitem`.
+    #[inline(never)]
+    fn item_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        match name {
+        "item" => {
+            let gap_before = self
+                .list_stack
+                .last()
+                .map(|list| {
+                    if list.count <= 1 {
+                        list.spacing.topsep_pt
+                    } else {
+                        list.spacing.itemsep_pt
+                    }
+                })
+                .unwrap_or(0.0);
+            self.flush_list_item(blocks, para, gap_before, 0.0);
+            match self.list_stack.last() {
+                Some(_) => {
+                    let explicit = self.item_label_argument();
+                    self.begin_item(span, explicit);
+                }
+                None => self.diags.push(Diagnostic::error(
+                    "\\item is only supported inside itemize or enumerate",
+                    Some(span),
+                    Some("ignored the item marker and continued".into()),
+                )),
+            }
+        }
+        "bibitem" => {
+            let in_bibliography =
+                matches!(self.list_stack.last(), Some(list) if list.kind == "thebibliography");
+            if !in_bibliography {
+                self.diags.push(Diagnostic::error(
+                    "\\bibitem is only supported inside thebibliography",
+                    Some(span),
+                    Some("ignored the entry and continued".into()),
+                ));
+                let _ = self.optional_bracket_argument();
+                let _ = self.required_group(name, span);
+            } else {
+                let gap_before = self
+                    .list_stack
+                    .last()
+                    .map(|list| {
+                        if list.count <= 1 {
+                            list.spacing.topsep_pt
+                        } else {
+                            list.spacing.itemsep_pt
+                        }
+                    })
+                    .unwrap_or(0.0);
+                self.flush_list_item(blocks, para, gap_before, 0.0);
+                // The optional `[label]`/required `{key}` were already
+                // read by `bib::prescan`, which resolved this occurrence
+                // (by document order, via `bib_cursor`) to its label
+                // before this parse began; only the token positions need
+                // consuming here.
+                let _ = self.optional_bracket_argument();
+                let _ = self.required_group(name, span);
+                self.document_global_state = true;
+                // The printed marker, already bracketed — and empty under
+                // natbib's author-year mode, whose `\@biblabel` is
+                // `\hfill` (natbib.sty line 622), so the entry starts
+                // flush at the margin with no `[1]` in front of it.
+                let text = self
+                    .bibliography
+                    .marker_at(self.bib_cursor)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        // Should not happen: the pre-scan and this real
+                        // parse walk the same literal `\bibitem`s in
+                        // lockstep (see `bib::prescan`). Recover with a
+                        // plain sequential number rather than losing the
+                        // entry.
+                        bib::label_bracket(&(self.bib_cursor + 1).to_string())
+                    });
+                self.bib_cursor += 1;
+                if let Some(list) = self.list_stack.last_mut() {
+                    list.count += 1;
+                }
+                self.pending_item = Some(ItemLabel::Template { text: text.clone() });
+                self.pending_item_label = Some((text, span));
+            }
+        }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// `\url`, `\nolinkurl` and `\href`.
+    #[inline(never)]
+    fn url_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        match name {
+        // See `url_argument` for why the URL is read from raw source
+        // bytes rather than the ordinary token stream, and
+        // `note_links_unclickable` for the once-per-document diagnostic.
+        "url" => {
+            let space_before = self.space_precedes(self.i - 1);
+            let (text, arg_span) = self.url_argument(name, span);
+            let full_span = span.merge(arg_span);
+            self.note_links_unclickable(full_span);
+            self.push_url_text(&text, full_span, space_before, para);
+        }
+        // `\nolinkurl`: url.sty-style literal, monospaced text with no
+        // hyperlink at all, so it never needs the "not clickable" notice
+        // — nothing here was ever meant to be clickable.
+        "nolinkurl" => {
+            let space_before = self.space_precedes(self.i - 1);
+            let (text, arg_span) = self.url_argument(name, span);
+            self.push_url_text(&text, span.merge(arg_span), space_before, para);
+        }
+        "href" => {
+            let (_url, url_span) = self.url_argument(name, span);
+            let (text_tokens, text_span) = self.required_group(name, span.merge(url_span));
+            self.note_links_unclickable(span.merge(text_span));
+            let style = self.style;
+            para.extend(self.inlines_from_tokens(text_tokens, style));
+        }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// A text style command with an argument (`\textbf{..}`, `\emph{..}`, ...).
+    #[inline(never)]
+    fn style_command_argument(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        self.skip_spaces();
+        let next = apply_style(self.style, name);
+        if let Some(open) = self.closed_group_start() {
+            // Re-enter the argument as an ordinary group so math and
+            // other commands inside it are parsed normally.
+            self.i += 1;
+            self.open_group(open);
+            self.style = next;
+        } else {
+            let (tokens, _) = self.required_group(name, span);
+            para.extend(self.inlines_from_tokens(tokens, next));
+        }
+    }
+
+    /// Horizontal material: fills, line breaks, `\hspace`, indentation, text glue and kerns.
+    #[inline(never)]
+    fn horizontal_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        match name {
+        "hfill" | "hfil" => para.push(Inline::HFill { span, leader: FillLeader::None }),
+        "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule }),
+        "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots }),
+        // `\linebreak[n]`/`\nolinebreak[n]`: real TeX's 0-4 priority only
+        // ever hints a badness-based line-breaking algorithm this greedy
+        // layout does not have. An absent bracket or an explicit `4` is
+        // TeX's own "you must break here", which is exactly what `\\`
+        // already forces (see `Inline::LineBreak`), so that priority
+        // alone gets a real break; anything lower is honestly left alone
+        // rather than guessing whether a real engine would have broken
+        // there. `\nolinebreak` can only ever discourage a break this
+        // layout was never going to insert on its own initiative, so
+        // honouring it exactly means doing nothing beyond consuming its
+        // bracket.
+        "linebreak" => {
+            if self.mandatory_break_requested() {
+                para.push(Inline::LineBreak { span, skip_pt: None });
+            }
+        }
+        "nolinebreak" => {
+            let _ = self.optional_bracket_argument();
+        }
+        "hspace" => {
+            // The star only affects whether the glue survives being
+            // discarded at a line break in real TeX, which this layout
+            // never does anyway (see the `Inline::HSpace` comment), so
+            // both forms are parsed identically.
+            let _starred = self.take_optional_star();
+            let (tokens, argument_span) = self.required_group(name, span);
+            let raw = token_text(&tokens);
+            match parse_dimen_pt(&raw) {
+                Some(pt) => para.push(Inline::HSpace {
+                    pt,
+                    span: span.merge(argument_span),
+                }),
+                None => self.diags.push(Diagnostic::error(
+                    format!(
+                        "\\hspace requires a recognised dimension, got '{}'",
+                        raw.trim()
+                    ),
+                    Some(span.merge(argument_span)),
+                    Some("ignored the malformed \\hspace argument".into()),
+                )),
+            }
+        }
+        // No paragraph is ever given a first-line indent in this layout
+        // model, so there is nothing for \noindent to suppress: an honest
+        // no-op rather than a fabricated indent to cancel.
+        "noindent" => {}
+        // The opposite request: unlike \noindent above, this one is not a
+        // coincidental match with real LaTeX's output — \indent asks for
+        // a first-line indent that this layout has no way to draw (see
+        // `set_length`'s `\parindent` handling), so it is named honestly
+        // via a diagnostic rather than silently accepted.
+        "indent" => self.diags.push(Diagnostic::warning(
+            "\\indent is recognised but paragraph indentation is not implemented",
+            Some(span),
+            Some("the paragraph was not given a first-line indent".into()),
+        )),
+        // Text-mode horizontal glue. `\quad`/`\qquad` are also implemented
+        // in math mode (`src/math.rs`); this arm covers the same commands
+        // used directly in running text, 1em/2em of the body text size.
+        "quad" => para.push(Inline::TextGlue {
+            em: math::QUAD_EM,
+            span,
+        }),
+        "qquad" => para.push(Inline::TextGlue {
+            em: 2.0 * math::QUAD_EM,
+            span,
+        }),
+        "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
+        | "negthickspace" | "enspace" => {
+            if let Some(amount) = text_builtins::text_kern(name, self.math_packages.amsmath) {
+                para.push(Inline::Kern {
+                    amount,
+                    span,
+                    style: self.style,
+                });
+            }
+        }
+        // `\def\enskip{\hskip.5em\relax}` (latex.ltx 9434): glue, like `\quad`.
+        "enskip" => para.push(Inline::TextGlue { em: 0.5, span }),
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// Vertical material: skips, rules, page and column breaks.
+    #[inline(never)]
+    fn vertical_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        match name {
+        "bigskip" | "medskip" | "smallskip" => {
+            let pt = match name {
+                "bigskip" => BIG_SKIP_PT,
+                "medskip" => MEDIUM_SKIP_PT,
+                _ => SMALL_SKIP_PT,
+            };
+            self.flush_paragraph(blocks, para);
+            blocks.push(Block::VSpace { pt });
+            self.finish_block_dependencies();
+        }
+        "vspace" => {
+            // The star only affects whether the glue survives being
+            // discarded at a page break in real TeX, which this layout
+            // never does anyway (see `hspace`'s identical star), so both
+            // forms are parsed identically. Consuming it here (as
+            // `hspace` already does for itself) is the fix: left alone,
+            // `required_group` sees `*` where it expects `{` and reports
+            // a missing argument instead of reading the dimension after it.
+            let _starred = self.take_optional_star();
+            let (tokens, argument_span) = self.required_group(name, span);
+            let raw = token_text(&tokens);
+            let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+            match parse_dimen_pt_at(&raw, body) {
+                Some(pt) => {
+                    self.flush_paragraph(blocks, para);
+                    blocks.push(Block::VSpace { pt });
+                    self.finish_block_dependencies();
+                }
+                None => self.diags.push(Diagnostic::error(
+                    format!(
+                        "\\vspace requires a recognised dimension, got '{}'",
+                        raw.trim()
+                    ),
+                    Some(span.merge(argument_span)),
+                    Some("ignored the vertical space and continued".into()),
+                )),
+            }
+        }
+        "hrule" => {
+            self.flush_paragraph(blocks, para);
+            blocks.push(Block::Rule { span });
+            self.finish_block_dependencies();
+        }
+        "newpage" => {
+            self.flush_paragraph(blocks, para);
+            blocks.push(Block::PageBreak);
+            self.finish_block_dependencies();
+        }
+        // `\clearpage`/`\cleardoublepage` also flush any queued floats
+        // and, for `\cleardoublepage` in a `twoside` class, insert a
+        // blank page to land back on an odd one. Neither float queuing
+        // nor the oneside/twoside distinction exists in this compiler
+        // (article defaults to oneside, where the two commands are
+        // already identical in real LaTeX), so both reduce honestly to
+        // the same unconditional break as `\newpage`.
+        "clearpage" | "cleardoublepage" => {
+            self.flush_paragraph(blocks, para);
+            blocks.push(Block::PageBreak);
+            self.finish_block_dependencies();
+        }
+        // `\pagebreak[n]`: see the `\linebreak[n]` comment above for why
+        // only the mandatory priority (absent or `4`) forces a break.
+        "pagebreak" => {
+            if self.mandatory_break_requested() {
+                self.flush_paragraph(blocks, para);
+                blocks.push(Block::PageBreak);
+                self.finish_block_dependencies();
+            }
+        }
+        "nopagebreak" => {
+            let _ = self.optional_bracket_argument();
+        }
+        "vfill" => {
+            self.flush_paragraph(blocks, para);
+            blocks.push(Block::VFill);
+            self.finish_block_dependencies();
+        }
+        // multicol.sty 919-950: `\columnbreak[n]` and `\newcolumn` end a
+        // column of `multicols` (set by the render pipeline); outside the
+        // environment multicol raises an error.
+        "columnbreak" | "newcolumn" => {
+            if name == "columnbreak" {
+                let _ = self.optional_bracket_argument();
+            }
+            if !self.env_stack.iter().any(|(environment, _)| environment == "multicols" || environment == "multicols*") {
+                self.diags.push(Diagnostic::error(
+                    format!("Package multicol Error: \\{name} outside multicols; this command can only be used within a multicols or multicols* environment"),
+                    Some(span),
+                    Some("ignored the command".into()),
+                ));
+            }
+        }
+        // multicol.sty 564-567: column heights at output time.
+        "raggedcolumns" | "flushcolumns" => {}
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// ulem `\uline`/`\sout` and text-mode `\underline`.
+    #[inline(never)]
+    fn underline_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let geom = match name {
+            "underline" => UnderlineGeom::MathUnderline,
+            "sout" => UnderlineGeom::Strike,
+            _ => UnderlineGeom::UlemDescender,
+        };
+        self.text_underline_cmd(name, span, para, geom);
+    }
+
+    /// `\frac`/`\sqrt` outside math mode.
+    #[inline(never)]
+    fn text_mode_math_command(&mut self, name: &str, span: Span) {
+        self.diags.push(
+            Diagnostic::error(
                 format!("\\{} requires math mode", name),
                 Some(span),
                 Some("skipped the command and typeset its braced arguments as plain text".into()),
             )
             .with_help(format!("wrap it in math mode: \\(\\{name}{{...}}\\)"))
-            .with_label(span, "this command", true)),
-            other => self.unsupported(other, span),
-        }
+            .with_label(span, "this command", true),
+        );
     }
 
     fn include(
@@ -4152,6 +4303,9 @@ impl P<'_> {
         self.finish_block_dependencies();
     }
 
+    /// `\begin{..}`/`\end{..}`. Like [`P::command`], this frame is on the
+    /// stack once per nested table, so only the dispatch to the environment
+    /// parsers stays here; the generic begin and end work is outlined.
     fn environment(
         &mut self,
         kind: &str,
@@ -4203,128 +4357,154 @@ impl P<'_> {
                 self.verbatim_environment(span, argument_span, &environment, blocks, para);
                 return;
             }
-            self.env_alignments.push(self.declared_alignment);
-            if environment == "document" && self.has_document {
-                self.in_body = true;
-            } else if environment == "figure" && self.in_body {
-                self.flush_paragraph(blocks, para);
-            } else if let (Some(style), true) = (paragraph_style(&environment), self.in_body) {
-                self.flush_paragraph(blocks, para);
-                self.paragraph_styles.push(style);
-                // An inner alignment environment overrides an outer declaration.
-                if style != ParagraphStyle::Quote {
-                    self.declared_alignment = None;
-                }
-                if let Some(kind) = ListEnvironment::from_name(&environment) {
-                    self.push_list_frame(kind, Vec::new(), span.merge(argument_span));
-                }
-            } else if matches!(
-                environment.as_str(),
-                "itemize" | "enumerate" | "description"
-            ) && self.in_body
-            {
-                self.flush_paragraph(blocks, para);
-                let options = self.optional_bracket_argument();
-                let begin_span = options
-                    .as_ref()
-                    .map_or(span.merge(argument_span), |(_, o)| span.merge(*o));
-                self.open_list(&environment, options.map(|(text, _)| text), begin_span, blocks.len());
-            } else if self.in_body
-                && (self.theorems.contains_key(&environment) || environment == "proof")
-            {
-                self.flush_paragraph(blocks, para);
-            } else if environment == "thebibliography" && self.in_body {
-                self.flush_paragraph(blocks, para);
-                // article.cls: `\begin{thebibliography}{#1}` is
-                // `\section*{\refname}` followed by a `\list` whose
-                // `\labelwidth` is set from `#1` (the widest label the
-                // author expects, e.g. `{99}` for up to 99 entries).
-                let (widest_tokens, widest_span) = self.required_group(&environment, span);
-                let widest_label = token_text(&widest_tokens).trim().to_string();
-                self.document_global_state = true;
-                let heading_span = span.merge(argument_span).merge(widest_span);
-                blocks.push(Block::Heading {
-                    level: 1,
-                    number: String::new(),
-                    number_span: heading_span,
-                    content: vec![Inline::Text {
-                        text: "References".to_string(),
-                        span: heading_span,
-                        style: TextStyle::BOLD,
-                        space_before: false,
-                    }],
-                });
-                self.finish_block_dependencies();
-                let spacing = self
-                    .list_spacing
-                    .get(&environment)
-                    .copied()
-                    .unwrap_or_default();
-                self.list_stack.push(OpenList {
-                    kind: environment.clone(),
-                    count: 0,
-                    template: Some(widest_label),
-                    spacing,
-                    start: blocks.len(),
-                    counter: 0,
-                    label_star: None,
-                    current_label: String::new(),
-                    current_reference: String::new(),
-                    series: None,
-                    begin_options: Vec::new(),
-                });
-                self.push_list_frame(ListEnvironment::Bibliography, Vec::new(), heading_span);
-            } else if environment == "subequations" && self.in_body {
-                self.begin_subequations();
-            } else if matches!(environment.as_str(), "multicols" | "multicols*") && self.in_body {
-                // `\mult@@cols` starts with `\par`.
-                self.flush_paragraph(blocks, para);
-                self.multicols_arguments(span.merge(argument_span), &environment);
-            } else if environment == "letter" && self.in_body && self.is_letter_class() {
-                // letter.cls 174-186: `\newenvironment{letter}[1]{\newpage
-                // ... \c@page\@ne ... \@processto{...#1}}`. The mandatory
-                // argument is the recipient; `\@processto` splits it at the
-                // first `\\` into `\toname` and `\toaddress`, which
-                // `\opening` then sets one per line — so it is stored whole
-                // and the `\\`s are kept, exactly as written.
-                self.flush_paragraph(blocks, para);
-                let (recipient, recipient_span) = self.required_group(&environment, span);
-                self.letter.recipient = Some((recipient, span.merge(recipient_span)));
-                self.letter.opened = false;
-                // Each letter starts a fresh page; the first one in a
-                // document does not, because `\newpage` with nothing queued
-                // ships no page (see `Block::PageBreak` in `layout`).
-                blocks.push(Block::PageBreak);
-                self.finish_block_dependencies();
-            } else if self.in_body {
-                self.diags.push(Diagnostic::environment_warning(
-                    &environment,
-                    format!(
-                        "environment '{}' is not implemented; its body is typeset as plain text",
-                        environment
-                    ),
-                    Some(span),
-                    Some("typeset the body without the environment's formatting".into()),
-                )
-                .with_optional_help(vocabulary::environment_help(&environment)));
-            }
-            if is_minipage(&environment) {
-                // `\@iiiminipage`: `\c@mpfootnote\z@`.
-                self.mpfootnote_counter = 0;
-            }
-            self.env_stack
-                .push((environment.clone(), span.merge(argument_span)));
-            self.env_styles.push(self.style);
-            if self.in_body {
-                if let Some(theorem) = self.theorems.get(&environment).cloned() {
-                    self.begin_theorem(&theorem, &environment, span, para);
-                } else if environment == "proof" {
-                    self.begin_proof(span, para);
-                }
-            }
+            self.begin_environment(span, argument_span, environment, blocks, para);
             return;
         }
 
+        self.end_environment(span, environment, blocks, para);
+    }
+
+    /// `\begin{..}` of an environment without its own parser (see
+    /// [`P::environment`]); kept out of the recursive dispatch frame.
+    #[inline(never)]
+    fn begin_environment(
+        &mut self,
+        span: Span,
+        argument_span: Span,
+        environment: String,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        self.env_alignments.push(self.declared_alignment);
+        if environment == "document" && self.has_document {
+            self.in_body = true;
+        } else if environment == "figure" && self.in_body {
+            self.flush_paragraph(blocks, para);
+        } else if let (Some(style), true) = (paragraph_style(&environment), self.in_body) {
+            self.flush_paragraph(blocks, para);
+            self.paragraph_styles.push(style);
+            // An inner alignment environment overrides an outer declaration.
+            if style != ParagraphStyle::Quote {
+                self.declared_alignment = None;
+            }
+            if let Some(kind) = ListEnvironment::from_name(&environment) {
+                self.push_list_frame(kind, Vec::new(), span.merge(argument_span));
+            }
+        } else if matches!(
+            environment.as_str(),
+            "itemize" | "enumerate" | "description"
+        ) && self.in_body
+        {
+            self.flush_paragraph(blocks, para);
+            let options = self.optional_bracket_argument();
+            let begin_span = options
+                .as_ref()
+                .map_or(span.merge(argument_span), |(_, o)| span.merge(*o));
+            self.open_list(&environment, options.map(|(text, _)| text), begin_span, blocks.len());
+        } else if self.in_body
+            && (self.theorems.contains_key(&environment) || environment == "proof")
+        {
+            self.flush_paragraph(blocks, para);
+        } else if environment == "thebibliography" && self.in_body {
+            self.flush_paragraph(blocks, para);
+            // article.cls: `\begin{thebibliography}{#1}` is
+            // `\section*{\refname}` followed by a `\list` whose
+            // `\labelwidth` is set from `#1` (the widest label the
+            // author expects, e.g. `{99}` for up to 99 entries).
+            let (widest_tokens, widest_span) = self.required_group(&environment, span);
+            let widest_label = token_text(&widest_tokens).trim().to_string();
+            self.document_global_state = true;
+            let heading_span = span.merge(argument_span).merge(widest_span);
+            blocks.push(Block::Heading {
+                level: 1,
+                number: String::new(),
+                number_span: heading_span,
+                content: vec![Inline::Text {
+                    text: "References".to_string(),
+                    span: heading_span,
+                    style: TextStyle::BOLD,
+                    space_before: false,
+                }],
+            });
+            self.finish_block_dependencies();
+            let spacing = self
+                .list_spacing
+                .get(&environment)
+                .copied()
+                .unwrap_or_default();
+            self.list_stack.push(OpenList {
+                kind: environment.clone(),
+                count: 0,
+                template: Some(widest_label),
+                spacing,
+                start: blocks.len(),
+                counter: 0,
+                label_star: None,
+                current_label: String::new(),
+                current_reference: String::new(),
+                series: None,
+                begin_options: Vec::new(),
+            });
+            self.push_list_frame(ListEnvironment::Bibliography, Vec::new(), heading_span);
+        } else if environment == "subequations" && self.in_body {
+            self.begin_subequations();
+        } else if matches!(environment.as_str(), "multicols" | "multicols*") && self.in_body {
+            // `\mult@@cols` starts with `\par`.
+            self.flush_paragraph(blocks, para);
+            self.multicols_arguments(span.merge(argument_span), &environment);
+        } else if environment == "letter" && self.in_body && self.is_letter_class() {
+            // letter.cls 174-186: `\newenvironment{letter}[1]{\newpage
+            // ... \c@page\@ne ... \@processto{...#1}}`. The mandatory
+            // argument is the recipient; `\@processto` splits it at the
+            // first `\\` into `\toname` and `\toaddress`, which
+            // `\opening` then sets one per line — so it is stored whole
+            // and the `\\`s are kept, exactly as written.
+            self.flush_paragraph(blocks, para);
+            let (recipient, recipient_span) = self.required_group(&environment, span);
+            self.letter.recipient = Some((recipient, span.merge(recipient_span)));
+            self.letter.opened = false;
+            // Each letter starts a fresh page; the first one in a
+            // document does not, because `\newpage` with nothing queued
+            // ships no page (see `Block::PageBreak` in `layout`).
+            blocks.push(Block::PageBreak);
+            self.finish_block_dependencies();
+        } else if self.in_body {
+            self.diags.push(Diagnostic::environment_warning(
+                &environment,
+                format!(
+                    "environment '{}' is not implemented; its body is typeset as plain text",
+                    environment
+                ),
+                Some(span),
+                Some("typeset the body without the environment's formatting".into()),
+            )
+            .with_optional_help(vocabulary::environment_help(&environment)));
+        }
+        if is_minipage(&environment) {
+            // `\@iiiminipage`: `\c@mpfootnote\z@`.
+            self.mpfootnote_counter = 0;
+        }
+        self.env_stack
+            .push((environment.clone(), span.merge(argument_span)));
+        self.env_styles.push(self.style);
+        if self.in_body {
+            if let Some(theorem) = self.theorems.get(&environment).cloned() {
+                self.begin_theorem(&theorem, &environment, span, para);
+            } else if environment == "proof" {
+                self.begin_proof(span, para);
+            }
+        }
+    }
+
+    /// `\end{..}` (see [`P::environment`]).
+    #[inline(never)]
+    fn end_environment(
+        &mut self,
+        span: Span,
+        environment: String,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
         let popped = self.env_stack.pop();
         let had_open_environment = popped.is_some();
         match popped {
