@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/rcases",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/540",
   "machine": "Overpriced-Hardware",
   "note": null,
   "started_utc": "2026-09-15T06:26:33Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-RCASES",
-  "updated_utc": "2026-09-15T06:26:33Z"
+  "updated_utc": "2026-09-15T07:01:35Z"
 }
