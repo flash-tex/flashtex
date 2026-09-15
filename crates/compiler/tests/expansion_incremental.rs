@@ -46,9 +46,13 @@ fn document() -> String {
 /// Compare cached and full expansion; returns whether the full expansion ran
 /// into the step limit.
 fn check(text: &str, cache: &mut Option<ExpansionCache>, step: usize, what: &str) -> bool {
-    let docs = [SourceDocument { path: "main.tex", text }];
-    let full = expand_project(&docs, 0);
-    let cached = expand_project_with_cache(&docs, 0, cache);
+    check_project(&[SourceDocument { path: "main.tex", text }], cache, step, what)
+}
+
+/// [`check`] for a project whose entry is its first document.
+fn check_project(docs: &[SourceDocument<'_>], cache: &mut Option<ExpansionCache>, step: usize, what: &str) -> bool {
+    let full = expand_project(docs, 0);
+    let cached = expand_project_with_cache(docs, 0, cache);
     if *cached.tokens != *full.tokens {
         let at = cached
             .tokens
@@ -125,8 +129,8 @@ fn cached_expansion_matches_full_expansion_under_random_edits() {
             text.insert_str(at, piece);
             format!("insert {piece:?} at {at}")
         };
-        // A runaway document is checked once (including the cache's fallback),
-        // then the edit is undone so the walk keeps exercising normal edits.
+        // A runaway document is checked once, then the edit is undone so the
+        // walk keeps exercising normal edits.
         if check(&text, &mut cache, step, &what) {
             text = before;
         }
@@ -154,5 +158,95 @@ fn typing_and_line_deletion_match_full_expansion() {
         check(&text, &mut cache, 100, "delete line");
         text.insert_str(start, &line);
         check(&text, &mut cache, 101, "restore line");
+    }
+}
+
+#[test]
+fn repeated_engine_diagnostics_match_full_expansion() {
+    // Identical engine reports collapse between safe points; edits that add,
+    // split and remove repeats must still give the full expansion's list.
+    const PIECES: &[&str] = &["\\bad ", "\\bad\\bad ", "\n", " ", "\\relax ", "\\count1=\\relax ", "x", "\\fi"];
+    let mut text = String::from("\\documentclass{article}\n\\newcommand{\\bad}{\\ifnum\\relax<1 \\fi\\ifnum\\relax<1 \\fi}\n\\begin{document}\n");
+    for i in 0..300 {
+        text.push_str(&format!("Paragraph {i} \\bad{{}} text.\n"));
+    }
+    text.push_str("\\end{document}\n");
+    let mut cache = None;
+    let mut rng = Rng(0x5EED_D1A6_0000_0001);
+    check(&text, &mut cache, 0, "initial");
+    for step in 1..=120 {
+        let before = text.clone();
+        let at = boundary(&text, &mut rng);
+        let what = if rng.below(3) == 0 {
+            let mut end = (at + 1 + rng.below(20)).min(text.len());
+            while !text.is_char_boundary(end) {
+                end += 1;
+            }
+            text.replace_range(at..end, "");
+            format!("delete at {at}")
+        } else {
+            let piece = PIECES[rng.below(PIECES.len())];
+            text.insert_str(at, piece);
+            format!("insert {piece:?} at {at}")
+        };
+        if check(&text, &mut cache, step, &what) {
+            text = before;
+        }
+    }
+}
+
+/// A runaway loop is re-expanded incrementally like any other edit (no full
+/// re-expansion after the stop): typing before, inside and after it, and
+/// deleting it, must still give the full expansion's tokens (including the
+/// unexpanded rest of the document after the stop) and diagnostics. Typing
+/// changes the step limit, which grows with the document.
+#[test]
+fn edits_around_a_runaway_loop_match_full_expansion() {
+    let base = document();
+    let mut cache = None;
+    let loop_at = base.find("\\section{Part 20}").expect("section");
+    let mut text = base.clone();
+    text.insert_str(loop_at, "\\def\\r{x\\r}\\r ");
+    let mut runaway = 0;
+    runaway += check(&text, &mut cache, 0, "insert loop") as usize;
+    let place = |text: &str, needle: &str, offset: usize| text.find(needle).expect("needle") + offset;
+    let edits: [(&str, usize, &str); 6] = [
+        ("\\section{Part 3}", 0, "a"),
+        ("\\section{Part 3}", 0, "b "),
+        ("\\section{Part 30}", 0, "c"),
+        ("{x\\r}", 1, "y"),
+        ("\\section{Part 30}", 0, "%"),
+        ("\\documentclass", 0, "\n"),
+    ];
+    for (step, (needle, offset, piece)) in edits.into_iter().enumerate() {
+        let at = place(&text, needle, offset);
+        text.insert_str(at, piece);
+        runaway += check(&text, &mut cache, step + 1, &format!("insert {piece:?} at {at}")) as usize;
+    }
+    // Same-length replacements keep the limits, so these re-runs converge
+    // with the stopped run and reuse its suffix up to the stop.
+    for (step, (from, to)) in [("Paragraph 5 ", "Paragraph 6 "), ("Paragraph 6 ", "Paragraph 5 ")].into_iter().enumerate() {
+        let at = text.find(from).expect("paragraph");
+        text.replace_range(at..at + from.len(), to);
+        runaway += check(&text, &mut cache, step + 7, &format!("replace {from:?} at {at}")) as usize;
+    }
+    assert_eq!(runaway, 9, "every revision runs away");
+    let start = text.find("\\def\\r").expect("loop");
+    let end = start + text[start..].find("\\r ").expect("call") + 3;
+    text.replace_range(start..end, "");
+    assert!(!check(&text, &mut cache, 9, "delete loop"));
+}
+
+/// The limits count every project document's bytes, so a document the entry
+/// does not include still changes them.
+#[test]
+fn a_runaway_entry_follows_the_size_of_other_project_documents() {
+    let mut main = document();
+    main.insert_str(main.find("\\section{Part 20}").expect("section"), "\\def\\r{x\\r}\\r ");
+    let mut cache = None;
+    for (step, bytes) in [0usize, 64, 64, 4096, 1].into_iter().enumerate() {
+        let other = "y".repeat(bytes);
+        let docs = [SourceDocument { path: "main.tex", text: &main }, SourceDocument { path: "other.tex", text: &other }];
+        assert!(check_project(&docs, &mut cache, step, &format!("other.tex {bytes} bytes")));
     }
 }
