@@ -5077,16 +5077,46 @@ impl P<'_> {
             }
         }
 
+        let packages = self.math_packages;
+        let parsed: Vec<Vec<MathList>> = rows
+            .iter()
+            .map(|(cells, ..)| {
+                cells
+                    .iter()
+                    .map(|cell| math::parse_tokens(cell, packages, &mut self.diags))
+                    .collect()
+            })
+            .collect();
+        // amsmath's `\tag` replaces the row's number (`\df@tag` set, so
+        // `\print@eqnum`/`\incr@eqnum` never run): the counter does not step
+        // and a `\label` on the row takes the tag. A multline display has one
+        // tag wherever the `\tag` is written.
+        let source = self.documents[open.document.0].text;
+        let row_tags: Vec<Option<String>> = parsed
+            .iter()
+            .map(|cells| {
+                cells
+                    .iter()
+                    .find_map(|cell| Self::custom_tag_text(cell, source, open.document))
+            })
+            .collect();
+        let display_tag = (name == "multline")
+            .then(|| row_tags.iter().flatten().next().cloned())
+            .flatten();
+
         let mut math_rows = Vec::new();
         let mut labels = Vec::new();
-        for (cells, unnumbered, row_labels, intertext) in rows {
-            let span = cells
+        for (((raw_cells, unnumbered, row_labels, intertext), cells), row_tag) in
+            rows.into_iter().zip(parsed).zip(row_tags)
+        {
+            let tag = display_tag.clone().or(row_tag);
+            let span = raw_cells
                 .iter()
                 .flatten()
                 .map(|t| t.span)
                 .reduce(Span::merge)
                 .unwrap_or(open);
-            let number = (numbered && !unnumbered).then(|| {
+            let number = (numbered && !unnumbered && tag.is_none()).then(|| {
                 let number = self.counters.step("equation").unwrap_or_default();
                 self.set_current_counter("equation", Some(number.clone()));
                 number
@@ -5102,18 +5132,13 @@ impl P<'_> {
                 }
                 labels.push(Inline::Label {
                     key,
-                    value: number
-                        .clone()
-                        .unwrap_or_else(|| self.counters.the("equation").unwrap_or_default()),
+                    value: tag.clone().or_else(|| number.clone()).unwrap_or_else(|| {
+                        self.counters.the("equation").unwrap_or_default()
+                    }),
                     kind: "equation".into(),
                     span: label_span,
                 });
             }
-            let packages = self.math_packages;
-            let cells = cells
-                .iter()
-                .map(|cell| math::parse_tokens(cell, packages, &mut self.diags))
-                .collect();
             math_rows.push(MathRow {
                 cells,
                 number,

@@ -310,3 +310,53 @@ fn nested_text_runs_share_the_math_depth_limit() {
         parsed.diagnostics
     );
 }
+
+/// The numbers and label values of the rows of the first `MathRows` display.
+fn row_numbers_and_labels(source: &str) -> (Vec<Option<String>>, Vec<(String, String)>) {
+    let parsed = parse(source);
+    for block in &parsed.blocks {
+        let Block::Paragraph(inlines) = block else { continue };
+        let Some(rows) = inlines.iter().find_map(|inline| match inline {
+            Inline::MathRows { rows, .. } => Some(rows),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let labels = inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Label { key, value, .. } => Some((key.clone(), value.clone())),
+                _ => None,
+            })
+            .collect();
+        return (rows.iter().map(|row| row.number.clone()).collect(), labels);
+    }
+    panic!("no MathRows display in {source:?}");
+}
+
+/// amsmath's `\tag` in a row replaces its number: `\df@tag` is set, so
+/// `\incr@eqnum` never steps `equation` for that row, and a `\label` on the
+/// row writes the tag. pdflatex numbers `a &= b \tag{$a_1$} \\ c &= d \\ e &=
+/// f \tag{x}` as `(a1)`, `(1)`, `(x)` (display-placement fixture 40).
+#[test]
+fn tagged_align_and_gather_rows_do_not_step_the_equation_counter() {
+    for env in ["align", "gather"] {
+        let amp = if env == "align" { "&" } else { "" };
+        let source = format!(
+            "\\documentclass{{article}}\\usepackage{{amsmath}}\\begin{{document}}\\begin{{{env}}} a {amp}= b \\tag{{$a_1$}}\\label{{t}} \\\\ c {amp}= d \\label{{n}} \\\\ e {amp}= f \\tag*{{x}} \\end{{{env}}}\\end{{document}}"
+        );
+        let (numbers, labels) = row_numbers_and_labels(&source);
+        assert_eq!(numbers, vec![None, Some("1".to_string()), None], "{env}");
+        assert_eq!(labels, vec![("t".to_string(), "a₁".to_string()), ("n".to_string(), "1".to_string())], "{env}");
+    }
+}
+
+/// `multline` has one tag, wherever `\tag` is written; with one there is no
+/// number at all.
+#[test]
+fn a_tag_on_any_multline_row_replaces_the_display_number() {
+    let source = "\\documentclass{article}\\usepackage{amsmath}\\begin{document}\\begin{multline} a + b \\tag{M $x$}\\label{m} \\\\ = c \\end{multline}\\end{document}";
+    let (numbers, labels) = row_numbers_and_labels(source);
+    assert_eq!(numbers, vec![None, None]);
+    assert_eq!(labels, vec![("m".to_string(), "M x".to_string())]);
+}
