@@ -208,17 +208,26 @@ fn healed_labelitem_redefinition_reuses_the_cached_suffix() {
     // Only the converter's suffix-splice path restores `labelitem_log`
     // entries, and it only runs once the engine converges downstream. A
     // later identical `\renewcommand` heals the edited definition, so the
-    // re-parse converges and splices: the first itemize must show the edited
-    // body while the healed one keeps the original text.
-    let mut filler = String::new();
+    // re-parse converges mid-document and splices the rest: the second
+    // itemize sits past the convergence point, so its record can only come
+    // from the restored suffix. It must keep the healed text while the
+    // re-captured first itemize shows the edited body.
+    let mut near = String::new();
+    let mut far = String::new();
     for i in 0..200 {
-        filler.push_str(&format!(
+        let paragraph = format!(
             "Paragraph {i} with some ordinary text padding the document beyond the incremental threshold.\n\n"
-        ));
+        );
+        if i < 8 {
+            near.push_str(&paragraph);
+        } else {
+            far.push_str(&paragraph);
+        }
     }
-    let head = "\\documentclass{article}\n\\begin{document}\n\\renewcommand{\\labelitemi}{X}\\begin{itemize}\\item A\\end{itemize}\n\\renewcommand{\\labelitemi}{X}\n\\begin{itemize}\\item B\\end{itemize}\n";
+    let head = "\\documentclass{article}\n\\begin{document}\n\\renewcommand{\\labelitemi}{X}\\begin{itemize}\\item A\\end{itemize}\n\\renewcommand{\\labelitemi}{X}\n";
+    let mid = "\\begin{itemize}\\item B\\end{itemize}\n";
     let tail = "\n\\end{document}\n";
-    let before = format!("{head}{filler}{tail}");
+    let before = format!("{head}{near}{mid}{far}{tail}");
     assert!(before.len() > 4 * 1024, "repro needs a document over 4 KiB");
     let mut cache = None;
     check(&before, &mut cache, 0, "initial");
