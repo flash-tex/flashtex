@@ -11,7 +11,9 @@
 
 use std::path::{Path, PathBuf};
 
-use flashtex_tex_expansion::{Diagnostic, Edit, Engine, IncrementalExpander, LabelRecord, Limits, Span, Token};
+use flashtex_tex_expansion::{
+    is_output_limit, output_limit_message, Diagnostic, Edit, Engine, IncrementalExpander, LabelRecord, Limits, Span, Token,
+};
 
 struct Rng(u64);
 impl Rng {
@@ -46,7 +48,7 @@ fn full(src: &str, limits: Limits) -> Run {
         tokens.push(tok);
         origins.push(origin);
         if tokens.len() as u64 > limits.max_output_tokens {
-            e.push_diagnostic(Diagnostic::error("output token limit exceeded", Span::synthetic()));
+            e.push_diagnostic(Diagnostic::error(output_limit_message(limits.max_output_tokens), Span::synthetic()));
             break;
         }
     }
@@ -115,10 +117,11 @@ fn converged_edits_across_the_output_token_limit() {
     let at = doc.find("line 1 ").unwrap();
     inc.edit(&Edit { start: at, end: at, replacement: "xy".into() });
     assert_same(&inc, limits, &|| "insert xy".into());
-    assert!(inc.diagnostics().iter().any(|d| d.message.contains("output token limit")));
+    assert!(inc.diagnostics().iter().any(|d| d.message
+        == format!("TeX capacity exceeded, sorry [output token limit={}]; expansion stopped here and the rest of the document was not typeset.", limits.max_output_tokens)));
     inc.edit(&Edit { start: at, end: at + 2, replacement: String::new() });
     assert_same(&inc, limits, &|| "delete xy".into());
-    assert!(!inc.diagnostics().iter().any(|d| d.message.contains("output token limit")));
+    assert!(!inc.diagnostics().iter().any(|d| is_output_limit(&d.message)));
 }
 
 /// The minimised form of `incremental_matches_full_with_repeated_diagnostics_
@@ -305,7 +308,6 @@ fn incremental_matches_full_on_fuzz_seeds_with_small_limits() {
             let messages = || inc.diagnostics().iter().map(|d| d.message.as_str());
             if messages().any(|m| {
                 m.starts_with("expansion step limit exceeded")
-                    || m == "output token limit exceeded"
                     || m.starts_with("TeX capacity exceeded")
             }) {
                 stops += 1;
@@ -417,7 +419,6 @@ fn incremental_matches_full_on_fuzz_seeds_when_limits_change() {
             checked += 1;
             if inc.diagnostics().iter().any(|d| {
                 d.message.starts_with("expansion step limit exceeded")
-                    || d.message == "output token limit exceeded"
                     || d.message.starts_with("TeX capacity exceeded")
             }) {
                 stops += 1;
