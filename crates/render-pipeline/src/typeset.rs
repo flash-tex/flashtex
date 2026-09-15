@@ -1010,12 +1010,28 @@ impl<'a> Context<'a> {
 
     /// Shapes one styled segment into a box record and a paragraph-layout box.
     fn text_box(&mut self, seg: &adapter::Segment, size: f64) -> Option<(pl::GlyphRun, usize)> {
+        let filtered = self.input_filtered(seg);
+        let seg = filtered.as_ref().unwrap_or(seg);
         let span = seg_span(seg)?;
         let face = self.face(seg.style, size, span);
+        // Where the input encoding puts a character outside the font's
+        // ligature/kern program (an OT1 `\accent`, a TS1 symbol), the text
+        // is shaped in pieces split around it.
+        let cuts: Vec<usize> = match &self.style.input {
+            Some(input) if !seg.text.is_ascii() => seg
+                .text
+                .char_indices()
+                .filter(|(_, c)| input.cuts_ligkern(*c))
+                .flat_map(|(i, c)| [i, i + c.len_utf8()])
+                .collect(),
+            _ => Vec::new(),
+        };
         // Verbatim runs the font's ligature/kern program not at all
         // (`\@noligs`); every other run runs it as TeX does.
         let shaped = if seg.style.literal {
             self.shaper.shape_literal(&face, &seg.text)
+        } else if !cuts.is_empty() {
+            self.shaper.shape_cut(&face, &seg.text, &cuts)
         } else {
             self.shaper.shape(&face, &seg.text)
         };
@@ -1120,6 +1136,66 @@ impl<'a> Context<'a> {
             raise: 0.0,
         });
         Some((run, self.recs.len() - 1))
+    }
+
+    /// pdfLaTeX's input errors for the literal UTF-8 characters of `seg`
+    /// (`crate::inputenc`): each rejected character is reported at its
+    /// source as the LaTeX error pdfLaTeX logs, and removed from the text —
+    /// or replaced by the letter pdfLaTeX still sets (`\k a` in OT1 sets
+    /// `a`). `None` when the segment keeps every character.
+    fn input_filtered(&mut self, seg: &adapter::Segment) -> Option<adapter::Segment> {
+        let input = self.style.input.as_ref()?;
+        if seg.text.is_ascii() {
+            return None;
+        }
+        // Only a character typed in the source is input: one a macro
+        // generates (`\fnsymbol`'s U+2217 for `\thanks`) has its invocation's
+        // span, not its own bytes.
+        let texts = self.texts;
+        let typed = |i: usize, c: char| {
+            seg.chars.get(i).is_some_and(|s| {
+                texts.get(s.document.0).and_then(|t| t.get(s.start..s.end)).is_some_and(|t| t.len() == c.len_utf8() && t.starts_with(c))
+            })
+        };
+        let rejected: Vec<(usize, char, crate::inputenc::Rejected)> = seg
+            .text
+            .chars()
+            .enumerate()
+            .filter_map(|(i, c)| input.rejected(c).filter(|_| typed(i, c)).map(|r| (i, c, r)))
+            .collect();
+        if rejected.is_empty() {
+            return None;
+        }
+        let mut text = String::with_capacity(seg.text.len());
+        let mut chars = Vec::with_capacity(seg.chars.len());
+        let mut next = rejected.iter().peekable();
+        for (i, c) in seg.text.chars().enumerate() {
+            let src = seg.chars.get(i).copied();
+            let keep = match next.peek() {
+                Some((at, _, r)) if *at == i => {
+                    let keep = r.keep;
+                    next.next();
+                    keep
+                }
+                _ => Some(c),
+            };
+            if let (Some(k), Some(src)) = (keep, src) {
+                text.push(k);
+                chars.push(src);
+            }
+        }
+        for (i, c, r) in rejected {
+            let Some(csrc) = seg.chars.get(i).copied() else { continue };
+            let src = self.source(csrc.span());
+            let code = if r.message.contains("not set up for use with LaTeX") { "unicode_not_set_up" } else { "command_unavailable_in_encoding" };
+            let mut d = Diagnostic::error(code, r.message, vec![src]);
+            d.recovery = Some(match r.keep {
+                Some(k) => format!("typeset `{k}` without the accent, as pdfLaTeX does after this error"),
+                None => format!("typeset nothing for U+{:04X}, as pdfLaTeX does after this error", c as u32),
+            });
+            self.report_once(format!("input:{}:{}:{}", csrc.document.0, csrc.start, c), d);
+        }
+        Some(adapter::Segment { text, chars, style: seg.style })
     }
 
     /// Marks a text box as the continuation of the word box before it.

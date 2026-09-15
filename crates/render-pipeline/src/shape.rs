@@ -127,6 +127,57 @@ impl Shaper {
         self.shape_with(face, text, true)
     }
 
+    /// Shapes `text` with kerning and ligatures on, but restarts the
+    /// ligature/kern program at every byte offset in `cuts` — where TeX's
+    /// list has something other than a character of this font between two
+    /// characters (an OT1 `\accent` group, a symbol from another encoding;
+    /// see `crate::inputenc::cuts_ligkern`). The pieces are shaped (and
+    /// cached) on their own and joined. When they disagree on metrics (one
+    /// piece left the TFM for the font program), the text is shaped whole.
+    pub fn shape_cut(&self, face: &Rc<LoadedFace>, text: &str, cuts: &[usize]) -> Rc<Shaped> {
+        let mut bounds: Vec<usize> = cuts.iter().copied().filter(|&b| b > 0 && b < text.len() && text.is_char_boundary(b)).collect();
+        bounds.sort_unstable();
+        bounds.dedup();
+        if bounds.is_empty() {
+            return self.shape(face, text);
+        }
+        let starts = std::iter::once(0).chain(bounds.iter().copied());
+        let ends = bounds.iter().copied().chain(std::iter::once(text.len()));
+        let parts: Vec<(usize, Rc<Shaped>)> = starts.zip(ends).map(|(a, b)| (a, self.shape(face, &text[a..b]))).collect();
+        let (_, first) = &parts[0];
+        let uniform = parts.iter().all(|(_, p)| {
+            p.units_per_em == first.units_per_em && p.tfm_metrics == first.tfm_metrics && p.refused.is_none() && p.tfm_error.is_none()
+        });
+        if !uniform {
+            return self.shape(face, text);
+        }
+        let mut joined = Shaped {
+            face: face.clone(),
+            text: text.to_string(),
+            clusters: Vec::new(),
+            units_per_em: first.units_per_em,
+            tfm_metrics: first.tfm_metrics,
+            width_units: 0,
+            height_units: 0,
+            depth_units: 0,
+            missing: Vec::new(),
+            refused: None,
+            tfm_error: None,
+        };
+        for (at, p) in &parts {
+            joined.clusters.extend(p.clusters.iter().map(|c| SCluster {
+                glyphs: c.glyphs.clone(),
+                text_range: c.text_range.start + at..c.text_range.end + at,
+                text: c.text.clone(),
+            }));
+            joined.missing.extend(p.missing.iter().map(|(ch, off)| (*ch, off + at)));
+            joined.width_units += p.width_units;
+            joined.height_units = joined.height_units.max(p.height_units);
+            joined.depth_units = joined.depth_units.max(p.depth_units);
+        }
+        Rc::new(joined)
+    }
+
     fn shape_with(&self, face: &Rc<LoadedFace>, text: &str, literal: bool) -> Rc<Shaped> {
         // Keyed by the face's metrics identity, not its wire `font_id`: one
         // OpenType program is laid out with different TFMs (`ec-lmr10` for
