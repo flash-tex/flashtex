@@ -140,7 +140,7 @@ fn fraction_bars_are_explicit_rules_in_v2_and_negotiated_in_v1() {
         .expect("typed rule");
     assert!((typed_rule.1 - rule.top.to_bp()).abs() < 1e-9);
     assert!((typed_rule.3 - rule.height.to_bp()).abs() < 1e-9);
-    assert_eq!(&*typed_rule.4.path, "main.tex");
+    assert_eq!(&*typed_rule.4.as_ref().expect("a fraction bar keeps its source").path, "main.tex");
     assert!(typed.pages[0].items.iter().all(|i| !matches!(i, V1Item::Text { text, .. } if text.contains('\u{2500}'))));
     // No font hints unless accepted.
     assert!(typed.pages[0].items.iter().all(|i| !matches!(i, V1Item::Text { font: Some(_), .. })));
@@ -257,7 +257,7 @@ fn joined_word_fragments_keep_carets_inside_their_clusters() {
                 runs += 1;
                 for (ci, c) in run.clusters.iter().enumerate() {
                     let range = c.text_start_byte..=c.text_end_byte;
-                    for caret in c.carets.iter() {
+                    for caret in run.carets_of(ci).iter() {
                         assert!(range.contains(&caret.text_byte), "run {:?} cluster {ci}: caret {} outside {:?}", run.text, caret.text_byte, range);
                     }
                 }

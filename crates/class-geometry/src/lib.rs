@@ -16,8 +16,8 @@ pub mod sections;
 pub mod tex;
 
 pub use class::{
-    body_font, class_params, BaseSize, ClassKind, ClassOptions, FontMetrics, FontSize, Glue,
-    PageParams, Paper,
+    body_font, class_params, letter_indentation, BaseSize, ClassKind, ClassOptions, FontMetrics,
+    FontSize, Glue, PageParams, Paper,
 };
 pub use frame::{Column, PageFrame, Side};
 pub use geometry::{apply_geometry, GeometryInput, LayoutFlags};

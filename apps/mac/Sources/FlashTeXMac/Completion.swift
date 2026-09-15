@@ -919,12 +919,9 @@ enum Completion {
     /// Names of environments appearing in `\begin{…}` anywhere in the document.
     static func documentEnvironments(in text: String) -> [String] {
         var out: [String] = []
-        withBytes(text) { b in
-            forEachCommand(in: b, upTo: b.count) { name, _, arg in
-                guard let arg, bytes(name, equal: "begin") else { return }
-                let env = String(decoding: arg, as: UTF8.self)
-                if !out.contains(env) { out.append(env) }
-            }
+        for u in EditorNavigation.uses(in: text as NSString) {
+            guard u.name == "begin", let arg = u.arg, !arg.isEmpty else { continue }
+            if !out.contains(arg) { out.append(arg) }
         }
         return out
     }
@@ -1709,9 +1706,9 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
     private let docHint = NSTextField(labelWithString: "↑↓ choose · ⏎ insert · esc close")
     private let docSeparator = NSBox()
     private(set) var items: [Completion.Suggestion] = []
-    static let rowHeight: CGFloat = 24
-    static let width: CGFloat = 480
-    static let docHeight: CGFloat = 58
+    static let rowHeight: CGFloat = DS.Row.completion
+    static let width: CGFloat = DS.Layout.completionWidth
+    static let docHeight: CGFloat = DS.Layout.completionDocHeight
 
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.rowHeight * 4 + Self.docHeight),
@@ -1757,20 +1754,20 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         docSeparator.frame = NSRect(x: 0, y: Self.docHeight - 1, width: Self.width, height: 1)
         docSeparator.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docSeparator)
-        docTitle.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        docTitle.font = DS.NSFonts.header
         docTitle.textColor = .labelColor
         docTitle.lineBreakMode = .byTruncatingTail
         docTitle.frame = NSRect(x: 10, y: Self.docHeight - 20, width: Self.width - 20, height: 15)
         docTitle.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docTitle)
-        docBody.font = NSFont.systemFont(ofSize: 11)
+        docBody.font = DS.NSFonts.secondary
         docBody.textColor = .secondaryLabelColor
         docBody.maximumNumberOfLines = 2
         docBody.lineBreakMode = .byTruncatingTail
         docBody.frame = NSRect(x: 10, y: 15, width: Self.width - 20, height: 24)
         docBody.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docBody)
-        docHint.font = NSFont.systemFont(ofSize: 10)
+        docHint.font = DS.NSFonts.secondary
         docHint.textColor = .tertiaryLabelColor
         docHint.frame = NSRect(x: 10, y: 2, width: Self.width - 20, height: 13)
         docHint.autoresizingMask = [.width, .minYMargin]
@@ -1780,8 +1777,8 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         doc.setAccessibilityLabel("Completion documentation")
         contentView?.addSubview(doc)
         contentView?.wantsLayer = true
-        contentView?.layer?.cornerRadius = 8
-        contentView?.layer?.borderWidth = 1
+        contentView?.layer?.cornerRadius = DS.Radius.panel
+        contentView?.layer?.borderWidth = DS.Size.hairline
         backgroundColor = .clear
         isOpaque = false
         // The chrome colours are re-resolved on every appearance change; see
@@ -1985,14 +1982,14 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
             out.append(NSAttributedString(string: " "))
         }
         out.append(NSAttributedString(string: s.label, attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.labelColor,
+            .font: DS.NSFonts.monoCandidate, .foregroundColor: NSColor.labelColor,
         ]))
         out.append(NSAttributedString(string: "  \(s.kind.badge) · \(s.detail)", attributes: [
-            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor,
+            .font: DS.NSFonts.secondary, .foregroundColor: NSColor.secondaryLabelColor,
         ]))
         if let doc = documentation(for: s) {
             out.append(NSAttributedString(string: " — \(doc)", attributes: [
-                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.tertiaryLabelColor,
+                .font: DS.NSFonts.secondary, .foregroundColor: NSColor.tertiaryLabelColor,
             ]))
         }
         return out
@@ -2028,13 +2025,13 @@ final class CompletionRowView: NSView {
         icon.frame = NSRect(x: 8, y: 4, width: 16, height: 16)
         icon.autoresizingMask = [.maxXMargin]
         addSubview(icon)
-        label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        label.font = DS.NSFonts.monoCandidate
         label.textColor = .labelColor
         label.lineBreakMode = .byTruncatingTail
         label.frame = NSRect(x: 30, y: 4, width: 220, height: 16)
         label.autoresizingMask = [.maxXMargin]
         addSubview(label)
-        detail.font = NSFont.systemFont(ofSize: 11)
+        detail.font = DS.NSFonts.secondary
         detail.textColor = .secondaryLabelColor
         detail.alignment = .right
         detail.lineBreakMode = .byTruncatingMiddle
@@ -2246,11 +2243,20 @@ final class CompletingTextView: NSTextView {
 
     // MARK: ⌘/ line comment
 
-    /// Toggles `% ` on every line the selection touches (one undo step).
     /// ⌥⇧↓ / ⌥⇧↑: copy the line (or every line the selection touches) below or
     /// above itself, leaving the caret on the copy. One undo step, like
-    /// `toggleLineComment`.
-    func duplicateLines(below: Bool) {
+    /// `toggleLineComment`. A menu key equivalent and `keyDown` must not both
+    /// apply the same event: `performKeyEquivalent` consumes it, and a second
+    /// call with that event's timestamp is ignored.
+    private var lastDuplicateEventTimestamp: TimeInterval = -.infinity
+    private var lastDuplicateEventKeyCode: UInt16 = 0
+
+    func duplicateLines(below: Bool, event: NSEvent? = nil) {
+        if let ev = event ?? Self.duplicateChordEvent(NSApp.currentEvent) {
+            if ev.timestamp == lastDuplicateEventTimestamp, ev.keyCode == lastDuplicateEventKeyCode { return }
+            lastDuplicateEventTimestamp = ev.timestamp
+            lastDuplicateEventKeyCode = ev.keyCode
+        }
         guard !hasMarkedText() else { return }
         let sel = selectedRange()
         guard let (edit, selection) = EditorKeyHandling.duplicateLinesEdit(in: string, range: sel, below: below) else { return }
@@ -2261,6 +2267,15 @@ final class CompletingTextView: NSTextView {
         breakUndoCoalescing()
     }
 
+    /// ⌥⇧↓ / ⌥⇧↑, the chord both `keyDown` and the Editor menu bind.
+    private static func duplicateChordEvent(_ event: NSEvent?) -> NSEvent? {
+        guard let event else { return nil }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 else { return nil }
+        return event
+    }
+
+    /// Toggles `% ` on every line the selection touches (one undo step).
     func toggleLineComment() {
         guard !hasMarkedText() else { return }
         let text = string as NSString
@@ -2753,6 +2768,19 @@ final class CompletingTextView: NSTextView {
 
     // MARK: events
 
+    /// Consumes ⌥⇧↓ / ⌥⇧↑ before the Editor menu's key equivalent can fire
+    /// the same chord a second time. `keyDown` still handles the chord when
+    /// the event never goes through `performKeyEquivalent` (hosted tests).
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if hasMarkedText() { return super.performKeyEquivalent(with: event) }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 {
+            duplicateLines(below: event.keyCode == 125, event: event)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
         if hasMarkedText() { super.keyDown(with: event); return } // IME composition owns the keys (mac-editor-accessibility)
         if vimActive, let key = VimMode.Key(event: event), vim.handle(key) { return } // VimMode.swift: normal/visual keys, Esc in insert
@@ -2772,9 +2800,10 @@ final class CompletingTextView: NSTextView {
         // ⌥⇧↓ / ⌥⇧↑: duplicate the line(s) down/up (the Overleaf shortcut).
         // This takes the key from AppKit's extend-selection-by-paragraph
         // binding, which no LaTeX editor's users reach for and which ⇧↓ and
-        // ⌥↓ still cover between them.
+        // ⌥↓ still cover between them. `performKeyEquivalent` also consumes
+        // this chord so an Editor-menu key equivalent cannot apply it twice.
         if modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 {
-            duplicateLines(below: event.keyCode == 125)
+            duplicateLines(below: event.keyCode == 125, event: event)
             return
         }
         guard session != nil else {

@@ -721,8 +721,9 @@ struct NavigationCommands: Commands {
     @FocusedValue(\.diagnosticsPanel) private var diagnosticsPanel
 
     var body: some Commands {
-        EditorFoldCommands() // EditorFolding.swift: Editor ▸ Fold / Unfold
         CommandMenu("Navigate") {
+            Button("Go to Line…") { model.presentGoToLine() }
+                .keyboardShortcut("l", modifiers: [.command])
             Button("Go to Matching \\begin/\\end or \\label/\\ref") { model.goToMatching() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
             // Editor navigation lane (ShellModel+EditorNavigation.swift / EditorNavigation.swift).

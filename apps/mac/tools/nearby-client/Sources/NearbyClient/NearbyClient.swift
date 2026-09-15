@@ -4,7 +4,7 @@ import Network
 /// One stored pairing, keyed by the Mac's TXT `fp` (proposal §2, §7).
 /// The companion app should keep `pair_psk` in the Keychain; the CLI keeps it
 /// in a 0600 JSON file (`PairFile`).
-public struct PairedMac: Codable, Equatable {
+public struct PairedMac: Codable, Equatable, Sendable {
     public var fingerprint: String
     public var macName: String
     public var pairId: String
@@ -140,12 +140,19 @@ public enum NearbyClient {
 /// Plain JSON file of pairings for the CLI and tests (mode 0600). An iOS
 /// companion should use the Keychain instead; the record shape is the same.
 public final class PairFile: @unchecked Sendable {
-    public struct Contents: Codable {
+    public struct Contents: Codable, Sendable {
         public var version: Int
         public var pairs: [PairedMac]
     }
     public let url: URL
-    public private(set) var pairs: [PairedMac]
+    /// Snapshot of the list. Mutations go through `upsert`/`remove` under `lock`
+    /// because one instance is shared across threads and concurrency domains
+    /// (the CLI, reconnect helpers, and tests call `upsert`/`remove`/`pair`
+    /// off whatever queue they run on), so an unlocked read-modify-write could
+    /// tear the array or lose a concurrent update.
+    public var pairs: [PairedMac] { lock.withLock { _pairs } }
+    private var _pairs: [PairedMac]
+    private let lock = NSLock()
 
     public static func defaultURL() -> URL {
         if let env = ProcessInfo.processInfo.environment["NEARBY_CLIENT_STORE"], !env.isEmpty { return URL(fileURLWithPath: env) }
@@ -161,41 +168,48 @@ public final class PairFile: @unchecked Sendable {
             dec.dateDecodingStrategy = .iso8601
             let c = try dec.decode(Contents.self, from: data)
             guard c.version == 1 else { throw NearbyError.invalidInput("\(url.path): unsupported store version \(c.version)") }
-            pairs = c.pairs
+            _pairs = c.pairs
         } else {
-            pairs = []
+            _pairs = []
         }
     }
 
-    public func pair(fingerprint: String) -> PairedMac? { pairs.first { $0.fingerprint == fingerprint } }
+    public func pair(fingerprint: String) -> PairedMac? { lock.withLock { _pairs.first { $0.fingerprint == fingerprint } } }
 
     /// Matches a stored pairing by fp, pair_id or Mac name (case-insensitive).
     public func pair(matching key: String) -> PairedMac? {
-        pairs.first { $0.fingerprint == key || $0.pairId == key || $0.macName.caseInsensitiveCompare(key) == .orderedSame }
+        lock.withLock { _pairs.first { $0.fingerprint == key || $0.pairId == key || $0.macName.caseInsensitiveCompare(key) == .orderedSame } }
     }
 
     public func upsert(_ p: PairedMac) throws {
-        pairs.removeAll { $0.fingerprint == p.fingerprint }
-        pairs.append(p)
-        try save()
+        try lock.withLock {
+            _pairs.removeAll { $0.fingerprint == p.fingerprint }
+            _pairs.append(p)
+            try saveLocked()
+        }
     }
 
     @discardableResult
     public func remove(fingerprint: String) throws -> Bool {
-        let before = pairs.count
-        pairs.removeAll { $0.fingerprint == fingerprint }
-        try save()
-        return pairs.count != before
+        try lock.withLock {
+            let before = _pairs.count
+            _pairs.removeAll { $0.fingerprint == fingerprint }
+            try saveLocked()
+            return _pairs.count != before
+        }
     }
 
-    private func save() throws {
+    /// Caller must hold `lock`. `saveLocked` runs under that lock so a
+    /// concurrent `pairs` read cannot observe a torn list; the file always
+    /// holds one complete snapshot.
+    private func saveLocked() throws {
         let fm = FileManager.default
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
                                attributes: [.posixPermissions: 0o700])
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         enc.dateEncodingStrategy = .iso8601
-        try enc.encode(Contents(version: 1, pairs: pairs)).write(to: url, options: [.atomic])
+        try enc.encode(Contents(version: 1, pairs: _pairs)).write(to: url, options: [.atomic])
         try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 }

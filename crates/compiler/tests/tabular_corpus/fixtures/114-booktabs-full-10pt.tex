@@ -1,0 +1,14 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Text before the table.
+
+\begin{tabular}{lccc}\toprule Model & \multicolumn{3}{c}{Accuracy}\\\cmidrule(lr){2-4} & Train & Dev & Test\\\midrule Base & 81.2 & 79.5 & 78.9\\Large & 88.0 & 84.1 & 83.7\\\bottomrule\end{tabular}
+
+Text after the table.
+\end{document}

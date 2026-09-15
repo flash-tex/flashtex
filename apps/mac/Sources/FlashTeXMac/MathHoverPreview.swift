@@ -107,7 +107,7 @@ struct MathPreviewView: View {
 
     var body: some View {
         Image(decorative: image, scale: 1, orientation: .up)
-            .padding(6)
+            .padding(DS.Space.s)
     }
 }
 

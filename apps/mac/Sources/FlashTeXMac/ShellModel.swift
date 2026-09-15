@@ -41,9 +41,15 @@ final class ShellModel {
     // The panel state is shared with the palette so Next/Previous
     // Occurrence work from there too (DiagnosticsPanel.swift).
     var problemsVisible = true
+    /// Below the width where editor and preview both fit, the preview
+    /// collapses to a toggle instead of being crushed (design-principles §4).
+    /// `narrowLayout` mirrors the split's available width; the toggle picks
+    /// which column the narrow window shows.
+    var narrowLayout = false
+    var narrowPreviewShown = false
     var problemsSeverityFilter: RuntimeV1.Severity?
     var commandPaletteShown = false
-    /// Rename Symbol / Wrap in Environment / Go to Symbol sheets (ShellModel+EditorNavigation.swift).
+    /// Rename Symbol / Wrap in Environment / Go to Symbol / Go to Line sheets (ShellModel+EditorNavigation.swift).
     var editorNavigation = EditorNavigationState()
     let problemsPanel = DiagnosticsPanelState()
     /// Debounced, background word/document-statistics scan (GH68), read by
@@ -72,6 +78,9 @@ final class ShellModel {
     }
     /// Fit-to-width scale the preview pane last laid out with (written by the pane; drives Actual Size and the percentage).
     var previewFitScale: CGFloat = 1
+    /// Zoom multiplier that fits the tallest page's height to the pane
+    /// (PreviewView reports it with the pane geometry; View > Fit Page).
+    var previewFitPageZoom: CGFloat = 1
     var displayListV2: V2PreviewState? {
         didSet {
             editorMarksCache = nil // v2-only diagnostics can arrive after the compile_result
@@ -94,6 +103,10 @@ final class ShellModel {
         var revision: Int? = nil
         /// What to give back when a capture insertion is refused.
         var captureRefund: CaptureRefund? = nil
+        /// When non-empty, these replacements (original-text coordinates) are
+        /// applied last-first as one undo group instead of `nsRange`/`text`.
+        /// Change Environment uses the two name spans so the body is not rewritten.
+        var groupedEdits: [EditorKeyHandling.LineEdit] = []
     }
     struct CaptureRefund: Equatable { var proposal: RuntimeV1.CaptureProposal; var anchorBefore: InsertionAnchor }
     var caretUTF16: Int = 0 {

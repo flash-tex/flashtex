@@ -20,6 +20,180 @@
 //! Counters live in a small `Vec` in definition order, so iteration and
 //! therefore output are deterministic.
 
+use std::collections::BTreeMap;
+
+/// The document-level naming options and overrides from `cleveref`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleverefConfig {
+    pub capitalise: bool,
+    pub noabbrev: bool,
+    pub names: BTreeMap<String, CleverefName>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CleverefName {
+    pub singular: Option<String>,
+    pub plural: Option<String>,
+    pub capital_singular: Option<String>,
+    pub capital_plural: Option<String>,
+}
+
+impl Default for CleverefConfig {
+    fn default() -> Self {
+        let mut names = BTreeMap::new();
+        for (kind, singular, plural) in [
+            ("equation", "Equation", "Equations"),
+            ("figure", "Figure", "Figures"),
+            ("table", "Table", "Tables"),
+            ("page", "Page", "Pages"),
+            ("part", "Part", "Parts"),
+            ("chapter", "Chapter", "Chapters"),
+            ("section", "Section", "Sections"),
+            ("subsection", "Section", "Sections"),
+            ("subsubsection", "Section", "Sections"),
+            ("appendix", "Appendix", "Appendices"),
+            ("item", "Item", "Items"),
+            ("footnote", "Footnote", "Footnotes"),
+        ] {
+            names.insert(
+                kind.to_string(),
+                CleverefName {
+                    capital_singular: Some(singular.to_string()),
+                    capital_plural: Some(plural.to_string()),
+                    ..CleverefName::default()
+                },
+            );
+        }
+        Self {
+            capitalise: false,
+            noabbrev: false,
+            names,
+        }
+    }
+}
+
+impl CleverefConfig {
+    pub fn set_options(&mut self, options: &str) {
+        for option in options.split(',').map(str::trim) {
+            match option {
+                "capitalise" => self.capitalise = true,
+                "noabbrev" => self.noabbrev = true,
+                _ => {}
+            }
+        }
+    }
+
+    pub fn set_name(&mut self, kind: String, singular: String, plural: String, capital: bool) {
+        let name = self.names.entry(kind).or_default();
+        if capital {
+            name.capital_singular = Some(singular.clone());
+            name.capital_plural = Some(plural.clone());
+            if name.singular.is_none() {
+                name.singular = Some(if self.capitalise {
+                    singular.clone()
+                } else {
+                    singular.to_lowercase()
+                });
+            }
+            if name.plural.is_none() {
+                name.plural = Some(if self.capitalise {
+                    plural.clone()
+                } else {
+                    plural.to_lowercase()
+                });
+            }
+        } else {
+            name.singular = Some(singular.clone());
+            name.plural = Some(plural.clone());
+            if name.capital_singular.is_none() {
+                name.capital_singular = Some(capitalize_first(&singular));
+            }
+            if name.capital_plural.is_none() {
+                name.capital_plural = Some(capitalize_first(&plural));
+            }
+        }
+    }
+}
+
+/// The default `cleveref` name for a label type. `capitalise` changes the
+/// initial letter; `noabbrev` selects full equation/figure names.
+pub fn cleveref_name(config: &CleverefConfig, kind: &str, plural: bool, capital: bool) -> String {
+    if let Some(name) = configured_name(config, kind, plural, capital) {
+        return name;
+    }
+    let canonical_kind = cleveref_kind(kind);
+    if canonical_kind != kind {
+        if let Some(name) = configured_name(config, canonical_kind, plural, capital) {
+            return name;
+        }
+    }
+    let kind = canonical_kind;
+    let full = config.noabbrev;
+    let (singular, plural_name) = match (kind, full) {
+        ("equation", false) => ("eq.", "eqs."),
+        ("figure", false) => ("fig.", "figs."),
+        ("appendix", _) => ("appendix", "appendices"),
+        ("section", _) => ("section", "sections"),
+        ("table", _) => ("table", "tables"),
+        ("item", _) => ("item", "items"),
+        ("footnote", _) => ("footnote", "footnotes"),
+        ("chapter", _) => ("chapter", "chapters"),
+        ("part", _) => ("part", "parts"),
+        (kind, _) => (kind, ""),
+    };
+    let name = if plural {
+        if plural_name.is_empty() {
+            let fallback = format!("{singular}s");
+            return if capital || config.capitalise {
+                capitalize_first(&fallback)
+            } else {
+                fallback
+            };
+        }
+        plural_name.to_string()
+    } else {
+        singular.to_string()
+    };
+    if capital || config.capitalise {
+        capitalize_first(&name)
+    } else {
+        name
+    }
+}
+
+fn configured_name(
+    config: &CleverefConfig,
+    kind: &str,
+    plural: bool,
+    capital: bool,
+) -> Option<String> {
+    config.names.get(kind).and_then(|name| {
+        match (capital, plural) {
+            (true, true) => name.capital_plural.as_ref(),
+            (true, false) => name.capital_singular.as_ref(),
+            (false, true) => name.plural.as_ref(),
+            (false, false) => name.singular.as_ref(),
+        }
+        .cloned()
+    })
+}
+
+/// `cleveref` aliases subsections to the section name by default.
+pub fn cleveref_kind(kind: &str) -> &str {
+    match kind {
+        "subsection" | "subsubsection" => "section",
+        kind => kind,
+    }
+}
+
+fn capitalize_first(text: &str) -> String {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    first.to_uppercase().chain(chars).collect()
+}
+
 /// A counter's printed form (`\arabic`, `\alph`, `\Alph`, `\roman`,
 /// `\Roman`; latex.ltx `\@arabic`, `\@alph`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -134,7 +134,9 @@ pub enum V1Item {
         x_pt: f64,
         baseline_y_pt: f64,
         font_size_pt: f64,
-        source: SourceRange,
+        /// `None` for content with no source of its own (page chrome):
+        /// the wire item carries `"source": null`.
+        source: Option<SourceRange>,
         font: Option<FontHint>,
     },
     Rule {
@@ -142,7 +144,9 @@ pub enum V1Item {
         y_pt: f64,
         width_pt: f64,
         height_pt: f64,
-        source: SourceRange,
+        /// `None` for content with no source of its own (page chrome):
+        /// the wire item carries `"source": null`.
+        source: Option<SourceRange>,
     },
 }
 
@@ -207,6 +211,13 @@ fn union_of<'a>(mut sources: impl Iterator<Item = &'a SourceRange>) -> Option<So
 
 /// Builds the v1 payload. `accepted` is `None` when the request carried no
 /// `layout_capabilities` field (the field is then omitted in the reply).
+/// Typesetter-made page furniture: it has no source, but it is visible page
+/// content, so the fallback keeps it (with a `null` source) where other
+/// synthetic items stay v2-only.
+fn is_chrome(p: &display::Provenance) -> bool {
+    matches!(p, display::Provenance::Synthetic(reason) if reason == display::PAGE_CHROME)
+}
+
 pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<String>>) -> V1Payload {
     let mut pages = Vec::with_capacity(v2.pages.len());
     // One hint per font resource, shared by every run that uses it.
@@ -220,7 +231,11 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
                     let size = run.font_size.to_bp();
                     match run.role {
                         display::RunRole::Text => {
-                            let (Some(source), Some(first)) = (union_of(run.clusters.iter().flat_map(|c| c.provenance.sources())), run.glyphs.first()) else { continue };
+                            let Some(first) = run.glyphs.first() else { continue };
+                            let source = union_of(run.clusters.iter().flat_map(|c| c.provenance.sources()));
+                            if source.is_none() && !run.clusters.iter().any(|c| is_chrome(&c.provenance)) {
+                                continue;
+                            }
                             items.push(V1Item::Text {
                                 text: run.text.clone(),
                                 x_pt: first.origin_x.to_bp(),
@@ -233,7 +248,10 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
                         display::RunRole::Math => {
                             for g in &run.glyphs {
                                 let Some(c) = run.clusters.get(g.cluster as usize) else { continue };
-                                let Some(source) = union(c.provenance.sources()) else { continue };
+                                let source = union(c.provenance.sources());
+                                if source.is_none() && !is_chrome(&c.provenance) {
+                                    continue;
+                                }
                                 items.push(V1Item::Text {
                                     text: run.text[c.text_start_byte..c.text_end_byte].to_string(),
                                     x_pt: g.origin_x.to_bp(),
@@ -252,7 +270,10 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
                 // runtime-v1 has no image item; the v2 image proposal carries them.
                 display::Item::Image(_) => {}
                 display::Item::Rule(rule) => {
-                    let Some(source) = union(rule.provenance.sources()) else { continue };
+                    let source = union(rule.provenance.sources());
+                    if source.is_none() && !is_chrome(&rule.provenance) {
+                        continue;
+                    }
                     let (x, top, w, h) = (rule.x.to_bp(), rule.top.to_bp(), rule.width.to_bp(), rule.height.to_bp());
                     if caps.rules {
                         items.push(V1Item::Rule {
@@ -373,7 +394,7 @@ impl V1Payload {
                                                 o.set("x_pt", pt(*x_pt));
                                                 o.set("baseline_y_pt", pt(*baseline_y_pt));
                                                 o.set("font_size_pt", pt(*font_size_pt));
-                                                o.set("source", source_json(source));
+                                                o.set("source", source.as_ref().map(source_json).unwrap_or(Value::Null));
                                                 if let Some(f) = font {
                                                     let mut fo = Value::obj();
                                                     fo.set("family", json::str_(f.family.to_string()));
@@ -394,7 +415,7 @@ impl V1Payload {
                                                 o.set("y_pt", pt(*y_pt));
                                                 o.set("width_pt", pt(*width_pt));
                                                 o.set("height_pt", pt(*height_pt));
-                                                o.set("source", source_json(source));
+                                                o.set("source", source.as_ref().map(source_json).unwrap_or(Value::Null));
                                             }
                                         }
                                         o
@@ -524,6 +545,109 @@ fn jsource(out: &mut String, s: &SourceRange) {
     out.push('}');
 }
 
+// ------------------------------------------------------------- line length
+//
+// Exact serialised length of the envelope, computed without allocating it.
+// Each `*_len` returns exactly the number of bytes its writer above appends
+// (`envelope_len_matches_write_envelope` pins the equivalence), so the
+// oversize refusal in `protocol::handle_line` can carry the same byte count
+// the 16+ MB line would have had without ever serialising it.
+
+fn js_len(s: &str) -> usize {
+    if s.bytes().all(|b| b >= 0x20 && b != b'"' && b != b'\\') {
+        return s.len() + 2;
+    }
+    let mut n = 2;
+    for c in s.chars() {
+        n += match c {
+            '"' | '\\' | '\n' | '\r' | '\t' => 2,
+            c if (c as u32) < 0x20 => 6,
+            c => c.len_utf8(),
+        };
+    }
+    n
+}
+
+/// `ji`'s length: the decimal digits plus a possible sign.
+fn ji_len(i: i64) -> usize {
+    let mut n = i.unsigned_abs();
+    let mut len = usize::from(i < 0) + 1;
+    while n >= 10 {
+        len += 1;
+        n /= 10;
+    }
+    len
+}
+
+fn jn_len(n: f64) -> usize {
+    if n.is_finite() && n == n.trunc() && n.abs() < 1e15 {
+        ji_len(n as i64)
+    } else if n.is_finite() {
+        // Cold corner of `jn`: no length arithmetic reproduces `{}` for an
+        // arbitrary float, so format it (into a scratch this long path can
+        // afford) and measure.
+        let mut s = String::new();
+        let _ = write!(s, "{}", n);
+        s.len()
+    } else {
+        "null".len()
+    }
+}
+
+fn jpt_len(v: f64) -> usize {
+    let m = (v * 1000.0).round();
+    if !m.is_finite() || m.abs() >= 1e11 {
+        return jn_len(m / 1000.0);
+    }
+    let m = m as i64;
+    if m == 0 {
+        return 1;
+    }
+    let a = m.unsigned_abs();
+    let mut len = usize::from(m < 0) + ji_len((a / 1000) as i64);
+    let frac = a % 1000;
+    if frac != 0 {
+        len += 1 + if frac % 10 != 0 {
+            3
+        } else if (frac / 10) % 10 != 0 {
+            2
+        } else {
+            1
+        };
+    }
+    len
+}
+
+fn jsource_len(s: &SourceRange) -> usize {
+    "{\"end_byte\":".len()
+        + jn_len(s.end_byte as f64)
+        + ",\"path\":".len()
+        + js_len(&s.path)
+        + ",\"start_byte\":".len()
+        + jn_len(s.start_byte as f64)
+        + "}".len()
+}
+
+fn jdiag_len(d: &display::Diagnostic) -> usize {
+    let mut len = "{\"code\":".len()
+        + js_len(&d.code)
+        + ",\"message\":".len()
+        + js_len(&d.message)
+        + ",\"recovery\":".len()
+        + d.recovery.as_deref().map_or("null".len(), js_len)
+        + ",\"severity\":".len()
+        + js_len(match d.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        })
+        + ",\"source\":".len()
+        + d.sources.first().map_or("null".len(), jsource_len);
+    if let Some(s) = &d.suggestion {
+        len += ",\"suggestion\":".len() + js_len(s);
+    }
+    len + "}".len()
+}
+
 fn jdiag(out: &mut String, d: &display::Diagnostic) {
     out.push_str("{\"code\":");
     js(out, &d.code);
@@ -566,6 +690,99 @@ impl V1Payload {
         self.write_payload(&mut out);
         out.push_str(",\"protocol_version\":1,\"type\":\"compile_result\"}");
         out
+    }
+
+    /// Exactly `self.write_envelope(id).len()`, without allocating the line:
+    /// the length arithmetic mirrors `write_payload` field for field, and
+    /// `envelope_len_matches_write_envelope` pins the equivalence. Lets the
+    /// worker refuse an over-limit `compile_result` (16+ MB of pages) with
+    /// the byte count the refusal message always carried, while never
+    /// serialising the line it is about to throw away.
+    pub fn envelope_len(&self, id: &str) -> usize {
+        let mut len = "{\"id\":".len()
+            + js_len(id)
+            + ",\"payload\":".len()
+            + ",\"protocol_version\":1,\"type\":\"compile_result\"}".len();
+        len += "{\"diagnostics\":[".len() + "]".len();
+        for (i, d) in self.diagnostics.iter().enumerate() {
+            len += usize::from(i > 0) + jdiag_len(d);
+        }
+        if let Some(acc) = &self.accepted {
+            len += ",\"layout_capabilities\":[".len() + "]".len();
+            for (i, c) in acc.iter().enumerate() {
+                len += usize::from(i > 0) + js_len(c);
+            }
+        }
+        // The closing brackets of `pages` and of each page's `items` are
+        // part of the `"],..."` literals below, as in the writer.
+        len += ",\"pages\":[".len();
+        for (pi, pg) in self.pages.iter().enumerate() {
+            len += usize::from(pi > 0)
+                + "{\"height_pt\":".len()
+                + jpt_len(pg.height_pt)
+                + ",\"items\":[".len();
+            for (ii, it) in pg.items.iter().enumerate() {
+                len += usize::from(ii > 0);
+                match it {
+                    V1Item::Text {
+                        text,
+                        x_pt,
+                        baseline_y_pt,
+                        font_size_pt,
+                        source,
+                        font,
+                    } => {
+                        len += "{\"baseline_y_pt\":".len() + jpt_len(*baseline_y_pt);
+                        if let Some(f) = font {
+                            len += ",\"font\":{\"family\":".len()
+                                + js_len(&f.family)
+                                + ",\"style\":".len()
+                                + js_len(f.style)
+                                + ",\"weight\":".len()
+                                + js_len(f.weight)
+                                + "}".len();
+                        }
+                        len += ",\"font_size_pt\":".len()
+                            + jpt_len(*font_size_pt)
+                            + ",\"kind\":\"text\",\"source\":".len()
+                            + source.as_ref().map_or("null".len(), jsource_len)
+                            + ",\"text\":".len()
+                            + js_len(text)
+                            + ",\"x_pt\":".len()
+                            + jpt_len(*x_pt)
+                            + "}".len();
+                    }
+                    V1Item::Rule {
+                        x_pt,
+                        y_pt,
+                        width_pt,
+                        height_pt,
+                        source,
+                    } => {
+                        len += "{\"height_pt\":".len()
+                            + jpt_len(*height_pt)
+                            + ",\"kind\":\"rule\",\"source\":".len()
+                            + source.as_ref().map_or("null".len(), jsource_len)
+                            + ",\"width_pt\":".len()
+                            + jpt_len(*width_pt)
+                            + ",\"x_pt\":".len()
+                            + jpt_len(*x_pt)
+                            + ",\"y_pt\":".len()
+                            + jpt_len(*y_pt)
+                            + "}".len();
+                    }
+                }
+            }
+            len += "],\"number\":".len() + jn_len(f64::from(pg.number)) + ",\"width_pt\":".len() + jpt_len(pg.width_pt) + "}".len();
+        }
+        len += "],\"pdf_path\":null,\"project_id\":".len()
+            + js_len(&self.project_id)
+            + ",\"revision\":".len()
+            + jn_len(self.revision as f64)
+            + ",\"status\":".len()
+            + js_len(self.status)
+            + "}".len();
+        len
     }
 
     fn write_payload(&self, out: &mut String) {
@@ -622,7 +839,10 @@ impl V1Payload {
                         out.push_str(",\"font_size_pt\":");
                         jpt(out, *font_size_pt);
                         out.push_str(",\"kind\":\"text\",\"source\":");
-                        jsource(out, source);
+                        match source {
+                            Some(s) => jsource(out, s),
+                            None => out.push_str("null"),
+                        }
                         out.push_str(",\"text\":");
                         js(out, text);
                         out.push_str(",\"x_pt\":");
@@ -639,7 +859,10 @@ impl V1Payload {
                         out.push_str("{\"height_pt\":");
                         jpt(out, *height_pt);
                         out.push_str(",\"kind\":\"rule\",\"source\":");
-                        jsource(out, source);
+                        match source {
+                            Some(s) => jsource(out, s),
+                            None => out.push_str("null"),
+                        }
                         out.push_str(",\"width_pt\":");
                         jpt(out, *width_pt);
                         out.push_str(",\"x_pt\":");
@@ -712,7 +935,7 @@ mod tests {
                         x_pt: 72.0004,
                         baseline_y_pt: 83.955,
                         font_size_pt: 11.955,
-                        source: src("a/b.tex", 3, 10),
+                        source: Some(src("a/b.tex", 3, 10)),
                         font: Some(FontHint {
                             family: "Latin Modern Roman".into(),
                             weight: "bold",
@@ -724,7 +947,7 @@ mod tests {
                         x_pt: 1.0,
                         baseline_y_pt: 2.0,
                         font_size_pt: 3.0,
-                        source: src("main.tex", 0, 1),
+                        source: Some(src("main.tex", 0, 1)),
                         font: None,
                     },
                     V1Item::Rule {
@@ -732,7 +955,23 @@ mod tests {
                         y_pt: 101.4675,
                         width_pt: 43.351,
                         height_pt: 0.3985,
-                        source: src("main.tex", 37, 78),
+                        source: Some(src("main.tex", 37, 78)),
+                    },
+                    // Page chrome: no source of its own, `"source":null`.
+                    V1Item::Text {
+                        text: "1".into(),
+                        x_pt: 303.0,
+                        baseline_y_pt: 756.0,
+                        font_size_pt: 9.963,
+                        source: None,
+                        font: None,
+                    },
+                    V1Item::Rule {
+                        x_pt: 0.0,
+                        y_pt: 1.0,
+                        width_pt: 2.0,
+                        height_pt: 3.0,
+                        source: None,
                     },
                 ],
             }],
@@ -763,6 +1002,115 @@ mod tests {
         assert!(line.contains(r#""suggestion":"\\alpha""#), "{line}");
         assert!(!line.contains(r#""suggestion":null"#), "{line}");
     }
+
+    /// `envelope_len` is the byte count `write_envelope` produces, for every
+    /// field shape the writer has: escaped and multi-byte strings, control
+    /// characters, hints present and absent, both item kinds, null sources,
+    /// suggestions, empty pages, and the non-finite / huge coordinates that
+    /// take `jpt`'s cold path.
+    #[test]
+    fn envelope_len_matches_write_envelope() {
+        let src = |path: &str, a: usize, b: usize| SourceRange {
+            path: std::rc::Rc::from(path),
+            start_byte: a,
+            end_byte: b,
+        };
+        let text = |text: &str, x: f64, y: f64, size: f64, source: Option<SourceRange>, font: Option<FontHint>| V1Item::Text {
+            text: text.into(),
+            x_pt: x,
+            baseline_y_pt: y,
+            font_size_pt: size,
+            source,
+            font,
+        };
+        let hint = FontHint {
+            family: "Latin Modern \"Roman\"".into(),
+            weight: "bold",
+            style: "italic",
+        };
+        let mut with_suggestion = display::Diagnostic::error("unknown_command", "\\alpah\u{1}", vec![src("main.tex", 5, 11)]);
+        with_suggestion.suggestion = Some("\\alpha".into());
+        let payload = V1Payload {
+            project_id: "p\"q\n\u{7}".into(),
+            revision: 7,
+            status: "recovered",
+            pages: vec![
+                V1Page {
+                    number: 1,
+                    width_pt: 612.0,
+                    height_pt: 792.0,
+                    items: vec![
+                        text("w\u{f6}rld\t\"x\"", 72.0004, 83.955, 11.955, Some(src("a/b.tex", 3, 10)), Some(hint)),
+                        text("chrome", 303.0, 756.0, 9.963, None, None),
+                        text("corner", f64::NAN, f64::INFINITY, 1e12, None, None),
+                        text("", -0.0, -0.5, 0.12, Some(src("", 0, usize::MAX >> 12)), None),
+                        V1Item::Rule {
+                            x_pt: 302.386,
+                            y_pt: 101.4675,
+                            width_pt: 43.351,
+                            height_pt: 0.3985,
+                            source: Some(src("main.tex", 37, 78)),
+                        },
+                        V1Item::Rule {
+                            x_pt: -1.25,
+                            y_pt: 0.0,
+                            width_pt: 2.0,
+                            height_pt: f64::NEG_INFINITY,
+                            source: None,
+                        },
+                    ],
+                },
+                V1Page {
+                    number: 398,
+                    width_pt: 597.508,
+                    height_pt: 845.047,
+                    items: Vec::new(),
+                },
+            ],
+            diagnostics: vec![
+                display::Diagnostic::warning("w", "m\n", vec![src("main.tex", 1, 2)]),
+                display::Diagnostic::error("e", "boom", Vec::new()),
+                with_suggestion,
+            ],
+            accepted: Some(vec!["rules-v1".into(), "font-hints-v1".into()]),
+        };
+        for id in ["r-1", "", "id \"quoted\"\u{9}"] {
+            assert_eq!(payload.envelope_len(id), payload.write_envelope(id).len(), "id {id:?}");
+        }
+        let mut none = payload.clone();
+        none.accepted = None;
+        none.diagnostics.clear();
+        none.pages.clear();
+        assert_eq!(none.envelope_len("r-1"), none.write_envelope("r-1").len());
+        // The whole `jpt` milli-grid near zero, where the trailing-zero
+        // trimming lives, plus a pseudo-random sweep of larger magnitudes.
+        let mut probe = V1Payload {
+            project_id: String::new(),
+            revision: 0,
+            status: "ok",
+            pages: vec![V1Page {
+                number: 1,
+                width_pt: 0.0,
+                height_pt: 0.0,
+                items: Vec::new(),
+            }],
+            diagnostics: Vec::new(),
+            accepted: None,
+        };
+        let mut x: u64 = 0x9e3779b97f4a7c15;
+        let mut values: Vec<f64> = (-2200..2200).map(|m| m as f64 / 1000.0).collect();
+        for _ in 0..2000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            values.push((x % 200_000_000) as f64 / 1000.0 - 100_000.0);
+        }
+        for v in values {
+            probe.pages[0].width_pt = v;
+            assert_eq!(probe.envelope_len("p"), probe.write_envelope("p").len(), "width_pt {v}");
+        }
+    }
+
 
     /// `jpt`/`js` fast paths print exactly what `fmt` printed before.
     #[test]

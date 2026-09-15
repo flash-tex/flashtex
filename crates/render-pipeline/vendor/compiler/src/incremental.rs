@@ -217,8 +217,11 @@ impl Session {
         };
 
         if parsed.document_global_state {
-            let (pages, mut layout_diagnostics) =
-                layout::layout_converged(&parsed.blocks, constraints);
+            let (pages, mut layout_diagnostics) = layout::layout_converged_with_options(
+                &parsed.blocks,
+                constraints,
+                &parsed.cleveref,
+            );
             let mut diagnostics = parsed.diagnostics;
             diagnostics.append(&mut layout_diagnostics);
             stats.full_recompile = true;
@@ -398,7 +401,11 @@ pub fn compile_full_project_with(
 ) -> CompileOutput {
     let parsed = parser::parse_project_with(documents, entry_path, options);
     let constraints = parsed.preamble_constraints(constraints);
-    let (pages, mut layout_diagnostics) = layout::layout_converged(&parsed.blocks, constraints);
+    let (pages, mut layout_diagnostics) = layout::layout_converged_with_options(
+        &parsed.blocks,
+        constraints,
+        &parsed.cleveref,
+    );
     let mut diagnostics = parsed.diagnostics;
     diagnostics.append(&mut layout_diagnostics);
     CompileOutput {
@@ -515,6 +522,20 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             Some(())
         }
         Block::VFill => Some(()),
+        Block::LetterBlock {
+            part: _,
+            lines,
+            extra_gap_after_pt: _,
+            gap_before_pt: _,
+            gap_after_pt: _,
+            indent_pt: _,
+            span,
+        } => {
+            for line in lines.iter_mut() {
+                shift_inlines(line, changes, deltas)?;
+            }
+            map_span(span, changes, deltas)
+        }
     }
 }
 
@@ -574,6 +595,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::Label {
                 key: _,
                 value: _,
+                kind: _,
                 span,
             } => map_span(span, changes, deltas)?,
             Inline::Reference {
@@ -583,6 +605,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 span,
                 space_before: _,
             } => map_span(span, changes, deltas)?,
+            Inline::CleverReference { span, .. } => map_span(span, changes, deltas)?,
             Inline::HFill { span, .. } => map_span(span, changes, deltas)?,
             Inline::HSpace { pt: _, span } => map_span(span, changes, deltas)?,
             Inline::Footnote {
@@ -799,6 +822,10 @@ fn block_signature(block: &Block) -> BlockSignature {
         | Block::Verbatim { .. }
         | Block::TableOfContents { .. }
         | Block::VFill => &[],
+        // Signature only (see the doc comment above): the first line is
+        // enough to narrow the candidate set, and `shift_block`'s full
+        // equality check still gates every reuse.
+        Block::LetterBlock { lines, .. } => lines.first().map_or(&[][..], |line| &line[..]),
         // Signature only, not identity (see the doc comment above): using
         // just `title` here (never `authors`/`date`) can only widen the
         // candidate set on an author/date-only edit, never produce a wrong
@@ -813,6 +840,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::MathRows { span, .. } => *span,
         Inline::Label { span, .. } => *span,
         Inline::Reference { span, .. } => *span,
+        Inline::CleverReference { span, .. } => *span,
         Inline::HFill { span, .. } => *span,
         Inline::HSpace { span, .. } => *span,
         Inline::Footnote { span, .. } => *span,

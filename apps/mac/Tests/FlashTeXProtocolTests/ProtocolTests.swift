@@ -162,4 +162,35 @@ final class StructuredDiagnosticTests: XCTestCase {
         XCTAssertNil((obj["replacement"] as? [String: Any])?["path"])
         XCTAssertEqual((obj["replacement"] as? [String: Any])?["text"] as? String, "x")
     }
+
+    /// The compiler nests the edit range inside `source` and emits no flat
+    /// `start_byte`. Both decoders used to require the flat pair, so every
+    /// diagnostic carrying a fix made the whole `compile_result` frame fail to
+    /// decode -- and the Mac dropped the preview update as a protocol
+    /// violation. These bytes are the shape `crates/compiler/src/diagnostics.rs`
+    /// actually writes (its own unit tests assert this string).
+    func testHelpReplacementAcceptsTheCompilersNestedSourceRange() throws {
+        let emitted = #"{"message":"did you mean \\alpha?","replacement":{"source":{"end_byte":11,"path":"main.tex","start_byte":5},"text":"\\alpha"}}"#
+        let help = try JSONDecoder().decode(RuntimeV1.Diagnostic.Help.self, from: Data(emitted.utf8))
+        let r = try XCTUnwrap(help.replacement)
+        XCTAssertEqual(r.startByte, 5)
+        XCTAssertEqual(r.endByte, 11)
+        XCTAssertEqual(r.text, "\\alpha")
+        XCTAssertEqual(r.path, "main.tex")
+    }
+
+    /// A flat pair still wins over a nested one, so a producer that sends both
+    /// is read the way it was before nested ranges were accepted.
+    func testFlatReplacementOffsetsWinOverNestedOnes() throws {
+        let both = #"{"message":"h","replacement":{"start_byte":1,"end_byte":2,"text":"x","source":{"path":"src.tex","start_byte":9,"end_byte":10}}}"#
+        let help = try JSONDecoder().decode(RuntimeV1.Diagnostic.Help.self, from: Data(both.utf8))
+        XCTAssertEqual(help.replacement?.startByte, 1)
+        XCTAssertEqual(help.replacement?.endByte, 2)
+    }
+
+    /// Neither form present is still an error, and it names both spellings.
+    func testReplacementWithNoRangeAtAllIsRejected() {
+        let none = #"{"message":"h","replacement":{"text":"x"}}"#
+        XCTAssertThrowsError(try JSONDecoder().decode(RuntimeV1.Diagnostic.Help.self, from: Data(none.utf8)))
+    }
 }

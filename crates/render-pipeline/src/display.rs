@@ -111,6 +111,11 @@ pub struct Caret {
     pub height: Tick,
 }
 
+/// Synthetic-provenance reason for page furniture the typesetter creates
+/// with no source of its own: page numbers, header/footer marks, and the
+/// column separator rule.
+pub const PAGE_CHROME: &str = "page chrome";
+
 /// Where a cluster's bytes came from: exact source ranges, or a stated
 /// reason when the pipeline synthesised it.
 #[derive(Debug, Clone, PartialEq)]
@@ -133,12 +138,30 @@ impl Provenance {
     }
 }
 
-/// One or two carets per cluster (its start, and the run end on the last
-/// cluster), stored inline: a page carries a caret pair per cluster.
+/// One or two carets for a cluster: its start, and the run end on the last
+/// cluster.
+///
+/// Derived, never stored (FT-070). The start caret is exactly the cluster's
+/// `hit_rect` and `text_start_byte`, and the end caret's `top`/`height` are
+/// that same rect's — measured over 1 991 552 clusters of the corpus, with
+/// zero exceptions. `place_item` and `shift_x` move the rect and the carets
+/// by the same offset, so placement cannot break the identity either. What
+/// is *not* derivable is the end caret's `x` (the TikZ path clamps the hit
+/// rect's width to one tick but not the caret) and which cluster carries
+/// it, so a run stores that once in [`GlyphRun::end_caret`] instead of
+/// 72 bytes per glyph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Carets {
     pub first: Caret,
     pub last: Option<Caret>,
+}
+
+/// The run-end caret: the part of it that the cluster geometry does not
+/// already say. Held once per [`GlyphRun`], not once per cluster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EndCaret {
+    pub x: Tick,
+    pub text_byte: usize,
 }
 
 impl Carets {
@@ -158,15 +181,25 @@ pub struct Cluster {
     pub text_start_byte: usize,
     pub text_end_byte: usize,
     /// The cluster's hit rectangle (the wire format is a list; this
-    /// pipeline emits exactly one per cluster).
+    /// pipeline emits exactly one per cluster). Also the geometry of both
+    /// of the cluster's carets: see [`Carets`].
     pub hit_rect: Rect,
-    pub carets: Carets,
     pub provenance: Provenance,
 }
 
 impl Cluster {
     pub fn hit_rects(&self) -> &[Rect] {
         std::slice::from_ref(&self.hit_rect)
+    }
+
+    /// The cluster's start caret.
+    pub fn first_caret(&self) -> Caret {
+        Caret {
+            text_byte: self.text_start_byte,
+            x: self.hit_rect.x,
+            top: self.hit_rect.top,
+            height: self.hit_rect.height,
+        }
     }
 }
 
@@ -201,6 +234,27 @@ pub struct GlyphRun {
     pub clusters: Vec<Cluster>,
     pub paint: Paint,
     pub role: RunRole,
+    /// The caret at the end of the run's text, carried by its last cluster.
+    /// `None` for a run that does not end a word (a math run, or a word
+    /// fragment continued by the next run).
+    pub end_caret: Option<EndCaret>,
+}
+
+impl GlyphRun {
+    /// The carets of cluster `i`: its start caret, and the run-end caret if
+    /// this is the last cluster.
+    pub fn carets_of(&self, i: usize) -> Carets {
+        let c = &self.clusters[i];
+        Carets {
+            first: c.first_caret(),
+            last: self.end_caret.filter(|_| i + 1 == self.clusters.len()).map(|e| Caret {
+                text_byte: e.text_byte,
+                x: e.x,
+                top: c.hit_rect.top,
+                height: c.hit_rect.height,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -284,6 +338,13 @@ pub struct ClipPath {
     pub even_odd: bool,
 }
 
+#[cfg(feature = "tikz-patterns")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PathPattern {
+    pub name: String,
+    pub color: [f64; 3],
+}
+
 /// A filled or stroked vector path (TikZ pictures).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathItem {
@@ -291,6 +352,8 @@ pub struct PathItem {
     pub commands: Vec<PathCmd>,
     pub clips: Vec<ClipPath>,
     pub paint: Paint,
+    #[cfg(feature = "tikz-patterns")]
+    pub pattern: Option<PathPattern>,
     pub provenance: Provenance,
 }
 
@@ -349,10 +412,9 @@ pub fn shift_x(item: &mut Item, dx: Tick) {
             }
             for c in &mut r.clusters {
                 c.hit_rect.x = add(c.hit_rect.x);
-                c.carets.first.x = add(c.carets.first.x);
-                if let Some(l) = &mut c.carets.last {
-                    l.x = add(l.x);
-                }
+            }
+            if let Some(e) = &mut r.end_caret {
+                e.x = add(e.x);
             }
         }
         Item::Rule(rule) => rule.x = add(rule.x),
@@ -591,7 +653,17 @@ impl DisplayList {
                 n += match it {
                     Item::GlyphRun(r) => 220 + 2 * r.text.len() + 120 * r.glyphs.len() + 280 * r.clusters.len(),
                     Item::Rule(_) => 240,
-                    Item::Path(p) => 240 + 64 * (p.commands.len() + p.clips.iter().map(|c| c.commands.len()).sum::<usize>()),
+                    Item::Path(p) => {
+                        #[cfg(feature = "tikz-patterns")]
+                        let pattern_bytes = if matches!(&p.op, PathPaintOp::Fill { .. }) {
+                            p.pattern.as_ref().map_or(0, |pattern| 64 + 2 * pattern.name.len())
+                        } else {
+                            0
+                        };
+                        #[cfg(not(feature = "tikz-patterns"))]
+                        let pattern_bytes = 0;
+                        240 + 64 * (p.commands.len() + p.clips.iter().map(|c| c.commands.len()).sum::<usize>()) + pattern_bytes
+                    },
                     Item::Image(i) => 520 + 2 * i.resource.path.len(),
                 };
             }
@@ -949,6 +1021,19 @@ fn write_paint(o: &mut String, p: &Paint, device: bool) {
 }
 
 /// [`path_json`] written directly.
+#[cfg(feature = "tikz-patterns")]
+fn write_pattern(o: &mut String, p: &PathPattern) {
+    o.push_str("{\"color\":{\"b\":");
+    num(o, p.color[2]);
+    o.push_str(",\"g\":");
+    num(o, p.color[1]);
+    o.push_str(",\"r\":");
+    num(o, p.color[0]);
+    o.push_str("},\"name\":");
+    json::write_string_into(&p.name, o);
+    o.push('}');
+}
+
 fn write_path(o: &mut String, cmds: &[PathCmd]) {
     o.push('[');
     for (i, c) in cmds.iter().enumerate() {
@@ -1044,7 +1129,7 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
                 for (j, c) in r.clusters.iter().enumerate() {
                     sep(o, j);
                     o.push_str("{\"carets\":[");
-                    for (k, caret) in c.carets.iter().enumerate() {
+                    for (k, caret) in r.carets_of(j).iter().enumerate() {
                         sep(o, k);
                         o.push_str("{\"height\":");
                         write_tick(o, caret.height);
@@ -1120,7 +1205,7 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
             }
             Item::Path(p) => {
                 // BTreeMap key order: clips, fill_rule, kind, paint, path,
-                // sources, stroke, synthetic_reason.
+                // pattern, sources, stroke, synthetic_reason.
                 o.push('{');
                 if !p.clips.is_empty() {
                     o.push_str("\"clips\":[");
@@ -1150,6 +1235,13 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
                 write_paint(o, &p.paint, wire.device_color);
                 o.push_str(",\"path\":");
                 write_path(o, &p.commands);
+                #[cfg(feature = "tikz-patterns")]
+                if matches!(&p.op, PathPaintOp::Fill { .. }) {
+                    if let Some(pattern) = &p.pattern {
+                        o.push_str(",\"pattern\":");
+                        write_pattern(o, pattern);
+                    }
+                }
                 let synthetic = matches!(p.provenance, Provenance::Synthetic(_));
                 if !synthetic {
                     write_provenance(o, &p.provenance);
@@ -1232,6 +1324,18 @@ fn paint_json(p: &Paint, device: bool) -> Value {
 }
 
 /// `[["m",x,y],["l",x,y],["c",x1,y1,x2,y2,x,y],["z"]]` in ticks.
+#[cfg(feature = "tikz-patterns")]
+fn pattern_json(p: &PathPattern) -> Value {
+    let mut color = Value::obj();
+    color.set("r", json::num(p.color[0]));
+    color.set("g", json::num(p.color[1]));
+    color.set("b", json::num(p.color[2]));
+    let mut o = Value::obj();
+    o.set("name", json::str_(p.name.clone()));
+    o.set("color", color);
+    o
+}
+
 fn path_json(cmds: &[PathCmd]) -> Value {
     Value::Arr(
         cmds.iter()
@@ -1322,7 +1426,8 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                             Value::Arr(
                                 r.clusters
                                     .iter()
-                                    .map(|c| {
+                                    .enumerate()
+                                    .map(|(ci, c)| {
                                         let mut o = Value::obj();
                                         o.set("text_start_byte", json::num(c.text_start_byte as f64));
                                         o.set("text_end_byte", json::num(c.text_end_byte as f64));
@@ -1330,7 +1435,7 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                                         o.set(
                                             "carets",
                                             Value::Arr(
-                                                c.carets
+                                                r.carets_of(ci)
                                                     .iter()
                                                     .map(|k| {
                                                         let mut o = Value::obj();
@@ -1390,6 +1495,12 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                             }
                         }
                         o.set("path", path_json(&p.commands));
+                        #[cfg(feature = "tikz-patterns")]
+                        if matches!(&p.op, PathPaintOp::Fill { .. }) {
+                            if let Some(pattern) = &p.pattern {
+                                o.set("pattern", pattern_json(pattern));
+                            }
+                        }
                         if !p.clips.is_empty() {
                             o.set(
                                 "clips",
@@ -1617,12 +1728,6 @@ mod tests {
             start_byte: a,
             end_byte: b,
         };
-        let caret = |x| Caret {
-            text_byte: 3,
-            x: Tick(x),
-            top: Tick(-7),
-            height: Tick(1 << 40),
-        };
         let cluster = |provenance| Cluster {
             text_start_byte: 0,
             text_end_byte: 4,
@@ -1631,10 +1736,6 @@ mod tests {
                 top: Tick(-2),
                 width: Tick(3),
                 height: Tick(4),
-            },
-            carets: Carets {
-                first: caret(5),
-                last: Some(caret(9)),
             },
             provenance,
         };
@@ -1658,6 +1759,10 @@ mod tests {
                 cluster(Provenance::Sources(vec![src(3, 4), src(5, 6)])),
                 cluster(Provenance::Synthetic("heading number".into())),
             ],
+            // Only the run's last cluster shows it, so the two writers have
+            // to agree about which cluster that is as well as about the
+            // value.
+            end_caret: Some(EndCaret { x: Tick(9), text_byte: 3 }),
             paint: Paint {
                 r: 0.25,
                 g: 0.1,
@@ -1705,6 +1810,8 @@ mod tests {
                 commands: cmds(),
                 clips,
                 paint: Paint { r: 0.5, g: 0.0, b: 1.0, a: 0.25, device: None },
+                #[cfg(feature = "tikz-patterns")]
+                pattern: None,
                 provenance,
             })
         };

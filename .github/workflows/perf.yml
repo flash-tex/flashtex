@@ -1,0 +1,129 @@
+# FT-070 engine performance gate.
+#
+# Two things are checked, and they are not equally trustworthy on a shared
+# GitHub runner, so they are gated differently:
+#
+#   * Output identity. The harness pins its fonts to apps/mac/Fonts inside the
+#     repository and builds the font set with FontSet::with_dirs, so the
+#     display-list and PDF digests do not depend on the machine. A changed
+#     digest fails the job anywhere — a faster run that changed a byte is a
+#     failed run.
+#
+#   * Timings. Hosted runners are shared, unpinned and vary between classes, so
+#     wall-clock numbers are only comparable against a baseline recorded on the
+#     same host. `--require-same-host` enforces the >5 % rule when the baseline
+#     matches and reports it without failing when it does not. Either way the
+#     report is uploaded, so the numbers are on record for every run.
+#
+# The 2 MB case takes tens of minutes on its own and is excluded from the
+# per-PR run; `workflow_dispatch` with `full: true` measures the whole corpus.
+#
+# The authoritative baseline is recorded on a reference machine and committed
+# under crates/perf-bench/baselines/. See crates/perf-bench/README.md.
+name: perf
+
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "fixtures/real-world/**"
+      - ".github/workflows/perf.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Measure the whole corpus, including the 2 MB document"
+        type: boolean
+        default: false
+
+concurrency:
+  group: perf-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  bench:
+    name: engine performance
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/perf-bench
+          key: perf-bench
+
+      - name: Build
+        working-directory: crates/perf-bench
+        run: cargo build --release --locked
+
+      - name: Harness unit tests
+        working-directory: crates/perf-bench
+        run: cargo test --release --locked
+
+      # Fonts are deliberately not configured through the environment: the
+      # harness resolves them itself, so a runner image that happens to ship
+      # TeX Live cannot supply substitute metrics without the run noticing.
+      # --list also proves the corpus was found.
+      - name: Corpus and font preflight
+        working-directory: crates/perf-bench
+        run: ./target/release/flashtex-perf-bench --list
+
+      # One invocation produces the report *and* runs the gate, so the numbers
+      # that are published are the numbers that were judged.
+      - name: Benchmark and gate
+        working-directory: crates/perf-bench
+        run: |
+          set -o pipefail
+          args="--runs 5"
+          if [ "${{ github.event.inputs.full }}" != "true" ]; then
+            for id in article-twocolumn cv hw1 hw2 inline-math input-bibliography \
+                      lecture-notes letter math-sheet unicode-accents \
+                      synthetic-500kb math-heavy tikz-heavy; do
+              args="$args --only $id"
+            done
+          fi
+          baseline=$(ls baselines/*.json 2>/dev/null | head -1)
+          if [ -n "$baseline" ]; then
+            echo "baseline: $baseline"
+            args="$args --baseline $baseline --tolerance 5 --check --require-same-host"
+          else
+            echo "no committed baseline yet; recording only"
+          fi
+          # shellcheck disable=SC2086
+          ./target/release/flashtex-perf-bench $args \
+            --json "$GITHUB_WORKSPACE/perf-report.json" \
+            | tee "$GITHUB_WORKSPACE/perf-report.txt"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '### Engine performance'
+            echo
+            echo '```'
+            sed -n '/== headline/,/== cold phase split/p' "$GITHUB_WORKSPACE/perf-report.txt" || true
+            echo '```'
+            echo
+            echo '```'
+            sed -n '/== targets/,$p' "$GITHUB_WORKSPACE/perf-report.txt" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-report
+          path: |
+            perf-report.json
+            perf-report.txt
+          retention-days: 30

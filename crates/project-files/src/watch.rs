@@ -7,12 +7,14 @@
 //! the comparison logic is the same.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
+use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::path::ProjectPath;
+use crate::save::{ProjectRoot, Refused, SaveError};
 use crate::sha256::{Digest, sha256};
 
 /// On-disk identity of one file at snapshot time.
@@ -25,11 +27,28 @@ pub struct FileState {
 
 /// Recorded state for a set of project paths (missing paths are tracked as
 /// `None` so their later creation is reported).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The root directory is opened once, by [`Snapshot::take`], and that
+/// descriptor is kept (shared by clones and by the snapshot a [`Diff`]
+/// carries forward). [`Snapshot::track`] and [`Snapshot::diff`] read through
+/// it and never re-resolve the root path, so a directory renamed into the
+/// root's place after `take` is never stat'ed or hashed. `diff` reports that
+/// situation as [`Diff::root_replaced`]. Equality compares the root path and
+/// the recorded entries, not the descriptor.
+#[derive(Debug, Clone)]
 pub struct Snapshot {
     root: PathBuf,
+    pinned: RootHandle,
     entries: BTreeMap<ProjectPath, Option<FileState>>,
 }
+
+impl PartialEq for Snapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root && self.entries == other.entries
+    }
+}
+
+impl Eq for Snapshot {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeKind {
@@ -53,9 +72,36 @@ pub struct ExternalChange {
 /// carry forward.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diff {
+    /// Changes inside the pinned root directory.
     pub changes: Vec<ExternalChange>,
+    /// The root path no longer names the pinned directory: it was renamed,
+    /// removed, or replaced by another directory or a symlink after
+    /// [`Snapshot::take`]. `changes` still describe the pinned directory
+    /// (wherever it now is); nothing at the replacement was read. The caller
+    /// decides whether to keep following the pinned directory or take a new
+    /// snapshot of whatever is at the path now.
+    pub root_replaced: bool,
     pub snapshot: Snapshot,
 }
+
+/// The error [`Poller::poll`] returns (wrapped in an `io::Error` of kind
+/// `Other`) when the root path no longer names the pinned directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootReplaced {
+    pub root: PathBuf,
+}
+
+impl fmt::Display for RootReplaced {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "project root {} was renamed, removed or replaced after it was opened",
+            self.root.display()
+        )
+    }
+}
+
+impl std::error::Error for RootReplaced {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictKind {
@@ -84,12 +130,14 @@ impl Snapshot {
         root: &Path,
         paths: impl IntoIterator<Item = &'a ProjectPath>,
     ) -> io::Result<Snapshot> {
+        let pinned = RootHandle::open(root)?;
         let mut entries = BTreeMap::new();
         for p in paths {
-            entries.insert(p.clone(), read_state(&p.to_os_path(root), None)?);
+            entries.insert(p.clone(), pinned.read_state(p, None)?);
         }
         Ok(Snapshot {
             root: root.to_path_buf(),
+            pinned,
             entries,
         })
     }
@@ -106,9 +154,10 @@ impl Snapshot {
         self.entries.get(path).and_then(Option::as_ref)
     }
 
-    /// Adds a path to track (hashes it now).
+    /// Adds a path to track (hashes it now, through the pinned root).
     pub fn track(&mut self, path: &ProjectPath) -> io::Result<()> {
-        let state = read_state(&path.to_os_path(&self.root), None)?;
+        self.pinned = self.pinned.pin_if_missing(&self.root)?;
+        let state = self.pinned.read_state(path, None)?;
         self.entries.insert(path.clone(), state);
         Ok(())
     }
@@ -140,11 +189,17 @@ impl Snapshot {
     /// Compares disk against this snapshot. Only files whose size or mtime
     /// changed are rehashed; a file rewritten with identical content is not
     /// reported.
+    ///
+    /// Files are read through the root descriptor pinned by
+    /// [`Snapshot::take`], never the root path; if the path no longer names
+    /// that directory, [`Diff::root_replaced`] is set.
     pub fn diff(&self) -> io::Result<Diff> {
         let mut changes = Vec::new();
         let mut entries = BTreeMap::new();
+        let pinned = self.pinned.pin_if_missing(&self.root)?;
+        let root_replaced = pinned.replaced()?;
         for (path, before) in &self.entries {
-            let after = read_state(&path.to_os_path(&self.root), *before)?;
+            let after = pinned.read_state(path, *before)?;
             let kind = match (before, &after) {
                 (None, None) => None,
                 (None, Some(_)) => Some(ChangeKind::Created),
@@ -163,8 +218,10 @@ impl Snapshot {
         }
         Ok(Diff {
             changes,
+            root_replaced,
             snapshot: Snapshot {
                 root: self.root.clone(),
+                pinned,
                 entries,
             },
         })
@@ -201,33 +258,105 @@ impl Diff {
     }
 }
 
-/// Reads the state of `os_path`, reusing `previous`'s hash when size and
-/// mtime are unchanged. Returns `Ok(None)` if the path does not exist.
-fn read_state(os_path: &Path, previous: Option<FileState>) -> io::Result<Option<FileState>> {
-    let meta = match fs::metadata(os_path) {
-        Ok(m) => m,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e),
-    };
-    if !meta.is_file() {
-        return Ok(None);
+/// The project root, pinned once by [`Snapshot::take`] and then shared.
+/// Every tracked file is stat'ed and hashed through the same rooted,
+/// symlink-refusing walk that reads and saves use ([`ProjectRoot`]), never
+/// through a path string: a tracked path that is, or lies under, a symlink
+/// is never followed, stat'ed or hashed, and nothing but a regular file is
+/// opened. On a target without rooted file operations this fails closed
+/// with an `Unsupported` error.
+#[derive(Debug, Clone)]
+enum RootHandle {
+    Open(Arc<ProjectRoot>),
+    /// The root directory did not exist when the snapshot was taken: every
+    /// path is absent. There is no earlier directory to be replaced, so the
+    /// path is opened (and then pinned) once it exists.
+    Missing,
+}
+
+impl RootHandle {
+    fn open(root: &Path) -> io::Result<RootHandle> {
+        match ProjectRoot::open(root) {
+            Ok(r) => Ok(RootHandle::Open(Arc::new(r))),
+            Err(SaveError::Io(e)) if e.kind() == io::ErrorKind::NotFound => Ok(RootHandle::Missing),
+            Err(e) => Err(save_error_to_io(e)),
+        }
     }
-    let size = meta.len();
-    let mtime = meta.modified()?;
-    if let Some(prev) = previous
-        && prev.size == size
-        && prev.mtime == mtime
-    {
-        return Ok(Some(prev));
+
+    /// The pinned handle itself, or a first open of `root` if it was missing.
+    fn pin_if_missing(&self, root: &Path) -> io::Result<RootHandle> {
+        match self {
+            RootHandle::Open(_) => Ok(self.clone()),
+            RootHandle::Missing => RootHandle::open(root),
+        }
     }
-    let bytes = fs::read(os_path)?;
-    // Re-read metadata so a write racing with our read is caught next time.
-    let meta2 = fs::metadata(os_path)?;
-    Ok(Some(FileState {
-        size: meta2.len(),
-        mtime: meta2.modified()?,
-        sha256: sha256(&bytes),
-    }))
+
+    /// Whether the root path no longer names the pinned directory.
+    fn replaced(&self) -> io::Result<bool> {
+        match self {
+            RootHandle::Open(r) => Ok(!r.is_still_at_path()?),
+            RootHandle::Missing => Ok(false),
+        }
+    }
+
+    /// Reads the state of `path`, reusing `previous`'s hash when size and
+    /// mtime are unchanged. `Ok(None)` if the path does not exist *or* is not
+    /// something the rooted reader will open: a symlink (the file itself or
+    /// an ancestor directory, wherever it points), a non-directory ancestor,
+    /// a directory whose `..` no longer leads back, or a non-regular file.
+    /// Such a path is reported like a deleted file, and its contents are
+    /// never read.
+    fn read_state(
+        &self,
+        path: &ProjectPath,
+        previous: Option<FileState>,
+    ) -> io::Result<Option<FileState>> {
+        let RootHandle::Open(root) = self else {
+            return Ok(None);
+        };
+        let (mut file, meta) = match root.open_regular(path) {
+            Ok(Some(opened)) => opened,
+            Ok(None) => return Ok(None),
+            Err(SaveError::Refused(
+                Refused::SymlinkComponent { .. }
+                | Refused::NotADirectory { .. }
+                | Refused::NotARegularFile { .. }
+                | Refused::EscapesRoot { .. },
+            )) => return Ok(None),
+            // A missing intermediate directory: the path does not exist.
+            Err(SaveError::Io(e)) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(save_error_to_io(e)),
+        };
+        let size = meta.len();
+        let mtime = meta.modified()?;
+        if let Some(prev) = previous
+            && prev.size == size
+            && prev.mtime == mtime
+        {
+            return Ok(Some(prev));
+        }
+        let mut bytes = Vec::with_capacity(size as usize);
+        io::Read::read_to_end(&mut file, &mut bytes)?;
+        // Re-read metadata (of the same descriptor) so a write racing with
+        // our read is caught next time.
+        let meta2 = file.metadata()?;
+        Ok(Some(FileState {
+            size: meta2.len(),
+            mtime: meta2.modified()?,
+            sha256: sha256(&bytes),
+        }))
+    }
+}
+
+fn save_error_to_io(e: SaveError) -> io::Error {
+    match e {
+        SaveError::Io(e) | SaveError::DirectorySync(e) => e,
+        SaveError::Refused(Refused::Unsupported) => io::Error::new(
+            io::ErrorKind::Unsupported,
+            "rooted file operations are not available on this target",
+        ),
+        other => io::Error::other(other.to_string()),
+    }
 }
 
 /// Polling helper: holds the latest snapshot and reports changes on demand
@@ -252,8 +381,19 @@ impl Poller {
     }
 
     /// Diffs once and advances the internal snapshot.
+    ///
+    /// If the root path no longer names the pinned directory this returns an
+    /// `io::Error` of kind `Other` wrapping [`RootReplaced`] and does not
+    /// advance, so no change is lost: the caller either takes a new snapshot
+    /// of the path or keeps following the pinned directory with
+    /// [`Snapshot::diff`] on [`Poller::snapshot`].
     pub fn poll(&mut self) -> io::Result<Vec<ExternalChange>> {
         let diff = self.snapshot.diff()?;
+        if diff.root_replaced {
+            return Err(io::Error::other(RootReplaced {
+                root: self.snapshot.root.clone(),
+            }));
+        }
         self.snapshot = diff.snapshot;
         Ok(diff.changes)
     }

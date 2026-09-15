@@ -1,0 +1,46 @@
+article-twocolumn
+  render article-twocolumn: recovered exit 0 0.051s; from-v2 exit 0
+conf-paper
+  render conf-paper: recovered exit 0 0.089s; from-v2 exit 0
+cv
+  render cv: recovered exit 0 0.032s; from-v2 exit 0
+enumitem-worksheet
+  render enumitem-worksheet: recovered exit 0 0.029s; from-v2 exit 0
+hw1
+  render hw1: recovered exit 0 0.04s; from-v2 exit 0
+hw2
+  render hw2: recovered exit 0 0.041s; from-v2 exit 0
+hyperref-toc
+  render hyperref-toc: recovered exit 0 0.058s; from-v2 exit 0
+inline-math
+  render inline-math: recovered exit 0 0.037s; from-v2 exit 0
+input-bibliography
+  render input-bibliography: recovered exit 0 0.038s; from-v2 exit 0
+lab-report
+  render lab-report: recovered exit 0 0.042s; from-v2 exit 0
+lecture-notes
+  render lecture-notes: recovered exit 0 0.037s; from-v2 exit 0
+letter
+  render letter: recovered exit 0 0.009s; from-v2 exit 0
+listings-manual
+  render listings-manual: recovered exit 0 0.032s; from-v2 exit 0
+lmodern-report
+  render lmodern-report: recovered exit 0 0.063s; from-v2 exit 0
+math-sheet
+  render math-sheet: recovered exit 0 0.031s; from-v2 exit 0
+natbib-review
+  render natbib-review: recovered exit 0 0.052s; from-v2 exit 0
+plain-article
+  render plain-article: recovered exit 0 0.043s; from-v2 exit 0
+ps-calculus
+  render ps-calculus: recovered exit 0 0.043s; from-v2 exit 0
+siunitx-tables
+  render siunitx-tables: recovered exit 0 0.046s; from-v2 exit 0
+thesis-chapter
+  render thesis-chapter: recovered exit 0 0.066s; from-v2 exit 0
+twelvept-plain
+  render twelvept-plain: recovered exit 0 0.046s; from-v2 exit 0
+unicode-accents
+  render unicode-accents: recovered exit 0 0.012s; from-v2 exit 0
+font environment: zero font-FAILURE diagnostics in every fixture
+report: docs/evidence/visual-oracle-letter-after/report.md

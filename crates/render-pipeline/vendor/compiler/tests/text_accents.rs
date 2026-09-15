@@ -64,6 +64,36 @@ fn accent_commands_lay_out_like_the_precomposed_characters() {
 }
 
 #[test]
+fn capital_aliases_resolve_identically_to_their_canonical_accents() {
+    // Each `\capital<name>` is the same accent as its lowercase-named
+    // counterpart; over a capital base both must lay out exactly alike.
+    for (alias, canonical, base, expected) in [
+        ("capitalcaron", "v", "S", "Š"),
+        ("capitalbreve", "u", "A", "Ă"),
+        ("capitalring", "r", "A", "Å"),
+        ("capitalogonek", "k", "A", "Ą"),
+        ("capitalhungarumlaut", "H", "U", "Ű"),
+        ("capitalcedilla", "c", "C", "Ç"),
+    ] {
+        // `\k` is T1-only, like its canonical; everything else is OT1-safe.
+        let preamble = if canonical == "k" {
+            "\\usepackage[T1]{fontenc}\n"
+        } else {
+            ""
+        };
+        same_as_typed(
+            &format!("{preamble}x \\{alias}{{{base}}} end\n"),
+            &format!("{preamble}x \\{canonical}{{{base}}} end\n"),
+        );
+        // And both are the precomposed character typed directly.
+        same_as_typed(
+            &format!("{preamble}x \\{alias}{{{base}}} end\n"),
+            &format!("{preamble}x {expected} end\n"),
+        );
+    }
+}
+
+#[test]
 fn an_unbraced_argument_is_the_next_letter_only() {
     same_as_typed("Ko\\v sice and \\c C\\v s end.\n", "Košice and Çš end.\n");
     same_as_typed(

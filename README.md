@@ -82,14 +82,14 @@ pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026, MacTeX). pdflatex never runs
 inside the product; it is only used to compare.
 
 **Full render, single document, no bibliography or images.** `HW1.tex` and
-`HW2.tex` are two real problem sets (5.1 KB, 134–140 lines each, `article`
+`HW2.tex` are two real problem sets (5.0–5.1 KB, 164–168 lines each, `article`
 11pt with `amsmath`/`amssymb`/`enumitem`/`geometry`). Median of 5 runs, best in
 parentheses; each run is a fresh process.
 
 | Document | `flashtex-render` in-process render | `flashtex-render` process wall (`--tex`, writes PDF) | `pdflatex -interaction=batchmode` wall (one pass) |
 |---|---:|---:|---:|
 | `fixtures/real-world/hw1/HW1.tex` (3 pages) | 47.4 ms (46.5 ms) | 56.0 ms (54.1 ms) | 547.5 ms (536.2 ms) |
-| `fixtures/real-world/hw2/HW2.tex` (3 pages in pdflatex, 4 in FlashTeX) | 46.9 ms (46.9 ms) | 56.4 ms (54.9 ms) | 551.9 ms (534.4 ms) |
+| `fixtures/real-world/hw2/HW2.tex` (3 pages) | 46.9 ms (46.9 ms) | 56.4 ms (54.9 ms) | 551.9 ms (534.4 ms) |
 
 Both documents render with status `recovered` (8 and 19 diagnostics for
 package features that are recognised but not implemented). The pdflatex

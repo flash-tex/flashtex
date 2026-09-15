@@ -157,10 +157,9 @@ pub fn double_struck(letter: char) -> Option<char> {
 }
 
 pub fn advance(c: char) -> Option<u16> {
-    ADVANCES
-        .iter()
-        .find(|(glyph, _)| *glyph == c)
-        .map(|(_, advance)| *advance)
+    static INDEX: crate::char_table::CharTable<u16> = crate::char_table::CharTable::new(ADVANCES);
+    INDEX
+        .get(c)
         // amssymb/amsfonts symbols bound to the same resource
         // (`crate::amssymb::LM_ADVANCES`, generated from this font program).
         .or_else(|| crate::amssymb::lm_advance(c))

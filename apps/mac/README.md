@@ -203,7 +203,7 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   item. Display math (`$$…$$`, `\[…\]`) and math environments are not covered.
   Debounced like other hover (the same 0.45 s timer; nothing while typing).
   Tests: `MathHoverTests`.
-- Dark preview toggle in the toolbar (page and text colors only).
+- Dark preview toggle in the preview header (page and text colors only).
 - Stale offsets are never applied. Each `compile_result` remembers the exact
   document text it was produced for; after edits, a span is rebased through the
   common prefix/suffix of old vs new text (`SourceMapping`), verified against the
@@ -891,7 +891,14 @@ Return at the end of a `\item …` line continues the list with a new `\item `
 (`\item[] ` for a description entry; a bare `\item` line just breaks). ⌘/
 toggles `% ` on every line the selection touches (all commented → uncomment,
 `%` with or without a space; otherwise comment the non-blank lines; one undo
-step "Toggle Comment"). The delimiter pair around the caret is highlighted
+step "Toggle Comment"). Editor ▸ Duplicate Line (⌥⇧↓) and Duplicate Line Up
+(⌥⇧↑) copy every full line the selection touches below or above, leaving the
+caret or selection on the copy, as one undo step (`EditorKeyHandling.duplicateLinesEdit`,
+the Overleaf shortcut). Editor ▸ Move Line
+Up/Down (⌥⌘↑ / ⌥⌘↓), Delete Line (⌃⌘K), Join Lines (⌃J), Sort Lines
+Ascending/Descending (palette) and Trim Trailing Whitespace (palette) operate
+on the full lines the selection touches as one undo step (`EditorLineCommands.swift`).
+The delimiter pair around the caret is highlighted
 (`BraceMatcher`).
 
 Commands trigger on `\` (empty prefix lists everything supported). Invalid
@@ -957,12 +964,13 @@ explain that nothing is loaded.
 | ⌘⇧U | Submit sample capture… (PNG/JPEG → `capture_submit` through the attached bridge) |
 | ⌘⇧G | Convert capture (`capture_convert` for the latest received capture) |
 | ⌘⇧N | Nearby Companion… (advertise, pairing code, paired devices, received captures; Return shows or resumes a pairing code, Esc cancels it or dismisses a banner, Tab walks Advertise → pairing controls → Forget → Clear; the step indicator, status row and every transition are VoiceOver text) |
-| Edit > Rename Citation… | Rename citation window (reviewed `plan_citation_rename` across the project → one `apply_group`; also in the toolbar) |
-| ⌘⇧P | Command palette (View; also the toolbar's Commands button): every command in this table with its menu and shortcut; type to filter, ↑/↓ choose, Return runs, Esc closes |
+| Edit > Rename Citation… | Rename citation window (reviewed `plan_citation_rename` across the project → one `apply_group`) |
+| ⌘⇧P | Command palette (View; also the toolbar's Commands button): scope tabs for Files, Sections, Labels, Citations and every command in this table; type to filter, Tab cycles scopes, ↑/↓ choose, Return opens or runs, Esc closes |
 | ⌘= | Zoom in preview (View; also the preview header's + button or a pinch): multiply the fit-width zoom by 1.25, up to 4x; wide pages scroll horizontally |
 | ⌘- | Zoom out preview (View; also the header's − button): divide by 1.25, down to 0.25x fit width |
 | ⌘0 | Actual size preview (View): 1 PDF point per screen point when the 0.25x…4x zoom bounds permit it |
 | ⌘9 | Fit width preview (View): reset zoom to 1x so the widest page fits the pane; double-click the header percentage does the same |
+| ⌘⇧9 | Fit page preview (View): zooms so the tallest page's full height fits the pane (within the 0.25x…4x bounds); also in the preview header on hover |
 | ⌘⌥= | Increase editor font size (View; also a pinch over the editor): +1 pt up to 36 pt, persisted as the Settings font-size preference; gutter and highlighting follow |
 | ⌘⌥- | Decrease editor font size (View): -1 pt down to 8 pt |
 | ⌘⌥0 | Reset editor font size (View): back to the default 13 pt |
@@ -981,8 +989,16 @@ explain that nothing is loaded.
 | Esc / ⌃Space | Completion popup (supported commands, `\end{…}` for open environments, labels, citation keys, document words; never takes the keyboard from the editor) |
 | ↑ / ↓ / Tab / ⇧Tab / Return | Completion list keys, while the list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Return/Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list, any other caret move closes it |
 | ⌘⇧Space | Signature help for the command whose argument the caret is in (also opens on `{`/`[` typed after a command name; `}`, Esc or leaving the argument closes it) |
-| ⌥⇧↓ / ⌥⇧↑ | Duplicate the caret's line — or every line the selection touches — below / above itself, caret on the copy so the key repeats |
 | ⌘/ | Toggle `% ` line comment on the selection's lines |
+| ⌘L | Go to line… (1-based line, line:column, or +N/−N relative to the caret; out-of-range numbers clamp; `:42` in the command palette jumps directly) |
+| ⌥⇧↓ | Duplicate Line (every full line the selection touches, copy below, caret/selection stays on the copy, one undo step; the Overleaf shortcut) |
+| ⌥⇧↑ | Duplicate Line Up (every full line the selection touches, copy above, caret/selection stays on the copy, one undo step) |
+| ⌘⌥↑ / ⌘⌥↓ | Move line up / down (full lines only, no-op at the buffer edges; ⌥⌘[ / ⌥⌘] remain Previous/Next Occurrence) |
+| ⌃⌘K | Delete Line (every full line the selection touches; ⇧⌘K remains Attach Built Compiler) |
+| ⌃J | Join Lines (one space; strips the next line's leading whitespace and a trailing `%` comment marker only when it ends the line) |
+| Editor > Sort Lines Ascending | Sort Lines Ascending (stable, locale-aware compare of the touched lines; no key equivalent) |
+| Editor > Sort Lines Descending | Sort Lines Descending (stable, locale-aware compare of the touched lines; no key equivalent) |
+| Editor > Trim Trailing Whitespace | Trim Trailing Whitespace of the whole document (verbatim bodies and a line that is only `\\` plus spaces are left alone) |
 | ⌃I | Re-indent Lines (selected lines, or the caret's line; LaTeX-aware; one undo step). Not Tab; Vim does not bind ⌃I; ⌘⇧I is Toggle Captures |
 | Edit > Re-indent Document | Re-indent Document (same rules over the whole buffer; one undo step; no shortcut) |
 | ⌘⌥← | Fold the innermost environment or section at the caret (first line stays visible with an inline …; hidden characters stay in the buffer) |
@@ -994,6 +1010,7 @@ explain that nothing is loaded.
 | ⌘⇧T | Go to symbol: fuzzy picker over every heading, environment and label of the open documents |
 | ⌘⇧A | Select environment: the innermost `\begin{X}`…`\end{X}` around the caret, again for the enclosing one (a caret on `\begin`/`\end` highlights its partner) |
 | ⌘⇧W | Wrap selection in environment… (whole lines as an indented block, otherwise inline; one undoable edit) |
+| ⌃⌘E | Change environment… (innermost pair; rewrites both `\begin` and `\end` names as one undo step; typing in either name updates the partner) |
 | ⌥⇧R | Rename symbol: the `\label` key or user command under the caret across the open documents (Plan → Apply; one undoable edit per document, one guarded `apply_group` per file with the helper) |
 | ⌘⇧] / ⌘⇧[ | Next / previous diagnostic (refused if its span was edited since the compile) |
 | ⌘⌥] / ⌘⌥[ | Next / previous occurrence within the diagnostics panel's selected group (wrapping; the row reads "k of n") |
@@ -1218,8 +1235,8 @@ not replace, negotiate, or change the v1 path.
   decode, prepare and paint red at the disc centre).
 - Input, file: a `display_list` JSON envelope written by `flashtex-render --v2 out.json`.
   Open it with `File > Open Display List (v2)…`, or launch with `FLASHTEX_V2_FILE=<json>`
-  (`FLASHTEX_PREVIEW_V2=1` starts with the toolbar toggle on). The toolbar's
-  "v2 preview" switch flips between the v1 and v2 panes.
+  (`FLASHTEX_PREVIEW_V2=1` starts with the switch on). The preview header's
+  "v2 pane" switch flips between the v1 and v2 panes.
 - Keeping up with typing (`docs/evidence/mac-preview-v2-live-2026-09-12.md`): one
   preparation in flight, the newest arrival waits and lists in between are dropped
   undecoded (coalescing; strict supersession alone starved visible progress: only the last
