@@ -143,6 +143,7 @@
     {"name": "goodbreak", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "ends the paragraph, then \\penalty-500", "renders": true},
     {"name": "filbreak", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "ends the paragraph, then \\vfil\\penalty-200\\vfilneg", "renders": true},
     {"name": "discretionary", "mode": "text", "origin": "text_dispatch", "arguments": "{pre}{post}{nobreak}", "description": "discretionary break (plain text of each argument)", "renders": true},
+    {"name": "nobreakdash", "mode": "text", "origin": "text_dispatch", "arguments": "- -- ---", "description": "amsmath: the dashes that follow, with no line break after them (\\nobreak)", "renders": true},
     {"name": "tolerance", "mode": "text", "origin": "text_dispatch", "arguments": "=<number>", "description": "line-breaking parameter, restored at the end of its group", "renders": true},
     {"name": "pretolerance", "mode": "text", "origin": "text_dispatch", "arguments": "=<number>", "description": "line-breaking parameter, restored at the end of its group", "renders": true},
     {"name": "looseness", "mode": "text", "origin": "text_dispatch", "arguments": "=<number>", "description": "line-breaking parameter for the next paragraph end", "renders": true},
@@ -980,7 +981,7 @@
     "rows": [
       {"set": "kernel", "kind": "command", "canonical": 410, "supported": 190, "percent": 46.3},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 18, "percent": 60},
-      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 41, "percent": 40.2},
+      {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 42, "percent": 41.2},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
       {"set": "amssymb", "kind": "command", "canonical": 229, "supported": 225, "percent": 98.3},
       {"set": "enumitem", "kind": "command", "canonical": 17, "supported": 1, "percent": 5.9},
@@ -993,6 +994,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 18, "percent": 7.5}
     ],
-    "total": {"canonical": 1314, "supported": 533, "percent": 40.6}
+    "total": {"canonical": 1314, "supported": 534, "percent": 40.6}
   }
 }
