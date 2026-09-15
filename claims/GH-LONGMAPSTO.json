@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/longmapsto",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/603",
   "machine": "Overpriced-Hardware",
   "note": null,
   "started_utc": "2026-09-15T09:09:22Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-LONGMAPSTO",
-  "updated_utc": "2026-09-15T09:09:22Z"
+  "updated_utc": "2026-09-15T09:49:40Z"
 }
