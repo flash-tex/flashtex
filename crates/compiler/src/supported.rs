@@ -884,6 +884,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("verbatim", "literal monospaced lines"),
     ("verbatim*", "literal monospaced lines with visible spaces"),
     ("lstlisting", "literal monospaced lines (basic listings)"),
+    ("comment", "body discarded unread, even invalid commands inside (comment package)"),
     ("proof", "amsthm proof with a closing square"),
     (
         "thebibliography",
