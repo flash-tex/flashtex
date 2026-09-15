@@ -463,7 +463,7 @@ you trust.
 | Show completion list (off disables both automatic-while-typing and explicit ⌃Space / Esc completion) | on |
 | Vim keybindings (also View › Toggle Vim Keybindings, ⌃⌘V) | off |
 | Preview follows the caret while you edit | on |
-| Capture conversion: provider (None / xAI), key in Keychain, model | None |
+| Capture conversion: provider (None / xAI), key in Keychain, model | xAI (no-op until a key is added) |
 | Restore Defaults | |
 
 ## Keyboard shortcuts

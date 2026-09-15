@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contents-list oracle: \\tableofcontents, \\listoffigures, \\listoftables.
+"""Contents-list oracle: \\tableofcontents, \\listoffigures, \\listoftables, \\lstlistoflistings.
 
 pdflatex is the ORACLE ONLY (never in the product path, never in cargo
 tests). This script
@@ -271,6 +271,69 @@ def fixtures():
         "\\newpage\n" + secs(58, NAMES[:3], sub=["Overview"], words=90) + "\n\n\\clearpage\n\n" + secs(59, NAMES[3:5], words=90),
         clear=False,
     )
+    # Three figures and two tables over three body pages, one short caption.
+    f["34-article-three-figures-two-tables"] = doc(
+        "article",
+        "",
+        "\\listoffigures\n\\listoftables",
+        secs(61, NAMES[:2], words=90)
+        + "\n\n" + figs("figure", ["Apparatus"], 62)
+        + "\n\n" + figs("table", ["Raw measurements"], 63)
+        + "\n\n\\clearpage\n\n" + secs(64, NAMES[2:4], words=90)
+        + "\n\n" + pf.paras(65, 1, 70)
+        + "\n\n\\begin{figure}[h]\n\\centering\n\\caption[Fitted curve]{The fitted curve with its residuals underneath}\n\\end{figure}\n\n"
+        + figs("table", ["Summary of the fitted parameters"], 66)
+        + "\n\n\\clearpage\n\n" + secs(67, NAMES[4:6], words=90)
+        + "\n\n" + figs("figure", ["Outlook"], 68),
+    )
+    f["35-report-three-figures-two-tables"] = doc(
+        "report",
+        "",
+        "\\listoffigures\n\\listoftables",
+        "\\chapter{Measurements}\n" + pf.paras(69, 1, 80)
+        + "\n\n" + figs("figure", ["Apparatus", "Detector response"], 70)
+        + "\n\n" + figs("table", ["Raw measurements"], 71)
+        + "\n\n\\chapter{Analysis}\n" + pf.paras(72, 1, 80)
+        + "\n\n\\begin{table}[h]\n\\centering\n\\caption[Fit parameters]{The fitted parameters and their uncertainties}\n\\end{table}\n\n"
+        + figs("figure", ["Residuals"], 73),
+        clear=False,
+    )
+    # `\lstlistoflistings`: `\tableofcontents` reading `.lol`
+    # (listings.sty `\lstlistoflistings`, `\l@lstlisting`). Only captioned
+    # listings step `\c@lstlisting` and write an entry; `nolol` writes none;
+    # report numbers by chapter.
+    lst = lambda opts, code: f"\\begin{{lstlisting}}[{opts}]\n{code}\n\\end{{lstlisting}}"
+    f["36-article-lstlistoflistings"] = doc(
+        "article",
+        "",
+        "\\lstlistoflistings",
+        secs(74, NAMES[:1], words=90)
+        + "\n\n" + lst("caption={Hello world}", "print hello")
+        + "\n\n" + pf.paras(75, 1, 70)
+        + "\n\n" + lst("", "uncaptioned")
+        + "\n\n" + pf.paras(76, 1, 70)
+        + "\n\n\\clearpage\n\n" + secs(77, NAMES[1:2], words=90)
+        + "\n\n" + lst("caption={Second listing}", "x = 1")
+        + "\n\n" + lst("caption={Not listed},nolol", "y = 2")
+        + "\n\n" + pf.paras(78, 1, 70)
+        + "\n\n" + lst("caption={Third listing}", "z = 3"),
+        "\\usepackage{listings}\n",
+    )
+    f["37-report-lstlistoflistings"] = doc(
+        "report",
+        "",
+        "\\lstlistoflistings",
+        "\\chapter{First}\n" + pf.paras(79, 1, 80)
+        + "\n\n" + lst("caption={Setup}", "make setup")
+        + "\n\n" + pf.paras(80, 1, 70)
+        + "\n\n" + lst("caption={Build}", "make")
+        + "\n\n\\chapter{Second}\n" + pf.paras(81, 1, 80)
+        + "\n\n" + lst("caption={Deploy}", "make deploy"),
+        "\\usepackage{listings}\n",
+        clear=False,
+    )
+    # Nothing but the list: pdflatex still ships the page with its head.
+    f["38-article-list-only"] = doc("article", "", "\\listoffigures", "", clear=False)
     return f
 
 
