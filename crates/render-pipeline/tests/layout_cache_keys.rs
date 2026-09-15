@@ -119,7 +119,7 @@ fn one_of_every_item_kind() -> Vec<(&'static str, Item)> {
         ("Space", Item::Space { style, factor: 1000, no_break: false }),
         ("Math", item_from("$x$", |i| matches!(i, Item::Math { .. }))),
         ("LineBreak", Item::LineBreak { skip_pt: 0.0 }),
-        ("Quad", Item::Quad { em: 1.0 }),
+        ("Quad", Item::Quad { em: 1.0, style }),
         ("Label", Item::Label { key: "k".into() }),
         ("ItalicCorrection", Item::ItalicCorrection),
         ("NoteParBreak", Item::NoteParBreak),
