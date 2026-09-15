@@ -281,8 +281,10 @@ impl ProjectRoot {
         Ok(cur)
     }
 
-    /// Opens the regular file `name` in `dir` for reading without following
-    /// a symlink. `Ok(None)` when absent.
+    /// Opens `name` in `dir` for reading without following a symlink.
+    /// `Ok(None)` when absent. The open is non-blocking (see
+    /// [`sys::open_at`]), so a FIFO here cannot hang the caller; callers that
+    /// read `fstat` the result and refuse anything but a regular file.
     fn open_target(dir: &File, name: &str) -> Result<Option<File>, SaveError> {
         match sys::open_at(dir, name, sys::O_RDONLY | sys::O_NOFOLLOW, 0) {
             Ok(f) => Ok(Some(f)),
@@ -457,6 +459,11 @@ impl ProjectRoot {
         let flags = sys::O_RDWR | sys::O_CREAT | sys::O_NOFOLLOW;
         let file = sys::open_at(&dir, lock_path.file_name(), flags, 0o644)
             .map_err(|e| classify_open(e, lock_path.file_name()))?;
+        if !file.metadata()?.is_file() {
+            return Err(refused(Refused::NotARegularFile {
+                component: lock_path.file_name().to_string(),
+            }));
+        }
         if !sys::try_lock_exclusive(&file)? {
             return Err(refused(Refused::LockUnavailable {
                 lock_path: self.path.join(LOCK_FILE),

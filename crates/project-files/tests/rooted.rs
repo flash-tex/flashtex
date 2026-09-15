@@ -7,11 +7,14 @@ use std::fs;
 use std::os::unix::fs::{MetadataExt, symlink};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use common::{TempDir, pp};
 use flashtex_project_files::{
-    Expected, ProjectRoot, Refused, SaveConflictKind, SaveError, save_atomic, sha256,
+    DiagnosticKind, DiscoverError, Expected, ProjectGraph, ProjectRoot, Refused, SaveConflictKind,
+    SaveError, save_atomic, sha256,
 };
 
 fn is_refused_symlink(err: &SaveError, component: &str) -> bool {
@@ -295,4 +298,160 @@ fn racing_symlink_swap_never_reaches_the_outside_file() {
     assert!(flips > 0);
     assert_eq!(fs::read_to_string(&victim).unwrap(), "untouchable");
     eprintln!("racing outcomes ok/refused/conflict = {outcomes:?}, racer flips = {flips}");
+}
+
+#[cfg(target_os = "macos")]
+type ModeT = u16;
+#[cfg(not(target_os = "macos"))]
+type ModeT = u32;
+
+unsafe extern "C" {
+    fn mkfifo(path: *const std::os::raw::c_char, mode: ModeT) -> std::os::raw::c_int;
+}
+
+fn make_fifo(path: &std::path::Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `c` is a valid NUL-terminated path that outlives the call.
+    let rc = unsafe { mkfifo(c.as_ptr(), 0o644) };
+    assert_eq!(
+        rc,
+        0,
+        "mkfifo {}: {}",
+        path.display(),
+        std::io::Error::last_os_error()
+    );
+}
+
+/// Runs `f` on a worker thread and fails the test if it has not returned
+/// within `limit`. A hung worker is leaked; the test binary still exits.
+fn within<T: Send + 'static>(
+    limit: Duration,
+    what: &str,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(limit).unwrap_or_else(|_| {
+        panic!("{what} did not return within {limit:?} (blocked on a FIFO open?)")
+    })
+}
+
+/// A FIFO where a regular file or directory is expected is refused at once;
+/// neither the rooted read, the directory walk, nor discovery of a
+/// FIFO entry blocks waiting for a writer.
+#[test]
+fn fifo_is_refused_without_blocking() {
+    let t = TempDir::new("fifo");
+    make_fifo(&t.root().join("pipe.tex"));
+    let root_path = t.root().to_path_buf();
+    let limit = Duration::from_secs(2);
+
+    let r = root_path.clone();
+    let err = within(limit, "ProjectRoot::read", move || {
+        ProjectRoot::open(&r)
+            .unwrap()
+            .read(&pp("pipe.tex"), 1024)
+            .map(|_| ())
+    })
+    .unwrap_err();
+    assert!(
+        matches!(&err, SaveError::Refused(Refused::NotARegularFile { component }) if component == "pipe.tex"),
+        "{err:?}"
+    );
+
+    // A FIFO as a directory component: the O_DIRECTORY open refuses it and
+    // the symlink-classification probe that follows must not block either.
+    let r = root_path.clone();
+    let err = within(
+        limit,
+        "ProjectRoot::read through a FIFO component",
+        move || {
+            ProjectRoot::open(&r)
+                .unwrap()
+                .read(&pp("pipe.tex/x.tex"), 1024)
+                .map(|_| ())
+        },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&err, SaveError::Refused(Refused::NotADirectory { component }) if component == "pipe.tex"),
+        "{err:?}"
+    );
+
+    let r = root_path.clone();
+    let err = within(limit, "ProjectGraph::discover", move || {
+        ProjectGraph::discover(&r, &pp("pipe.tex")).map(|_| ())
+    })
+    .unwrap_err();
+    assert!(
+        matches!(&err, DiscoverError::EntryUnreadable(p, e) if p.as_str() == "pipe.tex" && e.to_string().contains("not a regular file")),
+        "{err:?}"
+    );
+}
+
+/// `\input{pipe}` whose target is swapped between a regular file and a FIFO
+/// behind discovery's existence probe. Every discovery returns promptly; once
+/// the swap lands between the probe and the rooted open, the reference gets
+/// a not-a-regular-file read diagnostic instead of a hang.
+#[test]
+fn input_swapped_to_fifo_after_probe_does_not_hang_discovery() {
+    let t = TempDir::new("fifo-swap");
+    t.write("main.tex", "\\input{pipe}\n");
+    t.write("keep-regular", "Regular.");
+    make_fifo(&t.root().join("keep-fifo"));
+    fs::copy(t.root().join("keep-regular"), t.root().join("pipe.tex")).unwrap();
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let racer = {
+        let (stop, root) = (stop.clone(), t.root().to_path_buf());
+        thread::spawn(move || {
+            let mut flips = 0u64;
+            while !stop.load(Ordering::Relaxed) {
+                for keep in ["keep-fifo", "keep-regular"] {
+                    let tmp = root.join("swap.tmp");
+                    let _ = fs::remove_file(&tmp);
+                    fs::hard_link(root.join(keep), &tmp).unwrap();
+                    fs::rename(&tmp, root.join("pipe.tex")).unwrap();
+                }
+                flips += 1;
+            }
+            flips
+        })
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let (mut runs, mut refused) = (0u32, 0u32);
+    while refused == 0 && Instant::now() < deadline {
+        let root = t.root().to_path_buf();
+        let graph = match within(
+            Duration::from_secs(2),
+            "ProjectGraph::discover",
+            move || ProjectGraph::discover(&root, &pp("main.tex")),
+        ) {
+            Ok(g) => g,
+            Err(e) => {
+                stop.store(true, Ordering::Relaxed);
+                panic!("discover failed: {e:?}");
+            }
+        };
+        runs += 1;
+        refused += graph
+            .diagnostics()
+            .iter()
+            .filter(|d| {
+                matches!(&d.kind, DiagnosticKind::ReadError { path, message }
+                    if path.as_str() == "pipe.tex" && message.contains("not a regular file"))
+            })
+            .count() as u32;
+    }
+    stop.store(true, Ordering::Relaxed);
+    let flips = racer.join().unwrap();
+    eprintln!("fifo swap: {runs} discoveries, {refused} refused, racer flips = {flips}");
+    assert!(
+        refused > 0,
+        "the swap never landed between probe and open in {runs} discoveries"
+    );
 }

@@ -201,6 +201,21 @@ impl Diff {
     }
 }
 
+fn open_nonblocking(os_path: &Path) -> io::Result<fs::File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(crate::sys::O_NONBLOCK)
+            .open(os_path)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::File::open(os_path)
+    }
+}
+
 /// Reads the state of `os_path`, reusing `previous`'s hash when size and
 /// mtime are unchanged. Returns `Ok(None)` if the path does not exist.
 fn read_state(os_path: &Path, previous: Option<FileState>) -> io::Result<Option<FileState>> {
@@ -220,7 +235,14 @@ fn read_state(os_path: &Path, previous: Option<FileState>) -> io::Result<Option<
     {
         return Ok(Some(prev));
     }
-    let bytes = fs::read(os_path)?;
+    // Open non-blocking and re-check the opened descriptor: a path swapped
+    // to a FIFO after the `metadata` probe must not block the open.
+    let mut file = open_nonblocking(os_path)?;
+    if !file.metadata()?.is_file() {
+        return Ok(None);
+    }
+    let mut bytes = Vec::with_capacity(size as usize);
+    io::Read::read_to_end(&mut file, &mut bytes)?;
     // Re-read metadata so a write racing with our read is caught next time.
     let meta2 = fs::metadata(os_path)?;
     Ok(Some(FileState {
