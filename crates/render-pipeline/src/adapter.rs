@@ -195,6 +195,11 @@ pub enum Item {
     /// `typeset::footnotes` (`None` for `\footnotemark`). `span` is the
     /// command token.
     Footnote { number: String, mark: bool, span: Span, text: Option<Vec<Item>> },
+    /// `\marginpar` (compiler `Inline::Marginpar`, behind the `marginpar`
+    /// cargo feature): `text` is the note's items, set in `\footnotesize`
+    /// in the right margin by `typeset::marginpar`. `span` is the command
+    /// token. There is no mark: the running text is untouched.
+    Marginpar { span: Span, text: Vec<Item> },
     /// `\colorbox`/`\fcolorbox` (compiler `Inline::ColorBox`).
     ColorBox(Box<ColorBoxItem>),
     /// LaTeX's `\llap{...}`: `items` set at their natural width and then
@@ -2015,6 +2020,8 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
                     out.insert((span.document.0, span.start, span.end), *c);
                 }
                 Inline::Footnote { text: Some(text), .. } => walk(text, out),
+                #[cfg(feature = "marginpar")]
+                Inline::Marginpar { text, .. } => walk(text, out),
                 Inline::Tabular(t) => {
                     for list in t.inline_lists() {
                         walk(list, out);
@@ -2101,6 +2108,8 @@ fn inline_span(i: &Inline) -> Span {
         Inline::Underline(u) => u.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
+        #[cfg(feature = "marginpar")]
+        Inline::Marginpar { span, .. } => *span,
     }
 }
 
@@ -2114,6 +2123,14 @@ fn unsupported_inlines(inline: &Inline, out: &mut Vec<(&'static str, Span, Strin
             // Set by `typeset::footnotes`; contexts it does not reach
             // (headings, captions, floats) are diagnosed there.
             for i in text.iter().flatten() {
+                unsupported_inlines(i, out);
+            }
+        }
+        #[cfg(feature = "marginpar")]
+        Inline::Marginpar { text, .. } => {
+            // Set by `typeset::marginpar`; nested constructs are scanned
+            // like a footnote's.
+            for i in text {
                 unsupported_inlines(i, out);
             }
         }
@@ -6337,6 +6354,11 @@ fn items_cached(
                 mark.hash(&mut h);
                 text.as_ref().map_or(0, Vec::len).hash(&mut h);
             }
+            #[cfg(feature = "marginpar")]
+            Inline::Marginpar { text, .. } => {
+                20u8.hash(&mut h);
+                text.len().hash(&mut h);
+            }
             Inline::Tabular(t) => {
                 10u8.hash(&mut h);
                 t.entries.len().hash(&mut h);
@@ -6537,6 +6559,31 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     note
                 });
                 items.push(Item::Footnote { number: number.clone(), mark: *mark, span: *span, text: note });
+                after_control_word = end == span.end;
+                prev_end = Some(end);
+                prev_span = Some(Span::in_document(span.document, span.start, end));
+                pending_accent = None;
+            }
+            #[cfg(feature = "marginpar")]
+            Inline::Marginpar { span, text, .. } => {
+                // `\@marginpar` sets no mark in the running text; the space
+                // before the command is an ordinary interword space. The
+                // command's `[<left>]` and `{<right>}` are skipped for the
+                // gap that follows, exactly like a footnote's arguments.
+                let src = text_of(span.document);
+                let end = footnote_command_end(src, span.end);
+                let gap = space_between(prev_end, prev_span, *span, Some("\\marginpar"), after_control_word);
+                let mut gap_style = space_style(texts, styles, prev_end, *span, TextStyle::default());
+                gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
+                let mut note = Vec::new();
+                for (k, part) in text.split(|i| matches!(i, Inline::LineBreak { span: at, .. } if at == span)).enumerate() {
+                    if k > 0 {
+                        note.push(Item::NoteParBreak);
+                    }
+                    note.extend(items_from_inlines_styled(texts, part, styles, labels, size, false, compiler_weight));
+                }
+                items.push(Item::Marginpar { span: *span, text: note });
                 after_control_word = end == span.end;
                 prev_end = Some(end);
                 prev_span = Some(Span::in_document(span.document, span.start, end));
@@ -7329,6 +7376,40 @@ mod tests {
             let c = &w.segments[0].chars[0];
             assert_eq!(&src[c.start..c.end], "---");
         }
+    }
+
+    /// `\marginpar` (behind the `marginpar` cargo feature): the note sets
+    /// no mark and leaves the running text alone, arriving as an
+    /// `Item::Marginpar` that carries the note's own items.
+    #[cfg(feature = "marginpar")]
+    #[test]
+    fn marginpar_keeps_its_text_out_of_the_running_prose() {
+        let src = "Text\\marginpar{note}";
+        let it = items(src);
+        let words: Vec<String> = it
+            .iter()
+            .filter_map(|i| match i {
+                Item::Word(w) => Some(w.text()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(words, vec!["Text".to_string()], "{it:?}");
+        let (span, text) = it
+            .iter()
+            .find_map(|i| match i {
+                Item::Marginpar { span, text } => Some((span, text)),
+                _ => None,
+            })
+            .expect("a margin note item");
+        assert_eq!(&src[span.start..span.end], "\\marginpar");
+        let note_words: Vec<String> = text
+            .iter()
+            .filter_map(|i| match i {
+                Item::Word(w) => Some(w.text()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(note_words, vec!["note".to_string()], "{it:?}");
     }
 
     #[test]

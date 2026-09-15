@@ -380,7 +380,7 @@ fn part_span(part: &ParaPart) -> Option<Span> {
     match part {
         ParaPart::Lines(items) => items.iter().find_map(|i| match i {
             Item::Word(w) => Some(w.span()),
-            Item::Math { span, .. } | Item::Logo { span, .. } | Item::Rule { span, .. } | Item::Footnote { span, .. } => Some(*span),
+            Item::Math { span, .. } | Item::Logo { span, .. } | Item::Rule { span, .. } | Item::Footnote { span, .. } | Item::Marginpar { span, .. } => Some(*span),
             _ => None,
         }),
         ParaPart::Display { span, .. } | ParaPart::Rows { span, .. } => Some(*span),
