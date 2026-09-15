@@ -104,6 +104,38 @@ fn dot_fill_matches_pdflatex_cleaders() {
 }
 
 #[test]
+fn large_dot_fill_uses_large_dots() {
+    if !common::lm_available() {
+        return;
+    }
+    // pdflatex oracle for `{\Large A\dotfill B}` (same 10pt article and
+    // 200pt box as above, TeX Live 2026 `\showbox`): A/B and the dots are
+    // set in OT1/cmr/m/n/14.4. A is 10.5699pt and B 9.9849pt, so the fill
+    // glue is 179.4452pt; each of the 28 cleader boxes is 6.20395pt
+    // (`.44em` of a 14.09984pt em) holding a 3.91661pt dot. The 5.7346pt
+    // leftover splits 2.8673pt at each end, so the first dot origin is
+    // 4.01097pt and the last 171.51762pt from the glue start. (The box and
+    // dot are NOT 14.4pt-scaled cmr10 values: cmr17 is an optical size with
+    // its own quad and period width, measured here rather than derived.)
+    let rendered = rendered("{\\Large A\\dotfill B}");
+    let items = &rendered.v2.pages[0].items;
+    let dots = synthetic_run(items, "\\dotfill");
+    let a = text_run(items, "A");
+    let b = text_run(items, "B");
+    let glue_start = a.glyphs[0].origin_x.0 + a.glyphs[0].advance_x.0;
+    let first = (dots.glyphs[0].origin_x.0 - glue_start) as f64 / flashtex_render_pipeline::display::TICKS_PER_BP * PT_PER_BP;
+    let last = (dots.glyphs.last().unwrap().origin_x.0 - glue_start) as f64 / flashtex_render_pipeline::display::TICKS_PER_BP * PT_PER_BP;
+    let b_start = (b.glyphs[0].origin_x.0 - glue_start) as f64 / flashtex_render_pipeline::display::TICKS_PER_BP * PT_PER_BP;
+    assert_eq!(dots.text, ".".repeat(28));
+    assert_eq!(dots.glyphs.len(), 28);
+    assert_eq!(dots.clusters.len(), 28);
+    assert!((pt(dots.glyphs[0].advance_x) - 3.91661).abs() <= TOL, "dot width: {}pt", pt(dots.glyphs[0].advance_x));
+    assert!((first - 4.01097).abs() <= TOL, "first dot: {first}pt");
+    assert!((last - 171.51762).abs() <= TOL, "last dot: {last}pt");
+    assert!((b_start - 179.4452).abs() <= TOL, "glue width: {b_start}pt");
+}
+
+#[test]
 fn leader_inside_text_keeps_both_sides() {
     if !common::lm_available() {
         return;
