@@ -2517,6 +2517,8 @@ impl P<'_> {
                 TokenKind::Word(word)
                     if control_symbol_kern(
                         word,
+                        self.t[self.i].maps_to_invocation,
+                        self.t[self.i].definition,
                         self.t[self.i].token.span,
                         self.math_packages.amsmath,
                     )
