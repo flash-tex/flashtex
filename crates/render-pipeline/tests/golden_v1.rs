@@ -18,7 +18,12 @@ fn text_items(payload: &flashtex_render_pipeline::v1::V1Payload) -> Vec<(String,
                 x_pt,
                 baseline_y_pt,
                 ..
-            } => Some((text.clone(), source.path.to_string(), source.start_byte, source.end_byte, *x_pt, *baseline_y_pt)),
+            } => {
+                // Chrome (the page number) has no source; the byte-exact
+                // assertions below are about real text.
+                let source = source.as_ref()?;
+                Some((text.clone(), source.path.to_string(), source.start_byte, source.end_byte, *x_pt, *baseline_y_pt))
+            }
             V1Item::Rule { .. } => None,
         })
         .collect()
@@ -104,4 +109,47 @@ fn body_only_input_uses_the_compiler_geometry() {
     // First baseline: 1in + \topskip (12 TeX pt) = 72 + 11.955 bp.
     assert!((items[0].4 - 72.0).abs() < 1e-6, "x {}", items[0].4);
     assert!((items[0].5 - 83.955).abs() < 1e-3, "baseline {}", items[0].5);
+}
+
+/// Generated page numbers are page chrome with no source of their own:
+/// the v1 item carries `source: None` (a wire `"source": null`), while
+/// every ordinary text item keeps its exact byte span.
+#[test]
+fn page_numbers_have_no_source_and_real_text_keeps_its_span() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let src = "\\documentclass{article}\\begin{document}Hello world\\end{document}";
+    let r = render_one(src);
+    let v1 = v1_of(&r, Capabilities::default());
+    assert_eq!(v1.status, "ok", "{:?}", v1.diagnostics);
+    let texts: Vec<_> = v1
+        .pages
+        .iter()
+        .flat_map(|p| p.items.iter())
+        .filter_map(|it| match it {
+            V1Item::Text { text, source, .. } => Some((text.clone(), source.clone())),
+            V1Item::Rule { .. } => None,
+        })
+        .collect();
+    let (chrome, sourced): (Vec<_>, Vec<_>) = texts.iter().partition(|(_, s)| s.is_none());
+    // Exactly one sourceless item: the page number, and it is "1".
+    assert_eq!(chrome.len(), 1, "{texts:?}");
+    assert_eq!(chrome[0].0, "1");
+    // Every real text item keeps a byte-exact span into main.tex.
+    assert!(!sourced.is_empty());
+    for (text, source) in &sourced {
+        let s = source.as_ref().unwrap();
+        assert_eq!(&*s.path, "main.tex");
+        assert!(s.start_byte < s.end_byte, "{text:?}: {s:?}");
+        assert!(s.end_byte <= src.len());
+    }
+    let hello = sourced.iter().find(|(t, _)| t == "Hello").expect("Hello item");
+    let s = hello.1.as_ref().unwrap();
+    assert_eq!(&src[s.start_byte..s.end_byte], "Hello");
+    // The wire form is a JSON null, not a zero-byte range.
+    let line = v1.write_envelope("t");
+    assert!(line.contains("\"kind\":\"text\",\"source\":null,\"text\":\"1\""), "{line}");
+    assert!(!line.contains("\"end_byte\":0"), "{line}");
 }

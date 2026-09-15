@@ -117,3 +117,45 @@ fn incremental_matches_full_on_macro_heavy_document() {
     let converged = check_doc("macro-heavy", &doc, 150, 128, 42);
     assert!(converged > 0);
 }
+
+/// Diagnostic bounding in the engine is checkpoint state: identical reports
+/// are collapsed only between safe points, and "nesting limit exceeded" is
+/// reported once per excursion. Edits around both must still match a
+/// from-scratch run.
+#[test]
+fn incremental_matches_full_with_repeated_diagnostics_and_nesting_limits() {
+    const PIECES: &[&str] = &[
+        "\\bad ", "\\bad\\bad ", "{{{{{{", "}}}}}}", "{", "}", "\n", "\n\n", "\\iftrue\\iftrue\\iftrue\\iftrue\\iftrue\\iftrue",
+        "\\fi\\fi\\fi", "\\fi", "x", "\\count1=\\relax ",
+    ];
+    let limits = Limits { max_expansion_steps: 200_000, max_group_depth: 4, max_conditional_depth: 4, ..Limits::default() };
+    let mut doc = String::from("\\def\\bad{\\ifnum\\relax<1 \\fi\\ifnum\\relax<1 \\fi}\n");
+    for i in 0..120 {
+        doc.push_str(&format!("Line {i} \\bad text\n"));
+        if i % 9 == 0 {
+            doc.push_str("{{{{{{\nnested\n}}}}}}\n\\iftrue\\iftrue\\iftrue\\iftrue\\iftrue\\iftrue\nif\n\\fi\\fi\\fi\\fi\\fi\\fi\n");
+        }
+    }
+    for seed in 1..=3u64 {
+        let mut inc = IncrementalExpander::with_options(&doc, limits, 64);
+        let mut rng = Rng(seed * 104_729 | 1);
+        for i in 0..80 {
+            let start = floor_char_boundary(inc.source(), rng.below(inc.source().len() + 1));
+            let edit = if rng.below(3) == 0 {
+                let end = floor_char_boundary(inc.source(), start + rng.below(16));
+                Edit { start, end, replacement: String::new() }
+            } else {
+                Edit { start, end: start, replacement: PIECES[rng.below(PIECES.len())].to_string() }
+            };
+            inc.edit(&edit);
+            let mut e = flashtex_tex_expansion::Engine::with_limits(inc.source(), limits);
+            let tokens = e.run();
+            let full_diagnostics = e.take_diagnostics();
+            let ctx = || format!("seed {seed} edit #{i} {edit:?}");
+            assert_eq!(inc.tokens(), &tokens[..], "tokens differ -- {}", ctx());
+            let inc_diags: Vec<_> = inc.diagnostics().iter().map(|d| (d.message.clone(), d.span)).collect();
+            let full_diags: Vec<_> = full_diagnostics.iter().map(|d| (d.message.clone(), d.span)).collect();
+            assert_eq!(inc_diags, full_diags, "diagnostics differ -- {}", ctx());
+        }
+    }
+}

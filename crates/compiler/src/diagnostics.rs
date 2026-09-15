@@ -3,7 +3,7 @@
 use crate::json::{str_, Value};
 use crate::Span;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Severity {
     Error,
     Warning,
@@ -22,7 +22,7 @@ impl Severity {
 ///
 /// Consumers classify by this rather than by message wording; messages stay
 /// human prose and may change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DiagnosticCode {
     /// A command no LaTeX layer this compiler knows of defines (most often a
     /// typo); may carry a did-you-mean `suggestion`.
@@ -411,6 +411,86 @@ fn source_json(span: Span, paths: &[&str]) -> Value {
     src.set("start_byte", Value::Num(span.start as f64));
     src.set("end_byte", Value::Num(span.end as f64));
     src
+}
+
+/// Distinct diagnostics kept per [`DiagnosticCode`] (diagnostics without a
+/// code share one budget) before [`limit_repeats`] summarises the rest.
+///
+/// TeX gives up after 100 errors in one paragraph; an editor shows the whole
+/// document, so the budget is per code over the whole compile and far above
+/// what a real document reports.
+pub const MAX_DIAGNOSTICS_PER_CODE: usize = 1000;
+
+/// Bound a diagnostic list that a runaway input made enormous.
+///
+/// - A diagnostic identical to an earlier one (severity, code, span and
+///   message) is dropped: a macro that loops reports its error at the same
+///   invocation span on every iteration.
+/// - Past [`MAX_DIAGNOSTICS_PER_CODE`] distinct diagnostics of one code, the
+///   rest are replaced by one "further N similar diagnostics suppressed"
+///   diagnostic per code, at the first suppressed span, appended after the
+///   kept ones. The engine's fatal stop ("TeX capacity exceeded", the
+///   expansion step limit) is always kept.
+///
+/// A pure function of the list, so a clean and an incremental compile that
+/// produce the same list report the same bounded list.
+pub fn limit_repeats(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    use std::collections::{HashMap, HashSet};
+    if diagnostics.len() <= 1 {
+        return diagnostics;
+    }
+    let mut keep = vec![false; diagnostics.len()];
+    // (code, suppressed count, most severe suppressed, first suppressed span)
+    let mut suppressed: Vec<(Option<DiagnosticCode>, usize, Severity, Option<Span>)> = Vec::new();
+    {
+        let mut seen: HashSet<(Severity, Option<DiagnosticCode>, Option<Span>, &str)> = HashSet::new();
+        let mut kept_per_code: HashMap<Option<DiagnosticCode>, usize> = HashMap::new();
+        for (index, d) in diagnostics.iter().enumerate() {
+            if !seen.insert((d.severity, d.code, d.span, d.message.as_str())) {
+                continue;
+            }
+            let kept = kept_per_code.entry(d.code).or_default();
+            if *kept < MAX_DIAGNOSTICS_PER_CODE || crate::expansion::is_stop_limit(&d.message) {
+                *kept += 1;
+                keep[index] = true;
+                continue;
+            }
+            match suppressed.iter_mut().find(|entry| entry.0 == d.code) {
+                Some(entry) => {
+                    entry.1 += 1;
+                    if d.severity == Severity::Error {
+                        entry.2 = Severity::Error;
+                    }
+                }
+                None => suppressed.push((d.code, 1, d.severity, d.span)),
+            }
+        }
+    }
+    if keep.iter().all(|k| *k) {
+        return diagnostics;
+    }
+    let mut out: Vec<Diagnostic> = diagnostics
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(d, keep)| keep.then_some(d))
+        .collect();
+    for (code, count, severity, span) in suppressed {
+        let noun = if count == 1 { "diagnostic" } else { "diagnostics" };
+        out.push(Diagnostic {
+            severity,
+            message: format!("further {count} similar {noun} suppressed"),
+            span,
+            recovery: Some(format!(
+                "reported the first {MAX_DIAGNOSTICS_PER_CODE} distinct diagnostics of this kind"
+            )),
+            code,
+            suggestion: None,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
+        });
+    }
+    out
 }
 
 #[cfg(test)]
