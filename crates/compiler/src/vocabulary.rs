@@ -110,7 +110,7 @@ const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "description", "table", "table*", "figure*", "tabular", "tabular*", "tabularx", "longtable",
     "verbatim", "verbatim*", "verse", "abstract", "minipage", "titlepage", "thebibliography",
     "list", "trivlist", "picture", "math", "eqnarray", "eqnarray*", "gathered", "multlined",
-    "subequations", "dcases", "rcases", "proof", "tikzpicture", "lstlisting", "minted",
+    "subequations", "proof", "tikzpicture", "lstlisting", "minted",
     "wrapfigure", "subfigure", "comment", "landscape", "samepage", "sloppypar", "filecontents",
     "frame", "tabbing", "small", "footnotesize",
 ];

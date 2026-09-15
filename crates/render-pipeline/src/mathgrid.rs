@@ -115,9 +115,15 @@ impl GridSpec {
                 spec.gaps = Gaps::Quads(1.0);
                 spec.trim_outer = true;
             }
-            // mathtools.sty `\newcases{rcases}` runs the same
-            // `\MT_start_cases:nnnn` machinery as `cases` (including
-            // `\spread@equation`), so its spacing is identical.
+            // `cases` and `rcases` do NOT share a macro path: `cases` is
+            // amsmath.sty's own `\env@cases` (`\arraystretch=1.2`,
+            // `\array{@{}l@{\quad}l@{}}`, amsmath.sty line 1121), while
+            // `rcases` is mathtools.sty's `\newcases`/`\MT_start_cases:nnnn`
+            // (`\ialign` with `\spread@equation`, mathtools.sty line 995).
+            // They land on numerically equivalent spacing (1.2 stretch, a
+            // `\quad` gap) by coincidence of both authors' choices, not
+            // shared code, which is why this compiler models them
+            // identically here.
             "rcases" => {
                 spec.stretch = 1.2;
                 spec.gaps = Gaps::Quads(1.0);
