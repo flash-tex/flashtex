@@ -147,28 +147,50 @@ impl Session {
         constraints: LayoutConstraints,
         options: &parser::ParseOptions,
     ) -> IncrementalResult {
+        let (output, stats) =
+            self.compile_project_borrowed(documents, entry_path, constraints, options);
+        IncrementalResult {
+            output: output.clone(),
+            stats,
+        }
+    }
+
+    /// [`Session::compile_project_with`], lending the output the session
+    /// retains for the next revision instead of returning a copy of it.
+    ///
+    /// Issue #65: the owned result is a deep clone of every block, placed item
+    /// and diagnostic. A caller that only reads the output (the runtime-v1
+    /// transport serialises it) avoids that copy; the output is identical.
+    pub fn compile_project_borrowed(
+        &mut self,
+        documents: &[SourceDocument<'_>],
+        entry_path: &str,
+        constraints: LayoutConstraints,
+        options: &parser::ParseOptions,
+    ) -> (&CompileOutput, ReuseStats) {
         let snapshot: Vec<(String, String)> = documents
             .iter()
             .map(|document| (document.path.to_string(), document.text.to_string()))
             .collect();
-        if let Some(previous) = &self.previous {
-            if previous.documents == snapshot
+        let unchanged = self.previous.as_ref().is_some_and(|previous| {
+            previous.documents == snapshot
                 && previous.entry_path == entry_path
                 && previous.constraints == constraints
                 && previous.options == *options
-            {
-                let total = previous.output.blocks.len();
-                return IncrementalResult {
-                    output: previous.output.clone(),
-                    stats: ReuseStats {
-                        blocks_total: total,
-                        blocks_reused: total,
-                        blocks_recomputed: 0,
-                        candidate_comparisons: 0,
-                        full_recompile: false,
-                    },
-                };
-            }
+        });
+        if unchanged {
+            let previous = self.previous.as_ref().expect("unchanged revision exists");
+            let total = previous.output.blocks.len();
+            return (
+                &previous.output,
+                ReuseStats {
+                    blocks_total: total,
+                    blocks_reused: total,
+                    blocks_recomputed: 0,
+                    candidate_comparisons: 0,
+                    full_recompile: false,
+                },
+            );
         }
 
         let mut parsed = parser::parse_project_with(documents, entry_path, options);
@@ -231,7 +253,7 @@ impl Session {
                 diagnostics,
                 pages,
             };
-            self.previous = Some(Revision {
+            let revision = self.previous.insert(Revision {
                 options: *options,
                 documents: snapshot,
                 entry_path: entry_path.to_string(),
@@ -239,10 +261,10 @@ impl Session {
                 preamble_source: parsed.preamble_source,
                 incremental_safe: parsed.incremental_safe,
                 document_global_state: true,
-                output: output.clone(),
+                output,
                 blocks: Vec::new(),
             });
-            return IncrementalResult { output, stats };
+            return (&revision.output, stats);
         }
 
         // Shift each cached block ONCE, not once per comparison.
@@ -358,7 +380,7 @@ impl Session {
             diagnostics,
             pages,
         };
-        self.previous = Some(Revision {
+        let revision = self.previous.insert(Revision {
             options: *options,
             documents: snapshot,
             entry_path: entry_path.to_string(),
@@ -366,10 +388,10 @@ impl Session {
             preamble_source: parsed.preamble_source,
             incremental_safe: parsed.incremental_safe,
             document_global_state: false,
-            output: output.clone(),
+            output,
             blocks: cache,
         });
-        IncrementalResult { output, stats }
+        (&revision.output, stats)
     }
 }
 
