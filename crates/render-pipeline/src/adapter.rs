@@ -1276,6 +1276,29 @@ pub fn adapt_cached(
     // book.cls `\if@mainmatter` (true until `\frontmatter`).
     let mut mainmatter = true;
     strip_command_text(&mut lowered, entry_doc, &commands);
+    // The same structural commands in `\input`/`\include`d documents (one
+    // list per document, empty for the entry): a `\chapter` in
+    // `chapters/one.tex` is as much a chapter as one in the entry file.
+    // `\maketitle`, `\noindent`, contents lists and nested `\input`s stay
+    // entry-only, as before.
+    let included_commands: Vec<Vec<BodyCommand>> = texts
+        .iter()
+        .enumerate()
+        .map(|(d, text)| {
+            if d == entry {
+                return Vec::new();
+            }
+            body_commands(text, has_chapters, book)
+                .into_iter()
+                .filter(|c| matches!(c.kind, BodyKind::Event(_) | BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::Appendix | BodyKind::Matter(_) | BodyKind::AddContentsLine { .. }))
+                .collect()
+        })
+        .collect();
+    for (d, cmds) in included_commands.iter().enumerate() {
+        strip_command_text(&mut lowered, DocumentId(d), cmds);
+    }
+    let mut next_included = vec![0usize; texts.len()];
+    let mut seen_included = vec![false; texts.len()];
     let mut next_command = 0usize;
     let mut noindent_at: Option<usize> = None;
     // The `\input`/`\include`d document whose units are being laid out.
@@ -1299,6 +1322,7 @@ pub fn adapt_cached(
     let mut toc_lists: Vec<(usize, crate::toc::ListKind, Span, bool)> = Vec::new();
     let mut toc_pending: Vec<String> = Vec::new();
     let mut chapter_starts: Vec<(usize, String)> = Vec::new();
+    let mut chapter_gaps: Vec<usize> = Vec::new();
     let mut after_heading = false;
     // The block that is, so far, the last one inside an open theorem-like
     // environment. `\endtrivlist`'s `\@endparenv` puts `\@topsepadd` after
@@ -1351,17 +1375,52 @@ pub fn adapt_cached(
             }
             _ => None,
         };
+        // `(document, command)` to lay out before this unit, in order.
+        let mut pending: Vec<(DocumentId, &BodyCommand)> = Vec::new();
+        // The entry document resumes: the included documents read so far are
+        // finished, so their commands after their last unit come first.
+        if unit_start.is_some_and(|at| at.document == entry_doc) {
+            for (d, cmds) in included_commands.iter().enumerate() {
+                if seen_included[d] {
+                    pending.extend(cmds[next_included[d]..].iter().map(|c| (DocumentId(d), c)));
+                    next_included[d] = cmds.len();
+                }
+            }
+        }
         if let Some(at) = flush_before {
             while let Some(cmd) = commands.get(next_command).filter(|c| c.start < at) {
                 next_command += 1;
+                pending.push((entry_doc, cmd));
+            }
+            // The `\input` command that read this unit's document is spent.
+            if input_doc.is_some() && commands.get(next_command).is_some_and(|c| c.start == at && matches!(c.kind, BodyKind::Input)) {
+                next_command += 1;
+            }
+        }
+        // An included document's own commands precede its next unit.
+        if let Some(at) = unit_start.filter(|at| at.document != entry_doc) {
+            if let Some(cmds) = included_commands.get(at.document.0) {
+                seen_included[at.document.0] = true;
+                while let Some(cmd) = cmds.get(next_included[at.document.0]).filter(|c| c.start < at.start) {
+                    next_included[at.document.0] += 1;
+                    pending.push((at.document, cmd));
+                }
+            }
+        }
+        if !pending.is_empty() {
+            for (cmd_doc, cmd) in pending {
+                let source = texts.get(cmd_doc.0).copied().unwrap_or("");
                 match &cmd.kind {
                     BodyKind::Input => {}
                     BodyKind::Event(event) => blocks.push(Block::Chrome {
                         event: event.clone(),
-                        span: Span::in_document(entry_doc, cmd.start, cmd.end),
+                        span: Span::in_document(cmd_doc, cmd.start, cmd.end),
                     }),
                     BodyKind::NoIndent => noindent_at = Some(cmd.end),
                     BodyKind::Chapter { starred, title } => {
+                        if !*starred {
+                            chapter_gaps.push(cmd.start);
+                        }
                         // `\@chapter`: `\refstepcounter{chapter}` only
                         // `\if@mainmatter` (book.cls line 356).
                         let number = (!*starred && mainmatter).then(|| {
@@ -1372,11 +1431,13 @@ pub fn adapt_cached(
                             } else {
                                 chapter_no.to_string()
                             };
-                            chapter_starts.push((cmd.start, chapter_label.clone()));
+                            if cmd_doc == entry_doc {
+                                chapter_starts.push((cmd.start, chapter_label.clone()));
+                            }
                             chapter_label.clone()
                         });
-                        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
-                        let mut items = words_from_source(source, entry_doc, title.0, title.1);
+                        let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
+                        let mut items = words_from_source(source, cmd_doc, title.0, title.1);
                         if toc_active {
                             if let Some(n) = &number {
                                 // report.cls `\@chapter`: `\addcontentsline{toc}{chapter}{\protect\numberline{\thechapter}#1}`.
@@ -1385,7 +1446,7 @@ pub fn adapt_cached(
                                     list: crate::toc::ListKind::Toc,
                                     level: 0,
                                     number: Some((n.clone(), span)),
-                                    title: labels.entry_items.get(entry_doc, title.0, title.1).unwrap_or_else(|| items.clone()),
+                                    title: labels.entry_items.get(cmd_doc, title.0, title.1).unwrap_or_else(|| items.clone()),
                                     key: key.clone(),
                                 });
                                 toc_pending.push(key);
@@ -1405,7 +1466,7 @@ pub fn adapt_cached(
                     }
                     BodyKind::MakeTitle => {
                         if let Some(t) = stashed.next() {
-                            let span = Span::in_document(entry_doc, cmd.start, cmd.end);
+                            let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
                             // `\@maketitle` is followed by `\thispagestyle{plain}`;
                             // the `titlepage` form sets `empty` on its own page.
                             if maketitle_plain {
@@ -1420,12 +1481,12 @@ pub fn adapt_cached(
                         } else if maketitle_plain {
                             blocks.push(Block::Chrome {
                                 event: ChromeEvent::ThisPageStyle(PageStyle::Plain),
-                                span: Span::in_document(entry_doc, cmd.start, cmd.end),
+                                span: Span::in_document(cmd_doc, cmd.start, cmd.end),
                             });
                         }
                     }
                     BodyKind::Matter(matter) => {
-                        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
+                        let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
                         let openright = style.class_geometry.as_ref().is_some_and(|d| d.options.openright);
                         let (double, numbering, main) = match matter {
                             Matter::Front => (true, Some(flashtex_class_geometry::Numbering::Roman), false),
@@ -1447,11 +1508,11 @@ pub fn adapt_cached(
                         // before the list's heading.
                         let before = source[..cmd.start].trim_end();
                         let eject = ["\\newpage", "\\clearpage", "\\cleardoublepage", "\\pagebreak"].iter().any(|c| before.ends_with(c));
-                        toc_lists.push((blocks.len(), *kind, Span::in_document(entry_doc, cmd.start, cmd.end), eject));
+                        toc_lists.push((blocks.len(), *kind, Span::in_document(cmd_doc, cmd.start, cmd.end), eject));
                     }
                     BodyKind::AddContentsLine { list, level, text } => {
                         if let (true, Some(level)) = (toc_active, crate::toc::level_of(level)) {
-                            let (number, title) = crate::toc::contentsline_text(source, entry_doc, text.0, text.1, &labels.entry_items);
+                            let (number, title) = crate::toc::contentsline_text(source, cmd_doc, text.0, text.1, &labels.entry_items);
                             let key = crate::toc::key(toc_records.len());
                             toc_records.push(crate::toc::Record {
                                 list: *list,
@@ -1483,8 +1544,8 @@ pub fn adapt_cached(
                             part_no += 1;
                             flashtex_class_geometry::Numbering::UpperRoman.format(i64::from(part_no))
                         });
-                        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
-                        let mut items = words_from_source(source, entry_doc, title.0, title.1);
+                        let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
+                        let mut items = words_from_source(source, cmd_doc, title.0, title.1);
                         if toc_active {
                             if let Some(n) = &number {
                                 let (s, e) = short.unwrap_or(*title);
@@ -1493,7 +1554,7 @@ pub fn adapt_cached(
                                     list: crate::toc::ListKind::Toc,
                                     level: -1,
                                     number: Some((n.clone(), span)),
-                                    title: labels.entry_items.get(entry_doc, s, e).unwrap_or_else(|| words_from_source(source, entry_doc, s, e)),
+                                    title: labels.entry_items.get(cmd_doc, s, e).unwrap_or_else(|| words_from_source(source, cmd_doc, s, e)),
                                     key: key.clone(),
                                 });
                                 toc_pending.push(key);
@@ -1519,10 +1580,6 @@ pub fn adapt_cached(
                         prev_para_end = None;
                     }
                 }
-            }
-            // The `\input` command that read this unit's document is spent.
-            if input_doc.is_some() && commands.get(next_command).is_some_and(|c| c.start == at && matches!(c.kind, BodyKind::Input)) {
-                next_command += 1;
             }
         }
         match unit.kind {
@@ -1899,9 +1956,18 @@ pub fn adapt_cached(
             *env_close = true;
         }
     }
+    // A list after the last material (a document that is nothing but its
+    // lists, or `\listoffigures` at the very end) is set there too.
+    for cmd in &commands[next_command..] {
+        if let BodyKind::ContentsList(kind) = cmd.kind {
+            let before = source[..cmd.start].trim_end();
+            let eject = ["\\newpage", "\\clearpage", "\\cleardoublepage", "\\pagebreak"].iter().any(|c| before.ends_with(c));
+            toc_lists.push((blocks.len(), kind, Span::in_document(entry_doc, cmd.start, cmd.end), eject));
+        }
+    }
     // The contents lists, now that every record is known.
     for (at, kind, span, eject) in toc_lists.into_iter().rev() {
-        let list = crate::toc::list_blocks(kind, span, eject, &toc_settings, &toc_records, labels, &chapter_starts);
+        let list = crate::toc::list_blocks(kind, span, eject, &toc_settings, &toc_records, labels, &chapter_starts, &chapter_gaps);
         blocks.splice(at..at, list);
     }
     // `abstract`: the compiler sets its body as plain text, so the class's
@@ -1964,7 +2030,7 @@ pub fn adapt_cached(
     // paragraph under a `\parshape` — so the listing paragraph must keep
     // neither the opening nor the closing `\topsep`, and that pass would
     // otherwise put the closing one back.
-    let (listing_superseded, listing_limitations) = crate::listings::apply(texts, &mut blocks, &style, labels);
+    let (listing_superseded, listing_limitations) = crate::listings::apply(texts, &mut blocks, &style, labels, &chapter_starts);
     superseded.extend(listing_superseded);
     superseded.extend(crate::listings::lstset_spans(texts));
     limitations.extend(listing_limitations);
@@ -5745,7 +5811,8 @@ pub enum BodyKind {
     MakeTitle,
     /// book.cls `\frontmatter`/`\mainmatter`/`\backmatter`.
     Matter(Matter),
-    /// `\tableofcontents`, `\listoffigures`, `\listoftables`.
+    /// `\tableofcontents`, `\listoffigures`, `\listoftables`,
+    /// `\lstlistoflistings`.
     ContentsList(crate::toc::ListKind),
     /// `\addcontentsline{<ext>}{<level>}{<entry>}`: `text` is the entry
     /// argument's inner range.
@@ -5857,6 +5924,9 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
             "tableofcontents" => Some((BodyKind::ContentsList(crate::toc::ListKind::Toc), j)),
             "listoffigures" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lof), j)),
             "listoftables" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lot), j)),
+            // listings.sty: `\tableofcontents` with `\contentsname` as
+            // `\lstlistlistingname`, reading the `.lol`.
+            "lstlistoflistings" => Some((BodyKind::ContentsList(crate::toc::ListKind::Lol), j)),
             "appendix" => Some((BodyKind::Appendix, j)),
             "addcontentsline" => group(j).and_then(|(s1, e1, a1)| {
                 let list = crate::toc::ListKind::from_ext(source[s1..e1].trim())?;
@@ -6878,7 +6948,12 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 }
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
-                factor = 1000;
+                // The space factor survives: glue (`\hskip`, `\hfill`, the
+                // leaders), `\kern` and the `\leavevmode`'s `\unhbox` of a
+                // void box leave it alone (tex.web §1041 sets it only for
+                // characters, boxes appended in horizontal mode, rules and
+                // math). So `Name: \hrulefill{} Date:` keeps the colon's 2000
+                // and the blank after `{}` gets `\fontdimen7` too.
                 pending_accent = None;
                 after_control_word = true;
             }
@@ -7064,6 +7139,16 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     if compiler_weight {
                         gap_style.bold = style.bold;
                         gap_style.italic = style.italic;
+                    }
+                    // `\subsection*{Bonus \hfill \normalfont[1 bonus point]}`:
+                    // a space with `\normalfont` words on both sides was read
+                    // after the declaration, so it is `ecrm1200`'s 3.90bp and
+                    // not the head's `ecbx1200` 4.48bp. The source intervals
+                    // do not carry the head's weight, so the neighbours'
+                    // compiler weight decides; a space next to a bold word
+                    // keeps the head font (`A {\normalfont B} C`).
+                    if heading && style.medium && matches!(items.last(), Some(Item::Word(w)) if w.segments.last().is_some_and(|s| s.style.medium)) {
+                        gap_style.medium = true;
                     }
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
@@ -7803,7 +7888,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "known limit: \\input'd preambles are not in the adapter source string"]
+    #[ignore = "fails: panics at src/adapter.rs:7602: not implemented: scan \\input'd preambles at ae62d63d"]
     fn preamble_scan_does_not_see_input_files() {
         let src = "\\documentclass{article}\n\\input{layout}\n\\begin{document}x\\end{document}";
         let _ = adapted(src);
@@ -7811,7 +7896,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "known limit: next_command is alphabetic, so \\@setlength is missed"]
     fn preamble_scan_does_not_see_at_setlength() {
         let src = "\\documentclass{article}\n\\makeatletter\n\\@setlength{\\textwidth}{6in}\n\\makeatother\n\\begin{document}x\\end{document}";
         assert!(
