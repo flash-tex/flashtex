@@ -313,7 +313,7 @@ final class RenderingV2Tests: XCTestCase {
     /// real fixture and for escapes, and refuses to guess: anything it does
     /// not accept goes to `JSONDecoder`, whose diagnostics stand.
     func testFastReaderMatchesCodableAndFallsBack() throws {
-        for name in ["display-list-v2-text.json", "display-list-v2-math.json", "display-list-v2-math-rules.json"] {
+        for name in ["display-list-v2-text.json", "display-list-v2-math.json", "display-list-v2-math-rules.json", "display-list-v2-diagnostics.json"] {
             let data = try Self.fixture(name)
             XCTAssertEqual(try RenderingV2Fast.envelope(data), try JSONDecoder().decode(RenderingV2.Envelope.self, from: data), name)
         }
@@ -347,6 +347,123 @@ final class RenderingV2Tests: XCTestCase {
         // Whitespace and key order do not matter.
         let reordered = Data("{ \"payload\": \(String(decoding: Self.data(o["payload"] as! [String: Any]), as: UTF8.self)) , \"type\":\"display_list\", \"id\":\"r1\", \"protocol_version\" : 2 }".utf8)
         XCTAssertEqual(try RenderingV2Fast.envelope(reordered), fast)
+    }
+
+    /// GH-277: `display-list-v2-diagnostics` optional keys round-trip on both
+    /// readers; a diagnostic that omits them stays the frozen four-key object.
+    func testDisplayListV2DiagnosticsFixtureKeepsStructuredFields() throws {
+        let data = try Self.fixture("display-list-v2-diagnostics.json")
+        let env = try RenderingV2.decode(data)
+        XCTAssertEqual(env.payload.diagnostics.count, 2)
+        let plain = env.payload.diagnostics[0]
+        XCTAssertNil(plain.suggestion)
+        XCTAssertNil(plain.labels)
+        XCTAssertNil(plain.notes)
+        XCTAssertNil(plain.help)
+        let d = env.payload.diagnostics[1]
+        XCTAssertEqual(d.suggestion, "\\alpha")
+        XCTAssertEqual(d.notes, ["\\alpah looks like a misspelling of \\alpha"])
+        XCTAssertEqual(d.labels?.count, 2)
+        XCTAssertEqual(d.labels?[0].text, "this command")
+        XCTAssertEqual(d.labels?[0].primary, true)
+        XCTAssertEqual(d.help?.message, "did you mean \\alpha?")
+        XCTAssertEqual(d.help?.replacement?.text, "\\alpha")
+        XCTAssertEqual(d.help?.replacement?.source, .init(path: "notes.tex", startByte: 0, endByte: 6))
+        let v1 = d.asRuntimeV1
+        XCTAssertEqual(v1.code, "unknown_command")
+        XCTAssertEqual(v1.suggestion, "\\alpha")
+        XCTAssertEqual(v1.notes, d.notes)
+        XCTAssertEqual(v1.help?.message, d.help?.message)
+        XCTAssertEqual(v1.help?.replacement?.text, "\\alpha")
+        XCTAssertEqual(v1.help?.replacement?.path, "notes.tex")
+        XCTAssertEqual(v1.help?.replacement?.startByte, 0)
+        XCTAssertEqual(v1.help?.replacement?.endByte, 6)
+        XCTAssertEqual(v1.source, d.sources.first)
+        let fast = try RenderingV2Fast.envelope(data)
+        XCTAssertEqual(fast, try JSONDecoder().decode(RenderingV2.Envelope.self, from: data))
+        XCTAssertEqual(fast.payload.diagnostics[1].suggestion, d.suggestion)
+        XCTAssertEqual(fast.payload.diagnostics[1].help, d.help)
+    }
+
+    /// The fast diagnostic reader used to skip unknown keys by ignoring the rest
+    /// of the object; a future key must not drop `suggestion` / `help`.
+    func testFastDiagnosticDecoderKeepsStructuredFieldsWhenUnknownKeysArePresent() throws {
+        var obj = try JSONSerialization.jsonObject(with: try Self.fixture("display-list-v2-diagnostics.json")) as! [String: Any]
+        var payload = obj["payload"] as! [String: Any]
+        var diags = payload["diagnostics"] as! [[String: Any]]
+        diags[1]["future_extra"] = ["nested": true]
+        payload["diagnostics"] = diags
+        obj["payload"] = payload
+        let data = Self.data(obj)
+        let fast = try RenderingV2Fast.envelope(data)
+        XCTAssertEqual(fast, try JSONDecoder().decode(RenderingV2.Envelope.self, from: data))
+        XCTAssertEqual(fast.payload.diagnostics[1].suggestion, "\\alpha")
+        XCTAssertEqual(fast.payload.diagnostics[1].help?.message, "did you mean \\alpha?")
+    }
+
+    /// `delta.rs` hashes `suggestion` only when the diagnostics cap is on;
+    /// labels/notes/help stay out of the header digest.
+    func testHeaderDigestHashesSuggestionOnlyWhenPresent() throws {
+        let list = try RenderingV2.decode(try Self.fixture("display-list-v2-diagnostics.json")).payload
+        XCTAssertNotNil(list.diagnostics[1].suggestion)
+        var without = list
+        without.diagnostics = without.diagnostics.map { d in
+            var d = d; d.suggestion = nil; return d
+        }
+        XCTAssertNotEqual(DisplayListDelta.headerDigest(list, diagnosticsCapability: true),
+                          DisplayListDelta.headerDigest(without, diagnosticsCapability: true),
+                          "a present suggestion must change the header digest when the cap is on")
+        var extra = list
+        extra.diagnostics = extra.diagnostics.map { d in
+            var d = d
+            d.notes = ["ignored in the digest"]
+            d.help = .init(message: "ignored in the digest")
+            return d
+        }
+        XCTAssertEqual(DisplayListDelta.headerDigest(list, diagnosticsCapability: true),
+                       DisplayListDelta.headerDigest(extra, diagnosticsCapability: true),
+                       "notes/help are not part of the header digest")
+    }
+
+    /// Appendix A vectors from #358 (`delta.rs` / `tests/test_rendering_v2.py`).
+    func testHeaderDigestMatchesAppendixAPinnedSuggestionVectors() {
+        let with = Self.appendixAList(suggestion: "\\alpha")
+        XCTAssertEqual(DisplayListDelta.hex(DisplayListDelta.headerDigest(with, diagnosticsCapability: true)),
+                       "c4e7c7129994d1b73c8dfe3d9b1b9a0cbf0edc49e7f9e6bc848d8c66e0126bb6")
+        let without = Self.appendixAList(suggestion: nil)
+        XCTAssertEqual(DisplayListDelta.hex(DisplayListDelta.headerDigest(without, diagnosticsCapability: true)),
+                       "e554935e8987d50810a82c72274b661d6be747d2b41993b0d008715cad5f8dbe")
+        XCTAssertEqual(DisplayListDelta.hex(DisplayListDelta.headerDigest(without, diagnosticsCapability: false)),
+                       "e554935e8987d50810a82c72274b661d6be747d2b41993b0d008715cad5f8dbe")
+        // Capability off must omit an in-memory suggestion, matching the producer.
+        XCTAssertEqual(DisplayListDelta.hex(DisplayListDelta.headerDigest(with, diagnosticsCapability: false)),
+                       "e554935e8987d50810a82c72274b661d6be747d2b41993b0d008715cad5f8dbe")
+    }
+
+    /// Empty `suggestion` is omitted (`""` → nil) on both readers.
+    func testEmptySuggestionNormalisesToNilOnSlowAndFastReaders() throws {
+        XCTAssertNil(RenderingV2.Diagnostic(code: "unknown_command", message: "\\alpah",
+                                            severity: .error, sources: [], suggestion: "").suggestion)
+        var obj = try JSONSerialization.jsonObject(with: try Self.fixture("display-list-v2-diagnostics.json")) as! [String: Any]
+        var payload = obj["payload"] as! [String: Any]
+        var diags = payload["diagnostics"] as! [[String: Any]]
+        diags[1]["suggestion"] = ""
+        payload["diagnostics"] = diags
+        obj["payload"] = payload
+        let data = Self.data(obj)
+        XCTAssertNil(try RenderingV2.decode(data).payload.diagnostics[1].suggestion)
+        XCTAssertNil(try RenderingV2Fast.envelope(data).payload.diagnostics[1].suggestion)
+        XCTAssertEqual(try RenderingV2Fast.envelope(data), try JSONDecoder().decode(RenderingV2.Envelope.self, from: data))
+    }
+
+    /// Minimal header-only list matching `header_only_diag_list` in `delta.rs`.
+    static func appendixAList(suggestion: String?) -> RenderingV2.DisplayList {
+        .init(projectId: "p", revision: 1,
+              requiredFeatures: ["glyph_run", "rgba-srgb", "cluster-actualtext"],
+              documents: [], fonts: [], pages: [],
+              diagnostics: [.init(code: "unknown_command", message: "\\alpah", severity: .error,
+                                  sources: [.init(path: "notes.tex", startByte: 0, endByte: 6)],
+                                  suggestion: suggestion)])
     }
 
     func testValidationErrorCarriesADiagnostic() {

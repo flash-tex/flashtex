@@ -30,6 +30,11 @@ pub const CAP_IMAGES: &str = "display-list-v2-images";
 /// carry `device_color` (pdfTeX's exact colour operands). Accepted only
 /// together with `display-list-v2`.
 pub const CAP_DEVICE_COLOR: &str = "display-list-v2-device-color";
+/// PROPOSAL (`protocol/proposals/display-list-v2-diagnostics.md`): v2
+/// diagnostics may carry `suggestion` (and later `labels`/`notes`/`help`).
+/// Accepted only together with `display-list-v2`; without it the diagnostic
+/// objects stay the frozen four keys.
+pub const CAP_DIAGNOSTICS: &str = "display-list-v2-diagnostics";
 /// PROPOSAL (`docs/proposals/display-list-v2-delta.md` r5): the sibling
 /// line may be one `display_list_delta` against the consumer's acknowledged
 /// installed base. Negotiated only next to `display-list-v2`; echoed only
@@ -55,6 +60,18 @@ pub const CAP_V2_ONLY: &str = "display-list-v2-only";
 /// the decline it is and does not send `display_list_base`.
 pub const CAP_WINDOW: &str = "display-list-v2-window";
 
+/// `display-list-v2` and every capability this producer only honours next
+/// to it. `-images` / `-device-color` / `-diagnostics` / `-delta` / `-only`
+/// are accepted only with `display-list-v2` (`negotiate`); declining the
+/// parent must drop them too so a reply never echoes a dependent alone.
+/// `display-list-v2-links` is not negotiated here.
+pub fn is_display_list_family(cap: &str) -> bool {
+    matches!(
+        cap,
+        CAP_DISPLAY_LIST | CAP_IMAGES | CAP_DEVICE_COLOR | CAP_DIAGNOSTICS | CAP_DELTA | CAP_V2_ONLY | CAP_WINDOW
+    )
+}
+
 /// Capabilities the producer accepted for one request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Capabilities {
@@ -63,6 +80,7 @@ pub struct Capabilities {
     pub display_list: bool,
     pub images: bool,
     pub device_color: bool,
+    pub diagnostics: bool,
     pub delta: bool,
     pub v2_only: bool,
     pub window: bool,
@@ -100,6 +118,10 @@ impl Capabilities {
                 }
                 CAP_IMAGES if !caps.images && requested.iter().any(|c| c == CAP_DISPLAY_LIST) => {
                     caps.images = true;
+                    accepted.push(r.clone());
+                }
+                CAP_DIAGNOSTICS if !caps.diagnostics && with_display_list => {
+                    caps.diagnostics = true;
                     accepted.push(r.clone());
                 }
                 CAP_DELTA if !caps.delta && with_display_list && !windowing => {
@@ -924,6 +946,11 @@ mod tests {
         let (c, acc) = Capabilities::negotiate(&["unknown".into()]);
         assert_eq!(c, Capabilities::default());
         assert!(acc.is_empty());
+        let (c, acc) = Capabilities::negotiate(&["display-list-v2-diagnostics".into()]);
+        assert!(!c.diagnostics && acc.is_empty());
+        let (c, acc) = Capabilities::negotiate(&["display-list-v2".into(), "display-list-v2-diagnostics".into(), "display-list-v2-diagnostics".into()]);
+        assert!(c.display_list && c.diagnostics);
+        assert_eq!(acc, vec!["display-list-v2".to_string(), "display-list-v2-diagnostics".to_string()]);
     }
 
     #[test]

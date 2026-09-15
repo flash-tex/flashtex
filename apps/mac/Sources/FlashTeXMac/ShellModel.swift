@@ -83,6 +83,7 @@ final class ShellModel {
     var previewFitPageZoom: CGFloat = 1
     var displayListV2: V2PreviewState? {
         didSet {
+            editorMarksCache = nil // v2-only diagnostics can arrive after the compile_result
             refreshToolbarMirrors()
             if case .loaded = displayListV2 { caretFollow.note(.recompile) } // CaretFollow.swift
         }
@@ -319,8 +320,19 @@ final class ShellModel {
     /// Source-aware errors for unknown primitives in the applied result
     /// (negotiated route only; the legacy route still skips unknown kinds).
     private(set) var layoutDiagnostics: [RuntimeV1.Diagnostic] = [] { didSet { refreshToolbarMirrors() } }
+    /// Diagnostics from `compile_result`, or — when that list is empty — the
+    /// live v2 frame mapped through `asRuntimeV1`. Runtime-v1 wins when both
+    /// carry rows for the same compile so Problems never duplicates; the v2
+    /// sibling fills the gap when the producer put suggestions only on the
+    /// display list. Layout diagnostics are not included.
+    var producerDiagnostics: [RuntimeV1.Diagnostic] {
+        let v1 = result?.diagnostics ?? []
+        if !v1.isEmpty { return v1 }
+        guard let mapped = displayListV2?.frame?.list.diagnostics, !mapped.isEmpty else { return [] }
+        return mapped.map(\.asRuntimeV1)
+    }
     /// Producer diagnostics followed by the shell's own layout diagnostics.
-    var displayedDiagnostics: [RuntimeV1.Diagnostic] { (result?.diagnostics ?? []) + layoutDiagnostics }
+    var displayedDiagnostics: [RuntimeV1.Diagnostic] { producerDiagnostics + layoutDiagnostics }
 
     /// Explicit banner notes: requested-but-unaccepted capabilities and font
     /// substitutions. Never inferred from item shapes.

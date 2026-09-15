@@ -170,7 +170,7 @@ to today's `QuickFix.Refusal.noEdits` ("this suggestion is advice only").
 |---|---|
 | `crates/compiler` `Diagnostic::to_json` / `to_json_with_paths` (runtime-v1 `compile_result.payload.diagnostics`) | **Yes**, this lane (#277 (1)+(3)). Empty by default; JSON keys only when non-empty. |
 | `crates/compiler` protocol validation errors (bad path, no documents, …) | No. Those sites stay `{severity, message, source: null, recovery: null}` with no `code`. |
-| `crates/render-pipeline` `display::Diagnostic::from_compiler` | **Not yet.** Today it copies `message`, severity, one span, and `recovery`, and hardcodes `code: "compiler"`. It does not forward `code`, `suggestion`, or these fields. Out of this lane (another crate; needs a `vendor/compiler` re-pin). |
+| `crates/render-pipeline` `display::Diagnostic::from_compiler` | **Yes** for `code` and `suggestion` (PR #354 / issue #358). It copies the compiler's `code` (or `"compiler"` when the compiler left it unset) and `suggestion`. `labels` / `notes` / `help` are still not slots on the display-list diagnostic; filling them needs a `vendor/compiler` re-pin past #346. |
 | `flashtex check` / `crates/flashtex-cli` | Consumer, not a producer. It currently builds its `Diagnostic` from the pipeline display list, so it will not see the new fields until the row above lands. Direct `compile_result` JSON from the compiler binary does. |
 | `apps/mac` | Consumer. `RuntimeV1.Diagnostic` today decodes only `severity`, `message`, `source`, `recovery`. Swift `Codable` ignores unknown keys, so old builds stay correct. |
 | Other crates' `Diagnostic` types (paragraph-layout, project-index, vector-graphics, …) | Not this wire format. |

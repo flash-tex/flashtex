@@ -234,6 +234,47 @@ final class EditorDiagnosticsQuickFixTests: XCTestCase {
         XCTAssertEqual(EditorDiagnostics.prepareHelpReplacement(otherPath, path: "main.tex", in: text, compiledText: text).failureValue,
                        .otherDocument(path: "other.tex"))
     }
+
+    /// v2 `suggestion` (and v1 without `help.replacement`) uses the diagnostic
+    /// source span; `help.replacement` still wins when both are set.
+    func testSuggestionReplacementBoundsAndHelpWins() throws {
+        let text = "Hello \\alpah end" // "\\alpah" = bytes 6..<12
+        let suggestionOnly = RuntimeV1.Diagnostic(
+            severity: .error, message: "\\alpah is not supported by this compiler version",
+            source: .init(path: "main.tex", startByte: 6, endByte: 12), recovery: nil,
+            code: "unknown_command", suggestion: "\\alpha")
+        XCTAssertTrue(EditorDiagnostics.canApplyHelpReplacement(suggestionOnly, path: "main.tex", currentText: text,
+                                                                compiledRevision: 1, editorRevision: 1))
+        XCTAssertFalse(EditorDiagnostics.canApplyHelpReplacement(suggestionOnly, path: "main.tex", currentText: text,
+                                                                 compiledRevision: 1, editorRevision: 2),
+                       "stale editor revision hides Fix…")
+        XCTAssertFalse(EditorDiagnostics.canApplyHelpReplacement(suggestionOnly, path: "chapter.tex", currentText: text,
+                                                                 compiledRevision: 1, editorRevision: 1))
+        let preview = try EditorDiagnostics.prepareHelpReplacement(suggestionOnly, path: "main.tex", in: text, compiledText: text).get()
+        XCTAssertEqual(preview.grouped.byteRange, 6..<12)
+        XCTAssertEqual(preview.grouped.before, "\\alpah")
+        XCTAssertEqual(preview.grouped.text, "\\alpha")
+        XCTAssertEqual(preview.grouped.applied(to: text), "Hello \\alpha end")
+
+        let both = RuntimeV1.Diagnostic(
+            severity: .error, message: "m",
+            source: .init(path: "main.tex", startByte: 6, endByte: 12), recovery: nil,
+            suggestion: "\\alpha",
+            help: .init(message: "wrap it", replacement: .init(startByte: 0, endByte: 5, text: "Hiya")))
+        XCTAssertEqual(EditorDiagnostics.mechanicalEdit(for: both)?.replacement, "Hiya")
+        XCTAssertEqual(EditorDiagnostics.mechanicalEdit(for: both)?.startByte, 0)
+        let helpPreview = try EditorDiagnostics.prepareHelpReplacement(both, path: "main.tex", in: text, compiledText: text).get()
+        XCTAssertEqual(helpPreview.grouped.text, "Hiya")
+
+        let v2 = RenderingV2.Diagnostic(
+            code: "unknown_command", message: "\\alpah is not supported by this compiler version",
+            severity: .error, sources: [.init(path: "main.tex", startByte: 6, endByte: 12)],
+            suggestion: "\\alpha")
+        XCTAssertTrue(EditorDiagnostics.canApplyHelpReplacement(v2.asRuntimeV1, path: "main.tex", currentText: text,
+                                                                compiledRevision: 4, editorRevision: 4))
+        let fromV2 = try EditorDiagnostics.prepareHelpReplacement(v2.asRuntimeV1, path: "main.tex", in: text, compiledText: text).get()
+        XCTAssertEqual(fromV2.grouped.applied(to: text), "Hello \\alpha end")
+    }
 }
 
 private extension Result {

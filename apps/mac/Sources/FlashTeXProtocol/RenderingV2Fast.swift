@@ -237,6 +237,7 @@ public struct RenderingV2Fast {
 
     private mutating func diagnostic() throws -> RenderingV2.Diagnostic {
         var code: String?, message: String?, severity: RenderingV2.Diagnostic.Severity?, sources: [RenderingV2.SourceRange]?
+        var suggestion: String?, labels: [RenderingV2.Diagnostic.Label]?, notes: [String]?, help: RenderingV2.Diagnostic.Help?
         try object { key, p in
             switch key {
             case "code": code = try p.string()
@@ -246,11 +247,65 @@ public struct RenderingV2Fast {
                 guard let v = RenderingV2.Diagnostic.Severity(rawValue: s) else { throw p.err("unknown severity \(s)") }
                 severity = v
             case "sources": sources = try p.array { try $0.sourceRange() }
+            case "suggestion": suggestion = try p.optionalString()
+            case "labels": labels = try p.optionalArray { try $0.diagnosticLabel() }
+            case "notes": notes = try p.optionalArray { try $0.string() }
+            case "help": help = try p.optionalDiagnosticHelp()
             default: try p.skip(depth: 3)
             }
         }
         guard let code, let message, let severity, let sources else { throw err("missing diagnostic field") }
-        return RenderingV2.Diagnostic(code: code, message: message, severity: severity, sources: sources)
+        return RenderingV2.Diagnostic(code: code, message: message, severity: severity, sources: sources,
+                                      suggestion: suggestion, labels: labels, notes: notes, help: help)
+    }
+
+    private mutating func diagnosticLabel() throws -> RenderingV2.Diagnostic.Label {
+        var source: RenderingV2.SourceRange?, text: String?, primary: Bool?
+        try object { key, p in
+            switch key {
+            case "source": source = try p.sourceRange()
+            case "text": text = try p.string()
+            case "primary": primary = try p.bool()
+            default: try p.skip(depth: 3)
+            }
+        }
+        guard let source, let text, let primary else { throw err("missing label field") }
+        return .init(source: source, text: text, primary: primary)
+    }
+
+    private mutating func optionalDiagnosticHelp() throws -> RenderingV2.Diagnostic.Help? {
+        ws()
+        if try literalNull() { return nil }
+        return try diagnosticHelp()
+    }
+
+    private mutating func diagnosticHelp() throws -> RenderingV2.Diagnostic.Help {
+        var message: String?, replacement: RenderingV2.Diagnostic.Help.Replacement?
+        try object { key, p in
+            switch key {
+            case "message": message = try p.string()
+            case "replacement":
+                p.ws()
+                if try p.literalNull() { replacement = nil }
+                else { replacement = try p.diagnosticHelpReplacement() }
+            default: try p.skip(depth: 3)
+            }
+        }
+        guard let message else { throw err("missing help message") }
+        return .init(message: message, replacement: replacement)
+    }
+
+    private mutating func diagnosticHelpReplacement() throws -> RenderingV2.Diagnostic.Help.Replacement {
+        var source: RenderingV2.SourceRange?, text: String?
+        try object { key, p in
+            switch key {
+            case "source": source = try p.sourceRange()
+            case "text": text = try p.string()
+            default: try p.skip(depth: 3)
+            }
+        }
+        guard let source, let text else { throw err("missing help replacement field") }
+        return .init(source: source, text: text)
     }
 
     private mutating func page() throws -> RenderingV2.Page {

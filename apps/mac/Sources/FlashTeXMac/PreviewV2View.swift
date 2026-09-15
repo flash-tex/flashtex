@@ -262,13 +262,14 @@ extension ShellModel {
     /// whose change re-requests the current revision under auto-compile. The
     /// v1 pages of every result keep painting the product preview.
     func setLiveV2(_ on: Bool) {
-        // `display-list-v2-images` and `display-list-v2-links` ride along
-        // (each proposal §1: accepted only with `display-list-v2`); one
+        // `display-list-v2-images`, `-links` and `-diagnostics` ride along
+        // (each proposal: accepted only with `display-list-v2`); one
         // assignment so a switch re-requests once. Compact (#257) is a
         // per-request encoding, not a mode-set sibling — left untouched.
+        // Unaccepted caps are logged, never an error.
         var caps = requestedLayoutCapabilities
-        caps.removeAll { $0 == V2Live.capability || $0 == RenderingV2.imagesCapability || $0 == RenderingV2.linksCapability }
-        if on { caps += [V2Live.capability, RenderingV2.imagesCapability, RenderingV2.linksCapability] }
+        caps.removeAll { $0 == V2Live.capability || $0 == RenderingV2.imagesCapability || $0 == RenderingV2.linksCapability || $0 == RenderingV2.diagnosticsCapability }
+        if on { caps += [V2Live.capability, RenderingV2.imagesCapability, RenderingV2.linksCapability, RenderingV2.diagnosticsCapability] }
         if caps != requestedLayoutCapabilities { requestedLayoutCapabilities = caps }
     }
 
@@ -306,6 +307,7 @@ extension ShellModel {
         // the base so the next request asks for a full frame.
         let isDelta = RenderingV2Fast.header(line)?.type == DisplayListDelta.messageType
         let installed = deltaInstalled
+        let hashDiagnostics = negotiation.accepted.contains(RenderingV2.diagnosticsCapability)
         if isDelta {
             guard negotiation.accepted.contains(DisplayListDelta.capability) else {
                 let msg = "display_list_delta \(id) arrived but \(DisplayListDelta.capability) was not accepted for that result (accepted: \(negotiation.accepted.joined(separator: ", ")))"
@@ -327,9 +329,10 @@ extension ShellModel {
             if isDelta, let installed {
                 do {
                     let delta = try RenderingV2Fast.delta(line, maxPages: DisplayListDelta.maxSnapshotPages)
-                    let (envelope, pageBytes, target) = try DisplayListDelta.apply(delta, to: installed)
+                    let (envelope, pageBytes, target) = try DisplayListDelta.apply(delta, to: installed, diagnosticsCapability: hashDiagnostics)
                     var frame = try V2Frame.prepare(envelope)
-                    frame.installedBase = DisplayListDelta.installed(from: envelope, pageBytes: pageBytes, lineBytes: target)
+                    frame.installedBase = DisplayListDelta.installed(from: envelope, pageBytes: pageBytes, lineBytes: target,
+                                                                     diagnosticsCapability: hashDiagnostics)
                     frame.reusedPages = delta.pageCount - delta.changedPages.count
                     outcome = .loaded(frame)
                 } catch let refusal as DisplayListDelta.Refusal {
@@ -353,7 +356,8 @@ extension ShellModel {
                 }
                 if !isDelta, DisplayListDelta.enabled, frame.installedBase == nil, let pageBytes = frame.pageBytes {
                     let envelope = RenderingV2.Envelope(protocolVersion: RenderingV2.protocolVersion, id: frame.id, type: RenderingV2.messageType, payload: frame.list)
-                    frame.installedBase = DisplayListDelta.installed(from: envelope, pageBytes: pageBytes, lineBytes: line.count)
+                    frame.installedBase = DisplayListDelta.installed(from: envelope, pageBytes: pageBytes, lineBytes: line.count,
+                                                                     diagnosticsCapability: hashDiagnostics)
                 }
                 return .loaded(frame)
             case .failed: return outcome
