@@ -87,9 +87,12 @@ final class EditorDiagnosticsPartialOutputTests: XCTestCase {
         /// Diagnostics whose recovery says the compiler skipped something:
         /// the body and macro commands (7 per section) and the preamble one.
         static var skippedRegion: Int { 7 * problems + 1 }
-        /// Every diagnostic the fixture yields: the above plus 4 `\hwbolt`
-        /// per section and two package warnings.
-        static var diagnostics: Int { checkedByName + viaMacro + 2 }
+        /// Every diagnostic the fixture yields: the two categories above --
+        /// which already account for the 4 `\hwbolt` per section, via `\Z`
+        /// and `\R` -- plus the single package warning. The preamble asks for
+        /// `microtype` and `amsmath,amssymb,amsthm`; only `microtype` is still
+        /// unimplemented, so only it warns. This was 2 until amsthm landed.
+        static var diagnostics: Int { checkedByName + viaMacro + 1 }
     }
 
     /// The fixture with the multi-byte prefix, as compiled by every test here.
