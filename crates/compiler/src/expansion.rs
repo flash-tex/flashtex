@@ -657,7 +657,7 @@ fn step_limit_hit(diagnostics: &[tex::Diagnostic]) -> bool {
     diagnostics.iter().any(|d| is_stop_limit(&d.message))
 }
 
-fn is_stop_limit(message: &str) -> bool {
+pub(crate) fn is_stop_limit(message: &str) -> bool {
     message.contains("expansion step limit exceeded") || message.starts_with("TeX capacity exceeded, sorry [")
 }
 

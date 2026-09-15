@@ -1441,6 +1441,7 @@ pub fn parse_project_with(
         undo: Vec::new(),
         i: 0,
         diags: Vec::new(),
+        reported_commands: HashMap::new(),
         brace_stack: Vec::new(),
         env_stack: Vec::new(),
         arraystretch: expanded.arraystretch,
@@ -1548,7 +1549,7 @@ pub fn parse_project_with(
     }
     Parsed {
         blocks,
-        diagnostics: p.diags,
+        diagnostics: crate::diagnostics::limit_repeats(p.diags),
         document_class: p.document_class,
         class_size_pt: p.class_size_pt,
         parskip_pt: p.parskip_pt,
@@ -1591,6 +1592,8 @@ struct P<'a> {
     undo: Vec<(usize, InputToken)>,
     i: usize,
     diags: Vec<Diagnostic>,
+    /// Commands `unsupported`/`unsupported_preamble` reported, by span.
+    reported_commands: HashMap<(Span, bool), Vec<String>>,
     brace_stack: Vec<Span>,
     env_stack: Vec<(String, Span)>,
     /// `\arraystretch` at each `\begin{tabular}`, from the expansion pass.
@@ -7239,6 +7242,9 @@ impl P<'_> {
     }
 
     fn unsupported_preamble(&mut self, name: &str, span: Span) {
+        if !self.first_command_report(span, name, true) {
+            return;
+        }
         self.diags.push(Diagnostic::command_error(
             name,
             format!("\\{} is not supported in the document preamble", name),
@@ -7287,6 +7293,9 @@ impl P<'_> {
     fn unsupported(&mut self, name: &str, span: Span) {
         debug_assert!(!BUILT_INS.contains(&name));
         let skipped = self.skip_recoverable_argument(name);
+        if !self.first_command_report(span, name, false) {
+            return;
+        }
         self.diags.push(Diagnostic::command_error(
             name,
             // A text-mode command: math has its own reader and diagnostics,
@@ -7301,6 +7310,20 @@ impl P<'_> {
         )
         .with_optional_help(vocabulary::command_help(name))
         .with_label(span, "this command", true));
+    }
+
+    /// False when `\name` was already reported at `span` (in the preamble or
+    /// not, as `preamble` says). A macro that loops re-emits the same
+    /// command at its invocation span on every iteration; the repeat would
+    /// be dropped by `diagnostics::limit_repeats` anyway, so it is not built
+    /// (1.4 million of them took seconds and gigabytes).
+    fn first_command_report(&mut self, span: Span, name: &str, preamble: bool) -> bool {
+        let names = self.reported_commands.entry((span, preamble)).or_default();
+        if names.iter().any(|reported| reported == name) {
+            return false;
+        }
+        names.push(name.to_string());
+        true
     }
 
     /// Commands this compiler recognises by name as taking a fixed count of
