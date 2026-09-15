@@ -9,6 +9,8 @@
 //! Gates (0.1pt = 0.0996bp):
 //! * chrome: every header/footer word (page numbers, running heads) matches
 //!   text, x and baseline;
+//! * rules (`\columnseprule`): reference and painted rules are paired
+//!   one-to-one, so an extra rule of ours fails as loudly as a missing one;
 //! * left edge: per page (per column for two-column pages) the leftmost
 //!   body word;
 //! * lines: line starts matched by their first words; x always, baseline
@@ -110,9 +112,9 @@ fn dir() -> std::path::PathBuf {
 /// `expected/<name>.txt`: `page <n> <w> <h>`, `word <page> <x> <baseline>
 /// <font> <size> <text>`, `rule <page> <x> <top> <width> <height>` (bp,
 /// top-left origin).
-fn oracle_words(data: &str) -> (Vec<W>, Vec<Vec<(f64, f64, f64, f64)>>) {
+fn oracle_words(data: &str) -> (Vec<W>, Vec<Vec<Rule>>) {
     let mut words = Vec::new();
-    let mut rules: Vec<Vec<(f64, f64, f64, f64)>> = Vec::new();
+    let mut rules: Vec<Vec<Rule>> = Vec::new();
     for line in data.lines().filter(|l| !l.starts_with('#')) {
         let f: Vec<&str> = line.splitn(7, ' ').collect();
         let num = |i: usize| f[i].parse::<f64>().unwrap();
@@ -133,7 +135,7 @@ fn oracle_words(data: &str) -> (Vec<W>, Vec<Vec<(f64, f64, f64, f64)>>) {
 
 /// Our words: glyph runs joined into words the way the oracle splits them
 /// (a run that starts where the previous one ended continues the word).
-fn our_words(r: &flashtex_render_pipeline::Rendered) -> (Vec<W>, Vec<Vec<(f64, f64, f64, f64)>>) {
+fn our_words(r: &flashtex_render_pipeline::Rendered) -> Vec<W> {
     let mut out: Vec<W> = Vec::new();
     let mut prev_end: Option<(u32, f64, f64)> = None;
     for w in words_of(r) {
@@ -150,21 +152,7 @@ fn our_words(r: &flashtex_render_pipeline::Rendered) -> (Vec<W>, Vec<Vec<(f64, f
         }
         prev_end = Some((w.page, w.x + w.width, w.baseline));
     }
-    let rules = r
-        .v2
-        .pages
-        .iter()
-        .map(|p| {
-            p.items
-                .iter()
-                .filter_map(|it| match it {
-                    flashtex_render_pipeline::display::Item::Rule(rule) => Some((rule.x.to_bp(), rule.top.to_bp(), rule.width.to_bp(), rule.height.to_bp())),
-                    _ => None,
-                })
-                .collect()
-        })
-        .collect();
-    (out, rules)
+    out
 }
 
 struct Frame {
@@ -237,7 +225,8 @@ pub fn measure(name: &str) -> Report {
     let frame = frame_of(&tex);
     let (want, want_rules) = oracle_words(&expected);
     let rendered = render_one(&tex);
-    let (got, got_rules) = our_words(&rendered);
+    let got = our_words(&rendered);
+    let got_rules = rules_of(&rendered);
     let mut rep = Report {
         pages: (want_rules.len(), got_rules.len()),
         ..Report::default()
@@ -261,16 +250,20 @@ pub fn measure(name: &str) -> Report {
                 )),
             }
         }
-        // Rules (\columnseprule).
+        // Rules (\columnseprule), paired one-to-one so the check is
+        // symmetric: a rule we paint with no pdflatex counterpart fails just
+        // as loudly as a pdflatex rule we never paint. Same predicate and
+        // same `TOL_BP` as before.
         let wr = want_rules.get(page as usize - 1).cloned().unwrap_or_default();
         let gr = got_rules.get(page as usize - 1).cloned().unwrap_or_default();
-        rep.rules_total += wr.len();
-        for r in &wr {
-            if gr.iter().any(|q| close(r.0, q.0) && close(r.1, q.1) && close(r.2, q.2) && close(r.3, q.3)) {
-                rep.rules_ok += 1;
-            } else {
-                rep.rules_fail.push(format!("p{page}: pdflatex rule {r:?} ours {gr:?}"));
-            }
+        let m = match_rules(&wr, &gr, TOL_BP);
+        rep.rules_total += m.total();
+        rep.rules_ok += m.matched;
+        for r in &m.missing {
+            rep.rules_fail.push(format!("p{page}: pdflatex rule {r:?} ours {gr:?}"));
+        }
+        for r in &m.extra {
+            rep.rules_fail.push(format!("p{page}: ours paints rule {r:?} with no pdflatex counterpart; pdflatex {wr:?}"));
         }
     }
     // Left edges per page and column.
