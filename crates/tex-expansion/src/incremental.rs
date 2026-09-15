@@ -174,8 +174,9 @@ impl IncrementalExpander {
     /// [`IncrementalExpander::with_options`], with `init` run on the fresh
     /// engine before anything is read (and before checkpoint 0). `init` must
     /// only change checkpointed state (`declare_host_command`,
-    /// `run_host_prelude`, `set_emit_unbalanced_close`), since restored
-    /// engines never see it again.
+    /// `run_host_prelude`, `set_emit_unbalanced_close`, `declare_font_switch`,
+    /// `declare_host_assignment` or `set_font_metrics`),
+    /// since restored engines never see it again.
     pub fn with_host(source: &str, limits: Limits, checkpoint_interval: usize, init: Rc<dyn Fn(&mut Engine)>) -> Self {
         Self::build(source, limits, checkpoint_interval, Some(init))
     }
@@ -487,6 +488,7 @@ impl IncrementalExpander {
                     steps: (old.steps as i128 + step_offset) as u64,
                     last_origin: old.last_origin,
                     peak_memory: old.peak_memory.max(engine_peak),
+                    metrics: old.metrics,
                     out_len: (old.out_len as isize + out_offset) as usize,
                     diag_len: (old.diag_len as isize + diag_offset) as usize,
                     label_len: (old.label_len as isize + label_offset) as usize,

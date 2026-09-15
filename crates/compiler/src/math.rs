@@ -259,6 +259,24 @@ pub enum Nucleus {
         above: MathList,
         below: MathList,
     },
+    /// mathtools `\mathllap`/`\mathrlap`/`\mathclap` (`mathtools.sty`
+    /// 1539-1563): `{{}\llap{...}}`, `{{}\rlap{...}}`, `{{}\clap{...}}` —
+    /// `\hb@xt@\z@` boxes with zero advance whose ink is still painted,
+    /// hanging left (`\hss` after), right (`\hss` before) or centred
+    /// (`\hss` on both sides) on the current point. The opposite of
+    /// [`Nucleus::Phantom`], which reserves the width but paints nothing.
+    Lap { body: MathList, align: LapAlign },
+}
+
+/// Which side of the current point a [`Nucleus::Lap`] box's ink hangs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LapAlign {
+    /// `\mathllap`: `\llap` is `\hb@xt@\z@{\hss ...}`, ink extends left.
+    Left,
+    /// `\mathclap`: `\clap` is `\hb@xt@\z@{\hss ... \hss}`, ink centred.
+    Center,
+    /// `\mathrlap`: `\rlap` is `\hb@xt@\z@{... \hss}`, ink extends right.
+    Right,
 }
 
 /// Returns the literal text when a run contains no nested math.
@@ -381,7 +399,10 @@ fn append_math_reference_text(out: &mut String, list: &MathList, source: Option<
                     }
                 }
             }
-            Nucleus::Group(body) | Nucleus::Phantom { body, .. } | Nucleus::Operator { body, .. } => {
+            Nucleus::Group(body)
+            | Nucleus::Phantom { body, .. }
+            | Nucleus::Operator { body, .. }
+            | Nucleus::Lap { body, .. } => {
                 append_math_reference_text(out, body, source)
             }
             Nucleus::ExtArrow { above, below, .. } => {
@@ -436,7 +457,8 @@ fn reference_atom_end(atom: &MathAtom) -> usize {
         | Nucleus::Group(body)
         | Nucleus::Phantom { body, .. }
         | Nucleus::Operator { body, .. }
-        | Nucleus::Accent { body, .. } => extend(body),
+        | Nucleus::Accent { body, .. }
+        | Nucleus::Lap { body, .. } => extend(body),
         Nucleus::TextRun(pieces) => {
             for piece in pieces {
                 if let TextPiece::Math(list) = piece {
@@ -1739,6 +1761,50 @@ impl MathParser<'_> {
                         horizontal: name != "vphantom",
                         vertical: name != "hphantom",
                     },
+                    span,
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                }
+            }
+            // mathtools' lap family needs `\usepackage{mathtools}`:
+            // `mathtools.sty` 1540-1558 defines all three, and neither the
+            // base LaTeX sources nor amsmath does, so without it pdflatex
+            // answers "Undefined control sequence".
+            "mathllap" | "mathrlap" | "mathclap" if !self.packages.mathtools => {
+                self.missing_package(&name, "mathtools", span)
+            }
+            // mathtools.sty 1561-1563: `\mathllap` is `{{}\llap{...}}`,
+            // `\mathrlap` is `{{}\rlap{...}}`, `\mathclap` is `{{}\clap{...}}`.
+            // The outer group is an ordinary atom, so no class is forced
+            // (`atom_class` defaults such boxes to Ord, as TeX does).
+            "mathllap" | "mathrlap" | "mathclap" => {
+                let align = match name.as_str() {
+                    "mathllap" => LapAlign::Left,
+                    "mathclap" => LapAlign::Center,
+                    _ => LapAlign::Right,
+                };
+                // mathtools also accepts `\mathllap[<style>]{...}` (an
+                // explicit `\displaystyle`/`\textstyle`/`\scriptstyle`/
+                // `\scriptscriptstyle` for the body instead of `\mathpalette`'s
+                // current style). This layout has no style threading for lap
+                // bodies — `\genfrac`'s own style argument is likewise laid out
+                // at the ambient size — so the override is consumed and
+                // reported rather than silently becoming the body: without
+                // this, `required_group` below would take the `[` itself as a
+                // single-token argument and garble the rest undiagnosed.
+                if self.raw_bracket_text().is_some() {
+                    self.diagnostics.push(Diagnostic::error(
+                        format!("\\{name}'s optional style argument is not supported"),
+                        Some(span),
+                        Some("ignored the style and continued".into()),
+                    ));
+                }
+                let body = self.required_group(&name, span);
+                MathAtom {
+                    nucleus: Nucleus::Lap { body, align },
                     span,
                     superscript: None,
                     subscript: None,
@@ -4821,6 +4887,25 @@ fn layout_nucleus(
             }
             b
         }
+        // mathtools.sty 1539-1563: `\llap`/`\rlap`/`\clap` are
+        // `\hb@xt@\z@` boxes — zero advance, but the ink is painted. The
+        // opposite of `Phantom` above (kept width, cleared ink): here the
+        // items stay and only the width zeroes, shifted so the ink hangs
+        // off the current point on the commanded side. The caller then
+        // advances by 0, so following material overlaps the ink from the
+        // right (`\mathrlap`), the ink overlaps preceding material from
+        // the left (`\mathllap`), or the two overlap equally (`\mathclap`).
+        Nucleus::Lap { body, align } => {
+            let mut b = layout_list(body, size, root_size, level, diagnostics);
+            let shift = match align {
+                LapAlign::Left => -b.width,
+                LapAlign::Center => -b.width / 2.0,
+                LapAlign::Right => 0.0,
+            };
+            offset_items(&mut b.items, shift, 0.0);
+            b.width = 0.0;
+            b
+        }
         Nucleus::Operator { body, .. } => layout_list(body, size, root_size, level, diagnostics),
         // Approximated as the arrow glyph with its labels stacked over and
         // under it (render-pipeline builds amsmath's stretched arrow).
@@ -5178,6 +5263,10 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
                 body: shift_list(body, delta),
                 horizontal: *horizontal,
                 vertical: *vertical,
+            },
+            Nucleus::Lap { body, align } => Nucleus::Lap {
+                body: shift_list(body, delta),
+                align: *align,
             },
             Nucleus::Operator { body, limits } => Nucleus::Operator {
                 body: shift_list(body, delta),
@@ -7007,6 +7096,7 @@ mod shift_tests {
                         Nucleus::Accent { body, .. } => min_start(body),
                         Nucleus::Group(body)
                         | Nucleus::Phantom { body, .. }
+                        | Nucleus::Lap { body, .. }
                         | Nucleus::Operator { body, .. } => min_start(body),
                         Nucleus::GenFraction {
                             numerator,
@@ -7537,5 +7627,188 @@ mod double_bar_tests {
     fn the_double_bar_is_bound_to_latin_modern_math() {
         assert!(crate::lm_math::advance('\u{2016}').is_some());
         assert!(crate::export::unrepresentable("\u{2016}").is_empty());
+    }
+}
+
+/// mathtools `\mathllap`/`\mathrlap`/`\mathclap` (`mathtools.sty` 1539-1563):
+/// `\hb@xt@\z@` boxes with zero advance whose ink is still painted.
+#[cfg(test)]
+mod lap_tests {
+    use super::*;
+
+    /// 1mu = 1pt, so a measured mu reads straight off a coordinate.
+    const SIZE: f64 = 18.0;
+
+    /// A document that loaded `mathtools` (which requires `amsmath`): the lap
+    /// family exists. Base LaTeX2e defines none of it, so the tests that use
+    /// these commands have to say so — see `laps_need_mathtools`.
+    const MATHTOOLS: MathPackages = MathPackages {
+        amsmath: true,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: true,
+    };
+
+    /// `amsmath` without `mathtools`: the lap family is still undefined.
+    const AMSMATH: MathPackages = MathPackages {
+        amsmath: true,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: false,
+    };
+
+    fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), packages, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    fn laid_out(source: &str) -> MathBox {
+        let (list, diagnostics) = parsed(source, MATHTOOLS);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        layout(&list, SIZE, &mut Vec::new())
+    }
+
+    fn width(source: &str) -> f64 {
+        laid_out(source).width
+    }
+
+    fn x(b: &MathBox, text: &str) -> f64 {
+        b.items
+            .iter()
+            .find(|i| i.text == text)
+            .unwrap_or_else(|| panic!("{text:?} not painted in {:?}", b.items))
+            .x
+    }
+
+    fn close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    /// Each command parses to a one-atom `Lap` with its own alignment and the
+    /// argument as its body; a multi-atom argument stays one boxed atom.
+    #[test]
+    fn each_lap_parses_to_its_own_alignment() {
+        for (command, align) in [
+            ("mathllap", LapAlign::Left),
+            ("mathclap", LapAlign::Center),
+            ("mathrlap", LapAlign::Right),
+        ] {
+            let (list, diagnostics) = parsed(&format!("\\{command}{{y}}"), MATHTOOLS);
+            assert!(diagnostics.is_empty(), "{command}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{command}");
+            match &list.atoms[0].nucleus {
+                Nucleus::Lap { body, align: got } => {
+                    assert_eq!(*got, align, "{command}");
+                    assert_eq!(body.atoms.len(), 1, "{command}");
+                    assert!(
+                        matches!(&body.atoms[0].nucleus, Nucleus::Symbol(s) if s == "y"),
+                        "{command}: {body:?}"
+                    );
+                }
+                other => panic!("{command} parsed as {other:?}"),
+            }
+        }
+        let (list, diagnostics) = parsed(r"\mathclap{a+b}", MATHTOOLS);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        match &list.atoms[0].nucleus {
+            Nucleus::Lap { body, .. } => assert_eq!(body.atoms.len(), 3, "{body:?}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Base LaTeX2e (and amsmath alone) defines none of the three — each was
+    /// searched for in TeX Live 2026's base and amsmath sources — so without
+    /// `mathtools` each reports the missing package, as pdflatex answers
+    /// "Undefined control sequence".
+    #[test]
+    fn laps_need_mathtools() {
+        for command in ["mathllap", "mathclap", "mathrlap"] {
+            for packages in [MathPackages::KERNEL, AMSMATH] {
+                let (_, diagnostics) = parsed(&format!("\\{command}{{y}}"), packages);
+                assert_eq!(diagnostics.len(), 1, "{command}: {diagnostics:?}");
+                assert_eq!(
+                    diagnostics[0].message,
+                    format!("\\{command} requires \\usepackage{{mathtools}}"),
+                    "{command}"
+                );
+                // Slice 2 (#549 follow-up): the family is implemented, so the
+                // gate reports a known-but-gated command — never an unknown
+                // command with a did-you-mean rewrite.
+                assert_eq!(
+                    diagnostics[0].code,
+                    Some(crate::diagnostics::DiagnosticCode::UnsupportedFeature),
+                    "{command}"
+                );
+                assert_eq!(
+                    diagnostics[0].help.as_ref().map(|h| h.message.as_str()),
+                    Some("add \\usepackage{mathtools} in the preamble"),
+                    "{command}"
+                );
+                assert_eq!(diagnostics[0].suggestion, None, "{command}");
+            }
+        }
+    }
+
+    /// The box advances nothing: flanking material closes up exactly as if the
+    /// lapped content were absent. All three atoms are Ord, so no inter-atom
+    /// glue enters on either side.
+    #[test]
+    fn laps_advance_nothing() {
+        for command in ["mathllap", "mathclap", "mathrlap"] {
+            close(width(&format!("a\\{command}{{x}}b")), width("ab"));
+        }
+        // A wider body still advances nothing.
+        close(width(r"a\mathrlap{xyz}b"), width("ab"));
+    }
+
+    /// The ink is still painted, hung off the current point on the commanded
+    /// side: `\mathrlap`'s ink starts where the following atom starts (it is
+    /// overlapped from the right), `\mathllap`'s ends where the preceding atom
+    /// ends (it overlaps from the left), `\mathclap`'s is centred.
+    #[test]
+    fn lapped_ink_is_painted_at_the_commanded_offset() {
+        let origin = width("a");
+        let ink = width("x");
+        let b = laid_out(r"a\mathrlap{x}b");
+        close(x(&b, "x"), origin);
+        close(x(&b, "b"), origin);
+        let b = laid_out(r"a\mathllap{x}b");
+        close(x(&b, "x"), origin - ink);
+        close(x(&b, "b"), origin);
+        let b = laid_out(r"a\mathclap{x}b");
+        close(x(&b, "x"), origin - ink / 2.0);
+        close(x(&b, "b"), origin);
+    }
+
+    /// Zero width but full paint, vertically too: the lap of `xy` is as tall
+    /// and deep as `xy` itself, and contributes no advance.
+    #[test]
+    fn lap_keeps_the_body_box_except_its_width() {
+        let lapped = laid_out(r"\mathclap{xy}");
+        let plain = laid_out("xy");
+        close(lapped.width, 0.0);
+        assert_eq!(lapped.items.len(), plain.items.len());
+        assert_eq!(lapped.ascent, plain.ascent);
+        assert_eq!(lapped.descent, plain.descent);
+    }
+
+    /// mathtools' `\mathllap[<style>]{...}` override is consumed and reported
+    /// rather than becoming the body; the argument still laps at ambient size.
+    #[test]
+    fn style_override_is_diagnosed_and_ignored() {
+        let (list, diagnostics) = parsed(r"\mathrlap[\scriptstyle]{x}", MATHTOOLS);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(
+            diagnostics[0].message,
+            r"\mathrlap's optional style argument is not supported"
+        );
+        match &list.atoms[0].nucleus {
+            Nucleus::Lap { body, align } => {
+                assert_eq!(*align, LapAlign::Right);
+                assert_eq!(body.atoms.len(), 1, "{body:?}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }
