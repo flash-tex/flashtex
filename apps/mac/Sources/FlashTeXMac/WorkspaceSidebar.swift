@@ -68,14 +68,24 @@ struct WorkspaceSidebar: View {
 
 // MARK: - tool window header
 
-/// The IntelliJ tool-window header: the window's name leading, quiet
-/// controls trailing, on the panel's own surface.
+/// The IntelliJ tool-window header: the window's name leading — behind the
+/// same glyph the rail carries for it, accent-tinted so the open tool window
+/// is legible at a glance (owner on #653: more accents, and the rail's icon
+/// style everywhere) — quiet controls trailing, on the panel's own surface.
 struct ToolWindowHeader<Trailing: View>: View {
     let title: String
+    /// The rail glyph for this tool window; nil keeps a text-only header.
+    var icon: String?
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
         HStack(spacing: DS.Space.s) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(DS.Fonts.base)
+                    .foregroundStyle(DS.Colors.accentSelection)
+                    .accessibilityHidden(true)
+            }
             Text(title)
                 .font(DS.Fonts.base.weight(.semibold))
                 .foregroundStyle(DS.Colors.textPrimary)
@@ -105,7 +115,7 @@ private struct ProjectSection: View {
         let kinds = model.documentKinds
         let closure = model.chrome.closure
         VStack(spacing: 0) {
-            ToolWindowHeader(title: "Project") {
+            ToolWindowHeader(title: "Project", icon: "folder") {
                 Text("\(listing.count)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
                 Button { model.scaffold.presentNewFile() } label: { // ProjectScaffoldViews.swift
                     Image(systemName: "plus")
@@ -239,7 +249,7 @@ private struct OutlineSection: View {
     var body: some View {
         let rows = Self.rows(outline: outline, shownKinds: shownKinds, stale: stale, activePath: model.activePath)
         VStack(spacing: 0) {
-            ToolWindowHeader(title: "Outline") {
+            ToolWindowHeader(title: "Outline", icon: "list.bullet.indent") {
                 if stale { ProgressView().controlSize(.mini) }
                 // D1's in-header filter: which kinds are shown; order is
                 // always the document's own.
@@ -250,9 +260,13 @@ private struct OutlineSection: View {
                             set: { if $0 { shownKinds.insert(kind) } else { shownKinds.remove(kind) } }))
                     }
                 } label: {
-                    Image(systemName: shownKinds.count == DocumentOutline.Kind.allCases.count ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                    // The rail's plain-outline vocabulary, not a circled or
+                    // filled variant (owner on #653: one icon style); a
+                    // filter that hides something tints accent instead.
+                    let filtering = shownKinds.count != DocumentOutline.Kind.allCases.count
+                    Image(systemName: "line.3.horizontal.decrease")
                         .font(DS.Fonts.base)
-                        .foregroundStyle(DS.Colors.textSecondary)
+                        .foregroundStyle(filtering ? DS.Colors.accentSelection : DS.Colors.textSecondary)
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Show or hide sections, environments and labels; the list always keeps document order")

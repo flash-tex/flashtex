@@ -334,15 +334,17 @@ struct DiagnosticsListView: View {
                     .foregroundStyle(gap ? DS.Colors.textSecondary : d.severity == .error ? DS.Colors.severityError : DS.Colors.severityWarning)
                 Text(g.title)
                 Spacer(minLength: DS.Space.m)
+                // Row actions are JetBrains inline links, not bezelled push
+                // buttons (owner on #653: no glass/bezel controls).
                 if helpFix {
-                    Button("Fix…") { model.previewQuickFix(diagnosticIndex: i) }
+                    InlineActionButton(title: "Fix…") { model.previewQuickFix(diagnosticIndex: i) }
                         .help(d.help?.message ?? "Preview a suggested fix")
                 } else if let x = model.explanations.explanation(resultID: model.resultID, index: i),
                    x.suggestions.contains(where: { !$0.edits.isEmpty }) {
-                    Button("Fix…") { model.previewQuickFix(diagnosticIndex: i) }
+                    InlineActionButton(title: "Fix…") { model.previewQuickFix(diagnosticIndex: i) }
                         .help(x.suggestions.first { !$0.edits.isEmpty }?.text ?? "Preview a suggested fix")
                 } else if let fix = MissingIncludeFix.quickFix(for: d, projectRoot: model.project.projectRoot) { // ProjectScaffold.swift
-                    Button("Create \(fix.path)") { Task { _ = await model.project.createMissingInclude(fix.argument, from: fix.from); model.navigationNote = model.project.status } }
+                    InlineActionButton(title: "Create \(fix.path)") { Task { _ = await model.project.createMissingInclude(fix.argument, from: fix.from); model.navigationNote = model.project.status } }
                         .help("Create the empty file \(fix.path) under the project root and open it as included from \(fix.from)")
                 }
                 if g.count > 1 {
@@ -354,7 +356,8 @@ struct DiagnosticsListView: View {
                             .disabled(EditorDiagnostics.occurrence(j, of: g, in: diags) == nil)
                         }
                     }
-                    .fixedSize()
+                    .menuStyle(.borderlessButton).fixedSize()
+                    .font(DS.Fonts.secondary)
                     .help("Jump to one occurrence of this diagnostic (⌘⌥] / ⌘⌥[ step through them)")
                 }
                 Text(location(of: g, occurrence: k, diagnostic: d, group: group))

@@ -82,6 +82,13 @@ enum DS {
         /// Icon-rail glyphs: between VS Code's 24px-in-48 and SF's UI sizes —
         /// 16 with the 48pt rail reads as an activity bar, 13 as a toolbar.
         static let railIcon = Font.system(size: 16)
+        /// Title-bar toolbar glyphs (IDEToolbar.swift): one step under the
+        /// rail so the title bar reads lighter than the tool stripe, in the
+        /// same outline SF style as the rail icons (owner: unify on the
+        /// rail's icon look).
+        static let toolbarIcon = Font.system(size: 15)
+        /// The split button's chevron (its own click region, JetBrains-style).
+        static let toolbarChevron = Font.system(size: 9, weight: .semibold)
         /// The pairing code: read across the room, typed on another device.
         static let pairingCode = Font.system(size: 34, weight: .semibold, design: .monospaced)
     }
@@ -163,6 +170,10 @@ enum DS {
         /// The modified (unsaved) dot on tabs and tree rows — JetBrains blue,
         /// not a warning colour: an unsaved edit is a state, not a problem.
         static let statusModified = dynamic(light: 0x3574F0, dark: 0x548AF7)
+        /// The Compile (run) glyph: JetBrains' run-button green, the one
+        /// deliberate accent in the title bar (owner: more accents; the
+        /// JetBrains run triangle is the signature one).
+        static let runGreen = dynamic(light: 0x1A7F37, dark: 0x5FAD65)
         /// A completed older snapshot shown while a newer revision compiles.
         static let statusHistorical = dynamic(light: 0x834DF0, dark: 0xB189F5)
 
@@ -222,6 +233,8 @@ enum DS {
         static let statusModified = Color(nsColor: Palette.statusModified)
         /// A completed older snapshot shown while a newer revision compiles.
         static let statusHistorical = Color(nsColor: Palette.statusHistorical)
+        /// The Compile button's run-green glyph (IDEToolbar.swift).
+        static let runAccent = Color(nsColor: Palette.runGreen)
         /// Gutter marker on lines with an available fix.
         static let gutterMarker = Color(nsColor: Palette.focus)
         /// Keyboard-focus ring on custom controls.
@@ -331,6 +344,12 @@ enum DS {
         /// Minimum width of the zoom percentage readout, so 100% → 1000%
         /// never shifts its neighbours.
         static let zoomReadoutMinWidth: CGFloat = 40
+        /// Title-bar toolbar buttons (IDEToolbar.swift): square hit target.
+        static let toolbarButton: CGFloat = 28
+        /// The split button's chevron click region (visibly its own zone).
+        static let toolbarChevronWidth: CGFloat = 18
+        /// The vertical separator inside a split button.
+        static let toolbarSplitSeparatorHeight: CGFloat = 14
     }
 
     // MARK: layout — split minimums and panel bounds
@@ -338,6 +357,13 @@ enum DS {
     enum Layout {
         /// The left icon rail (tool-window stripe): 48 (VS Code activity bar).
         static let railWidth: CGFloat = 48
+        /// The custom title-bar row (TitleBar.swift): matches the height
+        /// AppKit gives a unified-compact title bar with a hidden title, so
+        /// the row occupies exactly the region the traffic lights are
+        /// centred in (measured 40 on macOS 26; contentLayoutRect confirms).
+        static let titleBarHeight: CGFloat = 40
+        /// Leading clearance past the traffic lights for the first control.
+        static let trafficLightClearance: CGFloat = 78
         /// The window itself: usable from ~900pt wide (design-principles §4).
         static let windowMinWidth: CGFloat = 900
         static let windowMinHeight: CGFloat = 600
@@ -423,6 +449,8 @@ enum DS {
         static let lightLabel = Color(white: 0.35)
         /// The soft shadow floating the page off the ground.
         static let pageShadowRadius: CGFloat = 4
+        /// Shadow under the floating page/zoom HUD chip.
+        static let hudShadowOpacity: Double = 0.18
         /// Space around and between pages on the ground.
         static let pageSpacing: CGFloat = 24
         /// Caret / navigation highlights painted over the page (accent-derived).
@@ -438,6 +466,8 @@ enum DS {
     enum Motion {
         static let durationQuick: Double = 0.15
         static let durationStandard: Double = 0.20
+        /// How long the preview HUD stays after scroll/zoom activity.
+        static let hudLinger: Double = 1.5
         /// Disclosure, panel reveal, popup appearance. Nil under Reduce
         /// Motion — pass to `.animation(_:value:)` and the change is instant.
         @MainActor static var quick: Animation? { ReduceMotion.isEnabled ? nil : .easeOut(duration: durationQuick) }
@@ -462,6 +492,87 @@ struct PressableStyle: ButtonStyle {
                         .fill(DS.Colors.textPrimary.opacity(DS.State.pressedOpacity))
                 }
             }
+    }
+}
+
+/// One flat icon control in the JetBrains/Android Studio manner: quiet
+/// outline glyph on a square target, hover wash, muted accent fill + accent
+/// glyph when `on` — no bezel, no glass capsule (owner on #653: reproduce
+/// the JetBrains button design; unify on the left rail's icon style). Used
+/// by the title bar row (TitleBar.swift) and inline icon toggles.
+struct IconButtonLabel: View {
+    let icon: String
+    var on = false
+    var hovering = false
+
+    var body: some View {
+        Image(systemName: icon)
+            .font(DS.Fonts.toolbarIcon)
+            .foregroundStyle(on ? DS.Colors.accentSelection : DS.Colors.textSecondary)
+            .frame(width: DS.Size.toolbarButton, height: DS.Size.toolbarButton)
+            .background(
+                on ? DS.Colors.accentSelection.opacity(DS.State.badgeFillOpacity)
+                   : hovering ? DS.Colors.hover : .clear,
+                in: RoundedRectangle(cornerRadius: DS.Radius.tab))
+            .contentShape(Rectangle())
+    }
+}
+
+/// The quiet close control of a tool-window header: the same flat hover
+/// wash as every other icon control, never a bordered system button.
+struct PanelCloseButton: View {
+    let help: String
+    let label: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(DS.Fonts.header)
+                .foregroundStyle(DS.Colors.textSecondary)
+                .frame(width: DS.Size.inlineIconButton, height: DS.Size.inlineIconButton)
+                .background(hovering ? DS.Colors.hover : .clear,
+                            in: RoundedRectangle(cornerRadius: DS.Radius.control))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle(cornerRadius: DS.Radius.control))
+        .onHover { hovering = $0 }
+        .help(help)
+        .accessibilityLabel(label)
+    }
+}
+
+/// A quiet inline action in JetBrains' manner: accent-coloured label text
+/// with a hover wash, no bezel — what IntelliJ puts in a problem row where
+/// macOS would use a bordered push button (owner on #653: no glass/bezelled
+/// buttons). Keyboard focus and VoiceOver behaviour stay the Button's.
+struct InlineActionLabel: View {
+    let title: String
+    var hovering = false
+
+    var body: some View {
+        Text(title)
+            .font(DS.Fonts.secondary)
+            .foregroundStyle(DS.Colors.accentSelection)
+            .padding(.horizontal, DS.Space.s)
+            .padding(.vertical, DS.Space.xxs)
+            .background(hovering ? DS.Colors.hover : .clear,
+                        in: RoundedRectangle(cornerRadius: DS.Radius.control))
+            .contentShape(Rectangle())
+    }
+}
+
+/// `InlineActionLabel` wired as a button, with its own hover state.
+struct InlineActionButton: View {
+    let title: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) { InlineActionLabel(title: title, hovering: hovering) }
+            .buttonStyle(PressableStyle(cornerRadius: DS.Radius.control))
+            .onHover { hovering = $0 }
     }
 }
 

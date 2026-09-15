@@ -293,7 +293,7 @@ struct FlashTeXMacApp: App {
         Window("Accessibility Help", id: AccessibilityHelpView.windowID) {
             AccessibilityHelpView() // FlashTeXAccessibility: focus order, VoiceOver notes, command table
         }
-        Settings { SettingsRootView() } // EditorPreferences.swift (⌘,): Editor and Conversion tabs, applying live
+        Settings { SettingsRootView().environment(model) } // EditorPreferences.swift (⌘,): Editor, Compile and Conversion tabs, applying live
         ProjectSearchWindow(model: model) // ProjectSearchPanel.swift: Find in Project (⌘⇧F)
         CitationRenameWindow(model: model) // CitationRename.swift: Rename Citation (reviewed plan_citation_rename → apply_group)
     }

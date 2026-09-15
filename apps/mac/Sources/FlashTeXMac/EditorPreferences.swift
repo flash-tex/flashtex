@@ -569,10 +569,34 @@ struct SettingsRootView: View {
         TabView {
             EditorPreferencesView(preferences: .shared, showConversion: false)
                 .tabItem { Label("Editor", systemImage: "square.and.pencil") }
+            Form { CompilePreferencesSection() } // auto-compile (moved out of the toolbar's producer menu, #653 review)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Compile", systemImage: "play.circle") }
             Form { ConversionPreferencesSection() } // provider picker, model, API key (Keychain) (ConversionPreferencesView.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Conversion", systemImage: "wand.and.stars") }
+        }
+    }
+}
+
+/// Settings > Compile. The one user-facing switch the old toolbar producer
+/// menu carried (the rest — attaching compiler executables, reloading
+/// fixtures — is a developer harness that stays in the File menu and the
+/// command palette). Session state on `ShellModel`, unchanged semantics.
+struct CompilePreferencesSection: View {
+    @Environment(ShellModel.self) var model
+
+    var body: some View {
+        @Bindable var model = model
+        Section("Compile") {
+            Toggle("Auto-compile after edits", isOn: $model.autoCompile)
+                .disabled(!model.workerAttached)
+                .accessibilityHint("While on, every edit compiles and the preview follows; while off, compile with Command-B.")
+            Text(model.workerAttached ? "Edits compile as you type; ⌘B compiles at any time."
+                                      : "No producer attached — File > Attach Built Compiler (⌘⇧K) first.")
+                .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
         }
     }
 }

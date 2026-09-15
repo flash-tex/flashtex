@@ -763,8 +763,15 @@ struct PreviewV2Pane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            // Debug-only strip (View > Show Preview Debug Status): identity,
+            // LIVE/behind badges, font manifest. At rest the pane starts at
+            // the pages — Open… and Export moved to the title bar
+            // (TitleBar.swift), the V2/loading state to the floating HUD
+            // (#653: no header rows over the preview).
+            if model.previewDebugStatus {
+                header
+                Divider()
+            }
             // The pages sit at ONE structural position whether the frame is the
             // loaded one or the previous one shown stale while a load is in
             // flight. Under typing the state toggles loaded -> stale -> loaded
@@ -812,6 +819,21 @@ struct PreviewV2Pane: View {
                                                                  : "Attach a producer that accepts display-list-v2, or use File > Open Display List (v2)… with a flashtex-render --v2 JSON file."))
                     }
                 }
+            }
+        }
+        .overlay(alignment: .bottomLeading) {
+            // display-list-v2-images: refused image bytes (stale hash, symlink,
+            // unreadable). Non-modal; the frame stays, the item painted nothing.
+            // Floats quietly over the ground now that the header row is gone.
+            if let notices = model.displayListV2?.frame?.imageNotices, !notices.isEmpty {
+                Text(notices.joined(separator: " · "))
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning).lineLimit(1).truncationMode(.middle)
+                    .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
+                    .background(DS.Colors.surfaceRaised, in: RoundedRectangle(cornerRadius: DS.Radius.control))
+                    .overlay(RoundedRectangle(cornerRadius: DS.Radius.control).strokeBorder(DS.Colors.componentBorder, lineWidth: DS.Size.hairline))
+                    .padding(DS.Space.l)
+                    .help(notices.joined(separator: "\n"))
+                    .accessibilityIdentifier("v2-image-notice")
             }
         }
         .onAppear {
@@ -927,7 +949,6 @@ private struct V2PaneHeader: View {
         VStack(alignment: .leading, spacing: DS.Space.xxs) {
             HStack(spacing: DS.Space.m) {
                 Text("V2").font(DS.Fonts.header).padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs).background(DS.Colors.statusHistorical.opacity(DS.State.badgeFillOpacity), in: Capsule())
-                if model.previewDebugStatus {
                 Text("display-list-v2").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).lineLimit(1)
                 if model.workerAttached {
                     Text(model.liveV2Accepted ? "LIVE" : "v1 only")
@@ -943,7 +964,6 @@ private struct V2PaneHeader: View {
                         .font(DS.Fonts.header).foregroundStyle(DS.Colors.severityWarning).lineLimit(1)
                         .accessibilityIdentifier("v2-behind")
                 }
-                }
                 if case .loading(let source, _, let previous, _, _) = model.displayListV2 {
                     // Quiet progress indicator: the previous frame stays on screen; no flashing text.
                     ProgressView().controlSize(.mini)
@@ -952,17 +972,6 @@ private struct V2PaneHeader: View {
                         .accessibilityIdentifier("v2-stale")
                 }
                 Spacer()
-                Button("Open…") { model.openDisplayListV2Panel() }.controlSize(.small).fixedSize()
-                Button("Export PDF (v2)…") { model.exportPDFV2() }.controlSize(.small).fixedSize()
-                    .disabled({ if case .loaded = model.displayListV2 { false } else { true } }())
-            }
-            if let notices = model.displayListV2?.frame?.imageNotices, !notices.isEmpty {
-                // display-list-v2-images: refused image bytes (stale hash, symlink,
-                // unreadable). Non-modal; the frame stays, the item painted nothing.
-                Text(notices.joined(separator: " · "))
-                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning).lineLimit(1).truncationMode(.middle)
-                    .help(notices.joined(separator: "\n"))
-                    .accessibilityIdentifier("v2-image-notice")
             }
             if model.previewDebugStatus, let frame = model.displayListV2?.frame {
                 let fonts = frame.fonts.values.map { "\($0.resource.postscriptName) \($0.resource.sha256.prefix(8))" }.sorted().joined(separator: ", ")

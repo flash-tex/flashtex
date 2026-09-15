@@ -31,13 +31,9 @@ struct DocumentTabBar: View {
             Spacer(minLength: DS.Space.m)
             if model.narrowLayout {
                 // The collapsed preview's way back (design-principles §4):
-                // the window is too narrow for both columns.
-                Toggle(isOn: Binding(get: { model.narrowPreviewShown }, set: { model.narrowPreviewShown = $0 })) {
-                    Image(systemName: "doc.richtext")
-                }
-                .toggleStyle(.button).buttonStyle(.accessoryBar).controlSize(.small)
-                .help("Show the preview (the window is too narrow for editor and preview side by side)")
-                .accessibilityLabel("Show preview")
+                // the window is too narrow for both columns. Flat icon
+                // toggle in the title bar's JetBrains style, not a bezel.
+                NarrowPreviewToggle()
             }
             ProjectMenu()
             DocumentKindIndicator() // DocumentKinds.swift: helper-reported bibliography kind, read-only
@@ -147,6 +143,23 @@ private struct DocumentTab: View {
         if let r = doc.durableRevision { s += " · durable r\(r)" }
         if doc.isDirty { s += " · edited" }
         return s
+    }
+}
+
+/// Reopens the preview while the narrow layout collapses it: the same flat
+/// JetBrains icon treatment as the title bar row (IconButtonLabel).
+private struct NarrowPreviewToggle: View {
+    @Environment(ShellModel.self) var model
+    @State private var hovering = false
+
+    var body: some View {
+        Toggle(isOn: Binding(get: { model.narrowPreviewShown }, set: { model.narrowPreviewShown = $0 })) {
+            IconButtonLabel(icon: "doc.richtext", on: model.narrowPreviewShown, hovering: hovering)
+        }
+        .toggleStyle(.button).buttonStyle(PressableStyle())
+        .onHover { hovering = $0 }
+        .help("Show the preview (the window is too narrow for editor and preview side by side)")
+        .accessibilityLabel("Show preview")
     }
 }
 

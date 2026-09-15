@@ -48,12 +48,8 @@ struct ProblemsPanel: View {
                 .help("Filter the list by severity; counts above are for every diagnostic")
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Problems severity filter")
-                Button {
-                    model.problemsVisible = false
-                } label: { Image(systemName: "xmark").font(DS.Fonts.header) }
-                    .buttonStyle(.borderless)
-                    .help("Hide the Problems panel (⌘⇧M shows it again)")
-                    .accessibilityLabel("Hide Problems")
+                PanelCloseButton(help: "Hide the Problems panel (⌘⇧M shows it again)",
+                                 label: "Hide Problems") { model.problemsVisible = false }
             }
             .padding(.horizontal, DS.Space.l)
             .frame(height: DS.Row.toolWindowHeader)
