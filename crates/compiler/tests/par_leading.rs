@@ -200,6 +200,14 @@ fn a_uline_argument_does_not_add_a_block_leading() {
 }
 
 #[test]
+fn a_list_inside_a_table_entry_does_not_add_a_block_leading() {
+    let source = "\\documentclass{article}\n\\begin{document}\n\\begin{tabular}{c}\\begin{itemize}\\item x\\end{itemize}\\end{tabular}\n\\end{document}\n";
+    let parsed = parse(source);
+    assert_eq!(parsed.blocks.len(), 1);
+    assert_eq!(parsed.block_par_leading.len(), 1);
+}
+
+#[test]
 fn the_letter_fixture_has_one_leading_per_block() {
     let parsed = parse(include_str!("../../../fixtures/real-world/letter/main.tex"));
     assert_eq!(parsed.blocks.len(), 13);
