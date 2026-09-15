@@ -1276,6 +1276,29 @@ pub fn adapt_cached(
     // book.cls `\if@mainmatter` (true until `\frontmatter`).
     let mut mainmatter = true;
     strip_command_text(&mut lowered, entry_doc, &commands);
+    // The same structural commands in `\input`/`\include`d documents (one
+    // list per document, empty for the entry): a `\chapter` in
+    // `chapters/one.tex` is as much a chapter as one in the entry file.
+    // `\maketitle`, `\noindent`, contents lists and nested `\input`s stay
+    // entry-only, as before.
+    let included_commands: Vec<Vec<BodyCommand>> = texts
+        .iter()
+        .enumerate()
+        .map(|(d, text)| {
+            if d == entry {
+                return Vec::new();
+            }
+            body_commands(text, has_chapters, book)
+                .into_iter()
+                .filter(|c| matches!(c.kind, BodyKind::Event(_) | BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::Appendix | BodyKind::Matter(_) | BodyKind::AddContentsLine { .. }))
+                .collect()
+        })
+        .collect();
+    for (d, cmds) in included_commands.iter().enumerate() {
+        strip_command_text(&mut lowered, DocumentId(d), cmds);
+    }
+    let mut next_included = vec![0usize; texts.len()];
+    let mut seen_included = vec![false; texts.len()];
     let mut next_command = 0usize;
     let mut noindent_at: Option<usize> = None;
     // The `\input`/`\include`d document whose units are being laid out.
@@ -1351,14 +1374,46 @@ pub fn adapt_cached(
             }
             _ => None,
         };
+        // `(document, command)` to lay out before this unit, in order.
+        let mut pending: Vec<(DocumentId, &BodyCommand)> = Vec::new();
+        // The entry document resumes: the included documents read so far are
+        // finished, so their commands after their last unit come first.
+        if unit_start.is_some_and(|at| at.document == entry_doc) {
+            for (d, cmds) in included_commands.iter().enumerate() {
+                if seen_included[d] {
+                    pending.extend(cmds[next_included[d]..].iter().map(|c| (DocumentId(d), c)));
+                    next_included[d] = cmds.len();
+                }
+            }
+        }
         if let Some(at) = flush_before {
             while let Some(cmd) = commands.get(next_command).filter(|c| c.start < at) {
                 next_command += 1;
+                pending.push((entry_doc, cmd));
+            }
+            // The `\input` command that read this unit's document is spent.
+            if input_doc.is_some() && commands.get(next_command).is_some_and(|c| c.start == at && matches!(c.kind, BodyKind::Input)) {
+                next_command += 1;
+            }
+        }
+        // An included document's own commands precede its next unit.
+        if let Some(at) = unit_start.filter(|at| at.document != entry_doc) {
+            if let Some(cmds) = included_commands.get(at.document.0) {
+                seen_included[at.document.0] = true;
+                while let Some(cmd) = cmds.get(next_included[at.document.0]).filter(|c| c.start < at.start) {
+                    next_included[at.document.0] += 1;
+                    pending.push((at.document, cmd));
+                }
+            }
+        }
+        if !pending.is_empty() {
+            for (cmd_doc, cmd) in pending {
+                let source = texts.get(cmd_doc.0).copied().unwrap_or("");
                 match &cmd.kind {
                     BodyKind::Input => {}
                     BodyKind::Event(event) => blocks.push(Block::Chrome {
                         event: event.clone(),
-                        span: Span::in_document(entry_doc, cmd.start, cmd.end),
+                        span: Span::in_document(cmd_doc, cmd.start, cmd.end),
                     }),
                     BodyKind::NoIndent => noindent_at = Some(cmd.end),
                     BodyKind::Chapter { starred, title } => {
@@ -1372,11 +1427,13 @@ pub fn adapt_cached(
                             } else {
                                 chapter_no.to_string()
                             };
-                            chapter_starts.push((cmd.start, chapter_label.clone()));
+                            if cmd_doc == entry_doc {
+                                chapter_starts.push((cmd.start, chapter_label.clone()));
+                            }
                             chapter_label.clone()
                         });
-                        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
-                        let mut items = words_from_source(source, entry_doc, title.0, title.1);
+                        let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
+                        let mut items = words_from_source(source, cmd_doc, title.0, title.1);
                         if toc_active {
                             if let Some(n) = &number {
                                 // report.cls `\@chapter`: `\addcontentsline{toc}{chapter}{\protect\numberline{\thechapter}#1}`.
@@ -1385,7 +1442,7 @@ pub fn adapt_cached(
                                     list: crate::toc::ListKind::Toc,
                                     level: 0,
                                     number: Some((n.clone(), span)),
-                                    title: labels.entry_items.get(entry_doc, title.0, title.1).unwrap_or_else(|| items.clone()),
+                                    title: labels.entry_items.get(cmd_doc, title.0, title.1).unwrap_or_else(|| items.clone()),
                                     key: key.clone(),
                                 });
                                 toc_pending.push(key);
@@ -1405,7 +1462,7 @@ pub fn adapt_cached(
                     }
                     BodyKind::MakeTitle => {
                         if let Some(t) = stashed.next() {
-                            let span = Span::in_document(entry_doc, cmd.start, cmd.end);
+                            let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
                             // `\@maketitle` is followed by `\thispagestyle{plain}`;
                             // the `titlepage` form sets `empty` on its own page.
                             if maketitle_plain {
@@ -1420,12 +1477,12 @@ pub fn adapt_cached(
                         } else if maketitle_plain {
                             blocks.push(Block::Chrome {
                                 event: ChromeEvent::ThisPageStyle(PageStyle::Plain),
-                                span: Span::in_document(entry_doc, cmd.start, cmd.end),
+                                span: Span::in_document(cmd_doc, cmd.start, cmd.end),
                             });
                         }
                     }
                     BodyKind::Matter(matter) => {
-                        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
+                        let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
                         let openright = style.class_geometry.as_ref().is_some_and(|d| d.options.openright);
                         let (double, numbering, main) = match matter {
                             Matter::Front => (true, Some(flashtex_class_geometry::Numbering::Roman), false),
@@ -1447,11 +1504,11 @@ pub fn adapt_cached(
                         // before the list's heading.
                         let before = source[..cmd.start].trim_end();
                         let eject = ["\\newpage", "\\clearpage", "\\cleardoublepage", "\\pagebreak"].iter().any(|c| before.ends_with(c));
-                        toc_lists.push((blocks.len(), *kind, Span::in_document(entry_doc, cmd.start, cmd.end), eject));
+                        toc_lists.push((blocks.len(), *kind, Span::in_document(cmd_doc, cmd.start, cmd.end), eject));
                     }
                     BodyKind::AddContentsLine { list, level, text } => {
                         if let (true, Some(level)) = (toc_active, crate::toc::level_of(level)) {
-                            let (number, title) = crate::toc::contentsline_text(source, entry_doc, text.0, text.1, &labels.entry_items);
+                            let (number, title) = crate::toc::contentsline_text(source, cmd_doc, text.0, text.1, &labels.entry_items);
                             let key = crate::toc::key(toc_records.len());
                             toc_records.push(crate::toc::Record {
                                 list: *list,
@@ -1483,8 +1540,8 @@ pub fn adapt_cached(
                             part_no += 1;
                             flashtex_class_geometry::Numbering::UpperRoman.format(i64::from(part_no))
                         });
-                        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
-                        let mut items = words_from_source(source, entry_doc, title.0, title.1);
+                        let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
+                        let mut items = words_from_source(source, cmd_doc, title.0, title.1);
                         if toc_active {
                             if let Some(n) = &number {
                                 let (s, e) = short.unwrap_or(*title);
@@ -1493,7 +1550,7 @@ pub fn adapt_cached(
                                     list: crate::toc::ListKind::Toc,
                                     level: -1,
                                     number: Some((n.clone(), span)),
-                                    title: labels.entry_items.get(entry_doc, s, e).unwrap_or_else(|| words_from_source(source, entry_doc, s, e)),
+                                    title: labels.entry_items.get(cmd_doc, s, e).unwrap_or_else(|| words_from_source(source, cmd_doc, s, e)),
                                     key: key.clone(),
                                 });
                                 toc_pending.push(key);
@@ -1519,10 +1576,6 @@ pub fn adapt_cached(
                         prev_para_end = None;
                     }
                 }
-            }
-            // The `\input` command that read this unit's document is spent.
-            if input_doc.is_some() && commands.get(next_command).is_some_and(|c| c.start == at && matches!(c.kind, BodyKind::Input)) {
-                next_command += 1;
             }
         }
         match unit.kind {
