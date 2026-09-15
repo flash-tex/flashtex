@@ -7231,6 +7231,16 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                         gap_style.bold = style.bold;
                         gap_style.italic = style.italic;
                     }
+                    // `\subsection*{Bonus \hfill \normalfont[1 bonus point]}`:
+                    // a space with `\normalfont` words on both sides was read
+                    // after the declaration, so it is `ecrm1200`'s 3.90bp and
+                    // not the head's `ecbx1200` 4.48bp. The source intervals
+                    // do not carry the head's weight, so the neighbours'
+                    // compiler weight decides; a space next to a bold word
+                    // keeps the head font (`A {\normalfont B} C`).
+                    if heading && style.medium && matches!(items.last(), Some(Item::Word(w)) if w.segments.last().is_some_and(|s| s.style.medium)) {
+                        gap_style.medium = true;
+                    }
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
                     pending_accent = None;

@@ -7363,8 +7363,44 @@ fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
         // (`TexMathMetrics`/`MathFonts`), which paint both from cmsy10's
         // `\emptyset` slot but only force this one's advance and outline.
         '\u{2205}' if width_em.is_some() => vec![ml::Atom::symbol(crate::mathfont::VARNOTHING_SENTINEL)],
-        _ => vec![ml::Atom::symbol(c)],
+        _ => match long_arrow_pieces(c) {
+            Some((left, right)) => vec![long_arrow(left, right)],
+            None => vec![ml::Atom::symbol(c)],
+        },
     }
+}
+
+/// The two relations a LaTeX long arrow joins (`latex.ltx`:
+/// `\longrightarrow` = `\relbar\joinrel\rightarrow`, `\Longrightarrow` =
+/// `\Relbar\joinrel\Rightarrow`, ...). `\relbar` is cmsy's minus and
+/// `\Relbar` cmr's `=`; the arrows are cmsy "20/"21/"24/"28/"29/"2C.
+fn long_arrow_pieces(c: char) -> Option<(char, char)> {
+    Some(match c {
+        '\u{27F5}' => ('\u{2190}', '\u{2212}'), // \longleftarrow
+        '\u{27F6}' => ('\u{2212}', '\u{2192}'), // \longrightarrow
+        '\u{27F7}' => ('\u{2190}', '\u{2192}'), // \longleftrightarrow
+        '\u{27F8}' => ('\u{21D0}', '='),        // \Longleftarrow
+        '\u{27F9}' => ('=', '\u{21D2}'),        // \Longrightarrow
+        '\u{27FA}' => ('\u{21D0}', '\u{21D2}'), // \Longleftrightarrow
+        _ => return None,
+    })
+}
+
+/// A long arrow as TeX builds it: the two relations with `\joinrel`
+/// (`\mathrel{\mkern-3mu}`) between them. Adjacent relations get no
+/// inter-atom space and no break between them, so the three are one
+/// relation whose nucleus is `left`, a -3mu kern and `right`. Latin Modern
+/// Math's single U+27F9 glyph is 1.457em wide where pdfTeX's `=`+`⇒` join
+/// is 0.777781 + 1.000003 - 3/18 = 1.611em, which moved every glyph after
+/// `\Longrightarrow` in a centred display by half the 1.69bp difference at
+/// 11pt (HW1 Problem 4(b)).
+///
+/// Not modelled: `\relbar` is `\smash`ed (amsmath `\mathsm@sh`), so pdfTeX's
+/// `\longrightarrow` box is only as tall as the arrow; here the minus keeps
+/// its 0.583em height and 0.083em depth.
+fn long_arrow(left: char, right: char) -> ml::Atom {
+    let piece = |ch| ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Symbol(ch));
+    ml::Atom::new(ml::AtomClass::Rel, ml::Nucleus::List(ml::MathList::new(vec![piece(left), ml::Atom::glue(-3.0, 0.0), piece(right)])))
 }
 
 /// Adds `\addvspace` glue (a list environment's `\topsep`) to the block's

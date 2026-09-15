@@ -523,7 +523,7 @@ fn left_right_paints_the_variant_of_the_selected_cmex_size() {
 }
 
 /// Symbols with no Computer Modern slot (`\mathbb`, `\setminus`,
-/// `\Longrightarrow`, `\aleph`) are drawn from Latin Modern Math through
+/// `\aleph`) are drawn from Latin Modern Math through
 /// `OTF_FALLBACK_FONT`, whose id lies above the `\text` run range: the
 /// painter must not look them up as run glyphs (they were silently
 /// dropped). The math minus is U+2212, not the text hyphen.
@@ -553,7 +553,10 @@ fn cm_less_symbols_are_painted_from_latin_modern_math() {
     let texts: Vec<&str> = runs.iter().map(|(t, _)| t.as_str()).collect();
     assert!(texts.contains(&"ℤℵ"), "\\mathbb{{Z}}\\aleph dropped: {texts:?}");
     assert!(texts.contains(&"ℝ∖ℚ"), "\\mathbb{{R}}\\setminus\\mathbb{{Q}} dropped: {texts:?}");
-    assert!(texts.contains(&"x⟹y"), "\\Longrightarrow dropped: {texts:?}");
+    // `\Longrightarrow` is no longer a fallback glyph: it is pdfTeX's
+    // `\Relbar\joinrel\Rightarrow` join of cmr `=` and cmsy `⇒`
+    // (tests/long_arrows.rs), and both pieces are painted.
+    assert!(texts.windows(2).any(|w| w == ["=", "⇒y"]), "\\Longrightarrow dropped: {texts:?}");
     // The run text keeps the source's ASCII hyphen; the painted glyph is
     // Latin Modern Math's U+2212 (gid 2615 in the pinned font 6075562b…),
     // not its text hyphen (gid 14).
