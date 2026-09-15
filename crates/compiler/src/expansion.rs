@@ -803,6 +803,9 @@ impl<'d> Converter<'d> {
                     "includeonly" if origin.is_none() && real_text == "\\includeonly" => {
                         return Flow::IncludeOnly(at);
                     }
+                    // `\-` (the discretionary hyphen) stays a command: it is
+                    // not the character it looks like.
+                    "-" => conv.push(TokenKind::Command(name.clone()), at),
                     _ if name.chars().count() == 1 && !name.chars().all(char::is_alphabetic) => {
                         conv.flush_word();
                         conv.push(TokenKind::Word(name.clone()), at);

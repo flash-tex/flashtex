@@ -41,9 +41,9 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "index", "glossary", "bibliography", "bibliographystyle", "bibitem", "cite", "nocite",
     // Boxes, spacing, breaking and page control.
     "centering", "raggedright", "raggedleft", "linespread", "vfill", "hss", "vss", "vbox",
-    "makebox", "fbox", "framebox", "parbox", "raisebox", "rule", "newline", "linebreak",
-    "nolinebreak", "pagebreak", "nopagebreak", "clearpage", "cleardoublepage", "thispagestyle",
-    "enlargethispage", "indent", "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
+    "makebox", "fbox", "framebox", "parbox", "raisebox", "rule", "newline",
+    "clearpage", "cleardoublepage", "thispagestyle",
+    "indent", "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
     "vskip", "hskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
     "multicolumn", "tabularnewline", "arraystretch",
     // Fonts and text symbols.
@@ -59,7 +59,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "value", "arabic", "roman", "Roman", "alph", "Alph", "fnsymbol", "the", "makeatletter",
     "makeatother", "ifthenelse", "newif", "relax", "expandafter", "csname", "endcsname",
     "newlength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
-    "verb", "hyphenation", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
+    "verb", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
     "PassOptionsToPackage", "AtBeginDocument",
     // Cross-references and links.
     "eqref", "autoref", "nameref", "url", "href", "hyperref", "hyperlink",
@@ -111,7 +111,7 @@ const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "verbatim", "verbatim*", "verse", "abstract", "minipage", "titlepage", "thebibliography",
     "list", "trivlist", "picture", "math", "eqnarray", "eqnarray*", "gathered", "multlined",
     "subequations", "dcases", "rcases", "proof", "tikzpicture", "lstlisting", "minted",
-    "wrapfigure", "subfigure", "comment", "landscape", "samepage", "sloppypar", "filecontents",
+    "wrapfigure", "subfigure", "comment", "landscape", "filecontents",
     "frame", "tabbing", "small", "footnotesize",
 ];
 
