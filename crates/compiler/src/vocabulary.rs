@@ -20,7 +20,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "Bigg", "bigm", "Bigm", "biggm", "Biggm", "Bigl", "Bigr", "biggl", "biggr", "Biggl", "Biggr",
     "dots", "ldots", "dotsc", "dotso", "cdots", "dotsb", "dotsm", "dotsi", "iint", "lbrace",
     "rbrace", "iiint", "bmod", "mod", "dfrac", "tfrac", "cfrac", "frac", "begin", "sqrt", "overset",
-    "stackrel", "underset", "binom", "dbinom", "tbinom", "mathbf", "textbf", "boxed", "overline",
+    "stackrel", "underset", "sideset", "binom", "dbinom", "tbinom", "mathbf", "textbf", "boxed", "overline",
     "underline", "tag", "pmod", "text", "bigl", "bigr", "quad", "qquad", "mathbb", "hat", "bar",
     "vec", "tilde", "dot", "ddot", "check", "breve", "acute", "grave", "widehat", "widetilde",
     "overbrace", "underbrace", "overrightarrow", "overleftarrow", "overleftrightarrow",
@@ -69,7 +69,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "usetikzlibrary", "draw", "node", "fill", "path", "scalebox", "resizebox", "rotatebox",
     "subcaption", "captionof", "listoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
-    "intertext", "shortintertext", "substack", "sideset", "xrightarrow", "xleftarrow", "overbrace",
+    "intertext", "shortintertext", "substack", "xrightarrow", "xleftarrow", "overbrace",
     "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",
     "limits", "nolimits", "displaylimits", "colon", "eqqcolon", "Coloneqq", "Eqqcolon",
     "vcentcolon", "dblcolon", "vdots", "ddots", "iff", "implies", "impliedby",

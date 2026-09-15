@@ -723,6 +723,20 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
             Nucleus::Phantom { body, .. } | Nucleus::Operator { body, .. } => {
                 shift_math_list(body, changes, deltas)?
             }
+            Nucleus::SideSet {
+                operator,
+                left_sub,
+                left_sup,
+                right_sub,
+                right_sup,
+            } => {
+                shift_math_list(operator, changes, deltas)?;
+                for scripts in [left_sub, left_sup, right_sub, right_sup] {
+                    if let Some(list) = scripts {
+                        shift_math_list(list, changes, deltas)?;
+                    }
+                }
+            }
             Nucleus::ExtArrow { above, below, .. } => {
                 shift_math_list(above, changes, deltas)?;
                 shift_math_list(below, changes, deltas)?;

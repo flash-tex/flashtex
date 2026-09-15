@@ -529,6 +529,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["sideset"],
+        "{left}{right}{op}",
+        "left and right sub/superscripts on a large operator (\\mathop with \\nolimits)",
+        true,
+    ),
+    (
         &["operatorname", "operatornamewithlimits"],
         "{name}",
         "upright named operator (\\mathop); starred and withlimits forms take limits",
@@ -872,7 +878,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "amsmath",
         "centertags, sumlimits, nointlimits, namelimits, reqno",
-        "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\sideset, \\shoveleft, \\smash, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used",
+        "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, \\sideset, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\shoveleft, \\smash, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used",
     ),
     (
         "amssymb",

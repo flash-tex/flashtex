@@ -106,6 +106,21 @@ pub enum Nucleus {
         over: Option<MathList>,
         under: Option<MathList>,
     },
+    /// `\sideset{left}{right}\bigop` (amsmath, `amsmath.sty` 921-929): the
+    /// `<left scripts>` (an optional subscript and/or superscript, e.g.
+    /// `_1^2`) attached to the LEFT of the large operator and the `<right
+    /// scripts>` to its right. amsmath sets the operator `\nolimits`, so
+    /// both pairs are corner scripts in every style — never display limits —
+    /// at the operator's normal script size, and the whole construct is one
+    /// `\mathop` atom. `operator` is one atom (trailing scripts were merged
+    /// into the side pairs at parse time, so it carries none itself).
+    SideSet {
+        operator: MathList,
+        left_sub: Option<MathList>,
+        left_sup: Option<MathList>,
+        right_sub: Option<MathList>,
+        right_sup: Option<MathList>,
+    },
     /// `array`, `cases` and the amsmath matrix environments: a grid of cells
     /// with per-column alignment (`l`, `c`, `r`) and optional stretched fences.
     Matrix {
@@ -1513,6 +1528,14 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
+            // amsmath's `\sideset{left}{right}\bigop` (`amsmath.sty`
+            // 921-929): two script groups, then the operator. Each group
+            // holds an optional subscript and/or superscript in either
+            // order, either possibly absent (`\sideset{}{_n}\sum` is only a
+            // right subscript). The operator is one atom; scripts written
+            // directly after it merge into the right pair, like ordinary
+            // operator scripting.
+            "sideset" => self.sideset_atom(span),
             "mathbf" | "textbf" => {
                 let (text, argument_span) = self.required_text_group(&name, span);
                 MathAtom {
@@ -2548,6 +2571,238 @@ impl MathParser<'_> {
         }
     }
 
+    /// `\sideset{left}{right}\bigop` (see the `"sideset"` arm): parses the
+    /// two script groups and the operator into one [`Nucleus::SideSet`]
+    /// atom. Returns the first atom and queues the rest, like every other
+    /// multi-atom arm, so the operator's own trailing atoms (from commands
+    /// that expand to several, such as `\iff`) keep their place after it.
+    /// A later script for an already-filled `\sideset` slot overwrites it and
+    /// is diagnosed exactly like a duplicate script on one atom (`list_inner`
+    /// keeps the last script too).
+    fn overwrite_script(
+        slot: &mut Option<MathList>,
+        script: Option<MathList>,
+        marker: Span,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        if script.is_none() {
+            return;
+        }
+        if slot.replace(script.unwrap()).is_some() {
+            diagnostics.push(Diagnostic::error(
+                "duplicate script on a math atom",
+                Some(marker),
+                Some("used the last script and continued".into()),
+            ));
+        }
+    }
+
+    fn sideset_atom(&mut self, span: Span) -> MathAtom {
+        let (left_sub, left_sup) = self.sideset_scripts(span);
+        let (group_sub, group_sup) = self.sideset_scripts(span);
+        while matches!(
+            self.tokens.get(self.i).map(|t| &t.kind),
+            Some(TokenKind::Space)
+        ) {
+            self.i += 1;
+        }
+        // Only these token kinds can open the operator; anything else (a
+        // closing brace, a stray script marker, the end of the formula)
+        // means it is missing, and must be left for the surrounding list.
+        // `self.atom` consumes before it decides, so calling it here would
+        // eat a brace that closes an outer group.
+        let opens_operator = match self.tokens.get(self.i).map(|t| &t.kind) {
+            None
+            | Some(TokenKind::RBrace)
+            | Some(TokenKind::Superscript)
+            | Some(TokenKind::Subscript) => false,
+            _ => true,
+        };
+        let mut operator = if opens_operator {
+            if matches!(
+                self.tokens.get(self.i).map(|t| &t.kind),
+                Some(TokenKind::LBrace)
+            ) {
+                // A defensively braced operator (`\sideset{}{}{\prod}`):
+                // flatten like a bare group, keeping its first atom.
+                self.i += 1;
+                let body = self.list(true);
+                Some(self.group_atom(body, span))
+            } else {
+                self.atom()
+            }
+        } else {
+            None
+        };
+        let Some(mut head) = operator.take() else {
+            if !self.argument_cut_off() {
+                self.diagnostics.push(Diagnostic::error(
+                    "\\sideset requires an operator",
+                    Some(span),
+                    Some("ignored \\sideset and continued".into()),
+                ));
+            }
+            // Recovery: the parsed scripts still typeset, floating on empty
+            // nuclei (like primes with no preceding atom), instead of the
+            // whole construct vanishing.
+            let mut seq = Vec::new();
+            for (sub, sup) in [(left_sub, left_sup), (group_sub, group_sup)] {
+                if sub.is_some() || sup.is_some() {
+                    seq.push(MathAtom {
+                        nucleus: Nucleus::Symbol(String::new()),
+                        span,
+                        superscript: sup,
+                        subscript: sub,
+                        class_override: None,
+                        width_em: None,
+                        ams_symbol: None,
+                    });
+                }
+            }
+            seq.append(&mut self.pending);
+            let mut atoms = seq.into_iter();
+            return match atoms.next() {
+                Some(first) => {
+                    self.pending.extend(atoms);
+                    first
+                }
+                None => space(0.0, span),
+            };
+        };
+        let tail = std::mem::take(&mut self.pending);
+        // Scripts the operator already carries (only possible from a braced
+        // group, e.g. `{\sum_x}`) are the earliest scripts: the group pair
+        // below overwrites them, and trailing scripts overwrite that, each
+        // conflict diagnosed like a duplicate script on one atom.
+        let mut right_sub = head.subscript.take();
+        let mut right_sup = head.superscript.take();
+        Self::overwrite_script(&mut right_sub, group_sub, span, &mut self.diagnostics);
+        Self::overwrite_script(&mut right_sup, group_sup, span, &mut self.diagnostics);
+        // Scripts written directly after the operator merge into the right
+        // pair, exactly where ordinary operator scripting would put them.
+        // `\limits`/`\nolimits` are parsed and ignored, as in `list_inner`.
+        loop {
+            while matches!(
+                self.tokens.get(self.i).map(|t| &t.kind),
+                Some(TokenKind::Space | TokenKind::ParBreak | TokenKind::Comment)
+            ) {
+                self.i += 1;
+            }
+            let trailing = match self.tokens.get(self.i).map(|t| &t.kind) {
+                Some(TokenKind::Superscript) => true,
+                Some(TokenKind::Subscript) => false,
+                _ => break,
+            };
+            let marker = self.tokens[self.i].span;
+            self.i += 1;
+            let script = self.script_argument(marker);
+            if trailing {
+                Self::overwrite_script(&mut right_sup, Some(script), marker, &mut self.diagnostics);
+            } else {
+                Self::overwrite_script(&mut right_sub, Some(script), marker, &mut self.diagnostics);
+            }
+        }
+        let atom = MathAtom {
+            nucleus: Nucleus::SideSet {
+                operator: MathList { atoms: vec![head] },
+                left_sub,
+                left_sup,
+                right_sub,
+                right_sup,
+            },
+            span,
+            superscript: None,
+            subscript: None,
+            class_override: None,
+            width_em: None,
+            ams_symbol: None,
+        };
+        self.pending.extend(tail);
+        atom
+    }
+
+    /// One `\sideset` script group: an optional subscript and/or superscript
+    /// in either order, either possibly absent. Anything else in the group
+    /// is diagnosed and skipped; `\limits`/`\nolimits` are no-ops, as in
+    /// `list_inner`. The braces are required, like every documented use.
+    fn sideset_scripts(&mut self, cmd_span: Span) -> (Option<MathList>, Option<MathList>) {
+        while matches!(
+            self.tokens.get(self.i).map(|t| &t.kind),
+            Some(TokenKind::Space)
+        ) {
+            self.i += 1;
+        }
+        if !matches!(
+            self.tokens.get(self.i).map(|t| &t.kind),
+            Some(TokenKind::LBrace)
+        ) {
+            if !self.argument_cut_off() {
+                self.diagnostics.push(Diagnostic::error(
+                    "\\sideset requires braced script groups",
+                    Some(cmd_span),
+                    Some("used an empty argument and continued".into()),
+                ));
+            }
+            return (None, None);
+        }
+        self.i += 1;
+        let mut sub = None;
+        let mut sup = None;
+        loop {
+            let Some(token) = self.tokens.get(self.i).cloned() else {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "\\sideset argument is missing its closing brace",
+                        Some(cmd_span),
+                        Some("closed the argument at the end of the formula".into()),
+                    )
+                    .with_help("add a closing '}'"),
+                );
+                self.unclosed.get_or_insert(cmd_span);
+                break;
+            };
+            match token.kind {
+                TokenKind::Space | TokenKind::ParBreak | TokenKind::Comment => self.i += 1,
+                TokenKind::RBrace => {
+                    self.i += 1;
+                    break;
+                }
+                TokenKind::Command(ref switch) if switch == "limits" || switch == "nolimits" => {
+                    self.i += 1;
+                }
+                TokenKind::Superscript | TokenKind::Subscript => {
+                    self.i += 1;
+                    let script = self.script_argument(token.span);
+                    let slot = if token.kind == TokenKind::Superscript {
+                        &mut sup
+                    } else {
+                        &mut sub
+                    };
+                    if slot.replace(script).is_some() {
+                        self.diagnostics.push(Diagnostic::error(
+                            "duplicate script on a math atom",
+                            Some(token.span),
+                            Some("used the last script and continued".into()),
+                        ));
+                    }
+                }
+                _ => {
+                    // Not a script: consume one atom to stay in sync (its
+                    // own trailing atoms are discarded with it), diagnose,
+                    // and carry on with the rest of the group.
+                    let _ = self.atom();
+                    self.pending.clear();
+                    self.diagnostics.push(Diagnostic::error(
+                        "unexpected content in \\sideset argument",
+                        Some(token.span),
+                        Some("only subscripts and superscripts are allowed here; ignored it and continued".into()),
+                    ));
+                }
+            }
+        }
+        (sub, sup)
+    }
+
     fn required_group(&mut self, command: &str, span: Span) -> MathList {
         while matches!(
             self.tokens.get(self.i).map(|t| &t.kind),
@@ -3255,6 +3510,8 @@ fn atom_class(atom: &MathAtom) -> Option<AtomClass> {
         Nucleus::Text(text) if text == "..." => Inner,
         Nucleus::Fraction { .. } => Inner,
         Nucleus::Operator { .. } => Op,
+        // amsmath wraps `\sideset` in `\mathop`.
+        Nucleus::SideSet { .. } => Op,
         // `\ext@arrow` is `\mathrel{\mathop{...}\limits...}`.
         Nucleus::ExtArrow { .. } => Rel,
         // `\overbrace`/`\underbrace` are `\mathop{..}\limits` (`fontmath.ltx` 430-437).
@@ -3803,6 +4060,79 @@ fn layout_nucleus(
                 offset_items(&mut m.items, (width - m.width) / 2.0, dy);
                 out.descent = out.descent.max(m.descent + dy);
                 out.items.extend(m.items);
+            }
+            out
+        }
+        Nucleus::SideSet {
+            operator,
+            left_sub,
+            left_sup,
+            right_sub,
+            right_sup,
+        } => {
+            // amsmath sets `\sideset`'s operator `\nolimits`, so both script
+            // pairs are corner scripts in every style — never display limits
+            // (`takes_display_limits` does not fire for this nucleus). Size
+            // and vertical offsets are exactly the ordinary corner-script
+            // path's below, mirrored left versus right.
+            let script_size = if level == 0 {
+                root_size * SCRIPT_SCALE
+            } else {
+                root_size * SECOND_ORDER_SCRIPT_SCALE
+            };
+            let base = layout_list(operator, size, root_size, level, diagnostics);
+            let mut laid = |scripts: &Option<MathList>| {
+                scripts
+                    .as_ref()
+                    .map(|l| layout_list(l, script_size, root_size, level + 1, diagnostics))
+            };
+            let left_sub = laid(left_sub);
+            let left_sup = laid(left_sup);
+            let right_sub = laid(right_sub);
+            let right_sup = laid(right_sup);
+            let left_width = [left_sub.as_ref(), left_sup.as_ref()]
+                .into_iter()
+                .flatten()
+                .map(|b| b.width)
+                .fold(0.0, f64::max);
+            let right_width = [right_sub.as_ref(), right_sup.as_ref()]
+                .into_iter()
+                .flatten()
+                .map(|b| b.width)
+                .fold(0.0, f64::max);
+            let base_width = base.width;
+            let mut out = MathBox {
+                width: left_width + base_width + right_width,
+                ascent: base.ascent,
+                descent: base.descent,
+                items: base.items,
+            };
+            // The base shifts right past the left scripts; every script
+            // offset below is then relative to the operator's edges.
+            offset_items(&mut out.items, left_width, 0.0);
+            if let Some(mut b) = left_sup {
+                let dy = -SUPERSCRIPT_RAISE_EM * size;
+                offset_items(&mut b.items, left_width - b.width, dy);
+                out.ascent = out.ascent.max(b.ascent - dy);
+                out.items.extend(b.items);
+            }
+            if let Some(mut b) = left_sub {
+                let dy = SUBSCRIPT_LOWER_EM * size;
+                offset_items(&mut b.items, left_width - b.width, dy);
+                out.descent = out.descent.max(b.descent + dy);
+                out.items.extend(b.items);
+            }
+            if let Some(mut b) = right_sup {
+                let dy = -SUPERSCRIPT_RAISE_EM * size;
+                offset_items(&mut b.items, left_width + base_width, dy);
+                out.ascent = out.ascent.max(b.ascent - dy);
+                out.items.extend(b.items);
+            }
+            if let Some(mut b) = right_sub {
+                let dy = SUBSCRIPT_LOWER_EM * size;
+                offset_items(&mut b.items, left_width + base_width, dy);
+                out.descent = out.descent.max(b.descent + dy);
+                out.items.extend(b.items);
             }
             out
         }
@@ -4413,6 +4743,19 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
                 body: shift_list(body, delta),
                 limits: *limits,
             },
+            Nucleus::SideSet {
+                operator,
+                left_sub,
+                left_sup,
+                right_sub,
+                right_sup,
+            } => Nucleus::SideSet {
+                operator: shift_list(operator, delta),
+                left_sub: left_sub.as_ref().map(|l| shift_list(l, delta)),
+                left_sup: left_sup.as_ref().map(|l| shift_list(l, delta)),
+                right_sub: right_sub.as_ref().map(|l| shift_list(l, delta)),
+                right_sup: right_sup.as_ref().map(|l| shift_list(l, delta)),
+            },
             Nucleus::Rule(rule) => Nucleus::Rule(rule.clone()),
             Nucleus::ExtArrow {
                 arrow,
@@ -4748,6 +5091,173 @@ mod parse_tests {
             .x;
         assert!(zero_x > int_x);
         assert!(display.width < inline.width);
+    }
+
+    #[test]
+    fn sideset_attaches_script_pairs_to_both_sides_of_the_operator() {
+        let mut diagnostics = Vec::new();
+        let tokens = crate::lexer::tokenize(r"\sideset{_1^2}{_3^4}\prod");
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        // One atom, so no orphaned script markers cascade into extra atoms.
+        assert_eq!(list.atoms.len(), 1);
+        let atom = &list.atoms[0];
+        let Nucleus::SideSet {
+            operator,
+            left_sub,
+            left_sup,
+            right_sub,
+            right_sup,
+        } = &atom.nucleus
+        else {
+            panic!("expected SideSet, got {:?}", atom.nucleus);
+        };
+        assert_eq!(operator.atoms.len(), 1);
+        assert!(matches!(&operator.atoms[0].nucleus, Nucleus::Symbol(g) if g == "∏"));
+        fn script_texts(scripts: &MathList) -> Vec<&str> {
+            scripts
+                .atoms
+                .iter()
+                .map(|a| match &a.nucleus {
+                    Nucleus::Symbol(g) => g.as_str(),
+                    other => panic!("expected symbol, got {other:?}"),
+                })
+                .collect()
+        }
+        assert_eq!(
+            script_texts(left_sub.as_ref().expect("left sub populated")),
+            ["1"]
+        );
+        assert_eq!(
+            script_texts(left_sup.as_ref().expect("left sup populated")),
+            ["2"]
+        );
+        assert_eq!(
+            script_texts(right_sub.as_ref().expect("right sub populated")),
+            ["3"]
+        );
+        assert_eq!(
+            script_texts(right_sup.as_ref().expect("right sup populated")),
+            ["4"]
+        );
+        // amsmath wraps `\sideset` in `\mathop`.
+        assert_eq!(spacing_classes(&list), vec![Some(AtomClass::Op)]);
+        let size = 10.0;
+        let boxed = layout(&list, size, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let item = |text: &str| {
+            boxed
+                .items
+                .iter()
+                .find(|i| i.text == text)
+                .unwrap_or_else(|| panic!("missing {text} in {boxed:?}"))
+        };
+        let prod_x = item("∏").x;
+        // Left scripts end at the operator's left edge, right scripts start
+        // at its right edge.
+        assert!(item("1").x < prod_x, "left sub not left of prod");
+        assert!(item("2").x < prod_x, "left sup not left of prod");
+        assert!(item("3").x > prod_x, "right sub not right of prod");
+        assert!(item("4").x > prod_x, "right sup not right of prod");
+        // Mirrored vertical math: the same corner-script offsets on both
+        // sides (and the same constants ordinary scripting uses below).
+        assert!((item("2").baseline + SUPERSCRIPT_RAISE_EM * size).abs() < 1e-9);
+        assert!((item("4").baseline + SUPERSCRIPT_RAISE_EM * size).abs() < 1e-9);
+        assert!((item("1").baseline - SUBSCRIPT_LOWER_EM * size).abs() < 1e-9);
+        assert!((item("3").baseline - SUBSCRIPT_LOWER_EM * size).abs() < 1e-9);
+        // Scripts protrude past the operator on both sides.
+        assert!(prod_x > 0.0);
+        assert!(boxed.width > prod_x);
+        // Display style never turns the side scripts into limits: amsmath
+        // sets the operator `\nolimits`, so display lays out identically.
+        let display = layout_display(&list, size, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let placed = |b: &MathBox| {
+            b.items
+                .iter()
+                .map(|i| (i.text.clone(), i.x, i.baseline))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(placed(&display), placed(&boxed));
+        assert!((display.width - boxed.width).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sideset_with_an_empty_side_sets_only_the_other() {
+        let mut diagnostics = Vec::new();
+        let tokens = crate::lexer::tokenize(r"\sideset{}{_n}\sum");
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 1);
+        let Nucleus::SideSet {
+            operator,
+            left_sub,
+            left_sup,
+            right_sub,
+            right_sup,
+        } = &list.atoms[0].nucleus
+        else {
+            panic!("expected SideSet, got {:?}", list.atoms[0].nucleus);
+        };
+        assert!(matches!(&operator.atoms[0].nucleus, Nucleus::Symbol(g) if g == "∑"));
+        assert!(left_sub.is_none() && left_sup.is_none());
+        assert!(right_sup.is_none());
+        let right: Vec<&str> = right_sub
+            .as_ref()
+            .expect("right sub populated")
+            .atoms
+            .iter()
+            .map(|a| match &a.nucleus {
+                Nucleus::Symbol(g) => g.as_str(),
+                other => panic!("expected symbol, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(right, ["n"]);
+        let boxed = layout(&list, 10.0, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let sum_x = boxed
+            .items
+            .iter()
+            .find(|i| i.text == "∑")
+            .expect("sum laid out")
+            .x;
+        let n = boxed
+            .items
+            .iter()
+            .find(|i| i.text == "n")
+            .expect("right sub laid out");
+        assert!(n.x > sum_x);
+        assert!(n.baseline > 0.0);
+        // Nothing floats left of the operator: the empty side is empty.
+        assert!((sum_x - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn plain_operator_scripts_still_parse_and_lay_out_as_before() {
+        let mut diagnostics = Vec::new();
+        let tokens = crate::lexer::tokenize(r"\prod_a^b");
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 1);
+        let atom = &list.atoms[0];
+        // No `\sideset`: the ordinary scripted-operator path, untouched.
+        assert!(matches!(&atom.nucleus, Nucleus::Symbol(g) if g == "∏"));
+        assert!(atom.subscript.is_some() && atom.superscript.is_some());
+        let size = 10.0;
+        let boxed = layout(&list, size, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let item = |text: &str| {
+            boxed
+                .items
+                .iter()
+                .find(|i| i.text == text)
+                .unwrap_or_else(|| panic!("missing {text}"))
+        };
+        let prod_x = item("∏").x;
+        assert!(item("a").x > prod_x && item("b").x > prod_x);
+        // Fresh baseline pinning the corner-script path both layouts share.
+        assert!((item("b").baseline + SUPERSCRIPT_RAISE_EM * size).abs() < 1e-9);
+        assert!((item("a").baseline - SUBSCRIPT_LOWER_EM * size).abs() < 1e-9);
     }
 
     #[test]
@@ -6229,6 +6739,22 @@ mod shift_tests {
                         Nucleus::Group(body)
                         | Nucleus::Phantom { body, .. }
                         | Nucleus::Operator { body, .. } => min_start(body),
+                        Nucleus::SideSet {
+                            operator,
+                            left_sub,
+                            left_sup,
+                            right_sub,
+                            right_sup,
+                        } => [
+                            min_start(operator),
+                            left_sub.as_ref().map(min_start).unwrap_or(usize::MAX),
+                            left_sup.as_ref().map(min_start).unwrap_or(usize::MAX),
+                            right_sub.as_ref().map(min_start).unwrap_or(usize::MAX),
+                            right_sup.as_ref().map(min_start).unwrap_or(usize::MAX),
+                        ]
+                        .into_iter()
+                        .min()
+                        .unwrap_or(usize::MAX),
                         Nucleus::GenFraction {
                             numerator,
                             denominator,

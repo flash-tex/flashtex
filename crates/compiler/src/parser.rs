@@ -7367,9 +7367,10 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         //
         // Like `siunitx` and `enumitem` above, the gaps that remain report
         // themselves where they are used rather than at \usepackage:
-        // \sideset, \shoveleft, \smash, \mspace, \hdotsfor and the
-        // \varinjlim family each raise "\X is not supported in math mode" at
-        // their own span. A blanket package warning on top of that is false
+        // \shoveleft, \smash, \mspace, \hdotsfor and the \varinjlim family
+        // each raise "\X is not supported in math mode" at their own span.
+        // (\sideset used to be in this list; it is parsed into its own
+        // nucleus now.) A blanket package warning on top of that is false
         // for every document that stays inside the implemented set --
         // `fixtures/real-world/hw1` and `hw2` are exactly that -- and adds
         // nothing to a document that does not, which already has a precise

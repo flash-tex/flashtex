@@ -1339,6 +1339,21 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
                 respan_list(part, span);
             }
         }
+        Nucleus::SideSet {
+            operator,
+            left_sub,
+            left_sup,
+            right_sub,
+            right_sup,
+        } => {
+            respan_list(operator, span);
+            for part in [left_sub, left_sup, right_sub, right_sup]
+                .into_iter()
+                .flatten()
+            {
+                respan_list(part, span);
+            }
+        }
         Nucleus::Matrix { rows, .. } => {
             for cell in rows.iter_mut().flatten() {
                 respan_list(cell, span);

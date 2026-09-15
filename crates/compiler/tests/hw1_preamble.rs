@@ -125,6 +125,7 @@ fn unimplemented_amsmath_constructs_still_report_themselves() {
         "$\\binom{n}{k}$",
         "$\\sum_{\\substack{i<j}} x$",
         "$\\operatorname{foo}(x)$",
+        "$\\sideset{_a^b}{_c^d}\\sum$",
         "$\\boxed{x}$",
         "$\\mathbb{R} \\nleq \\square$",
         "$\\lim_{x\\to 0} f$",
@@ -141,7 +142,6 @@ fn unimplemented_amsmath_constructs_still_report_themselves() {
         ("$\\smash{x}$", "\\smash"),
         ("$a\\mspace{3mu}b$", "\\mspace"),
         ("$\\varinjlim x$", "\\varinjlim"),
-        ("$\\sideset{_a^b}{_c^d}\\sum$", "\\sideset"),
         ("$\\begin{pmatrix}\\hdotsfor{2}\\end{pmatrix}$", "\\hdotsfor"),
         (
             "\\begin{multline} \\shoveleft{a} \\\\ b \\end{multline}",
