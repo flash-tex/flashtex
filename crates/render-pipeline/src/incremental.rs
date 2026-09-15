@@ -447,6 +447,20 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                 hash_math(above, h);
                 hash_math(below, h);
             }
+            #[cfg(feature = "amsmath-sideset")]
+            Nucleus::SideSet { operator, left_superscript, left_subscript } => {
+                17u8.hash(h);
+                hash_math(operator, h);
+                for part in [left_superscript, left_subscript] {
+                    match part {
+                        Some(l) => {
+                            1u8.hash(h);
+                            hash_math(l, h);
+                        }
+                        None => 0u8.hash(h),
+                    }
+                }
+            }
         }
         match &a.superscript {
             Some(s) => {
@@ -653,6 +667,13 @@ fn shift_math(list: &mut MathList, delta: isize) {
             Nucleus::ExtArrow { above, below, .. } => {
                 shift_math(above, delta);
                 shift_math(below, delta);
+            }
+            #[cfg(feature = "amsmath-sideset")]
+            Nucleus::SideSet { operator, left_superscript, left_subscript } => {
+                shift_math(operator, delta);
+                for part in [left_superscript, left_subscript].into_iter().flatten() {
+                    shift_math(part, delta);
+                }
             }
         }
         if let Some(s) = &mut a.superscript {
