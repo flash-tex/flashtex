@@ -353,8 +353,11 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
     let drop_cap = |v1: &mut crate::v1::V1Payload, cap: &str| {
         v1.accepted = v1.accepted.take().map(|a| a.into_iter().filter(|c| c != cap).collect());
     };
+    let drop_display_list_family = |v1: &mut crate::v1::V1Payload| {
+        v1.accepted = v1.accepted.take().map(|a| a.into_iter().filter(|c| !crate::v1::is_display_list_family(c)).collect());
+    };
     if caps.display_list && v1.status != "failed" {
-        let wire = crate::display::Wire { images: caps.images, device_color: caps.device_color };
+        let wire = crate::display::Wire { images: caps.images, device_color: caps.device_color, diagnostics: caps.diagnostics };
         // display-list-v2-delta (proposal r5 §3): against the acknowledged
         // installed base, when it is also this worker's last emitted sibling.
         let base = if caps.delta { payload.get("display_list_base").and_then(delta::Base::from_json) } else { None };
@@ -368,7 +371,7 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
         if !emitted_delta {
             // Size first (an upper-bound estimate, then the exact line), so an
             // oversized frame is declined without serialising 16+ MB in vain.
-            let estimate = rendered.v2.estimated_json_bytes();
+            let estimate = rendered.v2.estimated_json_bytes_for(wire);
             let mut page_bytes = Vec::new();
             let dl = if estimate > limit {
                 None
@@ -386,7 +389,7 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
                     extra_lines.push(dl);
                 }
                 _ => {
-                    drop_cap(&mut v1, crate::v1::CAP_DISPLAY_LIST);
+                    drop_display_list_family(&mut v1);
                     v1.diagnostics.push(crate::display::Diagnostic::warning(
                         "display_list_declined",
                         format!(
@@ -426,7 +429,7 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
                     "compile_result would be {} bytes for {pages} pages, over the {limit}-byte reply limit; split the project or compile fewer pages",
                     line.len(),
                 ),
-                accepted.map(|a| a.into_iter().filter(|c| c != crate::v1::CAP_DISPLAY_LIST).collect()),
+                accepted.map(|a| a.into_iter().filter(|c| !crate::v1::is_display_list_family(c)).collect()),
             )),
             extra_lines: Vec::new(),
             rendered: Some(rendered),
