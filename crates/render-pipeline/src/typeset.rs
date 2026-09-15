@@ -125,6 +125,8 @@ pub enum BoxRec {
     ColorBox(Rc<ColorBoxRec>),
     /// ulem `\uline` (`Context::underline_box`).
     Underline(Rc<UnderlineRec>),
+    /// `\textsuperscript` / `\textsubscript` (`Context::textscript_box`).
+    TextScript(Rc<TextScriptRec>),
 }
 
 /// A laid-out `\colorbox`/`\fcolorbox`: the content as one line whose
@@ -154,6 +156,23 @@ pub struct UnderlineRec {
     pub depth: f64,
     pub thickness: f64,
     pub ul_depth: f64,
+    pub span: Span,
+}
+
+/// A laid-out `\textsuperscript` / `\textsubscript`: the content as one
+/// unbreakable line at the `\sf@size` of the current size, painted `raise`
+/// points above the baseline (negative lowers, for subscripts). `height`
+/// and `depth` already include the shift, so the line breaker sees the
+/// raised box exactly like a footnote mark. `width` is the content plus
+/// `\scriptspace` (TeX §756); the inner `block` line keeps the content
+/// width.
+#[derive(Clone)]
+pub struct TextScriptRec {
+    pub block: BuiltBlock,
+    pub width: f64,
+    pub height: f64,
+    pub depth: f64,
+    pub raise: f64,
     pub span: Span,
 }
 
@@ -2155,6 +2174,10 @@ impl<'a> Context<'a> {
                 }
                 AItem::Underline(ul) => {
                     let (run, rec) = self.underline_box(ul, size);
+                    push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
+                }
+                AItem::TextScript(ts) => {
+                    let (run, rec) = self.textscript_box(ts, size);
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(rec));
                 }
                 AItem::Kern { amount, style } => {
@@ -4472,6 +4495,107 @@ impl<'a> Context<'a> {
         (run, self.recs.len() - 1)
     }
 
+    /// `\textsuperscript{...}` / `\textsubscript{...}`
+    /// (`adapter::TextScriptItem`): the content as an `\mbox` (an `\hbox`
+    /// at natural width, one unbreakable box) at the `\sf@size` of `size`
+    /// (`footnotes::script_size`: the `\DeclareMathSizes` table, 70% off
+    /// table — the same size footnote marks use), raised for superscripts
+    /// and lowered for subscripts like a math script of an empty nucleus
+    /// (`footnotes::textsup_shift_pt` / `footnotes::textsub_shift_pt`:
+    /// the shifts footnote marks and the `\LaTeX`e epsilon use). The
+    /// outer run's height/depth already include the shift, so the line
+    /// breaker treats it exactly like a footnote mark; assembly paints
+    /// the inner line shifted by `raise`. The outer width is the content
+    /// plus `\scriptspace` (TeX §756), like a footnote mark.
+    fn textscript_box(&mut self, ts: &adapter::TextScriptItem, size: f64) -> (pl::GlyphRun, usize) {
+        let sf = footnotes::script_size(size);
+        let (placed, width) = self.hbox_runs(&ts.items, sf);
+        let (mut ht, mut dp) = (0.0f64, 0.0f64);
+        let mut runs = Vec::with_capacity(placed.len());
+        let mut items = Vec::with_capacity(placed.len());
+        let mut recs = Vec::with_capacity(placed.len());
+        for (run, rec, x) in placed {
+            ht = ht.max(run.height);
+            dp = dp.max(run.depth);
+            runs.push(position_run(&run, x, 0.0));
+            items.push(pl::Item::Box(run));
+            recs.push(Some(rec));
+        }
+        let n = items.len();
+        let lines = pl::Lines {
+            lines: vec![pl::Line {
+                index: 0,
+                runs,
+                baseline_y: ht,
+                height: ht,
+                depth: dp,
+                natural_width: width,
+                set_width: width,
+                ratio: 0.0,
+                badness: 0.0,
+                items: 0..n,
+                hyphenated: false,
+            }],
+            breaks: Vec::new(),
+            stats: one_line_stats(),
+            diagnostics: Vec::new(),
+            height: ht + dp,
+        };
+        let block = BuiltBlock {
+            block: pl::ParagraphBlock::body(lines),
+            items,
+            recs,
+            vertical: VBlock {
+                lines: vec![(ht, dp)],
+                penalty_before: None,
+                space_before: None,
+                parskip: None,
+                interline_penalty: 0,
+                club_penalty: 0,
+                widow_penalty: 0,
+                penalty_after: None,
+                space_after: None,
+                no_interline_first: true,
+                no_interline_after: true,
+                baselineskip: None,
+                vskip_after: Vec::new(),
+                pre_space_after: None,
+                lineskip: None,
+                contributed: None,
+                line_penalty: Vec::new(),
+                // As for the underlined fragment above: one unbreakable
+                // line, so there is never a broken penalty to follow.
+                broken_penalty: Vec::new(),
+                depth_after: pagebuild::DepthAfter::default(),
+            },
+            labels: Vec::new(),
+            cache_key: None,
+        };
+        // §756: `\scriptspace` is part of every script box (never a
+        // separate, discardable kern): the outer advance is the content
+        // plus `footnotes::SCRIPT_SPACE`, exactly as `footnote_mark`
+        // widens its mark. The inner line keeps the content width — the
+        // space trails with no glyphs to paint.
+        let width = width + footnotes::SCRIPT_SPACE;
+        let raise = if ts.superscript {
+            footnotes::textsup_shift_pt(size, dp)
+        } else {
+            -footnotes::textsub_shift_pt(size, sf, ht)
+        };
+        let height = (ht + raise).max(0.0);
+        let depth = (dp - raise).max(0.0);
+        self.recs.push(BoxRec::TextScript(Rc::new(TextScriptRec {
+            block,
+            width,
+            height,
+            depth,
+            raise,
+            span: ts.span,
+        })));
+        let run = pl::GlyphRun { font: MATH_SENTINEL, size, glyphs: Vec::new(), width, height, depth, source: ts.span.start..ts.span.end };
+        (run, self.recs.len() - 1)
+    }
+
     /// ulem `\UL@setULdepth`: `\dp` of `\hbox{{(j}}` — max depth of `(`
     /// and `j` in the current text font. For cmr/lmr that is `(` at
     /// 0.25em (pdflatex 10pt 2.5pt, 12pt 3.0pt). Fallback 0.25em when
@@ -5625,6 +5749,7 @@ impl<'a> Context<'a> {
                     BoxRec::ColorBox(c) => Some(c.span),
                     BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
+                    BoxRec::TextScript(t) => Some(t.span),
                 })
                 .next();
             let _ = list;
@@ -5827,16 +5952,18 @@ impl flashtex_compiler::text_builtins::LogoMetrics for TfmLogoMetrics {
         flashtex_compiler::text_builtins::pt_to_sp(self.x_height)
     }
 
-    /// lmsy10's `\fontdimen16` (sub1, .15em) and `\fontdimen5` (.430555em)
-    /// at the text size and the script symbol font's `\fontdimen19`
-    /// (sub_drop, .05em at `\sf@size`): the formula `max` is decided by sub1
-    /// at every class size.
+    /// The shared per-design-size subscript constants
+    /// (`footnotes::sub1_pt` / `footnotes::sub_drop_pt`, `\fontdimen16`
+    /// and `\fontdimen19` of the lmsy design at the text / script size)
+    /// with the design-independent x-height (`\fontdimen5`, 0.430555em at
+    /// every lmsy design): the same values `footnotes::textsub_shift_pt`
+    /// uses, so the `\LaTeXe` epsilon drops like a `\textsubscript`.
     fn math_sub_params(&self) -> flashtex_compiler::text_builtins::MathSubParams {
         use flashtex_compiler::text_builtins::{pt_to_sp, MathSubParams};
         MathSubParams {
-            sub1: pt_to_sp(0.15 * self.size),
-            math_x_height: pt_to_sp(0.430555 * self.size),
-            script_sub_drop: pt_to_sp(0.05 * self.sf),
+            sub1: pt_to_sp(footnotes::sub1_pt(self.size)),
+            math_x_height: pt_to_sp(footnotes::CMR_EX_PER_EM * self.size),
+            script_sub_drop: pt_to_sp(footnotes::sub_drop_pt(self.sf)),
         }
     }
 }
@@ -8115,6 +8242,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     BoxRec::ColorBox(c) => Some(c.span),
                     BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
+                    BoxRec::TextScript(t) => Some(t.span),
             });
         let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
         ctx.diagnostics.push(Diagnostic::warning(
@@ -8605,6 +8733,7 @@ pub fn assemble(
                     BoxRec::ColorBox(c) => Some(c.span),
                     BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
+                    BoxRec::TextScript(t) => Some(t.span),
                     BoxRec::Text { .. } => None,
                 });
                 diagnostics.push(Diagnostic::warning(
@@ -8846,6 +8975,27 @@ fn assemble_block(
                             provenance: Provenance::Source(source_of(ul.span)),
                         }));
                     }
+                }
+                BoxRec::TextScript(ts) => {
+                    let x0 = local.x;
+                    let a = assemble_block(&ts.block, recs, maths, 0.0, source_of, paths, empty);
+                    let dx = Tick::from_tex_pt(x0);
+                    // Display y grows downward while `raise` is upward
+                    // (like `BoxRec::Text::raise` in `text_item`), so the
+                    // inner line moves up by `raise` — down for subscripts.
+                    let dy = Tick::from_tex_pt(-ts.raise);
+                    for line_items in &a.lines {
+                        for it in line_items {
+                            let mut item = incremental::place_item(it, dy, "", 0);
+                            display::shift_x(&mut item, dx);
+                            items.push(item);
+                        }
+                    }
+                    for f in a.faces {
+                        used.entry(f.font_id.clone()).or_insert(f);
+                    }
+                    resources.extend(a.resources);
+                    unmapped.extend(a.unmapped);
                 }
                 BoxRec::Leader { .. } => {}
                 BoxRec::Rule { width, height, bottom, span } => {

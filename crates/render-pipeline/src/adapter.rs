@@ -209,6 +209,10 @@ pub enum Item {
     /// ulem `\uline`/`\sout` or kernel text `\underline` (compiler
     /// `Inline::Underline`).
     Underline(Box<UnderlineItem>),
+    /// Kernel text `\textsuperscript` / `\textsubscript` (compiler
+    /// `Inline::TextScript`): `items` set as an unbreakable `\hbox` at
+    /// the `\sf@size` of the current size, raised or lowered.
+    TextScript(Box<TextScriptItem>),
     /// LaTeX's `\leavevmode`: an empty zero-width `\hbox`.
     ///
     /// Emitted only in front of a verbatim blank that would otherwise open
@@ -245,6 +249,16 @@ pub struct ColorBoxItem {
 pub struct UnderlineItem {
     pub thickness_pt: f64,
     pub geom: UnderlineGeom,
+    pub items: Vec<Item>,
+    pub span: Span,
+}
+
+/// A `\textsuperscript` / `\textsubscript`: `items` set as an unbreakable
+/// `\hbox` (`\mbox`) at the `\sf@size` of the current size, raised
+/// (`superscript`) or lowered like a math script of an empty nucleus.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextScriptItem {
+    pub superscript: bool,
     pub items: Vec<Item>,
     pub span: Span,
 }
@@ -2022,6 +2036,7 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
                 }
                 Inline::ColorBox(b) => walk(&b.content, out),
                 Inline::Underline(u) => walk(&u.content, out),
+                Inline::TextScript(t) => walk(&t.content, out),
                 _ => {}
             }
         }
@@ -2099,6 +2114,7 @@ fn inline_span(i: &Inline) -> Span {
         Inline::Tabular(t) => t.span,
         Inline::ColorBox(b) => b.span,
         Inline::Underline(u) => u.span,
+        Inline::TextScript(t) => t.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
     }
@@ -6354,6 +6370,10 @@ fn items_cached(
                 18u8.hash(&mut h);
                 format!("{u:?}").hash(&mut h);
             }
+            Inline::TextScript(t) => {
+                20u8.hash(&mut h);
+                format!("{t:?}").hash(&mut h);
+            }
             Inline::Logo { logo, style, .. } => {
                 12u8.hash(&mut h);
                 logo.hash(&mut h);
@@ -6592,6 +6612,26 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 items.push(Item::Underline(Box::new(UnderlineItem {
                     thickness_pt: u.thickness_pt,
                     geom: u.geom,
+                    items: content,
+                    span,
+                })));
+                prev_end = Some(span.end);
+                prev_span = Some(span);
+                factor = 1000;
+            }
+            Inline::TextScript(t) => {
+                let span = t.span;
+                let gap = space_between(prev_end, prev_span, span, None, after_control_word);
+                let mut gap_style = space_style(texts, styles, prev_end, span, TextStyle::default());
+                gap_style.size_cpt = space_size(texts, prev_end, span, prev_size_cpt, 0);
+                push_gap(&mut items, gap, gap_style, factor);
+                after_control_word = false;
+                // The `\sf@size` reduction is applied by `typeset`, which
+                // lays this hbox out at the script size; the size here
+                // stays ambient so nested declarations still resolve.
+                let content = items_from_inlines_styled(texts, &t.content, styles, labels, size, heading, compiler_weight);
+                items.push(Item::TextScript(Box::new(TextScriptItem {
+                    superscript: t.superscript,
                     items: content,
                     span,
                 })));

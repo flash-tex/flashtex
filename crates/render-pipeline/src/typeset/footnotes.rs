@@ -164,6 +164,70 @@ pub fn sup2_pt(size: f64) -> f64 {
     ratio * size
 }
 
+/// cmr x-height per em, the same constant the compiler's
+/// `CMR_EX_PER_EM` carries (4.30554pt at 10pt): `\fontdimen5`, 0.430555em
+/// at every lmsy design, so the subscript formula shares one value.
+pub const CMR_EX_PER_EM: f64 = 0.430555;
+
+/// `\@textsuperscript` raise for text of `size` whose superscript box has
+/// depth `content_depth`: TeX §758 with an empty nucleus, exactly the
+/// shift [`Context::footnote_mark`] applies — `sup2` of the symbol font
+/// at the current size, at least the box depth plus a quarter of the
+/// x-height (Appendix G rule 18c).
+pub fn textsup_shift_pt(size: f64, content_depth: f64) -> f64 {
+    sup2_pt(size).max(content_depth + 0.25 * CMR_EX_PER_EM * size)
+}
+
+/// `sub1` (fontdimen 16) of the Latin Modern symbol font LaTeX selects at
+/// `size` (`omslmsy.fd`: lmsy5..lmsy10 by size), in points: the same
+/// per-design table as [`sup2_pt`]. lmsy is a metric copy of cmsy, so the
+/// ratios are cmsy's TFM fix-words (`math-layout`'s embedded `cm_tfm`:
+/// 209715/2^20 at design 5, 174763 at 6, 116508 at 9) and the lmsy7/8/10
+/// TFMs (0.142858, 0.125, 0.15). At 9pt this is 0.99998pt — the pdflatex
+/// `\showbox` drop the old fixed 0.15em (1.35pt) missed — and at 8pt it is
+/// 1.0pt, so the box-height term wins there (1.1111pt), as in pdflatex.
+pub fn sub1_pt(size: f64) -> f64 {
+    let ratio = match size {
+        s if s < 5.5 => 0.2,
+        s if s < 6.5 => 0.166667,
+        s if s < 7.5 => 0.142858,
+        s if s < 8.5 => 0.125,
+        s if s < 9.5 => 0.111111,
+        _ => 0.15,
+    };
+    ratio * size
+}
+
+/// `sub_drop` (fontdimen 19) of the Latin Modern symbol font LaTeX selects
+/// at `size`, in points: the same per-design table as [`sup2_pt`]. Every
+/// design carries 0.5pt absolute (0.1 at 5, 0.083333 at 6, 0.071428 at 7,
+/// 0.0625 at 8, 0.055556 at 9, 0.05 at 10), so this only differs from the
+/// old fixed 0.05em off 10pt — but it is the true TFM value at each design.
+pub fn sub_drop_pt(size: f64) -> f64 {
+    let ratio = match size {
+        s if s < 5.5 => 0.1,
+        s if s < 6.5 => 0.083333,
+        s if s < 7.5 => 0.071428,
+        s if s < 8.5 => 0.0625,
+        s if s < 9.5 => 0.055556,
+        _ => 0.05,
+    };
+    ratio * size
+}
+
+/// `\@textsubscript` drop for text of `size` set at `sf` whose subscript
+/// box has height `content_height`: Appendix G rule 18 with an empty
+/// nucleus, the same formula the `\LaTeX`e epsilon uses — `sub_drop` of
+/// the symbol font at the script size, `sub1` at the current size, and the
+/// box height less four-fifths of the x-height. The x-height is 0.430555em
+/// at every lmsy design (fontdimen 5 of the lmsy7/8/10 TFMs and of cmsy
+/// 5/6/9), so it stays a single constant while the other two vary.
+pub fn textsub_shift_pt(size: f64, sf: f64, content_height: f64) -> f64 {
+    sub_drop_pt(sf)
+        .max(sub1_pt(size))
+        .max(content_height - 0.8 * CMR_EX_PER_EM * size)
+}
+
 /// Hook for `minipage` footnotes (`\@mpfootnotetext`): a minipage collects
 /// its notes (marks `\thempfootnote`, `{\itshape\@alph\c@mpfootnote}`) and
 /// sets them at its own foot, `\vskip\skip\@mpfootins \footnoterule
