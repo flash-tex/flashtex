@@ -78,7 +78,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "rVert", "varepsilon", "vartheta", "varphi", "varrho", "varsigma", "varpi", "digamma",
     "varkappa", "hbar", "hslash", "ell", "wp", "Re", "Im", "aleph", "beth", "gimel", "emptyset",
     "varnothing", "nabla", "partial", "infty", "forall", "exists", "nexists", "neg", "lnot", "top",
-    "bot", "angle", "measuredangle", "triangle", "square", "blacksquare", "Box", "Diamond",
+    "bot", "angle", "measuredangle", "triangle", "square", "blacksquare", "Diamond",
     "clubsuit", "diamondsuit", "heartsuit", "spadesuit", "flat", "natural", "sharp", "prime",
     "backprime", "surd", "mathstrut", "not", "neq", "ne", "leq", "le", "geq", "ge", "ll", "gg",
     "leqslant", "geqslant", "approx", "cong", "equiv", "sim", "simeq", "propto", "subset", "supset",

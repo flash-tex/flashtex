@@ -3113,6 +3113,9 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("top", "⊤"),
     ("measuredangle", "∡"),
     ("square", "□"),
+    // amssymb's `\Box` is `\let` to `\square` (amsfonts.sty:152, AMSa "03,
+    // Ord): the same open-square glyph and class, drawn generically.
+    ("Box", "□"),
     ("blacksquare", "■"),
     ("lozenge", "◊"),
     ("checkmark", "✓"),
@@ -6408,6 +6411,76 @@ mod package_gating_tests {
             assert_eq!(symbol.name, *target);
             assert_eq!(symbol.provider, Provider::Amssymb, "\\{alias}");
         }
+    }
+
+    /// Issue #516: amssymb's `\Box` is `\let` to `\square` (amsfonts.sty:152,
+    /// AMSa "03, Ord), so it parses to the same open-square glyph with the
+    /// same atom class — and `$\Box$` compiles with no diagnostics.
+    #[test]
+    fn box_parses_to_squares_open_square_glyph_and_class() {
+        for packages in [MathPackages::KERNEL, AMSSYMB] {
+            let (list, diagnostics) = parsed(r"\Box", packages);
+            assert!(diagnostics.is_empty(), "\\Box: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "\\Box");
+            assert!(
+                matches!(&list.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == "□"),
+                "\\Box: {:?}",
+                list.atoms[0].nucleus
+            );
+        }
+        let (square, diagnostics) = parsed(r"\square", AMSSYMB);
+        assert!(diagnostics.is_empty(), "\\square: {diagnostics:?}");
+        assert_eq!(square.atoms.len(), 1, "\\square");
+        assert!(
+            matches!(&square.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == "□"),
+            "\\square: {:?}",
+            square.atoms[0].nucleus
+        );
+        let (list, _) = parsed(r"\Box", AMSSYMB);
+        assert_eq!(
+            atom_class(&list.atoms[0]),
+            atom_class(&square.atoms[0]),
+            "\\Box and \\square take different classes"
+        );
+        assert_eq!(atom_class(&list.atoms[0]), Some(AtomClass::Ord));
+    }
+
+    /// Regression: `\square` itself is unaffected — still gated on its
+    /// package with nothing loaded, still clean once it is.
+    #[test]
+    fn square_keeps_its_package_gate() {
+        let (_, kernel) = parsed(r"\square", MathPackages::KERNEL);
+        assert_eq!(
+            kernel.first().map(|d| d.message.as_str()),
+            Some(r"\square requires \usepackage{amsfonts}"),
+            "\\square without its package: {kernel:?}"
+        );
+        let (_, loaded) = parsed(r"\square", AMSSYMB);
+        assert!(loaded.is_empty(), "\\square under amssymb: {loaded:?}");
+    }
+
+    /// Issue #516: the two spellings lay out the same glyph at the same
+    /// place. `\Box` takes the generic path (Latin Modern Math U+25A1, 778
+    /// units) while `\square` takes the msam slot advance (0.777781em), so
+    /// the widths agree to 0.000219em — sub-pixel at any size, not bitwise.
+    #[test]
+    fn box_and_square_lay_out_the_same_open_square() {
+        let boxed = laid_out(r"\Box", AMSSYMB);
+        let squared = laid_out(r"\square", AMSSYMB);
+        for (name, b) in [("Box", &boxed), ("square", &squared)] {
+            let item = b
+                .items
+                .iter()
+                .find(|i| i.text == "□")
+                .unwrap_or_else(|| panic!("\\{name} has no open square: {b:?}"));
+            assert_eq!(item.x, 0.0, "\\{name}");
+        }
+        assert!(
+            (boxed.width - squared.width).abs() < 0.01,
+            "Box {} vs square {}",
+            boxed.width,
+            squared.width
+        );
     }
 
     /// mathtools' colon-relation family needs `\usepackage{mathtools}`: base
