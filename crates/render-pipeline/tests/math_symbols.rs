@@ -255,6 +255,230 @@ fn math_face_glyphs(body: &str, text: &str) -> Vec<(u16, f64, f64, f64)> {
     out
 }
 
+#[derive(Debug)]
+struct PositionedMathGlyph {
+    text: String,
+    x: f64,
+    baseline: f64,
+    advance: f64,
+}
+
+fn positioned_math_glyphs(r: &flashtex_render_pipeline::Rendered) -> Vec<PositionedMathGlyph> {
+    let mut out = Vec::new();
+    for page in &r.v2.pages {
+        for item in &page.items {
+            let Item::GlyphRun(run) = item else { continue };
+            if run.role != RunRole::Math {
+                continue;
+            }
+            for glyph in &run.glyphs {
+                let cluster = &run.clusters[glyph.cluster as usize];
+                out.push(PositionedMathGlyph {
+                    text: run.text[cluster.text_start_byte as usize..cluster.text_end_byte as usize].to_string(),
+                    x: glyph.origin_x.to_bp(),
+                    baseline: glyph.baseline_y.to_bp(),
+                    advance: glyph.advance_x.to_bp(),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// pdfLaTeX oracle for mathtools' colon family, measured with
+/// `/Library/TeX/texbin/pdflatex` (TeX Live 2026) on this source:
+///
+/// ```tex
+/// \documentclass[12pt]{article}
+/// \usepackage{lmodern}
+/// \usepackage{mathtools}
+/// \pagestyle{empty}
+/// \newwrite\probeout
+/// \newcommand{\probe}[2]{\sbox0{$a#2 b$}%
+///   \immediate\write\probeout{#1 width=\the\wd0}\noindent\copy0\par}
+/// \begin{document}
+/// \immediate\openout\probeout=probe.dat
+/// \probe{vcentcolon}{\vcentcolon}   % ...one \probe per row of the tables
+/// \probe{mathrelcolon}{\mathrel{:}} % below: coloneqq, Coloneqq, eqqcolon,
+/// \probe{colon}{\colon}             % Eqqcolon, dblcolon, plain `:`
+/// \immediate\closeout\probeout
+/// \end{document}
+/// ```
+///
+/// `\sbox` writes each formula's width to `probe.dat`: `21.0943pt` for
+/// `\vcentcolon`, `:` and `\mathrel{:}`; `29.43333pt` for `\coloneqq` and
+/// `\eqqcolon`; `32.09735pt` for `\Coloneqq` and `\Eqqcolon`; `23.75832pt`
+/// for `\dblcolon`; `19.76099pt` for `\colon`. Glyph origins come from the
+/// PDF through PyMuPDF (`page.get_text("rawdict")`, each char's `origin`):
+/// `x` is the glyph origin minus `a`'s, `dy` the glyph baseline minus `a`'s
+/// (negative = raised), both in bp. pdfTeX writes positions to three
+/// decimals, so `x` is compared within 0.02bp and `dy` within 0.01bp. Every
+/// `\vcentcolon` colon rises 0.415bp: the 3pt axis minus the colon's
+/// 5.16666pt/2 ink centre is 0.41667pt at 12pt.
+type ColonOracle = (&'static str, &'static str, &'static [&'static str], &'static [f64], &'static [f64]);
+
+fn mathtools_formula_glyphs(fonts: &flashtex_render_pipeline::FontSet, body: &str) -> Vec<PositionedMathGlyph> {
+    let source = format!(
+        "\\documentclass[12pt]{{article}}\n\\usepackage{{lmodern}}\n\\usepackage{{mathtools}}\n\\begin{{document}}\n\\noindent${body}$\n\\end{{document}}"
+    );
+    let rendered = render_one_with(&source, fonts);
+    assert!(
+        rendered.v2.diagnostics.iter().all(|d| d.severity != flashtex_render_pipeline::display::Severity::Error),
+        "{body}: {:?}",
+        rendered.v2.diagnostics
+    );
+    positioned_math_glyphs(&rendered)
+}
+
+fn check_colon_oracle(fonts: &flashtex_render_pipeline::FontSet, (name, body, texts, x, dy): ColonOracle) {
+    let glyphs = mathtools_formula_glyphs(fonts, body);
+    assert_eq!(glyphs.iter().map(|g| g.text.as_str()).collect::<Vec<_>>(), texts, "{name}");
+    let (x0, y0) = (glyphs[0].x, glyphs[0].baseline);
+    for (i, glyph) in glyphs.iter().enumerate() {
+        let (gx, gdy) = (glyph.x - x0, glyph.baseline - y0);
+        assert!((gx - x[i]).abs() < 0.02, "{name} glyph {i} `{}`: x={gx:.4}bp, pdflatex {}", glyph.text, x[i]);
+        assert!((gdy - dy[i]).abs() < 0.01, "{name} glyph {i} `{}`: dy={gdy:.4}bp, pdflatex {}", glyph.text, dy[i]);
+    }
+}
+
+/// See the oracle comment above `ColonOracle`. `\vcentcolon` and the three
+/// composed relations the compiler builds from `vcentcolon_atom`: every colon
+/// is raised onto the axis, every `=` and the operands stay on the baseline,
+/// and the `mathtools.sty` kerns (-.9mu, -1.2mu) survive the conversion.
+#[test]
+fn mathtools_composed_colons_match_pdflatex() {
+    if !lm_available() {
+        return;
+    }
+    let fonts = flashtex_render_pipeline::FontSet::with_default_dirs(&[]);
+    for oracle in [
+        ("vcentcolon", r"a\vcentcolon b", &["a", ":", "b"][..], &[0.0, 9.466, 16.039][..], &[0.0, -0.415, 0.0][..]),
+        ("dblcolon", r"a\dblcolon b", &["a", ":", ":", "b"], &[0.0, 9.466, 12.120, 18.693], &[0.0, -0.416, -0.416, 0.0]),
+        ("Coloneqq", r"a\Coloneqq b", &["a", ":", ":", "=", "b"], &[0.0, 9.466, 12.120, 14.575, 27.0084], &[0.0, -0.415, -0.415, 0.0, 0.0]),
+        ("eqqcolon", r"a\eqqcolon b", &["a", "=", ":", "b"], &[0.0, 9.4685, 17.774, 24.347], &[0.0, 0.0, -0.415, 0.0]),
+        ("Eqqcolon", r"a\Eqqcolon b", &["a", "=", ":", ":", "b"], &[0.0, 9.4685, 17.774, 20.4281, 27.001], &[0.0, 0.0, -0.415, -0.415, 0.0]),
+    ] {
+        check_colon_oracle(&fonts, oracle);
+    }
+}
+
+/// Negative controls against the same pdfLaTeX oracle: a literal `:`,
+/// `\mathrel{:}` (a Rel `Nucleus::Group` holding a plain `:`, not a forced-Rel
+/// `Symbol`) and `\colon` all keep the colon on the baseline, with mathtools
+/// loaded.
+#[test]
+fn unraised_colons_match_pdflatex() {
+    if !lm_available() {
+        return;
+    }
+    let fonts = flashtex_render_pipeline::FontSet::with_default_dirs(&[]);
+    for oracle in [
+        ("literal colon", "a:b", &["a", ":", "b"][..], &[0.0, 9.4685, 16.0439][..], &[0.0, 0.0, 0.0][..]),
+        ("mathrel colon", r"a\mathrel{:}b", &["a", ":", "b"], &[0.0, 9.4685, 16.0439], &[0.0, 0.0, 0.0]),
+        ("colon", r"a\colon b", &["a", ":", "b"], &[0.0, 7.472, 14.7049], &[0.0, 0.0, 0.0]),
+    ] {
+        check_colon_oracle(&fonts, oracle);
+    }
+}
+
+/// pdfLaTeX builds mathtools' `\coloneqq` as `\vcentcolon\mathrel{\mkern-1.2mu}=`
+/// (same oracle as `ColonOracle`): the colon rises 0.415bp, the `=` starts
+/// 1.2mu (0.797bp) before the colon's advance ends, and the formula is
+/// `29.43333pt` wide. The pinned compiler still emits the precomposed U+2254
+/// `≔` on the baseline for `\coloneqq`; the compiler change that decomposes it
+/// under mathtools is #529.
+#[test]
+#[ignore = "needs re-pin past #529 (compiler: \\coloneqq decomposes under mathtools)"]
+fn coloneqq_decomposes_like_mathtools() {
+    if !lm_available() {
+        return;
+    }
+    let fonts = flashtex_render_pipeline::FontSet::with_default_dirs(&[]);
+    check_colon_oracle(
+        &fonts,
+        ("coloneqq", r"a\coloneqq b", &["a", ":", "=", "b"], &[0.0, 9.466, 11.921, 24.3544], &[0.0, -0.415, 0.0, 0.0]),
+    );
+}
+
+/// Horizontal control for the pipeline change: the x positions and advances
+/// below are the current-`main` rendering, in bp (they agree with the
+/// pdfLaTeX oracle above to its three-decimal precision), and must not change
+/// when only the colon's vertical placement changes. Vertically the raised
+/// colons match pdfLaTeX's -0.415bp, and kernel/amsmath `\colon` without
+/// mathtools stay on the baseline.
+#[test]
+fn mathtools_colons_match_pdflatex_vertical_oracle_without_spacing_changes() {
+    if !lm_available() {
+        return;
+    }
+    let source = r#"\documentclass[12pt]{article}
+\usepackage{lmodern}
+\usepackage{mathtools}
+\begin{document}
+\noindent$a\vcentcolon b$\par$a\dblcolon b$\par$a:b$
+\end{document}"#;
+    let fonts = flashtex_render_pipeline::FontSet::with_default_dirs(&[]);
+    let rendered = render_one_with(source, &fonts);
+    assert!(rendered.v2.diagnostics.iter().all(|d| d.severity != flashtex_render_pipeline::display::Severity::Error), "{:?}", rendered.v2.diagnostics);
+    let glyphs = positioned_math_glyphs(&rendered);
+    let texts: Vec<&str> = glyphs.iter().map(|g| g.text.as_str()).collect();
+    assert_eq!(texts, ["a", ":", "b", "a", ":", ":", "b", "a", ":", "b"]);
+
+    let check_layout = |name: &str, formula: &[PositionedMathGlyph], x: &[f64], advances: &[f64]| {
+        assert_eq!(formula.len(), x.len(), "{name}: x oracle length");
+        assert_eq!(formula.len(), advances.len(), "{name}: advance oracle length");
+        let first_x = formula[0].x;
+        for (i, glyph) in formula.iter().enumerate() {
+            assert!((glyph.x - first_x - x[i]).abs() < 0.001, "{name} glyph {i} x={} expected {}", glyph.x - first_x, x[i]);
+            assert!((glyph.advance - advances[i]).abs() < 0.001, "{name} glyph {i} advance={} expected {}", glyph.advance, advances[i]);
+        }
+    };
+    check_layout(
+        "vcentcolon",
+        &glyphs[0..3],
+        &[0.0, 9.4657698, 16.0384083],
+        &[6.1449404, 3.2518091, 4.9770937],
+    );
+    check_layout(
+        "dblcolon",
+        &glyphs[3..7],
+        &[0.0, 9.4657698, 12.1198306, 18.6924681],
+        &[6.1449404, 3.2518091, 3.2518091, 4.9770937],
+    );
+    check_layout(
+        "plain",
+        &glyphs[7..10],
+        &[0.0, 9.4657698, 16.0384083],
+        &[6.1449404, 3.2518091, 4.9770937],
+    );
+
+    let vcent_shift = glyphs[1].baseline - glyphs[0].baseline;
+    let dblcolon_shifts = [glyphs[4].baseline - glyphs[3].baseline, glyphs[5].baseline - glyphs[3].baseline];
+    let plain_shift = glyphs[8].baseline - glyphs[7].baseline;
+    assert!((vcent_shift + 0.415).abs() < 0.1, "vcentcolon shift {vcent_shift:.3}bp");
+    for shift in dblcolon_shifts {
+        assert!((shift + 0.415).abs() < 0.1, "dblcolon shift {shift:.3}bp");
+    }
+    assert!(plain_shift.abs() < 0.1, "literal colon shift {plain_shift:.3}bp");
+
+    for (name, control) in [
+        (
+            "kernel colon",
+            r#"\documentclass[12pt]{article}\begin{document}$a\colon b$\end{document}"#,
+        ),
+        (
+            "amsmath colon",
+            r#"\documentclass[12pt]{article}\usepackage{amsmath}\begin{document}$a\colon b$\end{document}"#,
+        ),
+    ] {
+        let control_rendered = render_one_with(control, &fonts);
+        let control_glyphs = positioned_math_glyphs(&control_rendered);
+        assert_eq!(control_glyphs.iter().map(|g| g.text.as_str()).collect::<Vec<_>>(), ["a", ":", "b"], "{name}");
+        let shift = control_glyphs[1].baseline - control_glyphs[0].baseline;
+        assert!(shift.abs() < 0.1, "{name} moved by {shift:.3}bp");
+    }
+}
+
 /// The cmex chain step math-layout selects (`\Big(` = cmex 0x10, 18 pt, for
 /// a `\left(` around a text-style fraction; `\bigg(` = 0x12, 24 pt, in
 /// display — pdflatex sets `lmex10` codes 0x10/0x12 there in the oracle
@@ -299,7 +523,7 @@ fn left_right_paints_the_variant_of_the_selected_cmex_size() {
 }
 
 /// Symbols with no Computer Modern slot (`\mathbb`, `\setminus`,
-/// `\Longrightarrow`, `\aleph`) are drawn from Latin Modern Math through
+/// `\aleph`) are drawn from Latin Modern Math through
 /// `OTF_FALLBACK_FONT`, whose id lies above the `\text` run range: the
 /// painter must not look them up as run glyphs (they were silently
 /// dropped). The math minus is U+2212, not the text hyphen.
@@ -329,7 +553,10 @@ fn cm_less_symbols_are_painted_from_latin_modern_math() {
     let texts: Vec<&str> = runs.iter().map(|(t, _)| t.as_str()).collect();
     assert!(texts.contains(&"ℤℵ"), "\\mathbb{{Z}}\\aleph dropped: {texts:?}");
     assert!(texts.contains(&"ℝ∖ℚ"), "\\mathbb{{R}}\\setminus\\mathbb{{Q}} dropped: {texts:?}");
-    assert!(texts.contains(&"x⟹y"), "\\Longrightarrow dropped: {texts:?}");
+    // `\Longrightarrow` is no longer a fallback glyph: it is pdfTeX's
+    // `\Relbar\joinrel\Rightarrow` join of cmr `=` and cmsy `⇒`
+    // (tests/long_arrows.rs), and both pieces are painted.
+    assert!(texts.windows(2).any(|w| w == ["=", "⇒y"]), "\\Longrightarrow dropped: {texts:?}");
     // The run text keeps the source's ASCII hyphen; the painted glyph is
     // Latin Modern Math's U+2212 (gid 2615 in the pinned font 6075562b…),
     // not its text hyphen (gid 14).

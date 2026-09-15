@@ -14,7 +14,7 @@
 //!
 //! The cache is bounded: past `MAX_BLOCKS` entries it is cleared.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -77,6 +77,47 @@ pub struct RenderCache {
     adapted: RefCell<HashMap<u64, Rc<AdaptedBlock>>>,
     hits: RefCell<u64>,
     misses: RefCell<u64>,
+    /// Measurement only (design #575 step 0): lookups in `adapted` and
+    /// `assembled`, and label passes run by `render_cached`. Plain counters;
+    /// nothing reads them on the render path.
+    adapted_hits: Cell<u64>,
+    adapted_misses: Cell<u64>,
+    assembled_hits: Cell<u64>,
+    assembled_misses: Cell<u64>,
+    label_passes: Cell<u64>,
+}
+
+/// Every `RenderCache` counter since creation (`RenderCache::counters`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CacheCounters {
+    pub block_hits: u64,
+    pub block_misses: u64,
+    pub adapted_hits: u64,
+    pub adapted_misses: u64,
+    pub assembled_hits: u64,
+    pub assembled_misses: u64,
+    /// Layout passes run by `render_cached` with this cache: one per
+    /// request, plus one per page-number relayout.
+    pub label_passes: u64,
+}
+
+impl CacheCounters {
+    /// The counts accumulated between `earlier` and `self`.
+    pub fn since(self, earlier: CacheCounters) -> CacheCounters {
+        CacheCounters {
+            block_hits: self.block_hits - earlier.block_hits,
+            block_misses: self.block_misses - earlier.block_misses,
+            adapted_hits: self.adapted_hits - earlier.adapted_hits,
+            adapted_misses: self.adapted_misses - earlier.adapted_misses,
+            assembled_hits: self.assembled_hits - earlier.assembled_hits,
+            assembled_misses: self.assembled_misses - earlier.assembled_misses,
+            label_passes: self.label_passes - earlier.label_passes,
+        }
+    }
+}
+
+fn bump(c: &Cell<u64>) {
+    c.set(c.get() + 1);
 }
 
 impl RenderCache {
@@ -104,7 +145,9 @@ impl RenderCache {
     }
 
     pub fn adapted(&self, key: u64) -> Option<Rc<AdaptedBlock>> {
-        self.adapted.borrow().get(&key).cloned()
+        let hit = self.adapted.borrow().get(&key).cloned();
+        bump(if hit.is_some() { &self.adapted_hits } else { &self.adapted_misses });
+        hit
     }
 
     pub fn insert_adapted(&self, key: u64, block: AdaptedBlock) {
@@ -116,7 +159,9 @@ impl RenderCache {
     }
 
     pub fn assembled(&self, key: u64) -> Option<Rc<AssembledBlock>> {
-        self.assembled.borrow().get(&key).cloned()
+        let hit = self.assembled.borrow().get(&key).cloned();
+        bump(if hit.is_some() { &self.assembled_hits } else { &self.assembled_misses });
+        hit
     }
 
     pub fn insert_assembled(&self, key: u64, block: AssembledBlock) -> Rc<AssembledBlock> {
@@ -140,6 +185,25 @@ impl RenderCache {
     /// `(hits, misses)` since creation.
     pub fn stats(&self) -> (u64, u64) {
         (*self.hits.borrow(), *self.misses.borrow())
+    }
+
+    /// Records one layout pass of `render_cached` (measurement only).
+    pub(crate) fn note_label_pass(&self) {
+        bump(&self.label_passes);
+    }
+
+    /// Hit and miss counts for every map, plus label passes, since creation.
+    pub fn counters(&self) -> CacheCounters {
+        let (block_hits, block_misses) = self.stats();
+        CacheCounters {
+            block_hits,
+            block_misses,
+            adapted_hits: self.adapted_hits.get(),
+            adapted_misses: self.adapted_misses.get(),
+            assembled_hits: self.assembled_hits.get(),
+            assembled_misses: self.assembled_misses.get(),
+            label_passes: self.label_passes.get(),
+        }
     }
 }
 

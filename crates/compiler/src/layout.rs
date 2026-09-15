@@ -19,9 +19,9 @@ use crate::parser::{
 };
 use crate::Span;
 use flashtex_font_engine::core14::Core14;
-use flashtex_font_engine::shape::{shape, ShapeOptions, Shaped};
+use flashtex_font_engine::shape::{shape, MissingGlyph, ShapeOptions, Shaped};
 use flashtex_font_engine::Core14Face;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
 
 pub use flashtex_font_engine::core14::Core14 as Font;
@@ -120,7 +120,9 @@ impl Default for LayoutConstraints {
 /// Retained only so math's script-size boxes can be measured consistently with
 /// body text while math moves onto real metrics too.
 pub fn text_width(text: &str, size: f64, font: Font) -> f64 {
-    shape_text(font, text).map_or(0.0, |shaped| shaped.width_pt(size))
+    with_shaped(font, text, |shaped| {
+        shaped.as_ref().map_or(0.0, |shaped| shaped.width_pt(size))
+    })
 }
 
 pub fn word_space(size: f64, font: Font) -> f64 {
@@ -146,8 +148,78 @@ fn face(font: Font) -> &'static Core14Face {
     }
 }
 
-fn shape_text(font: Font, text: &str) -> Result<Shaped, flashtex_font_engine::Error> {
-    shape(face(font), text, &ShapeOptions::default())
+/// What layout reads from a shaping result: the total advance, the first and
+/// last cluster boundaries (for source spans) and the missing glyphs. Kept
+/// instead of the full [`Shaped`], whose per-cluster `String`s and glyph
+/// vectors dominated layout time and allocation.
+#[derive(Debug, Clone)]
+struct ShapedSummary {
+    advance_units: i64,
+    units_per_em: u16,
+    /// `clusters.first().source_range.start` and `clusters.last().source_range.end`.
+    source_bounds: Option<(usize, usize)>,
+    missing: Box<[MissingGlyph]>,
+}
+
+impl ShapedSummary {
+    fn new(text: &str, shaped: &Shaped) -> Self {
+        for cluster in &shaped.clusters {
+            debug_assert_eq!(
+                text.get(cluster.source_range.clone()),
+                Some(cluster.text.as_str())
+            );
+        }
+        Self {
+            advance_units: shaped.advance_units(),
+            units_per_em: shaped.units_per_em,
+            source_bounds: shaped
+                .clusters
+                .first()
+                .zip(shaped.clusters.last())
+                .map(|(first, last)| (first.source_range.start, last.source_range.end)),
+            missing: shaped.missing.clone().into_boxed_slice(),
+        }
+    }
+
+    /// Same arithmetic as [`Shaped::width_pt`], so the result is bit-identical.
+    fn width_pt(&self, size_pt: f64) -> f64 {
+        self.advance_units as f64 * size_pt / f64::from(self.units_per_em)
+    }
+}
+
+type ShapeResult = Result<ShapedSummary, flashtex_font_engine::Error>;
+
+/// Distinct (face, text) pairs kept per thread before the memo is reset. Words
+/// repeat heavily and every cross-reference pass reshapes the whole document,
+/// so a document's vocabulary is far below this; the cap only bounds a
+/// long-lived process that sees many unrelated documents.
+const SHAPE_MEMO_LIMIT: usize = 1 << 17;
+
+thread_local! {
+    static SHAPE_MEMO: std::cell::RefCell<[HashMap<Box<str>, ShapeResult>; 7]> =
+        std::cell::RefCell::new(Default::default());
+}
+
+/// Shape `text` in `font` and hand the summary to `read`.
+///
+/// Shaping a Core 14 face is a pure function of the face and the text (fixed
+/// static faces, default options), so results are memoised per thread. The
+/// first call for a pair shapes exactly as before; later calls return the
+/// same summary, error included.
+fn with_shaped<R>(font: Font, text: &str, read: impl FnOnce(&ShapeResult) -> R) -> R {
+    let slot = font as usize;
+    SHAPE_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if !memo[slot].contains_key(text) {
+            if memo.iter().map(HashMap::len).sum::<usize>() >= SHAPE_MEMO_LIMIT {
+                memo.iter_mut().for_each(HashMap::clear);
+            }
+            let result = shape(face(font), text, &ShapeOptions::default())
+                .map(|shaped| ShapedSummary::new(text, &shaped));
+            memo[slot].insert(text.into(), result);
+        }
+        read(&memo[slot][text])
+    })
 }
 
 /// Select the same Core 14 face that the export mapping assigns to a math glyph.
@@ -218,22 +290,15 @@ pub(crate) fn italic_skew_pt(font: Font, height_pt: f64) -> f64 {
     height_pt * angle_deg.to_radians().tan().abs()
 }
 
-fn source_span(text: &str, span: Span, shaped: &Shaped) -> Span {
-    let Some(first) = shaped.clusters.first() else {
+fn source_span(text: &str, span: Span, shaped: &ShapedSummary) -> Span {
+    let Some((first_start, last_end)) = shaped.source_bounds else {
         return span;
     };
-    let last = shaped.clusters.last().expect("first cluster exists");
-    for cluster in &shaped.clusters {
-        debug_assert_eq!(
-            text.get(cluster.source_range.clone()),
-            Some(cluster.text.as_str())
-        );
-    }
     if span.end - span.start == text.len() {
         Span::in_document(
             span.document,
-            span.start + first.source_range.start,
-            span.start + last.source_range.end,
+            span.start + first_start,
+            span.start + last_end,
         )
     } else {
         // Macro replacement bytes do not exist in the document. Preserve the
@@ -270,9 +335,9 @@ pub(crate) fn shaped_width(
     } else {
         text
     };
-    match shape_text(font, text) {
+    with_shaped(font, text, |shaped| match shaped {
         Ok(shaped) => {
-            for missing in &shaped.missing {
+            for missing in shaped.missing.iter() {
                 let missing_span = relative_span(
                     text,
                     span,
@@ -290,10 +355,10 @@ pub(crate) fn shaped_width(
                     Some("emitted the face's explicit .notdef glyph and continued".into()),
                 ));
             }
-            (shaped.width_pt(size), source_span(text, span, &shaped))
+            (shaped.width_pt(size), source_span(text, span, shaped))
         }
         Err(error) => {
-            let error_span = match error {
+            let error_span = match *error {
                 flashtex_font_engine::Error::UnsupportedScript {
                     ch, byte_offset, ..
                 } => relative_span(text, span, byte_offset, byte_offset + ch.len_utf8()),
@@ -309,7 +374,7 @@ pub(crate) fn shaped_width(
             ));
             (0.0, span)
         }
-    }
+    })
 }
 
 /// A pending `\hfill` on the current line (see `LayoutCursor::resolve_hfill`).
@@ -564,6 +629,24 @@ impl LayoutCursor {
         resolved_labels: BTreeMap<String, ReferenceValue>,
         emit_heading_numbers: bool,
     ) -> Self {
+        Self::with_labels_and_cleveref(
+            constraints,
+            resolved_labels,
+            emit_heading_numbers,
+            crate::xref::CleverefConfig::default(),
+        )
+    }
+
+    /// `with_labels` with the `cleveref` configuration supplied, so a caller
+    /// that installs its own configuration does not first build (and drop)
+    /// the default name table: that cost ~24 `String` allocations per
+    /// `tabular` entry (issue #65).
+    fn with_labels_and_cleveref(
+        constraints: LayoutConstraints,
+        resolved_labels: BTreeMap<String, ReferenceValue>,
+        emit_heading_numbers: bool,
+        cleveref: crate::xref::CleverefConfig,
+    ) -> Self {
         LayoutCursor {
             pages: vec![Page {
                 number: 1,
@@ -584,7 +667,7 @@ impl LayoutCursor {
             constraints,
             resolved_labels,
             collected_labels: BTreeMap::new(),
-            cleveref: crate::xref::CleverefConfig::default(),
+            cleveref,
             resolved_toc: Vec::new(),
             collected_toc: Vec::new(),
             collect_toc: false,
@@ -1228,7 +1311,9 @@ impl LayoutCursor {
 
     /// Multi-row display (`gather`/`align`). `gather` rows are centred one by
     /// one; `align` cells alternate right/left alignment against column widths
-    /// shared by every row, and the whole block is centred.
+    /// shared by every row, and the whole block is centred. `multline` rows
+    /// centre like `gather` unless the row carries a `\shoveleft`/
+    /// `\shoveright` override, which sets that one row flush left/right.
     fn display_rows(&mut self, rows: &[MathRow], aligned: bool, size: f64) {
         // Displays centre themselves; line alignment must not move them again.
         let style = self.style.take();
@@ -1284,7 +1369,16 @@ impl LayoutCursor {
                 }
             } else {
                 let width: f64 = cells.iter().map(|b| b.width).sum();
-                self.x = MARGIN_PT + (measure - width).max(0.0) / 2.0;
+                // Only `multline` rows carry `shove` (see
+                // `parser::take_row_shove`); every other centred display
+                // keeps the midpoint below.
+                self.x = match row.shove {
+                    Some(crate::parser::ShoveDirection::Left) => MARGIN_PT,
+                    Some(crate::parser::ShoveDirection::Right) => {
+                        MARGIN_PT + (measure - width).max(0.0)
+                    }
+                    None => MARGIN_PT + (measure - width).max(0.0) / 2.0,
+                };
                 for b in cells {
                     let next = self.x + b.width;
                     self.place_math(b, size, true);
@@ -1812,12 +1906,14 @@ impl LayoutCursor {
             measure_pt: measure.unwrap_or(crate::tabular::MAX_DIMEN_PT),
             ..self.constraints
         };
-        let mut inner = LayoutCursor::with_labels(
+        // The labels and the (read-only) `cleveref` configuration are lent to
+        // the detached cursor and taken back below, never copied.
+        let mut inner = LayoutCursor::with_labels_and_cleveref(
             constraints,
             std::mem::take(&mut self.resolved_labels),
             self.emit_heading_numbers,
+            std::mem::replace(&mut self.cleveref, crate::xref::CleverefConfig::empty()),
         );
-        inner.cleveref = self.cleveref.clone();
         let left = inner.left_edge();
         let mut first_y = inner.y;
         let mut natural: f64 = 0.0;
@@ -1840,6 +1936,8 @@ impl LayoutCursor {
             inner.line_fills.clear();
         }
         self.resolved_labels = std::mem::take(&mut inner.resolved_labels);
+        self.cleveref =
+            std::mem::replace(&mut inner.cleveref, crate::xref::CleverefConfig::empty());
         self.diagnostics.append(&mut inner.diagnostics);
         let page = self.pages.len() as u32;
         for (key, mut value) in std::mem::take(&mut inner.collected_labels) {
@@ -2166,8 +2264,12 @@ pub fn layout_converged_with_options(
     let mut converged = false;
     let mut oscillating = false;
     for _ in 0..REFERENCE_ITERATION_LIMIT {
-        let mut cursor = LayoutCursor::with_labels(constraints, state.0.clone(), true);
-        cursor.cleveref = cleveref.clone();
+        let mut cursor = LayoutCursor::with_labels_and_cleveref(
+            constraints,
+            state.0.clone(),
+            true,
+            cleveref.clone(),
+        );
         cursor.resolved_toc = state.1.clone();
         cursor.collect_toc = collect_toc;
         for block in blocks {
