@@ -546,6 +546,11 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             Some(())
         }
         Block::VFill => Some(()),
+        Block::Penalty {
+            value: _,
+            fil: _,
+            span,
+        } => map_span(span, changes, deltas),
         Block::LetterBlock {
             part: _,
             lines,
@@ -647,6 +652,20 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => {
                 map_span(span, changes, deltas)?
             }
+            Inline::Penalty {
+                value: _,
+                span,
+                unskip: _,
+            } => map_span(span, changes, deltas)?,
+            Inline::PagePenalty { value: _, span } => map_span(span, changes, deltas)?,
+            Inline::Discretionary {
+                pre: _,
+                post: _,
+                nobreak: _,
+                hyphen: _,
+                span,
+                style: _,
+            } => map_span(span, changes, deltas)?,
             Inline::Tabular(table) => {
                 // `Tabular` only offers a mapping copy; its nested inlines are
                 // shifted through the same in-place walk.
@@ -862,7 +881,8 @@ fn block_signature(block: &Block) -> BlockSignature {
         | Block::PageBreak
         | Block::Verbatim { .. }
         | Block::TableOfContents { .. }
-        | Block::VFill => &[],
+        | Block::VFill
+        | Block::Penalty { .. } => &[],
         // Signature only (see the doc comment above): the first line is
         // enough to narrow the candidate set, and `shift_block`'s full
         // equality check still gates every reuse.
@@ -892,6 +912,9 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::Graphic(graphic) => graphic.span,
         Inline::Transform(transform) => transform.span,
         Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => *span,
+        Inline::Penalty { span, .. }
+        | Inline::PagePenalty { span, .. }
+        | Inline::Discretionary { span, .. } => *span,
     };
     let first = inlines.first().map(span_of);
     let last = inlines.last().map(span_of);

@@ -326,6 +326,15 @@ pub fn tokenize_document(text: &str, document: DocumentId) -> Vec<Token> {
                             span: Span::in_document(document, start, j + 1),
                         });
                     }
+                    // `\-`, the discretionary hyphen: a command, not the
+                    // literal character, so it is never typeset as a hyphen.
+                    Some(&(j, '-')) => {
+                        it.next();
+                        tokens.push(Token {
+                            kind: TokenKind::Command("-".to_string()),
+                            span: Span::in_document(document, start, j + 1),
+                        });
+                    }
                     // A control symbol such as `\%`: treat as escaped literal.
                     Some(&(j, ch)) => {
                         it.next();
