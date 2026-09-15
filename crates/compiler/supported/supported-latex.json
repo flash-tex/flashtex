@@ -246,6 +246,7 @@
     {"name": "pounds", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textsterling: OT1 £, T1 £ (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "dots", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textellipsis: OT1 …, T1 … (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "ldots", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textellipsis: OT1 …, T1 … (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
+    {"name": "enquote", "mode": "text", "origin": "text_dispatch", "arguments": "{text}", "description": "csquotes quotation: the argument wrapped in the ``...'' double-quote marks", "renders": true},
     {"name": "textsection", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textsection: OT1 §, T1 § (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "textparagraph", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textparagraph: OT1 ¶, T1 ¶ (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "textdagger", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\textdagger: OT1 †, T1 † (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
