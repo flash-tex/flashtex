@@ -77,7 +77,8 @@ pub fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Every UTF-8 `.tex` under `fixtures/` and `crates/*/tests/`, in sorted
+/// Every UTF-8 `.tex` under `fixtures/`, `crates/*/tests/` and
+/// `crates/*/oracle/`, in sorted
 /// order (never `vendor/` or a `target*` directory).
 pub fn load_seeds(root: &Path) -> Vec<Seed> {
     let mut files = Vec::new();
@@ -85,6 +86,7 @@ pub fn load_seeds(root: &Path) -> Vec<Seed> {
     if let Ok(entries) = std::fs::read_dir(root.join("crates")) {
         for entry in entries.flatten() {
             walk(&entry.path().join("tests"), &mut files);
+            walk(&entry.path().join("oracle"), &mut files);
         }
     }
     files.sort();
@@ -621,10 +623,21 @@ fn record(report: &Mutex<Report>, seeds: &[Seed], config: &Config, index: u64, o
         count: 0,
     });
     entry.count += 1;
-    if index < entry.first_case || entry.count == 1 {
-        entry.first_case = entry.first_case.min(index);
+    let first = index < entry.first_case || entry.count == 1;
+    entry.first_case = entry.first_case.min(index);
+    // Hangs and crashes share one signature whatever their cause, so keep
+    // a sample of inputs to triage, not only the first.
+    let sample = entry.count <= 50 && matches!(outcome, Outcome::Hang | Outcome::Crash(_));
+    if first || sample {
         let case = generate(seeds, config.rng_seed, index);
         let name = format!("case-{index}.tex");
+        if !first {
+            let _ = std::fs::write(config.out_dir.join(&name), case.main());
+            if let Some((_, sub)) = case.documents.get(1) {
+                let _ = std::fs::write(config.out_dir.join(format!("case-{index}.sub.tex")), sub);
+            }
+            return;
+        }
         let _ = std::fs::write(config.out_dir.join(&name), case.main());
         if let Some((_, sub)) = case.documents.get(1) {
             let _ = std::fs::write(config.out_dir.join(format!("case-{index}.sub.tex")), sub);
