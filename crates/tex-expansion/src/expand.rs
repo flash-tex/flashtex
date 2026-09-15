@@ -397,6 +397,9 @@ pub struct Checkpoint {
     pub(crate) lex_state: LexState,
     pub(crate) state: State,
     pub(crate) steps: u64,
+    /// `Engine::last_origin` at the snapshot. The step limit's diagnostic is
+    /// reported there when the very next step is over the limit.
+    pub(crate) last_origin: Option<Span>,
     /// Number of output tokens / diagnostics / labels produced so far.
     pub out_len: usize,
     pub diag_len: usize,
@@ -1136,6 +1139,7 @@ impl Engine {
             lex_state: self.base_lexer().state(),
             state: self.st.clone(),
             steps: self.steps,
+            last_origin: self.last_origin,
             out_len,
             diag_len: self.diagnostics.len(),
             label_len: self.labels.len(),
@@ -1146,7 +1150,17 @@ impl Engine {
     pub fn restore(src: Rc<str>, cp: &Checkpoint, limits: Limits) -> Self {
         let mut e = Self::from_parts(src, cp.pos, cp.lex_state, cp.state.clone(), limits);
         e.steps = cp.steps;
+        e.last_origin = cp.last_origin;
         e
+    }
+
+    pub(crate) fn last_origin(&self) -> Option<Span> {
+        self.last_origin
+    }
+
+    /// The engine stopped because it ran past `max_expansion_steps`.
+    pub(crate) fn hit_step_limit(&self) -> bool {
+        self.steps > self.limits.max_expansion_steps
     }
 
     pub(crate) fn state(&self) -> &State {
