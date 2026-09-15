@@ -427,3 +427,17 @@ fn an_argument_replayed_from_at_begin_document_never_inverts_its_span() {
     .unwrap();
     compile_messages(&fixture);
 }
+
+#[test]
+fn deeply_nested_left_right_pairs_hit_a_capacity_limit_in_bounded_time() {
+    // Sizing each pair lays out all it encloses: 10k nested pairs took 15 s
+    // in release (quadratic).
+    let n = 10_000;
+    let text = format!("\\begin{{document}}$${}x{}$$\\end{{document}}\n", "\\left(".repeat(n), "\\right)".repeat(n));
+    let started = std::time::Instant::now();
+    let messages = compile_messages(&text);
+    let elapsed = started.elapsed();
+    let capacity = format!("TeX capacity exceeded, sorry [grouping levels={}].", math::MAX_LEFT_RIGHT_DEPTH);
+    assert_eq!(messages.iter().filter(|m| **m == capacity).count(), 1, "{:?}", &messages[..messages.len().min(4)]);
+    assert!(elapsed.as_secs() < 20, "took {elapsed:?}");
+}

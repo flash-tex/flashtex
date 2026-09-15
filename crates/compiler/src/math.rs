@@ -620,6 +620,8 @@ pub fn parse_tokens_reporting_unclosed(
         pending: Vec::new(),
         unclosed: None,
         cut_off,
+        open_lefts: 0,
+        dropped_lefts: 0,
     };
     let list = parser.list(false);
     (list, parser.unclosed)
@@ -648,6 +650,13 @@ pub fn is_math_environment(name: &str) -> bool {
 // depth, so the guard fires first on every profile.
 pub const MAX_MATH_DEPTH: usize = 32;
 
+/// The deepest `\left`...`\right` nesting in one formula. Sizing a pair lays
+/// out everything it encloses (`left_right_stretch_scales`), so the cost is
+/// the nesting depth times the formula length: 10k nested pairs took 15 s.
+/// Past the limit the extra delimiters are dropped with TeX's capacity error
+/// (each `\left` is a TeX group).
+pub const MAX_LEFT_RIGHT_DEPTH: usize = 32;
+
 struct MathParser<'a> {
     tokens: &'a [Token],
     i: usize,
@@ -664,6 +673,10 @@ struct MathParser<'a> {
     unclosed: Option<Span>,
     /// The tokens end where unterminated math was cut off.
     cut_off: bool,
+    /// `\left`s still open, and those dropped past [`MAX_LEFT_RIGHT_DEPTH`]
+    /// (their `\right`s are dropped too).
+    open_lefts: usize,
+    dropped_lefts: usize,
 }
 
 impl MathParser<'_> {
@@ -1329,12 +1342,29 @@ impl MathParser<'_> {
             // time (`left_right_stretch_scales`); here they just record which
             // role they play so that pairing pass can find them.
             "left" | "right" => {
-                let role = if name == "left" {
-                    DelimiterRole::Left
+                let delimiter = self.take_delimiter(&name, span);
+                if name == "left" {
+                    if self.open_lefts >= MAX_LEFT_RIGHT_DEPTH {
+                        if self.dropped_lefts == 0 {
+                            self.diagnostics.push(Diagnostic::error(
+                                format!("TeX capacity exceeded, sorry [grouping levels={MAX_LEFT_RIGHT_DEPTH}]."),
+                                Some(span),
+                                Some("dropped the \\left/\\right delimiters nested past the limit".into()),
+                            ));
+                        }
+                        self.dropped_lefts += 1;
+                        space(0.0, span)
+                    } else {
+                        self.open_lefts += 1;
+                        left_right_delimiter(delimiter, DelimiterRole::Left)
+                    }
+                } else if self.dropped_lefts > 0 {
+                    self.dropped_lefts -= 1;
+                    space(0.0, span)
                 } else {
-                    DelimiterRole::Right
-                };
-                left_right_delimiter(self.take_delimiter(&name, span), role)
+                    self.open_lefts = self.open_lefts.saturating_sub(1);
+                    left_right_delimiter(delimiter, DelimiterRole::Right)
+                }
             }
             "big" | "Big" | "bigg" | "Bigg" | "bigl" | "Bigl" | "biggl" | "Biggl" | "bigr"
             | "Bigr" | "biggr" | "Biggr" | "bigm" | "Bigm" | "biggm" | "Biggm" => {
@@ -2049,6 +2079,8 @@ impl MathParser<'_> {
             pending: Vec::new(),
             unclosed: None,
             cut_off: false,
+            open_lefts: 0,
+            dropped_lefts: 0,
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {
