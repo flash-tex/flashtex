@@ -60,7 +60,7 @@ fn float_graphics_match_pdflatex() {
             .pages
             .iter()
             .flat_map(|p| {
-                p.items.iter().filter_map(move |it| match it {
+                p.resident_items().iter().filter_map(move |it| match it {
                     Item::Image(i) => Some((p.number, i.x.to_bp(), i.top.to_bp(), i.width.to_bp(), i.height.to_bp())),
                     _ => None,
                 })

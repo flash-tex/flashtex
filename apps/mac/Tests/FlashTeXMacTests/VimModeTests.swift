@@ -579,4 +579,90 @@ final class VimModeTests: XCTestCase {
         XCTAssertEqual(tv.selectedRange().location, 0)
         XCTAssertEqual(NSMaxRange(tv.selectedRange()), rows[1].location + 1)
     }
+
+    // MARK: dispatch policy — normal and visual mode own the keyboard
+
+    /// Keys that legitimately edit the buffer as a single normal-mode
+    /// keystroke. `p`/`P` are here because an earlier key in the sweep (`Y`)
+    /// fills the unnamed register, after which they paste. Every key *not*
+    /// in this set must leave the buffer untouched: before the
+    /// consume-unmapped-keys policy, `_`, `-`, `q`, `[`, `#` and every other
+    /// unmapped printable key fell through to the editor and typed itself
+    /// into the document.
+    private static let normalModeEditingKeys: Set<Character> = ["x", "X", "s", "S", "D", "C", "o", "O", "J", "~", "p", "P"]
+
+    func testNormalModeConsumesEveryUnmappedPrintableKey() {
+        let buffer = "alpha beta(gamma) {delta}\n  second line\nthird"
+        for v in UInt8(32)...UInt8(126) {
+            let ch = Character(UnicodeScalar(v))
+            if Self.normalModeEditingKeys.contains(ch) { continue }
+            load(buffer, caret: 8)
+            key(String(ch))
+            XCTAssertEqual(text, buffer, "normal-mode '\(ch)' must not edit the buffer")
+            type("<Esc>") // clear any pending operator / count / command line the key armed
+        }
+    }
+
+    /// Same sweep over a visual selection, where a fallthrough is worse:
+    /// the typed character *replaces the whole selection* (`u`, `r`, `U` and
+    /// every other unmapped key did exactly that).
+    private static let visualModeEditingKeys: Set<Character> = ["d", "x", "c", "s", "J", "~", ">", "<", "p", "P"]
+
+    func testVisualModeConsumesEveryUnmappedKeyInsteadOfReplacingTheSelection() {
+        let buffer = "alpha beta gamma\nsecond line here\n"
+        for v in UInt8(32)...UInt8(126) {
+            let ch = Character(UnicodeScalar(v))
+            if Self.visualModeEditingKeys.contains(ch) { continue }
+            load(buffer, caret: 0)
+            type("ve") // "alpha" selected
+            key(String(ch))
+            XCTAssertEqual(text, buffer, "visual-mode '\(ch)' must not edit the buffer")
+            type("<Esc><Esc>")
+        }
+    }
+
+    /// Unmapped ⌃-chords must never run the editor's Cocoa bindings from
+    /// normal or visual mode (⌃K killed the line, ⌃O opened one, ⌃T
+    /// transposed, ⌃H deleted, ⌃W deleted a word, ⌃Y yanked the kill buffer).
+    func testControlChordsNeverReachTheEditorsCocoaBindings() {
+        let buffer = "one two three\nfour five six\nseven eight\n"
+        for v in UInt8(ascii: "a")...UInt8(ascii: "z") {
+            let ch = String(UnicodeScalar(v))
+            load(buffer, caret: 4)
+            key(ch, flags: .control)
+            XCTAssertEqual(text, buffer, "normal-mode ⌃\(ch) must not edit the buffer")
+            type("<Esc>")
+            load(buffer, caret: 0)
+            type("ve")
+            key(ch, flags: .control)
+            XCTAssertEqual(text, buffer, "visual-mode ⌃\(ch) must not edit the buffer")
+            type("<Esc><Esc>")
+        }
+    }
+
+    /// Enter inserted a newline, Backspace deleted a character and Tab
+    /// inserted an indent — all from normal mode. Until they gain their Vim
+    /// motions they are consumed no-ops.
+    func testEnterBackspaceAndTabAreNoOpsInNormalAndVisualMode() {
+        let buffer = "first line\nsecond line\n"
+        for (chars, code) in [("\r", UInt16(36)), ("\u{7F}", UInt16(51)), ("\t", UInt16(48))] {
+            load(buffer, caret: 3)
+            key(chars, code: code)
+            XCTAssertEqual(text, buffer, "normal-mode key code \(code) must not edit the buffer")
+            load(buffer, caret: 0)
+            type("ve")
+            key(chars, code: code)
+            XCTAssertEqual(text, buffer, "visual-mode key code \(code) must not edit the buffer")
+            type("<Esc>")
+        }
+    }
+
+    /// The Tab consume is normal/visual-mode only: insert mode still hands
+    /// Tab to the editor (indentation, snippet placeholders, completion).
+    func testTabStillReachesTheEditorInInsertMode() {
+        load("ab")
+        type("i")
+        key("\t", code: 48)
+        XCTAssertNotEqual(text, "ab", "insert-mode Tab must keep taking the editor's path")
+    }
 }

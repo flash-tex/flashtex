@@ -431,12 +431,133 @@ pub fn shift_x(item: &mut Item, dx: Tick) {
     }
 }
 
+/// The range of pages whose glyph content a windowed render materialised.
+///
+/// 1-based and inclusive of `first_page`, clamped by the producer to the
+/// document's page count; the effective window is what the render reports,
+/// never what the request asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageWindow {
+    pub first_page: u32,
+    pub page_count: u32,
+}
+
+/// A window wider than this is clamped (and the clamp is reported).
+///
+/// The binding constraint is not memory, it is the reply limit. PR #273
+/// measured the 500 KB corpus case: 385 pages serialise to a **164 MB**
+/// `display_list` line against a 16 MiB limit — ~426 KB a page — and the
+/// runtime's framed default is 8 MiB. So a repliable window is on the order of
+/// 19 pages at 8 MiB and 39 at 16 MiB for that document, and fewer for a denser
+/// one. 64 is a ceiling with margin over what a viewer actually shows; the
+/// exact fit is decided per reply by the existing size check, which a windowed
+/// list answers for its resident pages only
+/// (`DisplayList::estimated_json_bytes`), so an over-limit window can be
+/// narrowed and re-served instead of declined.
+pub const MAX_WINDOW_PAGES: u32 = 64;
+
+impl PageWindow {
+    /// The effective window over a document of `pages` pages, or `None` when
+    /// the request is not a usable window (page 0, count 0, or past the end
+    /// with nothing to clamp to).
+    pub fn clamped(self, pages: u32) -> Option<PageWindow> {
+        if self.first_page == 0 || self.page_count == 0 || pages == 0 {
+            return None;
+        }
+        let count = self.page_count.min(MAX_WINDOW_PAGES);
+        // Past the last page: serve the last `count` pages rather than refuse.
+        let first = self.first_page.min(pages.saturating_sub(count).max(1));
+        Some(PageWindow { first_page: first, page_count: count.min(pages - first + 1) })
+    }
+
+    pub fn contains(&self, page_number: u32) -> bool {
+        page_number >= self.first_page && page_number < self.first_page + self.page_count
+    }
+
+    /// The widest window around `centre` that a reply of `limit` bytes can
+    /// carry, given a measured `bytes_per_page`.
+    ///
+    /// This is the arithmetic that turns FT-070's memory work into a product
+    /// fix. Today a 385-page document has no reply at all: its display list is
+    /// 164 MB against a 16 MiB limit, so the sibling is declined, the v1
+    /// `compile_result` is itself 20 339 909 bytes for those pages, and the
+    /// request ends `status: failed` (PR #273). A producer that can serve a
+    /// *window* has a reply it can actually send, so the question stops being
+    /// "decline or fail" and becomes "how many pages fit".
+    ///
+    /// Caller supplies `bytes_per_page` from a real measurement — the previous
+    /// reply's `page_bytes`, or `estimated_json_bytes` over what it has built —
+    /// because page size varies by an order of magnitude between a title page
+    /// and a dense one, and a constant here would be a guess presented as a
+    /// bound.
+    pub fn fitting(centre_page: u32, pages: u32, bytes_per_page: u64, limit: u64) -> Option<PageWindow> {
+        if bytes_per_page == 0 {
+            return PageWindow { first_page: 1, page_count: pages }.clamped(pages);
+        }
+        let fits = (limit / bytes_per_page).min(u64::from(u32::MAX)) as u32;
+        let count = fits.min(MAX_WINDOW_PAGES).max(1);
+        let first = centre_page.saturating_sub(count / 2).max(1);
+        PageWindow { first_page: first, page_count: count }.clamped(pages)
+    }
+}
+
+/// Whether a page's glyph-level content was materialised.
+///
+/// A page is always laid out, counted and measured; `Elided` says only that
+/// its items were not built, because the render was windowed
+/// (`protocol/proposals/display-list-v2-window.md`). It is a separate variant
+/// rather than an empty `items` vector so that no consumer can mistake a page
+/// that was not built for a page with nothing on it: the two are
+/// indistinguishable to every `for it in &page.items` in the tree, and one of
+/// them is a bug.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PageContent {
+    Resident(Vec<Item>),
+    Elided,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Page {
     pub number: u32,
     pub width: Tick,
     pub height: Tick,
-    pub items: Vec<Item>,
+    pub content: PageContent,
+}
+
+impl Page {
+    pub fn resident(number: u32, width: Tick, height: Tick, items: Vec<Item>) -> Page {
+        Page { number, width, height, content: PageContent::Resident(items) }
+    }
+
+    pub fn elided(number: u32, width: Tick, height: Tick) -> Page {
+        Page { number, width, height, content: PageContent::Elided }
+    }
+
+    /// The items of a resident page; `None` when the page was not built.
+    pub fn items(&self) -> Option<&Vec<Item>> {
+        match &self.content {
+            PageContent::Resident(items) => Some(items),
+            PageContent::Elided => None,
+        }
+    }
+
+    pub fn items_mut(&mut self) -> Option<&mut Vec<Item>> {
+        match &mut self.content {
+            PageContent::Resident(items) => Some(items),
+            PageContent::Elided => None,
+        }
+    }
+
+    /// The items of a page the caller has already established is resident
+    /// (an unwindowed render, or after refusing an elided page). Panics
+    /// otherwise — deliberately, rather than reading as an empty page.
+    pub fn resident_items(&self) -> &Vec<Item> {
+        self.items().unwrap_or_else(|| panic!("page {} is elided; its items were never built", self.number))
+    }
+
+    pub fn is_resident(&self) -> bool {
+        matches!(self.content, PageContent::Resident(_))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -597,6 +718,63 @@ impl Diagnostic {
     }
 }
 
+/// Which optional painting features the **whole document** needs, whether or
+/// not the page carrying them is resident.
+///
+/// `required_features` is one of the closures `display-list-v2-window` §3
+/// keeps whole: a consumer that negotiated a feature set from a windowed reply
+/// must be able to paint the rest of the document with it. Deriving it from
+/// the resident pages would quietly shrink it — a rule on page 900 would go
+/// unannounced while the window is 1..10 — which is the same failure mode as a
+/// smaller font closure, and the reason assembly harvests this over every
+/// block in the same pass that harvests the faces and the diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DocumentFeatures {
+    pub rule: bool,
+    pub path_fill: bool,
+    pub path_stroke: bool,
+    pub clip: bool,
+    pub image: bool,
+    pub device_color: bool,
+    /// Whether the document produced any paintable item at all, anywhere.
+    /// Not a wire feature: it is what `v1::fallback` asks to keep `status`
+    /// the same on a windowed reply as on an unwindowed one (§4.1), where
+    /// the resident pages alone cannot answer it.
+    pub any_items: bool,
+}
+
+impl DocumentFeatures {
+    /// Everything one item contributes.
+    pub fn note(&mut self, it: &Item) {
+        self.any_items = true;
+        match it {
+            Item::Rule(r) => {
+                self.rule = true;
+                self.device_color |= r.paint.device.is_some();
+            }
+            Item::GlyphRun(r) => self.device_color |= r.paint.device.is_some(),
+            Item::Path(p) => {
+                self.path_fill |= matches!(p.op, PathPaintOp::Fill { .. });
+                self.path_stroke |= matches!(p.op, PathPaintOp::Stroke(_));
+                self.clip |= !p.clips.is_empty();
+                self.device_color |= p.paint.device.is_some();
+            }
+            Item::Image(_) => self.image = true,
+        }
+    }
+
+    /// The same derivation over the items a list actually holds. On an
+    /// unwindowed list this is the whole document, and it is what
+    /// `required_features` has always computed.
+    pub fn scan<'a>(items: impl Iterator<Item = &'a Item>) -> DocumentFeatures {
+        let mut f = DocumentFeatures::default();
+        for it in items {
+            f.note(it);
+        }
+        f
+    }
+}
+
 /// `protocol/rendering-v2.schema.json`: `diagnostic.sources` `maxItems`.
 const MAX_DIAGNOSTIC_SOURCES: usize = 128;
 /// `protocol/rendering-v2.schema.json`: `diagnostic.message` `maxLength`.
@@ -610,6 +788,16 @@ pub struct DisplayList {
     pub fonts: Vec<FontResource>,
     pub pages: Vec<Page>,
     pub diagnostics: Vec<Diagnostic>,
+    /// `Some` when this render materialised only a window of pages. Every
+    /// page is present in `pages` with its number and frame; the ones outside
+    /// the window are `PageContent::Elided`. `None` is a complete compile and
+    /// is what every path in the product produces today.
+    pub window: Option<PageWindow>,
+    /// What the whole document needs to be painted, harvested during assembly
+    /// over every block — including the blocks whose only pages are elided.
+    /// `None` on a list not built by `typeset::assemble_windowed`, where the
+    /// resident scan is already complete; only a windowed list reads it.
+    pub document_features: Option<DocumentFeatures>,
 }
 
 impl DisplayList {
@@ -624,7 +812,9 @@ impl DisplayList {
         }
         for p in &self.pages {
             n += 64;
-            for it in &p.items {
+            // Elided pages contribute nothing to the estimate; a windowed
+            // line is smaller than this bound, never larger.
+            for it in p.items().into_iter().flatten() {
                 n += match it {
                     Item::GlyphRun(r) => 220 + 2 * r.text.len() + 120 * r.glyphs.len() + 280 * r.clusters.len(),
                     Item::Rule(_) => 240,
@@ -646,6 +836,19 @@ impl DisplayList {
         n
     }
 
+    /// Every item of every page that was materialised.
+    ///
+    /// On a complete compile (`window == None`) that is every item in the
+    /// document. On a windowed list it is the window's items only, so it is
+    /// **not** the thing to derive a document-wide fact from: that is what
+    /// [`DocumentFeatures`] is harvested during assembly for
+    /// (`display-list-v2-window` §3). Use this to answer questions about what
+    /// a list actually carries — how big it serialises, whether a page has
+    /// images to write — not about what the document needs.
+    pub fn resident_page_items(&self) -> impl Iterator<Item = &Item> {
+        self.pages.iter().flat_map(|p| p.items().into_iter().flatten())
+    }
+
     pub fn required_features(&self) -> Vec<&'static str> {
         self.required_features_with(false)
     }
@@ -658,41 +861,49 @@ impl DisplayList {
     /// `device-color` is listed when negotiated and some paint carries one.
     pub fn required_features_wire(&self, wire: Wire) -> Vec<&'static str> {
         let images = wire.images;
+        let d = self.document_feature_set();
         let mut f = vec!["glyph_run", "rgba-srgb", "cluster-actualtext"];
-        if self.pages.iter().any(|p| p.items.iter().any(|i| matches!(i, Item::Rule(_)))) {
+        if d.rule {
             f.insert(1, "rule");
         }
-        let paths = || self.pages.iter().flat_map(|p| p.items.iter()).filter_map(|i| if let Item::Path(p) = i { Some(p) } else { None });
-        if paths().any(|p| matches!(p.op, PathPaintOp::Fill { .. })) {
+        if d.path_fill {
             f.push("path_fill");
         }
-        if paths().any(|p| matches!(p.op, PathPaintOp::Stroke(_))) {
+        if d.path_stroke {
             f.push("path_stroke");
         }
-        if paths().any(|p| !p.clips.is_empty()) {
+        if d.clip {
             f.push("clip");
         }
         if self.fonts.iter().any(|r| r.format == "static-truetype") {
             f.push("static-truetype");
         }
-        if images && self.pages.iter().any(|p| p.items.iter().any(|i| matches!(i, Item::Image(_)))) {
+        if images && d.image {
             f.push("image");
         }
-        let device = |it: &Item| match it {
-            Item::GlyphRun(r) => r.paint.device.is_some(),
-            Item::Rule(r) => r.paint.device.is_some(),
-            Item::Path(p) => p.paint.device.is_some(),
-            Item::Image(_) => false,
-        };
-        if wire.device_color && self.pages.iter().any(|p| p.items.iter().any(device)) {
+        if wire.device_color && d.device_color {
             f.push("device-color");
         }
         f
     }
 
+    /// The features `required_features` is derived from.
+    ///
+    /// An unwindowed list scans its own items, which is every item in the
+    /// document and exactly what this has always done — so every reply on the
+    /// wire today is byte-for-byte unchanged by the harvest existing. Only a
+    /// windowed list, whose resident items are the window's and not the
+    /// document's, reads what assembly harvested (§3).
+    pub fn document_feature_set(&self) -> DocumentFeatures {
+        match (self.window, self.document_features) {
+            (Some(_), Some(d)) => d,
+            _ => DocumentFeatures::scan(self.resident_page_items()),
+        }
+    }
+
     /// Whether any page carries an image item.
     pub fn has_images(&self) -> bool {
-        self.pages.iter().any(|p| p.items.iter().any(|i| matches!(i, Item::Image(_))))
+        self.resident_page_items().any(|i| matches!(i, Item::Image(_)))
     }
 
     /// The `display_list` envelope of rendering-v2 as a JSON value, exactly
@@ -761,6 +972,16 @@ impl DisplayList {
             "diagnostics",
             Value::Arr(self.diagnostics.iter().map(diagnostic_json).collect()),
         );
+        // `display-list-v2-window` §4: present only on a windowed reply, and
+        // the authority on what was served -- the consumer never infers the
+        // coverage from the shape of `pages`.
+        if let Some(w) = self.window {
+            let mut o = Value::obj();
+            o.set("first_page", json::num(f64::from(w.first_page)));
+            o.set("page_count", json::num(f64::from(w.page_count)));
+            o.set("document_page_count", json::num(self.pages.len() as f64));
+            payload.set("window", o);
+        }
         let mut v = Value::obj();
         v.set("protocol_version", json::num(PROTOCOL_VERSION as f64));
         v.set("id", json::str_(id));
@@ -830,7 +1051,20 @@ impl DisplayList {
         write_features(&mut o, self, wire);
         o.push_str(",\"revision\":");
         num(&mut o, self.revision as f64);
-        o.push_str(",\"text_extraction\":\"cluster-actualtext\"},\"protocol_version\":");
+        o.push_str(",\"text_extraction\":\"cluster-actualtext\"");
+        // Alphabetically last, and written only when the render was windowed:
+        // an unwindowed line -- every line on the wire today -- is byte-for-byte
+        // what it was, and `FULL_LINE_FRAME_BYTES` stays exact for it.
+        if let Some(w) = self.window {
+            o.push_str(",\"window\":{\"document_page_count\":");
+            num(&mut o, self.pages.len() as f64);
+            o.push_str(",\"first_page\":");
+            num(&mut o, f64::from(w.first_page));
+            o.push_str(",\"page_count\":");
+            num(&mut o, f64::from(w.page_count));
+            o.push('}');
+        }
+        o.push_str("},\"protocol_version\":");
         num(&mut o, PROTOCOL_VERSION as f64);
         o.push_str(",\"type\":\"display_list\"}");
         o
@@ -1088,10 +1322,25 @@ fn device_space(d: &flashtex_compiler::color::DeviceColor) -> &'static str {
 /// (and inside a delta's `changed_pages`).
 pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
     let images = wire.images;
+    // An elided page carries its frame and an explicit `resident: false`, and
+    // NO `items` key at all: a consumer that never read the flag gets a decode
+    // error instead of a blank page. A resident page is byte-for-byte what it
+    // has always been — no marker is added — so an unwindowed line, which is
+    // every line on the wire today, is unchanged.
+    let Some(page_items) = p.items() else {
+        o.push_str("{\"height\":");
+        write_tick(o, p.height);
+        o.push_str(",\"number\":");
+        num(o, f64::from(p.number));
+        o.push_str(",\"resident\":false,\"width\":");
+        write_tick(o, p.width);
+        o.push('}');
+        return;
+    };
     o.push_str("{\"height\":");
     write_tick(o, p.height);
     o.push_str(",\"items\":[");
-    for (i, it) in p.items.iter().filter(|it| images || !matches!(it, Item::Image(_))).enumerate() {
+    for (i, it) in page_items.iter().filter(|it| images || !matches!(it, Item::Image(_))).enumerate() {
         sep(o, i);
         match it {
             Item::Image(img) => write_image(o, img),
@@ -1352,10 +1601,14 @@ fn page_json(p: &Page, wire: Wire) -> Value {
     o.set("number", json::num(f64::from(p.number)));
     o.set("width", tick(p.width));
     o.set("height", tick(p.height));
+    let Some(page_items) = p.items() else {
+        o.set("resident", Value::Bool(false));
+        return o;
+    };
     o.set(
         "items",
         Value::Arr(
-            p.items
+            page_items
                 .iter()
                 .filter(|it| images || !matches!(it, Item::Image(_)))
                 .map(|it| match it {
@@ -1833,17 +2086,17 @@ mod tests {
                 path: Some("/x".into()),
             }],
             pages: vec![
-                Page {
-                    number: 1,
-                    width: Tick(612 << 20),
-                    height: Tick(792 << 20),
-                    items: vec![run, rule(Provenance::Source(src(7, 8))), rule(Provenance::Synthetic("frac".into()))],
-                },
-                Page {
-                    number: 3,
-                    width: Tick(612 << 20),
-                    height: Tick(792 << 20),
-                    items: vec![
+                Page::resident(
+                    1,
+                    Tick(612 << 20),
+                    Tick(792 << 20),
+                    vec![run, rule(Provenance::Source(src(7, 8))), rule(Provenance::Synthetic("frac".into()))],
+                ),
+                Page::resident(
+                    3,
+                    Tick(612 << 20),
+                    Tick(792 << 20),
+                    vec![
                         path(PathPaintOp::Fill { even_odd: true }, Vec::new(), Provenance::Source(src(1, 3))),
                         path(PathPaintOp::Fill { even_odd: false }, clips(), Provenance::Synthetic("tikz".into())),
                         path(PathPaintOp::Stroke(stroke(Vec::new())), Vec::new(), Provenance::Synthetic("tikz".into())),
@@ -1851,18 +2104,18 @@ mod tests {
                         path(PathPaintOp::Stroke(stroke(vec![Tick(3), Tick(-4)])), clips(), Provenance::Sources(vec![src(2, 5), src(6, 9)])),
                         image(pdf(), Provenance::Synthetic("float".into())),
                     ],
-                },
-                Page {
-                    number: 2,
-                    width: Tick(1),
-                    height: Tick(2),
-                    items: Vec::new(),
-                },
+                ),
+                Page::resident(2, Tick(1), Tick(2), Vec::new()),
+                Page::elided(4, Tick(612 << 20), Tick(792 << 20)),
             ],
             diagnostics: vec![
                 Diagnostic::warning("overfull_hbox", "line \"3\" is 1.5pt too wide", vec![src(1, 9)]),
                 Diagnostic::error("compiler", "x", Vec::new()),
             ],
+            window: Some(PageWindow { first_page: 1, page_count: 3 }),
+            // Not harvested here: this list is built by hand, so the resident
+            // scan is the whole of it.
+            document_features: None,
         };
         assert_eq!(list.write_json("id\"1"), json::write(&list.to_json("id\"1")));
         for images in [false, true] {
@@ -1876,7 +2129,9 @@ mod tests {
             documents: Vec::new(),
             fonts: Vec::new(),
             pages: Vec::new(),
+            window: None,
             diagnostics: Vec::new(),
+            document_features: None,
         };
         assert_eq!(empty.write_json(""), json::write(&empty.to_json("")));
         assert_eq!(empty.write_json_with("", true), json::write(&empty.to_json_with("", true)));

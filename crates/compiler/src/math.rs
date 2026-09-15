@@ -4099,6 +4099,16 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("leq", "≤"),
     ("geq", "≥"),
     ("neq", "≠"),
+    // `\not` (`fontmath.ltx` 432: `\mathchardef\not="3236`) is not a symbol
+    // of its own but a zero-width overprint: TeX sets the cmsy `"36` slash in
+    // an empty box and the relation that FOLLOWS it draws on top, which is
+    // why `\hbox{$\not=$}`, `\hbox{$\neq$}` and `\hbox{$=$}` are all 7.77780
+    // pt at 10 pt and `\not<`, `\not\in`, `\not\subset` are exactly as wide
+    // as `<`, `\in`, `\subset`. One `\mathrel` row therefore covers `\not`
+    // before *any* relation, and `\ne`/`\neq`/`\notin` are the same two atoms
+    // spelled as one control word. U+0338 is what Latin Modern Math draws the
+    // slash at (`lm_math::ADVANCES`, advance 0, as in cmsy10).
+    ("not", "\u{0338}"),
     ("approx", "≈"),
     ("cdot", "⋅"),
     ("infty", "∞"),
@@ -4338,7 +4348,12 @@ fn symbol_class(glyph: &str) -> AtomClass {
         | "⟺" | "⟶" | "⟵" | "⟸" | "⟷"
         // fontmath.ltx 301-302: `\sqsubseteq`/`\sqsupseteq`, `\mathrel` at
         // cmsy "76/"77 (kernel, not amssymb).
-        | "⊑" | "⊒" => Rel,
+        | "⊑" | "⊒"
+        // fontmath.ltx 432: `\mathchardef\not="3236` — class 3, `\mathrel`.
+        // The class matters even though the slash is zero width: TeX puts no
+        // glue between two Rel atoms, so `\not=` is exactly as wide as `=`,
+        // where an Ord `\not` would open a thick space before the relation.
+        | "\u{0338}" => Rel,
         "+" | "-" | "−" | "*" | "±" | "×" | "÷" | "⋅" | "·" | "∗" | "∪" | "∩" | "∨" | "∧" | "⊕"
         | "⊗" | "⊖" | "⊘" | "⊙" | "◯" | "∖" | "∓" | "∘"
         // fontmath.ltx 278-279: `\sqcap`/`\sqcup`, `\mathbin` at cmsy "75/"74.
@@ -7556,6 +7571,43 @@ mod spacing_tests {
         let bin = laid_out(r"a\bigtriangleup b", SIZE);
         close(x(&bin, "△"), width("a", SIZE) + 4.0);
         close(x(&bin, "b"), x(&bin, "△") + width("△", SIZE) + 4.0);
+    }
+
+    /// `\not` (`fontmath.ltx` 432: `\mathchardef\not="3236`) is a zero-width
+    /// `\mathrel` overprint, not a symbol of its own: TeX sets the slash in
+    /// an empty box and the relation that follows draws on top of it. Both
+    /// halves of that matter for the box.
+    ///
+    /// pdflatex TL2025 at 10 pt, `\hbox{$ab$}` = 9.57755 pt as the control:
+    /// `\hbox{$\not=$}` = `\hbox{$\neq$}` = `\hbox{$=$}` = 7.77780 pt, and
+    /// `\hbox{$a\not=b$}` = `\hbox{$a=b$}` = 22.91077 pt. Were `\not` Ord
+    /// rather than Rel it would open a 5mu thick space in front of the
+    /// relation (TeX puts no glue between two Rel atoms), and `a\not=b`
+    /// would come out 5mu wide of `a=b`.
+    #[test]
+    fn not_is_a_zero_width_relation_the_following_relation_overprints() {
+        // Zero advance: `\not=` is exactly as wide as `=`, and `\not<` as `<`.
+        close(width(r"\not=", SIZE), width("=", SIZE));
+        close(width(r"\not<", SIZE), width("<", SIZE));
+        close(width(r"\not\in", SIZE), width(r"\in", SIZE));
+        close(width(r"\not\subset", SIZE), width(r"\subset", SIZE));
+        // Rel, not Ord: no extra space opens between `\not` and its relation,
+        // so the negated relation still spaces as one relation would.
+        close(width(r"a\not=b", SIZE), width("a=b", SIZE));
+        close(width(r"a\not\in b", SIZE), width(r"a\in b", SIZE));
+        // `\notin` is the same construction spelled as one control word
+        // (`fontmath.ltx`: `\notin` is `\not\in`), and measures the same.
+        // `\neq` is NOT compared here: this crate's own v1 layout sets it as
+        // the single precomposed U+2260 glyph (`lm_math`, 778 units) rather
+        // than as the composite, which is 0.27 pt narrower than `=` at 18 pt.
+        // That is a property of this layout only -- the render pipeline
+        // decomposes U+2260 back into the two atoms and measures `a \neq b`
+        // at pdflatex's 22.91077 pt exactly.
+        close(width(r"a\notin b", SIZE), width(r"a\in b", SIZE));
+        // The slash itself: one Rel atom whose glyph carries no advance.
+        let b = laid_out(r"\not=", SIZE);
+        close(x(&b, "\u{0338}"), 0.0);
+        close(x(&b, "="), 0.0);
     }
 
     #[test]

@@ -75,7 +75,7 @@ fn math_glyphs(src: &str) -> Vec<Painted> {
     let fonts = FontSet::with_default_dirs(&[]);
     let r = render_one_with(src, &fonts);
     let mut out = Vec::new();
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         let Item::GlyphRun(run) = item else { continue };
         if run.role != RunRole::Math {
             continue;

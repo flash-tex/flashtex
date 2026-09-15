@@ -20,7 +20,7 @@ fn formula(arrow: &str) -> (Vec<f64>, String) {
     let r = render_one(&format!("\\documentclass[11pt]{{article}}\\usepackage{{amsmath}}\\begin{{document}}\n${arrow} y$\n\\end{{document}}").replace('$', "$x"));
     let mut xs = Vec::new();
     let mut text = String::new();
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         if let Item::GlyphRun(run) = item {
             if run.role == RunRole::Math {
                 xs.extend(run.glyphs.iter().map(|g| g.origin_x.to_bp()));

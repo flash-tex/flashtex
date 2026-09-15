@@ -595,7 +595,7 @@ fn decompose(docs: &[SourceDocument<'_>], case: &Case, fonts: &FontSet, options:
     let assemble_ms = ms(t);
 
     let t = Instant::now();
-    let payload = v1::fallback(&v2, Capabilities { rules: true, font_hints: true, display_list: false, images: false, device_color: false, delta: false, v2_only: false }, Some(vec![]));
+    let payload = v1::fallback(&v2, Capabilities { rules: true, font_hints: true, display_list: false, images: false, device_color: false, delta: false, v2_only: false, window: false }, Some(vec![]));
     let v1_ms = ms(t);
 
     let t = Instant::now();

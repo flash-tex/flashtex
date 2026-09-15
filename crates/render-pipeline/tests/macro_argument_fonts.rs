@@ -49,7 +49,7 @@ fn words(text: &str) -> Vec<(String, f64, f64, Face)> {
     let r = render(&docs, "main.tex", 1, "macro-argument-fonts", &fonts, &RenderOptions::default());
     assert_eq!(r.v2.pages.len(), 1, "expected a one-page document");
     let mut out = Vec::new();
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         let Item::GlyphRun(run) = item else { continue };
         let Some(g) = run.glyphs.first() else { continue };
         let face = r.v2.fonts.iter().find(|f| f.font_id == run.font_id).map(|f| f.postscript_name.clone()).unwrap_or_default();
