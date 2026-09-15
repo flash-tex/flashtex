@@ -5259,11 +5259,17 @@ impl P<'_> {
             &mut self.diags,
             !found,
         );
+        // The span covers the opener through the close (or the last content
+        // token). Expanded content can carry spans from before the opener or
+        // from another document; the span never inverts or crosses documents.
         let end = if found {
             close_end
         } else {
-            raw.last().map_or(open.end, |t| t.span.end)
-        };
+            raw.last()
+                .filter(|t| t.span.document == open.document)
+                .map_or(open.end, |t| t.span.end)
+        }
+        .max(open.end);
         match (found, unclosed) {
             (true, Some(group)) => self.diags.push(Diagnostic::error(
                 "math group is missing its closing brace",

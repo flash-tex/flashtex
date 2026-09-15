@@ -333,3 +333,12 @@ fn lists_nested_past_255_levels_are_too_deeply_nested_not_an_overflow() {
     let ok = "\\begin{document}\\begin{itemize}\\item a\\begin{itemize}\\item b\\begin{itemize}\\item c\\begin{itemize}\\item d\\end{itemize}\\end{itemize}\\end{itemize}\\end{itemize}\\end{document}\n";
     assert!(!compile_messages(ok).iter().any(|m| m.contains("Too deeply nested")));
 }
+
+#[test]
+fn an_unclosed_math_span_never_inverts() {
+    // `\setlength{` re-reads its argument, so the math that `$` opens sees
+    // content tokens from before the opener: the span ended before it began
+    // ("span start must not exceed end").
+    let messages = compile_messages("\\setlength{\\begin{}$");
+    assert!(!messages.is_empty());
+}
