@@ -849,6 +849,11 @@ pub(crate) const GRID_ENVIRONMENTS: &[(&str, char, &str, &str)] = &[
     ("cases", 'l', "{", ""),
     // mathtools.sty `\newcases{dcases}`: `cases` with `\displaystyle` cells.
     ("dcases", 'l', "{", ""),
+    // mathtools.sty `\newcases{rcases}` (TeX Live 2026 lines 1029-1030):
+    // the same `\quad`-separated textstyle two-column preamble as `cases`
+    // (`\MT_start_cases:nnnn` runs for both), but a null left delimiter
+    // and `\rbrace` right — the mirror image of `cases`.
+    ("rcases", 'l', "", "}"),
     ("aligned", 'c', "", ""),
     ("alignedat", 'c', "", ""),
     ("split", 'c', "", ""),
@@ -2114,12 +2119,16 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
-            "boxed" | "overline" | "underline" | "overbrace" | "underbrace" | "overrightarrow"
-            | "overleftarrow" | "overleftrightarrow" | "underrightarrow" | "underleftarrow"
-            | "underleftrightarrow" => {
+            "boxed" | "Aboxed" | "overline" | "underline" | "overbrace" | "underbrace"
+            | "overrightarrow" | "overleftarrow" | "overleftrightarrow" | "underrightarrow"
+            | "underleftarrow" | "underleftrightarrow" => {
                 let body = self.required_group(&name, span);
                 let frame = match name.as_str() {
-                    "boxed" => Frame::Box,
+                    // mathtools' `\Aboxed{<lhs> <rel> <rhs>}` boxes the whole
+                    // row with the `\boxed` frame; the relation stays a plain
+                    // body atom at its natural position, so the align grid
+                    // keeps a shared alignment point across boxed rows.
+                    "boxed" | "Aboxed" => Frame::Box,
                     "overline" => Frame::Over,
                     "overbrace" => Frame::OverBrace,
                     "underbrace" => Frame::UnderBrace,
@@ -5403,6 +5412,75 @@ mod parse_tests {
     }
 
     #[test]
+    fn rcases_parses_as_a_right_brace_mirror_of_cases() {
+        // mathtools.sty `\newcases{rcases}` (TeX Live 2026 lines
+        // 1029-1030): the same two-column textstyle preamble as `cases`
+        // (`\MT_start_cases:nnnn` runs for both), a null left delimiter
+        // and `\rbrace` right — the mirror image. `cases`/`dcases` pin
+        // the pre-existing arms unchanged.
+        for (src, want_left, want_right) in [
+            (r"\begin{cases} a & b \\ c & d \end{cases}", "{", ""),
+            (r"\begin{dcases} a & b \\ c & d \end{dcases}", "{", ""),
+            (r"\begin{rcases} a & b \\ c & d \end{rcases}", "", "}"),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(src);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            let Nucleus::Matrix {
+                rows,
+                columns,
+                left,
+                right,
+            } = &list.atoms[0].nucleus
+            else {
+                panic!("{src}: not a grid: {:?}", list.atoms)
+            };
+            assert_eq!(rows.len(), 2, "{src}");
+            assert!(rows.iter().all(|row| row.len() == 2), "{src}");
+            assert_eq!(columns, "ll", "{src}");
+            assert_eq!(left, want_left, "{src}");
+            assert_eq!(right, want_right, "{src}");
+        }
+    }
+
+    #[test]
+    fn rcases_brace_lays_out_on_the_right_where_cases_lays_out_on_the_left() {
+        let laid = |src: &str| {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(src);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            layout(&list, 12.0, &mut diagnostics)
+        };
+        let cases = laid(r"\begin{cases} a & b \\ c & d \end{cases}");
+        let brace = cases
+            .items
+            .iter()
+            .find(|item| item.text == "{")
+            .expect("cases lays out a left brace");
+        assert_eq!(brace.x, 0.0, "cases brace starts the row");
+        assert!(
+            cases.items.iter().all(|item| item.x >= brace.x),
+            "cases brace is the leftmost ink"
+        );
+        let rcases = laid(r"\begin{rcases} a & b \\ c & d \end{rcases}");
+        let brace = rcases
+            .items
+            .iter()
+            .find(|item| item.text == "}")
+            .expect("rcases lays out a right brace");
+        assert!(
+            brace.x > 0.0,
+            "rcases brace sits past the grid, not at its start"
+        );
+        assert!(
+            rcases.items.iter().all(|item| item.x <= brace.x),
+            "rcases brace is the rightmost ink"
+        );
+    }
+
+    #[test]
     fn big_delimiters_scale_like_cmex_and_keep_tex_classes() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\bigl(x\bigr) \Bigm| \bigg[ \Biggr] \big.");
@@ -5712,6 +5790,61 @@ mod parse_tests {
             laid.items.iter().filter(|item| item.rule.is_some()).count(),
             6
         );
+    }
+
+    #[test]
+    fn aboxed_boxes_the_full_expression_with_the_boxed_primitive() {
+        // GitHub #567: mathtools' `\Aboxed` draws the `\boxed` frame around
+        // the whole row, so it must reuse the same `Framed`/`Box` primitive
+        // (drawn by the existing `layout_nucleus` arm) rather than inventing
+        // new box-drawing code.
+        for source in [r"\Aboxed{a = b}", r"\boxed{a = b}"] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{source}: {list:?}");
+            let Nucleus::Framed { body, frame } = &list.atoms[0].nucleus else {
+                panic!(
+                    "{source}: expected a framed nucleus, got {:?}",
+                    list.atoms[0].nucleus
+                );
+            };
+            assert_eq!(*frame, Frame::Box, "{source}");
+            let texts: Vec<_> = body
+                .atoms
+                .iter()
+                .filter_map(|atom| match &atom.nucleus {
+                    Nucleus::Symbol(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(texts, ["a", "=", "b"], "{source}: {body:?}");
+            // The frame covers the full expression: four rules whose outer
+            // edges are the laid-out box, with every body glyph strictly
+            // inside them horizontally.
+            let size = 10.0;
+            let laid = layout(&list, size, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            let rules: Vec<_> = laid.items.iter().filter(|item| item.rule.is_some()).collect();
+            assert_eq!(rules.len(), 4, "{source}: {laid:?}");
+            let left = rules
+                .iter()
+                .map(|item| item.x)
+                .fold(f64::INFINITY, f64::min);
+            let right = rules
+                .iter()
+                .map(|item| item.x + item.rule.unwrap().width)
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!((left - 0.0).abs() < 1e-9, "{source}: {laid:?}");
+            assert!((right - laid.width).abs() < 1e-9, "{source}: {laid:?}");
+            for item in laid.items.iter().filter(|item| item.rule.is_none()) {
+                assert!(
+                    item.x > 0.0 && item.x < laid.width,
+                    "{source}: {item:?} outside the frame in {laid:?}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -156,6 +156,7 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("space", "", "expands to one space"),
     ("ignorespaces", "", "skips the spaces that follow"),
     ("jobname", "", "expands to texput"),
+    ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
 ];
 
 /// (name, arguments, description) for every `parser::BUILT_INS` entry that
@@ -287,6 +288,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("reflectbox", "{...}", "graphics.sty box mirrored left to right"),
     ("graphicspath", "{{dir/}...}", "image search directories; no material"),
     ("allowdisplaybreaks", "[0-4]", "amsmath page-break permission inside displays; no material"),
+    ("index", "{entry}", "makeidx index entry (|modifier, @sort key and !subentry live inside the braces): accepted, never typeset (no indexing backend)"),
+    ("glossary", "{entry}", "glossary entry: accepted, never typeset (no glossary backend)"),
     ("clearpage", "", "forces a page break"),
     ("cleardoublepage", "", "forces a page break (one-sided article)"),
     ("c", "{letter}", "cedilla text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning"),
@@ -680,6 +683,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["Aboxed"],
+        "{lhs rel rhs}",
+        "mathtools: real \\boxed rule around the whole row, keeping the relation as the shared alignment point",
+        true,
+    ),
+    (
         &["overbrace", "underbrace"],
         "{body}",
         "cmex brace pieces with rule fills over or under a display-style body; scripts are limits",
@@ -853,6 +862,16 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("quotation", "indented paragraphs"),
     ("sloppypar", "a paragraph set with \\sloppy"),
     ("samepage", "\\samepage for the body"),
+    ("tiny", "the tiny size for the environment body"),
+    ("scriptsize", "the scriptsize size for the environment body"),
+    ("footnotesize", "the footnotesize size for the environment body"),
+    ("small", "the small size for the environment body"),
+    ("normalsize", "the body size for the environment body"),
+    ("large", "the large size for the environment body"),
+    ("Large", "the Large size for the environment body"),
+    ("LARGE", "the LARGE size for the environment body"),
+    ("huge", "the huge size for the environment body"),
+    ("Huge", "the Huge size for the environment body"),
     ("verse", "indented lines; each \\\\ ends a line"),
     ("itemize", "bulleted list; article labels per depth, \\item[label]"),
     (
@@ -983,6 +1002,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "xspace",
         "",
         "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)",
+    ),
+    (
+        "ifthen",
+        "",
+        "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used",
     ),
 ];
 
@@ -1166,6 +1190,7 @@ pub fn inventory() -> Inventory {
         let fences = match (left, right) {
             ("", "") => String::new(),
             (l, "") => format!(" with a left {l}"),
+            ("", r) => format!(" with a right {r}"),
             (l, r) => format!(" in {l} {r}"),
         };
         let align = match align {
@@ -1556,4 +1581,29 @@ pub fn render_markdown(inventory: &Inventory) -> String {
     out.push_str(DOC_END);
     out.push('\n');
     out
+}
+
+#[cfg(test)]
+mod fence_description_tests {
+    use super::*;
+
+    /// A grid environment with no left delimiter and a real right one
+    /// (`rcases`'s exact shape, `("rcases", 'l', "", "}")`) must describe
+    /// only the right fence, not fall through to the two-sided `"in {l} {r}"`
+    /// arm with an empty `{l}` (which produced the malformed
+    /// `"...cells in  }"`, a stray double space before a lone brace).
+    #[test]
+    fn a_right_only_fence_describes_only_the_right_delimiter() {
+        let inventory = inventory();
+        let rcases = inventory
+            .environments
+            .iter()
+            .find(|e| e.name == "rcases")
+            .expect("rcases is in the inventory");
+        assert_eq!(
+            rcases.description,
+            "math grid, left-aligned cells with a right }"
+        );
+        assert!(!rcases.description.contains("  "), "{}", rcases.description);
+    }
 }

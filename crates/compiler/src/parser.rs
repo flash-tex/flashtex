@@ -1049,6 +1049,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "paragraph",
     "subparagraph",
     "tableofcontents",
+    "index",
+    "glossary",
     "textbf",
     "textmd",
     "emph",
@@ -2649,6 +2651,18 @@ impl P<'_> {
             // than an unknown command.
             "makelabels" => {
                 let _ = self.letter_command_available(name, span);
+            }
+            // `\index{entry}` (makeidx) and `\glossary{entry}` write an
+            // `.idx`/`.glo` file for an external program to process. There
+            // is no indexing or glossary backend here, and neither command
+            // typesets anything in real LaTeX either, so the argument is
+            // read and discarded: a silent no-op with no diagnostic, like
+            // `\graphicspath` and `\pagestyle` above. The whole entry --
+            // `|`-modifiers (`\index{term|textbf}`), `@`-sort keys and
+            // `!`-subentries -- lives inside the one braced group, so
+            // consuming it consumes the variants too.
+            "index" | "glossary" => {
+                let _ = self.required_group(name, span);
             }
             // `\today` in ordinary body text. It had no arm here, so it fell
             // through to `unsupported`, whose `debug_assert!(!BUILT_INS
@@ -5059,6 +5073,22 @@ impl P<'_> {
                 self.verbatim_environment(span, argument_span, &environment, blocks, para);
                 return;
             }
+            // A size environment is a group with the size declaration applied
+            // for its extent (style save/restore below scopes it).
+            let size_env = self.in_body
+                && matches!(
+                    environment.as_str(),
+                    "tiny"
+                        | "scriptsize"
+                        | "footnotesize"
+                        | "small"
+                        | "normalsize"
+                        | "large"
+                        | "Large"
+                        | "LARGE"
+                        | "huge"
+                        | "Huge"
+                );
             self.env_alignments.push(self.declared_alignment);
             self.parameter_scopes.push(Vec::new());
             if environment == "document" && self.has_document {
@@ -5160,6 +5190,11 @@ impl P<'_> {
             } else if environment == "samepage" && self.in_body {
                 // `\begin{samepage}` runs the `\samepage` declaration.
                 self.assign_parameter(BreakParameter::InterlinePenalty(INF_PENALTY), span);
+            } else if size_env {
+                // Implemented above (the size list): this arm only keeps
+                // size environments out of the "not implemented" warning.
+                // The declaration itself is applied after the style save
+                // below, so the `\end` restore sees the surrounding style.
             } else if self.in_body {
                 self.diags.push(Diagnostic::environment_warning(
                     &environment,
@@ -5180,6 +5215,12 @@ impl P<'_> {
                 .push((environment.clone(), span.merge(argument_span)));
             self.env_styles.push(self.style);
             self.length_scopes.push(self.length_state());
+            // The size declaration itself, after the save above (which keeps
+            // the surrounding style for the `\end` restore), exactly like
+            // `begin_theorem` below.
+            if size_env {
+                self.style = apply_style(self.style, &environment);
+            }
             if self.in_body {
                 if let Some(theorem) = self.theorems.get(&environment).cloned() {
                     self.begin_theorem(&theorem, &environment, span, para);
@@ -8715,6 +8756,12 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // array.sty's preamble builder, column types and row strut are
         // implemented (parser/tabular.rs, crate::tabular); no options.
         "array" => options.is_empty(),
+        // ifthen's conditionals (`\ifthenelse` with its tests, `\newif`
+        // switches with `\newboolean`/`\setboolean`) run in the expansion
+        // pass, so loading the package is silent. The one gap reports
+        // itself where it is used instead: `\whiledo` is not implemented
+        // and is diagnosed as an unknown command at its own span.
+        "ifthen" => options.is_empty(),
         // natbib citation commands (crate::natbib) with the delimiter,
         // separator and citation-style options that decide the characters
         // they set. `sort`/`compress`/`super`/`longnamesfirst` are parsed but
@@ -10783,6 +10830,53 @@ mod tests {
     }
 
     #[test]
+    fn aboxed_rows_keep_the_relation_at_the_shared_alignment_point() {
+        // GitHub #567: each `\Aboxed{<lhs> <rel> <rhs>}` row boxes its full
+        // expression while keeping the relation symbol at the same structural
+        // position in every row, so the align grid can share one alignment
+        // point across the boxed rows. (Pixel coincidence of asymmetric rows
+        // is downstream layout work: the rows stay single-cell here because
+        // row-splitting runs before math parsing ever sees `\Aboxed`.)
+        let parsed = parse("\\begin{align}\\Aboxed{a = b}\\\\\\Aboxed{c = dd}\\end{align}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let rows = parsed
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .flatten()
+            .find_map(|i| match i {
+                Inline::MathRows { rows, .. } => Some(rows),
+                _ => None,
+            })
+            .expect("align rows");
+        assert_eq!(rows.len(), 2);
+        for row in rows {
+            assert_eq!(row.cells.len(), 1, "{row:?}");
+            assert_eq!(row.cells[0].atoms.len(), 1, "{row:?}");
+            let crate::math::Nucleus::Framed { body, frame } = &row.cells[0].atoms[0].nucleus
+            else {
+                panic!("expected a framed box, got {:?}", row.cells[0].atoms[0].nucleus);
+            };
+            assert_eq!(*frame, crate::math::Frame::Box, "{row:?}");
+            let texts: Vec<_> = body
+                .atoms
+                .iter()
+                .filter_map(|atom| match &atom.nucleus {
+                    crate::math::Nucleus::Symbol(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                texts.len() >= 3 && texts[1] == "=",
+                "relation stays the second body atom in {row:?}"
+            );
+        }
+    }
+
+    #[test]
     fn intertext_is_set_between_align_rows() {
         let source = "\\begin{align} a &= b \\\\ \\intertext{so that} c &= d \\shortintertext{and} e &= f \\end{align}";
         let parsed = parse(source);
@@ -11703,6 +11797,53 @@ mod tests {
         ] {
             assert_eq!(size_of(&items, text), size, "{text}");
         }
+    }
+
+    #[test]
+    fn size_environments_match_their_command_forms() {
+        // `\begin{small}` is a group with `\small` applied for its extent:
+        // every size environment sets the same size as its declaration, is
+        // scoped by `\end`, and produces no `unsupported_feature` warning.
+        const LEVELS: [&str; 10] = [
+            "tiny",
+            "scriptsize",
+            "footnotesize",
+            "small",
+            "normalsize",
+            "large",
+            "Large",
+            "LARGE",
+            "huge",
+            "Huge",
+        ];
+        let mut body = String::from("n0 ");
+        for (i, level) in LEVELS.iter().enumerate() {
+            body.push_str(&format!("\\begin{{{level}}}e{i} \\end{{{level}}} \\{level} c{i} "));
+        }
+        let (parsed, laid_out) = items(&body);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        for (i, level) in LEVELS.iter().enumerate() {
+            let (env, cmd) = (format!("e{i}"), format!("c{i}"));
+            assert_eq!(size_of(&laid_out, &env), size_of(&laid_out, &cmd), "{level}");
+        }
+        // Spot checks against the default (12pt-class) table, including the
+        // `normalsize` environment resetting to the body size.
+        assert_eq!(size_of(&laid_out, "e3"), 10.95, "small");
+        assert_eq!(size_of(&laid_out, "e2"), 10.0, "footnotesize");
+        assert_eq!(
+            size_of(&laid_out, "e4"),
+            crate::layout::BODY_SIZE_PT,
+            "normalsize"
+        );
+        // The environment form scopes like the group form: text after
+        // `\end{small}` is back at the surrounding size.
+        let (scoped, scoped_items) = items(r"Body \begin{small}Small\end{small} After");
+        assert!(scoped.diagnostics.is_empty(), "{:?}", scoped.diagnostics);
+        assert_eq!(size_of(&scoped_items, "Small"), 10.95);
+        assert_eq!(
+            size_of(&scoped_items, "After"),
+            crate::layout::BODY_SIZE_PT
+        );
     }
 
     #[test]
