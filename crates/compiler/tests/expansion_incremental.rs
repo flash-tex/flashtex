@@ -156,3 +156,37 @@ fn typing_and_line_deletion_match_full_expansion() {
         check(&text, &mut cache, 101, "restore line");
     }
 }
+
+#[test]
+fn repeated_engine_diagnostics_match_full_expansion() {
+    // Identical engine reports collapse between safe points; edits that add,
+    // split and remove repeats must still give the full expansion's list.
+    const PIECES: &[&str] = &["\\bad ", "\\bad\\bad ", "\n", " ", "\\relax ", "\\count1=\\relax ", "x", "\\fi"];
+    let mut text = String::from("\\documentclass{article}\n\\newcommand{\\bad}{\\ifnum\\relax<1 \\fi\\ifnum\\relax<1 \\fi}\n\\begin{document}\n");
+    for i in 0..300 {
+        text.push_str(&format!("Paragraph {i} \\bad{{}} text.\n"));
+    }
+    text.push_str("\\end{document}\n");
+    let mut cache = None;
+    let mut rng = Rng(0x5EED_D1A6_0000_0001);
+    check(&text, &mut cache, 0, "initial");
+    for step in 1..=120 {
+        let before = text.clone();
+        let at = boundary(&text, &mut rng);
+        let what = if rng.below(3) == 0 {
+            let mut end = (at + 1 + rng.below(20)).min(text.len());
+            while !text.is_char_boundary(end) {
+                end += 1;
+            }
+            text.replace_range(at..end, "");
+            format!("delete at {at}")
+        } else {
+            let piece = PIECES[rng.below(PIECES.len())];
+            text.insert_str(at, piece);
+            format!("insert {piece:?} at {at}")
+        };
+        if check(&text, &mut cache, step, &what) {
+            text = before;
+        }
+    }
+}

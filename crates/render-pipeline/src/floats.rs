@@ -61,6 +61,12 @@ pub enum Piece {
     /// carried into every later run of the same float (its scope is the rest
     /// of the float box, which a `\caption` between them must not end).
     Align { span: Span, align: Align },
+    /// A size declaration (`\tiny` ... `\Huge`, `\normalsize`) at the body's
+    /// own level. Like [`Piece::Align`] its bytes stay in their run and are
+    /// carried into every later run: `\@caption` sets its box inside
+    /// `\begingroup ... \normalsize ... \endgroup` (latex.ltx), so a
+    /// `\small` before a `\caption` still sets the `tabular` after it.
+    Size { span: Span },
     /// `\includegraphics[options]{path}`; `span` covers the whole command.
     Graphic { span: Span, options: String, path: String },
     /// `\caption[...]{...}`: `span` covers the command, `arg` the argument's
@@ -312,6 +318,13 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                         body!(i, name_end);
                         i = name_end;
                     }
+                    "tiny" | "scriptsize" | "footnotesize" | "small" | "normalsize" | "large" | "Large" | "LARGE" | "huge" | "Huge"
+                        if outer(braces, envs) =>
+                    {
+                        out.push(Piece::Size { span: span(i, name_end) });
+                        body!(i, name_end);
+                        i = name_end;
+                    }
                     "par" if run.is_none() => {
                         out.push(Piece::ParBreak);
                         i = name_end;
@@ -449,35 +462,96 @@ use crate::RenderOptions;
 pub const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// `(float numbers per document in scan order, label key -> value)`.
-pub fn number(envs: &[Vec<FloatEnv>]) -> (Vec<Vec<u32>>, Vec<(String, String)>) {
-    let (mut figures, mut tables) = (0u32, 0u32);
-    let mut numbers = Vec::new();
+///
+/// `chapters` is `Some(book)` for report.cls/book.cls, whose `\thefigure`
+/// and `\thetable` are `\ifnum\c@chapter>\z@\thechapter.\fi\@arabic\c@figure`
+/// and whose `\@addtoreset{figure}{chapter}` restarts both counters at every
+/// `\refstepcounter{chapter}`. `\chapter*`, and book's `\chapter` outside
+/// `\mainmatter`, step nothing; `\appendix` sets the chapter counter to zero
+/// and `\thechapter` to `\@Alph`. The chapter commands are read from `texts`
+/// (the masked sources). Floats and commands are taken in `order`
+/// ([`adapter::reading_order`]), so a float in the entry file after an
+/// `\include` whose file has its own `\chapter` is in that chapter. A
+/// float of a document never read (an `\includeonly`-excluded file) has no
+/// number and no label value.
+pub fn number(envs: &[Vec<FloatEnv>], texts: &[&str], order: &[Span], chapters: Option<bool>) -> (Vec<Vec<Option<String>>>, Vec<(String, String)>) {
+    let mut counters = Counters { figures: 0, tables: 0, chapter: 0, appendix: false, mainmatter: true };
+    let mut numbers: Vec<Vec<Option<String>>> = envs.iter().map(|doc| vec![None; doc.len()]).collect();
     let mut labels = Vec::new();
-    for doc in envs {
-        let mut nums = Vec::new();
-        for f in doc {
+    let commands: Vec<Vec<adapter::BodyCommand>> = texts
+        .iter()
+        .enumerate()
+        .map(|(d, text)| match chapters {
+            Some(book) if order.iter().any(|s| s.document.0 == d) => adapter::body_commands(text, true, book),
+            _ => Vec::new(),
+        })
+        .collect();
+    for segment in order {
+        let d = segment.document.0;
+        let inside = |at: usize| (segment.start..segment.end).contains(&at);
+        let mut cmds = commands.get(d).into_iter().flatten().filter(|c| inside(c.start)).peekable();
+        for (fi, f) in envs.get(d).into_iter().flatten().enumerate().filter(|(_, f)| inside(f.span.start)) {
+            while let Some(cmd) = cmds.next_if(|c| c.start < f.span.start) {
+                counters.step(cmd);
+            }
             let has_caption = f.pieces.iter().any(|p| matches!(p, Piece::Caption { .. }));
             let counter = match f.kind {
-                FloatKind::Figure => &mut figures,
-                FloatKind::Table => &mut tables,
+                FloatKind::Figure => &mut counters.figures,
+                FloatKind::Table => &mut counters.tables,
             };
             if has_caption {
                 *counter += 1;
             }
-            nums.push(*counter);
+            let counter = *counter;
+            let value = if counters.chapter > 0 {
+                let the_chapter = if counters.appendix { flashtex_class_geometry::Numbering::UpperAlph.format(i64::from(counters.chapter)) } else { counters.chapter.to_string() };
+                format!("{the_chapter}.{counter}")
+            } else {
+                counter.to_string()
+            };
             // `\label` after `\caption` takes its number (`\@currentlabel`).
             let mut seen_caption = false;
             for p in &f.pieces {
                 match p {
                     Piece::Caption { .. } => seen_caption = true,
-                    Piece::Label { key, .. } => labels.push((key.clone(), if seen_caption { counter.to_string() } else { String::new() })),
+                    Piece::Label { key, .. } => labels.push((key.clone(), if seen_caption { value.clone() } else { String::new() })),
                     _ => {}
                 }
             }
+            numbers[d][fi] = Some(value);
         }
-        numbers.push(nums);
+        // The commands after the segment's last float reach the next one.
+        cmds.for_each(|cmd| counters.step(cmd));
     }
     (numbers, labels)
+}
+
+/// report/book's float counters as [`number`] steps them.
+struct Counters {
+    figures: u32,
+    tables: u32,
+    chapter: u32,
+    appendix: bool,
+    mainmatter: bool,
+}
+
+impl Counters {
+    fn step(&mut self, cmd: &adapter::BodyCommand) {
+        use crate::adapter::{BodyKind, Matter};
+        match cmd.kind {
+            BodyKind::Chapter { starred: false, .. } if self.mainmatter => {
+                self.chapter += 1;
+                self.figures = 0;
+                self.tables = 0;
+            }
+            BodyKind::Appendix => {
+                self.chapter = 0;
+                self.appendix = true;
+            }
+            BodyKind::Matter(m) => self.mainmatter = m == Matter::Main,
+            _ => {}
+        }
+    }
 }
 
 type Loaded = Result<(Rc<ImageResource>, ImageInfo), String>;
@@ -563,7 +637,7 @@ fn em_ex(body: f64) -> (f64, f64) {
 #[allow(clippy::too_many_arguments)]
 pub fn prepare(
     envs: &[Vec<FloatEnv>],
-    numbers: &[Vec<u32>],
+    numbers: &[Vec<Option<String>>],
     documents: &[SourceDocument<'_>],
     entry_index: usize,
     texts: &[&str],
@@ -587,17 +661,30 @@ pub fn prepare(
     // `draft`/`demo` are per document, from the class options and every
     // `\usepackage` of `graphics`/`graphicx` in the entry file.
     let gmode = graphics::mode(texts.get(entry_index).copied().unwrap_or_default());
+    let float_package = adapter::package_options(texts.get(entry_index).copied().unwrap_or_default(), "float").is_some();
     for (d, doc_envs) in envs.iter().enumerate() {
         let path: Rc<str> = Rc::from(documents[d].path);
         let src = |span: Span| SourceRange { path: path.clone(), start_byte: span.start, end_byte: span.end };
         for (fi, f) in doc_envs.iter().enumerate() {
-            let number = numbers[d][fi];
+            // A float of a document never read is not set (`number`).
+            let Some(number) = numbers[d][fi].as_deref() else { continue };
             // `\figure*` is `\@dbflt` only `\if@twocolumn` (latex.ltx
             // 17419); in a one-column document the star does nothing.
             let wide = f.starred && twocolumn;
             let env = if wide { &wide_env } else { &env };
+            // float.sty `\@xfloat#1[{\@ifnextchar{H}...`: exactly `[H]`, in
+            // vertical mode (a blank line before the environment). In the
+            // middle of a paragraph `\float@endH`'s `\vskip` would end it
+            // there, which the text flow here cannot do yet.
+            let exact_here = f.placement.as_deref() == Some("H") && float_package && !wide && !f.hmode;
             let bits = match placement_bits(f.placement.as_deref(), wide) {
+                _ if exact_here => 16 | 1,
                 Ok(b) => b,
+                Err(msg) if msg.starts_with("placement H") && float_package => {
+                    let why = if f.hmode { "in the middle of a paragraph (no blank line before the environment)" } else { "on a full-width float" };
+                    diags.push(Diagnostic::warning("float_placement", format!("placement H {why} is not supported yet; using h"), vec![src(f.span)]));
+                    16 | 1
+                }
                 Err(msg) => {
                     let fallback = if msg.starts_with("placement H") { 16 | 1 } else { 16 | 8 };
                     diags.push(Diagnostic::warning("float_placement", msg, vec![src(f.span)]));
@@ -606,8 +693,8 @@ pub fn prepare(
             };
             let mut parts = Vec::new();
             let mut spec_labels = Vec::new();
-            // `\centering` and friends stay in force for the rest of the
-            // float box, so every later content run is parsed with them.
+            // `\centering`, `\small` and friends stay in force for the rest
+            // of the float box, so every later content run is parsed with them.
             let mut aligns: Vec<Span> = Vec::new();
             for piece in &f.pieces {
                 match piece {
@@ -615,6 +702,7 @@ pub fn prepare(
                         aligns.push(*span);
                         parts.push(FloatPart::Align(*align));
                     }
+                    Piece::Size { span } => aligns.push(*span),
                     Piece::ParBreak => parts.push(FloatPart::ParBreak),
                     Piece::Label { key, .. } => spec_labels.push(key.clone()),
                     Piece::Content { span } => {
@@ -708,7 +796,7 @@ pub fn prepare(
                     }
                 }
             }
-            specs.push(FloatSpec { kind: f.kind, number, wide, bits, span: f.span, hmode: f.hmode, parts, labels: spec_labels });
+            specs.push(FloatSpec { kind: f.kind, number: number.to_string(), wide, bits, span: f.span, hmode: f.hmode, exact_here, parts, labels: spec_labels });
         }
     }
     (specs, diags)
@@ -782,7 +870,7 @@ fn paragraph_start(parts: &[adapter::ParaPart]) -> Option<usize> {
 #[allow(clippy::too_many_arguments)]
 fn caption_items(
     kind: FloatKind,
-    number: u32,
+    number: &str,
     span: Span,
     arg: Span,
     d: usize,
@@ -872,6 +960,23 @@ mod tests {
         assert_eq!(runs[0], "\\centering");
         assert!(runs[1].starts_with("\\begin{tabular}") && runs[1].ends_with("And a note."));
         assert!(matches!(f[0].pieces[2], Piece::Caption { .. }));
+    }
+
+    #[test]
+    fn a_size_declaration_is_carried_past_the_caption() {
+        let src = "\\begin{document}\n\\begin{table}\n\\centering\\small\n\\caption{C}\n\\begin{tabular}{l}\na\n\\end{tabular}\n{\\large x}\n\\end{table}\n\\end{document}\n";
+        let f = scan(src, DocumentId(0));
+        let sizes: Vec<&str> = f[0]
+            .pieces
+            .iter()
+            .filter_map(|p| match p {
+                Piece::Size { span } => Some(&src[span.start..span.end]),
+                _ => None,
+            })
+            .collect();
+        // `\small` is float-level; the `\large` inside a group is not.
+        assert_eq!(sizes, ["\\small"]);
+        assert!(matches!(&f[0].pieces[2], Piece::Content { span } if &src[span.start..span.end] == "\\centering\\small"));
     }
 
     #[test]

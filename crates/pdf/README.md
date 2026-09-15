@@ -129,11 +129,14 @@ container writer, not a second PDF implementation:
   writes. `GlyphRun { font, size, glyphs: [PlacedGlyph { gid, origin }] }`
   expands to `BT /F size Tf 1 0 0 1 x y Tm (codes) Tj … ET`; a glyph without
   an origin continues the previous string at the font's advance.
-- **Typed operators.** `Op` is the bounded set `q Q cm w J j d g G rg RG m l
-  c h re S f f* n W W* BT ET Tf Td Tm Tj TJ`; `Op::rule(x, y, w, h)` is
-  `re f`. A page's `Content::Ops` is serialised one operator per line;
+- **Typed operators.** `Op` is the bounded set `q Q cm w M J j d g G rg RG k
+  K m l c h re S f f* n W W* BT ET Tf Td Tm Tj TJ Do gs`; `Op::rule(x, y, w,
+  h)` is `re f`. `gs` is only pgf's constant alpha (`Op::StrokeAlpha` /
+  `Op::FillAlpha`: `/pgf@CA<a> gs` / `/pgf@ca<a> gs`); a page declares each
+  state it selects once, inline, as `/ExtGState << /pgf@ca0.4 << /ca 0.4 >>
+  >>`. A page's `Content::Ops` is serialised one operator per line;
   `Content::Verbatim(bytes)` is parsed into the same set for validation and
-  then inserted unchanged. Anything else (`gs`, `sc`, shading, images,
+  then inserted unchanged. Anything else (other ExtGStates, `sc`, shading,
   inline images, exponents, nested arrays) is an error naming the page and
   operator index; nothing is dropped or rounded.
 - **Validation before writing.** Balanced `q`/`Q` and `BT`/`ET`, text

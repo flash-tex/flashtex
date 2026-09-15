@@ -84,6 +84,12 @@ math-glyph-spans = []
 # so takes one class whether or not amsmath is loaded.
 # `--no-default-features` still builds against an older pinned vendor.
 math-class-override = []
+# amsmath `\sideset` (compiler `Nucleus::SideSet`, math-layout
+# `Atom::left_scripts`): the `\mathop` of display-style left and right
+# script pairs. Builds only against a vendor/compiler and vendor/math-layout
+# that carry both; off until vendor/ is re-pinned past them, then a one-line
+# default-feature edit like `amsmath-inline` was.
+amsmath-sideset = []
 # A paragraph's `\baselineskip` follows the size declaration in force when its
 # `\par` ran (`\begin{quote}\small ...\end{quote}`, `{\small ...\par}`),
 # which is what TeX reads in `append_to_vlist` (§679). Needs the compiler's
@@ -104,6 +110,28 @@ par-leading = []
 # Turning it on is then a one-line default-feature edit, like `amsmath-inline`
 # was.
 linebreak-skip = []
+# TeX's math font kerns (`make_ord`, tex.web §752): `TexMathMetrics` and
+# `TextRunMetrics` answer math-layout's `MathFontMetrics::ord_pair`, so an Ord
+# character followed by a character of the same family gets the font's kern
+# (cmmi `r` `,` = -0.0556 em: HW1's `$r,a,b$`, #66) and a roman character loses
+# its italic correction before the next one. The same step forms the roman
+# ligatures (`\mathrm{f}\mathrm{i}` is one fi glyph, a one-character `\mathrm`
+# being a family-0 math character) and kerns one-character math alphabets
+# (`\mathbf{T}\mathbf{o}`). Needs math-layout's `ord_pair`
+# (`crates/math-layout`, GH-MATH-FONT-KERNS); off until vendor/math-layout is
+# re-pinned past that change, and with it off no math kern is inserted, exactly
+# as before. Turning it on is then a one-line default-feature edit, like
+# `amsmath-inline` was.
+math-font-kerns = []
+# The compiler's `Nucleus::TextRun` (#441, PR #470): `\text`/`\tag`
+# arguments holding inline math (`\tag{hi $x^2$}`, `\text{for all $x$}`) and
+# `\textbf`/`\emph` pieces, set through math-layout's matching `TextRun`
+# nucleus; a rich `\tag` is placed as an equation number like a plain one.
+# Builds only against a vendor/compiler and vendor/math-layout carrying
+# `TextRun`/`TextPiece`; off until vendor/ is re-pinned past #470, and with it
+# off the pipeline is unchanged. Turning it on is then a one-line
+# default-feature edit, like `amsmath-inline` was.
+compiler-text-run = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }
@@ -119,6 +147,9 @@ flashtex-pdf = { path = "vendor/pdf" }
 flashtex-font-resources = { path = "vendor/font-resources" }
 flashtex-project-files = { path = "vendor/project-files" }
 flashtex-vector-graphics = { path = "vendor/vector-graphics" }
+# utf8.def / *.dfu declarations and the NFSS text-command tables, for literal
+# UTF-8 input (`src/inputenc.rs`). Already a dependency of vendor/compiler.
+flashtex-tex-text-encoding = { path = "vendor/tex-text-encoding" }
 # The standard-class + geometry page frame (exact sp). A path to the sibling,
 # not a vendor mirror: a `git archive` of this directory alone must also
 # archive `crates/class-geometry` (zero dependencies) next to it.

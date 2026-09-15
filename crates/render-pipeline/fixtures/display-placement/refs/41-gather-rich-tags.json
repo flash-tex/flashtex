@@ -1,0 +1,98 @@
+{
+ "fixture": "41-gather-rich-tags.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Before.",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "a",
+    "x": 294.211,
+    "y_top": 156.682
+   },
+   {
+    "text": "=",
+    "x": 302.2468,
+    "y_top": 156.682
+   },
+   {
+    "text": "b",
+    "x": 312.7653,
+    "y_top": 156.682
+   },
+   {
+    "text": "(\u2217)",
+    "x": 464.7468,
+    "y_top": 156.682
+   },
+   {
+    "text": "c",
+    "x": 285.826,
+    "y_top": 171.626
+   },
+   {
+    "text": "+",
+    "x": 292.3495,
+    "y_top": 171.626
+   },
+   {
+    "text": "d",
+    "x": 302.3101,
+    "y_top": 171.626
+   },
+   {
+    "text": "=",
+    "x": 310.2653,
+    "y_top": 171.626
+   },
+   {
+    "text": "e",
+    "x": 320.7838,
+    "y_top": 171.626
+   },
+   {
+    "text": "(1)",
+    "x": 464.7493,
+    "y_top": 171.626
+   },
+   {
+    "text": "f",
+    "x": 293.452,
+    "y_top": 186.57
+   },
+   {
+    "text": "=",
+    "x": 302.1653,
+    "y_top": 186.57
+   },
+   {
+    "text": "g",
+    "x": 312.6838,
+    "y_top": 186.57
+   },
+   {
+    "text": "(ii",
+    "x": 454.89,
+    "y_top": 186.57
+   },
+   {
+    "text": "n)",
+    "x": 467.6271,
+    "y_top": 186.57
+   },
+   {
+    "text": "After.",
+    "x": 133.768,
+    "y_top": 208.488
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

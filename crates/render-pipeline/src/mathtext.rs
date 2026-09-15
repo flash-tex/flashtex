@@ -274,6 +274,14 @@ impl TextSink {
         self.atom_keyed(text, Some(key), true)
     }
 
+    /// An `Ord` atom for a text-mode run in the text font `key`: a
+    /// `\textbf{...}`/`\emph{...}` piece of `\text`/`\tag` (#441). It is
+    /// text, not a run of math characters; `corrected` is the kernel's
+    /// `\check@icr`, which ends a slanted `\textit`/`\emph` with `\/`.
+    pub fn atom_in_hbox(&mut self, text: &str, key: crate::nfss::FontKey, corrected: bool) -> ml::Atom {
+        self.atom_keyed(text, Some(key), corrected)
+    }
+
     fn atom_keyed(&mut self, text: &str, key: Option<crate::nfss::FontKey>, italic: bool) -> ml::Atom {
         match handle_char(self.texts.len()) {
             Some(handle) => {
@@ -610,6 +618,17 @@ impl MathFontMetrics for TextRunMetrics<'_> {
 
     fn extension_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
         self.inner.extension_glyph(code, ch, size)
+    }
+
+    /// A `\text` handle is a box, not a font character: it never kerns.
+    #[cfg(feature = "math-font-kerns")]
+    fn ord_pair(&self, left: flashtex_math_layout::MathChar, right: flashtex_math_layout::MathChar, size: SizeClass) -> Option<flashtex_math_layout::OrdPair> {
+        use flashtex_math_layout::MathChar::{Symbol, Text};
+        let is_handle = |c: flashtex_math_layout::MathChar| matches!(c, Symbol(ch) | Text(ch) if handle_index(ch).is_some());
+        if is_handle(left) || is_handle(right) {
+            return None;
+        }
+        self.inner.ord_pair(left, right, size)
     }
 
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {

@@ -10,10 +10,17 @@
 //! `oracle.py check`). Too-wide formulas are squeezed by their math glue
 //! with the number beside them or on a line of its own (09, 10, 33; needs
 //! math-layout `MathBox::pack_to`), and `\numberwithin`/`subequations`
-//! numbers come from the compiler (18; 17's numbers are right, its `\eqref`
-//! misses LaTeX's `\sw@slant` italic correction before the space). Fixtures
-//! not listed here do not pass yet: 17, `\tag{$..$}` math (15) and nested
-//! list labels (20).
+//! numbers come from the compiler (17, 18; 17's `\eqref` takes `\textup`'s
+//! `\check@icl` italic correction before its space). Display 20 sits in a
+//! nested list, whose closing `\topsep` is its own level's. The fixture not
+//! listed here does not pass yet: `\tag{$..$}` math (15).
+//!
+//! With feature `compiler-text-run` (#441; vendor/ re-pinned past #470)
+//! rich tags join the list: `\tag{hi $x^2$}`, `\tag*{...}` and `leqno`
+//! (37-39), tags in `align`/`gather`/`multline` (40-43; `multline` sets its
+//! tag on the last line, or the first under `leqno`), a rich tag too wide
+//! for its line (44), `\text{for all $x$}` (45), and `align`/`gather` tags
+//! amsmath's `\calc@shift@*` moves to a line of their own (46-48).
 
 mod common;
 
@@ -40,8 +47,10 @@ const PASSING: &[&str] = &[
     "13-dollars-leqno",
     "14-equation-star",
     "16-gather-numbers",
+    "17-numberwithin-section",
     "18-subequations",
     "19-itemize-display",
+    "20-enumerate-nested-display",
     "21-after-heading",
     "22-page-bottom",
     "23-page-top",
@@ -60,6 +69,26 @@ const PASSING: &[&str] = &[
     "36-cm-default-fonts",
 ];
 
+/// Fixtures that need the compiler's `TextRun` (#441, PR #470) and its
+/// tagged-row numbering.
+#[cfg(feature = "compiler-text-run")]
+const TEXT_RUN_PASSING: &[&str] = &[
+    "37-rich-tag-equation",
+    "38-rich-tag-star",
+    "39-rich-tag-leqno",
+    "40-align-rich-tags",
+    "41-gather-rich-tags",
+    "42-multline-tag",
+    "43-multline-tag-leqno",
+    "44-wide-rich-tag-own-line",
+    "45-text-math-display",
+    "46-align-wide-tag-own-line",
+    "47-gather-wide-tag-own-line",
+    "48-gather-wide-tag-leqno",
+];
+#[cfg(not(feature = "compiler-text-run"))]
+const TEXT_RUN_PASSING: &[&str] = &[];
+
 fn num(v: &Value, k: &str) -> f64 {
     match v.get(k) {
         Some(Value::Num(n)) => *n,
@@ -77,7 +106,7 @@ fn display_placement_matches_pdflatex() {
     let fonts = FontSet::with_default_dirs(&[]);
     let options = RenderOptions::default();
     let mut failures = Vec::new();
-    for name in PASSING {
+    for name in PASSING.iter().chain(TEXT_RUN_PASSING) {
         let tex = std::fs::read_to_string(format!("{dir}/fixtures/{name}.tex")).unwrap();
         let reference = json::parse(&std::fs::read_to_string(format!("{dir}/refs/{name}.json")).unwrap()).unwrap();
         let docs = [SourceDocument { path: "main.tex", text: &tex }];

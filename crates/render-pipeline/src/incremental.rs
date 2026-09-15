@@ -231,9 +231,24 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 3u8.hash(h);
                 skip_pt.to_bits().hash(h);
             }
-            Item::Quad { em } => {
+            Item::Penalty { value, boxed_dashes } => (40u8, value, boxed_dashes).hash(h),
+            Item::PagePenalty { value } => (41u8, value).hash(h),
+            Item::Discretionary { pre } => {
+                42u8.hash(h);
+                if let Some(seg) = pre {
+                    seg.text.hash(h);
+                    (seg.style.bold, seg.style.italic, seg.style.family).hash(h);
+                    for c in &seg.chars {
+                        (c.start.wrapping_sub(base)).hash(h);
+                        (c.end.wrapping_sub(base)).hash(h);
+                    }
+                }
+            }
+            Item::Quad { em, style } => {
                 4u8.hash(h);
                 em.to_bits().hash(h);
+                (style.bold, style.italic, style.size_cpt, style.medium).hash(h);
+                (style.slanted, style.caps, style.family, style.undefined).hash(h);
             }
             Item::Label { key } => {
                 5u8.hash(h);
@@ -431,6 +446,41 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                 arrow.hash(h);
                 hash_math(above, h);
                 hash_math(below, h);
+            }
+            #[cfg(feature = "amsmath-sideset")]
+            Nucleus::SideSet { operator, left_superscript, left_subscript } => {
+                17u8.hash(h);
+                hash_math(operator, h);
+                for part in [left_superscript, left_subscript] {
+                    match part {
+                        Some(l) => {
+                            1u8.hash(h);
+                            hash_math(l, h);
+                        }
+                        None => 0u8.hash(h),
+                    }
+                }
+            }
+            // `\text{for all $x$}`, `\tag{hi $x^2$}` (#441): the pieces, in
+            // order, with the face of each text piece.
+            #[cfg(feature = "compiler-text-run")]
+            Nucleus::TextRun(pieces) => {
+                // 18, not 17: #582's `SideSet` arm takes 17.
+                18u8.hash(h);
+                pieces.len().hash(h);
+                for piece in pieces {
+                    match piece {
+                        flashtex_compiler::math::TextPiece::Text { text, style } => {
+                            0u8.hash(h);
+                            text.hash(h);
+                            style.hash(h);
+                        }
+                        flashtex_compiler::math::TextPiece::Math(list) => {
+                            1u8.hash(h);
+                            hash_math(list, h);
+                        }
+                    }
+                }
             }
         }
         match &a.superscript {
@@ -638,6 +688,21 @@ fn shift_math(list: &mut MathList, delta: isize) {
             Nucleus::ExtArrow { above, below, .. } => {
                 shift_math(above, delta);
                 shift_math(below, delta);
+            }
+            #[cfg(feature = "amsmath-sideset")]
+            Nucleus::SideSet { operator, left_superscript, left_subscript } => {
+                shift_math(operator, delta);
+                for part in [left_superscript, left_subscript].into_iter().flatten() {
+                    shift_math(part, delta);
+                }
+            }
+            #[cfg(feature = "compiler-text-run")]
+            Nucleus::TextRun(pieces) => {
+                for piece in pieces {
+                    if let flashtex_compiler::math::TextPiece::Math(list) = piece {
+                        shift_math(list, delta);
+                    }
+                }
             }
         }
         if let Some(s) = &mut a.superscript {

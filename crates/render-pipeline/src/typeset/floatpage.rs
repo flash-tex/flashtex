@@ -61,7 +61,8 @@ use super::{BoxRec, BuiltBlock, Context};
 #[derive(Debug, Clone)]
 pub struct FloatSpec {
     pub kind: FloatKind,
-    pub number: u32,
+    /// `\thefigure`/`\thetable` (`2`, or `1.2` in a chapter).
+    pub number: String,
     /// A `figure*`/`table*` in a two-column document: `\@dbflt`, so
     /// `\@xdblfloat` sets the box at `\hsize\textwidth
     /// \linewidth\textwidth`, `\count\@currbox` is `\tw@` and the depth
@@ -74,6 +75,10 @@ pub struct FloatSpec {
     /// The environment's source span (`\begin` .. `\end`).
     pub span: Span,
     pub hmode: bool,
+    /// float.sty's `[H]` (`\@float@HH`): not a float at all. The box is set
+    /// in the text where the environment stands, between two
+    /// `\vskip\intextsep` (`\float@endH`), and never deferred or counted.
+    pub exact_here: bool,
     pub parts: Vec<FloatPart>,
     pub labels: Vec<String>,
 }
@@ -338,6 +343,8 @@ enum N {
     Glue(f64, f64, f64),
     Marker(usize),
     FBox(usize),
+    /// `\enlargethispage`'s `\insert\@kludgeins` (index into `enlarge`).
+    Enlarge(usize),
 }
 
 struct Col {
@@ -742,6 +749,32 @@ impl Placer<'_> {
         self.float_page_of(floats, goal);
     }
 
+    /// `\@doclearpage` (latex.ltx), one-column part: the floats already
+    /// queued for the unstarted column go back to `\@deferlist`
+    /// (`\xdef\@deferlist{\@toplist\@botlist\@deferlist}`), then
+    /// `\@makefcolumn` sets every deferred float on float pages, taking
+    /// as many per page as fit and a lone one otherwise.
+    fn clear_deferred(&mut self) {
+        let mut rest = std::mem::take(&mut self.col.top);
+        rest.append(&mut self.col.bot);
+        rest.append(&mut self.deferred);
+        self.deferred = rest;
+        while self.deferred.iter().any(|&f| !self.wide[f]) {
+            let goal = self.colht;
+            match self.try_fcolumn(f64::NEG_INFINITY, false, false, goal) {
+                Some((on_page, rest)) => {
+                    self.deferred = rest;
+                    self.float_page(&on_page);
+                }
+                None => {
+                    let at = self.deferred.iter().position(|&f| !self.wide[f]).expect("a non-wide float is deferred");
+                    let f = self.deferred.remove(at);
+                    self.float_page(&[f]);
+                }
+            }
+        }
+    }
+
     /// A full-width float page: `\@outputpage` ships the whole page, so it
     /// takes every column slot of that page. `\@doclearpage` reaches the
     /// double-float flush only `\if@firstcolumn`; a half-finished page is
@@ -796,6 +829,63 @@ impl Placer<'_> {
 }
 
 /// The column's float material for `\@makecol` (`\@cflt`/`\@cflb`).
+/// The nodes float.sty's `\float@endH` contributes for `[H]` float `f`,
+/// whose marker is `nodes[at]`: `\vskip\intextsep \box\@currbox
+/// \vskip\intextsep`. Being in the main vertical list, the box gets TeX's
+/// interline glue against the line above (`\prevdepth` survives the
+/// `\vskip`), and the next line's interline glue is computed against the
+/// box's zero depth instead of that line's, so the glue already in the list
+/// before the next line is replaced (`nodes` is edited in place there).
+fn exact_here_nodes(nodes: &[N], at: usize, list: &[VItem], p: &PageParams, boxes: &[FloatBox], f: usize, fp: &FloatParams) -> Vec<N> {
+    let i = fp.intextsep;
+    let h = boxes[f].height;
+    let rule = |g: f64| if g < p.lineskiplimit { p.lineskip } else { g };
+    let prev_depth = nodes[..at].iter().rev().find_map(|n| match n {
+        N::V(j) => match list[*j] {
+            VItem::Box { depth, .. } => Some(depth),
+            _ => None,
+        },
+        N::FBox(_) => Some(0.0),
+        _ => None,
+    });
+    let mut out = vec![N::Glue(i.n, i.st, i.sh)];
+    if let Some(d) = prev_depth {
+        out.push(N::Glue(rule(p.baselineskip - d - h), 0.0, 0.0));
+    }
+    out.push(N::FBox(f));
+    out.push(N::Glue(i.n, i.st, i.sh));
+    out
+}
+
+/// Before an `[H]` box is spliced in after `nodes[at]`, the interline glue
+/// before the next line was computed against the previous line's depth;
+/// TeX computes it against the box's (zero) depth.
+fn fix_glue_after_exact_here(nodes: &mut [N], at: usize, list: &[VItem], p: &PageParams) {
+    let rule = |g: f64| if g < p.lineskiplimit { p.lineskip } else { g };
+    let Some(prev_depth) = nodes[..at].iter().rev().find_map(|n| match n {
+        N::V(j) => match list[*j] {
+            VItem::Box { depth, .. } => Some(depth),
+            _ => None,
+        },
+        N::FBox(_) => Some(0.0),
+        _ => None,
+    }) else {
+        return;
+    };
+    let Some(next) = nodes[at..].iter().position(|n| matches!(n, N::V(j) if matches!(list[*j], VItem::Box { .. }) )).map(|k| at + k) else { return };
+    let N::V(j) = nodes[next] else { return };
+    let VItem::Box { height: next_h, .. } = list[j] else { return };
+    // The interline glue is the last glue before the line (penalties may
+    // sit between them); only a glue that is exactly TeX's rule for the
+    // previous depth is replaced, so a `\parskip` or a skip is never taken
+    // for it.
+    let Some(g) = nodes[at..next].iter().rposition(|n| matches!(n, N::Glue(..))).map(|k| at + k) else { return };
+    let N::Glue(width, stretch, shrink) = nodes[g] else { return };
+    if stretch == 0.0 && shrink == 0.0 && (width - rule(p.baselineskip - prev_depth - next_h)).abs() < 1e-6 {
+        nodes[g] = N::Glue(rule(p.baselineskip - next_h), 0.0, 0.0);
+    }
+}
+
 fn column_floats(boxes: &[FloatBox], tops: &[usize], bots: &[usize], fp: &FloatParams) -> pagebuild::ColumnFloats {
     let sk = |s: Skip| (s.n, s.st, s.sh);
     pagebuild::ColumnFloats {
@@ -804,6 +894,54 @@ fn column_floats(boxes: &[FloatBox], tops: &[usize], bots: &[usize], fp: &FloatP
         floatsep: sk(fp.floatsep),
         textfloatsep: sk(fp.textfloatsep),
     }
+}
+
+/// The vertical-list index of a float marker that would stand at `index`,
+/// right after block `b` (`list[index]` starts the next block): past the
+/// next block's leading penalty when the command that put it there was
+/// written between `b` and the float `at` (`First.\par\clearpage` then an
+/// `[h]` figure). The penalty is stored on the block after it, so without
+/// this the float would be read before the page break.
+fn after_break_written_before(ctx: &Context, b: &BuiltBlock, at: Span, list: &[VItem], index: usize) -> usize {
+    let mut i = index;
+    if matches!(list.get(i), Some(VItem::Glue { fil: true, .. })) {
+        i += 1;
+    }
+    if !matches!(list.get(i), Some(VItem::Penalty(_))) {
+        return index;
+    }
+    let Some(from) = block_end(ctx, b, at.document) else { return index };
+    let Some(gap) = ctx.texts.get(at.document.0).and_then(|t| t.get(from..at.start)) else { return index };
+    const VERTICAL_BREAKS: [&str; 9] = ["newpage", "clearpage", "cleardoublepage", "pagebreak", "nopagebreak", "goodbreak", "filbreak", "penalty", "nobreak"];
+    if !VERTICAL_BREAKS.iter().any(|c| adapter::find_command(gap, c).is_some()) {
+        return index;
+    }
+    i += 1;
+    // `\filbreak`'s `\vfilneg` follows its penalty.
+    if matches!(list.get(i), Some(VItem::Glue { fil: true, .. })) {
+        i += 1;
+    }
+    i
+}
+
+/// Where block `b`'s material in `document` ends in the source.
+fn block_end(ctx: &Context, b: &BuiltBlock, document: flashtex_compiler::DocumentId) -> Option<usize> {
+    b.recs
+        .iter()
+        .flatten()
+        .filter_map(|&r| match &ctx.recs[r] {
+            BoxRec::Text { clusters, .. } => clusters.last().map(|c| c.span),
+            BoxRec::Math(m) => Some(ctx.maths[*m].span),
+            BoxRec::Rule { span, .. } => Some(*span),
+            BoxRec::Picture(p) => Some(p.span),
+            BoxRec::Table(t) => Some(t.span),
+            BoxRec::ColorBox(c) => Some(c.span),
+            BoxRec::Leader { .. } => None,
+            BoxRec::Underline(u) => Some(u.span),
+        })
+        .filter(|s| s.document == document)
+        .map(|s| s.end)
+        .max()
 }
 
 fn block_source(ctx: &Context, b: &BuiltBlock, items: impl Iterator<Item = usize>) -> Vec<Span> {
@@ -859,18 +997,28 @@ pub fn paginate(
     short_cols: usize,
     short: f64,
     columns: usize,
+    clears: &[usize],
+    enlarge: &[pagebuild::Enlarge],
 ) -> (Vec<BuiltPage>, Vec<(u32, display::Item)>, Vec<(String, u32)>, Vec<Option<InsertArea>>) {
     // Marker positions, before caption blocks are appended.
     let vblocks: Vec<pagebuild::VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
     let mut markers: Vec<(usize, usize)> = Vec::new();
     for (f, spec) in specs.iter().enumerate() {
         let at = spec.span;
+        // The last block read before the float: by reading order when the
+        // project has one (a float in the entry file after an `\include`
+        // follows that file's blocks), else within the float's document.
+        let position = |s: Span| crate::adapter::reading_position(&ctx.reading_order, s.document, s.start);
+        let float_at = position(at);
         let mut after_block = None;
         for (bi, b) in blocks.iter().enumerate().take(text_blocks) {
-            if let Some(first) = block_source(ctx, b, 0..b.items.len()).into_iter().find(|s| s.document == at.document) {
-                if first.start < at.start {
-                    after_block = Some(bi);
-                }
+            let sources = block_source(ctx, b, 0..b.items.len());
+            let before = match float_at {
+                Some(float_at) => sources.iter().find_map(|s| position(*s)).is_some_and(|p| p < float_at),
+                None => sources.iter().find(|s| s.document == at.document).is_some_and(|first| first.start < at.start),
+            };
+            if before {
+                after_block = Some(bi);
             }
         }
         let index = match after_block {
@@ -880,10 +1028,10 @@ pub fn paginate(
                 let line = b.block.lines.lines.iter().position(|l| block_source(ctx, b, l.items.clone()).iter().any(|s| s.document == at.document && s.end > at.start));
                 match line.and_then(|li| list.iter().position(|v| matches!(v, VItem::Box { payload, .. } if *payload == (bi, li)))) {
                     Some(i) => i + 1,
-                    None => pagebuild::vlist(p, &vblocks[..=bi]).len(),
+                    None => after_break_written_before(ctx, &blocks[bi], at, list, pagebuild::vlist(p, &vblocks[..=bi]).len()),
                 }
             }
-            Some(bi) => pagebuild::vlist(p, &vblocks[..=bi]).len(),
+            Some(bi) => after_break_written_before(ctx, &blocks[bi], at, list, pagebuild::vlist(p, &vblocks[..=bi]).len()),
         };
         markers.push((index, f));
     }
@@ -923,9 +1071,16 @@ pub fn paginate(
             _ => build_box(ctx, blocks, s, &fp, p),
         })
         .collect();
-    let mut nodes: Vec<N> = Vec::with_capacity(list.len() + 4 * specs.len());
+    let mut nodes: Vec<N> = Vec::with_capacity(list.len() + 4 * specs.len() + enlarge.len());
     let mut mi = 0;
+    let mut ei = 0;
     for i in 0..=list.len() {
+        // An `\enlargethispage` at the same place as a float is taken to
+        // come first.
+        while ei < enlarge.len() && enlarge[ei].at <= i {
+            nodes.push(N::Enlarge(ei));
+            ei += 1;
+        }
         while mi < markers.len() && markers[mi].0 == i {
             nodes.push(N::Marker(markers[mi].1));
             mi += 1;
@@ -992,6 +1147,9 @@ pub fn paginate(
     let mut held: Vec<PageIns> = Vec::new();
     let mut areas: Vec<Option<InsertArea>> = Vec::new();
     let mut start = 0usize;
+    // Where the page being built began (its enlargements may precede its
+    // first box: an insertion is never discarded, §1000).
+    let mut page_from = 0usize;
     loop {
         while start < nodes.len() {
             match nodes[start] {
@@ -1023,6 +1181,16 @@ pub fn paginate(
         // only cleared once the page is settled, because the float machinery
         // can `restart` this page and the notes must survive that.
         let mut is = InsertState::new(insr, vsize);
+        // `\@kludgeins`: `\pagegoal` grows with each enlargement, and the
+        // column is packed with the box as it stood at the best break.
+        let mut kludge = pagebuild::Kludge::default();
+        for n in &nodes[page_from..start] {
+            if let N::Enlarge(k) = *n {
+                kludge.add(&enlarge[k]);
+            }
+        }
+        is.goal += kludge.pt;
+        let mut best_kludge = kludge;
         let head_reserve = regions.reserved(cur_li);
         for h in &held {
             is.append(h.list.clone(), h.height_plus_depth, None, total, depth, head_reserve, &mut stretch, &mut shrink);
@@ -1070,14 +1238,32 @@ pub fn paginate(
             }
         };
         while i < nodes.len() {
+            if let N::Enlarge(k) = nodes[i] {
+                kludge.add(&enlarge[k]);
+                is.goal += enlarge[k].pt;
+                i += 1;
+                continue;
+            }
             if let N::Marker(f) = nodes[i] {
                 if !processed[f] {
                     processed[f] = true;
+                    if specs[f].exact_here {
+                        fix_glue_after_exact_here(&mut nodes, i, list, p);
+                        let ins = exact_here_nodes(&nodes, i, list, p, &boxes, f, &fp);
+                        nodes.splice(i + 1..i + 1, ins);
+                        i += 1;
+                        continue;
+                    }
                     // `\@specialoutput`: `\@pageht` is the held page plus
-                    // `\ht\footins + \skip\footins + \dp\footins`.
+                    // `\ht\footins + \skip\footins + \dp\footins`, plus
+                    // `\ht\@kludgeins` (the enlargement, negative) when that
+                    // box has no width (no `\enlargethispage*`).
                     let mut pageht = if has_box { total + depth } else { 0.0 };
                     if is.started && is.height > 0.0 {
                         pageht += is.height + insr.skip.0;
+                    }
+                    if !kludge.star {
+                        pageht -= kludge.pt;
                     }
                     let before = pl.col.colroom;
                     let here = pl.add_to_cur_col(f, pageht, !specs[f].hmode);
@@ -1108,6 +1294,7 @@ pub fn paginate(
                 if best.is_none_or(|(_, lc)| c <= lc) {
                     best = Some((i, c));
                     best_ins = is.last_ins;
+                    best_kludge = kludge;
                 }
                 if c == AWFUL_BAD || pi <= EJECT_PENALTY {
                     fired = Some(best.map_or(i, |(bi, _)| bi));
@@ -1196,7 +1383,9 @@ pub fn paginate(
             }
         }
         let end = fired.unwrap_or(nodes.len());
-        let ejected = matches!(nodes.get(end), Some(N::Penalty(pen)) if *pen <= EJECT_PENALTY);
+        // `\newpage`'s `\vfil\penalty-\@M`; a bare forced penalty the
+        // document wrote (`pagebuild::BARE_EJECT_PENALTY`) has no `\vfil`.
+        let ejected = matches!(nodes.get(end), Some(N::Penalty(pen)) if *pen == EJECT_PENALTY);
         held.clear();
         let notes = pagebuild::settle_inserts(is, end, best_ins, insr.split_top_skip, &mut held);
         let page_no = pl.pages.len() as u32 + 1;
@@ -1255,7 +1444,7 @@ pub fn paginate(
                 N::V(j) => body.push(list[*j].clone()),
                 N::Glue(w, st, sh) => body.push(VItem::Glue { width: *w, stretch: *st, shrink: *sh, fil: false }),
                 N::Penalty(pen) => body.push(VItem::Penalty(*pen)),
-                N::Marker(_) => {}
+                N::Marker(_) | N::Enlarge(_) => {}
             }
         }
         if let Some((h, d, payload)) = region_foot {
@@ -1269,7 +1458,7 @@ pub fn paginate(
         // `\@doclearpage`'s `\box\@cclv\vfil` and `\newpage`'s `\vfil` do
         // the same for an ejected or final column.
         let vfil = region_break || ejected || fired.is_none();
-        let colp = PageParams { vsize: pl.colht, maxdepth, ..*p };
+        let colp = if fired.is_some() { best_kludge } else { kludge }.params(&PageParams { vsize: pl.colht, maxdepth, ..*p }, shrink);
         let cf = column_floats(&boxes, &tops, &bots, &fp);
         let (page, area, placed) = pagebuild::make_column(&colp, &body, false, vfil, &notes, insr, &cf);
         let overfull_by = page.overfull_by;
@@ -1292,11 +1481,34 @@ pub fn paginate(
         }
         pl.pages.push(BuiltPage { lines, overfull_by });
         pl.col.mid.clear();
+        // A body `\clearpage` (`clears`: the blocks it starts a page for)
+        // ends this page with `\newpage`, whose `\@startcolumn` runs as for
+        // any page, then its `\penalty-\@Mi` reaches `\@doclearpage` on
+        // the fresh page. Two-column pages are not flushed here.
+        let clear_break = columns <= 1
+            && fired.is_some()
+            && nodes[end..]
+                .iter()
+                .find_map(|n| match n {
+                    N::V(j) => match list[*j] {
+                        VItem::Box { payload, .. } => Some(payload.0),
+                        _ => None,
+                    },
+                    N::FBox(_) => Some(usize::MAX),
+                    _ => None,
+                })
+                .is_some_and(|b| clears.binary_search(&b).is_ok());
         start = end;
+        page_from = end;
         if region_break {
             pl.start_longtable_column();
         } else {
             pl.start_column();
+            if clear_break {
+                pl.clear_deferred();
+                pl.set_colht();
+                pl.col = Col::new(pl.colht);
+            }
         }
         if fired.is_none() {
             break;
@@ -1336,27 +1548,8 @@ pub fn paginate(
         pl.col.mid.clear();
         pl.start_column();
     }
-    // `\end{document}` -> `\clearpage` -> `\@doclearpage`: floats already
-    // queued for the unstarted column go back to the deferred list, then
-    // `\@makefcolumn` sets every remaining float on float pages.
-    let mut rest = std::mem::take(&mut pl.col.top);
-    rest.append(&mut pl.col.bot);
-    rest.append(&mut pl.deferred);
-    pl.deferred = rest;
-    while pl.deferred.iter().any(|&f| !pl.wide[f]) {
-        let goal = pl.colht;
-        match pl.try_fcolumn(f64::NEG_INFINITY, false, false, goal) {
-            Some((on_page, rest)) => {
-                pl.deferred = rest;
-                pl.float_page(&on_page);
-            }
-            None => {
-                let at = pl.deferred.iter().position(|&f| !pl.wide[f]).expect("a non-wide float is deferred");
-                let f = pl.deferred.remove(at);
-                pl.float_page(&[f]);
-            }
-        }
-    }
+    // `\end{document}` -> `\clearpage` -> `\@doclearpage`.
+    pl.clear_deferred();
     // `\@doclearpage`'s two-column branch: what is left of `\@dbltoplist`
     // and `\@deferlist` goes back through `\@dblfloatplacement
     // \@makefcolumn`, so every remaining full-width float gets a float page

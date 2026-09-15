@@ -488,10 +488,23 @@ pub struct Context<'a> {
     /// `\footnotetext`): see [`footnotes`].
     notes: Vec<footnotes::NoteSrc>,
     note_anchors: Vec<(usize, usize)>,
+    /// The body in reading order (`adapter::reading_order`): where a float
+    /// of an `\include`d file stands among the other documents' blocks.
+    reading_order: Vec<Span>,
     /// `multicols` environments of the project (`multicol::attach`).
     multicol: multicol::State,
     /// Footnote marks are `\rlap`ped (article/report/book `\maketitle`).
     rlap_marks: bool,
+    /// `\vadjust{\penalty}` nodes met by [`Context::hlist`] (adapter
+    /// `Item::PagePenalty`): the item index of the undiscardable anchor and
+    /// the penalty. The builder of the paragraph takes them after breaking.
+    vadjusts: Vec<(usize, i32)>,
+    /// The document's breaking parameters for the paragraph being built
+    /// ([`adapter::BreakOverrides`]), set by [`Context::build_paragraph`].
+    breaking: adapter::BreakOverrides,
+    /// The English patterns with the document's `\hyphenation` exceptions,
+    /// when it has any (`english_hyphenator` otherwise).
+    hyphenator: Option<pl::LiangHyphenator>,
     /// Math providers for text sizes other than the body's (footnotes), by
     /// size in centipoints; `None` when that size's metrics are missing.
     math_fonts_sized: BTreeMap<u32, Option<MathProvider>>,
@@ -505,6 +518,11 @@ pub struct Context<'a> {
 
 impl<'a> Context<'a> {
     /// Formula colours (`adapter::Doc::math_colors`).
+    /// `adapter::Labels::reading_order`, for placing floats.
+    pub fn set_reading_order(&mut self, order: Vec<Span>) {
+        self.reading_order = order;
+    }
+
     pub fn set_math_colors(&mut self, colors: std::collections::HashMap<(usize, usize, usize), flashtex_compiler::color::DeviceColor>) {
         self.math_colors = colors;
     }
@@ -541,9 +559,20 @@ impl<'a> Context<'a> {
             label_recs: BTreeSet::new(),
             notes: Vec::new(),
             note_anchors: Vec::new(),
+            reading_order: Vec::new(),
             parbox: false,
             multicol: multicol::State::default(),
             rlap_marks: false,
+            vadjusts: Vec::new(),
+            breaking: adapter::BreakOverrides::default(),
+            hyphenator: (!style.hyphenation.is_empty()).then(|| {
+                let mut h = pl::LiangHyphenator::english();
+                // An entry TeX would reject (`\hyphenation{x1}`) is skipped.
+                for word in &style.hyphenation {
+                    let _ = h.add_exceptions(word);
+                }
+                h
+            }),
             math_fonts_sized: BTreeMap::new(),
         }
     }
@@ -1010,12 +1039,28 @@ impl<'a> Context<'a> {
 
     /// Shapes one styled segment into a box record and a paragraph-layout box.
     fn text_box(&mut self, seg: &adapter::Segment, size: f64) -> Option<(pl::GlyphRun, usize)> {
+        let filtered = self.input_filtered(seg);
+        let seg = filtered.as_ref().unwrap_or(seg);
         let span = seg_span(seg)?;
         let face = self.face(seg.style, size, span);
+        // Where the input encoding puts a character outside the font's
+        // ligature/kern program (an OT1 `\accent`, a TS1 symbol), the text
+        // is shaped in pieces split around it.
+        let cuts: Vec<usize> = match &self.style.input {
+            Some(input) if !seg.text.is_ascii() => seg
+                .text
+                .char_indices()
+                .filter(|(_, c)| input.cuts_ligkern(*c))
+                .flat_map(|(i, c)| [i, i + c.len_utf8()])
+                .collect(),
+            _ => Vec::new(),
+        };
         // Verbatim runs the font's ligature/kern program not at all
         // (`\@noligs`); every other run runs it as TeX does.
         let shaped = if seg.style.literal {
             self.shaper.shape_literal(&face, &seg.text)
+        } else if !cuts.is_empty() {
+            self.shaper.shape_cut(&face, &seg.text, &cuts)
         } else {
             self.shaper.shape(&face, &seg.text)
         };
@@ -1120,6 +1165,66 @@ impl<'a> Context<'a> {
             raise: 0.0,
         });
         Some((run, self.recs.len() - 1))
+    }
+
+    /// pdfLaTeX's input errors for the literal UTF-8 characters of `seg`
+    /// (`crate::inputenc`): each rejected character is reported at its
+    /// source as the LaTeX error pdfLaTeX logs, and removed from the text —
+    /// or replaced by the letter pdfLaTeX still sets (`\k a` in OT1 sets
+    /// `a`). `None` when the segment keeps every character.
+    fn input_filtered(&mut self, seg: &adapter::Segment) -> Option<adapter::Segment> {
+        let input = self.style.input.as_ref()?;
+        if seg.text.is_ascii() {
+            return None;
+        }
+        // Only a character typed in the source is input: one a macro
+        // generates (`\fnsymbol`'s U+2217 for `\thanks`) has its invocation's
+        // span, not its own bytes.
+        let texts = self.texts;
+        let typed = |i: usize, c: char| {
+            seg.chars.get(i).is_some_and(|s| {
+                texts.get(s.document.0).and_then(|t| t.get(s.start..s.end)).is_some_and(|t| t.len() == c.len_utf8() && t.starts_with(c))
+            })
+        };
+        let rejected: Vec<(usize, char, crate::inputenc::Rejected)> = seg
+            .text
+            .chars()
+            .enumerate()
+            .filter_map(|(i, c)| input.rejected(c).filter(|_| typed(i, c)).map(|r| (i, c, r)))
+            .collect();
+        if rejected.is_empty() {
+            return None;
+        }
+        let mut text = String::with_capacity(seg.text.len());
+        let mut chars = Vec::with_capacity(seg.chars.len());
+        let mut next = rejected.iter().peekable();
+        for (i, c) in seg.text.chars().enumerate() {
+            let src = seg.chars.get(i).copied();
+            let keep = match next.peek() {
+                Some((at, _, r)) if *at == i => {
+                    let keep = r.keep;
+                    next.next();
+                    keep
+                }
+                _ => Some(c),
+            };
+            if let (Some(k), Some(src)) = (keep, src) {
+                text.push(k);
+                chars.push(src);
+            }
+        }
+        for (i, c, r) in rejected {
+            let Some(csrc) = seg.chars.get(i).copied() else { continue };
+            let src = self.source(csrc.span());
+            let code = if r.message.contains("not set up for use with LaTeX") { "unicode_not_set_up" } else { "command_unavailable_in_encoding" };
+            let mut d = Diagnostic::error(code, r.message, vec![src]);
+            d.recovery = Some(match r.keep {
+                Some(k) => format!("typeset `{k}` without the accent, as pdfLaTeX does after this error"),
+                None => format!("typeset nothing for U+{:04X}, as pdfLaTeX does after this error", c as u32),
+            });
+            self.report_once(format!("input:{}:{}:{}", csrc.document.0, csrc.start, c), d);
+        }
+        Some(adapter::Segment { text, chars, style: seg.style })
     }
 
     /// Marks a text box as the continuation of the word box before it.
@@ -1578,7 +1683,11 @@ impl<'a> Context<'a> {
     /// after the fragment it ends so a letter–hyphen kern is included. A
     /// point inside a ligature (`of-fice`) needs the pre/post/no-break
     /// reconstitution and is skipped.
-    fn word_items(&mut self, seg: &adapter::Segment, size: f64, hyphenate: bool) -> Vec<(pl::Item, Option<usize>)> {
+    ///
+    /// `boxed_dashes`: the word ends in `\nobreakdash`'s dashes, which carry
+    /// no discretionary (see [`adapter::Item::Penalty`]); when they are its
+    /// only dashes, the letters before them get automatic points.
+    fn word_items(&mut self, seg: &adapter::Segment, size: f64, hyphenate: bool, boxed_dashes: bool) -> Vec<(pl::Item, Option<usize>)> {
         if !hyphenate {
             return self.whole_word(seg, size);
         }
@@ -1588,7 +1697,21 @@ impl<'a> Context<'a> {
         // T1 ligatures end in the hyphen char, so TeX appends the empty
         // discretionary after them too (a break after an em dash).
         let is_dash = |c: char| matches!(c, '-' | '\u{2013}' | '\u{2014}');
-        if text.chars().any(is_dash) {
+        let letters = text.trim_end_matches(is_dash);
+        if boxed_dashes && !letters.chars().any(is_dash) {
+            // latex.ltx sets `\lccode`\-=`\-`, so TeX's hyphenation word runs
+            // on through the hyphens (`--` is two), which count towards
+            // `\righthyphenmin` and match no pattern: a letter no pattern
+            // holds stands in for each.
+            let hyphens: usize = text[letters.len()..].chars().map(|c| match c {
+                '\u{2013}' => 2,
+                '\u{2014}' => 3,
+                _ => 1,
+            }).sum();
+            let word = format!("{letters}{}", "\u{df}".repeat(hyphens));
+            let hyphenator = self.hyphenator.as_ref().unwrap_or_else(|| english_hyphenator());
+            points.extend(hyphenator.hyphenate(&word).into_iter().filter(|p| p.offset < letters.len()).map(|p| (p.offset, true)));
+        } else if text.chars().any(is_dash) {
             let mut prev_dash = false;
             for (i, c) in text.char_indices() {
                 if prev_dash && !is_dash(c) {
@@ -1597,7 +1720,8 @@ impl<'a> Context<'a> {
                 prev_dash = is_dash(c);
             }
         } else {
-            points.extend(english_hyphenator().hyphenate(text).into_iter().map(|p| (p.offset, true)));
+            let hyphenator = self.hyphenator.as_ref().unwrap_or_else(|| english_hyphenator());
+            points.extend(hyphenator.hyphenate(text).into_iter().map(|p| (p.offset, true)));
         }
         if points.is_empty() {
             return self.whole_word(seg, size);
@@ -1968,13 +2092,16 @@ impl<'a> Context<'a> {
                     // or kern (§899: a math or word box glued straight on
                     // ends the search with no hyphens).
                     let after_glue = matches!(out.last(), Some(pl::Item::Glue(_)));
-                    let joined = matches!(items.get(idx + 1), Some(AItem::Word(_) | AItem::Math { .. }));
+                    // §899 also stops at a discretionary: `manu\-scripts`
+                    // keeps its one explicit break point.
+                    let joined = matches!(items.get(idx + 1), Some(AItem::Word(_) | AItem::Math { .. } | AItem::Discretionary { .. }));
                     // The typewriter families declare `\hyphenchar\font=-1`
                     // (`ot1cmtt.fd`, `t1cmtt.fd`, `t1lmtt.fd`): no hyphens.
                     let hyphenate = after_glue
                         && !joined
                         && w.segments.len() == 1
                         && merge_style(base, w.segments[0].style).family != crate::nfss::FamilyKind::Tt;
+                    let boxed_dashes = matches!(items.get(idx + 1), Some(AItem::Penalty { boxed_dashes: true, .. }));
                     for seg in &w.segments {
                         let seg = adapter::Segment {
                             text: seg.text.clone(),
@@ -1984,7 +2111,7 @@ impl<'a> Context<'a> {
                         // A size declaration in force (`{\Large ...}`) sets
                         // this segment at its own size.
                         let seg_size = seg.style.size_or(size);
-                        for (item, rec) in self.word_items(&seg, seg_size, hyphenate) {
+                        for (item, rec) in self.word_items(&seg, seg_size, hyphenate, boxed_dashes) {
                             push(&mut out, &mut recs, item, rec);
                         }
                     }
@@ -2071,6 +2198,44 @@ impl<'a> Context<'a> {
                     };
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(self.recs.len() - 1));
                 }
+                AItem::Penalty { value, .. } => {
+                    push(&mut out, &mut recs, pl::Item::penalty(*value), None);
+                }
+                AItem::PagePenalty { value } => {
+                    // A `\vadjust` node is not discardable (TeX §148, §866):
+                    // like `LeaveVmode`'s empty box it keeps a following
+                    // glue a legal breakpoint and takes no width.
+                    self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    let run = pl::GlyphRun {
+                        font: MATH_SENTINEL,
+                        size,
+                        glyphs: Vec::new(),
+                        width: 0.0,
+                        height: 0.0,
+                        depth: 0.0,
+                        source: 0..0,
+                    };
+                    self.vadjusts.push((out.len(), pagebuild::bare_penalty(*value)));
+                    push(&mut out, &mut recs, pl::Item::Box(run), Some(self.recs.len() - 1));
+                }
+                AItem::Discretionary { pre } => {
+                    // TeX §1117 `append_discretionary`: `\-` is a flagged
+                    // penalty at `\hyphenpenalty` with the face's hyphen as
+                    // its pre-break text; an empty pre-break text is
+                    // `\exhyphenpenalty`'s.
+                    let merged = pre.as_ref().map(|seg| adapter::Segment { text: seg.text.clone(), chars: seg.chars.clone(), style: merge_style(base, seg.style) });
+                    let (pre_break, rec) = match merged.as_ref().and_then(|seg| self.text_box(seg, seg.style.size_or(size))) {
+                        Some((run, rec)) => (Some(run), Some(rec)),
+                        None => (None, None),
+                    };
+                    let value = if pre_break.is_some() { HYPHEN_PENALTY } else { EX_HYPHEN_PENALTY };
+                    push(
+                        &mut out,
+                        &mut recs,
+                        pl::Item::Penalty(pl::Penalty { value, flagged: true, pre_break, automatic: false, post_break: None, replace_count: 0 }),
+                        rec,
+                    );
+                }
                 AItem::LineBreak { skip_pt } => {
                     if fills {
                         push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fil()), None);
@@ -2080,8 +2245,12 @@ impl<'a> Context<'a> {
                     }
                     push(&mut out, &mut recs, pl::Item::penalty(pl::FORCED_BREAK), None);
                 }
-                AItem::Quad { em } => {
-                    let quad = self.text_params(base, size).quad;
+                AItem::Quad { em, style } => {
+                    // `em` is `\fontdimen6` of the font current where the
+                    // glue is read: `{\Large a\hspace{2em}b}` is two quads
+                    // of the `\Large` face, `{\bfseries a\quad b}` of the bold.
+                    let style = merge_base(*style, base);
+                    let quad = self.text_params(style, style.size_or(size)).quad;
                     push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(em * quad)), None);
                 }
                 AItem::HFill { fill, leader } => {
@@ -2530,6 +2699,8 @@ impl<'a> Context<'a> {
             lineskip: Some(0.0),
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             contributed: Some(contributed),
             line_penalty,
@@ -2744,7 +2915,12 @@ impl<'a> Context<'a> {
                 TableMaterial::Rule(span) => MPiece::Rule(*span),
                 TableMaterial::VLine(span, width) => MPiece::VLine(*span, *width),
                 TableMaterial::DoubleRuleGap(width) => MPiece::DoubleRuleGap(*width),
-                TableMaterial::Text(items) => match self.table_hbox(items, size) {
+                // `@{...}` material is set in the template as it stands, with
+                // no `\ignorespaces`/`\unskip` around it, so glue at either
+                // end is kept (`@{\hspace{1em}}`, `@{\quad--\quad}`). The
+                // empty boxes `\leavevmode` would put there keep `hlist`'s
+                // paragraph end from dropping it.
+                TableMaterial::Text(items) => match self.table_hbox(&anchored(items), size) {
                     Some((block, dims)) => {
                         blocks.insert((key.0, key.1, if before { Slot::Before(i) } else { Slot::After(i) }), block);
                         MPiece::Text(dims)
@@ -2835,6 +3011,23 @@ impl<'a> Context<'a> {
             hfuzz: 0.1,
             hbadness: 1000.0,
         };
+        // The document's own `\tolerance`, `\sloppy`, ... where the paragraph
+        // ends. A box's `\@parboxrestore` below starts from its own values.
+        let o = self.breaking;
+        if !self.parbox {
+            if let Some(v) = o.tolerance {
+                params.tolerance = f64::from(v);
+            }
+            if let Some(v) = o.pretolerance {
+                params.pretolerance = f64::from(v);
+            }
+            if let Some(pt) = o.emergency_stretch_pt {
+                params.emergency_stretch = pt;
+            }
+            if let Some(pt) = o.hfuzz_pt {
+                params.hfuzz = pt;
+            }
+        }
         // `\@parboxrestore`: `\parindent\z@ ... \sloppy`, the same values
         // `\@startpbox` gives a `p{}` cell.
         if self.parbox {
@@ -2873,7 +3066,9 @@ impl<'a> Context<'a> {
         let baselineskip = leading
             .or(sized.map(|s| s.baselineskip_pt))
             .unwrap_or(self.style.baselineskip_pt);
+        let vadjusts_from = self.vadjusts.len();
         let (mut list, mut recs, labels, mut skips) = self.hlist(items, size, TextStyle::default(), style);
+        let mut vadjusts: Vec<(usize, i32)> = self.vadjusts.drain(vadjusts_from..).collect();
         if !list.iter().any(|i| matches!(i, pl::Item::Box(_))) {
             return None;
         }
@@ -2918,6 +3113,9 @@ impl<'a> Context<'a> {
                         recs.insert(i, rec);
                     }
                     for (at, _) in &mut skips {
+                        *at += n;
+                    }
+                    for (at, _) in &mut vadjusts {
                         *at += n;
                     }
                 }
@@ -2965,9 +3163,9 @@ impl<'a> Context<'a> {
             penalty_before: None,
             space_before: None,
             parskip: starts_paragraph.then(|| skip_tuple(parskip)),
-            interline_penalty: 0,
-            club_penalty: if after_heading { pagebuild::INF_PENALTY } else { CLUB_PENALTY },
-            widow_penalty: WIDOW_PENALTY,
+            interline_penalty: self.breaking.interline_penalty.unwrap_or(0),
+            club_penalty: if after_heading { pagebuild::INF_PENALTY } else { self.breaking.club_penalty.unwrap_or(CLUB_PENALTY) },
+            widow_penalty: self.breaking.widow_penalty.unwrap_or(WIDOW_PENALTY),
             penalty_after: None,
             space_after: match (trailing_skip, vspace_after) {
                 (None, 0.0) => None,
@@ -2992,6 +3190,11 @@ impl<'a> Context<'a> {
             baselineskip: leading.or(sized.map(|s| s.baselineskip_pt)),
             vskip_after: vskips_of(&lines, &skips),
             broken_penalty: broken_of(&lines),
+            vadjust_penalty: vadjusts
+                .iter()
+                .filter_map(|(at, pen)| lines.lines.iter().position(|l| l.items.contains(at)).map(|li| (li, *pen)))
+                .collect(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -3023,6 +3226,8 @@ impl<'a> Context<'a> {
             env_open,
             env_close,
             eject_before,
+            penalty_before,
+            breaking,
             vspace_before,
             addvspace_before,
             addvspace_flex,
@@ -3035,6 +3240,8 @@ impl<'a> Context<'a> {
         else {
             return;
         };
+        let first_built = blocks.len();
+        let outer_breaking = std::mem::replace(&mut self.breaking, *breaking);
         let ctx = self;
         let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp, tag, items, flags);
             let mut first = true;
@@ -3217,6 +3424,9 @@ impl<'a> Context<'a> {
                             for row in rows {
                                 (row.span.start.wrapping_sub(span.start), row.span.end.wrapping_sub(span.start)).hash(&mut h);
                                 row.number.as_ref().map(|(n, _)| n).hash(&mut h);
+                                if let Some(m) = &row.number_math {
+                                    incremental::hash_math(m, &mut h);
+                                }
                                 row.cells.len().hash(&mut h);
                                 for cell in &row.cells {
                                     incremental::hash_math(cell, &mut h);
@@ -3250,6 +3460,7 @@ impl<'a> Context<'a> {
                         list,
                         span,
                         number,
+                        number_math,
                         bracket,
                     } => {
                         // TeX §1145: a display that opens a paragraph whose
@@ -3283,6 +3494,9 @@ impl<'a> Context<'a> {
                                 n.hash(&mut h);
                                 (ns.start.wrapping_sub(span.start), ns.end.wrapping_sub(span.start)).hash(&mut h);
                             }
+                            if let Some(m) = number_math {
+                                incremental::hash_math(m, &mut h);
+                            }
                             bracket.hash(&mut h);
                             (*style as u64).hash(&mut h);
                             list_fp.hash(&mut h);
@@ -3292,7 +3506,7 @@ impl<'a> Context<'a> {
                         };
                         let pd = pre_display;
                         let st = *style;
-                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.display_block(list, *span, pd, number.as_ref(), st, geom)) {
+                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.display_block(list, *span, pd, number.as_ref(), number_math.as_ref(), st, geom)) {
                             if let Some((ej, vs, env)) = empty_start {
                                 let parskip = geom.map_or(ctx.style.parskip, |g| g.parsep);
                                 if ej {
@@ -3349,6 +3563,17 @@ impl<'a> Context<'a> {
                 }
             }
             st.after_heading = false;
+        // A vertical-mode penalty before the paragraph (compiler
+        // `Block::Penalty`: `\goodbreak`, `\pagebreak[n]`, `\nobreak`, ...)
+        // sits after the previous block and before this one's `\parskip`;
+        // a page-break command before it already put a forced one there.
+        if let (Some((value, fil)), Some(b)) = (penalty_before, blocks.get_mut(first_built)) {
+            if b.vertical.penalty_before.is_none() {
+                b.vertical.penalty_before = Some(pagebuild::bare_penalty(*value));
+                b.vertical.fil_break = *fil;
+            }
+        }
+        ctx.breaking = outer_breaking;
     }
 
     /// The vertical material of a float body: `\@xfloat` opens a `\vbox`
@@ -3430,6 +3655,7 @@ impl<'a> Context<'a> {
                         Block::Part { .. } => "\\part",
                         Block::Title { .. } => "\\maketitle",
                         Block::ClearPage { .. } => "\\clearpage",
+                        Block::NoBreakFalse { .. } => "a contents list",
                         Block::Chrome { .. } => "a page-style command",
                         Block::TocEntry(_) => "a contents list",
                         Block::LongTable { .. } => "longtable",
@@ -3584,6 +3810,8 @@ impl<'a> Context<'a> {
             baselineskip: Some(h.baselineskip_pt),
             vskip_after: vskips_of(&lines, &skips),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -3707,6 +3935,8 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -3784,6 +4014,8 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -3846,6 +4078,8 @@ impl<'a> Context<'a> {
                 baselineskip: None,
                 vskip_after: Vec::new(),
                 broken_penalty: Vec::new(),
+                vadjust_penalty: Vec::new(),
+                fil_break: false,
                 pre_space_after: None,
                 lineskip: None,
                 contributed: None,
@@ -3971,6 +4205,8 @@ impl<'a> Context<'a> {
             baselineskip: Some(baselineskip_pt),
             vskip_after: vskips_of(&lines, &skips),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -4372,6 +4608,8 @@ impl<'a> Context<'a> {
                 baselineskip: None,
                 vskip_after: Vec::new(),
                 broken_penalty: Vec::new(),
+                vadjust_penalty: Vec::new(),
+                fil_break: false,
                 pre_space_after: None,
                 lineskip: None,
                 contributed: None,
@@ -4448,6 +4686,8 @@ impl<'a> Context<'a> {
                 // line; the underlined fragment is one unbreakable line
                 // (`hyphenated: false`), so there is never one to follow.
                 broken_penalty: Vec::new(),
+                vadjust_penalty: Vec::new(),
+                fil_break: false,
                 depth_after: pagebuild::DepthAfter::default(),
             },
             labels: Vec::new(),
@@ -4532,7 +4772,7 @@ impl<'a> Context<'a> {
                             text: w,
                             style,
                         };
-                        for (item, rec) in self.word_items(&seg, size, false) {
+                        for (item, rec) in self.word_items(&seg, size, false, false) {
                             match (item, rec) {
                                 (pl::Item::Box(run), Some(rec)) => {
                                     let advance = run.width;
@@ -4604,6 +4844,8 @@ impl<'a> Context<'a> {
                 baselineskip: None,
                 vskip_after: Vec::new(),
                 broken_penalty: Vec::new(),
+                vadjust_penalty: Vec::new(),
+                fil_break: false,
                 pre_space_after: None,
                 lineskip: None,
                 contributed: None,
@@ -4740,6 +4982,8 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -4788,6 +5032,8 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -4831,6 +5077,17 @@ impl<'a> Context<'a> {
     /// Each word is its own text box at its offset.
     fn number_box(&mut self, text: &str, nspan: Span, size: f64) -> Option<NumberBox> {
         self.word_box(text, nspan, size, TextStyle::default())
+    }
+
+    /// A rich `\tag` label (`\tag{hi $x^2$}`, #441) as amsmath's
+    /// `\maketag@@@` sets it: `\hbox{\m@th\normalfont ...}`, the label's
+    /// `TextRun` in text style at the body size -- text pieces in the body
+    /// face, inline formulas at `\textstyle`. One math box, at offset 0.
+    fn math_number_box(&mut self, list: &flashtex_compiler::math::MathList, nspan: Span, size: f64) -> Option<NumberBox> {
+        let rec = self.math_box(list, nspan, false, size)?;
+        let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
+        let run = math_run(&self.maths[*mi].root, size, nspan);
+        Some(NumberBox { width: run.width, height: run.height, depth: run.depth, pieces: vec![(run, rec, 0.0)] })
     }
 
     /// `text` as one `\hbox`, each word its own shaped run at its offset and
@@ -4881,6 +5138,7 @@ impl<'a> Context<'a> {
         span: Span,
         pre_display_size: Option<f64>,
         number: Option<&(String, Span)>,
+        number_math: Option<&flashtex_compiler::math::MathList>,
         style: ParaStyle,
         list_geom: Option<&ListGeom>,
     ) -> Option<BuiltBlock> {
@@ -4907,7 +5165,11 @@ impl<'a> Context<'a> {
             } else {
                 self.style.leqno
             };
-            if let Some(nb) = self.number_box(text, *nspan, size) {
+            let nb = match number_math {
+                Some(m) => self.math_number_box(m, *nspan, size),
+                None => self.number_box(text, *nspan, size),
+            };
+            if let Some(nb) = nb {
                 e = nb.width;
                 q = e + quad;
                 eqno = Some(nb);
@@ -5129,6 +5391,8 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -5158,7 +5422,7 @@ impl<'a> Context<'a> {
     /// flush right. Display alignments always take `\abovedisplayskip`/
     /// `\belowdisplayskip` (§1206); `\@display@init` removes one `\jot`
     /// before the first row of `align`/`gather`.
-    fn rows_block(&mut self, env: adapter::RowsEnv, rows: &[adapter::RowPart], span: Span) -> Option<BuiltBlock> {
+    fn rows_block(&mut self, env: adapter::RowsEnv, rows: &[adapter::RowPart], _span: Span) -> Option<BuiltBlock> {
         use adapter::RowsEnv;
         const MINALIGNSEP: f64 = 10.0;
         const MULTLINEGAP: f64 = 10.0;
@@ -5207,6 +5471,10 @@ impl<'a> Context<'a> {
         // Number boxes.
         let mut tags: Vec<Option<(pl::GlyphRun, usize)>> = Vec::with_capacity(rows.len());
         for row in rows {
+            if let (Some(m), Some((_, nspan))) = (&row.number_math, &row.number) {
+                tags.push(self.math_number_box(m, *nspan, size).and_then(|nb| nb.pieces.into_iter().next()).map(|(run, rec, _)| (run, rec)));
+                continue;
+            }
             tags.push(row.number.as_ref().and_then(|(text, nspan)| {
                 let label = text.clone();
                 let seg = adapter::Segment {
@@ -5224,10 +5492,20 @@ impl<'a> Context<'a> {
                 self.text_box(&seg, size)
             }));
         }
+        // `multline` has one tag, wherever `\tag` was written: `\multline@`
+        // sets it on the last line, or on the first under `leqno`.
+        if matches!(env, RowsEnv::Multline) && !tags.is_empty() {
+            if let Some(i) = tags.iter().position(Option::is_some) {
+                let target = if leqno { 0 } else { tags.len() - 1 };
+                tags.swap(i, target);
+            }
+        }
         let tagw = |i: usize| tags[i].as_ref().map_or(0.0, |(r, _)| r.width);
         // x of every cell, per row.
         let mut xs: Vec<Vec<f64>> = cells.iter().map(|r| vec![0.0; r.len()]).collect();
-        let mut shifted_tags = 0usize;
+        // Rows whose tag amsmath's `\calc@shift@*` moves to a line of its own
+        // (`\shift@tag`, `\ifshifttag@`).
+        let mut shifted = vec![false; cells.len()];
         match env {
             RowsEnv::Align | RowsEnv::AlignAt | RowsEnv::FlAlign => {
                 let mut maxfields = cells.iter().map(Vec::len).max().unwrap_or(0);
@@ -5322,7 +5600,7 @@ impl<'a> Context<'a> {
                         dimen += mintagsep;
                     }
                     if dimen > dw {
-                        shifted_tags += 1;
+                        shifted[ri] = true;
                         continue;
                     }
                     let dimen = eqnshift + dima + cntb as f64 * alignsep + t;
@@ -5365,7 +5643,7 @@ impl<'a> Context<'a> {
                     let mut shift = dw - w;
                     if t > 0.0 {
                         if 2.0 * mintagsep + w + t > dw {
-                            shifted_tags += 1;
+                            shifted[ri] = true;
                         } else if shift < 4.0 * t {
                             shift -= t;
                         }
@@ -5391,7 +5669,7 @@ impl<'a> Context<'a> {
                     let w: f64 = row.iter().map(width).sum();
                     let t = tagw(ri);
                     let x0 = if n > 1 && ri == 0 {
-                        MULTLINEGAP
+                        if t > 0.0 { MULTLINETAGGAP + t } else { MULTLINEGAP }
                     } else if n > 1 && ri + 1 == n {
                         dw - w - if t > 0.0 { MULTLINETAGGAP + t } else { MULTLINEGAP }
                     } else {
@@ -5404,14 +5682,6 @@ impl<'a> Context<'a> {
                     }
                 }
             }
-        }
-        if shifted_tags > 0 {
-            let src = self.source(span);
-            self.emit(None, Diagnostic::warning(
-                "math_limitation",
-                format!("{shifted_tags} equation number(s) too wide for their row set on the row's baseline; amsmath moves them to a line of their own"),
-                vec![src],
-            ));
         }
         // Rows: `\strut@` (.7/.3 `\normalbaselineskip`) minima.
         let normal = self.style.baselineskip_pt;
@@ -5484,10 +5754,12 @@ impl<'a> Context<'a> {
                 items.push(pl::Item::Box(run.clone()));
                 recs.push(Some(*rec));
             }
-            if let Some((nrun, nrec)) = &tags[ri] {
+            let tag_x = |nrun: &pl::GlyphRun| if leqno { 0.0 } else { dw - nrun.width };
+            let shift = shifted[ri] && tags[ri].is_some();
+            if let (Some((nrun, nrec)), false) = (&tags[ri], shift) {
                 h = h.max(nrun.height);
                 d = d.max(nrun.depth);
-                runs.push(position_run(nrun, if leqno { 0.0 } else { dw - nrun.width }, 0.0));
+                runs.push(position_run(nrun, tag_x(nrun), 0.0));
                 items.push(pl::Item::Box(nrun.clone()));
                 recs.push(Some(*nrec));
             }
@@ -5495,8 +5767,8 @@ impl<'a> Context<'a> {
                 let src = self.source(rows[ri].span);
                 self.emit(None, Diagnostic::warning("overfull_display", format!("display row is {:.2}pt wider than the text width", natural - dw), vec![src]));
             }
-            lines.push(pl::Line {
-                index: lines.len(),
+            let row_line = |runs, items: std::ops::Range<usize>, index, h, d, natural| pl::Line {
+                index,
                 runs,
                 baseline_y: h,
                 height: h,
@@ -5505,12 +5777,73 @@ impl<'a> Context<'a> {
                 set_width: dw,
                 ratio: 0.0,
                 badness: 0.0,
-                items: start..items.len(),
+                items,
                 hyphenated: false,
-            });
-            extents.push((h, d));
-            vskips.push(0.0);
-            total += h + d;
+            };
+            let Some((nrun, nrec)) = tags[ri].as_ref().filter(|_| shift) else {
+                lines.push(row_line(runs, start..items.len(), lines.len(), h, d, natural));
+                extents.push((h, d));
+                vskips.push(0.0);
+                total += h + d;
+                continue;
+            };
+            // A shifted tag (`\place@tag`, `\place@tag@gather`): the tag box
+            // is `\hbox{\strut@ tag}` stacked under `\normalbaselines` with a
+            // box of the row's `\lineht@` -- its cells' greatest depth (tags
+            // right, a `\vtop` hanging below the row) or height (`leqno`, a
+            // `\vbox` standing above it). It is its own line here, and the
+            // extents the page builder sees are chosen so the interline glue
+            // before and after the pair is the glue TeX computes for the one
+            // taller row, whichever of `\baselineskip`/`\lineskip` it takes.
+            let (th, td) = (nrun.height.max(strut_h), nrun.depth.max(strut_d));
+            let lineht = row
+                .iter()
+                .filter_map(|c| c.run.as_ref())
+                .map(|(r, _)| if leqno { r.height } else { r.depth })
+                .fold(0.0f64, f64::max);
+            let (bs_n, ls_n, lsl_n) = (normal, self.style.lineskip_pt, self.style.lineskiplimit_pt);
+            let interline = |g: f64| if g < lsl_n { ls_n } else { g };
+            let block_bs = normal + JOT;
+            let tag_runs = vec![position_run(nrun, tag_x(nrun), 0.0)];
+            let tag_natural = tag_x(nrun) + nrun.width;
+            if leqno {
+                // Tag baseline `dl` above the row's; the row box is `hh` high.
+                let dl = td + interline(bs_n - td - lineht) + lineht;
+                let hh = h.max(dl + th);
+                match vskips.last_mut() {
+                    Some(v) => *v -= dl,
+                    None => lead -= dl,
+                }
+                // The tag's line comes first, so its item goes before the row's.
+                items.insert(start, pl::Item::Box(nrun.clone()));
+                recs.insert(start, Some(*nrec));
+                lines.push(row_line(tag_runs, start..start + 1, lines.len(), th, td, tag_natural));
+                extents.push((hh, 0.0));
+                vskips.push(dl - block_bs);
+                total += hh;
+                lines.push(row_line(runs, start + 1..items.len(), lines.len(), h, d, natural));
+                extents.push((0.0, d));
+                vskips.push(0.0);
+                total += d;
+            } else {
+                // Tag baseline `dr` below the row's.
+                let dr = lineht + interline(bs_n - lineht - th) + th;
+                let tag_start = items.len();
+                items.push(pl::Item::Box(nrun.clone()));
+                recs.push(Some(*nrec));
+                lines.push(row_line(runs, start..tag_start, lines.len(), h, d, natural));
+                extents.push((h, 0.0));
+                vskips.push(dr - block_bs);
+                total += h + dr;
+                lines.push(row_line(tag_runs, tag_start..items.len(), lines.len(), th, td, tag_natural));
+                // The pair's depth is the taller row's, `max(d, dr + td)`
+                // below the row's baseline: reported whole, so the next row's
+                // interline glue is TeX's, and the tag's `dr` taken back.
+                let below = (d - dr).max(td);
+                extents.push((0.0, dr + below));
+                vskips.push(-dr);
+                total += below;
+            }
         }
         if lines.is_empty() {
             return None;
@@ -5567,6 +5900,8 @@ impl<'a> Context<'a> {
             lineskip: Some(self.style.lineskip_pt + JOT),
             vskip_after: vskips,
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             contributed: None,
             line_penalty: Vec::new(),
@@ -5668,6 +6003,16 @@ fn skip_tuple(s: crate::style::Skip) -> (f64, f64, f64) {
     (s.natural, s.stretch, s.shrink)
 }
 
+/// `items` between two empty `\hbox`es ([`AItem::LeaveVmode`]), so glue at
+/// either end of an `\hbox`'s material is not taken for a paragraph's.
+fn anchored(items: &[AItem]) -> Vec<AItem> {
+    let mut out = Vec::with_capacity(items.len() + 2);
+    out.push(AItem::LeaveVmode);
+    out.extend(items.iter().cloned());
+    out.push(AItem::LeaveVmode);
+    out
+}
+
 /// A table entry's lines as a block assembled like a paragraph's.
 fn table_cell_block(lines: pl::Lines, items: Vec<pl::Item>, recs: Vec<Option<usize>>, labels: Vec<(String, usize)>) -> BuiltBlock {
     let vertical = VBlock {
@@ -5685,6 +6030,8 @@ fn table_cell_block(lines: pl::Lines, items: Vec<pl::Item>, recs: Vec<Option<usi
         baselineskip: None,
         vskip_after: Vec::new(),
         broken_penalty: Vec::new(),
+        vadjust_penalty: Vec::new(),
+        fil_break: false,
         pre_space_after: None,
         lineskip: None,
         contributed: None,
@@ -6284,6 +6631,30 @@ pub fn math_ellipsis_of(text: &str, at: usize) -> Option<char> {
     })
 }
 
+/// The text font of a `\text`/`\tag` piece set by `\textbf`/`\emph`/
+/// `\textit` (#441); `None` for the document's upright text font.
+#[cfg(feature = "compiler-text-run")]
+fn text_piece_key(style: flashtex_compiler::math::TextStyle) -> Option<crate::nfss::FontKey> {
+    use crate::nfss::{FamilyKind, FontKey, Series, Shape};
+    use flashtex_compiler::math::TextStyle as S;
+    match style {
+        S::Normal => None,
+        S::Bold => Some(FontKey::new(FamilyKind::Rm, Series::Bx, Shape::N)),
+        S::Italic => Some(FontKey::new(FamilyKind::Rm, Series::M, Shape::It)),
+        S::BoldItalic => Some(FontKey::new(FamilyKind::Rm, Series::Bx, Shape::It)),
+    }
+}
+
+/// The math pieces of a `\text`/`\tag` run (#441), for the walks that only
+/// look inside sub-formulas.
+#[cfg(feature = "compiler-text-run")]
+fn text_run_lists(pieces: &[flashtex_compiler::math::TextPiece]) -> impl Iterator<Item = &flashtex_compiler::math::MathList> {
+    pieces.iter().filter_map(|p| match p {
+        flashtex_compiler::math::TextPiece::Math(list) => Some(list),
+        flashtex_compiler::math::TextPiece::Text { .. } => None,
+    })
+}
+
 /// [`convert_math_fenced`] with `class` giving the forced class of a
 /// `Group` (`\mathbin{...}`) or class-overridden symbol atom at a span, and
 /// `op_limits` the limit placement of a named operator at a span
@@ -6331,6 +6702,22 @@ pub fn convert_math_classed(
             // (`math_text_keeps_italic`), and it decides the italic
             // correction of the run's last character: `$\lim$` and
             // `$\mathrm{lim}$` are 16.3773 pt, `$\text{lim}$` 16.31999 pt.
+            // `\mathrm{K}`: a group holding one ordinary character is that
+            // math character of family 0 (TeX §1186), so `make_ord` joins it
+            // to a neighbouring one (`\mathrm{f}\mathrm{i}` is the fi
+            // ligature, `\mathrm{A}\mathrm{V}` kerned) and its scripts sit
+            // as on a character; the provider boxes it from the roman TFM.
+            // Only letters and digits: they are the variable-family math
+            // codes `\mathrm` moves to family 0.
+            #[cfg(feature = "math-font-kerns")]
+            N::Text(text)
+                if text_italic(&a.span)
+                    && op_limits(&a.span).is_none()
+                    && text_split(&a.span).is_none()
+                    && matches!(text.as_bytes(), [c] if c.is_ascii_alphanumeric()) =>
+            {
+                vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::TextChar(char::from(text.as_bytes()[0])))]
+            }
             N::Text(text) => {
                 // `\limsup`/`\liminf` are `lim\,sup` and `lim\,inf`: one
                 // operator whose nucleus is a list of two math-character runs
@@ -6348,6 +6735,34 @@ pub fn convert_math_classed(
                     atom.limits = limits;
                 }
                 vec![atom]
+            }
+            // `\text{for all $x$ in $S$}`, `\tag{hi $x^2$}` (#441): an `\hbox`
+            // (an Ord atom, §1076) of text pieces and inline formulas.
+            // math-layout's `TextRun` sets each piece as its own list at
+            // `\textstyle` (or the script style it is in), so a formula's
+            // spacing starts afresh as it does after `$`; a text piece is a
+            // one-atom list holding the shaped text handle.
+            #[cfg(feature = "compiler-text-run")]
+            N::TextRun(pieces) => {
+                use flashtex_compiler::math::TextPiece;
+                let mut out = Vec::with_capacity(pieces.len());
+                for (i, piece) in pieces.iter().enumerate() {
+                    out.push(match piece {
+                        TextPiece::Text { text, style } => {
+                            // `\check@icr`: a slanted font's run takes its
+                            // italic correction unless `.` or `,` follows
+                            // (`\nocorrlist`).
+                            let nocorr = matches!(pieces.get(i + 1), Some(TextPiece::Text { text: next, .. }) if next.starts_with(['.', ',']));
+                            let atom = match text_piece_key(*style) {
+                                None => sink.atom(text),
+                                Some(key) => sink.atom_in_hbox(text, key, key.slanted() && !nocorr),
+                            };
+                            ml::TextPiece::Math(ml::MathList::new(vec![atom]))
+                        }
+                        TextPiece::Math(list) => ml::TextPiece::Math(sub(list, sink)),
+                    });
+                }
+                vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::TextRun(out))]
             }
             // Glue inside a sub-formula (`\operatorname*{arg\,max}`, `\;`
             // inside `\left...\right`): math-layout's `Glue` atom, which
@@ -6398,6 +6813,32 @@ pub fn convert_math_classed(
                     X::LeftRight => (['\u{2190}', '-', '\u{2192}'], [3.0, 3.0, 9.0, 9.0]),
                 };
                 vec![ml::Atom::ext_arrow(pieces, kerns, sub(above, sink), sub(below, sink))]
+            }
+            // amsmath `\sideset{#1}{#2}{#3}` (`amsmath.sty` 921-929). The
+            // compiler emits amsmath's two atoms: the empty ordinary
+            // `\hbox to\dimen@{}` (a `Group`, converted above) and this
+            // `\mathop`. `#3`'s last atom carries `#2`; math-layout's
+            // `Atom::left_scripts` sets `#1` and `#3\nolimits#2` in
+            // `\displaystyle` exactly. Scripts written after `#3` are the
+            // `\mathop`'s own, so they go on an `Op` atom around it (whose
+            // default `\displaylimits` makes them limits in display style).
+            #[cfg(feature = "amsmath-sideset")]
+            N::SideSet { operator, left_superscript, left_subscript } => {
+                let mut parts = sub(operator, sink).atoms;
+                let mut side = if parts.len() == 1 {
+                    parts.pop().expect("one atom")
+                } else {
+                    // `\sideset{..}{..}{\sum\sum}`: the whole of `#3` is
+                    // the operator, and `#2` stays on its last atom.
+                    ml::Atom::new(ml::AtomClass::Op, ml::Nucleus::List(ml::MathList::new(parts)))
+                };
+                side.class = ml::AtomClass::Op;
+                let side = side.with_left_scripts(left_superscript.as_ref().map(|l| sub(l, sink)), left_subscript.as_ref().map(|l| sub(l, sink)));
+                if a.superscript.is_some() || a.subscript.is_some() {
+                    vec![ml::Atom::new(ml::AtomClass::Op, ml::Nucleus::List(ml::MathList::new(vec![side])))]
+                } else {
+                    vec![side]
+                }
             }
             // `\quad`/`\qquad` (compiler `Space { em }`): TeX glue in the
             // math list. math-layout has no kern/glue atom, so the glue is
@@ -6556,7 +6997,29 @@ pub fn convert_math_classed(
                         Some(Some(c)) => match class(a) {
                             // `\bot` (Ord, same glyph as `\perp`) and
                             // `\bigtriangleup` (Bin, same glyph as `\triangle`).
-                            Some(forced) => vec![ml::Atom::new(forced, ml::Nucleus::Symbol(c))],
+                            Some(forced) => {
+                                // mathtools defines `\vcentcolon` as
+                                // `\mathrel{\mathop\ordinarycolon}`. The
+                                // compiler marks exactly that atom as a
+                                // `Symbol(":")` with a forced `Rel` class;
+                                // kernel/amsmath `\colon` and a literal `:`
+                                // do not carry this override. Keep the outer
+                                // atom Rel for its spacing, and use the
+                                // existing math-layout Op path for the
+                                // glyph's real-bounds axis centring.
+                                #[cfg(feature = "math-class-override")]
+                                let vcentcolon = c == ':'
+                                    && a.class_override
+                                        == Some(flashtex_compiler::math::AtomClass::Rel);
+                                #[cfg(not(feature = "math-class-override"))]
+                                let vcentcolon = false;
+                                let nucleus = if vcentcolon {
+                                    ml::Nucleus::List(ml::MathList::new(vec![ml::Atom::op(c)]))
+                                } else {
+                                    ml::Nucleus::Symbol(c)
+                                };
+                                vec![ml::Atom::new(forced, nucleus)]
+                            }
                             None => symbol_atoms(c, a.width_em),
                         },
                         Some(None) => vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Empty)],
@@ -7121,6 +7584,15 @@ fn math_grids(list: &flashtex_compiler::math::MathList, out: &mut Vec<(usize, us
                 math_grids(above, out);
                 math_grids(below, out);
             }
+            #[cfg(feature = "amsmath-sideset")]
+            N::SideSet { operator, left_superscript, left_subscript } => {
+                math_grids(operator, out);
+                for part in [left_superscript, left_subscript].into_iter().flatten() {
+                    math_grids(part, out);
+                }
+            }
+            #[cfg(feature = "compiler-text-run")]
+            N::TextRun(pieces) => text_run_lists(pieces).for_each(|l| math_grids(l, out)),
         }
         if let Some(s) = &a.superscript {
             math_grids(s, out);
@@ -7166,6 +7638,12 @@ fn math_glue_em(list: &flashtex_compiler::math::MathList) -> f64 {
                 N::SubArray { rows, .. } => rows.iter().map(math_glue_em).sum(),
                 #[cfg(feature = "amsmath-inline")]
                 N::ExtArrow { above, below, .. } => math_glue_em(above) + math_glue_em(below),
+                #[cfg(feature = "amsmath-sideset")]
+                N::SideSet { operator, left_superscript, left_subscript } => {
+                    math_glue_em(operator) + [left_superscript, left_subscript].into_iter().flatten().map(math_glue_em).sum::<f64>()
+                }
+                #[cfg(feature = "compiler-text-run")]
+                N::TextRun(pieces) => text_run_lists(pieces).map(math_glue_em).sum(),
             };
             own + a.superscript.as_ref().map_or(0.0, math_glue_em) + a.subscript.as_ref().map_or(0.0, math_glue_em)
         })
@@ -7277,6 +7755,15 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
                 math_approximations(above, out);
                 math_approximations(below, out);
             }
+            #[cfg(feature = "amsmath-sideset")]
+            N::SideSet { operator, left_superscript, left_subscript } => {
+                math_approximations(operator, out);
+                for part in [left_superscript, left_subscript].into_iter().flatten() {
+                    math_approximations(part, out);
+                }
+            }
+            #[cfg(feature = "compiler-text-run")]
+            N::TextRun(pieces) => text_run_lists(pieces).for_each(|l| math_approximations(l, out)),
         }
         for part in [&a.superscript, &a.subscript].into_iter().flatten() {
             math_approximations(part, out);
@@ -7306,8 +7793,44 @@ fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
         // (`TexMathMetrics`/`MathFonts`), which paint both from cmsy10's
         // `\emptyset` slot but only force this one's advance and outline.
         '\u{2205}' if width_em.is_some() => vec![ml::Atom::symbol(crate::mathfont::VARNOTHING_SENTINEL)],
-        _ => vec![ml::Atom::symbol(c)],
+        _ => match long_arrow_pieces(c) {
+            Some((left, right)) => vec![long_arrow(left, right)],
+            None => vec![ml::Atom::symbol(c)],
+        },
     }
+}
+
+/// The two relations a LaTeX long arrow joins (`latex.ltx`:
+/// `\longrightarrow` = `\relbar\joinrel\rightarrow`, `\Longrightarrow` =
+/// `\Relbar\joinrel\Rightarrow`, ...). `\relbar` is cmsy's minus and
+/// `\Relbar` cmr's `=`; the arrows are cmsy "20/"21/"24/"28/"29/"2C.
+fn long_arrow_pieces(c: char) -> Option<(char, char)> {
+    Some(match c {
+        '\u{27F5}' => ('\u{2190}', '\u{2212}'), // \longleftarrow
+        '\u{27F6}' => ('\u{2212}', '\u{2192}'), // \longrightarrow
+        '\u{27F7}' => ('\u{2190}', '\u{2192}'), // \longleftrightarrow
+        '\u{27F8}' => ('\u{21D0}', '='),        // \Longleftarrow
+        '\u{27F9}' => ('=', '\u{21D2}'),        // \Longrightarrow
+        '\u{27FA}' => ('\u{21D0}', '\u{21D2}'), // \Longleftrightarrow
+        _ => return None,
+    })
+}
+
+/// A long arrow as TeX builds it: the two relations with `\joinrel`
+/// (`\mathrel{\mkern-3mu}`) between them. Adjacent relations get no
+/// inter-atom space and no break between them, so the three are one
+/// relation whose nucleus is `left`, a -3mu kern and `right`. Latin Modern
+/// Math's single U+27F9 glyph is 1.457em wide where pdfTeX's `=`+`⇒` join
+/// is 0.777781 + 1.000003 - 3/18 = 1.611em, which moved every glyph after
+/// `\Longrightarrow` in a centred display by half the 1.69bp difference at
+/// 11pt (HW1 Problem 4(b)).
+///
+/// Not modelled: `\relbar` is `\smash`ed (amsmath `\mathsm@sh`), so pdfTeX's
+/// `\longrightarrow` box is only as tall as the arrow; here the minus keeps
+/// its 0.583em height and 0.083em depth.
+fn long_arrow(left: char, right: char) -> ml::Atom {
+    let piece = |ch| ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Symbol(ch));
+    ml::Atom::new(ml::AtomClass::Rel, ml::Nucleus::List(ml::MathList::new(vec![piece(left), ml::Atom::glue(-3.0, 0.0), piece(right)])))
 }
 
 /// Adds `\addvspace` glue (a list environment's `\topsep`) to the block's
@@ -7358,6 +7881,17 @@ fn block_key(cache: Option<&RenderCache>, style_fp: u64, tag: u8, items: &[AItem
     (Some(h.finish()), Some((document, base)))
 }
 
+/// The page-break penalty before block `doc_index` of `doc` whose
+/// `eject_before` is set: `\newpage`'s, or a bare forced penalty the
+/// document wrote (`adapter::Doc::bare_ejects`).
+fn eject_penalty(doc: &Doc, doc_index: usize) -> i32 {
+    if doc.bare_ejects.binary_search(&doc_index).is_ok() {
+        pagebuild::BARE_EJECT_PENALTY
+    } else {
+        pagebuild::EJECT_PENALTY
+    }
+}
+
 fn page_params(s: &Stylesheet) -> pagebuild::PageParams {
     pagebuild::PageParams {
         vsize: s.text_height_pt,
@@ -7367,6 +7901,7 @@ fn page_params(s: &Stylesheet) -> pagebuild::PageParams {
         lineskip: s.lineskip_pt,
         lineskiplimit: s.lineskiplimit_pt,
         flushbottom: !s.raggedbottom,
+        squeeze: 0.0,
     }
 }
 
@@ -7387,6 +7922,8 @@ fn plain_vblock(lines: Vec<(f64, f64)>) -> VBlock {
         baselineskip: None,
         vskip_after: Vec::new(),
         broken_penalty: Vec::new(),
+        vadjust_penalty: Vec::new(),
+        fil_break: false,
         pre_space_after: None,
         lineskip: None,
         contributed: None,
@@ -7462,6 +7999,40 @@ const DBLTEXTFLOATSEP_PT: f64 = 20.0;
 
 /// Reports a `\twocolumn[<material>]` case `\@topnewpage` handles and this
 /// page builder does not, against the title block's first source span.
+/// Where a built block's line `li` starts in the source: its first text or
+/// rule box.
+fn line_source(recs: &[BoxRec], b: &BuiltBlock, li: usize) -> Option<Span> {
+    let line = b.block.lines.lines.get(li)?;
+    line.items.clone().find_map(|i| match recs.get(b.recs.get(i).copied().flatten()?)? {
+        BoxRec::Text { clusters, .. } => clusters.first().map(|c| c.span),
+        BoxRec::Rule { span, .. } => Some(*span).filter(|s| s.end > s.start),
+        _ => None,
+    })
+}
+
+/// `\enlargethispage`'s insertion in the vertical list (`list`, whose
+/// block `i` begins at `starts[i]`): before the first line set from the
+/// source after the command. A command inside a paragraph is `\insert`ed
+/// in horizontal mode and migrates out of the line holding it (§655), so it
+/// follows that line; one between paragraphs precedes the next block.
+fn enlarge_marks(ctx: &Context, blocks: &[BuiltBlock], list: &[pagebuild::VItem], starts: &[usize]) -> Vec<pagebuild::Enlarge> {
+    let mut out = Vec::new();
+    for &(span, pt, star) in &ctx.style.enlarge_this_page {
+        let after = |s: &Span| s.document == span.document && s.start >= span.end;
+        let found = blocks.iter().enumerate().find_map(|(bi, b)| (0..b.block.lines.lines.len()).find(|&li| line_source(&ctx.recs, b, li).is_some_and(|s| after(&s))).map(|li| (bi, li)));
+        let at = match found {
+            Some((bi, 0)) => starts.get(bi).copied(),
+            Some((bi, li)) => list.iter().position(|v| matches!(v, pagebuild::VItem::Box { payload, .. } if *payload == (bi, li - 1))).map(|i| i + 1),
+            None => None,
+        };
+        if let Some(at) = at {
+            out.push(pagebuild::Enlarge { at, pt, star });
+        }
+    }
+    out.sort_by_key(|e| e.at);
+    out
+}
+
 fn top_title_warning(ctx: &mut Context, blocks: &[BuiltBlock], first: usize, message: &str) {
     let span = blocks.get(first).and_then(|b| b.recs.iter().flatten().next().copied()).and_then(|r| match &ctx.recs[r] {
         BoxRec::Text { clusters, .. } => clusters.first().map(|c| c.span),
@@ -7548,6 +8119,11 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         if doc.page_starts.binary_search(&doc_index).is_ok() {
             page_start_blocks.push(blocks.len());
         }
+        // A body `\cleardoublepage`: the odd-page test `open_right` applies
+        // to a chapter's.
+        if doc.double_page_starts.binary_search(&doc_index).is_ok() {
+            chapter_starts.push((blocks.len(), events.len()));
+        }
         match block {
             Block::Heading {
                 level,
@@ -7561,15 +8137,21 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 let (key, origin) = key_for(b'H', items, &[u64::from(*level)]);
                 if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.heading_block(*level, items)) {
                     if *eject_before {
-                        b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                        b.vertical.penalty_before = Some(eject_penalty(doc, doc_index));
                     }
                     // `\@startsection`: `\addvspace{<before>}` — right after
                     // another heading (`\@nobreak`) no skip at all; otherwise
                     // only the excess over the skip the previous block left
                     // (`\lastskip`: a display's `\belowdisplayskip`, an
                     // environment's closing `\topsep`), that skip removed.
+                    // `\addpenalty\@secpenalty` belongs to the same branch:
+                    // under `\@nobreak` there is no breakpoint between the
+                    // two heads at all.
                     if after_heading {
                         b.vertical.space_before = None;
+                        if !*eject_before {
+                            b.vertical.penalty_before = None;
+                        }
                     } else if let (Some(before), Some(prev)) = (b.vertical.space_before, blocks.last_mut()) {
                         if let Some(last) = prev.vertical.space_after {
                             if last.0 < before.0 {
@@ -7600,6 +8182,19 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     // after the list's heading).
                     if after_heading {
                         b.vertical.penalty_before = None;
+                    }
+                    // report/book `\@chapter`'s `\addvspace{10\p@}` ahead of
+                    // the entry's own `\vskip`: `\vskip-\lastskip \vskip
+                    // 10pt` unless the previous skip is already as large.
+                    if entry.addvspace_pt > 0.0 {
+                        let prev_after = blocks.last().and_then(|p| p.vertical.space_after).map_or(0.0, |k| k.0);
+                        if prev_after < entry.addvspace_pt {
+                            if let Some(prev) = blocks.last_mut() {
+                                prev.vertical.space_after = None;
+                            }
+                            let own = b.vertical.space_before.unwrap_or((0.0, 0.0, 0.0));
+                            b.vertical.space_before = Some((own.0 + entry.addvspace_pt, own.1, own.2));
+                        }
                     }
                     // `\addvspace`: only the excess over the previous skip.
                     if entry.style.addvspace {
@@ -7697,6 +8292,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 blocks.extend(built);
                 after_heading = true;
             }
+            // `\@starttoc`'s `\@nobreakfalse`: a heading next takes its
+            // `\addvspace` again (only the excess over the list heading's
+            // after-skip), and a paragraph next its normal `\clubpenalty`.
+            Block::NoBreakFalse { .. } => after_heading = false,
             Block::ClearPage { double, .. } => {
                 clears.push(blocks.len());
                 if *double {
@@ -7765,7 +8364,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             } => {
                 let mut b = ctx.rule_block(*span);
                 if *eject_before {
-                    b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                    b.vertical.penalty_before = Some(eject_penalty(doc, doc_index));
                 }
                 add_vspace(&mut b.vertical, *vspace_before);
                 blocks.push(b);
@@ -7781,7 +8380,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 let _ = labels;
                 if let Some((mut b, region)) = ctx.longtable_block(table, lengths) {
                     if *eject_before {
-                        b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                        b.vertical.penalty_before = Some(eject_penalty(doc, doc_index));
                     }
                     add_vspace(&mut b.vertical, *vspace_before);
                     longtables.push((blocks.len(), region));
@@ -7798,7 +8397,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             } => {
                 let mut b = ctx.picture_block(*document, picture, *centered);
                 if *eject_before {
-                    b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                    b.vertical.penalty_before = Some(eject_penalty(doc, doc_index));
                 }
                 add_vspace(&mut b.vertical, *vspace_before);
                 blocks.push(b);
@@ -7826,7 +8425,8 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     let s = style;
     let params = page_params(s);
     let vblocks: Vec<VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
-    let list = pagebuild::vlist(&params, &vblocks);
+    let (list, block_starts) = pagebuild::vlist_starts(&params, &vblocks);
+    let enlarge = enlarge_marks(ctx, &blocks, &list, &block_starts);
     // Footnote blocks are appended after the body's (not in `vblocks`).
     let body_blocks = blocks.len();
     let insertions = footnotes::prepare(ctx, &mut blocks, &params);
@@ -7883,6 +8483,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             }
         }
     };
+    // Blocks a body `\clearpage`/`\cleardoublepage` starts a page for.
+    let mut clear_starts: Vec<usize> = page_start_blocks.iter().chain(&clears).copied().collect();
+    clear_starts.sort_unstable();
+    clear_starts.dedup();
     let (mut built, mut images, float_labels) = if let Some(b) = multicol::paginate(ctx, doc, &mut blocks, &params) {
         (b, Vec::new(), Vec::new())
     } else if floats.is_empty() {
@@ -7890,19 +8494,19 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         match &insertions {
             Some(ins) => {
                 let regions = pagebuild::resolve_regions(&list, &longtables);
-                let (mut pages, areas) = pagebuild::break_pages_inserts_regions(&params, &list, short_pages, short, ins, &regions);
+                let (mut pages, areas) = pagebuild::break_pages_inserts_regions(&params, &list, short_pages, short, ins, &regions, &enlarge);
                 footnotes::place(ctx, &mut blocks, &mut pages, areas);
                 (pages, Vec::new(), Vec::new())
             }
             None => {
                 let regions = pagebuild::resolve_regions(&list, &longtables);
-                (pagebuild::break_pages_regions(&params, &list, short_pages, short, &regions), Vec::new(), Vec::new())
+                (pagebuild::break_pages_regions(&params, &list, short_pages, short, &regions, &enlarge), Vec::new(), Vec::new())
             }
         }
     } else {
         let regions = pagebuild::resolve_regions(&list, &longtables);
         let (mut pages, images, labels, areas) =
-            floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref(), short_cols, short, columns);
+            floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref(), short_cols, short, columns, &clear_starts, &enlarge);
         if insertions.is_some() {
             footnotes::place(ctx, &mut blocks, &mut pages, areas);
         }
@@ -9584,7 +10188,10 @@ fn math_items(
             None if g.ch == crate::mathfont::VARNOTHING_SENTINEL => r.text.push('\u{2205}'),
             // An amssymb sentinel stands for its table text.
             None if ams.is_some() => r.text.push_str(ams.expect("checked").text),
-            None => r.text.push(g.ch),
+            None => match crate::mathfont::MathFonts::extraction_text(g.ch) {
+                Some(text) => r.text.push_str(text),
+                None => r.text.push(g.ch),
+            },
         }
         let ci = r.clusters.len() as u32;
         let top = Tick::from_tex_pt(baseline_y - h);

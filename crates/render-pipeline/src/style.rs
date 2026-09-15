@@ -146,6 +146,20 @@ pub struct Stylesheet {
     /// `microtype` (`None` otherwise; lines are then broken exactly as
     /// before).
     pub microtype: Option<MicrotypeSetup>,
+    /// Literal UTF-8 input checks (`crate::inputenc`): the text encoding
+    /// and the preamble's own declarations, or `None` to typeset every
+    /// character the fonts can draw without pdfLaTeX's input errors (a
+    /// stylesheet built without a document, or a document outside the
+    /// pdfLaTeX `utf8` world). The adapter sets it.
+    pub input: Option<crate::inputenc::InputSetup>,
+    /// `\hyphenation{...}` words as written (`man-u-script`): exceptions to
+    /// the patterns for every paragraph (compiler `Parsed::hyphenation`).
+    pub hyphenation: Vec<String>,
+    /// `\enlargethispage{<dimen>}` (and `*`): the command, its dimen in
+    /// points and whether it is starred, in document order (compiler
+    /// `Parsed::parameters`). Where the command stands decides the page it
+    /// enlarges; see `pagebuild::Enlarge`.
+    pub enlarge_this_page: Vec<(flashtex_compiler::Span, f64, bool)>,
 }
 
 impl Stylesheet {
@@ -248,7 +262,10 @@ impl Stylesheet {
             labelsep_pt: list.labelsep.0,
             headings: [heading(1), heading(2), heading(3), heading(4), heading(5)],
             class_geometry: None,
+            hyphenation: Vec::new(),
+            enlarge_this_page: Vec::new(),
             microtype: None,
+            input: None,
         }
     }
 

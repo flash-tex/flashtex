@@ -378,10 +378,23 @@ fn after_bracket_option(text: &str, from: usize) -> usize {
     if newlines >= 2 || bytes.get(j) != Some(&b'[') {
         return from;
     }
-    match text[j..].find(']') {
-        Some(offset) => j + offset + 1,
-        None => from,
+    // A `]` inside braces does not close the option
+    // (`[caption={[short]long}]`). A backslash takes the next byte with it,
+    // as TeX reads a control symbol: `\]` is display-math close, not a
+    // bracket, and `\{`/`\}` do not change the brace depth.
+    let mut depth = 0usize;
+    let mut k = j + 1;
+    while k < bytes.len() {
+        match bytes[k] {
+            b'\\' => k += 1,
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            b']' if depth == 0 => return k + 1,
+            _ => {}
+        }
+        k += 1;
     }
+    from
 }
 
 struct Converter<'d> {
@@ -645,12 +658,85 @@ fn configure(engine: &mut Engine) {
     engine.declare_host_command("flashtexaddtolength");
 }
 
+#[derive(Clone, Copy)]
+struct CompilerFontMetrics {
+    quad_sp: i64,
+    x_height_sp: i64,
+}
+
+impl tex::FontMetrics for CompilerFontMetrics {
+    fn quad_sp(&self) -> i64 {
+        self.quad_sp
+    }
+
+    fn x_height_sp(&self) -> i64 {
+        self.x_height_sp
+    }
+}
+
+fn compiler_font_metrics(body_size_pt: f64) -> Rc<dyn tex::FontMetrics> {
+    let font = crate::layout::Font::TimesRoman;
+    Rc::new(CompilerFontMetrics {
+        quad_sp: i64::from(crate::text_builtins::pt_to_sp(body_size_pt)),
+        x_height_sp: i64::from(crate::text_builtins::pt_to_sp(
+            crate::layout::x_height_pt(font, body_size_pt),
+        )),
+    })
+}
+
+fn configure_with_body_size(engine: &mut Engine, body_size_pt: f64) {
+    configure(engine);
+    engine.set_font_metrics(compiler_font_metrics(body_size_pt));
+}
+
+/// The expansion engine must know the class body size before it executes a
+/// `\newlength`/`\setlength` assignment. This is deliberately just the class
+/// option: local font declarations are resolved by the parser-owned length
+/// path, after the expanded stream reaches it.
+fn document_body_size(documents: &[SourceDocument<'_>]) -> f64 {
+    for (document_index, document) in documents.iter().enumerate() {
+        let tokens = tokenize_document(document.text, DocumentId(document_index));
+        for (index, token) in tokens.iter().enumerate() {
+            if !matches!(&token.kind, TokenKind::Command(name) if name == "documentclass") {
+                continue;
+            }
+            for option in tokens
+                .iter()
+                .skip(index + 1)
+                .take_while(|token| token.kind != TokenKind::LBrace)
+            {
+                let TokenKind::Word(word) = &option.kind else {
+                    continue;
+                };
+                for value in word.trim_matches(|c| matches!(c, '[' | ']' | ',')).split(',') {
+                    match value.trim() {
+                        "10pt" => return 10.0,
+                        "11pt" => return 11.0,
+                        "12pt" => return 12.0,
+                        _ => {}
+                    }
+                }
+            }
+            return 12.0;
+        }
+    }
+    12.0
+}
+
 fn has_includes(text: &str) -> bool {
     text.contains("\\input") || text.contains("\\include")
 }
 
+/// The engine stopped on a resource limit: the step limit, or TeX's
+/// "capacity exceeded" (input stack, main memory). Both stop at a point that
+/// depends on where the run started, so an incremental run cannot match a
+/// full one; both get the full run and its unexpanded recovery.
 fn step_limit_hit(diagnostics: &[tex::Diagnostic]) -> bool {
-    diagnostics.iter().any(|d| d.message.contains("expansion step limit exceeded"))
+    diagnostics.iter().any(|d| is_stop_limit(&d.message))
+}
+
+pub(crate) fn is_stop_limit(message: &str) -> bool {
+    message.contains("expansion step limit exceeded") || message.starts_with("TeX capacity exceeded, sorry [")
 }
 
 /// What the caller must do after one converted token.
@@ -803,6 +889,9 @@ impl<'d> Converter<'d> {
                     "includeonly" if origin.is_none() && real_text == "\\includeonly" => {
                         return Flow::IncludeOnly(at);
                     }
+                    // `\-` (the discretionary hyphen) stays a command: it is
+                    // not the character it looks like.
+                    "-" => conv.push(TokenKind::Command(name.clone()), at),
                     _ if name.chars().count() == 1 && !name.chars().all(char::is_alphabetic) => {
                         conv.flush_word();
                         conv.push(TokenKind::Word(name.clone()), at);
@@ -883,7 +972,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     let total_bytes: usize = documents.iter().map(|d| d.text.len()).sum();
     let entry_text: &str = prepared.get(entry).map_or("", |p| p.text.as_ref());
     let mut engine = Engine::with_limits(entry_text, limits_for(total_bytes));
-    configure(&mut engine);
+    configure_with_body_size(&mut engine, document_body_size(documents));
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
@@ -957,6 +1046,8 @@ pub struct ExpansionCache {
     last_span: Span,
     /// Engine tokens the previous run produced.
     old_engine_tokens: usize,
+    /// Changing the class size changes the expansion engine's `em`/`ex`.
+    body_size_pt: f64,
     /// The last revision ran into the step limit: re-expand from scratch
     /// until it no longer does (an incremental run would hit the same limit
     /// and still need the full run for its recovery).
@@ -1055,14 +1146,18 @@ pub fn expand_project_with_cache(
         .collect();
     if cache.as_ref().is_some_and(|c| c.halted && c.entry_path == document.path) {
         let full = expand_project(documents, entry);
-        if full.diagnostics.iter().any(|d| d.message.contains("expansion step limit exceeded")) {
+        if full.diagnostics.iter().any(|d| is_stop_limit(&d.message)) {
             return full;
         }
         *cache = None;
     }
     let masked: &str = prepared[entry].text.as_ref();
+    let body_size_pt = document_body_size(documents);
     let reusable = cache.as_ref().is_some_and(|c| {
-        !c.lent && c.entry_path == document.path && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
+        !c.lent
+            && c.entry_path == document.path
+            && c.body_size_pt == body_size_pt
+            && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
     });
     let expansion = if reusable {
         update_cache(cache.as_mut().expect("checked"), documents, entry, &prepared)
@@ -1086,7 +1181,10 @@ pub fn expand_project_with_cache(
 
 fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepared<'_>]) -> (ExpansionCache, Option<Expansion>) {
     let masked: &str = prepared[entry].text.as_ref();
-    let init: Rc<dyn Fn(&mut Engine)> = Rc::new(configure);
+    let body_size_pt = document_body_size(documents);
+    let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
+        configure_with_body_size(engine, body_size_pt);
+    });
     let expander = IncrementalExpander::with_host(masked, limits_for(masked.len()), CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
     let mut marks = vec![Mark { index: 0, out_len: 0, last_span: conv.last_span }];
@@ -1102,6 +1200,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         stretch_log: Vec::new(),
         last_span: conv.last_span,
         old_engine_tokens: 0,
+        body_size_pt,
         halted: false,
         lent: false,
     };
@@ -1330,7 +1429,7 @@ fn recovery_for(message: &str) -> &'static str {
         "kept the existing command definition"
     } else if message.contains("LaTeX Error: Command") && message.contains("undefined") {
         "defined the command anyway"
-    } else if message.contains("limit exceeded") {
+    } else if message.contains("limit exceeded") || is_stop_limit(message) {
         "stopped expanding; the rest of the document was typeset without macro expansion"
     } else {
         "continued expanding after the problem"
@@ -1518,4 +1617,37 @@ fn include(
     }
     let id = engine.push_input(prepared[index].text.as_ref());
     conv.source_documents.insert(id, Some(index));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::after_bracket_option;
+
+    /// The byte index just past the options that `after_bracket_option`
+    /// finds in `text` (whose `[` follows `\begin{lstlisting}` at index 0).
+    fn options_of(text: &str) -> &str {
+        &text[..after_bracket_option(text, 0)]
+    }
+
+    #[test]
+    fn bracket_option_ends_at_the_first_unbraced_bracket() {
+        assert_eq!(options_of("[language=C]\nx]"), "[language=C]");
+        assert_eq!(options_of("[caption={[Short]Long}]\nx]"), "[caption={[Short]Long}]");
+    }
+
+    /// A backslash takes the next byte with it: `\]` does not close the
+    /// options, and `\{` / `\}` do not change the brace depth.
+    #[test]
+    fn bracket_option_skips_escaped_bytes() {
+        assert_eq!(options_of("[caption=Has a \\] mark]\nx]"), "[caption=Has a \\] mark]");
+        assert_eq!(options_of("[caption={Open \\{ only}]\nx]"), "[caption={Open \\{ only}]");
+        assert_eq!(options_of("[caption=Close \\} only]\nx]"), "[caption=Close \\} only]");
+        assert_eq!(options_of("[caption=Two \\\\]\nx]"), "[caption=Two \\\\]");
+    }
+
+    #[test]
+    fn bracket_option_without_a_close_leaves_the_body_start() {
+        assert_eq!(after_bracket_option("[caption={open]", 0), 0);
+        assert_eq!(after_bracket_option("\n\n[language=C]", 0), 0);
+    }
 }

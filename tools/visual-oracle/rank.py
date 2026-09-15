@@ -118,7 +118,10 @@ def v2_words(display_list):
         for item in page.get("items", []):
             if item.get("kind") != "glyph_run" or not item.get("glyphs"):
                 continue
-            text = item.get("text") or ""
+            # Cluster ranges are UTF-8 byte offsets, not str indices: slicing
+            # the str drifts after the first non-ASCII character (`∈`, a
+            # U+2212 minus) and hands the next glyphs their neighbours' text.
+            text = (item.get("text") or "").encode("utf-8")
             font = fonts.get(item.get("font_id"))
             name = (font or {}).get("postscript_name", item.get("font_id", "")[:12])
             math = is_math_font(font)
@@ -127,7 +130,7 @@ def v2_words(display_list):
             for gi, g in enumerate(item["glyphs"]):
                 ci = g.get("cluster", gi)
                 cluster = clusters[ci] if ci < len(clusters) else None
-                ctext = text[cluster["text_start_byte"]:cluster["text_end_byte"]] if cluster else ""
+                ctext = text[cluster["text_start_byte"]:cluster["text_end_byte"]].decode("utf-8", "replace") if cluster else ""
                 glyphs.append({
                     "text": ctext,
                     "x": g["origin_x"] / Q,
@@ -162,9 +165,13 @@ def v2_words(display_list):
 
 
 def norm(text):
-    t = text.lower().replace("?", "")
-    t = re.sub(r"[^\w]", "", t)
-    return t or text.lower()
+    # U+2212 MINUS SIGN and U+002D HYPHEN-MINUS are one word for alignment.
+    # pdfTeX's own PDFs extract a math minus as U+2212 (PyMuPDF), and so does
+    # the candidate; pdftext's glyph-name table maps `minus` to "-", and the
+    # pinned references were made with it.
+    folded = text.lower().replace("−", "-")
+    t = re.sub(r"[^\w]", "", folded.replace("?", ""))
+    return t or folded
 
 
 def align_words(ref_words, cand_words):

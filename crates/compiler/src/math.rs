@@ -23,10 +23,91 @@ pub const RADICALEX_THICKNESS_EM: f64 = 0.036;
 pub const MATRIX_COLUMN_GAP_EM: f64 = 1.0;
 pub const MATRIX_ROW_GAP_EM: f64 = 0.3;
 pub const QUAD_EM: f64 = 1.0;
+/// Gap after a display tag on the compiler's own layout route. The render
+/// pipeline drops it with the tag atoms (`adapter::strip_tag`) and places the
+/// tag as amsmath does, flush to the margin (#441); this route has no line
+/// width to place it against.
+pub const INTERIM_TAG_GAP_EM: f64 = 2.0 * QUAD_EM;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MathList {
     pub atoms: Vec<MathAtom>,
+}
+
+/// The text-face state carried by a piece of a mixed text/math run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextStyle {
+    Normal,
+    Bold,
+    Italic,
+    BoldItalic,
+}
+
+impl TextStyle {
+    pub const NORMAL: Self = Self::Normal;
+    pub const BOLD: Self = Self::Bold;
+    pub const ITALIC: Self = Self::Italic;
+
+    fn bold(self) -> Self {
+        match self {
+            Self::Normal | Self::Bold => Self::Bold,
+            Self::Italic | Self::BoldItalic => Self::BoldItalic,
+        }
+    }
+
+    fn italic(self) -> Self {
+        match self {
+            Self::Normal | Self::Italic => Self::Italic,
+            Self::Bold | Self::BoldItalic => Self::BoldItalic,
+        }
+    }
+
+    fn toggle_italic(self) -> Self {
+        match self {
+            Self::Normal => Self::Italic,
+            Self::Bold => Self::BoldItalic,
+            Self::Italic => Self::Normal,
+            Self::BoldItalic => Self::Bold,
+        }
+    }
+
+    fn normal(self) -> Self {
+        match self {
+            Self::Italic => Self::Normal,
+            Self::BoldItalic => Self::Bold,
+            other => other,
+        }
+    }
+
+    fn medium(self) -> Self {
+        match self {
+            Self::Bold => Self::Normal,
+            Self::BoldItalic => Self::Italic,
+            other => other,
+        }
+    }
+
+    fn reset(self) -> Self {
+        let _ = self;
+        Self::Normal
+    }
+}
+
+/// One part of a text-mode argument. Nested math remains a real math list so
+/// later layout stages can typeset it at the surrounding text size.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TextPiece {
+    Text { text: String, style: TextStyle },
+    Math(MathList),
+}
+
+impl TextPiece {
+    pub fn text(text: impl Into<String>, style: TextStyle) -> Self {
+        Self::Text {
+            text: text.into(),
+            style,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +159,8 @@ pub enum Nucleus {
     },
     /// Literal text with explicit Roman intent, distinct from math symbols.
     Text(String),
+    /// A text-mode hbox containing literal text and inline math pieces.
+    TextRun(Vec<TextPiece>),
     /// Explicit TeX math glue. `em` is in quads of the math symbol font
     /// (18 mu: `\,` is 3/18) unless `font_em`, when it is in ems of the
     /// current text font: `\quad` is `\hskip1em` (latex.ltx), and `em` in
@@ -178,6 +261,416 @@ pub enum Nucleus {
         above: MathList,
         below: MathList,
     },
+    /// amsmath `\sideset{#1}{#2}{#3}` (`amsmath.sty` 921-929): `operator`
+    /// is `#3`, whose last atom carries the right-hand pair `#2` as its own
+    /// scripts, and `left_superscript`/`left_subscript` are `#1`.
+    ///
+    /// amsmath typesets `\hbox to\dimen@{}\mathop{\kern-\dimen@\box4
+    /// \box6}`, which is two atoms: the parser puts an empty ordinary
+    /// [`Nucleus::Group`] in front of this one, and this atom is the
+    /// `\mathop` (class `Op`), so scripts written after `#3` are its own.
+    /// All three pieces are measured in `\displaystyle` whatever the
+    /// current style, the left pair hangs from an empty box as tall and deep
+    /// as the display operator (left-aligned) and the right pair is
+    /// `#3\nolimits#2`; math-layout's `Atom::left_scripts` sets that exactly.
+    SideSet {
+        operator: MathList,
+        left_superscript: Option<MathList>,
+        left_subscript: Option<MathList>,
+    },
+}
+
+/// Returns the literal text when a run contains no nested math.
+pub fn text_run_plain_text(pieces: &[TextPiece]) -> Option<String> {
+    let mut text = String::new();
+    for piece in pieces {
+        match piece {
+            TextPiece::Text { text: part, .. } => text.push_str(part),
+            TextPiece::Math(_) => return None,
+        }
+    }
+    Some(text)
+}
+
+/// Flattens a mixed text/math run for string-only references when no source is
+/// available. Literal text and rendered symbol glyphs are preserved; simple
+/// superscripts use Unicode glyphs (`x^2` becomes `x²`).
+pub fn text_run_reference_text(pieces: &[TextPiece]) -> String {
+    text_run_reference_text_inner(pieces, None)
+}
+
+/// Flattens a mixed text/math run for a reference, using the source span of a
+/// composite math atom when it has no single rendered glyph. References do not
+/// retain a structured `MathList`, so this is deliberately a plain-text view.
+pub fn text_run_reference_text_with_source(pieces: &[TextPiece], source: &str) -> String {
+    text_run_reference_text_inner(pieces, Some(source))
+}
+
+fn text_run_reference_text_inner(pieces: &[TextPiece], source: Option<&str>) -> String {
+    let mut text = String::new();
+    for piece in pieces {
+        match piece {
+            TextPiece::Text { text: part, .. } => text.push_str(part),
+            TextPiece::Math(list) => append_math_reference_text(&mut text, list, source),
+        }
+    }
+    text
+}
+
+fn append_math_reference_text(out: &mut String, list: &MathList, source: Option<&str>) {
+    for atom in &list.atoms {
+        match &atom.nucleus {
+            Nucleus::Symbol(text)
+            | Nucleus::Text(text)
+            | Nucleus::Bold(text)
+            | Nucleus::SizedDelimiter { glyph: text, .. } => out.push_str(text),
+            Nucleus::TextRun(pieces) => out.push_str(&text_run_reference_text_inner(pieces, source)),
+            Nucleus::Space { .. } => out.push(' '),
+            Nucleus::Fraction {
+                numerator,
+                denominator,
+            }
+            | Nucleus::GenFraction {
+                numerator,
+                denominator,
+                ..
+            } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    out.push('(');
+                    append_math_reference_text(out, numerator, source);
+                    out.push('/');
+                    append_math_reference_text(out, denominator, source);
+                    out.push(')');
+                }
+            }
+            Nucleus::Radical(body) => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    out.push('√');
+                    append_math_reference_text(out, body, source);
+                }
+            }
+            Nucleus::Framed { body, .. }
+            | Nucleus::Accent { body, .. }
+            | Nucleus::Stacked { base: body, .. } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    append_math_reference_text(out, body, source);
+                }
+            }
+            Nucleus::Matrix {
+                rows, left, right, ..
+            } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    out.push_str(left);
+                    for (row_index, row) in rows.iter().enumerate() {
+                        if row_index > 0 {
+                            out.push(';');
+                        }
+                        for (column_index, cell) in row.iter().enumerate() {
+                            if column_index > 0 {
+                                out.push(',');
+                            }
+                            append_math_reference_text(out, cell, source);
+                        }
+                    }
+                    out.push_str(right);
+                }
+            }
+            Nucleus::Rule(_) => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                }
+            }
+            Nucleus::SubArray { rows, .. } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    for (index, row) in rows.iter().enumerate() {
+                        if index > 0 {
+                            out.push(';');
+                        }
+                        append_math_reference_text(out, row, source);
+                    }
+                }
+            }
+            Nucleus::Group(body) | Nucleus::Phantom { body, .. } | Nucleus::Operator { body, .. } => {
+                append_math_reference_text(out, body, source)
+            }
+            Nucleus::ExtArrow { above, below, .. } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    append_math_reference_text(out, above, source);
+                    append_math_reference_text(out, below, source);
+                }
+            }
+            Nucleus::SideSet { operator, .. } => {
+                if let Some(raw) = source_text(source, atom) {
+                    out.push_str(raw);
+                } else {
+                    append_math_reference_text(out, operator, source);
+                }
+            }
+        }
+        if let Some(superscript) = &atom.superscript {
+            append_math_script(out, '^', superscript, source);
+        }
+        if let Some(subscript) = &atom.subscript {
+            append_math_script(out, '_', subscript, source);
+        }
+    }
+}
+
+fn source_text<'a>(source: Option<&'a str>, atom: &MathAtom) -> Option<&'a str> {
+    let source = source?;
+    let mut end = reference_atom_end(atom).min(source.len());
+    while source.as_bytes().get(end) == Some(&b'}') {
+        end += 1;
+    }
+    source.get(atom.span.start..end)
+}
+
+fn reference_atom_end(atom: &MathAtom) -> usize {
+    let mut end = atom.span.end;
+    let mut extend = |list: &MathList| {
+        if let Some(nested_end) = reference_list_end(list) {
+            end = end.max(nested_end);
+        }
+    };
+    match &atom.nucleus {
+        Nucleus::Fraction {
+            numerator,
+            denominator,
+        }
+        | Nucleus::GenFraction {
+            numerator,
+            denominator,
+            ..
+        } => {
+            extend(numerator);
+            extend(denominator);
+        }
+        Nucleus::Radical(body)
+        | Nucleus::Framed { body, .. }
+        | Nucleus::Group(body)
+        | Nucleus::Phantom { body, .. }
+        | Nucleus::Operator { body, .. }
+        | Nucleus::Accent { body, .. } => extend(body),
+        Nucleus::TextRun(pieces) => {
+            for piece in pieces {
+                if let TextPiece::Math(list) = piece {
+                    extend(list);
+                }
+            }
+        }
+        Nucleus::Stacked { base, over, under } => {
+            extend(base);
+            if let Some(over) = over {
+                extend(over);
+            }
+            if let Some(under) = under {
+                extend(under);
+            }
+        }
+        Nucleus::Matrix { rows, .. } => {
+            for row in rows {
+                for cell in row {
+                    extend(cell);
+                }
+            }
+        }
+        Nucleus::SubArray { rows, .. } => {
+            for row in rows {
+                extend(row);
+            }
+        }
+        Nucleus::SideSet {
+            operator,
+            left_superscript,
+            left_subscript,
+        } => {
+            extend(operator);
+            for list in [left_superscript, left_subscript].into_iter().flatten() {
+                extend(list);
+            }
+        }
+        Nucleus::ExtArrow { above, below, .. } => {
+            extend(above);
+            extend(below);
+        }
+        Nucleus::Symbol(_)
+        | Nucleus::SizedDelimiter { .. }
+        | Nucleus::Text(_)
+        | Nucleus::Space { .. }
+        | Nucleus::Rule(_)
+        | Nucleus::Bold(_) => {}
+    }
+    end
+}
+
+fn reference_list_end(list: &MathList) -> Option<usize> {
+    list.atoms.iter().map(reference_atom_end).max()
+}
+
+fn append_math_script(out: &mut String, marker: char, list: &MathList, source: Option<&str>) {
+    let text = math_reference_text(list, source);
+    if marker == '^' {
+        if let Some(superscript) = text
+            .chars()
+            .map(superscript_char)
+            .collect::<Option<String>>()
+        {
+            out.push_str(&superscript);
+            return;
+        }
+    } else if marker == '_' {
+        if let Some(subscript) = text.chars().map(subscript_char).collect::<Option<String>>() {
+            out.push_str(&subscript);
+            return;
+        }
+    }
+    out.push(marker);
+    out.push_str(&text);
+}
+
+fn math_reference_text(list: &MathList, source: Option<&str>) -> String {
+    let mut text = String::new();
+    append_math_reference_text(&mut text, list, source);
+    text
+}
+
+fn superscript_char(ch: char) -> Option<char> {
+    Some(match ch {
+        '0' => '⁰',
+        '1' => '¹',
+        '2' => '²',
+        '3' => '³',
+        '4' => '⁴',
+        '5' => '⁵',
+        '6' => '⁶',
+        '7' => '⁷',
+        '8' => '⁸',
+        '9' => '⁹',
+        '+' => '⁺',
+        '-' => '⁻',
+        '=' => '⁼',
+        '(' => '⁽',
+        ')' => '⁾',
+        'n' => 'ⁿ',
+        'i' => 'ⁱ',
+        'r' => 'ʳ',
+        'j' => 'ʲ',
+        'h' => 'ʰ',
+        'k' => 'ᵏ',
+        'l' => 'ˡ',
+        'm' => 'ᵐ',
+        's' => 'ˢ',
+        'w' => 'ʷ',
+        'x' => 'ˣ',
+        'y' => 'ʸ',
+        'z' => 'ᶻ',
+        _ => return None,
+    })
+}
+
+fn subscript_char(ch: char) -> Option<char> {
+    Some(match ch {
+        '0' => '₀',
+        '1' => '₁',
+        '2' => '₂',
+        '3' => '₃',
+        '4' => '₄',
+        '5' => '₅',
+        '6' => '₆',
+        '7' => '₇',
+        '8' => '₈',
+        '9' => '₉',
+        '+' => '₊',
+        '-' => '₋',
+        '=' => '₌',
+        '(' => '₍',
+        ')' => '₎',
+        'a' => 'ₐ',
+        'e' => 'ₑ',
+        'h' => 'ₕ',
+        'i' => 'ᵢ',
+        'j' => 'ⱼ',
+        'k' => 'ₖ',
+        'l' => 'ₗ',
+        'm' => 'ₘ',
+        'n' => 'ₙ',
+        'o' => 'ₒ',
+        'p' => 'ₚ',
+        'r' => 'ᵣ',
+        's' => 'ₛ',
+        't' => 'ₜ',
+        'u' => 'ᵤ',
+        'v' => 'ᵥ',
+        'x' => 'ₓ',
+        _ => return None,
+    })
+}
+
+fn text_run_nucleus(pieces: Vec<TextPiece>) -> Nucleus {
+    if pieces.iter().all(|piece| {
+        matches!(
+            piece,
+            TextPiece::Text {
+                style: TextStyle::Normal,
+                ..
+            }
+        )
+    }) {
+        return Nucleus::Text(text_run_plain_text(&pieces).unwrap_or_default());
+    }
+    Nucleus::TextRun(pieces)
+}
+
+fn push_text_piece(pieces: &mut Vec<TextPiece>, text: impl Into<String>, style: TextStyle) {
+    let text = text.into();
+    if text.is_empty() {
+        return;
+    }
+    if let Some(TextPiece::Text {
+        text: previous,
+        style: previous_style,
+    }) = pieces.last_mut()
+    {
+        if *previous_style == style {
+            previous.push_str(&text);
+            return;
+        }
+    }
+    pieces.push(TextPiece::text(text, style));
+}
+
+fn append_text_pieces(dst: &mut Vec<TextPiece>, src: impl IntoIterator<Item = TextPiece>) {
+    for piece in src {
+        match piece {
+            TextPiece::Text { text, style } => push_text_piece(dst, text, style),
+            TextPiece::Math(list) => dst.push(TextPiece::Math(list)),
+        }
+    }
+}
+
+fn text_command_style(name: &str, style: TextStyle) -> Option<TextStyle> {
+    Some(match name {
+        "text" | "mbox" | "hbox" | "texttt" | "textsf" => style,
+        "textbf" => style.bold(),
+        "textit" | "textsl" => style.italic(),
+        "emph" => style.toggle_italic(),
+        "textup" | "textrm" => style.normal(),
+        "textmd" => style.medium(),
+        "textnormal" => style.reset(),
+        _ => return None,
+    })
 }
 
 /// Which extensible arrow an [`Nucleus::ExtArrow`] draws.
@@ -620,6 +1113,8 @@ pub fn parse_tokens_reporting_unclosed(
         pending: Vec::new(),
         unclosed: None,
         cut_off,
+        open_lefts: 0,
+        dropped_lefts: 0,
     };
     let list = parser.list(false);
     (list, parser.unclosed)
@@ -648,6 +1143,22 @@ pub fn is_math_environment(name: &str) -> bool {
 // depth, so the guard fires first on every profile.
 pub const MAX_MATH_DEPTH: usize = 32;
 
+/// The deepest `\left`...`\right` nesting in one formula. Sizing a pair lays
+/// out everything it encloses (`left_right_stretch_scales`), so the cost is
+/// the nesting depth times the formula length: 10k nested pairs took 15 s.
+/// Past the limit the extra delimiters are dropped with TeX's capacity error:
+/// each `\left` is a TeX group, and TeX allows 255 grouping levels
+/// ([`TEX_GROUPING_LEVELS`]). A formula in a document body already sits in
+/// two of them (the `document` environment and the math shift), so pdflatex
+/// accepts 253 nested `\left`s there and stops at the 254th, in display and
+/// inline math alike (measured, TeX Live 2026). Other enclosing groups make
+/// TeX stop sooner; they are not counted here. The layout is not recursive
+/// per pair: 255 levels ran on a 256 KiB release and 512 KiB debug thread.
+pub const MAX_LEFT_RIGHT_DEPTH: usize = TEX_GROUPING_LEVELS - 2;
+
+/// tex.web `max_quarterword`: the most grouping levels TeX allows (§274).
+pub const TEX_GROUPING_LEVELS: usize = 255;
+
 struct MathParser<'a> {
     tokens: &'a [Token],
     i: usize,
@@ -664,6 +1175,10 @@ struct MathParser<'a> {
     unclosed: Option<Span>,
     /// The tokens end where unterminated math was cut off.
     cut_off: bool,
+    /// `\left`s still open, and those dropped past [`MAX_LEFT_RIGHT_DEPTH`]
+    /// (their `\right`s are dropped too).
+    open_lefts: usize,
+    dropped_lefts: usize,
 }
 
 impl MathParser<'_> {
@@ -791,19 +1306,7 @@ impl MathParser<'_> {
                 // collects every following `'` as another `\prime` and a
                 // directly following `^{...}` into the same superscript.
                 TokenKind::Word(ref word) if word == "'" => {
-                    let mut script = MathList { atoms: Vec::new() };
-                    while let Some(t) = self.tokens.get(self.i) {
-                        if !matches!(&t.kind, TokenKind::Word(w) if w == "'") {
-                            break;
-                        }
-                        script.atoms.push(symbol("\u{2032}".into(), t.span));
-                        self.i += 1;
-                    }
-                    if matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Superscript)) {
-                        let marker = self.tokens[self.i].span;
-                        self.i += 1;
-                        script.atoms.extend(self.script_argument(marker).atoms);
-                    }
+                    let script = self.prime_script();
                     if atoms.is_empty() {
                         atoms.push(symbol(String::new(), token.span));
                     }
@@ -852,6 +1355,133 @@ impl MathParser<'_> {
             self.unclosed = open.or_else(|| self.tokens.last().map(|t| t.span));
         }
         MathList { atoms }
+    }
+
+    /// The superscript a run of `'` starts at the current token (latex.ltx
+    /// `\active@math@prime`): one `\prime` per `'`, then a directly
+    /// following `^{...}`.
+    fn prime_script(&mut self) -> MathList {
+        let mut script = MathList { atoms: Vec::new() };
+        while let Some(t) = self.tokens.get(self.i) {
+            if !matches!(&t.kind, TokenKind::Word(w) if w == "'") {
+                break;
+            }
+            script.atoms.push(symbol("\u{2032}".into(), t.span));
+            self.i += 1;
+        }
+        if matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Superscript)) {
+            let marker = self.tokens[self.i].span;
+            self.i += 1;
+            script.atoms.extend(self.script_argument(marker).atoms);
+        }
+        script
+    }
+
+    /// amsmath `\sideset{#1}{#2}{#3}` (see [`Nucleus::SideSet`]): returns
+    /// the ordinary `\hbox to\dimen@{}` atom and queues the `\mathop`, so
+    /// scripts written after `#3` attach to the `\mathop`.
+    fn sideset(&mut self, span: Span) -> MathAtom {
+        let (left_superscript, left_subscript) = self.sideset_scripts(span);
+        let (right_superscript, right_subscript) = self.sideset_scripts(span);
+        let mut operator = self.required_group("sideset", span);
+        if operator.atoms.is_empty() {
+            operator.atoms.push(symbol(String::new(), span));
+        }
+        // `#3\nolimits#2`: the pair attaches to the last atom of `#3`.
+        let last = operator.atoms.last_mut().expect("pushed above");
+        for (slot, script) in [
+            (&mut last.superscript, right_superscript),
+            (&mut last.subscript, right_subscript),
+        ] {
+            if script.is_some_and(|script| slot.replace(script).is_some()) {
+                self.diagnostics.push(Diagnostic::error(
+                    "duplicate script on a math atom",
+                    Some(span),
+                    Some("used the last script and continued".into()),
+                ));
+            }
+        }
+        self.pending.push(MathAtom {
+            nucleus: Nucleus::SideSet {
+                operator,
+                left_superscript,
+                left_subscript,
+            },
+            ..symbol(String::new(), span)
+        });
+        MathAtom {
+            nucleus: Nucleus::Group(MathList { atoms: Vec::new() }),
+            class_override: Some(AtomClass::Ord),
+            ..symbol(String::new(), span)
+        }
+    }
+
+    /// One braced `\sideset` script group, `{_a^b}`, `{'}` or `{}`: its
+    /// superscript and subscript. amsmath would set any other material in
+    /// the group after the scripts; that is reported and dropped.
+    fn sideset_scripts(&mut self, span: Span) -> (Option<MathList>, Option<MathList>) {
+        while matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Space)) {
+            self.i += 1;
+        }
+        let open = match self.tokens.get(self.i) {
+            Some(token) if token.kind == TokenKind::LBrace => token.span,
+            _ => {
+                if !self.argument_cut_off() {
+                    self.diagnostics.push(Diagnostic::error(
+                        "\\sideset requires a braced group of scripts",
+                        Some(span),
+                        Some("used an empty group and continued".into()),
+                    ));
+                }
+                return (None, None);
+            }
+        };
+        self.i += 1;
+        let (mut superscript, mut subscript) = (None, None);
+        while let Some(token) = self.tokens.get(self.i).cloned() {
+            let (slot, script) = match token.kind {
+                TokenKind::RBrace => {
+                    self.i += 1;
+                    return (superscript, subscript);
+                }
+                TokenKind::Space | TokenKind::ParBreak | TokenKind::Comment => {
+                    self.i += 1;
+                    continue;
+                }
+                TokenKind::Word(ref word) if word == "'" => (&mut superscript, self.prime_script()),
+                TokenKind::Superscript | TokenKind::Subscript => {
+                    self.i += 1;
+                    let script = self.script_argument(token.span);
+                    if token.kind == TokenKind::Superscript {
+                        (&mut superscript, script)
+                    } else {
+                        (&mut subscript, script)
+                    }
+                }
+                _ => {
+                    if self.atom().is_some() {
+                        self.diagnostics.push(Diagnostic::error(
+                            "only scripts are supported in a \\sideset group",
+                            Some(token.span),
+                            Some("ignored it and continued".into()),
+                        ));
+                    }
+                    self.pending.clear();
+                    continue;
+                }
+            };
+            if slot.replace(script).is_some() {
+                self.diagnostics.push(Diagnostic::error(
+                    "duplicate script on a math atom",
+                    Some(token.span),
+                    Some("used the last script and continued".into()),
+                ));
+            }
+        }
+        if self.unclosed.is_none() {
+            self.unclosed = Some(open);
+        }
+        (superscript, subscript)
     }
 
     fn script_argument(&mut self, marker: Span) -> MathList {
@@ -1071,6 +1701,22 @@ impl MathParser<'_> {
             // enum's own doc comment on `Nucleus`), leaving exactly the
             // written kern between the two glyphs, not kern-plus-Rel-Rel-gap.
             //
+            // `\coloneqq` (":=") = `\vcentcolon \mathrel{\mkern-1.2mu} =`
+            // (`\MATHT@coloneq`, mathtools.sty 487/506/531). Only when
+            // mathtools is loaded: without it the command keeps the
+            // precomposed U+2254 glyph from `command_glyph` below. pdfLaTeX
+            // with mathtools (12pt lmodern, measured): the colon is raised
+            // 0.415bp like `\vcentcolon`, the `=` starts 0.797bp (1.2mu)
+            // before the colon's advance ends, and `$a\coloneqq b$` is
+            // 29.43333pt wide — the same as `\eqqcolon`.
+            "coloneqq" if self.packages.mathtools => {
+                let atoms = vec![vcentcolon_atom(span), mkern(-1.2, span), symbol("=".into(), span)];
+                MathAtom {
+                    nucleus: Nucleus::Group(MathList { atoms }),
+                    class_override: Some(AtomClass::Rel),
+                    ..symbol(String::new(), span)
+                }
+            }
             // `\eqqcolon` ("=:") = `= \mathrel{\mkern-1.2mu} \vcentcolon`.
             "eqqcolon" => {
                 let atoms = vec![symbol("=".into(), span), mkern(-1.2, span), vcentcolon_atom(span)];
@@ -1285,8 +1931,7 @@ impl MathParser<'_> {
             // Upright roman is already the math default in this subset, and
             // the other style switches have no distinct face yet: keep the
             // argument's content rather than dropping or garbling it.
-            "mathrm" | "mathit" | "mathsf" | "mathtt" | "mathnormal" | "boldsymbol" | "bm"
-            | "mbox" | "hbox" | "textrm" | "textit" | "textnormal" => {
+            "mathrm" | "mathit" | "mathsf" | "mathtt" | "mathnormal" | "boldsymbol" | "bm" => {
                 // `\mathsf{AB}`, `\mathtt{T}`, `\mathit{diff}` with a plain
                 // argument: the letters of that math alphabet (fontmath.ltx
                 // `\DeclareMathAlphabet`: OT1 cmss/m/n, cmtt/m/n, cmr/m/it)
@@ -1297,7 +1942,7 @@ impl MathParser<'_> {
                     // fontmath.ltx: `\mathrm` is the `operators` font (OT1
                     // cmr/m/n), the upright roman `Text` sets, so `\mathrm{K}`
                     // is upright; math ignores the spaces in the argument.
-                    let (text, argument_span) = self.required_text_group(&name, span);
+                    let (text, argument_span) = self.required_text_group_string(&name, span);
                     let span = span.merge(argument_span);
                     let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
                     if letters.is_empty() {
@@ -1306,7 +1951,7 @@ impl MathParser<'_> {
                         text_atom(letters, span)
                     }
                 } else if matches!(&*name, "mathit" | "mathsf" | "mathtt") && self.plain_text_argument() {
-                    let (text, argument_span) = self.required_text_group(&name, span);
+                    let (text, argument_span) = self.required_text_group_string(&name, span);
                     let span = span.merge(argument_span);
                     let glyphs: String = text
                         .chars()
@@ -1329,12 +1974,29 @@ impl MathParser<'_> {
             // time (`left_right_stretch_scales`); here they just record which
             // role they play so that pairing pass can find them.
             "left" | "right" => {
-                let role = if name == "left" {
-                    DelimiterRole::Left
+                let delimiter = self.take_delimiter(&name, span);
+                if name == "left" {
+                    if self.open_lefts >= MAX_LEFT_RIGHT_DEPTH {
+                        if self.dropped_lefts == 0 {
+                            self.diagnostics.push(Diagnostic::error(
+                                format!("TeX capacity exceeded, sorry [grouping levels={TEX_GROUPING_LEVELS}]."),
+                                Some(span),
+                                Some("dropped the \\left/\\right delimiters nested past the limit".into()),
+                            ));
+                        }
+                        self.dropped_lefts += 1;
+                        space(0.0, span)
+                    } else {
+                        self.open_lefts += 1;
+                        left_right_delimiter(delimiter, DelimiterRole::Left)
+                    }
+                } else if self.dropped_lefts > 0 {
+                    self.dropped_lefts -= 1;
+                    space(0.0, span)
                 } else {
-                    DelimiterRole::Right
-                };
-                left_right_delimiter(self.take_delimiter(&name, span), role)
+                    self.open_lefts = self.open_lefts.saturating_sub(1);
+                    left_right_delimiter(delimiter, DelimiterRole::Right)
+                }
             }
             "big" | "Big" | "bigg" | "Bigg" | "bigl" | "Bigl" | "biggl" | "Biggl" | "bigr"
             | "Bigr" | "biggr" | "Biggr" | "bigm" | "Bigm" | "biggm" | "Biggm" => {
@@ -1400,10 +2062,10 @@ impl MathParser<'_> {
                 gen_fraction(numerator, denominator, binom, style, span)
             }
             "genfrac" => {
-                let (left, _) = self.required_text_group("genfrac", span);
-                let (right, _) = self.required_text_group("genfrac", span);
-                let (thickness, thickness_span) = self.required_text_group("genfrac", span);
-                let (style, _) = self.required_text_group("genfrac", span);
+                let (left, _) = self.required_text_group_string("genfrac", span);
+                let (right, _) = self.required_text_group_string("genfrac", span);
+                let (thickness, thickness_span) = self.required_text_group_string("genfrac", span);
+                let (style, _) = self.required_text_group_string("genfrac", span);
                 let numerator = self.required_group("genfrac", span);
                 let denominator = self.required_group("genfrac", span);
                 let thickness = thickness.trim();
@@ -1495,6 +2157,9 @@ impl MathParser<'_> {
                     _ => radical,
                 }
             }
+            // amsmath.sty 921-929; base LaTeX2e has no `\sideset`.
+            "sideset" if !self.packages.amsmath => self.missing_package(&name, "amsmath", span),
+            "sideset" => self.sideset(span),
             "overset" | "stackrel" | "underset" => {
                 let script = self.required_group(&name, span);
                 let base = self.required_group(&name, span);
@@ -1514,9 +2179,15 @@ impl MathParser<'_> {
                 }
             }
             "mathbf" | "textbf" => {
-                let (text, argument_span) = self.required_text_group(&name, span);
+                let (pieces, argument_span) =
+                    self.required_text_group_styled(&name, span, TextStyle::BOLD);
+                let nucleus = if let Some(text) = text_run_plain_text(&pieces) {
+                    Nucleus::Bold(text)
+                } else {
+                    Nucleus::TextRun(pieces)
+                };
                 MathAtom {
-                    nucleus: Nucleus::Bold(text),
+                    nucleus,
                     span: span.merge(argument_span),
                     superscript: None,
                     subscript: None,
@@ -1555,11 +2226,24 @@ impl MathParser<'_> {
             "tag" => {
                 let starred = matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Word(w)) if w == "*");
                 self.skip_star();
-                let (text, argument_span) = self.required_text_group("tag", span);
-                let label = if starred { text } else { format!("({text})") };
-                self.pending
-                    .push(text_atom(label, span.merge(argument_span)));
-                text_space(2.0 * QUAD_EM, span)
+                let (mut pieces, argument_span) = self.required_text_group("tag", span);
+                if !starred {
+                    let mut wrapped = Vec::with_capacity(pieces.len() + 2);
+                    push_text_piece(&mut wrapped, "(", TextStyle::NORMAL);
+                    append_text_pieces(&mut wrapped, pieces);
+                    push_text_piece(&mut wrapped, ")", TextStyle::NORMAL);
+                    pieces = wrapped;
+                }
+                self.pending.push(MathAtom {
+                    nucleus: text_run_nucleus(pieces),
+                    span: span.merge(argument_span),
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                });
+                text_space(INTERIM_TAG_GAP_EM, span)
             }
             // The kernel's `\pmod` (`latex.ltx` 15709) opens with
             // `\mkern18mu`; amsmath renews it through `\pod`, which is
@@ -1601,9 +2285,23 @@ impl MathParser<'_> {
                 space(0.0, span)
             }
             "text" => {
-                let (text, argument_span) = self.required_text_group("text", span);
+                let (pieces, argument_span) = self.required_text_group("text", span);
                 MathAtom {
-                    nucleus: Nucleus::Text(text),
+                    nucleus: text_run_nucleus(pieces),
+                    span: span.merge(argument_span),
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                }
+            }
+            "textit" | "textrm" | "textnormal" | "mbox" | "hbox" => {
+                let style =
+                    text_command_style(&name, TextStyle::NORMAL).unwrap_or(TextStyle::NORMAL);
+                let (pieces, argument_span) = self.required_text_group_styled(&name, span, style);
+                MathAtom {
+                    nucleus: text_run_nucleus(pieces),
                     span: span.merge(argument_span),
                     superscript: None,
                     subscript: None,
@@ -1615,7 +2313,7 @@ impl MathParser<'_> {
             "quad" => text_space(QUAD_EM, span),
             "qquad" => text_space(2.0 * QUAD_EM, span),
             "mathbb" => {
-                let (text, argument_span) = self.required_text_group("mathbb", span);
+                let (text, argument_span) = self.required_text_group_string("mathbb", span);
                 let span = span.merge(argument_span);
                 let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
                 match letters
@@ -1641,7 +2339,7 @@ impl MathParser<'_> {
             // Euler Fraktur letters as Unicode mathematical fraktur; digits
             // and other characters are kept as they are.
             "mathfrak" => {
-                let (text, argument_span) = self.required_text_group("mathfrak", span);
+                let (text, argument_span) = self.required_text_group_string("mathfrak", span);
                 let span = span.merge(argument_span);
                 let glyphs: String = text
                     .chars()
@@ -1655,7 +2353,7 @@ impl MathParser<'_> {
                 }
             }
             "mathcal" => {
-                let (text, argument_span) = self.required_text_group("mathcal", span);
+                let (text, argument_span) = self.required_text_group_string("mathcal", span);
                 let span = span.merge(argument_span);
                 let letters: String = text.chars().filter(|c| !c.is_whitespace()).collect();
                 match letters
@@ -1969,7 +2667,7 @@ impl MathParser<'_> {
         }
         match self.tokens.get(self.i).map(|t| &t.kind) {
             Some(TokenKind::LBrace) => {}
-            _ => return self.required_text_group(command, span),
+            _ => return self.required_text_group_string(command, span),
         }
         let open = self.tokens[self.i].span;
         self.i += 1;
@@ -2049,6 +2747,8 @@ impl MathParser<'_> {
             pending: Vec::new(),
             unclosed: None,
             cut_off: false,
+            open_lefts: 0,
+            dropped_lefts: 0,
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {
@@ -2174,30 +2874,113 @@ impl MathParser<'_> {
         }
     }
 
-    fn required_text_group(&mut self, command: &str, span: Span) -> (String, Span) {
+    fn required_text_group(&mut self, command: &str, span: Span) -> (Vec<TextPiece>, Span) {
+        self.required_text_group_styled(command, span, TextStyle::NORMAL)
+    }
+
+    fn required_text_group_string(&mut self, command: &str, span: Span) -> (String, Span) {
+        let (pieces, argument_span) = self.required_text_group(command, span);
+        if pieces
+            .iter()
+            .any(|piece| matches!(piece, TextPiece::Math(_)))
+        {
+            self.diagnostics.push(Diagnostic::error(
+                format!("math syntax is not supported inside \\{command}"),
+                Some(argument_span),
+                Some("used only the literal text and continued".into()),
+            ));
+        }
+        let text = pieces
+            .into_iter()
+            .filter_map(|piece| match piece {
+                TextPiece::Text { text, .. } => Some(text),
+                TextPiece::Math(_) => None,
+            })
+            .collect();
+        (text, argument_span)
+    }
+
+    fn required_text_group_styled(
+        &mut self,
+        command: &str,
+        span: Span,
+        style: TextStyle,
+    ) -> (Vec<TextPiece>, Span) {
         while matches!(
             self.tokens.get(self.i).map(|t| &t.kind),
             Some(TokenKind::Space)
         ) {
             self.i += 1;
         }
+        if self.depth > MAX_MATH_DEPTH {
+            let argument_span = self.skip_text_group_argument(span);
+            self.diagnostics.push(Diagnostic::error(
+                format!("math nesting deeper than {MAX_MATH_DEPTH} levels is not supported"),
+                Some(argument_span),
+                Some("stopped descending and typeset nothing further in this expression".into()),
+            ));
+            return (Vec::new(), argument_span);
+        }
+        self.depth += 1;
+        let result = self.required_text_group_styled_inner(command, span, style);
+        self.depth -= 1;
+        result
+    }
+
+    fn skip_text_group_argument(&mut self, fallback: Span) -> Span {
+        while matches!(
+            self.tokens.get(self.i).map(|t| &t.kind),
+            Some(TokenKind::Space)
+        ) {
+            self.i += 1;
+        }
+        let Some(first) = self.tokens.get(self.i).cloned() else {
+            return fallback;
+        };
+        if first.kind != TokenKind::LBrace {
+            self.i += 1;
+            return first.span;
+        }
+        let mut depth = 0usize;
+        let mut end = first.span;
+        while let Some(token) = self.tokens.get(self.i).cloned() {
+            self.i += 1;
+            end = token.span;
+            match token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        first.span.merge(end)
+    }
+
+    fn required_text_group_styled_inner(
+        &mut self,
+        command: &str,
+        span: Span,
+        style: TextStyle,
+    ) -> (Vec<TextPiece>, Span) {
         let Some(open) = self.tokens.get(self.i).cloned() else {
             self.diagnostics.push(Diagnostic::error(
                 format!("\\{command} requires an argument"),
                 Some(span),
                 Some("used an empty argument and continued".into()),
             ));
-            return (String::new(), span);
+            return (Vec::new(), span);
         };
         if open.kind != TokenKind::LBrace {
-            // TeX's undelimited argument: without a brace, the argument is
-            // the next single token by itself -- one already-split character
-            // (`\mathbb R`, `\mathbf v`) or one whole control sequence --
-            // not a full group scan.
+            // TeX's undelimited argument is one already-split token, not a
+            // scan through the rest of the surrounding math list.
             return match open.kind {
-                TokenKind::Word(ch) => {
+                TokenKind::Word(text) => {
                     self.i += 1;
-                    (ch, open.span)
+                    (vec![TextPiece::text(text, style)], open.span)
                 }
                 TokenKind::Command(name) => {
                     self.i += 1;
@@ -2206,7 +2989,7 @@ impl MathParser<'_> {
                         Some(open.span),
                         Some("typeset the command name literally and continued".into()),
                     ));
-                    (format!("\\{name}"), open.span)
+                    (vec![TextPiece::text(format!("\\{name}"), style)], open.span)
                 }
                 _ => {
                     self.diagnostics.push(Diagnostic::error(
@@ -2214,14 +2997,23 @@ impl MathParser<'_> {
                         Some(span),
                         Some("used an empty argument and continued".into()),
                     ));
-                    (String::new(), span)
+                    (Vec::new(), span)
                 }
             };
         }
         self.i += 1;
+        self.text_group(command, open.span, style)
+    }
+
+    fn text_group(
+        &mut self,
+        command: &str,
+        open: Span,
+        style: TextStyle,
+    ) -> (Vec<TextPiece>, Span) {
+        let mut pieces = Vec::new();
         let mut depth = 1usize;
-        let mut text = String::new();
-        let mut end = open.span;
+        let mut end = open;
         let mut after_comment = false;
         let mut depth_reported = false;
         while let Some(token) = self.tokens.get(self.i).cloned() {
@@ -2242,13 +3034,13 @@ impl MathParser<'_> {
                 TokenKind::RBrace => {
                     depth -= 1;
                     if depth == 0 {
-                        return (text, open.span.merge(end));
+                        return (pieces, open.merge(end));
                     }
                 }
-                TokenKind::Word(word) => text.push_str(&word),
+                TokenKind::Word(word) => push_text_piece(&mut pieces, word, style),
                 TokenKind::Space => {
                     if !after_comment {
-                        text.push(' ');
+                        push_text_piece(&mut pieces, " ", style);
                     }
                 }
                 TokenKind::Comment => {
@@ -2261,7 +3053,7 @@ impl MathParser<'_> {
                         Some(token.span),
                         Some("collapsed the paragraph break to one space and continued".into()),
                     ));
-                    text.push(' ');
+                    push_text_piece(&mut pieces, " ", style);
                 }
                 TokenKind::LineBreak => {
                     self.diagnostics.push(Diagnostic::error(
@@ -2269,29 +3061,43 @@ impl MathParser<'_> {
                         Some(token.span),
                         Some("typeset the line-break command literally and continued".into()),
                     ));
-                    text.push_str("\\\\");
+                    push_text_piece(&mut pieces, "\\\\", style);
                 }
                 TokenKind::Command(name) => {
-                    self.diagnostics.push(Diagnostic::command_error(
-                        &name,
-                        format!("\\{name} is not supported inside \\{command}"),
-                        Some(token.span),
-                        Some("typeset the command name literally and continued".into()),
-                    ));
-                    text.push('\\');
-                    text.push_str(&name);
+                    if let Some(nested_style) = text_command_style(&name, style) {
+                        let (nested, nested_span) =
+                            self.required_text_group_styled(&name, token.span, nested_style);
+                        end = nested_span;
+                        append_text_pieces(&mut pieces, nested);
+                    } else {
+                        self.diagnostics.push(Diagnostic::command_error(
+                            &name,
+                            format!("\\{name} is not supported inside \\{command}"),
+                            Some(token.span),
+                            Some("typeset the command name literally and continued".into()),
+                        ));
+                        push_text_piece(&mut pieces, format!("\\{name}"), style);
+                    }
                 }
-                TokenKind::Verb { .. } => {
-                    self.diagnostics.push(Diagnostic::error(
-                        format!("\\verb is not supported inside \\{command}"),
-                        Some(token.span),
-                        Some("ignored the \\verb and continued".into()),
-                    ));
+                TokenKind::MathShift => {
+                    let (math, math_span) =
+                        self.text_math(command, token.span, TokenKind::MathShift);
+                    end = math_span;
+                    pieces.push(TextPiece::Math(math));
                 }
-                TokenKind::MathShift
-                | TokenKind::DisplayMathOpen
-                | TokenKind::DisplayMathClose
-                | TokenKind::InlineMathOpen
+                TokenKind::InlineMathOpen => {
+                    let (math, math_span) =
+                        self.text_math(command, token.span, TokenKind::InlineMathClose);
+                    end = math_span;
+                    pieces.push(TextPiece::Math(math));
+                }
+                TokenKind::DisplayMathOpen => {
+                    let (math, math_span) =
+                        self.text_math(command, token.span, TokenKind::DisplayMathClose);
+                    end = math_span;
+                    pieces.push(TextPiece::Math(math));
+                }
+                TokenKind::DisplayMathClose
                 | TokenKind::InlineMathClose
                 | TokenKind::Superscript
                 | TokenKind::Subscript => {
@@ -2300,27 +3106,65 @@ impl MathParser<'_> {
                         Some(token.span),
                         Some("typeset the token literally and continued".into()),
                     ));
-                    text.push_str(match token.kind {
-                        TokenKind::MathShift => "$",
-                        TokenKind::DisplayMathOpen => "\\[",
+                    let literal = match token.kind {
                         TokenKind::DisplayMathClose => "\\]",
-                        TokenKind::InlineMathOpen => "\\(",
                         TokenKind::InlineMathClose => "\\)",
                         TokenKind::Superscript => "^",
                         TokenKind::Subscript => "_",
                         _ => unreachable!(),
-                    });
+                    };
+                    push_text_piece(&mut pieces, literal, style);
+                }
+                TokenKind::Verb { .. } => {
+                    self.diagnostics.push(Diagnostic::error(
+                        format!("\\verb is not supported inside \\{command}"),
+                        Some(token.span),
+                        Some("ignored the \\verb and continued".into()),
+                    ));
                 }
             }
             after_comment = false;
         }
+        self.diagnostics.push(
+            Diagnostic::error(
+                format!("argument to \\{command} is missing its closing brace"),
+                Some(open),
+                Some("closed the text argument at the math delimiter".into()),
+            )
+            .with_help("add a closing '}'"),
+        );
+        (pieces, open.merge(end))
+    }
+
+    fn text_math(&mut self, command: &str, open: Span, close: TokenKind) -> (MathList, Span) {
+        let start = self.i;
+        let mut braces = 0usize;
+        let mut end = open;
+        while let Some(token) = self.tokens.get(self.i).cloned() {
+            if token.kind == close && braces == 0 {
+                let inner = self.tokens[start..self.i].to_vec();
+                self.i += 1;
+                let list = self.sub_list(&inner);
+                return (list, open.merge(token.span));
+            }
+            if matches!(token.kind, TokenKind::RBrace) && braces == 0 {
+                break;
+            }
+            match token.kind {
+                TokenKind::LBrace => braces += 1,
+                TokenKind::RBrace => braces = braces.saturating_sub(1),
+                _ => {}
+            }
+            end = token.span;
+            self.i += 1;
+        }
+        let inner = self.tokens[start..self.i].to_vec();
         self.diagnostics.push(Diagnostic::error(
-            format!("argument to \\{command} is missing its closing brace"),
-            Some(open.span),
-            Some("closed the text argument at the math delimiter".into()),
-        )
-        .with_help("add a closing '}'"));
-        (text, open.span.merge(end))
+            format!("math argument inside \\{command} is missing its closing delimiter"),
+            Some(open.merge(end)),
+            Some("closed the nested math at the end of the text argument".into()),
+        ));
+        (self.sub_list(&inner), open.merge(end))
     }
 
     /// Reads `{name}` after a `\begin` as plain characters.
@@ -2410,7 +3254,7 @@ impl MathParser<'_> {
         }
         if name == "alignedat" {
             // The column-pair count argument; the grid sizes itself from cells.
-            let _ = self.required_text_group("alignedat", span);
+            let _ = self.required_text_group_string("alignedat", span);
         }
         if matches!(name.as_str(), "aligned" | "alignedat" | "split") {
             columns = "rl".repeat(8);
@@ -3206,6 +4050,10 @@ fn takes_display_limits(nucleus: &Nucleus) -> bool {
             "lim" | "liminf" | "limsup" | "max" | "min" | "sup" | "inf" | "det" | "gcd" | "Pr"
         ),
         Nucleus::Symbol(glyph) => matches!(glyph.as_str(), "∑" | "∏"),
+        // amsmath wraps `\sideset` in an outer `\mathop` with the default
+        // `\displaylimits`, so scripts after `#3` are display limits whatever
+        // the inner operator (`\int`'s own `\nolimits` stays inside).
+        Nucleus::SideSet { .. } => true,
         _ => false,
     }
 }
@@ -3255,6 +4103,8 @@ fn atom_class(atom: &MathAtom) -> Option<AtomClass> {
         Nucleus::Text(text) if text == "..." => Inner,
         Nucleus::Fraction { .. } => Inner,
         Nucleus::Operator { .. } => Op,
+        // `\sideset`'s second atom is the `\mathop` (amsmath.sty 928).
+        Nucleus::SideSet { .. } => Op,
         // `\ext@arrow` is `\mathrel{\mathop{...}\limits...}`.
         Nucleus::ExtArrow { .. } => Rel,
         // `\overbrace`/`\underbrace` are `\mathop{..}\limits` (`fontmath.ltx` 430-437).
@@ -3512,6 +4362,58 @@ fn layout_list_with_scales(
     out
 }
 
+fn text_piece_font(style: TextStyle) -> crate::layout::Font {
+    match style {
+        TextStyle::Normal => crate::layout::Font::TimesRoman,
+        TextStyle::Bold => crate::layout::Font::TimesBold,
+        TextStyle::Italic => crate::layout::Font::TimesItalic,
+        TextStyle::BoldItalic => crate::layout::Font::TimesBoldItalic,
+    }
+}
+
+fn layout_text_run(
+    pieces: &[TextPiece],
+    size: f64,
+    root_size: f64,
+    level: usize,
+    atom: &MathAtom,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> MathBox {
+    let mut out = MathBox {
+        items: Vec::new(),
+        width: 0.0,
+        ascent: size,
+        descent: 0.2 * size,
+    };
+    for piece in pieces {
+        match piece {
+            TextPiece::Text { text, style } => {
+                let font = text_piece_font(*style);
+                let width = crate::layout::shaped_width(text, size, font, atom.span, diagnostics).0;
+                out.items.push(MathItem {
+                    font: Some(font),
+                    text: text.clone(),
+                    x: out.width,
+                    baseline: 0.0,
+                    size,
+                    span: atom.span,
+                    rule: None,
+                });
+                out.width += width;
+            }
+            TextPiece::Math(list) => {
+                let mut math = layout_list(list, size, root_size, level, diagnostics);
+                out.ascent = out.ascent.max(math.ascent);
+                out.descent = out.descent.max(math.descent);
+                offset_items(&mut math.items, out.width, 0.0);
+                out.width += math.width;
+                out.items.extend(math.items);
+            }
+        }
+    }
+    out
+}
+
 /// Pairs each `\left` in `list` with the `\right` at the same nesting depth
 /// (a stack of open indices, like matching parentheses) and computes TeX's
 /// rule-19 stretch scale for every matched pair from the atoms strictly
@@ -3710,6 +4612,9 @@ fn layout_nucleus(
                 laid.descent -= raise;
             }
             laid
+        }
+        Nucleus::TextRun(pieces) => {
+            layout_text_run(pieces, size, root_size, level, atom, diagnostics)
         }
         Nucleus::SizedDelimiter { glyph, scale, .. } => {
             let glyph_size = size * scale;
@@ -4088,6 +4993,30 @@ fn layout_nucleus(
             };
             layout_nucleus(&stacked, size, root_size, level, diagnostics)
         }
+        // The left pair on an empty nucleus, then the operator with its own
+        // (right) scripts beside it. This approximate layout has no display
+        // operator size; math-layout's `Atom::left_scripts` is the exact one.
+        Nucleus::SideSet {
+            operator,
+            left_superscript,
+            left_subscript,
+        } => {
+            let carrier = MathList {
+                atoms: vec![MathAtom {
+                    superscript: left_superscript.clone(),
+                    subscript: left_subscript.clone(),
+                    ..symbol(String::new(), atom.span)
+                }],
+            };
+            let mut out = layout_list(&carrier, size, root_size, level, diagnostics);
+            let mut right = layout_list(operator, size, root_size, level, diagnostics);
+            offset_items(&mut right.items, out.width, 0.0);
+            out.items.extend(right.items);
+            out.width += right.width;
+            out.ascent = out.ascent.max(right.ascent);
+            out.descent = out.descent.max(right.descent);
+            out
+        }
         Nucleus::SubArray { rows, .. } => {
             let rows: Vec<Vec<MathList>> = rows.iter().map(|r| vec![r.clone()]).collect();
             layout_matrix(
@@ -4344,6 +5273,18 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
             Nucleus::Symbol(s) => Nucleus::Symbol(s.clone()),
             Nucleus::SizedDelimiter { .. } => atom.nucleus.clone(),
             Nucleus::Text(s) => Nucleus::Text(s.clone()),
+            Nucleus::TextRun(pieces) => Nucleus::TextRun(
+                pieces
+                    .iter()
+                    .map(|piece| match piece {
+                        TextPiece::Text { text, style } => TextPiece::Text {
+                            text: text.clone(),
+                            style: *style,
+                        },
+                        TextPiece::Math(list) => TextPiece::Math(shift_list(list, delta)),
+                    })
+                    .collect(),
+            ),
             Nucleus::Space { em, font_em } => Nucleus::Space {
                 em: *em,
                 font_em: *font_em,
@@ -4426,6 +5367,15 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
             Nucleus::SubArray { rows, align } => Nucleus::SubArray {
                 rows: rows.iter().map(|r| shift_list(r, delta)).collect(),
                 align: *align,
+            },
+            Nucleus::SideSet {
+                operator,
+                left_superscript,
+                left_subscript,
+            } => Nucleus::SideSet {
+                operator: shift_list(operator, delta),
+                left_superscript: left_superscript.as_ref().map(|l| shift_list(l, delta)),
+                left_subscript: left_subscript.as_ref().map(|l| shift_list(l, delta)),
             },
         },
         span: shift(atom.span, delta),
@@ -5774,6 +6724,7 @@ mod spacing_tests {
             close(x(&b, "b"), x(&b, glyph) + own + 5.0);
         }
         for (command, glyphs, own) in [
+            ("coloneqq", vec![":", "="], colon + equals - 1.2),
             ("Coloneqq", vec![":", ":", "="], 2.0 * colon + equals - 0.9 - 1.2),
             ("Eqqcolon", vec!["=", ":", ":"], equals + 2.0 * colon - 1.2 - 0.9),
             ("dblcolon", vec![":", ":"], 2.0 * colon - 0.9),
@@ -5827,7 +6778,7 @@ mod spacing_tests {
         // The fix lives in `vcentcolon_atom`'s atoms, so every family member
         // built from them carries raised colons — each `":"` item, not just
         // the first.
-        for command in ["vcentcolon", "eqqcolon", "Coloneqq", "Eqqcolon", "dblcolon"] {
+        for command in ["vcentcolon", "coloneqq", "eqqcolon", "Coloneqq", "Eqqcolon", "dblcolon"] {
             let b = laid_out_with(&format!(r"\{command}"), size, MATHTOOLS);
             let colons: Vec<_> = b.items.iter().filter(|i| i.text == ":").collect();
             assert!(!colons.is_empty(), "\\{command} lays out no colon");
@@ -6203,6 +7154,14 @@ mod shift_tests {
                     let nested = match &a.nucleus {
                         Nucleus::Symbol(_) | Nucleus::SizedDelimiter { .. } => usize::MAX,
                         Nucleus::Text(_) => usize::MAX,
+                        Nucleus::TextRun(pieces) => pieces
+                            .iter()
+                            .filter_map(|piece| match piece {
+                                TextPiece::Text { .. } => None,
+                                TextPiece::Math(list) => Some(min_start(list)),
+                            })
+                            .min()
+                            .unwrap_or(usize::MAX),
                         Nucleus::Space { .. } | Nucleus::Rule(_) => usize::MAX,
                         Nucleus::Fraction {
                             numerator,
@@ -6240,6 +7199,16 @@ mod shift_tests {
                         Nucleus::SubArray { rows, .. } => {
                             rows.iter().map(min_start).min().unwrap_or(usize::MAX)
                         }
+                        Nucleus::SideSet {
+                            operator,
+                            left_superscript,
+                            left_subscript,
+                        } => [Some(operator), left_superscript.as_ref(), left_subscript.as_ref()]
+                            .into_iter()
+                            .flatten()
+                            .map(min_start)
+                            .min()
+                            .unwrap_or(usize::MAX),
                     };
                     let scripts = a
                         .superscript
@@ -6515,6 +7484,33 @@ mod package_gating_tests {
         };
         assert_eq!(inner.atoms.len(), 3, ": <kern> : -- {inner:?}");
         assert!(matches!(&inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 0.9 / 18.0).abs() < 1e-9));
+
+        // `\coloneqq` = `\vcentcolon \mathrel{\mkern-1.2mu} =` once mathtools
+        // is loaded: one Rel group whose colon is a real `vcentcolon_atom`
+        // (so layout raises it), not the precomposed U+2254 glyph.
+        let (list, diagnostics) = parsed(r"\coloneqq", MATHTOOLS);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 1, "\\coloneqq");
+        assert_eq!(list.atoms[0].class_override, Some(AtomClass::Rel), "\\coloneqq");
+        let Nucleus::Group(inner) = &list.atoms[0].nucleus else {
+            panic!("\\coloneqq is not a group: {:?}", list.atoms[0].nucleus);
+        };
+        assert_eq!(inner.atoms.len(), 3, ": <kern> = -- {inner:?}");
+        assert!(matches!(&inner.atoms[0].nucleus, Nucleus::Symbol(g) if g == ":"));
+        assert_eq!(inner.atoms[0].class_override, Some(AtomClass::Rel));
+        assert!(matches!(&inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 1.2 / 18.0).abs() < 1e-9));
+        assert!(matches!(&inner.atoms[2].nucleus, Nucleus::Symbol(g) if g == "="));
+
+        // Without mathtools it keeps the precomposed glyph it always had.
+        for packages in [MathPackages::KERNEL, AMSSYMB] {
+            let (list, diagnostics) = parsed(r"\coloneqq", packages);
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            assert!(
+                matches!(&list.atoms[0].nucleus, Nucleus::Symbol(g) if g == "≔"),
+                "\\coloneqq without mathtools: {:?}",
+                list.atoms[0].nucleus
+            );
+        }
     }
 
     /// The two math alphabets and the dashed arrows are `amsfonts.sty`'s too,
@@ -6731,5 +7727,191 @@ mod double_bar_tests {
     fn the_double_bar_is_bound_to_latin_modern_math() {
         assert!(crate::lm_math::advance('\u{2016}').is_some());
         assert!(crate::export::unrepresentable("\u{2016}").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod sideset_tests {
+    use super::*;
+
+    const AMSMATH: MathPackages = MathPackages {
+        amsmath: true,
+        ..MathPackages::KERNEL
+    };
+
+    fn parse(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let tokens = crate::lexer::tokenize(source);
+        let list = parse_tokens(&tokens, packages, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    fn glyphs(list: &Option<MathList>) -> String {
+        list.as_ref()
+            .map(|l| {
+                l.atoms
+                    .iter()
+                    .map(|a| match &a.nucleus {
+                        Nucleus::Symbol(s) => s.clone(),
+                        other => format!("{other:?}"),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The `\mathop` atom of a parsed `\sideset`, after checking the ordinary
+    /// `\hbox to\dimen@{}` atom in front of it.
+    fn sideset_at(list: &MathList, index: usize) -> (&MathAtom, &MathList, String, String) {
+        let hbox = &list.atoms[index - 1];
+        assert!(
+            matches!(&hbox.nucleus, Nucleus::Group(body) if body.atoms.is_empty()),
+            "{hbox:?}"
+        );
+        assert_eq!(atom_class(hbox), Some(AtomClass::Ord));
+        let op = &list.atoms[index];
+        assert_eq!(atom_class(op), Some(AtomClass::Op));
+        let Nucleus::SideSet {
+            operator,
+            left_superscript,
+            left_subscript,
+        } = &op.nucleus
+        else {
+            panic!("expected SideSet, got {:?}", op.nucleus);
+        };
+        (op, operator, glyphs(left_superscript), glyphs(left_subscript))
+    }
+
+    #[test]
+    fn sideset_is_an_ordinary_box_then_the_operator_with_both_pairs() {
+        let (list, diagnostics) = parse("\\sideset{_a^b}{_c^d}\\sum", AMSMATH);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 2);
+        let (op, operator, sup, sub) = sideset_at(&list, 1);
+        assert_eq!((sup.as_str(), sub.as_str()), ("b", "a"));
+        assert!(op.superscript.is_none() && op.subscript.is_none());
+        let [sum] = operator.atoms.as_slice() else {
+            panic!("{operator:?}")
+        };
+        assert!(matches!(&sum.nucleus, Nucleus::Symbol(s) if s == "∑"));
+        assert_eq!(glyphs(&sum.superscript), "d");
+        assert_eq!(glyphs(&sum.subscript), "c");
+    }
+
+    #[test]
+    fn sideset_prime_braced_operator_and_trailing_scripts() {
+        // `\sideset{}{'}\sum`: the prime is the right superscript.
+        let (list, diagnostics) = parse("x\\sideset{}{'}\\sum_{i} x", AMSMATH);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(list.atoms.len(), 4);
+        let (op, operator, sup, sub) = sideset_at(&list, 2);
+        assert_eq!((sup.as_str(), sub.as_str()), ("", ""));
+        assert_eq!(glyphs(&operator.atoms[0].superscript), "′");
+        // Scripts after `#3` belong to the `\mathop`, not to `#2`.
+        assert_eq!(glyphs(&op.subscript), "i");
+        assert!(operator.atoms[0].subscript.is_none());
+
+        let (list, diagnostics) = parse("\\sideset{^{n}}{} {\\prod}", AMSMATH);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (_, operator, sup, _) = sideset_at(&list, 1);
+        assert_eq!(sup, "n");
+        assert!(matches!(&operator.atoms[0].nucleus, Nucleus::Symbol(s) if s == "∏"));
+    }
+
+    #[test]
+    fn sideset_reports_non_script_material_and_a_duplicate_script() {
+        let (list, diagnostics) = parse("\\sideset{x_a}{_c}{\\sum_d}", AMSMATH);
+        let messages: Vec<&str> = diagnostics.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "only scripts are supported in a \\sideset group",
+                "duplicate script on a math atom"
+            ]
+        );
+        let (_, _, _, sub) = sideset_at(&list, 1);
+        assert_eq!(sub, "a");
+    }
+
+    #[test]
+    fn sideset_needs_amsmath() {
+        // pdflatex without amsmath: `! Undefined control sequence. \sideset`.
+        let (_, diagnostics) = parse("\\sideset{_a^b}{_c^d}\\sum", MathPackages::KERNEL);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message == "\\sideset requires \\usepackage{amsmath}"),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn sideset_shifts_and_lays_out_left_of_the_operator() {
+        let (list, _) = parse("\\sideset{_{ab}^b}{_c}\\sum", AMSMATH);
+        let shifted = shift_list(&list, 7);
+        let (_, operator, _, _) = sideset_at(&shifted, 1);
+        let (_, original, _, _) = sideset_at(&list, 1);
+        assert_eq!(operator.atoms[0].span.start, original.atoms[0].span.start + 7);
+        let laid = layout(&list, 10.0, &mut Vec::new());
+        let x = |text: &str| {
+            laid.items
+                .iter()
+                .find(|item| item.text == text)
+                .map(|item| item.x)
+                .unwrap_or_else(|| panic!("{text} in {:?}", laid.items))
+        };
+        assert!(x("a") < x("∑") && x("b") < x("∑") && x("∑") < x("c"));
+        assert!((x("a") - x("b")).abs() < 1e-9, "left scripts share a left edge");
+    }
+
+    #[test]
+    fn sideset_trailing_script_is_a_display_limit_whatever_the_operator() {
+        // pdflatex `\showbox` (amsmath, 10pt). amsmath wraps `\sideset` in an
+        // outer `\mathop` with default `\displaylimits`:
+        // - `\sideset{_a^b}{}\sum_{i}`: inline, `i` is a corner script after
+        //   the operator (x=20.95, shifted down 6.50); in `\displaystyle` it
+        //   is a limit centred under `∑` (x=10.65, baseline 13.30 below).
+        // - `\sideset{_a^b}{}\int_{i}`: inline, a corner script (x=16.50,
+        //   shifted down 9.61); in `\displaystyle` also a limit centred under
+        //   `∫` (x=8.42, baseline 16.41 below), although `\int` is
+        //   `\nolimits` on its own.
+        // So display moves `i` left and down relative to inline for both.
+        let place = |source: &str, glyph: &str, display: bool| {
+            let (list, diagnostics) = parse(source, AMSMATH);
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            let mut diagnostics = Vec::new();
+            let laid = if display {
+                layout_display(&list, 10.0, &mut diagnostics)
+            } else {
+                layout(&list, 10.0, &mut diagnostics)
+            };
+            let at = |text: &str| {
+                laid.items
+                    .iter()
+                    .find(|item| item.text == text)
+                    .map(|item| (item.x, item.baseline))
+                    .unwrap_or_else(|| panic!("{text} in {:?}", laid.items))
+            };
+            (at("i"), at(glyph))
+        };
+        for (source, glyph) in [
+            ("\\sideset{_a^b}{}\\sum_{i}", "∑"),
+            ("\\sideset{_a^b}{}\\int_{i}", "∫"),
+        ] {
+            let ((inline_x, inline_y), (inline_op_x, _)) = place(source, glyph, false);
+            let ((display_x, display_y), (display_op_x, _)) = place(source, glyph, true);
+            assert!(inline_x > inline_op_x, "{source}: inline corner script");
+            assert!(display_x < inline_x, "{source}: {display_x} vs {inline_x}");
+            assert!(display_y > inline_y, "{source}: {display_y} vs {inline_y}");
+            assert!(display_x < display_op_x + 10.0, "{source}: not after");
+            // Same limit baseline as the bare `\sum`'s own display limit.
+            let ((_, sum_display_y), _) = place("\\sum_{i}", "∑", true);
+            assert!((display_y - sum_display_y).abs() < 1e-9, "{source}");
+        }
+
+        // A bare `\int` keeps its corner script in display style.
+        let ((int_x, int_y), (int_op_x, _)) = place("\\int_{i}", "∫", true);
+        let ((_, int_inline_y), _) = place("\\int_{i}", "∫", false);
+        assert!(int_x > int_op_x && (int_y - int_inline_y).abs() < 1e-9);
     }
 }
