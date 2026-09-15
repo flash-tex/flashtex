@@ -2032,7 +2032,7 @@ fn heading_size(level: u8, body_size: f64) -> f64 {
 /// identically to before this existed, even for the 11pt class, where this
 /// compiler's own body size is a literal 11pt rather than real LaTeX's
 /// 10.95pt normalsize (`class_size_pt`'s documented approximation).
-fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f64 {
+pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f64 {
     // tiny, scriptsize, footnotesize, small, large, Large, LARGE, huge, Huge
     // (normalsize is handled by the caller before reaching here).
     const SIZE_10PT: [f64; 9] = [5.0, 7.0, 8.0, 9.0, 12.0, 14.4, 17.28, 20.74, 24.88];

@@ -163,6 +163,8 @@
     {"name": "LARGE", "mode": "text", "origin": "text_size", "arguments": "", "description": "size declaration from the class size table", "renders": true},
     {"name": "huge", "mode": "text", "origin": "text_size", "arguments": "", "description": "size declaration from the class size table", "renders": true},
     {"name": "Huge", "mode": "text", "origin": "text_size", "arguments": "", "description": "size declaration from the class size table", "renders": true},
+    {"name": "larger", "mode": "text", "origin": "text_style", "arguments": "{...}", "description": "relsize: one step up the class size table from the size in effect; without an argument, a declaration for the rest of the scope", "renders": true},
+    {"name": "smaller", "mode": "text", "origin": "text_style", "arguments": "{...}", "description": "relsize: one step down the class size table from the size in effect; without an argument, a declaration for the rest of the scope", "renders": true},
     {"name": "cite", "mode": "text", "origin": "text_dispatch", "arguments": "[note]{keys}", "description": "numbered citation from thebibliography entries; natbib redefines it as \\citet, or as \\citep when an optional argument follows", "renders": true},
     {"name": "citet", "mode": "text", "origin": "text_dispatch", "arguments": "[pre][post]{keys}", "description": "natbib textual citation: Name (Year); one optional argument is the post-note", "renders": true},
     {"name": "citep", "mode": "text", "origin": "text_dispatch", "arguments": "[pre][post]{keys}", "description": "natbib parenthetical citation: (Name, Year); one optional argument is the post-note", "renders": true},
