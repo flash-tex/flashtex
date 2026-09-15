@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/editor-goto-line",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/412",
   "machine": "mac-m5pro-dq222",
   "note": "uptake scale-up 2026-09-14",
   "started_utc": "2026-09-14T16:32:24Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-EDITOR-GOTO-LINE",
-  "updated_utc": "2026-09-14T16:32:24Z"
+  "updated_utc": "2026-09-15T07:07:24Z"
 }
