@@ -115,8 +115,8 @@ fn main() {
         let fonts = flashtex_render_pipeline::FontSet::with_default_dirs(&[]);
         let t = render_case(&case, &fonts, &scratch);
         println!(
-            "parse {:.0} ms, render {:.0} ms ({}, {} pages), pdf {:.0} ms: {:?}",
-            t.parse_ms, t.render_ms, t.status, t.pages, t.pdf_ms, t.pdf
+            "parse {:.0} ms, render {:.0} ms ({}, {} pages, {} diagnostics), pdf {:.0} ms: {:?}",
+            t.parse_ms, t.render_ms, t.status, t.pages, t.diagnostics, t.pdf_ms, t.pdf
         );
         let _ = std::fs::remove_dir_all(&scratch);
         return;

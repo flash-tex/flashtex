@@ -95,8 +95,12 @@ pub struct Seed {
     pub text: String,
 }
 
+/// The checkout the seeds are read from; `FLASHTEX_FUZZ_ROOT` overrides it
+/// (a build of a copied crate fuzzing the same seeds).
 pub fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    std::env::var_os("FLASHTEX_FUZZ_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
 }
 
 /// Every UTF-8 `.tex` under `fixtures/` and `crates/*/{tests,oracle,fixtures}`,
@@ -1189,6 +1193,7 @@ pub struct Timings {
     pub pdf_ms: f64,
     pub status: String,
     pub pages: usize,
+    pub diagnostics: usize,
     pub pdf: Result<usize, String>,
 }
 
@@ -1274,6 +1279,7 @@ pub fn render_case(case: &Case, fonts: &FontSet, root: &Path) -> Timings {
 
     set_stage(3);
     let started = std::time::Instant::now();
+    let diagnostics = rendered.as_ref().map_or(0, |r| r.v2.diagnostics.len());
     let (status, pages, pdf) = match &rendered {
         Some(rendered) => {
             // `flashtex build`: the exact PDF route (`compile::exact_pdf`).
@@ -1288,6 +1294,7 @@ pub fn render_case(case: &Case, fonts: &FontSet, root: &Path) -> Timings {
         pdf_ms: started.elapsed().as_secs_f64() * 1000.0,
         status,
         pages,
+        diagnostics,
         pdf,
     }
 }
@@ -1366,7 +1373,9 @@ impl Runner {
 pub fn scratch_dir(out_dir: &Path) -> PathBuf {
     let dir = out_dir.join(format!("work-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
-    dir
+    // Absolute: the pipeline ignores a relative project root, so images
+    // would silently never load.
+    std::fs::canonicalize(&dir).unwrap_or(dir)
 }
 
 // ---------------------------------------------------------------- worker / supervisor
@@ -1515,7 +1524,16 @@ pub fn supervise(
                         .lines()
                         .map_while(Result::ok)
                     {
-                        let fields: Vec<&str> = line.splitn(4, '\t').collect();
+                        // libtest may print `test name ... ` before the first
+                        // protocol line on the same line.
+                        let Some(at) = ["START\t", "STAGE\t", "OK\t", "PANIC\t", "HANG\t", "CRASH\t"]
+                            .iter()
+                            .filter_map(|tag| line.find(tag))
+                            .min()
+                        else {
+                            continue;
+                        };
+                        let fields: Vec<&str> = line[at..].splitn(4, '\t').collect();
                         if fields[0] == "STAGE" {
                             stage = fields.get(1).unwrap_or(&"?").to_string();
                             continue;
