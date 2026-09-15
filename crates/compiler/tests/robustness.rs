@@ -371,20 +371,12 @@ fn an_alignment_that_inputs_another_document_keeps_its_spans_in_one_document() {
 fn nested_sub_parses_hit_tex_grouping_capacity_instead_of_the_stack() {
     // Every nested table cell, box or footnote re-enters the parser on its
     // own token stream: 3000 nested tabulars overflowed an 8 MiB stack, and
-    // 10k took minutes (each level copies its cell). TeX stops at 255
-    // grouping levels. The limit is sized for release stacks (~3 KiB a
-    // level); an unoptimised tabular level takes ~50 KiB, so the debug test
-    // runs on a large stack.
-    std::thread::Builder::new()
-        .stack_size(64 * 1024 * 1024)
-        .spawn(nested_sub_parses_body)
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
-fn nested_sub_parses_body() {
-    let capacity = "TeX capacity exceeded, sorry [grouping levels=255].";
+    // 10k took minutes (each level copies its cell). The parser stops at
+    // `STREAM_DEPTH_LIMIT` levels, below what a 2 MiB debug test thread holds.
+    let capacity = format!(
+        "TeX capacity exceeded, sorry [grouping levels={}].",
+        flashtex_compiler::parser::STREAM_DEPTH_LIMIT
+    );
     for (open, close) in [
         ("\\begin{tabular}{c}", "\\end{tabular}"),
         ("\\footnote{", "}"),
@@ -400,7 +392,7 @@ fn nested_sub_parses_body() {
         );
         let started = std::time::Instant::now();
         let messages = compile_messages(&text);
-        assert_eq!(messages.iter().filter(|m| *m == capacity).count(), 1, "{open}: {:?}", &messages[..messages.len().min(4)]);
+        assert_eq!(messages.iter().filter(|m| **m == capacity).count(), 1, "{open}: {:?}", &messages[..messages.len().min(4)]);
         assert!(started.elapsed().as_secs() < 30, "{open}: {:?}", started.elapsed());
     }
     // Well inside the limit nothing is reported.

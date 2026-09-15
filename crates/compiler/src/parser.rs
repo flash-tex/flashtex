@@ -36,10 +36,15 @@ pub use lists::{
 /// Maximum number of active nested `\input`/`\include` calls.
 pub const INCLUDE_DEPTH_LIMIT: usize = 64;
 /// How deeply the parser may re-enter itself on a nested token stream (a
-/// table cell, box, footnote or color argument inside another): TeX's
-/// `max_quarterword` grouping levels. Past it the inner content is skipped
-/// with TeX's "capacity exceeded" error instead of overflowing the stack.
-pub const STREAM_DEPTH_LIMIT: usize = 255;
+/// table cell, box, footnote or color argument inside another). Past it the
+/// inner content is skipped with TeX's "capacity exceeded" error instead of
+/// overflowing the stack. TeX allows 255 grouping levels, but a nested
+/// tabular costs ~7 KiB of stack a level in release and ~50 KiB in debug:
+/// 128 levels overflowed a 512 KiB thread (the default for a secondary
+/// thread on macOS) and 40 a 2 MiB debug test thread. Like
+/// [`crate::math::MAX_MATH_DEPTH`], the limit sits below both. `\include`
+/// nesting has its own limit ([`INCLUDE_DEPTH_LIMIT`]) and is not counted.
+pub const STREAM_DEPTH_LIMIT: usize = 32;
 
 /// Per-request inputs that are neither document text nor the entry path.
 ///
@@ -2934,7 +2939,7 @@ impl P<'_> {
         );
         let saved_index = std::mem::replace(&mut self.i, 0);
         self.include_stack.push(document_index);
-        self.parse_stream(blocks, para);
+        self.parse_stream_body(blocks, para);
         self.include_stack.pop();
         self.t = saved_tokens;
         self.i = saved_index;
