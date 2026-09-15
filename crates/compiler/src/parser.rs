@@ -2515,14 +2515,18 @@ impl P<'_> {
                     continue;
                 }
                 TokenKind::Word(word)
-                    if control_symbol_kern(
-                        word,
-                        self.t[self.i].maps_to_invocation,
-                        self.t[self.i].definition,
-                        self.t[self.i].token.span,
-                        self.math_packages.amsmath,
-                    )
-                    .is_none() =>
+                    if !(self.in_body
+                        && !self.document_ended
+                        && self.tabbing_active()
+                        && is_tabbing_control(word, self.t[self.i].token.span))
+                        && control_symbol_kern(
+                            word,
+                            self.t[self.i].maps_to_invocation,
+                            self.t[self.i].definition,
+                            self.t[self.i].token.span,
+                            self.math_packages.amsmath,
+                        )
+                        .is_none() =>
                 {
                     let span = self.t[self.i].token.span;
                     let space_before = self.space_precedes(self.i);
