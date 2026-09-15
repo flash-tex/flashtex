@@ -213,10 +213,9 @@ final class DocumentStatisticsTests: XCTestCase {
 /// published on the main actor, and only the most recent schedule's result
 /// survives a burst — the same shape `DocumentWatcherTests` uses for its own
 /// coalesced-delivery assertions. These tests inject an immediate scheduler
-/// AND a synchronous background executor, so the whole
-/// schedule→scan→publish pipeline is deterministic with no real wall-clock
-/// wait at all; production still debounces on the main queue and still scans
-/// on a background queue.
+/// and run scans synchronously inline, so the whole schedule→scan→publish
+/// pipeline needs no real wall-clock wait at all; production still
+/// debounces on the main queue and still scans on a background queue.
 @MainActor
 final class WordCountModelTests: XCTestCase {
     /// Synchronous pipeline: the debounce fires immediately and the
@@ -239,35 +238,68 @@ final class WordCountModelTests: XCTestCase {
     /// Must be called after the trigger(s) it is waiting on and before any
     /// other `await` in the same test, so the hook is armed before the
     /// already-enqueued Task(s) get a chance to run.
-    private func published(_ model: WordCountModel, settles: Int = 1) async {
+    /// Bounded: if the settles never arrive (a missed settle callback — a
+    /// real bug elsewhere or a future regression), this gives up after
+    /// `timeoutSeconds` instead of hanging the whole suite forever. A few
+    /// seconds is plenty: the seam below is fully synchronous, so the only
+    /// hop is the `Task { @MainActor }` publish. Both the hook and the
+    /// timeout run on the main actor, so `settled` is never raced.
+    /// Returns `true` when all `settles` arrived before the timeout and
+    /// `false` when the timeout fired first. The Bool — rather than an
+    /// `XCTFail` here — lets a test assert on the timeout path itself as
+    /// its own expected outcome; happy-path callers assert the result.
+    @discardableResult
+    private func published(_ model: WordCountModel, settles: Int = 1, timeoutSeconds: UInt64 = 5) async -> Bool {
         var remaining = settles
+        var settled = false
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             model.onRecomputeSettled = {
                 remaining -= 1
-                if remaining <= 0 {
+                if remaining <= 0, !settled {
+                    settled = true
+                    model.onRecomputeSettled = nil
+                    continuation.resume()
+                }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
+                if !settled {
+                    settled = true
                     model.onRecomputeSettled = nil
                     continuation.resume()
                 }
             }
         }
+        return remaining <= 0
     }
 
     func testScheduleUpdateEventuallyPublishesTotals() async {
         let model = makeModel()
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three.")])
-        await published(model)
+        let didPublish = await published(model)
+        XCTAssertTrue(didPublish, "recompute should settle within the timeout")
         XCTAssertEqual(model.total?.totalWords, 3)
     }
 
     func testOnlyTheLastScheduledUpdateWins() async {
         let model = makeModel()
-        // Both updates run their scans inline before either publish lands,
-        // so only the `generation` guard — the real coalescing mechanism —
-        // decides the winner.
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One.")])
         model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three four.")])
-        await published(model, settles: 2)
+        let didSettle = await published(model, settles: 2)
+        XCTAssertTrue(didSettle, "both recomputes should settle within the timeout")
         XCTAssertEqual(model.total?.totalWords, 4)
+    }
+
+    func testPublishedWaitReportsTimeoutInsteadOfHanging() async {
+        let model = makeModel()
+        // Swallow the scan work so no publish — and therefore no settle —
+        // ever fires. The bounded wait must give up and report `false`
+        // after `timeoutSeconds` instead of hanging the suite on the
+        // production-length default.
+        model.recomputeExecutor = { _ in }
+        model.scheduleUpdate(documents: [.init(path: "main.tex", text: "One two three.")])
+        let ok = await published(model, settles: 1, timeoutSeconds: 1)
+        XCTAssertFalse(ok, "published() should return false when no settle arrives before the timeout")
     }
 
     func testCancelledScheduleNeverPublishesItsResult() async throws {

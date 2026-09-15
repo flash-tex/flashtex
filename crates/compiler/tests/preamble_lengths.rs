@@ -233,3 +233,16 @@ fn hw1_keeps_its_three_reference_pages_with_parskip_applied() {
         "{messages:?}"
     );
 }
+
+#[test]
+fn table_lengths_are_accepted_in_every_assignment_form() {
+    let src = "\\documentclass{article}\\usepackage{array}\\setlength{\\tabcolsep}{4pt}\
+         \\begin{document}{\\setlength\\tabcolsep{2pt}\\addtolength{\\arrayrulewidth}{.2pt}\
+         \\setlength{\\doublerulesep}{1pt}\\setlength{\\extrarowheight}{2pt}\
+         \\begin{tabular}{|l|}a\\end{tabular}}\
+         {\\tabcolsep=1pt \\begin{tabular}{l}b\\end{tabular}}\\end{document}";
+    assert_no_diagnostics(src);
+    let (pages, _) = compile(src);
+    let text: String = format!("{pages:?}");
+    assert!(!text.contains("1pt"), "the assignment's value is not text");
+}
