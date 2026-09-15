@@ -93,8 +93,8 @@ PREAMBLE = r"""\documentclass[12pt]{article}
 """
 
 
-def doc(parts):
-    return PREAMBLE + "\\begin{document}\n\n" + "\n\n".join(parts) + "\n\n\\end{document}\n"
+def doc(parts, extra=""):
+    return PREAMBLE + extra + "\\begin{document}\n\n" + "\n\n".join(parts) + "\n\n\\end{document}\n"
 
 
 def fig(env, place, body):
@@ -165,6 +165,27 @@ F["10-mixed"] = doc([
     fig("figure", "p", "\\centering\n\\includegraphics{images/red-72.png}\n\\caption{Only on a float page.}"),
     para(27, 200),
 ])
+# float.sty `[H]` (`\@float@HH`, `\float@endH`): the box is set in the text
+# with `\vskip\intextsep` on both sides, never deferred and never counted.
+F["11-float-h"] = doc([
+    para(28, 60),
+    fig("figure", "H", "\\centering\n\\includegraphics{images/red-72.png}\n\\caption{Exactly here.}"),
+    para(29, 60),
+    fig("table", "H", "\\centering\n\\caption{A table caption above.}\n\\includegraphics[width=3cm,height=1cm]{images/blue-96dpi.jpg}"),
+    para(30, 120),
+    fig("figure", "t", "\\centering\n\\includegraphics{images/green-144dpi.png}\n\\caption{A top float after them.}"),
+    para(31, 150),
+    fig("figure", "H", "\\centering\n\\includegraphics[height=3in]{images/tall-72.png}\n\\caption{Too tall for what is left.}"),
+    para(32, 60),
+], "\\usepackage{float}\n")
+F["12-h-passes-deferred"] = doc([
+    para(33, 150),
+    fig("figure", "t", "\\centering\n\\includegraphics{images/tall-72.png}\n\\caption{Deferred to the end.}"),
+    fig("figure", "H", "\\centering\n\\includegraphics{images/red-72.png}\n\\caption{Placed before the deferred one.}"),
+    para(34, 80),
+    fig("figure", "H", "\\centering\n\\includegraphics[width=2in]{images/red-72.png}\n\\caption{Another.}"),
+    para(35, 200),
+], "\\usepackage{float}\n")
 
 for name, text in F.items():
     open(os.path.join(HERE, name + ".tex"), "w").write(text)
