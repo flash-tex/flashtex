@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/display-frac-quad-gap",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/622",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-15T11:39:09Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-DISPLAY-FRAC-QUAD-GAP",
-  "updated_utc": "2026-09-15T11:39:40Z"
+  "updated_utc": "2026-09-15T11:47:18Z"
 }
