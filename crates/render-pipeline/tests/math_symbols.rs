@@ -547,7 +547,9 @@ fn glyph_ink_x(body: &str) -> Vec<(String, f64, f64, f64)> {
     let fonts = FontSet::with_default_dirs(&[]);
     let r = render_one_with(&doc(body), &fonts);
     let mut out = Vec::new();
-    for item in &r.v2.pages[0].items {
+    // `Page::items` became an accessor with #294's page window: a resident
+    // page yields its items, an elided page yields none.
+    for item in r.v2.pages[0].items().into_iter().flatten() {
         let Item::GlyphRun(run) = item else { continue };
         // A face this set cannot name (a Core14 fallback) has no outline to
         // measure here; the negated relations below are never drawn from one.
