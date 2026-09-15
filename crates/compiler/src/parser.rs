@@ -954,6 +954,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "medskip",
     "smallskip",
     "vspace",
+    "addvspace",
     "hrule",
     "newpage",
     "clearpage",
@@ -2696,6 +2697,57 @@ impl P<'_> {
                     None => self.diags.push(Diagnostic::error(
                         format!(
                             "\\vspace requires a recognised dimension, got '{}'",
+                            raw.trim()
+                        ),
+                        Some(span.merge(argument_span)),
+                        Some("ignored the vertical space and continued".into()),
+                    )),
+                }
+            }
+            "addvspace" => {
+                // Honest simplification of real LaTeX's `\addvspace` (see
+                // `ltspace.dtx`'s `\@xaddvskip`): real TeX merges with
+                // *whatever* glue already ends the current vertical list
+                // (`\ifdim\lastskip=\z@`, checked generically — not "only
+                // when that glue came from a previous `\addvspace`"; a
+                // preceding `\vspace`/`\bigskip` triggers the exact same
+                // merge, since `\lastskip` carries no provenance in real TeX
+                // either). The merge itself takes the *larger* of the two
+                // skips (falling back to summing only when the new length is
+                // negative and the existing one is not). This compiler's
+                // vertical-spacing model cannot express any of that:
+                // `Block::VSpace` carries a flat point amount with no
+                // provenance and no way to inspect or replace the *previous*
+                // block, and the render-pipeline sums consecutive `VSpace`
+                // blocks into the next block's before-skip — the correct
+                // merge point (`page-builder`'s `VListBuilder::addvspace`) is
+                // a separate crate this change must not reach into. So
+                // `\addvspace{len}` unconditionally inserts `len` of vertical
+                // space, exactly like `\vspace{len}`: a single call (with
+                // nothing but non-glue material before it) matches real TeX,
+                // while two consecutive calls (or an `\addvspace` right after
+                // any other vertical glue) add up where real TeX would keep
+                // the larger of the two.
+                //
+                // Unlike `\vspace`, real `\addvspace` has NO star form at
+                // all (`ltspace.dtx`'s kernel `\addvspace` takes one plain
+                // argument, no `\@ifstar`): `\addvspace*{10pt}` is a hard
+                // TeX error, since the `*` itself gets consumed as the
+                // (invalid) mandatory argument. So the star is deliberately
+                // NOT consumed here, matching real TeX's error rather than
+                // silently tolerating it like `\vspace*` correctly does.
+                let (tokens, argument_span) = self.required_group(name, span);
+                let raw = token_text(&tokens);
+                let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+                match parse_dimen_pt_at(&raw, body) {
+                    Some(pt) => {
+                        self.flush_paragraph(blocks, para);
+                        blocks.push(Block::VSpace { pt });
+                        self.finish_block_dependencies();
+                    }
+                    None => self.diags.push(Diagnostic::error(
+                        format!(
+                            "\\addvspace requires a recognised dimension, got '{}'",
                             raw.trim()
                         ),
                         Some(span.merge(argument_span)),
@@ -8293,6 +8345,97 @@ mod tests {
             two_spaced.baseline_y_pt - one.baseline_y_pt
                 > two_baseline.baseline_y_pt - one.baseline_y_pt,
             "\\vspace{{50pt}} should push the following text further down than an ordinary paragraph break"
+        );
+    }
+
+    #[test]
+    fn addvspace_inserts_vertical_space_without_an_unsupported_diagnostic() {
+        let (parsed, laid) = items(r"One\addvspace{10pt}Two");
+        assert!(
+            !parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.code == Some(crate::diagnostics::DiagnosticCode::UnsupportedFeature)),
+            "\\addvspace{{10pt}} must not report unsupported_feature, got {:?}",
+            parsed.diagnostics
+        );
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let vspace: Vec<f64> = parsed
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::VSpace { pt } => Some(*pt),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            vspace,
+            vec![10.0],
+            "\\addvspace{{10pt}} should lower to one 10pt vertical-glue block, got {vspace:?}"
+        );
+        let baseline = items("One\n\nTwo").1;
+        let one = baseline.iter().find(|i| i.text == "One").unwrap();
+        let two_baseline = baseline.iter().find(|i| i.text == "Two").unwrap();
+        let two_spaced = laid.iter().find(|i| i.text == "Two").unwrap();
+        assert!(
+            two_spaced.baseline_y_pt - one.baseline_y_pt
+                > two_baseline.baseline_y_pt - one.baseline_y_pt,
+            "\\addvspace{{10pt}} should push the following text further down than an ordinary paragraph break"
+        );
+    }
+
+    #[test]
+    fn addvspace_twice_in_a_row_adds_safely_without_negative_space() {
+        // The documented simplification: consecutive `\addvspace`s add up
+        // (real TeX's `\@xaddvskip` would keep the larger). Whatever the
+        // amount, back-to-back calls must stay finite, non-negative and at
+        // most additive — never a crash, negative space or blowup.
+        let (single_parsed, single) = items(r"One\addvspace{10pt}Two");
+        let (double_parsed, double) = items(r"One\addvspace{10pt}\addvspace{10pt}Two");
+        assert!(single_parsed.diagnostics.is_empty(), "{:?}", single_parsed.diagnostics);
+        assert!(double_parsed.diagnostics.is_empty(), "{:?}", double_parsed.diagnostics);
+        let gap = |laid: &[crate::layout::TextItem]| {
+            let one = laid.iter().find(|i| i.text == "One").unwrap();
+            let two = laid.iter().find(|i| i.text == "Two").unwrap();
+            two.baseline_y_pt - one.baseline_y_pt
+        };
+        let gap_single = gap(&single);
+        let gap_double = gap(&double);
+        assert!(gap_single.is_finite() && gap_double.is_finite(), "gaps must be finite, got {gap_single} and {gap_double}");
+        assert!(gap_single > 0.0 && gap_double > 0.0, "gaps must be positive, got {gap_single} and {gap_double}");
+        assert!(
+            gap_double >= gap_single,
+            "a second \\addvspace must not remove space: {gap_double} < {gap_single}"
+        );
+        assert!(
+            gap_double <= gap_single + 10.0 + 1e-6,
+            "a second \\addvspace{{10pt}} must add at most 10pt more, not blow up: {gap_double} vs {gap_single}"
+        );
+    }
+
+    #[test]
+    fn addvspace_star_is_diagnosed_not_silently_tolerated() {
+        // Real `\addvspace` has no star form (`ltspace.dtx`'s kernel
+        // definition takes one plain argument); `\addvspace*{10pt}` is a
+        // hard TeX error, since the `*` is consumed as the (invalid)
+        // mandatory argument. This compiler must not silently accept the
+        // star and insert a real 10pt space as if nothing were wrong.
+        let (parsed, _) = items(r"One\addvspace*{10pt}Two");
+        assert!(
+            !parsed.diagnostics.is_empty(),
+            "\\addvspace*{{10pt}} should be diagnosed, not silently accepted"
+        );
+        let vspace: Vec<f64> = parsed
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::VSpace { pt } => Some(*pt),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            vspace.is_empty(),
+            "\\addvspace*{{10pt}} must not silently insert a real vertical-glue block, got {vspace:?}"
         );
     }
 
