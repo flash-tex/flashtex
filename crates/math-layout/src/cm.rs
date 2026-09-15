@@ -733,19 +733,10 @@ impl MathFontMetrics for CmMathMetrics {
         let text_font = font.params.get(1).is_some_and(|&space| space != 0);
         let (kern, ligature) = match font.lig_kern(l, r) {
             Some(LigKern::Kern(fixword)) => (scale(fixword, at), None),
-            Some(LigKern::Ligature { op, rem }) => {
-                let ch = ot1_text_char(rem).and_then(|ch| match left {
-                    MathChar::Text(_) => Some(MathChar::Text(ch)),
-                    // A symbol-family ligature needs a character that
-                    // `symbol_slot` puts back at the same slot; CM's math
-                    // families have no ligatures, so this never misses in
-                    // practice and a miss forms nothing.
-                    MathChar::Symbol(_) => {
-                        (symbol_slot(ch) == Some((family, rem))).then_some(MathChar::Symbol(ch))
-                    }
-                });
-                (0.0, ch.map(|ch| OrdLigature { op, ch }))
-            }
+            Some(LigKern::Ligature { op, rem }) => (
+                0.0,
+                ligature_char(left, family, rem).map(|ch| OrdLigature { op, ch }),
+            ),
             None => (0.0, None),
         };
         Some(OrdPair {
@@ -774,6 +765,22 @@ const OT1_LIGATURES: [(u8, char); 11] = [
     (0o173, '\u{2013}'), // --
     (0o174, '\u{2014}'), // ---
 ];
+
+/// The character a ligature instruction of `family`'s font produces at slot
+/// `rem`, of the same kind as the pair's `left` character: a text character
+/// ([`ot1_text_char`]), or a symbol that [`symbol_slot`] puts back at that
+/// slot. `None` when no character stands for the slot (CM's math families
+/// have no ligatures, so a symbol pair never misses in practice); the
+/// ligature is then not formed.
+pub fn ligature_char(left: MathChar, family: Family, rem: u8) -> Option<MathChar> {
+    let ch = ot1_text_char(rem)?;
+    match left {
+        MathChar::Text(_) => Some(MathChar::Text(ch)),
+        MathChar::Symbol(_) => {
+            (symbol_slot(ch) == Some((family, rem))).then_some(MathChar::Symbol(ch))
+        }
+    }
+}
 
 /// The OT1 text-font slot of a text character: its ASCII code, or the slot
 /// of a ligature character ([`OT1_LIGATURES`]).
