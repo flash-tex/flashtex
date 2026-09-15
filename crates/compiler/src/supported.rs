@@ -322,6 +322,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("nopagebreak", "[n]", "accepted no-op; the layout never breaks there on its own"),
     ("linebreak", "[n]", "line break"),
     ("nolinebreak", "[n]", "accepted no-op"),
+    ("obeylines", "", "every source newline ends the line, like \\\\, for the rest of the group"),
     ("vfill", "", "vertical glue filling the rest of the page"),
     ("columnbreak", "[n]", "multicol: ends the current column of multicols (priority n, default 4)"),
     ("newcolumn", "", "multicol: ends the current column of multicols, filling it"),

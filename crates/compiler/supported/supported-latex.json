@@ -151,6 +151,7 @@
     {"name": "RaggedRight", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "left-aligned following paragraphs (ragged2e form)", "renders": true},
     {"name": "raggedleft", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "right-aligned following paragraphs", "renders": true},
     {"name": "RaggedLeft", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "right-aligned following paragraphs (ragged2e form)", "renders": true},
+    {"name": "obeylines", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "every source newline ends the line, like \\\\, for the rest of the group", "renders": true},
     {"name": "noindent", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "accepted no-op; paragraphs are never indented", "renders": true},
     {"name": "indent", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "accepted; the first-line indent is diagnosed, not drawn", "renders": true},
     {"name": "tiny", "mode": "text", "origin": "text_size", "arguments": "", "description": "size declaration from the class size table", "renders": true},
