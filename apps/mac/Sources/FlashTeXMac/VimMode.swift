@@ -100,7 +100,7 @@ final class VimMode {
         case setNumber(Bool)
     }
 
-    enum Operator: Equatable { case delete, change, yank, indent, outdent }
+    enum Operator: Equatable { case delete, change, yank, indent, outdent, lowercase, uppercase, toggleCase }
 
     private enum Pending: Equatable {
         case none
@@ -309,6 +309,9 @@ final class VimMode {
             case .yank: s += " y"
             case .indent: s += " >"
             case .outdent: s += " <"
+            case .lowercase: s += " gu"
+            case .uppercase: s += " gU"
+            case .toggleCase: s += " g~"
             }
         }
         return s
@@ -696,14 +699,44 @@ final class VimMode {
                     visualAnchor = caret
                     setCaretKeepingVisual(caret)
                 }
-            // gu/gU/g~ still need an operator implementation. (Deliberately
-            // one bare case per key: Swift scopes a trailing `where` to the
-            // last pattern only, so `case "u", "U", "~" where cond:` guards
-            // nothing but the "~".)
-            case "u", "U", "~": break
+            case "u", "U", "~":
+                let op: Operator = ch == "u" ? .lowercase : ch == "U" ? .uppercase : .toggleCase
+                if mode == .visual || mode == .visualLine {
+                    // Visual `gu`/`gU`/`g~` act on the selection at once.
+                    let sel = textView?.selectedRange() ?? NSRange(location: caret, length: 0)
+                    beginRecording(.c("g"))
+                    record(key)
+                    mode = .normal
+                    changeCase(op, in: sel)
+                    finishRecording()
+                } else if pendingOperator == nil {
+                    // `gu` arms an operator awaiting its motion (guw, gu$, guu…).
+                    beginRecording(.c("g"))
+                    record(key)
+                    pendingOperator = op
+                    operatorCount = n
+                } else if pendingOperator == op {
+                    // `gugu` / `gUgU` / `g~g~`: the doubled form, whole lines.
+                    record(key)
+                    operateOnLines(op, count: (operatorCount ?? 1) * (n ?? 1))
+                } else {
+                    resetPending()
+                }
             default: resetPending()
             }
         case .replaceChar:
+            if mode == .visual || mode == .visualLine {
+                // Visual `r`: every selected character becomes `ch`; newlines stay.
+                let sel = textView?.selectedRange() ?? NSRange(location: caret, length: 0)
+                guard sel.length > 0 else { resetPending(); return true }
+                record(key)
+                let replaced = String(text.substring(with: sel).map { $0 == "\n" ? "\n" : ch })
+                mode = .normal
+                replace(sel, with: replaced, actionName: "Replace Character")
+                setCaret(sel.location)
+                finishRecording()
+                return true
+            }
             let c = n ?? 1
             guard caret + c <= lineEnd(caret) else { resetPending(); return true }
             record(key)
@@ -719,14 +752,18 @@ final class VimMode {
         case .textObject(let inner):
             guard let op = pendingOperator, let range = textObject(ch, inner: inner) else { resetPending(); return true }
             record(key)
-            finishOperator(op, range: range, linewise: false)
+            finishOperator(op, range: range, linewise: ch == "p") // ip/ap are linewise, like Vim's
         case .register:
             selectedRegister = ch
         case .z:
             guard let tv = textView else { return true }
             switch ch {
-            case "z", ".": tv.centerSelectionInVisibleArea(nil)
-            case "t", "\n": tv.scrollRangeToVisible(NSRange(location: caret, length: 0))
+            case "z", ".":
+                tv.centerSelectionInVisibleArea(nil)
+                if ch == "." { setCaret(firstNonBlank(fromLineStart: lineStart(caret))) }
+            case "t", "b", "-":
+                scrollCaretLine(toTop: ch == "t")
+                if ch == "-" { setCaret(firstNonBlank(fromLineStart: lineStart(caret))) }
             default: break
             }
         }
@@ -737,7 +774,10 @@ final class VimMode {
     private func handleOperatorTarget(_ ch: Character, key: Key, count n: Int?, op: Operator) -> Bool {
         record(key)
         let total = (operatorCount ?? 1) * (n ?? 1)
-        let doubled: Character = switch op { case .delete: "d"; case .change: "c"; case .yank: "y"; case .indent: ">"; case .outdent: "<" }
+        let doubled: Character = switch op {
+        case .delete: "d"; case .change: "c"; case .yank: "y"; case .indent: ">"; case .outdent: "<"
+        case .lowercase: "u"; case .uppercase: "U"; case .toggleCase: "~"
+        }
         if ch == doubled {
             operateOnLines(op, count: total)
             return true
@@ -779,6 +819,9 @@ final class VimMode {
         case .indent, .outdent:
             shiftLines(NSRange(location: start, length: max(0, end - start - (end < length ? 1 : 0))), outdent: op == .outdent)
             finishRecording()
+        case .lowercase, .uppercase, .toggleCase:
+            changeCase(op, in: NSRange(location: start, length: max(0, end - start - (end < length ? 1 : 0))))
+            finishRecording()
         }
         pendingOperator = nil
         operatorCount = nil
@@ -801,7 +844,7 @@ final class VimMode {
                 if hi < length { hi += 1 }
             case .change:
                 lo = firstNonBlank(fromLineStart: lo)
-            case .indent, .outdent: break
+            case .indent, .outdent, .lowercase, .uppercase, .toggleCase: break
             }
         } else if target.inclusive, hi < length {
             hi += 1
@@ -833,7 +876,24 @@ final class VimMode {
             clampNormalCaret()
         case .indent, .outdent:
             shiftLines(range, outdent: op == .outdent)
+        case .lowercase, .uppercase, .toggleCase:
+            changeCase(op, in: range)
         }
+    }
+
+    /// `gu`/`gU`/`g~` (and visual `u`/`U`/`~`): case-map `range` in place.
+    /// Case operators never touch the registers, like Vim's.
+    private func changeCase(_ op: Operator, in range: NSRange) {
+        guard range.length > 0 else { return }
+        let s = text.substring(with: range)
+        let mapped: String = switch op {
+        case .lowercase: s.lowercased()
+        case .uppercase: s.uppercased()
+        default: String(s.map { $0.isUppercase ? Character($0.lowercased()) : Character($0.uppercased()) })
+        }
+        replace(range, with: mapped, actionName: "Change Case")
+        setCaret(range.location)
+        clampNormalCaret()
     }
 
     private func shiftLines(_ range: NSRange, outdent: Bool) {
@@ -1016,16 +1076,31 @@ final class VimMode {
         switch ch {
         case "v": if mode == .visual { leaveVisual() } else { mode = .visual; updateVisualSelection() }
         case "V": if mode == .visualLine { leaveVisual() } else { mode = .visualLine; updateVisualSelection() }
-        case "o": let head = visualHead; visualAnchor = head; setCaretKeepingVisual(sel.location == head ? NSMaxRange(sel) - 1 : sel.location)
+        case "o", "O": let head = visualHead; visualAnchor = head; setCaretKeepingVisual(sel.location == head ? NSMaxRange(sel) - 1 : sel.location)
         case "d", "x": beginRecording(key); mode = .normal; apply(.delete, to: sel, linewise: linewise); finishRecording()
         case "c", "s": beginRecording(key); mode = .normal; apply(.change, to: sel, linewise: linewise)
         case "y": mode = .normal; apply(.yank, to: sel, linewise: linewise)
         case ">": beginRecording(key); mode = .normal; shiftLines(sel, outdent: false); finishRecording()
         case "<": beginRecording(key); mode = .normal; shiftLines(sel, outdent: true); finishRecording()
-        case "~":
+        case "~", "u", "U":
             beginRecording(key); mode = .normal
-            let toggled = String(text.substring(with: sel).map { c -> Character in c.isUppercase ? Character(c.lowercased()) : Character(c.uppercased()) })
-            replace(sel, with: toggled, actionName: "Toggle Case"); setCaret(sel.location); finishRecording()
+            changeCase(ch == "~" ? .toggleCase : ch == "u" ? .lowercase : .uppercase, in: sel)
+            finishRecording()
+        case "r": beginRecording(key); pending = .replaceChar
+        case "D", "X":
+            // Linewise delete of every selected line, wherever the selection ends sit.
+            beginRecording(key); mode = .normal
+            apply(.delete, to: lineRange(sel, includeTrailingNewline: true), linewise: true)
+            finishRecording()
+        case "C", "S", "R":
+            // Linewise change: clear the selected lines (indent kept) and insert.
+            beginRecording(key); mode = .normal
+            let lines = lineNumber(of: max(sel.location, NSMaxRange(sel) - 1)) - lineNumber(of: sel.location) + 1
+            setCaret(sel.location)
+            changeLines(count: lines)
+        case "Y":
+            mode = .normal
+            apply(.yank, to: lineRange(sel, includeTrailingNewline: true), linewise: true)
         case "J": beginRecording(key); mode = .normal; setCaret(sel.location); joinLines(count: max(2, lineNumber(of: NSMaxRange(sel) - 1) - lineNumber(of: sel.location) + 1)); finishRecording()
         case "p", "P":
             beginRecording(key); mode = .normal
@@ -1177,6 +1252,21 @@ final class VimMode {
     private func moveLines(by delta: Int) {
         guard delta != 0 else { return }
         move(delta > 0 ? .down(count: delta) : .up(count: -delta))
+    }
+
+    /// `zt`/`zb` (and `z-`): scroll so the caret's line touches the top or
+    /// bottom edge of the visible rect (clamped to the document's ends).
+    private func scrollCaretLine(toTop: Bool) {
+        guard let tv = textView, let lm = tv.layoutManager, lm.numberOfGlyphs > 0 else { return }
+        let glyph = min(lm.glyphIndexForCharacter(at: min(caret, max(0, length - 1))), lm.numberOfGlyphs - 1)
+        var rect = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        rect.origin.y += tv.textContainerInset.height
+        guard let clip = tv.enclosingScrollView?.contentView else { tv.scrollRangeToVisible(NSRange(location: caret, length: 0)); return }
+        let visibleHeight = clip.documentVisibleRect.height
+        let maxY = max(0, tv.bounds.height - visibleHeight)
+        let y = toTop ? rect.minY : rect.maxY - visibleHeight
+        clip.scroll(to: NSPoint(x: clip.documentVisibleRect.origin.x, y: min(max(0, y), maxY)))
+        tv.enclosingScrollView?.reflectScrolledClipView(clip)
     }
 
     private func pageLines() -> Int {
@@ -1556,7 +1646,7 @@ final class VimMode {
 
     // MARK: text objects
 
-    /// `iw aw i( a( i[ a[ i{ a{ i" a" i$ a$ ie ae` (and `ib ab iB aB`) around the caret.
+    /// `iw aw i( a( i[ a[ i{ a{ i" a" i$ a$ ie ae ip ap` (and `ib ab iB aB`) around the caret.
     func textObject(_ ch: Character, inner: Bool) -> NSRange? {
         let c = caret
         switch ch {
@@ -1587,8 +1677,37 @@ final class VimMode {
         case "\"", "'", "`": return quoteObject(String(ch).utf16.first!, inner: inner)
         case "$": return mathObject(inner: inner)
         case "e": return environmentObject(inner: inner)
+        case "p": return paragraphObject(inner: inner)
         default: return nil
         }
+    }
+
+    /// `ip`/`ap`: the block of lines around the caret sharing its blankness
+    /// (a paragraph, or a run of blank lines); `ap` adds the following
+    /// opposite block (trailing blanks after a paragraph, the paragraph after
+    /// leading blanks), or the leading blanks when the paragraph ends the
+    /// buffer. Whole lines, trailing newline included.
+    private func paragraphObject(inner: Bool) -> NSRange? {
+        guard length > 0 else { return nil }
+        let startLine = lineNumber(of: caret)
+        let onBlank = isBlankLine(at: lineStart(ofLine: startLine))
+        var first = startLine
+        while first > 0, isBlankLine(at: lineStart(ofLine: first - 1)) == onBlank { first -= 1 }
+        var last = startLine
+        while last + 1 < lineCount, isBlankLine(at: lineStart(ofLine: last + 1)) == onBlank { last += 1 }
+        if !inner {
+            if last + 1 < lineCount {
+                var l = last
+                while l + 1 < lineCount, isBlankLine(at: lineStart(ofLine: l + 1)) == !onBlank { l += 1 }
+                last = l
+            } else if !onBlank {
+                while first > 0, isBlankLine(at: lineStart(ofLine: first - 1)) { first -= 1 }
+            }
+        }
+        let s = lineStart(ofLine: first)
+        var e = lineEnd(lineStart(ofLine: last))
+        if e < length { e += 1 }
+        return NSRange(location: s, length: e - s)
     }
 
     private func bracketObject(open: unichar, close: unichar, inner: Bool) -> NSRange? {
@@ -1773,6 +1892,15 @@ final class VimMode {
         // A substitute with an address: `%s`, `'<,'>s`, `3,5s`, `s`.
         if let r = line.range(of: #"^(%|'<,'>|\d+,\d+|\d+)?s(?=[/#|])"#, options: .regularExpression) {
             substitute(address: String(line[r.lowerBound..<line.index(before: r.upperBound)]), spec: String(line[r.upperBound...]))
+            return
+        }
+        // `:42` jumps to line 42 (first non-blank), `:$` to the last line.
+        if let n = Int(line), n >= 1 {
+            setCaret(firstNonBlank(fromLineStart: lineStart(ofLine: min(n - 1, lineCount - 1))))
+            return
+        }
+        if line == "$" {
+            setCaret(firstNonBlank(fromLineStart: lineStart(length)))
             return
         }
         let parts = line.split(separator: " ", maxSplits: 1).map(String.init)

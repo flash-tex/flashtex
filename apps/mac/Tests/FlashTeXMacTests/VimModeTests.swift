@@ -606,7 +606,17 @@ final class VimModeTests: XCTestCase {
     /// Same sweep over a visual selection, where a fallthrough is worse:
     /// the typed character *replaces the whole selection* (`u`, `r`, `U` and
     /// every other unmapped key did exactly that).
-    private static let visualModeEditingKeys: Set<Character> = ["d", "x", "c", "s", "J", "~", ">", "<", "p", "P"]
+    ///
+    /// This allowlist grows as visual commands are implemented — it is the
+    /// register of keys that *may* edit, not a licence for them to do
+    /// anything: what each one actually does is pinned by its own row in the
+    /// table-driven tests below (`vjD`, `vX`, `vC`, `veU`, `ver-`, …). The
+    /// sweep's job is only to catch a key editing the buffer when nothing
+    /// implements it.
+    private static let visualModeEditingKeys: Set<Character> = [
+        "d", "x", "c", "s", "J", "~", ">", "<", "p", "P",
+        "u", "U", "D", "X", "C", "S", "R", // case + linewise commands (this PR)
+    ]
 
     func testVisualModeConsumesEveryUnmappedKeyInsteadOfReplacingTheSelection() {
         let buffer = "alpha beta gamma\nsecond line here\n"
@@ -943,5 +953,120 @@ final class VimModeTests: XCTestCase {
         load("x")
         type("\"ap")
         XCTAssertEqual(text, "x\none\ntwo", "the appended register pastes as two whole lines")
+    }
+
+    // MARK: case operators gu / gU / g~
+
+    func testCaseOperatorsWithMotionsAndDoubledForms() {
+        run([
+            VimRow(keys: "guw", before: "HELLO World", caret: 0, after: "hello World", caretAfter: 0),
+            VimRow(keys: "gUw", before: "hello world", caret: 0, after: "HELLO world", caretAfter: 0),
+            VimRow(keys: "g~w", before: "Hello", caret: 0, after: "hELLO", caretAfter: 0),
+            VimRow(keys: "gu$", before: "ABC DEF", caret: 4, after: "ABC def", caretAfter: 4),
+            VimRow(keys: "guu", before: "ABC Def\nGHI", caret: 2, after: "abc def\nGHI", caretAfter: 0),
+            VimRow(keys: "gugu", before: "ABC Def\nGHI", caret: 2, after: "abc def\nGHI", caretAfter: 0),
+            VimRow(keys: "2gUU", before: "ab\ncd\nef", caret: 0, after: "AB\nCD\nef", caretAfter: 0),
+            VimRow(keys: "g~~", before: "aBc", caret: 1, after: "AbC", caretAfter: 0),
+        ])
+    }
+
+    func testCaseOperatorsInVisualModeAndDotRepeat() {
+        run([
+            VimRow(keys: "vegu", before: "ABC DEF", caret: 0, after: "abc DEF", caretAfter: 0),
+            VimRow(keys: "veU", before: "abc def", caret: 0, after: "ABC def", caretAfter: 0),
+            VimRow(keys: "vju", before: "AB\nCD", caret: 0, after: "ab\ncD", caretAfter: 0), // charwise through 'C'
+            VimRow(keys: "VjU", before: "ab\ncd", caret: 0, after: "AB\nCD", caretAfter: 0), // linewise: both lines
+        ])
+        load("AAA BBB")
+        type("guw")
+        XCTAssertEqual(text, "aaa BBB")
+        type("w.")
+        XCTAssertEqual(text, "aaa bbb", "`.` repeats guw at the new position")
+    }
+
+    // MARK: visual-mode commands that previously fell through
+
+    func testVisualReplaceEachSelectedCharacter() {
+        run([
+            VimRow(keys: "ver-", before: "abc def", caret: 0, after: "--- def", caretAfter: 0),
+            VimRow(keys: "Vjrx", before: "ab\ncd", caret: 0, after: "xx\nxx", caretAfter: 0), // newline survives
+        ])
+    }
+
+    func testVisualLinewiseDeleteChangeAndYank() {
+        run([
+            VimRow(keys: "vjD", before: "one\ntwo\nthree", caret: 0, after: "three", caretAfter: 0),
+            VimRow(keys: "vX", before: "one\ntwo", caret: 5, after: "one", caretAfter: 0),
+            VimRow(keys: "vYp", before: "one\ntwo", caret: 0, after: "one\none\ntwo", caretAfter: 4), // Y is linewise
+        ])
+        load("  one\n  two", caret: 8)
+        type("vC")
+        XCTAssertEqual(mode, .insert)
+        XCTAssertEqual(text, "  one\n  ", "linewise change keeps the indent")
+        type("x")
+        key("\u{1B}", code: 53)
+        XCTAssertEqual(text, "  one\n  x")
+    }
+
+    func testVisualOSwapsTheSelectionCorners() {
+        load("abcdef")
+        type("vll")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 0, length: 3))
+        type("O")
+        XCTAssertEqual(mode, .visual)
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 0, length: 3), "O keeps the region, moving the head")
+        type("l") // the head is now the LEFT end, so l shrinks from the left
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 1, length: 2))
+        type("<Esc>")
+    }
+
+    // MARK: ip / ap paragraph text objects
+
+    func testParagraphTextObjects() {
+        let b = "aaa\nbbb\n\nccc\nddd\n\neee"
+        run([
+            VimRow(keys: "dip", before: b, caret: 5, after: "\nccc\nddd\n\neee", caretAfter: 0),
+            VimRow(keys: "dap", before: b, caret: 5, after: "ccc\nddd\n\neee", caretAfter: 0), // trailing blank line included
+            VimRow(keys: "dip", before: "aaa\n\n\nbbb", caret: 4, after: "aaa\nbbb", caretAfter: 4), // a blank run is its own paragraph
+            VimRow(keys: "dap", before: "aaa\nbbb\n\n\n", caret: 0, after: "", caretAfter: 0), // paragraph and every trailing blank line
+            VimRow(keys: "yipP", before: b, caret: 9, after: "aaa\nbbb\n\nccc\nddd\nccc\nddd\n\neee", caretAfter: 9),
+        ])
+        // Register is linewise: p pastes on the next line.
+        load(b, caret: 9)
+        type("yipGp")
+        XCTAssertTrue(text.hasSuffix("eee\nccc\nddd"), "yip yanks whole lines, so p pastes below; got \(text)")
+    }
+
+    // MARK: ex line jumps
+
+    func testExLineNumberJumps() {
+        let b = "  l1\nl2\nl3\n  l4\nl5"
+        load(b, caret: 0)
+        type(":3<CR>")
+        XCTAssertEqual(caret, 8)
+        type(":1<CR>")
+        XCTAssertEqual(caret, 2)
+        type(":$<CR>")
+        XCTAssertEqual(caret, 16)
+        type(":99<CR>")
+        XCTAssertEqual(caret, 16, "past the end clamps to the last line")
+    }
+
+    // MARK: zt / zb scrolling
+
+    func testZtAndZbScrollTheCaretLineToTheEdges() throws {
+        load((0..<200).map { "line \($0)" }.joined(separator: "\n"))
+        let lm = try XCTUnwrap(tv.layoutManager)
+        lm.ensureLayout(for: try XCTUnwrap(tv.textContainer)) // bounds/height must be final before scrolling
+        type("100G")
+        let glyph = lm.glyphIndexForCharacter(at: tv.selectedRange().location)
+        let rect = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let inset = tv.textContainerInset.height
+        type("zt")
+        let top = try XCTUnwrap(tv.enclosingScrollView).documentVisibleRect
+        XCTAssertEqual(top.minY, rect.minY + inset, accuracy: rect.height * 1.5, "zt puts the caret line at the top edge")
+        type("zb")
+        let bottom = try XCTUnwrap(tv.enclosingScrollView).documentVisibleRect
+        XCTAssertEqual(bottom.maxY, rect.maxY + inset, accuracy: rect.height * 1.5, "zb puts the caret line at the bottom edge")
     }
 }
