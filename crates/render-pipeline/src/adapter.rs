@@ -155,7 +155,12 @@ pub enum Item {
     /// `\penalty`, `\nobreak`, `\allowbreak`, `\linebreak[n]`,
     /// `\nolinebreak[n]`). A forced one (-10000) ends a *justified* line:
     /// unlike `\\` there is no `\hfil` in front of it.
-    Penalty { value: i32 },
+    ///
+    /// `boxed_dashes`: amsmath's `\nobreakdash`, whose `-`/`--`/`---` (the
+    /// end of the word before this item) were set in an `\hbox`, so no
+    /// discretionary follows them (TeX §1039) and the letters before them
+    /// are hyphenated as a word followed by a penalty (§899).
+    Penalty { value: i32, boxed_dashes: bool },
     /// `\vadjust{\penalty<value>}` (compiler `Inline::PagePenalty`:
     /// `\pagebreak[n]`/`\nopagebreak[n]` inside a paragraph): a page-break
     /// penalty in the vertical list right after the line this item ends up
@@ -1241,6 +1246,14 @@ pub fn adapt_cached(
     }
     style.microtype = microtype_setup(source);
     style.hyphenation = parsed.hyphenation.iter().map(|h| h.word.clone()).collect();
+    style.enlarge_this_page = parsed
+        .parameters
+        .iter()
+        .filter_map(|a| match a.parameter {
+            flashtex_compiler::parser::BreakParameter::EnlargeThisPage { pt, .. } => Some((a.span, pt)),
+            _ => None,
+        })
+        .collect();
     // `\raggedbottom`/`\flushbottom` written by the document: the last one
     // outside any group decides every page (in the body LaTeX's own
     // `\@textbottom` changes from the next page on, not modelled).
@@ -1460,6 +1473,14 @@ pub fn adapt_cached(
             }
         }
         let mut eject_before = next.as_ref().is_some_and(|unit| unit.eject_before);
+        // Only a paragraph carries the vertical penalty before it; a forced
+        // one (`\pagebreak`, `\penalty-10000`) before a heading, rule or
+        // picture still ends the page, set like `\newpage`'s.
+        if next.as_ref().is_some_and(|unit| {
+            !matches!(unit.kind, UnitKind::Paragraph { .. }) && unit.penalty_before.is_some_and(|(value, _)| value <= crate::pagebuild::EJECT_PENALTY)
+        }) {
+            eject_before = true;
+        }
         let vspace_before = next.as_ref().map_or(0.0, |unit| unit.vspace_before);
         if let Some(unit) = &mut next {
             limitations.append(&mut unit.limitations);
@@ -7748,7 +7769,8 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 if !unskip {
                     push_gap(&mut items, has_space, gap_style, factor);
                 }
-                items.push(if page { Item::PagePenalty { value: *value } } else { Item::Penalty { value: *value } });
+                let boxed_dashes = word.as_deref() == Some("\\nobreakdash");
+                items.push(if page { Item::PagePenalty { value: *value } } else { Item::Penalty { value: *value, boxed_dashes } });
                 if unskip {
                     push_gap(&mut items, has_space, gap_style, factor);
                 }

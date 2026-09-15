@@ -747,6 +747,32 @@ impl Placer<'_> {
         self.float_page_of(floats, goal);
     }
 
+    /// `\@doclearpage` (latex.ltx), one-column part: the floats already
+    /// queued for the unstarted column go back to `\@deferlist`
+    /// (`\xdef\@deferlist{\@toplist\@botlist\@deferlist}`), then
+    /// `\@makefcolumn` sets every deferred float on float pages, taking
+    /// as many per page as fit and a lone one otherwise.
+    fn clear_deferred(&mut self) {
+        let mut rest = std::mem::take(&mut self.col.top);
+        rest.append(&mut self.col.bot);
+        rest.append(&mut self.deferred);
+        self.deferred = rest;
+        while self.deferred.iter().any(|&f| !self.wide[f]) {
+            let goal = self.colht;
+            match self.try_fcolumn(f64::NEG_INFINITY, false, false, goal) {
+                Some((on_page, rest)) => {
+                    self.deferred = rest;
+                    self.float_page(&on_page);
+                }
+                None => {
+                    let at = self.deferred.iter().position(|&f| !self.wide[f]).expect("a non-wide float is deferred");
+                    let f = self.deferred.remove(at);
+                    self.float_page(&[f]);
+                }
+            }
+        }
+    }
+
     /// A full-width float page: `\@outputpage` ships the whole page, so it
     /// takes every column slot of that page. `\@doclearpage` reaches the
     /// double-float flush only `\if@firstcolumn`; a half-finished page is
@@ -921,6 +947,7 @@ pub fn paginate(
     short_cols: usize,
     short: f64,
     columns: usize,
+    clears: &[usize],
 ) -> (Vec<BuiltPage>, Vec<(u32, display::Item)>, Vec<(String, u32)>, Vec<Option<InsertArea>>) {
     // Marker positions, before caption blocks are appended.
     let vblocks: Vec<pagebuild::VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
@@ -1369,11 +1396,33 @@ pub fn paginate(
         }
         pl.pages.push(BuiltPage { lines, overfull_by });
         pl.col.mid.clear();
+        // A body `\clearpage` (`clears`: the blocks it starts a page for)
+        // ends this page with `\newpage`, whose `\@startcolumn` runs as for
+        // any page, then its `\penalty-\@Mi` reaches `\@doclearpage` on
+        // the fresh page. Two-column pages are not flushed here.
+        let clear_break = columns <= 1
+            && fired.is_some()
+            && nodes[end..]
+                .iter()
+                .find_map(|n| match n {
+                    N::V(j) => match list[*j] {
+                        VItem::Box { payload, .. } => Some(payload.0),
+                        _ => None,
+                    },
+                    N::FBox(_) => Some(usize::MAX),
+                    _ => None,
+                })
+                .is_some_and(|b| clears.binary_search(&b).is_ok());
         start = end;
         if region_break {
             pl.start_longtable_column();
         } else {
             pl.start_column();
+            if clear_break {
+                pl.clear_deferred();
+                pl.set_colht();
+                pl.col = Col::new(pl.colht);
+            }
         }
         if fired.is_none() {
             break;
@@ -1413,27 +1462,8 @@ pub fn paginate(
         pl.col.mid.clear();
         pl.start_column();
     }
-    // `\end{document}` -> `\clearpage` -> `\@doclearpage`: floats already
-    // queued for the unstarted column go back to the deferred list, then
-    // `\@makefcolumn` sets every remaining float on float pages.
-    let mut rest = std::mem::take(&mut pl.col.top);
-    rest.append(&mut pl.col.bot);
-    rest.append(&mut pl.deferred);
-    pl.deferred = rest;
-    while pl.deferred.iter().any(|&f| !pl.wide[f]) {
-        let goal = pl.colht;
-        match pl.try_fcolumn(f64::NEG_INFINITY, false, false, goal) {
-            Some((on_page, rest)) => {
-                pl.deferred = rest;
-                pl.float_page(&on_page);
-            }
-            None => {
-                let at = pl.deferred.iter().position(|&f| !pl.wide[f]).expect("a non-wide float is deferred");
-                let f = pl.deferred.remove(at);
-                pl.float_page(&[f]);
-            }
-        }
-    }
+    // `\end{document}` -> `\clearpage` -> `\@doclearpage`.
+    pl.clear_deferred();
     // `\@doclearpage`'s two-column branch: what is left of `\@dbltoplist`
     // and `\@deferlist` goes back through `\@dblfloatplacement
     // \@makefcolumn`, so every remaining full-width float gets a float page
