@@ -214,6 +214,99 @@ fn the_letter_fixture_has_one_leading_per_block() {
     assert_eq!(parsed.block_par_leading.len(), 13);
 }
 
+/// Parses `body` in an article that loads `packages` and checks that the
+/// parser recorded exactly one `ParLeading` per block, returning the count.
+fn blocks_and_leadings(packages: &str, body: &str) -> (usize, usize) {
+    let source = format!(
+        "\\documentclass{{article}}\n\\usepackage{{{packages}}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"
+    );
+    let parsed = parse(&source);
+    (parsed.blocks.len(), parsed.block_par_leading.len())
+}
+
+/// `\colorbox`'s argument is parsed through `box_inlines`; its temporary
+/// paragraph used to leave a leading behind in the outer vector.
+#[test]
+fn a_colorbox_argument_does_not_add_a_block_leading() {
+    assert_eq!(blocks_and_leadings("xcolor", "A \\colorbox{yellow}{Highlighted}."), (1, 1));
+}
+
+#[test]
+fn an_fcolorbox_argument_does_not_add_a_block_leading() {
+    assert_eq!(blocks_and_leadings("xcolor", "A \\fcolorbox{red}{white}{Border}."), (1, 1));
+}
+
+/// Paragraph breaks inside a box argument must not leak either: each one
+/// flushes a temporary paragraph of its own.
+#[test]
+fn a_paragraph_break_inside_a_box_argument_does_not_add_block_leadings() {
+    let (blocks, leadings) =
+        blocks_and_leadings("xcolor", "A \\colorbox{yellow}{a\\par b} \\underline{c\\par d}.\n\nZ.");
+    assert_eq!(leadings, blocks);
+}
+
+/// `\rotatebox`/`\scalebox`/`\reflectbox`/`\resizebox` and `\footnote` parse
+/// their argument through `argument_inlines`, which already truncated; this
+/// guards the other sub-parse path with the same shape of input.
+#[test]
+fn transform_and_footnote_arguments_do_not_add_block_leadings() {
+    let (blocks, leadings) = blocks_and_leadings(
+        "graphicx",
+        "\\rotatebox{30}{a\\par b}\\scalebox{1.5}[0.8]{c}\\reflectbox{d}\\resizebox{2cm}{!}{e\\par f}\\footnote{g\\par h}\n\nZ.",
+    );
+    assert_eq!(leadings, blocks);
+}
+
+/// PR #42's `extended/graphics-transform-color` case, verbatim: a debug build
+/// of the render pipeline asserted 7 leadings for 5 blocks on it (the
+/// `\colorbox` and `\fcolorbox` arguments each leaked one).
+#[test]
+fn the_graphics_transform_color_case_has_one_leading_per_block() {
+    let source = "\\documentclass{article}\n\\listfiles\n\\usepackage{xcolor,graphicx}\n\n\\begin{document}\n\\definecolor{brand}{RGB}{20,80,170}\n\\textcolor{brand}{Blue text} \\colorbox{yellow}{Highlighted} \\fcolorbox{red}{white}{Border}.\n\\par\\medskip\\noindent\\rotatebox{30}{Rotated text}\\quad\\scalebox{1.5}[0.8]{Scaled}\\quad\\reflectbox{Mirror}.\n\\par\\medskip\\noindent\\begin{picture}(180,70)\\put(0,0){\\framebox(180,70){}}\\put(10,10){\\vector(2,1){100}}\\put(40,40){\\circle{30}}\\put(100,50){Label}\\end{picture}\n\\end{document}\n";
+    let parsed = parse(source);
+    assert_eq!(parsed.blocks.len(), 5);
+    assert_eq!(parsed.block_par_leading.len(), 5);
+}
+
+/// Every `.tex` under `fixtures/real-world` and `fixtures/divergence-probes`
+/// parses to exactly one `ParLeading` per block, so a future sub-parse that
+/// forgets to truncate is caught on real documents.
+#[test]
+fn every_fixture_has_one_leading_per_block() {
+    fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("fixture directory") {
+            let path = entry.expect("fixture entry").path();
+            if path.is_dir() {
+                collect(&path, out);
+            } else if path.extension().is_some_and(|e| e == "tex") {
+                out.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let mut paths = Vec::new();
+    collect(&root.join("real-world"), &mut paths);
+    collect(&root.join("divergence-probes"), &mut paths);
+    paths.sort();
+    assert!(paths.len() > 50, "found only {} fixtures", paths.len());
+    let mismatches: Vec<String> = paths
+        .iter()
+        .filter_map(|path| {
+            let source = std::fs::read_to_string(path).expect("fixture source");
+            let parsed = parse(&source);
+            (parsed.blocks.len() != parsed.block_par_leading.len()).then(|| {
+                format!(
+                    "{}: {} blocks, {} leadings",
+                    path.display(),
+                    parsed.blocks.len(),
+                    parsed.block_par_leading.len()
+                )
+            })
+        })
+        .collect();
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
+}
+
 fn block_kind(block: &flashtex_compiler::parser::Block) -> &'static str {
     use flashtex_compiler::parser::Block as B;
     match block {
