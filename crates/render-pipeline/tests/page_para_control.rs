@@ -539,3 +539,110 @@ fn enlargethispage_star_squeezes_the_page() {
         assert!(near(spans[0], 386.49), "{flush:?} figure: {spans:?}");
     }
 }
+
+/// `n` words of the NATO alphabet from the first, every ninth ending a
+/// sentence, with `command` written after word `at` (0-based) and `sep` on
+/// both sides of it.
+fn words(n: usize, command: &str, at: Option<usize>, sep: &str) -> String {
+    const W: [&str; 26] = [
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima", "mike",
+        "november", "oscar", "papa", "quebec", "romeo", "sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu",
+    ];
+    let mut out = String::new();
+    for i in 0..n {
+        if i > 0 {
+            out.push(' ');
+        }
+        out.push_str(W[i % 26]);
+        if i % 9 == 8 {
+            out.push('.');
+        }
+        if at == Some(i) {
+            out.push_str(&format!("{sep}{command}{sep}"));
+        }
+    }
+    out.replace(&format!(" {sep}"), sep).replace(&format!("{sep} "), sep)
+}
+
+/// `\vadjust{\penalty-\@getpen{n}}` (latex.ltx `\@no@pgbk` in horizontal
+/// mode). pdflatex: a 160-word justified paragraph sets 14 lines on one
+/// page; with `\pagebreak` after word 71, written inline or on a line of
+/// its own, it sets the *same* 14 lines, 6 on page 1 and 8 on page 2.
+#[test]
+fn pagebreak_in_a_long_paragraph_keeps_its_lines_and_ends_the_page_after_its_line() {
+    if !lm_available() {
+        return;
+    }
+    let control = pages_of("", &words(160, "", None, " "));
+    assert_eq!(control.iter().map(Vec::len).collect::<Vec<_>>(), [14]);
+    for sep in [" ", "\n"] {
+        let got = pages_of("", &words(160, "\\pagebreak", Some(70), sep));
+        assert_eq!(got.iter().map(Vec::len).collect::<Vec<_>>(), [6, 8], "{sep:?}");
+        assert_eq!(got.concat(), control[0], "{sep:?}: the paragraph must keep its line breaks");
+        assert!(got[1][0].starts_with("uniform victor whiskey"), "{sep:?}: {:?}", got[1][0]);
+    }
+}
+
+/// The hint priorities and `\nopagebreak` in horizontal mode, near the foot
+/// of the page: 36 one-line paragraphs, then the 160-word paragraph. pdflatex
+/// page 1 holds 46 lines without a command. `\pagebreak[2]` (-151) after
+/// word 73 ends it after line 43 (3 lines short), after word 85 after line
+/// 44; `\pagebreak[1]` (-51) after word 73 is too weak (46) but after word
+/// 85 ends it after line 44; `\nopagebreak` after word 109 (line 46) moves
+/// the break back to line 45, after word 97 (line 45) it changes nothing.
+#[test]
+fn pagebreak_priorities_and_nopagebreak_inside_a_paragraph_near_the_page_foot() {
+    if !lm_available() {
+        return;
+    }
+    let first_page = |command: &str, at: Option<usize>| {
+        let (_, count, pages) = page_one_end("", &format!("{}{}", filler(1, 36), words(160, command, at, " ")));
+        (count, pages)
+    };
+    assert_eq!(first_page("", None), (46, 2));
+    for (command, at, count) in [
+        ("\\pagebreak[2]", 72, 43),
+        ("\\pagebreak[2]", 84, 44),
+        ("\\pagebreak[1]", 72, 46),
+        ("\\pagebreak[1]", 84, 44),
+        ("\\nopagebreak", 96, 46),
+        ("\\nopagebreak", 108, 45),
+    ] {
+        assert_eq!(first_page(command, Some(at)), (count, 2), "{command} after word {}", at + 1);
+    }
+}
+
+/// Unchanged by the horizontal-mode path: pdflatex, 10 one-line paragraphs
+/// and two 60-word paragraphs fit one page (20 lines); `\pagebreak` on its
+/// own between the two paragraphs ends page 1 after 15 lines.
+#[test]
+fn vertical_pagebreak_between_paragraphs_is_unchanged() {
+    if !lm_available() {
+        return;
+    }
+    let body = |between: &str| format!("{}{}\n\n{between}{}", filler(1, 10), words(60, "", None, " "), words(60, "", None, " "));
+    assert_eq!(pages_of("", &body("")).iter().map(Vec::len).collect::<Vec<_>>(), [20]);
+    assert_eq!(pages_of("", &body("\\pagebreak\n\n")).iter().map(Vec::len).collect::<Vec<_>>(), [15, 5]);
+}
+
+/// The mode, not the collected text, decides. pdflatex: `\noindent`,
+/// `\indent` and `\textbf{` start the paragraph, so a `\pagebreak` right
+/// after them ends the page after that paragraph's first line; after
+/// `\label{a}` the list is still vertical and the page ends before it.
+#[test]
+fn pagebreak_right_after_a_paragraph_starts_is_horizontal() {
+    if !lm_available() {
+        return;
+    }
+    let text = "First line of a paragraph that is long enough to take two lines of text in this document, so the break position shows where the penalty landed in the list.";
+    for (start, first) in [
+        ("\\noindent\\pagebreak ", vec!["First line of a paragraph that is long enough to take two lines of text in this"]),
+        ("Before.\n\n\\indent\\pagebreak ", vec!["Before.", "First line of a paragraph that is long enough to take two lines of text in this"]),
+        ("Before.\n\n\\textbf{\\pagebreak Bold} ", vec!["Before.", "Bold First line of a paragraph that is long enough to take two lines of text"]),
+        ("Before.\n\n\\label{a}\\pagebreak ", vec!["Before."]),
+    ] {
+        let got = pages_of("", &format!("{start}{text}"));
+        assert_eq!(got.len(), 2, "{start:?}: {got:?}");
+        assert_eq!(got[0], first, "{start:?}");
+    }
+}
