@@ -151,12 +151,49 @@ pub struct GridCells {
 
 /// A `\boxed` body converted to a math-layout list. It is always laid out in
 /// display style, as amsmath defines `\boxed{#1}` through `\fbox{...$\displaystyle#1$}`.
+/// A `\cancel`/`\bcancel`/`\xcancel` body (`cancel` is `Some`) shares the seam:
+/// it is laid out the same way and wrapped by [`cancel_math_box`] instead of
+/// [`framed_math_box`].
 #[derive(Debug, Clone)]
 pub(crate) struct FrameBoxSpec {
     /// Index of the handle character (as for [`GridCells`]).
     handle: usize,
     body: ml::MathList,
     tag: ml::SourceTag,
+    /// Which diagonal the body is struck through with (`None`: a `\boxed`
+    /// frame).
+    cancel: Option<flashtex_compiler::math::Frame>,
+}
+
+/// `SourceTag` attributes marking the invisible full-body rule
+/// [`cancel_math_box`] overlays on a cancel body (`'CANC'` + 0/1/2 for
+/// `\cancel`/`\bcancel`/`\xcancel`). Nothing else in the pipeline sets
+/// `attr` — math-layout only carries it onto the leaf — so these values are
+/// unambiguous, and `typeset::math_items` turns a rule carrying one back
+/// into stroked diagonals instead of an `Item::Rule`.
+const CANCEL_ATTR_BASE: u32 = 0x4341_4E43;
+
+/// The marker attribute for a cancel frame (`None` for any other frame).
+pub(crate) fn cancel_attr(frame: flashtex_compiler::math::Frame) -> Option<u32> {
+    use flashtex_compiler::math::Frame as F;
+    match frame {
+        F::Cancel => Some(CANCEL_ATTR_BASE),
+        F::BCancel => Some(CANCEL_ATTR_BASE + 1),
+        F::XCancel => Some(CANCEL_ATTR_BASE + 2),
+        _ => None,
+    }
+}
+
+/// The cancel frame a marker attribute names (`None` when the rule is an
+/// ordinary rule).
+pub(crate) fn cancel_frame(attr: Option<u32>) -> Option<flashtex_compiler::math::Frame> {
+    use flashtex_compiler::math::Frame as F;
+    match attr {
+        Some(a) if a == CANCEL_ATTR_BASE => Some(F::Cancel),
+        Some(a) if a == CANCEL_ATTR_BASE + 1 => Some(F::BCancel),
+        Some(a) if a == CANCEL_ATTR_BASE + 2 => Some(F::XCancel),
+        _ => None,
+    }
 }
 
 /// A [`GridCells`] with its environment spec resolved from the source.
@@ -231,7 +268,7 @@ impl TextSink {
         let index = self.texts.len();
         match handle_char(index) {
             Some(handle) => {
-                self.frames.push(FrameBoxSpec { handle: index, body, tag });
+                self.frames.push(FrameBoxSpec { handle: index, body, tag, cancel: None });
                 self.texts.push(String::new());
                 self.keys.push(None);
                 // A `\boxed` frame is an hbox, not a run of math characters.
@@ -240,6 +277,39 @@ impl TextSink {
             }
             None => {
                 self.refused.push("\\boxed{...}".to_string());
+                ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Empty)
+            }
+        }
+    }
+
+    /// An `Ord` atom for a `\cancel`/`\bcancel`/`\xcancel` body; the diagonal
+    /// is struck after its body is laid out in display style through the same
+    /// placeholder seam as [`Self::frame_atom`].
+    pub(crate) fn cancel_atom(
+        &mut self,
+        body: ml::MathList,
+        tag: ml::SourceTag,
+        frame: flashtex_compiler::math::Frame,
+    ) -> ml::Atom {
+        let index = self.texts.len();
+        match handle_char(index) {
+            Some(handle) => {
+                self.frames.push(FrameBoxSpec { handle: index, body, tag, cancel: Some(frame) });
+                self.texts.push(String::new());
+                self.keys.push(None);
+                // A cancel strike is an hbox, not a run of math characters.
+                self.italics.push(false);
+                ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Text(handle.to_string()))
+            }
+            None => {
+                use flashtex_compiler::math::Frame as F;
+                let name = match frame {
+                    F::Cancel => "\\cancel{...}",
+                    F::BCancel => "\\bcancel{...}",
+                    F::XCancel => "\\xcancel{...}",
+                    _ => "\\cancel{...}",
+                };
+                self.refused.push(name.to_string());
                 ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Empty)
             }
         }
@@ -529,7 +599,8 @@ impl<'a> TextRunMetrics<'a> {
     }
 
     /// Lays out a `\boxed` body in display style and wraps it in the standard
-    /// `\fbox` frame. The result is cached per placeholder and parent size.
+    /// `\fbox` frame (or strikes a cancel body corner-to-corner). The result
+    /// is cached per placeholder and parent size.
     fn frame_box(&self, frame: &FrameBoxSpec, ch: char, size: SizeClass) -> (f64, f64, f64) {
         let p = self.inner.params(size);
         if let Some(b) = self.frame_boxes.borrow().iter().find(|b| b.ch == ch && b.size == p.size) {
@@ -537,7 +608,10 @@ impl<'a> TextRunMetrics<'a> {
         }
         let laid = ml::layout_with_report(&frame.body, ml::Style::DISPLAY, self);
         self.frame_limitations.borrow_mut().extend(laid.limitations);
-        let hbox = framed_math_box(laid.root, frame.tag);
+        let hbox = match frame.cancel {
+            None => framed_math_box(laid.root, frame.tag),
+            Some(kind) => cancel_math_box(laid.root, kind, frame.tag),
+        };
         let dims = (hbox.width, hbox.height, hbox.depth);
         self.frame_boxes.borrow_mut().push(FrameBox { ch, size: p.size, hbox });
         dims
@@ -710,6 +784,41 @@ fn framed_math_box(body: ml::MathBox, tag: ml::SourceTag) -> ml::MathBox {
                 dx: 0.0,
                 dy: depth,
                 content: rule(width, RULE),
+            },
+        ]),
+        width,
+        height,
+        depth,
+        tag: ml::SourceTag::NONE,
+    }
+}
+
+/// A `\cancel`/`\bcancel`/`\xcancel` body with its strike: the body unchanged
+/// (same width/height/depth, so spacing and scripts see the argument alone)
+/// plus an invisible marker rule exactly covering it at its own origin.
+/// math-layout has no diagonal primitive, so the marker carries the body's
+/// extents through layout as an ordinary rule; `typeset::math_items` turns a
+/// rule with a [`cancel_attr`] marker back into stroked corner-to-corner
+/// diagonal(s) instead of an `Item::Rule`. The marker's `span` keeps the
+/// formula's colour/provenance mapping; both fields are set, so later
+/// `inherit_tag` fills leave it alone.
+fn cancel_math_box(body: ml::MathBox, kind: flashtex_compiler::math::Frame, tag: ml::SourceTag) -> ml::MathBox {
+    let (width, height, depth) = (body.width, body.height, body.depth);
+    let marker = ml::MathBox::rule(width, height, depth).with_tag(ml::SourceTag {
+        span: tag.span,
+        attr: Some(cancel_attr(kind).expect("cancel_math_box with a cancel frame")),
+    });
+    ml::MathBox {
+        kind: ml::BoxKind::HBox(vec![
+            ml::Child {
+                dx: 0.0,
+                dy: 0.0,
+                content: body,
+            },
+            ml::Child {
+                dx: 0.0,
+                dy: 0.0,
+                content: marker,
             },
         ]),
         width,
