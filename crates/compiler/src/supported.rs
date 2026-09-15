@@ -287,6 +287,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("reflectbox", "{...}", "graphics.sty box mirrored left to right"),
     ("graphicspath", "{{dir/}...}", "image search directories; no material"),
     ("allowdisplaybreaks", "[0-4]", "amsmath page-break permission inside displays; no material"),
+    ("index", "{entry}", "makeidx index entry (|modifier, @sort key and !subentry live inside the braces): accepted, never typeset (no indexing backend)"),
+    ("glossary", "{entry}", "glossary entry: accepted, never typeset (no glossary backend)"),
     ("clearpage", "", "forces a page break"),
     ("cleardoublepage", "", "forces a page break (one-sided article)"),
     ("c", "{letter}", "cedilla text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning"),

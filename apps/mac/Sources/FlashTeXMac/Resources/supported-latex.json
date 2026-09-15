@@ -24,6 +24,8 @@
     {"name": "paragraph", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "run-in heading: bold, flush, set into the first line of the paragraph that follows it", "renders": true},
     {"name": "subparagraph", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "run-in heading indented by \\parindent, set into the first line of the paragraph that follows it", "renders": true},
     {"name": "tableofcontents", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "article contents list from the previous layout pass", "renders": true},
+    {"name": "index", "mode": "text", "origin": "text_dispatch", "arguments": "{entry}", "description": "makeidx index entry (|modifier, @sort key and !subentry live inside the braces): accepted, never typeset (no indexing backend)", "renders": true},
+    {"name": "glossary", "mode": "text", "origin": "text_dispatch", "arguments": "{entry}", "description": "glossary entry: accepted, never typeset (no glossary backend)", "renders": true},
     {"name": "textbf", "mode": "text", "origin": "text_style", "arguments": "{...}", "description": "bold text", "renders": true},
     {"name": "textmd", "mode": "text", "origin": "text_style", "arguments": "{...}", "description": "medium-weight text", "renders": true},
     {"name": "emph", "mode": "text", "origin": "text_style", "arguments": "{...}", "description": "emphasis: toggles italic", "renders": true},
@@ -952,7 +954,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 183, "percent": 44.6},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 184, "percent": 44.9},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 17, "percent": 56.7},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 41, "percent": 40.2},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -967,6 +969,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 18, "percent": 7.5}
     ],
-    "total": {"canonical": 1314, "supported": 525, "percent": 40}
+    "total": {"canonical": 1314, "supported": 526, "percent": 40}
   }
 }

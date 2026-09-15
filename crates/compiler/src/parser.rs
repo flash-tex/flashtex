@@ -850,6 +850,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "paragraph",
     "subparagraph",
     "tableofcontents",
+    "index",
+    "glossary",
     "textbf",
     "textmd",
     "emph",
@@ -2123,6 +2125,18 @@ impl P<'_> {
             // than an unknown command.
             "makelabels" => {
                 let _ = self.letter_command_available(name, span);
+            }
+            // `\index{entry}` (makeidx) and `\glossary{entry}` write an
+            // `.idx`/`.glo` file for an external program to process. There
+            // is no indexing or glossary backend here, and neither command
+            // typesets anything in real LaTeX either, so the argument is
+            // read and discarded: a silent no-op with no diagnostic, like
+            // `\graphicspath` and `\pagestyle` above. The whole entry --
+            // `|`-modifiers (`\index{term|textbf}`), `@`-sort keys and
+            // `!`-subentries -- lives inside the one braced group, so
+            // consuming it consumes the variants too.
+            "index" | "glossary" => {
+                let _ = self.required_group(name, span);
             }
             // `\today` in ordinary body text. It had no arm here, so it fell
             // through to `unsupported`, whose `debug_assert!(!BUILT_INS
