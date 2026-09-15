@@ -318,7 +318,10 @@ fn symlink_inside_root_is_refused_with_truthful_wording() {
 /// the graph: every `discover` outcome must be either the safe in-root
 /// content or a refusal (`EscapesRootViaSymlink`/`MissingFile`), never a
 /// leak. This must hold for every interleaving, not just probabilistically,
-/// so the assertion is unconditional rather than "usually passes".
+/// so the assertion is unconditional rather than "usually passes". Timing
+/// decides which interleavings a run hits, so this is stress coverage; the
+/// worst one is pinned deterministically by
+/// `symlink_swapped_in_between_classify_and_open_is_refused`.
 #[cfg(unix)]
 #[test]
 fn toctou_symlink_race_never_leaks_outside_content_into_graph() {
@@ -406,6 +409,56 @@ fn toctou_symlink_race_never_leaks_outside_content_into_graph() {
         !leaked,
         "TOCTOU RACE WON: outside file content was read into the project graph as secret.tex"
     );
+}
+
+/// Finding 7 (deterministic): the target is a regular file when it is
+/// classified and a symlink to an outside file when it is opened, at the
+/// root and under nested directories. Discovery must refuse it as a
+/// symlink escape and never put the outside content in the graph.
+#[cfg(unix)]
+#[test]
+fn symlink_swapped_in_between_classify_and_open_is_refused() {
+    use flashtex_project_files::save::race_hook::{self, Window};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    for (entry, rel) in [
+        ("\\input{secret}", "secret.tex"),
+        ("\\input{a/b/secret}", "a/b/secret.tex"),
+    ] {
+        let outside = TempDir::new("window-outside");
+        let victim = outside.write("secret-data.txt", "OUTSIDE-SECRET-CONTENT");
+        let t = TempDir::new("window-root");
+        t.write("main.tex", entry);
+        let target = t.write(rel, "safe-inroot-content");
+
+        let fired = Rc::new(Cell::new(0u32));
+        let count = fired.clone();
+        let _guard = race_hook::install(move |w, name| {
+            if w == Window::BeforeOpen && name == "secret.tex" {
+                if count.get() == 0 {
+                    fs::remove_file(&target).unwrap();
+                    std::os::unix::fs::symlink(&victim, &target).unwrap();
+                }
+                count.set(count.get() + 1);
+            }
+        });
+        let g = ProjectGraph::discover(t.root(), &pp("main.tex")).unwrap();
+        assert!(
+            fired.get() >= 1,
+            "{rel}: the hook must have swapped in the window"
+        );
+        assert!(
+            g.file(&pp(rel)).is_none(),
+            "{rel}: outside content read into the graph"
+        );
+        assert!(
+            g.diagnostics().iter().any(|d| matches!(&d.kind,
+                DiagnosticKind::EscapesRootViaSymlink { target } if target == &pp(rel))),
+            "{rel}: {:?}",
+            g.diagnostics()
+        );
+    }
 }
 
 /// Same property as

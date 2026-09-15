@@ -11,4 +11,5 @@ name = "flashtex_project_files"
 path = "src/lib.rs"
 
 [dependencies]
+libc = "0.2.189"
 unicode-normalization = "0.1.25"
