@@ -331,6 +331,11 @@ fn validation_rejects_unbalanced_state_unknown_fonts_and_foreign_operators() {
         ("Q without matching q", b"Q".to_vec()),
         ("unmatched q", b"q q Q".to_vec()),
         ("unterminated text object", b"BT".to_vec()),
+        (
+            "unterminated marked-content sequence",
+            b"/Span <</ActualText <FEFF27F9>>> BDC".to_vec(),
+        ),
+        ("EMC without matching BDC", b"EMC".to_vec()),
         ("Tj outside BT/ET", b"(\\000\\001) Tj".to_vec()),
         ("without a path", b"f".to_vec()),
         ("path segment without a current point", b"1 2 l".to_vec()),

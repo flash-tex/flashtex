@@ -67,6 +67,11 @@ fn real_pipeline_envelope_exports_glyphs_by_original_gid_at_exact_positions() {
 
     let out = exact::render_exact(&doc).unwrap();
     verify::check_structure(&out.bytes).unwrap();
+    assert_eq!(
+        sha256::hex(&out.bytes),
+        "bedc30983b6ccd486e861b64bf9562d6d5066bb72692cf88603934f1ceefc1db",
+        "the ungrouped v2 fixture must stay byte-identical"
+    );
     let content = ops_text(&out.bytes, 5);
     // 12 TeX pt = 12535902 ticks: the exact decimal, not pdfTeX's 11.9552.
     assert!(
@@ -586,4 +591,129 @@ fn searchable_text_word_gaps_are_the_producers_and_are_counted() {
     let content = ops_text(&out.bytes, 5);
     let ops = exact::parse(content.as_bytes()).unwrap();
     assert_positions_round_trip(&ops, &doc, mixed);
+}
+
+#[test]
+fn actual_text_groups_adjacent_cross_font_runs_without_changing_tounicode() {
+    let font_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/mac/Fonts"));
+    let roman_path = font_dir.join("lmroman10-regular.otf");
+    let math_path = font_dir.join("latinmodern-math.otf");
+    if !roman_path.is_file() || !math_path.is_file() {
+        eprintln!("skipped: bundled Latin Modern fonts are not present");
+        return;
+    }
+    let roman_bytes = std::fs::read(&roman_path).unwrap();
+    let math_bytes = std::fs::read(&math_path).unwrap();
+    let roman = TrueTypeFont::load(&roman_path).unwrap();
+    let math = TrueTypeFont::load(&math_path).unwrap();
+    let roman_id = sha256::hex(&roman_bytes);
+    let math_id = sha256::hex(&math_bytes);
+    let eq = roman.glyph_id('=').unwrap();
+    let implies = math.glyph_id('⇒').unwrap();
+    let arrow = math.glyph_id('→').unwrap();
+    let size = 12i64 << 20;
+    let baseline = 100i64 << 20;
+    let x0 = 72i64 << 20;
+    let x1 = x0 + i64::from(roman.advance(eq)) * size / i64::from(roman.units_per_em);
+    let x2 = x1 + i64::from(math.advance(implies)) * size / i64::from(math.units_per_em);
+    let x3 = x2 + i64::from(math.advance(arrow)) * size / i64::from(math.units_per_em);
+    let run = |font_id: &str, text: &str, gid: u16, x: i64, actual: bool| {
+        let actual = if actual {
+            r#","actual_text":"⟹""#
+        } else {
+            ""
+        };
+        format!(
+            r#"{{"kind":"glyph_run","font_id":"{font_id}","font_size":{size},"text":"{text}"{actual},"paint":{{"r":0,"g":0,"b":0,"a":1}},"glyphs":[{{"gid":{gid},"origin_x":{x},"baseline_y":{baseline},"advance_x":0,"advance_y":0,"cluster":0}}],"clusters":[{{"text_start_byte":0,"text_end_byte":{text_len}}}]}}"#,
+            text_len = text.len(),
+        )
+    };
+    let font = |id: &str, bytes: &[u8], f: &TrueTypeFont| {
+        format!(
+            r#"{{"font_id":"{id}","sha256":"{id}","byte_length":{},"format":"opentype-cff","face_index":0,"units_per_em":{},"glyph_count":{},"postscript_name":"{}"}}"#,
+            bytes.len(),
+            f.units_per_em,
+            f.num_glyphs(),
+            f.postscript_name
+        )
+    };
+    let envelope = format!(
+        r#"{{"protocol_version":2,"id":"actual","type":"display_list","payload":{{"render_format":"display-list-v2","coordinate_unit":"bp_2pow20","color_space":"srgb","text_extraction":"cluster-actualtext","project_id":"actual","revision":1,"required_features":["glyph_run","cluster-actualtext"],"documents":[],"fonts":[{roman_font},{math_font}],"pages":[{{"number":1,"width":{page_width},"height":{page_height},"items":[{items}]}}],"diagnostics":[]}}}}"#,
+        roman_font = font(&roman_id, &roman_bytes, &roman),
+        math_font = font(&math_id, &math_bytes, &math),
+        items = [
+            run(&roman_id, "=", eq, x0, true),
+            run(&math_id, "⇒", implies, x1, true),
+            run(&roman_id, "=", eq, x2, false),
+            run(&math_id, "→", arrow, x3, false),
+        ]
+        .join(","),
+        page_width = 612i64 << 20,
+        page_height = 792i64 << 20,
+    );
+    let (doc, _) = v2::from_v2(
+        &envelope,
+        &V2Options {
+            font_dirs: vec![font_dir],
+        },
+    )
+    .unwrap();
+    let out = exact::render_exact(&doc).unwrap();
+    let exact::ExactFont::CidCff(roman_font) = &doc.fonts["F1"] else {
+        panic!("expected a CFF font for the roman run")
+    };
+    let exact::ExactFont::CidCff(math_font) = &doc.fonts["F2"] else {
+        panic!("expected a CFF font for the math run")
+    };
+    assert_eq!(
+        roman_font.to_unicode.get(&eq).map(String::as_str),
+        Some("=")
+    );
+    assert_eq!(
+        math_font.to_unicode.get(&implies).map(String::as_str),
+        Some("⇒")
+    );
+    assert_eq!(
+        math_font.to_unicode.get(&arrow).map(String::as_str),
+        Some("→")
+    );
+    let content = ops_text(&out.bytes, 5);
+    assert_eq!(content.matches(" BDC\n").count(), 1, "{content}");
+    assert_eq!(content.matches("EMC\n").count(), 1, "{content}");
+    assert!(content.contains("<FEFF27F9>"), "{content}");
+    assert_eq!(
+        exact::parse(content.as_bytes()).unwrap(),
+        match &doc.pages[0].content {
+            exact::Content::Ops(ops) => ops.clone(),
+            exact::Content::Verbatim(_) => unreachable!(),
+        }
+    );
+
+    let dir = std::env::temp_dir().join(format!("flashtex-pdf-actualtext-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pdf = dir.join("actual-text.pdf");
+    std::fs::write(&pdf, &out.bytes).unwrap();
+    let output = std::process::Command::new("python3")
+        .args([
+            "-c",
+            "import contextlib, io, sys\nwith contextlib.redirect_stdout(io.StringIO()):\n import fitz\nprint(''.join(page.get_text() for page in fitz.open(sys.argv[1])), end='')",
+            pdf.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    if !output.status.success()
+        && String::from_utf8_lossy(&output.stderr).contains("No module named")
+    {
+        eprintln!("skipped: PyMuPDF is not installed");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let extracted = String::from_utf8_lossy(&output.stdout).replace(['\r', '\n'], "");
+    assert_eq!(extracted, "⟹=→");
+    let _ = std::fs::remove_dir_all(&dir);
 }

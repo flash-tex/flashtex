@@ -136,6 +136,11 @@ container writer, not a second PDF implementation:
   then inserted unchanged. Anything else (`gs`, `sc`, shading, images,
   inline images, exponents, nested arrays) is an error naming the page and
   operator index; nothing is dropped or rounded.
+- **Marked ActualText.** Exact producers may put `Op::BeginActualText(text)` and
+  `Op::EndMarkedContent` around consecutive glyph operators. The writer emits
+  `/Span <</ActualText <FEFF…>>> BDC` and `EMC`, encoding `text` as UTF-16BE
+  hex with a BOM. The pair may enclose font switches and one or more `BT … ET`
+  blocks. It does not change any font's `ToUnicode` map.
 - **Validation before writing.** Balanced `q`/`Q` and `BT`/`ET`, text
   operators only inside a text object, path segments only after a current
   point, painting only with a path, every `Tf` naming a declared font that
@@ -215,7 +220,11 @@ operators replay to the envelope origins exactly, `exact::glyph_positions`),
 rules become `re f`, fonts
 are resolved by content hash from `--font-dir`/`FLASHTEX_FONT_DIRS`/
 `FLASHTEX_LM_DIR`/the TeX Live Latin Modern directories and embedded as
-GID-preserving subsets, cluster text becomes ToUnicode. `opentype-cff` and
+GID-preserving subsets, cluster text becomes ToUnicode. An optional
+`"actual_text":"⟹"` field on consecutive `glyph_run` items coalesces runs
+with the same value into one `/ActualText` marked-content span, including
+across font switches and `BT … ET` blocks; absent fields keep the old
+serialization and ToUnicode behavior. `opentype-cff` and
 `static-truetype` are accepted; `core14-afm`, alpha, non-integer
 ticks and non-terminating colours are errors. Both SHA-256(bytes) and
 font-engine's SHA-256(bytes ‖ face index) are accepted as `sha256` (the

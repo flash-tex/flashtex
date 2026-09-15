@@ -233,6 +233,10 @@ pub enum Op {
     ClipEvenOdd,
     BeginText,
     EndText,
+    /// `/Span <</ActualText <UTF-16BE hex>>> BDC`.
+    BeginActualText(String),
+    /// `EMC`, closing the nearest marked-content sequence.
+    EndMarkedContent,
     /// `/Name size Tf`; the name is the resource key without the slash.
     Font(String, Decimal),
     TextMove(Decimal, Decimal),
@@ -277,6 +281,8 @@ impl Op {
             Op::ClipEvenOdd => "W*",
             Op::BeginText => "BT",
             Op::EndText => "ET",
+            Op::BeginActualText(_) => "BDC",
+            Op::EndMarkedContent => "EMC",
             Op::Font(..) => "Tf",
             Op::TextMove(..) => "Td",
             Op::TextMatrix(_) => "Tm",
@@ -307,7 +313,15 @@ impl Op {
             | Op::ClipNonZero
             | Op::ClipEvenOdd
             | Op::BeginText
-            | Op::EndText => {}
+            | Op::EndText
+            | Op::EndMarkedContent => {}
+            Op::BeginActualText(text) => {
+                out.extend_from_slice(b"/Span <</ActualText <FEFF");
+                for unit in text.encode_utf16() {
+                    let _ = write!(out_string(out), "{unit:04X}");
+                }
+                out.extend_from_slice(b">>> ");
+            }
             Op::Concat(v) | Op::Cubic(v) | Op::TextMatrix(v) => nums(out, v),
             Op::LineWidth(d) | Op::FillGray(d) | Op::StrokeGray(d) => {
                 nums(out, std::slice::from_ref(d))
@@ -411,6 +425,7 @@ enum Operand {
     Number(String),
     Name(String),
     String(Vec<u8>),
+    Dictionary(Vec<(String, Operand)>),
     Array(Vec<Operand>),
 }
 
@@ -500,28 +515,14 @@ fn tokenize(content: &[u8]) -> Result<Vec<Token>, String> {
             }
             b'<' => {
                 if content.get(i + 1) == Some(&b'<') {
-                    return Err(format!("dictionary at byte {i} is not a content operand"));
+                    let (entries, next) = read_dictionary(content, i)?;
+                    tokens.push(Token::Operand(Operand::Dictionary(entries)));
+                    i = next;
+                    continue;
                 }
-                let end = content[i..]
-                    .iter()
-                    .position(|&c| c == b'>')
-                    .ok_or_else(|| format!("unterminated hex string at byte {i}"))?;
-                let hex: Vec<u8> = content[i + 1..i + end]
-                    .iter()
-                    .copied()
-                    .filter(|c| !is_whitespace(*c))
-                    .collect();
-                let mut bytes = Vec::with_capacity(hex.len() / 2 + 1);
-                for pair in hex.chunks(2) {
-                    let hi = hex_digit(pair[0]);
-                    let lo = pair.get(1).map_or(Some(0), |&c| hex_digit(c));
-                    match (hi, lo) {
-                        (Some(h), Some(l)) => bytes.push(h * 16 + l),
-                        _ => return Err(format!("bad hex string at byte {i}")),
-                    }
-                }
+                let (bytes, next) = read_hex_string(content, i)?;
                 tokens.push(Token::Operand(Operand::String(bytes)));
-                i += end + 1;
+                i = next;
             }
             b')' | b'>' | b'{' | b'}' => {
                 return Err(format!("unexpected delimiter {:?} at byte {i}", b as char));
@@ -544,6 +545,62 @@ fn tokenize(content: &[u8]) -> Result<Vec<Token>, String> {
         }
     }
     Ok(tokens)
+}
+
+fn read_hex_string(content: &[u8], start: usize) -> Result<(Vec<u8>, usize), String> {
+    let end = content[start..]
+        .iter()
+        .position(|&c| c == b'>')
+        .ok_or_else(|| format!("unterminated hex string at byte {start}"))?;
+    let hex: Vec<u8> = content[start + 1..start + end]
+        .iter()
+        .copied()
+        .filter(|c| !is_whitespace(*c))
+        .collect();
+    let mut bytes = Vec::with_capacity(hex.len() / 2 + 1);
+    for pair in hex.chunks(2) {
+        let hi = hex_digit(pair[0]);
+        let lo = pair.get(1).map_or(Some(0), |&c| hex_digit(c));
+        match (hi, lo) {
+            (Some(h), Some(l)) => bytes.push(h * 16 + l),
+            _ => return Err(format!("bad hex string at byte {start}")),
+        }
+    }
+    Ok((bytes, start + end + 1))
+}
+
+fn read_dictionary(
+    content: &[u8],
+    start: usize,
+) -> Result<(Vec<(String, Operand)>, usize), String> {
+    let mut i = start + 2;
+    let mut entries = Vec::new();
+    loop {
+        while content.get(i).is_some_and(|b| is_whitespace(*b)) {
+            i += 1;
+        }
+        if content.get(i) == Some(&b'>') && content.get(i + 1) == Some(&b'>') {
+            return Ok((entries, i + 2));
+        }
+        if content.get(i) != Some(&b'/') {
+            return Err(format!("dictionary at byte {start} needs a name key"));
+        }
+        let key_start = i + 1;
+        i = key_start;
+        while i < content.len() && !is_whitespace(content[i]) && !is_delimiter(content[i]) {
+            i += 1;
+        }
+        let key = decode_name(&content[key_start..i])?;
+        while content.get(i).is_some_and(|b| is_whitespace(*b)) {
+            i += 1;
+        }
+        if content.get(i) != Some(&b'<') || content.get(i + 1) == Some(&b'<') {
+            return Err(format!("dictionary value for /{key} is not a hex string"));
+        }
+        let (value, next) = read_hex_string(content, i)?;
+        entries.push((key, Operand::String(value)));
+        i = next;
+    }
 }
 
 fn read_literal(content: &[u8], start: usize) -> Result<(Vec<u8>, usize), String> {
@@ -672,6 +729,17 @@ fn decimal(t: &Operand) -> Result<Decimal, String> {
     }
 }
 
+fn decode_actual_text(bytes: &[u8]) -> Result<String, String> {
+    if bytes.len() < 2 || bytes[..2] != [0xFE, 0xFF] || !(bytes.len() - 2).is_multiple_of(2) {
+        return Err("ActualText must be UTF-16BE with a BOM".into());
+    }
+    let units: Vec<u16> = bytes[2..]
+        .chunks_exact(2)
+        .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+        .collect();
+    String::from_utf16(&units).map_err(|_| "ActualText is not valid UTF-16".into())
+}
+
 fn decimals<const N: usize>(operands: &[Operand], name: &str) -> Result<[Decimal; N], String> {
     if operands.len() != N {
         return Err(format!(
@@ -747,6 +815,19 @@ fn build_op(name: &str, operands: &[Operand]) -> Result<Op, String> {
         "W*" => none(Op::ClipEvenOdd)?,
         "BT" => none(Op::BeginText)?,
         "ET" => none(Op::EndText)?,
+        "BDC" => match operands {
+            [Operand::Name(tag), Operand::Dictionary(entries)] if tag == "Span" => {
+                if entries.len() != 1 || entries[0].0 != "ActualText" {
+                    return Err("BDC Span needs only an /ActualText property".into());
+                }
+                let Operand::String(bytes) = &entries[0].1 else {
+                    return Err("BDC /ActualText needs a string".into());
+                };
+                Op::BeginActualText(decode_actual_text(bytes)?)
+            }
+            _ => return Err("BDC takes /Span and an /ActualText dictionary".into()),
+        },
+        "EMC" => none(Op::EndMarkedContent)?,
         "Tf" => match operands {
             [Operand::Name(n), size] => Op::Font(n.clone(), decimal(size)?),
             _ => return Err("Tf takes a name and a size".into()),
@@ -1387,6 +1468,7 @@ fn validate(
     };
     let mut depth = 0i32;
     let mut in_text = false;
+    let mut marked_content = 0usize;
     let mut font: Option<&ExactFont> = None;
     let mut has_path = false;
     let mut has_point = false;
@@ -1452,6 +1534,13 @@ fn validate(
                     return Err(err(i, "ET without BT".into()));
                 }
                 in_text = false;
+            }
+            Op::BeginActualText(_) => marked_content += 1,
+            Op::EndMarkedContent => {
+                if marked_content == 0 {
+                    return Err(err(i, "EMC without matching BDC".into()));
+                }
+                marked_content -= 1;
             }
             Op::Font(name, size) => {
                 let f = fonts
@@ -1556,6 +1645,12 @@ fn validate(
     }
     if in_text {
         return Err(err(ops.len(), "unterminated text object".into()));
+    }
+    if marked_content != 0 {
+        return Err(err(
+            ops.len(),
+            "unterminated marked-content sequence".into(),
+        ));
     }
     if has_path {
         return Err(err(ops.len(), "page ends with an unpainted path".into()));
@@ -2457,6 +2552,26 @@ mod tests {
                 .contains("not a PDF number")
         );
         assert!(parse(b"BI /W 1 ID x EI").is_err());
+    }
+
+    #[test]
+    fn actual_text_uses_utf16be_hex_and_round_trips() {
+        let ops = vec![
+            Op::BeginText,
+            Op::Font("F1".into(), Decimal::from_i64(12)),
+            Op::BeginActualText("⟹".into()),
+            Op::ShowText(vec![0, 1]),
+            Op::EndMarkedContent,
+            Op::EndText,
+        ];
+        let bytes = serialize(&ops);
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(
+            text.contains("/Span <</ActualText <FEFF27F9>>> BDC\n"),
+            "{text}"
+        );
+        assert!(text.contains("EMC\n"), "{text}");
+        assert_eq!(parse(&bytes).unwrap(), ops);
     }
 
     #[test]
