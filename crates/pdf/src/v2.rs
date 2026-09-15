@@ -57,8 +57,9 @@
 //!   would not change a pixel. The value is rounded like a colour component.
 //! - Cluster ActualText is reduced to a per-glyph ToUnicode entry (the
 //!   cluster's text); a glyph seen with two different texts keeps the first
-//!   and the report says so. Marked-content `/ActualText` is outside the
-//!   bounded operator set. Only a cluster of *one* glyph names that glyph's
+//!   and the report says so. An optional `actual_text` string on a
+//!   glyph run instead groups consecutive runs with the same value into
+//!   marked content, leaving the ToUnicode maps unchanged. Only a cluster of *one* glyph names that glyph's
 //!   text: the three periods of an ellipsis share the cluster `…`, and
 //!   mapping the period glyph to `…` would make every period of the document
 //!   extract as `…` (and the ellipsis as `………`). A glyph seen only in
@@ -559,6 +560,7 @@ pub fn from_v2_rooted(
             size_ticks: i128,
             color: Option<Vec<Op>>,
             alpha: Option<Decimal>,
+            actual_text: Option<String>,
             glyphs: Vec<Glyph>,
         },
         Ops(Vec<Op>),
@@ -606,6 +608,11 @@ pub fn from_v2_rooted(
                         return Err(format!("{iw}: font_size {size} ticks is not positive"));
                     }
                     let text = s(iv.get("text"), &format!("{iw}.text"))?;
+                    let actual_text = iv
+                        .get("actual_text")
+                        .map(|v| s(Some(v), &format!("{iw}.actual_text")))
+                        .transpose()?
+                        .map(str::to_owned);
                     let clusters = arr(iv.get("clusters"), &format!("{iw}.clusters"))?;
                     let u = used.entry(font_id.to_string()).or_insert_with(|| Used {
                         gids: BTreeSet::new(),
@@ -696,6 +703,7 @@ pub fn from_v2_rooted(
                         size_ticks: size,
                         color: pt.ops.clone(),
                         alpha: pt.alpha.clone(),
+                        actual_text,
                         glyphs,
                     });
                 }
@@ -1064,7 +1072,21 @@ pub fn from_v2_rooted(
         // baseline, size and text: gaps across run boundaries are the word
         // boundaries an extractor reads from geometry.
         let mut last: Option<(i128, i128, i128, String)> = None;
+        let mut open_actual_text: Option<String> = None;
         for item in items {
+            let item_actual_text = match &item {
+                Pending::Run { actual_text, .. } => actual_text.as_deref(),
+                Pending::Ops(_) | Pending::Image { .. } => None,
+            };
+            if open_actual_text.as_deref() != item_actual_text {
+                if open_actual_text.is_some() {
+                    ops.push(Op::EndMarkedContent);
+                }
+                if let Some(text) = item_actual_text {
+                    ops.push(Op::BeginActualText(text.to_owned()));
+                }
+                open_actual_text = item_actual_text.map(str::to_owned);
+            }
             let (resource, size_ticks, color, alpha, glyphs) = match item {
                 Pending::Ops(o) => {
                     ops.extend(o);
@@ -1086,6 +1108,7 @@ pub fn from_v2_rooted(
                     size_ticks,
                     color,
                     alpha,
+                    actual_text: _,
                     glyphs,
                 } => (resource, size_ticks, color, alpha, glyphs),
             };
@@ -1170,6 +1193,9 @@ pub fn from_v2_rooted(
             } else {
                 ops.extend(run_ops);
             }
+        }
+        if open_actual_text.is_some() {
+            ops.push(Op::EndMarkedContent);
         }
         pages.push(ExactPage {
             width,
