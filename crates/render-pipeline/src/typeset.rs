@@ -3217,6 +3217,9 @@ impl<'a> Context<'a> {
                             for row in rows {
                                 (row.span.start.wrapping_sub(span.start), row.span.end.wrapping_sub(span.start)).hash(&mut h);
                                 row.number.as_ref().map(|(n, _)| n).hash(&mut h);
+                                if let Some(m) = &row.number_math {
+                                    incremental::hash_math(m, &mut h);
+                                }
                                 row.cells.len().hash(&mut h);
                                 for cell in &row.cells {
                                     incremental::hash_math(cell, &mut h);
@@ -3250,6 +3253,7 @@ impl<'a> Context<'a> {
                         list,
                         span,
                         number,
+                        number_math,
                         bracket,
                     } => {
                         // TeX §1145: a display that opens a paragraph whose
@@ -3283,6 +3287,9 @@ impl<'a> Context<'a> {
                                 n.hash(&mut h);
                                 (ns.start.wrapping_sub(span.start), ns.end.wrapping_sub(span.start)).hash(&mut h);
                             }
+                            if let Some(m) = number_math {
+                                incremental::hash_math(m, &mut h);
+                            }
                             bracket.hash(&mut h);
                             (*style as u64).hash(&mut h);
                             list_fp.hash(&mut h);
@@ -3292,7 +3299,7 @@ impl<'a> Context<'a> {
                         };
                         let pd = pre_display;
                         let st = *style;
-                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.display_block(list, *span, pd, number.as_ref(), st, geom)) {
+                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.display_block(list, *span, pd, number.as_ref(), number_math.as_ref(), st, geom)) {
                             if let Some((ej, vs, env)) = empty_start {
                                 let parskip = geom.map_or(ctx.style.parskip, |g| g.parsep);
                                 if ej {
@@ -4833,6 +4840,17 @@ impl<'a> Context<'a> {
         self.word_box(text, nspan, size, TextStyle::default())
     }
 
+    /// A rich `\tag` label (`\tag{hi $x^2$}`, #441) as amsmath's
+    /// `\maketag@@@` sets it: `\hbox{\m@th\normalfont ...}`, the label's
+    /// `TextRun` in text style at the body size -- text pieces in the body
+    /// face, inline formulas at `\textstyle`. One math box, at offset 0.
+    fn math_number_box(&mut self, list: &flashtex_compiler::math::MathList, nspan: Span, size: f64) -> Option<NumberBox> {
+        let rec = self.math_box(list, nspan, false, size)?;
+        let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
+        let run = math_run(&self.maths[*mi].root, size, nspan);
+        Some(NumberBox { width: run.width, height: run.height, depth: run.depth, pieces: vec![(run, rec, 0.0)] })
+    }
+
     /// `text` as one `\hbox`, each word its own shaped run at its offset and
     /// the gaps TeX's interword glue at natural width. One shaped run over
     /// the whole string would paint the T1 *visible space* glyph in the gap,
@@ -4881,6 +4899,7 @@ impl<'a> Context<'a> {
         span: Span,
         pre_display_size: Option<f64>,
         number: Option<&(String, Span)>,
+        number_math: Option<&flashtex_compiler::math::MathList>,
         style: ParaStyle,
         list_geom: Option<&ListGeom>,
     ) -> Option<BuiltBlock> {
@@ -4907,7 +4926,11 @@ impl<'a> Context<'a> {
             } else {
                 self.style.leqno
             };
-            if let Some(nb) = self.number_box(text, *nspan, size) {
+            let nb = match number_math {
+                Some(m) => self.math_number_box(m, *nspan, size),
+                None => self.number_box(text, *nspan, size),
+            };
+            if let Some(nb) = nb {
                 e = nb.width;
                 q = e + quad;
                 eqno = Some(nb);
@@ -5158,7 +5181,7 @@ impl<'a> Context<'a> {
     /// flush right. Display alignments always take `\abovedisplayskip`/
     /// `\belowdisplayskip` (§1206); `\@display@init` removes one `\jot`
     /// before the first row of `align`/`gather`.
-    fn rows_block(&mut self, env: adapter::RowsEnv, rows: &[adapter::RowPart], span: Span) -> Option<BuiltBlock> {
+    fn rows_block(&mut self, env: adapter::RowsEnv, rows: &[adapter::RowPart], _span: Span) -> Option<BuiltBlock> {
         use adapter::RowsEnv;
         const MINALIGNSEP: f64 = 10.0;
         const MULTLINEGAP: f64 = 10.0;
@@ -5207,6 +5230,10 @@ impl<'a> Context<'a> {
         // Number boxes.
         let mut tags: Vec<Option<(pl::GlyphRun, usize)>> = Vec::with_capacity(rows.len());
         for row in rows {
+            if let (Some(m), Some((_, nspan))) = (&row.number_math, &row.number) {
+                tags.push(self.math_number_box(m, *nspan, size).and_then(|nb| nb.pieces.into_iter().next()).map(|(run, rec, _)| (run, rec)));
+                continue;
+            }
             tags.push(row.number.as_ref().and_then(|(text, nspan)| {
                 let label = text.clone();
                 let seg = adapter::Segment {
@@ -5224,10 +5251,20 @@ impl<'a> Context<'a> {
                 self.text_box(&seg, size)
             }));
         }
+        // `multline` has one tag, wherever `\tag` was written: `\multline@`
+        // sets it on the last line, or on the first under `leqno`.
+        if matches!(env, RowsEnv::Multline) && !tags.is_empty() {
+            if let Some(i) = tags.iter().position(Option::is_some) {
+                let target = if leqno { 0 } else { tags.len() - 1 };
+                tags.swap(i, target);
+            }
+        }
         let tagw = |i: usize| tags[i].as_ref().map_or(0.0, |(r, _)| r.width);
         // x of every cell, per row.
         let mut xs: Vec<Vec<f64>> = cells.iter().map(|r| vec![0.0; r.len()]).collect();
-        let mut shifted_tags = 0usize;
+        // Rows whose tag amsmath's `\calc@shift@*` moves to a line of its own
+        // (`\shift@tag`, `\ifshifttag@`).
+        let mut shifted = vec![false; cells.len()];
         match env {
             RowsEnv::Align | RowsEnv::AlignAt | RowsEnv::FlAlign => {
                 let mut maxfields = cells.iter().map(Vec::len).max().unwrap_or(0);
@@ -5322,7 +5359,7 @@ impl<'a> Context<'a> {
                         dimen += mintagsep;
                     }
                     if dimen > dw {
-                        shifted_tags += 1;
+                        shifted[ri] = true;
                         continue;
                     }
                     let dimen = eqnshift + dima + cntb as f64 * alignsep + t;
@@ -5365,7 +5402,7 @@ impl<'a> Context<'a> {
                     let mut shift = dw - w;
                     if t > 0.0 {
                         if 2.0 * mintagsep + w + t > dw {
-                            shifted_tags += 1;
+                            shifted[ri] = true;
                         } else if shift < 4.0 * t {
                             shift -= t;
                         }
@@ -5391,7 +5428,7 @@ impl<'a> Context<'a> {
                     let w: f64 = row.iter().map(width).sum();
                     let t = tagw(ri);
                     let x0 = if n > 1 && ri == 0 {
-                        MULTLINEGAP
+                        if t > 0.0 { MULTLINETAGGAP + t } else { MULTLINEGAP }
                     } else if n > 1 && ri + 1 == n {
                         dw - w - if t > 0.0 { MULTLINETAGGAP + t } else { MULTLINEGAP }
                     } else {
@@ -5404,14 +5441,6 @@ impl<'a> Context<'a> {
                     }
                 }
             }
-        }
-        if shifted_tags > 0 {
-            let src = self.source(span);
-            self.emit(None, Diagnostic::warning(
-                "math_limitation",
-                format!("{shifted_tags} equation number(s) too wide for their row set on the row's baseline; amsmath moves them to a line of their own"),
-                vec![src],
-            ));
         }
         // Rows: `\strut@` (.7/.3 `\normalbaselineskip`) minima.
         let normal = self.style.baselineskip_pt;
@@ -5484,10 +5513,12 @@ impl<'a> Context<'a> {
                 items.push(pl::Item::Box(run.clone()));
                 recs.push(Some(*rec));
             }
-            if let Some((nrun, nrec)) = &tags[ri] {
+            let tag_x = |nrun: &pl::GlyphRun| if leqno { 0.0 } else { dw - nrun.width };
+            let shift = shifted[ri] && tags[ri].is_some();
+            if let (Some((nrun, nrec)), false) = (&tags[ri], shift) {
                 h = h.max(nrun.height);
                 d = d.max(nrun.depth);
-                runs.push(position_run(nrun, if leqno { 0.0 } else { dw - nrun.width }, 0.0));
+                runs.push(position_run(nrun, tag_x(nrun), 0.0));
                 items.push(pl::Item::Box(nrun.clone()));
                 recs.push(Some(*nrec));
             }
@@ -5495,8 +5526,8 @@ impl<'a> Context<'a> {
                 let src = self.source(rows[ri].span);
                 self.emit(None, Diagnostic::warning("overfull_display", format!("display row is {:.2}pt wider than the text width", natural - dw), vec![src]));
             }
-            lines.push(pl::Line {
-                index: lines.len(),
+            let row_line = |runs, items: std::ops::Range<usize>, index, h, d, natural| pl::Line {
+                index,
                 runs,
                 baseline_y: h,
                 height: h,
@@ -5505,12 +5536,73 @@ impl<'a> Context<'a> {
                 set_width: dw,
                 ratio: 0.0,
                 badness: 0.0,
-                items: start..items.len(),
+                items,
                 hyphenated: false,
-            });
-            extents.push((h, d));
-            vskips.push(0.0);
-            total += h + d;
+            };
+            let Some((nrun, nrec)) = tags[ri].as_ref().filter(|_| shift) else {
+                lines.push(row_line(runs, start..items.len(), lines.len(), h, d, natural));
+                extents.push((h, d));
+                vskips.push(0.0);
+                total += h + d;
+                continue;
+            };
+            // A shifted tag (`\place@tag`, `\place@tag@gather`): the tag box
+            // is `\hbox{\strut@ tag}` stacked under `\normalbaselines` with a
+            // box of the row's `\lineht@` -- its cells' greatest depth (tags
+            // right, a `\vtop` hanging below the row) or height (`leqno`, a
+            // `\vbox` standing above it). It is its own line here, and the
+            // extents the page builder sees are chosen so the interline glue
+            // before and after the pair is the glue TeX computes for the one
+            // taller row, whichever of `\baselineskip`/`\lineskip` it takes.
+            let (th, td) = (nrun.height.max(strut_h), nrun.depth.max(strut_d));
+            let lineht = row
+                .iter()
+                .filter_map(|c| c.run.as_ref())
+                .map(|(r, _)| if leqno { r.height } else { r.depth })
+                .fold(0.0f64, f64::max);
+            let (bs_n, ls_n, lsl_n) = (normal, self.style.lineskip_pt, self.style.lineskiplimit_pt);
+            let interline = |g: f64| if g < lsl_n { ls_n } else { g };
+            let block_bs = normal + JOT;
+            let tag_runs = vec![position_run(nrun, tag_x(nrun), 0.0)];
+            let tag_natural = tag_x(nrun) + nrun.width;
+            if leqno {
+                // Tag baseline `dl` above the row's; the row box is `hh` high.
+                let dl = td + interline(bs_n - td - lineht) + lineht;
+                let hh = h.max(dl + th);
+                match vskips.last_mut() {
+                    Some(v) => *v -= dl,
+                    None => lead -= dl,
+                }
+                // The tag's line comes first, so its item goes before the row's.
+                items.insert(start, pl::Item::Box(nrun.clone()));
+                recs.insert(start, Some(*nrec));
+                lines.push(row_line(tag_runs, start..start + 1, lines.len(), th, td, tag_natural));
+                extents.push((hh, 0.0));
+                vskips.push(dl - block_bs);
+                total += hh;
+                lines.push(row_line(runs, start + 1..items.len(), lines.len(), h, d, natural));
+                extents.push((0.0, d));
+                vskips.push(0.0);
+                total += d;
+            } else {
+                // Tag baseline `dr` below the row's.
+                let dr = lineht + interline(bs_n - lineht - th) + th;
+                let tag_start = items.len();
+                items.push(pl::Item::Box(nrun.clone()));
+                recs.push(Some(*nrec));
+                lines.push(row_line(runs, start..tag_start, lines.len(), h, d, natural));
+                extents.push((h, 0.0));
+                vskips.push(dr - block_bs);
+                total += h + dr;
+                lines.push(row_line(tag_runs, tag_start..items.len(), lines.len(), th, td, tag_natural));
+                // The pair's depth is the taller row's, `max(d, dr + td)`
+                // below the row's baseline: reported whole, so the next row's
+                // interline glue is TeX's, and the tag's `dr` taken back.
+                let below = (d - dr).max(td);
+                extents.push((0.0, dr + below));
+                vskips.push(-dr);
+                total += below;
+            }
         }
         if lines.is_empty() {
             return None;
@@ -6284,6 +6376,30 @@ pub fn math_ellipsis_of(text: &str, at: usize) -> Option<char> {
     })
 }
 
+/// The text font of a `\text`/`\tag` piece set by `\textbf`/`\emph`/
+/// `\textit` (#441); `None` for the document's upright text font.
+#[cfg(feature = "compiler-text-run")]
+fn text_piece_key(style: flashtex_compiler::math::TextStyle) -> Option<crate::nfss::FontKey> {
+    use crate::nfss::{FamilyKind, FontKey, Series, Shape};
+    use flashtex_compiler::math::TextStyle as S;
+    match style {
+        S::Normal => None,
+        S::Bold => Some(FontKey::new(FamilyKind::Rm, Series::Bx, Shape::N)),
+        S::Italic => Some(FontKey::new(FamilyKind::Rm, Series::M, Shape::It)),
+        S::BoldItalic => Some(FontKey::new(FamilyKind::Rm, Series::Bx, Shape::It)),
+    }
+}
+
+/// The math pieces of a `\text`/`\tag` run (#441), for the walks that only
+/// look inside sub-formulas.
+#[cfg(feature = "compiler-text-run")]
+fn text_run_lists(pieces: &[flashtex_compiler::math::TextPiece]) -> impl Iterator<Item = &flashtex_compiler::math::MathList> {
+    pieces.iter().filter_map(|p| match p {
+        flashtex_compiler::math::TextPiece::Math(list) => Some(list),
+        flashtex_compiler::math::TextPiece::Text { .. } => None,
+    })
+}
+
 /// [`convert_math_fenced`] with `class` giving the forced class of a
 /// `Group` (`\mathbin{...}`) or class-overridden symbol atom at a span, and
 /// `op_limits` the limit placement of a named operator at a span
@@ -6348,6 +6464,34 @@ pub fn convert_math_classed(
                     atom.limits = limits;
                 }
                 vec![atom]
+            }
+            // `\text{for all $x$ in $S$}`, `\tag{hi $x^2$}` (#441): an `\hbox`
+            // (an Ord atom, §1076) of text pieces and inline formulas.
+            // math-layout's `TextRun` sets each piece as its own list at
+            // `\textstyle` (or the script style it is in), so a formula's
+            // spacing starts afresh as it does after `$`; a text piece is a
+            // one-atom list holding the shaped text handle.
+            #[cfg(feature = "compiler-text-run")]
+            N::TextRun(pieces) => {
+                use flashtex_compiler::math::TextPiece;
+                let mut out = Vec::with_capacity(pieces.len());
+                for (i, piece) in pieces.iter().enumerate() {
+                    out.push(match piece {
+                        TextPiece::Text { text, style } => {
+                            // `\check@icr`: a slanted font's run takes its
+                            // italic correction unless `.` or `,` follows
+                            // (`\nocorrlist`).
+                            let nocorr = matches!(pieces.get(i + 1), Some(TextPiece::Text { text: next, .. }) if next.starts_with(['.', ',']));
+                            let atom = match text_piece_key(*style) {
+                                None => sink.atom(text),
+                                Some(key) => sink.atom_in_hbox(text, key, key.slanted() && !nocorr),
+                            };
+                            ml::TextPiece::Math(ml::MathList::new(vec![atom]))
+                        }
+                        TextPiece::Math(list) => ml::TextPiece::Math(sub(list, sink)),
+                    });
+                }
+                vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::TextRun(out))]
             }
             // Glue inside a sub-formula (`\operatorname*{arg\,max}`, `\;`
             // inside `\left...\right`): math-layout's `Glue` atom, which
@@ -7121,6 +7265,8 @@ fn math_grids(list: &flashtex_compiler::math::MathList, out: &mut Vec<(usize, us
                 math_grids(above, out);
                 math_grids(below, out);
             }
+            #[cfg(feature = "compiler-text-run")]
+            N::TextRun(pieces) => text_run_lists(pieces).for_each(|l| math_grids(l, out)),
         }
         if let Some(s) = &a.superscript {
             math_grids(s, out);
@@ -7166,6 +7312,8 @@ fn math_glue_em(list: &flashtex_compiler::math::MathList) -> f64 {
                 N::SubArray { rows, .. } => rows.iter().map(math_glue_em).sum(),
                 #[cfg(feature = "amsmath-inline")]
                 N::ExtArrow { above, below, .. } => math_glue_em(above) + math_glue_em(below),
+                #[cfg(feature = "compiler-text-run")]
+                N::TextRun(pieces) => text_run_lists(pieces).map(math_glue_em).sum(),
             };
             own + a.superscript.as_ref().map_or(0.0, math_glue_em) + a.subscript.as_ref().map_or(0.0, math_glue_em)
         })
@@ -7277,6 +7425,8 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
                 math_approximations(above, out);
                 math_approximations(below, out);
             }
+            #[cfg(feature = "compiler-text-run")]
+            N::TextRun(pieces) => text_run_lists(pieces).for_each(|l| math_approximations(l, out)),
         }
         for part in [&a.superscript, &a.subscript].into_iter().flatten() {
             math_approximations(part, out);

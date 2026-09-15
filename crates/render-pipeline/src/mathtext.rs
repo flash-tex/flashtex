@@ -274,6 +274,14 @@ impl TextSink {
         self.atom_keyed(text, Some(key), true)
     }
 
+    /// An `Ord` atom for a text-mode run in the text font `key`: a
+    /// `\textbf{...}`/`\emph{...}` piece of `\text`/`\tag` (#441). It is
+    /// text, not a run of math characters; `corrected` is the kernel's
+    /// `\check@icr`, which ends a slanted `\textit`/`\emph` with `\/`.
+    pub fn atom_in_hbox(&mut self, text: &str, key: crate::nfss::FontKey, corrected: bool) -> ml::Atom {
+        self.atom_keyed(text, Some(key), corrected)
+    }
+
     fn atom_keyed(&mut self, text: &str, key: Option<crate::nfss::FontKey>, italic: bool) -> ml::Atom {
         match handle_char(self.texts.len()) {
             Some(handle) => {
