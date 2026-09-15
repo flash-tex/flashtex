@@ -2830,7 +2830,10 @@ impl P<'_> {
             // `-\@getpen{n}`/`\@getpen{n}` with the space in front of the
             // command moved after it; in vertical mode, `\@nolnerr`.
             "linebreak" | "nolinebreak" => {
-                let priority = self.break_priority_penalty();
+                let (priority, bracket) = self.break_priority_penalty();
+                // The span covers the bracket, so a consumer reading the
+                // source after it starts past `]`.
+                let span = bracket.map_or(span, |bracket| span.merge(bracket));
                 if para.is_empty() {
                     self.diags.push(Diagnostic::error(
                         format!("LaTeX Error: There's no line here to end (\\{name} outside a paragraph)"),
@@ -2855,11 +2858,16 @@ impl P<'_> {
             // horizontal list inside a paragraph, in the vertical list between
             // paragraphs.
             "penalty" | "nobreak" | "allowbreak" => {
+                // `\penalty`'s span covers its number.
+                let mut span = span;
                 let value = match name {
                     "nobreak" => INF_PENALTY,
                     "allowbreak" => 0,
                     _ => match self.integer_value() {
-                        Some((value, _)) => value,
+                        Some((value, number)) => {
+                            span = span.merge(number);
+                            value
+                        }
                         None => {
                             self.diags.push(Diagnostic::error(
                                 "\\penalty needs a number (Missing number, treated as zero)",
@@ -3027,7 +3035,8 @@ impl P<'_> {
             // the penalty lands after the line the command is set on. A
             // vertical-mode `\pagebreak` with priority 4 keeps its own block.
             "pagebreak" | "nopagebreak" => {
-                let priority = self.break_priority_penalty();
+                let (priority, bracket) = self.break_priority_penalty();
+                let span = bracket.map_or(span, |bracket| span.merge(bracket));
                 let value = if name == "pagebreak" {
                     -priority
                 } else {
@@ -6017,18 +6026,20 @@ impl P<'_> {
     /// latex.ltx `\@getpen` of a `\linebreak`/`\pagebreak`-family priority
     /// bracket (absent: 4): `\ifcase #1 \z@ \or \@lowpenalty\or \@medpenalty
     /// \or \@highpenalty \else \@M \fi`, with the kernel's 51/151/301.
-    fn break_priority_penalty(&mut self) -> i32 {
-        let priority = match self.optional_bracket_argument() {
-            None => 4,
-            Some((content, _)) => content.trim().parse::<i64>().unwrap_or(4),
+    /// The bracket's span is returned with the value (`None` without one).
+    fn break_priority_penalty(&mut self) -> (i32, Option<Span>) {
+        let (priority, bracket) = match self.optional_bracket_argument() {
+            None => (4, None),
+            Some((content, span)) => (content.trim().parse::<i64>().unwrap_or(4), Some(span)),
         };
-        match priority {
+        let value = match priority {
             0 => 0,
             1 => 51,
             2 => 151,
             3 => 301,
             _ => INF_PENALTY,
-        }
+        };
+        (value, bracket)
     }
 
     /// TeX's `<optional equals><number>` (§1224, §440-§445) after an integer
@@ -6068,8 +6079,13 @@ impl P<'_> {
             .unwrap_or(i64::MAX)
             .min(i64::from(i32::MAX));
         let value = if negative { -magnitude } else { magnitude } as i32;
-        let span = self.t[self.i].token.span;
         let consumed = signs + digits;
+        let token = self.t[self.i].token.span;
+        let span = if token.end - token.start == word.len() {
+            Span::in_document(token.document, token.start, token.start + consumed)
+        } else {
+            token
+        };
         if consumed == word.len() {
             self.i += 1;
             if matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Space)) {
@@ -9098,6 +9114,28 @@ mod tests {
                 (10000, false),
                 (0, false),
                 (-50, false)
+            ]
+        );
+        // Each node's span covers its number or priority bracket.
+        let source = r"a \linebreak[2] b \nolinebreak c a\linebreak b a\nolinebreak[0] b a\nobreak\ b a \penalty10000 b a\allowbreak b a\penalty-50 b";
+        let spans: Vec<&str> = para
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Penalty { span, .. } => Some(&source[span.start..span.end]),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            spans,
+            [
+                r"\linebreak[2]",
+                r"\nolinebreak",
+                r"\linebreak",
+                r"\nolinebreak[0]",
+                r"\nobreak",
+                r"\penalty10000",
+                r"\allowbreak",
+                r"\penalty-50"
             ]
         );
         // No number, bracket or sign is typeset as text.
