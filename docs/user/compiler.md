@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 307 text-mode and 551 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 310 text-mode and 551 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -544,6 +544,9 @@ Canonical sources:
 | `\LaTeX` |  | latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \TeX |
 | `\LaTeXe` |  | \LaTeX, kern .15em, 2 and a text-style subscript varepsilon |
 | `\rule` | `[raise]{dimension}{dimension}` | filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \textwidth, \linewidth, \columnwidth |
+| `\phantom` | `{...}` | empty box with the argument's width, height and depth; nothing is painted |
+| `\hphantom` | `{...}` | empty box with the argument's width only (zero height and depth) |
+| `\vphantom` | `{...}` | empty box with the argument's height and depth only (zero width) |
 | `\thinspace` |  | text kern .16667em (math: thin muskip) |
 | `\negthinspace` |  | text kern -.16667em |
 | `\medspace` |  | text kern .2222em |

@@ -2515,6 +2515,64 @@ pub(crate) fn style_font(style: TextStyle) -> Font {
     }
 }
 
+/// The size-based extents a phantom's text would occupy if it were really
+/// typeset: `place` ensures `(run size, run size × (line spacing − 1))` per
+/// text run, which the detached measuring box's per-glyph AFM extents
+/// understate (Times descends 0.217em, not 0.2em). Transparent wrappers are
+/// traversed with the ambient size they lay out in (see the
+/// `Underline`/`ColorBox` arms); a footnote contributes its mark's ambient
+/// size while its note text is skipped, since it leaves the line for the
+/// page bottom.
+fn ensure_text_extents(c: &mut LayoutCursor, inlines: &[Inline], size: f64) {
+    for inline in inlines {
+        match inline {
+            Inline::Text { style, .. } => {
+                let run_size = style.size.map_or(size, |level| {
+                    size_declaration_pt(level, c.constraints.font_size_pt)
+                });
+                c.ensure_extents(run_size, run_size * (LINE_SPACING - 1.0));
+            }
+            Inline::Verbatim { .. }
+            | Inline::Label { .. }
+            | Inline::Reference { .. }
+            | Inline::CleverReference { .. }
+            | Inline::Footnote { .. } => {
+                c.ensure_extents(size, size * (LINE_SPACING - 1.0));
+            }
+            Inline::Underline(u) => ensure_text_extents(c, &u.content, size),
+            Inline::ColorBox(b) => ensure_text_extents(c, &b.content, size),
+            Inline::Phantom { content, .. } => ensure_text_extents(c, content, size),
+            _ => {}
+        }
+    }
+}
+
+/// True when `content` holds material the text model above cannot measure:
+/// the layout arms for these variants ensure real box extents rather than
+/// size-based ones (`place_math`, `place_logo`, `place_rule`, the graphics
+/// and tabular boxes). Anything else is covered by [`ensure_text_extents`]
+/// exactly, so the detached box's AFM approximation must not dilute it (see
+/// the `Phantom` arm); unknown future variants default to needing the box,
+/// which can only over- rather than under-reserve.
+fn content_needs_box_extents(inlines: &[Inline]) -> bool {
+    inlines.iter().any(|inline| match inline {
+        Inline::Math { .. }
+        | Inline::MathRows { .. }
+        | Inline::Logo { .. }
+        | Inline::Rule { .. }
+        | Inline::Graphic { .. }
+        | Inline::Tabular(_)
+        | Inline::Transform(_) => true,
+        Inline::Underline(u) => content_needs_box_extents(&u.content),
+        Inline::ColorBox(b) => content_needs_box_extents(&b.content),
+        Inline::Phantom { content, .. } => content_needs_box_extents(content),
+        Inline::Footnote { text, .. } => text
+            .as_deref()
+            .is_some_and(content_needs_box_extents),
+        _ => false,
+    })
+}
+
 fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
     for inline in inlines {
         match inline {
@@ -2751,6 +2809,41 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                             }),
                         });
                 }
+            }
+            Inline::Phantom {
+                content,
+                horizontal,
+                vertical,
+                space_before,
+                ..
+            } => {
+                // latex.ltx `\ph@nt`: the argument set as an unbroken box
+                // (`inline_box` with no measure, like a tabular entry) whose
+                // ink is discarded — only its extents advance the cursor. A
+                // box, not glue: unlike `hspace`, the eagerly reserved
+                // inter-word space around it is kept (see `place`), so
+                // `a \phantom{X} b` keeps both gaps while `X` paints nothing.
+                if !space_before {
+                    c.x = c.content_end;
+                }
+                let measured = c.inline_box(content, size, None);
+                let width = if *horizontal { measured.0.width } else { 0.0 };
+                if *vertical {
+                    // Text runs are laid out with size-based extents (see
+                    // `place`), which the detached box's per-glyph AFM
+                    // extents understate; ensure them directly so the box
+                    // matches what its text would occupy if really typeset.
+                    // The box numbers are only ensured on top when the
+                    // content holds real boxes (math, rules, ...), which the
+                    // text model cannot see.
+                    ensure_text_extents(c, content, size);
+                    if content_needs_box_extents(content) {
+                        c.ensure_extents(measured.0.ascent, measured.0.descent);
+                    }
+                }
+                c.note_space();
+                c.content_end = c.x + width;
+                c.x += width + word_space(size, font);
             }
         }
     }
