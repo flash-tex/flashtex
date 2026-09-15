@@ -4,9 +4,10 @@ import FlashTeXProtocol
 /// Editor navigation intelligence (lane mac-editor-dx-3): environment pair
 /// matching for highlight / select / wrap, project-wide symbol rename plans
 /// for `\label` keys and user commands, user command definitions for
-/// go-to-definition and the hover peek, and the fuzzy symbol picker. All
-/// pure over UTF-16 `NSString`s; the model glue lives in
-/// `ShellModel+EditorNavigation.swift`, the editor glue in `SourceEditorView`.
+/// go-to-definition and the hover peek, the fuzzy symbol picker, and Go to
+/// Line (`resolveLineTarget`). All pure over UTF-16 `NSString`s; the model
+/// glue lives in `ShellModel+EditorNavigation.swift`, the editor glue in
+/// `SourceEditorView`.
 ///
 /// The scanners share one lexical rule set: a `%` that is not `\%` comments
 /// the rest of its line, `\begin{verbatim}`-like environments (the
@@ -501,5 +502,129 @@ enum EditorNavigation {
         }
         guard qi == q.count else { return nil }
         return score - c.count / 4
+    }
+
+    // MARK: go to line
+
+    /// A resolved caret: UTF-16 offset on `NSString` coordinates, 1-based line,
+    /// 1-based column counting extended grapheme clusters (so a flag emoji or
+    /// `e\u{0301}` is one column).
+    struct LineTarget: Equatable {
+        var utf16: Int
+        var line: Int
+        var column: Int
+    }
+
+    /// Parsed Go to Line input, before it is applied to a buffer.
+    enum LineSpec: Equatable {
+        /// 1-based line, optional 1-based grapheme column (`42` / `42:7`).
+        case absolute(line: Int, column: Int?)
+        /// Added to the caret's 1-based line (`+5` / `-5`).
+        case relative(delta: Int)
+    }
+
+    static let emptyLineTargetHint = "Type a line number, line:column, or +N/−N."
+    static let invalidLineTargetHint = "Not a line number. Try 42, 42:7, or +5/−5."
+
+    /// Inline-hint payload for a failed parse/resolve (`Result`'s Failure must be `Error`).
+    struct LineHint: Error, Equatable {
+        var message: String
+    }
+
+    /// `42`, `42:7`, `+5`, `-5`; a leading `:` is ignored so the command
+    /// palette can pass `:42` through the same parser. Empty / junk fail
+    /// with a short hint for the sheet.
+    static func parseLineTarget(_ input: String) -> Result<LineSpec, LineHint> {
+        var s = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix(":") { s = String(s.dropFirst()).trimmingCharacters(in: .whitespaces) }
+        guard !s.isEmpty else { return .failure(LineHint(message: emptyLineTargetHint)) }
+        if s.first == "+" || s.first == "-" {
+            let negative = s.first == "-"
+            let digits = String(s.dropFirst())
+            guard let n = saturatedDecimal(digits) else { return .failure(LineHint(message: invalidLineTargetHint)) }
+            let delta = negative ? (n == Int.max ? Int.min : -n) : n
+            return .success(.relative(delta: delta))
+        }
+        let parts = s.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+        if parts.count == 1 {
+            guard let line = saturatedDecimal(String(parts[0])) else { return .failure(LineHint(message: invalidLineTargetHint)) }
+            return .success(.absolute(line: line, column: nil))
+        }
+        if parts.count == 2 {
+            guard let line = saturatedDecimal(String(parts[0])), let column = saturatedDecimal(String(parts[1])) else {
+                return .failure(LineHint(message: invalidLineTargetHint))
+            }
+            return .success(.absolute(line: line, column: column))
+        }
+        return .failure(LineHint(message: invalidLineTargetHint))
+    }
+
+    /// Maps `input` onto `text`: out-of-range line/column clamp to the last
+    /// line or the last grapheme column of that line; invalid text is a hint.
+    /// `caret` is a UTF-16 offset (clamped) used only for `+N`/`-N`.
+    static func resolveLineTarget(_ text: String, input: String, caret: Int) -> Result<LineTarget, LineHint> {
+        switch parseLineTarget(input) {
+        case .failure(let hint): return .failure(hint)
+        case .success(let spec):
+            let ns = text as NSString
+            let lines = lineSpans(in: ns)
+            let last = lines.count
+            let caretLine: Int = {
+                let c = min(max(caret, 0), ns.length)
+                if let i = lines.firstIndex(where: { c < $0.end || (c == ns.length && $0.start == ns.length) }) {
+                    return i + 1
+                }
+                return last
+            }()
+            let requested: (line: Int, column: Int?)
+            switch spec {
+            case .absolute(let line, let column): requested = (line, column)
+            case .relative(let delta):
+                let sum = caretLine.addingReportingOverflow(delta)
+                requested = (sum.overflow ? (delta > 0 ? Int.max : 1) : sum.partialValue, nil)
+            }
+            let line = min(max(requested.line, 1), last)
+            let span = lines[line - 1]
+            let content = ns.substring(with: NSRange(location: span.start, length: span.contentsEnd - span.start))
+            let graphemes = Array(content)
+            let maxColumn = graphemes.count + 1
+            let column = min(max(requested.column ?? 1, 1), maxColumn)
+            var utf16 = span.start
+            for g in graphemes.prefix(column - 1) { utf16 += String(g).utf16.count }
+            return .success(LineTarget(utf16: utf16, line: line, column: column))
+        }
+    }
+
+    /// Non-empty all-digits string → Int, saturating at `Int.max`; nil otherwise.
+    private static func saturatedDecimal(_ s: String) -> Int? {
+        guard !s.isEmpty else { return nil }
+        var n = 0
+        for ch in s.unicodeScalars {
+            guard ch >= "0" && ch <= "9" else { return nil }
+            let d = Int(ch.value - 48)
+            if n > (Int.max - d) / 10 { return Int.max }
+            n = n * 10 + d
+        }
+        return n
+    }
+
+    /// Every Cocoa line of `ns`, including an empty last line after a trailing
+    /// terminator. `end` includes the delimiter; `contentsEnd` does not.
+    private static func lineSpans(in ns: NSString) -> [(start: Int, contentsEnd: Int, end: Int)] {
+        let n = ns.length
+        if n == 0 { return [(0, 0, 0)] }
+        var out: [(start: Int, contentsEnd: Int, end: Int)] = []
+        var loc = 0
+        while loc < n {
+            var start = 0, end = 0, contentsEnd = 0
+            ns.getLineStart(&start, end: &end, contentsEnd: &contentsEnd, for: NSRange(location: loc, length: 0))
+            out.append((start, contentsEnd, end))
+            if end <= loc { break }
+            loc = end
+        }
+        if let last = out.last, last.contentsEnd < last.end {
+            out.append((n, n, n))
+        }
+        return out
     }
 }

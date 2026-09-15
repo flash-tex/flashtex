@@ -891,7 +891,14 @@ Return at the end of a `\item …` line continues the list with a new `\item `
 (`\item[] ` for a description entry; a bare `\item` line just breaks). ⌘/
 toggles `% ` on every line the selection touches (all commented → uncomment,
 `%` with or without a space; otherwise comment the non-blank lines; one undo
-step "Toggle Comment"). The delimiter pair around the caret is highlighted
+step "Toggle Comment"). Editor ▸ Duplicate Line (⌥⇧↓) and Duplicate Line Up
+(⌥⇧↑) copy every full line the selection touches below or above, leaving the
+caret or selection on the copy, as one undo step (`EditorKeyHandling.duplicateLinesEdit`,
+the Overleaf shortcut). Editor ▸ Move Line
+Up/Down (⌥⌘↑ / ⌥⌘↓), Delete Line (⌃⌘K), Join Lines (⌃J), Sort Lines
+Ascending/Descending (palette) and Trim Trailing Whitespace (palette) operate
+on the full lines the selection touches as one undo step (`EditorLineCommands.swift`).
+The delimiter pair around the caret is highlighted
 (`BraceMatcher`).
 
 Commands trigger on `\` (empty prefix lists everything supported). Invalid
@@ -982,8 +989,16 @@ explain that nothing is loaded.
 | Esc / ⌃Space | Completion popup (supported commands, `\end{…}` for open environments, labels, citation keys, document words; never takes the keyboard from the editor) |
 | ↑ / ↓ / Tab / ⇧Tab / Return | Completion list keys, while the list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Return/Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list, any other caret move closes it |
 | ⌘⇧Space | Signature help for the command whose argument the caret is in (also opens on `{`/`[` typed after a command name; `}`, Esc or leaving the argument closes it) |
-| ⌥⇧↓ / ⌥⇧↑ | Duplicate the caret's line — or every line the selection touches — below / above itself, caret on the copy so the key repeats |
 | ⌘/ | Toggle `% ` line comment on the selection's lines |
+| ⌘L | Go to line… (1-based line, line:column, or +N/−N relative to the caret; out-of-range numbers clamp; `:42` in the command palette jumps directly) |
+| ⌥⇧↓ | Duplicate Line (every full line the selection touches, copy below, caret/selection stays on the copy, one undo step; the Overleaf shortcut) |
+| ⌥⇧↑ | Duplicate Line Up (every full line the selection touches, copy above, caret/selection stays on the copy, one undo step) |
+| ⌘⌥↑ / ⌘⌥↓ | Move line up / down (full lines only, no-op at the buffer edges; ⌥⌘[ / ⌥⌘] remain Previous/Next Occurrence) |
+| ⌃⌘K | Delete Line (every full line the selection touches; ⇧⌘K remains Attach Built Compiler) |
+| ⌃J | Join Lines (one space; strips the next line's leading whitespace and a trailing `%` comment marker only when it ends the line) |
+| Editor > Sort Lines Ascending | Sort Lines Ascending (stable, locale-aware compare of the touched lines; no key equivalent) |
+| Editor > Sort Lines Descending | Sort Lines Descending (stable, locale-aware compare of the touched lines; no key equivalent) |
+| Editor > Trim Trailing Whitespace | Trim Trailing Whitespace of the whole document (verbatim bodies and a line that is only `\\` plus spaces are left alone) |
 | ⌃I | Re-indent Lines (selected lines, or the caret's line; LaTeX-aware; one undo step). Not Tab; Vim does not bind ⌃I; ⌘⇧I is Toggle Captures |
 | Edit > Re-indent Document | Re-indent Document (same rules over the whole buffer; one undo step; no shortcut) |
 | ⌘⌥← | Fold the innermost environment or section at the caret (first line stays visible with an inline …; hidden characters stay in the buffer) |
@@ -995,6 +1010,7 @@ explain that nothing is loaded.
 | ⌘⇧T | Go to symbol: fuzzy picker over every heading, environment and label of the open documents |
 | ⌘⇧A | Select environment: the innermost `\begin{X}`…`\end{X}` around the caret, again for the enclosing one (a caret on `\begin`/`\end` highlights its partner) |
 | ⌘⇧W | Wrap selection in environment… (whole lines as an indented block, otherwise inline; one undoable edit) |
+| ⌃⌘E | Change environment… (innermost pair; rewrites both `\begin` and `\end` names as one undo step; typing in either name updates the partner) |
 | ⌥⇧R | Rename symbol: the `\label` key or user command under the caret across the open documents (Plan → Apply; one undoable edit per document, one guarded `apply_group` per file with the helper) |
 | ⌘⇧] / ⌘⇧[ | Next / previous diagnostic (refused if its span was edited since the compile) |
 | ⌘⌥] / ⌘⌥[ | Next / previous occurrence within the diagnostics panel's selected group (wrapping; the row reads "k of n") |

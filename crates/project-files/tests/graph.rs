@@ -276,6 +276,38 @@ fn symlink_escaping_root_is_rejected() {
     assert!(
         matches!(&g.diagnostics()[0].kind, DiagnosticKind::EscapesRootViaSymlink { target } if target == &pp("link.tex"))
     );
+    assert_eq!(
+        g.diagnostics()[0].message,
+        "\\input{link}: link.tex is a symbolic link; project files are read without following symlinks"
+    );
+}
+
+/// Symlinks are refused wherever they point, so the diagnostic must not
+/// claim an in-root link leaves the root; an ancestor link is named.
+#[cfg(unix)]
+#[test]
+fn symlink_inside_root_is_refused_with_truthful_wording() {
+    let t = TempDir::new("symlink-inside");
+    t.write("main.tex", "\\input{link}\n\\input{alias/one}");
+    t.write("real.tex", "Real.");
+    t.write("chapters/one.tex", "One.");
+    std::os::unix::fs::symlink(t.root().join("real.tex"), t.root().join("link.tex")).unwrap();
+    std::os::unix::fs::symlink(t.root().join("chapters"), t.root().join("alias")).unwrap();
+    let g = ProjectGraph::discover(t.root(), &pp("main.tex")).unwrap();
+    assert_eq!(paths(&g), ["main.tex"]);
+    let messages: Vec<&str> = g.diagnostics().iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(
+        messages,
+        [
+            "\\input{link}: link.tex is a symbolic link; project files are read without following symlinks",
+            "\\input{alias/one}: alias/one.tex: `alias` is a symbolic link; project files are read without following symlinks",
+        ]
+    );
+    assert!(
+        g.diagnostics()
+            .iter()
+            .all(|d| matches!(d.kind, DiagnosticKind::EscapesRootViaSymlink { .. }))
+    );
 }
 
 /// Issue #45 finding 1: `escapes_via_symlink` (canonicalize) and `load`
@@ -286,7 +318,10 @@ fn symlink_escaping_root_is_rejected() {
 /// the graph: every `discover` outcome must be either the safe in-root
 /// content or a refusal (`EscapesRootViaSymlink`/`MissingFile`), never a
 /// leak. This must hold for every interleaving, not just probabilistically,
-/// so the assertion is unconditional rather than "usually passes".
+/// so the assertion is unconditional rather than "usually passes". Timing
+/// decides which interleavings a run hits, so this is stress coverage; the
+/// worst one is pinned deterministically by
+/// `symlink_swapped_in_between_classify_and_open_is_refused`.
 #[cfg(unix)]
 #[test]
 fn toctou_symlink_race_never_leaks_outside_content_into_graph() {
@@ -374,6 +409,56 @@ fn toctou_symlink_race_never_leaks_outside_content_into_graph() {
         !leaked,
         "TOCTOU RACE WON: outside file content was read into the project graph as secret.tex"
     );
+}
+
+/// Finding 7 (deterministic): the target is a regular file when it is
+/// classified and a symlink to an outside file when it is opened, at the
+/// root and under nested directories. Discovery must refuse it as a
+/// symlink escape and never put the outside content in the graph.
+#[cfg(unix)]
+#[test]
+fn symlink_swapped_in_between_classify_and_open_is_refused() {
+    use flashtex_project_files::save::race_hook::{self, Window};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    for (entry, rel) in [
+        ("\\input{secret}", "secret.tex"),
+        ("\\input{a/b/secret}", "a/b/secret.tex"),
+    ] {
+        let outside = TempDir::new("window-outside");
+        let victim = outside.write("secret-data.txt", "OUTSIDE-SECRET-CONTENT");
+        let t = TempDir::new("window-root");
+        t.write("main.tex", entry);
+        let target = t.write(rel, "safe-inroot-content");
+
+        let fired = Rc::new(Cell::new(0u32));
+        let count = fired.clone();
+        let _guard = race_hook::install(move |w, name| {
+            if w == Window::BeforeOpen && name == "secret.tex" {
+                if count.get() == 0 {
+                    fs::remove_file(&target).unwrap();
+                    std::os::unix::fs::symlink(&victim, &target).unwrap();
+                }
+                count.set(count.get() + 1);
+            }
+        });
+        let g = ProjectGraph::discover(t.root(), &pp("main.tex")).unwrap();
+        assert!(
+            fired.get() >= 1,
+            "{rel}: the hook must have swapped in the window"
+        );
+        assert!(
+            g.file(&pp(rel)).is_none(),
+            "{rel}: outside content read into the graph"
+        );
+        assert!(
+            g.diagnostics().iter().any(|d| matches!(&d.kind,
+                DiagnosticKind::EscapesRootViaSymlink { target } if target == &pp(rel))),
+            "{rel}: {:?}",
+            g.diagnostics()
+        );
+    }
 }
 
 /// Same property as
@@ -526,4 +611,57 @@ fn project_path_display_and_ordering() {
         ["a.tex", "a/z.tex", "b/a.tex"]
     );
     assert_eq!(format!("{}", pp("./x/../y.tex")), "y.tex");
+}
+
+/// Review finding 3: existence is probed through the pinned root without
+/// following anything, so a broken symlink, a symlink to a directory, and a
+/// reference under a symlinked directory that has no such file are all
+/// refused as symlinks rather than reported as missing files.
+#[cfg(unix)]
+#[test]
+fn broken_and_directory_symlinks_are_refused_not_missing() {
+    let outside = TempDir::new("probe-outside");
+    outside.write("sub/keep.txt", "x");
+    let t = TempDir::new("probe-symlinks");
+    t.write(
+        "main.tex",
+        "\\input{broken}\n\\input{dirlink}\n\\input{linked/absent}\n\\input{really-missing}",
+    );
+    let link = std::os::unix::fs::symlink;
+    link(t.root().join("nowhere.tex"), t.root().join("broken.tex")).unwrap();
+    link(outside.root().join("sub"), t.root().join("dirlink.tex")).unwrap();
+    link(outside.root().to_path_buf(), t.root().join("linked")).unwrap();
+    let g = ProjectGraph::discover(t.root(), &pp("main.tex")).unwrap();
+    assert_eq!(paths(&g), ["main.tex"]);
+    let got: Vec<(&str, bool)> = g
+        .diagnostics()
+        .iter()
+        .map(|d| {
+            (
+                d.message.as_str(),
+                matches!(d.kind, DiagnosticKind::EscapesRootViaSymlink { .. }),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (
+                "\\input{broken}: broken.tex is a symbolic link; project files are read without following symlinks",
+                true
+            ),
+            (
+                "\\input{dirlink}: dirlink.tex is a symbolic link; project files are read without following symlinks",
+                true
+            ),
+            (
+                "\\input{linked/absent}: linked/absent.tex: `linked` is a symbolic link; project files are read without following symlinks",
+                true
+            ),
+            (
+                "\\input{really-missing}: no file found (tried really-missing.tex, really-missing)",
+                false
+            ),
+        ]
+    );
 }

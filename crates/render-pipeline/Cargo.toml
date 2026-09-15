@@ -27,7 +27,7 @@ path = "src/bin/flashtex-render.rs"
 # (`hash_math`/`shift_math`/`math_grids`/`math_glue_em`/`convert_math_classed`)
 # fail to build. `--no-default-features` still builds against a pinned vendor
 # older than this without the new variants.
-default = ["amsmath-inline", "request-date", "compiler-package-gating", "par-leading"]
+default = ["amsmath-inline", "request-date", "compiler-package-gating", "par-leading", "math-class-override"]
 # The compiler's `Nucleus::Text` (`\text{...}` in math) is an isolated
 # candidate (crates/preview-controller/docs/handoffs/hw1-text-candidate/
 # candidate.patch on compiler base 1c02a2bc, not on main nor in
@@ -75,8 +75,14 @@ math-glyph-spans = []
 # re-derived by matching the control word at its span
 # (`typeset::class_override_of`). Needed for `\colon`, whose class depends on
 # whether amsmath is loaded and so cannot be recovered from the source text at
-# all; the re-derivation stays as the fallback. Builds only against a
-# vendor/compiler that carries the public field; off until vendor/ is re-pinned.
+# all; the re-derivation stays as the fallback. Its precondition is met as of
+# the 6a47ed49 re-pin -- `vendor/compiler/src/math.rs` declares `pub
+# class_override: Option<AtomClass>` and `pub enum AtomClass` -- so, exactly as
+# `amsmath-inline` and `par-leading` did once theirs were, it is a default
+# feature. Without it #472's mathtools colon relations are merged but inert
+# here: every `\colon` is re-derived from the same five source characters and
+# so takes one class whether or not amsmath is loaded.
+# `--no-default-features` still builds against an older pinned vendor.
 math-class-override = []
 # A paragraph's `\baselineskip` follows the size declaration in force when its
 # `\par` ran (`\begin{quote}\small ...\end{quote}`, `{\small ...\par}`),
@@ -86,6 +92,31 @@ math-class-override = []
 # Turning it on is then a one-line default-feature edit, like `amsmath-inline`
 # was.
 par-leading = []
+# `\\[<dimen>]`'s skip is read off the compiler's own `Inline::LineBreak`
+# (`skip_pt`) instead of being re-scanned out of the source bytes after the
+# node's span. The byte scan cannot see the argument of a `\\` that came from a
+# macro body -- there the span is the invocation, so the bytes after it are the
+# call's arguments -- which silently drops every `\\[-6pt]` inside a
+# `\newcommand` (`fixtures/real-world/cv`: +5.98bp per `\cvsection`,
+# `tests/line_break_skip_macro.rs`). Needs the compiler's
+# `parser::Inline::LineBreak::skip_pt`; off until vendor/ is re-pinned past
+# that change, and with it off the byte scan behaves exactly as before.
+# Turning it on is then a one-line default-feature edit, like `amsmath-inline`
+# was.
+linebreak-skip = []
+# TeX's math font kerns (`make_ord`, tex.web §752): `TexMathMetrics` and
+# `TextRunMetrics` answer math-layout's `MathFontMetrics::ord_pair`, so an Ord
+# character followed by a character of the same family gets the font's kern
+# (cmmi `r` `,` = -0.0556 em: HW1's `$r,a,b$`, #66) and a roman character loses
+# its italic correction before the next one. The same step forms the roman
+# ligatures (`\mathrm{f}\mathrm{i}` is one fi glyph, a one-character `\mathrm`
+# being a family-0 math character) and kerns one-character math alphabets
+# (`\mathbf{T}\mathbf{o}`). Needs math-layout's `ord_pair`
+# (`crates/math-layout`, GH-MATH-FONT-KERNS); off until vendor/math-layout is
+# re-pinned past that change, and with it off no math kern is inserted, exactly
+# as before. Turning it on is then a one-line default-feature edit, like
+# `amsmath-inline` was.
+math-font-kerns = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }

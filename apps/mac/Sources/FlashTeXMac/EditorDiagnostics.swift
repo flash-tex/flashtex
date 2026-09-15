@@ -189,6 +189,25 @@ enum EditorDiagnostics {
         return (errors, warnings, gaps)
     }
 
+    /// Problems header / VoiceOver wording: "2 errors · 5 warnings · 46 FlashTeX gaps".
+    /// Zero buckets stay in the string so an all-gap document still reads
+    /// "0 errors · 0 warnings · 30 FlashTeX gaps" rather than hiding the error
+    /// count (the original #76 complaint). Singular forms match `withheldNote`.
+    static func summary(_ diagnostics: [RuntimeV1.Diagnostic]) -> String {
+        summary(counts(diagnostics))
+    }
+    static func summary(_ c: (errors: Int, warnings: Int, gaps: Int)) -> String {
+        "\(c.errors) error\(c.errors == 1 ? "" : "s") · \(c.warnings) warning\(c.warnings == 1 ? "" : "s") · \(c.gaps) FlashTeX gap\(c.gaps == 1 ? "" : "s")"
+    }
+
+    /// 0 = author error, 1 = warning, 2 = FlashTeX gap. The Problems list,
+    /// copy-text and in-group occurrence stepping share this order; occurrence
+    /// order inside a group stays document order. Does not reorder `diagnostics`.
+    static func listBucket(_ d: RuntimeV1.Diagnostic) -> Int {
+        if isGap(d) { return 2 }
+        return d.severity == .error ? 0 : 1
+    }
+
     /// Recovery line for a diagnostic of a result with `status` (see `Mark.recoveryLine`).
     static func recoveryLine(recovery: String?, status: RuntimeV1.Status) -> String? {
         if let recovery { return "recovery: " + recovery }
@@ -328,11 +347,12 @@ extension EditorDiagnostics {
 // MARK: - Identical diagnostics grouped (count + per-occurrence jump)
 
 extension EditorDiagnostics {
-    /// Diagnostics of one result with the same severity and message, in the
-    /// order of their first occurrence; `occurrences` are indices into
-    /// `result.diagnostics` in document order (by path in `documentOrder`,
-    /// then start byte; unsourced last), so "occurrence k of n" is stable
-    /// and each one can be jumped to on its own.
+    /// Diagnostics of one result with the same severity and message. Groups
+    /// list author errors first, then warnings, then FlashTeX gaps (`isGap`);
+    /// within a bucket, the order of their first occurrence. `occurrences`
+    /// are indices into `result.diagnostics` in document order (by path in
+    /// `documentOrder`, then start byte; unsourced last), so "occurrence k of
+    /// n" is stable and each one can be jumped to on its own.
     struct Group: Equatable, Identifiable {
         let severity: RuntimeV1.Severity
         let message: String
@@ -354,8 +374,9 @@ extension EditorDiagnostics {
         var title: String { count > 1 ? "\(count)× " + message : message }
     }
 
-    /// Groups `result.diagnostics` by (severity, message). `documentOrder`
-    /// orders occurrences across documents (unknown paths after known ones).
+    /// Groups `result.diagnostics` by (severity, code, message). Listed
+    /// errors, then warnings, then gaps; `documentOrder` orders occurrences
+    /// across documents within a bucket (unknown paths after known ones).
     static func groups(of result: RuntimeV1.CompileResult, documentOrder: [String] = []) -> [Group] {
         groups(of: result.diagnostics, documentOrder: documentOrder)
     }
@@ -389,7 +410,11 @@ extension EditorDiagnostics {
                          code: (codes.count == 1 && !codes.contains("")) ? diagnostics[sorted[0]].code : nil,
                          recovery: recoveries.count == 1 ? diagnostics[sorted[0]].recovery : nil, occurrences: sorted)
         }
-        groups.sort { before($0.first, $1.first) }
+        groups.sort {
+            let ba = listBucket(diagnostics[$0.first]), bb = listBucket(diagnostics[$1.first])
+            if ba != bb { return ba < bb }
+            return before($0.first, $1.first)
+        }
         return groups
     }
 

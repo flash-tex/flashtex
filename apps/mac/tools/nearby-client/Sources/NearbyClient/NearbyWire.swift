@@ -163,7 +163,7 @@ public enum NearbyWire {
 
     /// transfer-v1 acknowledgement. `durable` is true only when the Mac's bridge
     /// journaled the capture; the in-memory inbox answers false.
-    public struct CaptureReceived: Codable, Equatable {
+    public struct CaptureReceived: Codable, Equatable, Sendable {
         public var captureId: String
         public var durable: Bool
         public var hasProposal: Bool

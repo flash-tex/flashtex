@@ -193,6 +193,10 @@ fn block_inlines(block: Block) -> Vec<Inline> {
         | Block::TableOfContents { .. }
         | Block::TitleBlock { .. }
         | Block::VFill => Vec::new(),
+        // A `\opening`/`\closing` block inside a tabular cell cannot
+        // happen: both flush the paragraph and push a block of their own,
+        // and a cell only ever collects inline content.
+        Block::LetterBlock { lines, .. } => lines.into_iter().flatten().collect(),
     }
 }
 
@@ -411,7 +415,8 @@ impl P<'_> {
             // `table` is one of the class body counters (`crate::xref`), so
             // `\thetable` carries report/book's `\thechapter.` prefix and any
             // `\numberwithin`/`\setcounter` in force.
-            self.current_counter = self.counters.step("table");
+            let number = self.counters.step("table");
+            self.set_current_counter("table", number);
         }
         let rule_color = self.table_rule_color.clone();
         let double_rule_sep_color = self.table_double_rule_sep_color.clone();

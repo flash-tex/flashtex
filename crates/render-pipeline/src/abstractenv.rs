@@ -286,7 +286,7 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
         // `\begin{abstract}` is always read in vertical mode: the compiler
         // only emits a body block for it after `\par`, and `\@trivlist`
         // takes `\partopsep` whenever it is.
-        env_open: Some(EnvOpen { vmode: true }),
+        env_open: Some(EnvOpen { vmode: true, skips: None }),
         env_close: true,
         eject_before: false,
         vspace_before: 0.0,

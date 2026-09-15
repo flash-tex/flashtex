@@ -36,6 +36,7 @@ pub use mathlist::{
     TextStyle,
 };
 pub use metrics::{FontId, Glyph, MathFontMetrics, MathParams, OpenTypeMathConstants, SizeClass};
+pub use metrics::{MathChar, OrdLigature, OrdPair};
 pub use source::{SourceSpan, SourceTag};
 pub use spacing::{Space, between};
 pub use style::{Style, StyleLevel};

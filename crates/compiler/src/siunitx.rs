@@ -1339,6 +1339,7 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         | Nucleus::Framed { body, .. }
         | Nucleus::Accent { body, .. }
         | Nucleus::Phantom { body, .. }
+        | Nucleus::Lap { body, .. }
         | Nucleus::Operator { body, .. } => respan_list(body, span),
         Nucleus::Stacked { base, over, under } => {
             respan_list(base, span);

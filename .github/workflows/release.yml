@@ -84,7 +84,11 @@ jobs:
             crates/project-files
           key: helpers
       - name: Build every bundled helper (release)
-        run: scripts/ci/build-helpers.sh | tee -a "$GITHUB_ENV"
+        # pipefail: otherwise `tee` hides a failed helper build and the
+        # release proceeds with FLASHTEX_* lines missing.
+        run: |
+          set -o pipefail
+          scripts/ci/build-helpers.sh | tee -a "$GITHUB_ENV"
 
       - name: Import the Developer ID certificate into a temporary keychain (optional)
         id: sign
