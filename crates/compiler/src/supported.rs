@@ -862,6 +862,10 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "amsmath: displays inside number as the parent number plus a, b, ...; a \\label right after \\begin gets the parent number",
     ),
     ("figure", "numbered captions; no floating"),
+    (
+        "frame",
+        "rule-bordered box around its body (\\fboxsep padding, \\fboxrule rule in the current colour)",
+    ),
     ("center", "centred paragraphs"),
     ("flushleft", "left-aligned paragraphs"),
     ("flushright", "right-aligned paragraphs"),

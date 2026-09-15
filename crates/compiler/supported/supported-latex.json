@@ -917,6 +917,7 @@
     {"name": "multline*", "mode": "text", "description": "multi-line display"},
     {"name": "subequations", "mode": "text", "description": "amsmath: displays inside number as the parent number plus a, b, ...; a \\label right after \\begin gets the parent number"},
     {"name": "figure", "mode": "text", "description": "numbered captions; no floating"},
+    {"name": "frame", "mode": "text", "description": "rule-bordered box around its body (\\fboxsep padding, \\fboxrule rule in the current colour)"},
     {"name": "center", "mode": "text", "description": "centred paragraphs"},
     {"name": "flushleft", "mode": "text", "description": "left-aligned paragraphs"},
     {"name": "flushright", "mode": "text", "description": "right-aligned paragraphs"},
