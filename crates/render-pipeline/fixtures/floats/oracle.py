@@ -106,7 +106,8 @@ def run(name):
 
 
 if __name__ == "__main__":
-    names = sorted(n[:-4] for n in os.listdir(HERE) if re.match(r"\d\d-.*\.tex$", n))
+    # `oracle.py 11-float-h` re-pins only the named fixtures.
+    names = sys.argv[1:] or sorted(n[:-4] for n in os.listdir(HERE) if re.match(r"\d\d-.*\.tex$", n))
     for n in names:
         o = run(n)
         print(n, "pages", o["pages"], "images", [(i["page"], i["top"]) for i in o["images"]], "captions", [(c["page"], c["baseline"]) for c in o["captions"]])

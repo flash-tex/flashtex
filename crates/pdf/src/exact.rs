@@ -206,6 +206,8 @@ pub enum Op {
     /// `a b c d e f cm`
     Concat([Decimal; 6]),
     LineWidth(Decimal),
+    /// `limit M`
+    MiterLimit(Decimal),
     LineCap(u8),
     LineJoin(u8),
     /// `[array] phase d`
@@ -255,6 +257,7 @@ impl Op {
             Op::Restore => "Q",
             Op::Concat(_) => "cm",
             Op::LineWidth(_) => "w",
+            Op::MiterLimit(_) => "M",
             Op::LineCap(_) => "J",
             Op::LineJoin(_) => "j",
             Op::Dash(..) => "d",
@@ -309,7 +312,7 @@ impl Op {
             | Op::BeginText
             | Op::EndText => {}
             Op::Concat(v) | Op::Cubic(v) | Op::TextMatrix(v) => nums(out, v),
-            Op::LineWidth(d) | Op::FillGray(d) | Op::StrokeGray(d) => {
+            Op::LineWidth(d) | Op::MiterLimit(d) | Op::FillGray(d) | Op::StrokeGray(d) => {
                 nums(out, std::slice::from_ref(d))
             }
             Op::LineCap(n) | Op::LineJoin(n) => {
@@ -713,6 +716,7 @@ fn build_op(name: &str, operands: &[Operand]) -> Result<Op, String> {
         "Q" => none(Op::Restore)?,
         "cm" => Op::Concat(decimals::<6>(operands, name)?),
         "w" => Op::LineWidth(decimals::<1>(operands, name)?[0].clone()),
+        "M" => Op::MiterLimit(decimals::<1>(operands, name)?[0].clone()),
         "J" => Op::LineCap(small_int(operands, name)?),
         "j" => Op::LineJoin(small_int(operands, name)?),
         "d" => match operands {
@@ -1533,6 +1537,7 @@ fn validate(
             Op::LineCap(_)
             | Op::LineJoin(_)
             | Op::LineWidth(_)
+            | Op::MiterLimit(_)
             | Op::Dash(..)
             | Op::Concat(_)
             | Op::FillGray(_)
