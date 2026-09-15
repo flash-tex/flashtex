@@ -724,8 +724,8 @@ impl LayoutCursor {
     /// for a break before placing the next word (see `place`). Start at the
     /// preceding item's true end so the layout engine's eagerly reserved
     /// inter-word space is not accidentally added to the requested dimension.
-    fn hspace(&mut self, pt: f64) {
-        self.x = self.content_end + pt;
+    fn hspace(&mut self, pt: f64, space_before_pt: f64, space_after_pt: f64) {
+        self.x = self.content_end + space_before_pt + pt + space_after_pt;
         self.content_end = self.x;
     }
 
@@ -2032,7 +2032,7 @@ fn heading_size(level: u8, body_size: f64) -> f64 {
 /// identically to before this existed, even for the 11pt class, where this
 /// compiler's own body size is a literal 11pt rather than real LaTeX's
 /// 10.95pt normalsize (`class_size_pt`'s documented approximation).
-fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f64 {
+pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f64 {
     // tiny, scriptsize, footnotesize, small, large, Large, LARGE, huge, Huge
     // (normalsize is handled by the caller before reaching here).
     const SIZE_10PT: [f64; 9] = [5.0, 7.0, 8.0, 9.0, 12.0, 14.4, 17.28, 20.74, 24.88];
@@ -2636,7 +2636,12 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 );
             }
             Inline::HFill { leader, span } => c.mark_hfill(*leader, size, font, *span),
-            Inline::HSpace { pt, .. } => c.hspace(*pt),
+            Inline::HSpace {
+                pt,
+                space_before_pt,
+                space_after_pt,
+                ..
+            } => c.hspace(*pt, *space_before_pt, *space_after_pt),
             Inline::Footnote {
                 number,
                 span,
@@ -2698,7 +2703,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     quad: crate::text_builtins::pt_to_sp(text_size),
                     ..Default::default()
                 };
-                c.hspace(crate::text_builtins::sp_to_pt(amount.resolve(&cx)))
+                c.hspace(crate::text_builtins::sp_to_pt(amount.resolve(&cx)), 0.0, 0.0)
             }
             Inline::Rule {
                 rule,

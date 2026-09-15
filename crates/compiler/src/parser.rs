@@ -189,6 +189,11 @@ pub enum Inline {
     /// start, so both forms behave identically here.
     HSpace {
         pt: f64,
+        /// Inter-word glue immediately before/after the command. It is
+        /// resolved while parsing, when the active font is known; the layout
+        /// cursor otherwise cannot recover the command's local style.
+        space_before_pt: f64,
+        space_after_pt: f64,
         span: Span,
     },
     /// `\footnote[<n>]{..}`, `\footnotemark[<n>]` or `\footnotetext[<n>]{..}`.
@@ -1112,12 +1117,12 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "sout",
 ];
 
-/// Parses a LaTeX dimension (`12pt`, `1.5em`, `0.5in`, `2cm`, `10mm`, `2ex`,
-/// `12bp`) to points. `em`/`ex` are relative to the compiler's fixed body size
-/// because the layout does not yet carry a current font size into dimension
-/// parsing. Physical units follow TeX `scan_dimen` §458 (`1bp` = 72.27/72 pt,
-/// not 1pt). `ex` uses [`CMR_EX_PER_EM`] (cmr x-height/em, the same constant
-/// as ulem `\sout`); this crate has no TFM, unlike the pipeline's `ec_em_ex`.
+/// Parses a LaTeX dimension using the legacy body-size context. The command
+/// paths that know the active text style use `parse_dimen_pt_current` instead.
+/// Physical units follow TeX `scan_dimen` §458 (`1bp` = 72.27/72 pt, not
+/// 1pt). The legacy `ex` value uses [`CMR_EX_PER_EM`] (cmr x-height/em, the
+/// same constant as ulem `\sout`); this crate has no TFM, unlike the pipeline's
+/// `ec_em_ex`.
 pub(crate) fn parse_dimen_pt(text: &str) -> Option<f64> {
     parse_dimen_pt_at(text, crate::layout::BODY_SIZE_PT)
 }
@@ -1141,6 +1146,19 @@ const PREAMBLE_LENGTHS: &[&str] = &[
     "parindent",
     "parskip",
 ];
+
+/// Table lengths are read by the table layout, but their assignments still
+/// belong to the compiler's accepted input grammar.
+const TABLE_LENGTHS: &[&str] = &[
+    "tabcolsep",
+    "arrayrulewidth",
+    "doublerulesep",
+    "extrarowheight",
+];
+
+fn is_table_length(name: &str) -> bool {
+    TABLE_LENGTHS.contains(&name)
+}
 
 fn is_preamble_length(name: &str) -> bool {
     PREAMBLE_LENGTHS.contains(&name)
@@ -1184,6 +1202,19 @@ fn length_reference_parts(raw: &str) -> Option<(f64, &str)> {
 /// looked up here: the render pipeline applies real page geometry from the
 /// source; a zero is enough for the compiler to accept the assignment.
 pub(crate) fn parse_dimen_pt_at(text: &str, body_pt: f64) -> Option<f64> {
+    parse_dimen_pt_with_units(text, body_pt, body_pt * CMR_EX_PER_EM)
+}
+
+/// Parse a dimension using the active text font's quad and x-height.
+fn parse_dimen_pt_current(text: &str, style: TextStyle, body_pt: f64) -> Option<f64> {
+    let size = style
+        .size
+        .map_or(body_pt, |level| crate::layout::size_declaration_pt(level, body_pt));
+    let font = crate::layout::style_font(style);
+    parse_dimen_pt_with_units(text, size, crate::layout::x_height_pt(font, size))
+}
+
+fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> {
     let text = text.trim().trim_start_matches('=').trim();
     if text.is_empty() {
         return None;
@@ -1226,8 +1257,8 @@ pub(crate) fn parse_dimen_pt_at(text: &str, body_pt: f64) -> Option<f64> {
         "dd" => 1238.0 / 1157.0,
         "cc" => 14856.0 / 1157.0,
         "sp" => 1.0 / 65536.0,
-        "em" => body_pt,
-        "ex" => body_pt * CMR_EX_PER_EM,
+        "em" => em_pt,
+        "ex" => ex_pt,
         _ => return None,
     };
     Some(value * per_pt)
@@ -1504,6 +1535,8 @@ pub fn parse_project_with(
         page_color: None,
         fboxsep_pt: 3.0,
         fboxrule_pt: 0.4,
+        length_scopes: Vec::new(),
+        pending_global: false,
     };
     p.diags.extend(bibliography_diags);
     p.diags.extend(expanded.diagnostics);
@@ -1561,6 +1594,13 @@ fn gap_is_blank(documents: &[SourceDocument<'_>], a: Span, b: Span) -> bool {
         .is_some_and(|gap| gap.chars().all(char::is_whitespace))
 }
 
+#[derive(Clone, Copy)]
+struct LengthScope {
+    parskip_pt: Option<f64>,
+    fboxsep_pt: f64,
+    fboxrule_pt: f64,
+}
+
 struct P<'a> {
     /// The expanded stream. Edits go through [`P::token_mut`]: when the
     /// expansion cache holds the stream, it is lent to the parser (no copy)
@@ -1598,6 +1638,10 @@ struct P<'a> {
     /// `\fboxsep`/`\fboxrule` in TeX points (latex.ltx: 3pt, 0.4pt).
     fboxsep_pt: f64,
     fboxrule_pt: f64,
+    /// Length values saved at `{`/`}` and environment boundaries.
+    length_scopes: Vec<LengthScope>,
+    /// A pass-through `\global` waiting for a parser-owned length assignment.
+    pending_global: bool,
     /// The current text font encoding: OT1 unless `fontenc` selected another
     /// (`text_builtins::fontenc_encoding`).
     font_encoding: Encoding,
@@ -1939,6 +1983,7 @@ impl P<'_> {
                         if let Some(alignment) = self.alignment_stack.pop() {
                             self.declared_alignment = alignment;
                         }
+                        self.restore_length_scope();
                     }
                 }
                 TokenKind::MathShift if render => self.dollar_math(tok.span, para),
@@ -2016,8 +2061,16 @@ impl P<'_> {
             return;
         }
 
+        if name == "global" {
+            self.pending_global = true;
+            return;
+        }
+
         match name {
             "documentclass" => self.document_class(span),
+            // The expansion engine already consumes `\global` for registers,
+            // `\advance`, `\let` and definitions. Undefined length names are
+            // deliberately passed through so this parser can consume them.
             "setlength" => self.set_length(span),
             "addtolength" => self.add_to_length(span),
             "usepackage" => self.use_package(span),
@@ -2252,7 +2305,12 @@ impl P<'_> {
             "lstset" => self.lstset(span),
             "crefname" | "Crefname" => self.cleveref_name(name, span),
             _ if self.has_document && !self.in_body && is_preamble_length(name) => {
-                self.length_assignment(name, span)
+                let global = std::mem::take(&mut self.pending_global);
+                self.length_assignment(name, span, global);
+            }
+            _ if is_table_length(name) => {
+                let global = std::mem::take(&mut self.pending_global);
+                self.length_assignment(name, span, global);
             }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
@@ -2622,13 +2680,34 @@ impl P<'_> {
                 // never does anyway (see the `Inline::HSpace` comment), so
                 // both forms are parsed identically.
                 let _starred = self.take_optional_star();
+                // A source space starts an interword gap only when this is
+                // not the first item in the current horizontal run. Spaces
+                // after row/line commands are otherwise mistaken for glue
+                // before the first cell item.
+                let space_before = !para.is_empty() && self.space_precedes(self.i - 1);
                 let (tokens, argument_span) = self.required_group(name, span);
                 let raw = token_text(&tokens);
-                match parse_dimen_pt(&raw) {
-                    Some(pt) => para.push(Inline::HSpace {
-                        pt,
-                        span: span.merge(argument_span),
-                    }),
+                let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+                match parse_dimen_pt_current(&raw, self.style, body) {
+                    Some(pt) => {
+                        let space_after = matches!(
+                            self.t.get(self.i).map(|input| &input.token.kind),
+                            Some(TokenKind::Space)
+                        );
+                        let size = self.style.size.map_or(body, |level| {
+                            crate::layout::size_declaration_pt(level, body)
+                        });
+                        let word_space = crate::layout::word_space(
+                            size,
+                            crate::layout::style_font(self.style),
+                        );
+                        para.push(Inline::HSpace {
+                            pt,
+                            space_before_pt: if space_before { word_space } else { 0.0 },
+                            space_after_pt: if space_after { word_space } else { 0.0 },
+                            span: span.merge(argument_span),
+                        });
+                    }
                     None => self.diags.push(Diagnostic::error(
                         format!(
                             "\\hspace requires a recognised dimension, got '{}'",
@@ -2687,7 +2766,7 @@ impl P<'_> {
                 let (tokens, argument_span) = self.required_group(name, span);
                 let raw = token_text(&tokens);
                 let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-                match parse_dimen_pt_at(&raw, body) {
+                match parse_dimen_pt_current(&raw, self.style, body) {
                     Some(pt) => {
                         self.flush_paragraph(blocks, para);
                         blocks.push(Block::VSpace { pt });
@@ -2812,6 +2891,7 @@ impl P<'_> {
             .with_label(span, "this command", true)),
             other => self.unsupported(other, span),
         }
+        self.pending_global = false;
     }
 
     fn include(
@@ -2969,8 +3049,9 @@ impl P<'_> {
     }
 
     /// `\setlength{\parskip}{..}` and `\setlength{\parindent}{..}` in the
-    /// preamble. `em`/`ex` resolve against the class body size. This engine
-    /// never indents paragraphs, so only a zero `\parindent` is exact.
+    /// preamble. `em`/`ex` resolve against the active style's compiler font
+    /// metrics. This engine never indents paragraphs, so only a zero
+    /// `\parindent` is exact.
     /// Page-geometry lengths (`\textwidth`, `\oddsidemargin`, ...) are
     /// accepted in the preamble without a diagnostic; the render pipeline
     /// applies them from the source.
@@ -2991,11 +3072,11 @@ impl P<'_> {
             .trim_start_matches('\\')
             .to_string();
         let raw = dimen_source(&value_tokens);
-        self.apply_length_value(command, &target, &raw, span, add);
+        self.apply_length_value(command, &target, &raw, span, add, false);
     }
 
     /// A TeX assignment `\textwidth=6in` / `\textwidth 6in` in the preamble.
-    fn length_assignment(&mut self, name: &str, span: Span) {
+    fn length_assignment(&mut self, name: &str, span: Span, global: bool) {
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
         let mut raw = String::new();
         let mut end = span;
@@ -3010,7 +3091,7 @@ impl P<'_> {
                     raw.push_str(word);
                     end = end.merge(tok.span);
                     self.i += 1;
-                    if parse_dimen_pt_at(&raw, body).is_some() {
+                    if parse_dimen_pt_current(&raw, self.style, body).is_some() {
                         break;
                     }
                 }
@@ -3022,7 +3103,7 @@ impl P<'_> {
                     raw.push_str(cmd);
                     end = end.merge(tok.span);
                     self.i += 1;
-                    if parse_dimen_pt_at(&raw, body).is_some() {
+                    if parse_dimen_pt_current(&raw, self.style, body).is_some() {
                         break;
                     }
                 }
@@ -3032,7 +3113,7 @@ impl P<'_> {
                 break;
             }
         }
-        self.apply_length_value("", name, &raw, end, false);
+        self.apply_length_value("", name, &raw, end, false, global);
     }
 
     fn resolve_known_length_ref(&self, raw: &str) -> Option<f64> {
@@ -3046,9 +3127,17 @@ impl P<'_> {
         Some(scale * base)
     }
 
-    fn apply_length_value(&mut self, command: &str, target: &str, raw: &str, span: Span, add: bool) {
+    fn apply_length_value(
+        &mut self,
+        command: &str,
+        target: &str,
+        raw: &str,
+        span: Span,
+        add: bool,
+        global: bool,
+    ) {
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-        let Some(pt) = parse_dimen_pt_at(raw, body) else {
+        let Some(pt) = parse_dimen_pt_current(raw, self.style, body) else {
             let who = if command.is_empty() {
                 format!("\\{target}")
             } else {
@@ -3109,6 +3198,7 @@ impl P<'_> {
                 Some("paragraphs are not indented".into()),
             )),
             name if in_preamble && is_preamble_length(name) => {}
+            name if is_table_length(name) => {}
             _ => self.diags.push(Diagnostic::warning(
                 format!(
                     "\\{command}{{\\{target}}} is recognised but not implemented here"
@@ -3116,6 +3206,9 @@ impl P<'_> {
                 Some(span),
                 Some("ignored the length assignment".into()),
             )),
+        }
+        if global {
+            self.globalize_length(target);
         }
     }
 
@@ -4315,6 +4408,7 @@ impl P<'_> {
             self.env_stack
                 .push((environment.clone(), span.merge(argument_span)));
             self.env_styles.push(self.style);
+            self.length_scopes.push(self.length_state());
             if self.in_body {
                 if let Some(theorem) = self.theorems.get(&environment).cloned() {
                     self.begin_theorem(&theorem, &environment, span, para);
@@ -4478,6 +4572,7 @@ impl P<'_> {
             if let Some(style) = self.env_styles.pop() {
                 self.style = style;
             }
+            self.restore_length_scope();
         }
     }
 
@@ -5892,6 +5987,35 @@ impl P<'_> {
         self.brace_stack.push(span);
         self.style_stack.push(self.style);
         self.alignment_stack.push(self.declared_alignment);
+        self.length_scopes.push(self.length_state());
+    }
+
+    fn length_state(&self) -> LengthScope {
+        LengthScope {
+            parskip_pt: self.parskip_pt,
+            fboxsep_pt: self.fboxsep_pt,
+            fboxrule_pt: self.fboxrule_pt,
+        }
+    }
+
+    fn restore_length_scope(&mut self) {
+        if let Some(scope) = self.length_scopes.pop() {
+            self.parskip_pt = scope.parskip_pt;
+            self.fboxsep_pt = scope.fboxsep_pt;
+            self.fboxrule_pt = scope.fboxrule_pt;
+        }
+    }
+
+    fn globalize_length(&mut self, target: &str) {
+        let current = self.length_state();
+        for scope in &mut self.length_scopes {
+            match target {
+                "parskip" => scope.parskip_pt = current.parskip_pt,
+                "fboxsep" => scope.fboxsep_pt = current.fboxsep_pt,
+                "fboxrule" => scope.fboxrule_pt = current.fboxrule_pt,
+                _ => {}
+            }
+        }
     }
 
     fn inlines_from_tokens(&mut self, tokens: Vec<InputToken>, base: TextStyle) -> Vec<Inline> {
@@ -6041,6 +6165,49 @@ impl P<'_> {
                     span: input.token.span,
                     skip_pt: None,
                 }),
+                TokenKind::Command(name) if name == "hspace" => {
+                    let mut next = index + 1;
+                    if matches!(
+                        expanded.get(next).map(|input| &input.token.kind),
+                        Some(TokenKind::Word(word)) if word == "*"
+                    ) {
+                        next += 1;
+                    }
+                    if let Some((raw, argument_span, after)) = siunitx_group_at(&expanded, next) {
+                        skip_until = after;
+                        let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+                        if let Some(pt) = parse_dimen_pt_current(&raw, style, body) {
+                            let space_after = matches!(
+                                expanded.get(after).map(|input| &input.token.kind),
+                                Some(TokenKind::Space)
+                            );
+                            let size = style
+                                .size
+                                .map_or(body, |level| crate::layout::size_declaration_pt(level, body));
+                            let word_space =
+                                crate::layout::word_space(size, crate::layout::style_font(style));
+                            content.push(Inline::HSpace {
+                                pt,
+                                space_before_pt: if !content.is_empty() && space_before {
+                                    word_space
+                                } else {
+                                    0.0
+                                },
+                                space_after_pt: if space_after { word_space } else { 0.0 },
+                                span: input.token.span.merge(argument_span),
+                            });
+                        } else {
+                            self.diags.push(Diagnostic::error(
+                                format!(
+                                    "\\hspace requires a recognised dimension, got '{}'",
+                                    raw.trim()
+                                ),
+                                Some(input.token.span.merge(argument_span)),
+                                Some("ignored the malformed \\hspace argument".into()),
+                            ));
+                        }
+                    }
+                }
                 // `\hfill`/`\hfil` take no argument, so — unlike `\hspace`,
                 // which needs a following brace group this flat,
                 // one-token-at-a-time pass has no way to consume — they fit
