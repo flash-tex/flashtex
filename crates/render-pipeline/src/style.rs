@@ -152,6 +152,9 @@ pub struct Stylesheet {
     /// stylesheet built without a document, or a document outside the
     /// pdfLaTeX `utf8` world). The adapter sets it.
     pub input: Option<crate::inputenc::InputSetup>,
+    /// `\hyphenation{...}` words as written (`man-u-script`): exceptions to
+    /// the patterns for every paragraph (compiler `Parsed::hyphenation`).
+    pub hyphenation: Vec<String>,
 }
 
 impl Stylesheet {
@@ -254,6 +257,7 @@ impl Stylesheet {
             labelsep_pt: list.labelsep.0,
             headings: [heading(1), heading(2), heading(3), heading(4), heading(5)],
             class_geometry: None,
+            hyphenation: Vec::new(),
             microtype: None,
             input: None,
         }

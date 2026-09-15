@@ -495,6 +495,16 @@ pub struct Context<'a> {
     multicol: multicol::State,
     /// Footnote marks are `\rlap`ped (article/report/book `\maketitle`).
     rlap_marks: bool,
+    /// `\vadjust{\penalty}` nodes met by [`Context::hlist`] (adapter
+    /// `Item::PagePenalty`): the item index of the undiscardable anchor and
+    /// the penalty. The builder of the paragraph takes them after breaking.
+    vadjusts: Vec<(usize, i32)>,
+    /// The document's breaking parameters for the paragraph being built
+    /// ([`adapter::BreakOverrides`]), set by [`Context::build_paragraph`].
+    breaking: adapter::BreakOverrides,
+    /// The English patterns with the document's `\hyphenation` exceptions,
+    /// when it has any (`english_hyphenator` otherwise).
+    hyphenator: Option<pl::LiangHyphenator>,
     /// Math providers for text sizes other than the body's (footnotes), by
     /// size in centipoints; `None` when that size's metrics are missing.
     math_fonts_sized: BTreeMap<u32, Option<MathProvider>>,
@@ -553,6 +563,16 @@ impl<'a> Context<'a> {
             parbox: false,
             multicol: multicol::State::default(),
             rlap_marks: false,
+            vadjusts: Vec::new(),
+            breaking: adapter::BreakOverrides::default(),
+            hyphenator: (!style.hyphenation.is_empty()).then(|| {
+                let mut h = pl::LiangHyphenator::english();
+                // An entry TeX would reject (`\hyphenation{x1}`) is skipped.
+                for word in &style.hyphenation {
+                    let _ = h.add_exceptions(word);
+                }
+                h
+            }),
             math_fonts_sized: BTreeMap::new(),
         }
     }
@@ -1682,7 +1702,8 @@ impl<'a> Context<'a> {
                 prev_dash = is_dash(c);
             }
         } else {
-            points.extend(english_hyphenator().hyphenate(text).into_iter().map(|p| (p.offset, true)));
+            let hyphenator = self.hyphenator.as_ref().unwrap_or_else(|| english_hyphenator());
+            points.extend(hyphenator.hyphenate(text).into_iter().map(|p| (p.offset, true)));
         }
         if points.is_empty() {
             return self.whole_word(seg, size);
@@ -2053,7 +2074,9 @@ impl<'a> Context<'a> {
                     // or kern (§899: a math or word box glued straight on
                     // ends the search with no hyphens).
                     let after_glue = matches!(out.last(), Some(pl::Item::Glue(_)));
-                    let joined = matches!(items.get(idx + 1), Some(AItem::Word(_) | AItem::Math { .. }));
+                    // §899 also stops at a discretionary: `manu\-scripts`
+                    // keeps its one explicit break point.
+                    let joined = matches!(items.get(idx + 1), Some(AItem::Word(_) | AItem::Math { .. } | AItem::Discretionary { .. }));
                     // The typewriter families declare `\hyphenchar\font=-1`
                     // (`ot1cmtt.fd`, `t1cmtt.fd`, `t1lmtt.fd`): no hyphens.
                     let hyphenate = after_glue
@@ -2155,6 +2178,44 @@ impl<'a> Context<'a> {
                         source: 0..0,
                     };
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(self.recs.len() - 1));
+                }
+                AItem::Penalty { value } => {
+                    push(&mut out, &mut recs, pl::Item::penalty(*value), None);
+                }
+                AItem::PagePenalty { value } => {
+                    // A `\vadjust` node is not discardable (TeX §148, §866):
+                    // like `LeaveVmode`'s empty box it keeps a following
+                    // glue a legal breakpoint and takes no width.
+                    self.recs.push(BoxRec::Rule { width: 0.0, height: 0.0, bottom: 0.0, span: Span::new(0, 0) });
+                    let run = pl::GlyphRun {
+                        font: MATH_SENTINEL,
+                        size,
+                        glyphs: Vec::new(),
+                        width: 0.0,
+                        height: 0.0,
+                        depth: 0.0,
+                        source: 0..0,
+                    };
+                    self.vadjusts.push((out.len(), *value));
+                    push(&mut out, &mut recs, pl::Item::Box(run), Some(self.recs.len() - 1));
+                }
+                AItem::Discretionary { pre } => {
+                    // TeX §1117 `append_discretionary`: `\-` is a flagged
+                    // penalty at `\hyphenpenalty` with the face's hyphen as
+                    // its pre-break text; an empty pre-break text is
+                    // `\exhyphenpenalty`'s.
+                    let merged = pre.as_ref().map(|seg| adapter::Segment { text: seg.text.clone(), chars: seg.chars.clone(), style: merge_style(base, seg.style) });
+                    let (pre_break, rec) = match merged.as_ref().and_then(|seg| self.text_box(seg, seg.style.size_or(size))) {
+                        Some((run, rec)) => (Some(run), Some(rec)),
+                        None => (None, None),
+                    };
+                    let value = if pre_break.is_some() { HYPHEN_PENALTY } else { EX_HYPHEN_PENALTY };
+                    push(
+                        &mut out,
+                        &mut recs,
+                        pl::Item::Penalty(pl::Penalty { value, flagged: true, pre_break, automatic: false, post_break: None, replace_count: 0 }),
+                        rec,
+                    );
                 }
                 AItem::LineBreak { skip_pt } => {
                     if fills {
@@ -2619,6 +2680,8 @@ impl<'a> Context<'a> {
             lineskip: Some(0.0),
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             contributed: Some(contributed),
             line_penalty,
@@ -2929,6 +2992,23 @@ impl<'a> Context<'a> {
             hfuzz: 0.1,
             hbadness: 1000.0,
         };
+        // The document's own `\tolerance`, `\sloppy`, ... where the paragraph
+        // ends. A box's `\@parboxrestore` below starts from its own values.
+        let o = self.breaking;
+        if !self.parbox {
+            if let Some(v) = o.tolerance {
+                params.tolerance = f64::from(v);
+            }
+            if let Some(v) = o.pretolerance {
+                params.pretolerance = f64::from(v);
+            }
+            if let Some(pt) = o.emergency_stretch_pt {
+                params.emergency_stretch = pt;
+            }
+            if let Some(pt) = o.hfuzz_pt {
+                params.hfuzz = pt;
+            }
+        }
         // `\@parboxrestore`: `\parindent\z@ ... \sloppy`, the same values
         // `\@startpbox` gives a `p{}` cell.
         if self.parbox {
@@ -2967,7 +3047,9 @@ impl<'a> Context<'a> {
         let baselineskip = leading
             .or(sized.map(|s| s.baselineskip_pt))
             .unwrap_or(self.style.baselineskip_pt);
+        let vadjusts_from = self.vadjusts.len();
         let (mut list, mut recs, labels, mut skips) = self.hlist(items, size, TextStyle::default(), style);
+        let mut vadjusts: Vec<(usize, i32)> = self.vadjusts.drain(vadjusts_from..).collect();
         if !list.iter().any(|i| matches!(i, pl::Item::Box(_))) {
             return None;
         }
@@ -3012,6 +3094,9 @@ impl<'a> Context<'a> {
                         recs.insert(i, rec);
                     }
                     for (at, _) in &mut skips {
+                        *at += n;
+                    }
+                    for (at, _) in &mut vadjusts {
                         *at += n;
                     }
                 }
@@ -3059,9 +3144,9 @@ impl<'a> Context<'a> {
             penalty_before: None,
             space_before: None,
             parskip: starts_paragraph.then(|| skip_tuple(parskip)),
-            interline_penalty: 0,
-            club_penalty: if after_heading { pagebuild::INF_PENALTY } else { CLUB_PENALTY },
-            widow_penalty: WIDOW_PENALTY,
+            interline_penalty: self.breaking.interline_penalty.unwrap_or(0),
+            club_penalty: if after_heading { pagebuild::INF_PENALTY } else { self.breaking.club_penalty.unwrap_or(CLUB_PENALTY) },
+            widow_penalty: self.breaking.widow_penalty.unwrap_or(WIDOW_PENALTY),
             penalty_after: None,
             space_after: match (trailing_skip, vspace_after) {
                 (None, 0.0) => None,
@@ -3086,6 +3171,11 @@ impl<'a> Context<'a> {
             baselineskip: leading.or(sized.map(|s| s.baselineskip_pt)),
             vskip_after: vskips_of(&lines, &skips),
             broken_penalty: broken_of(&lines),
+            vadjust_penalty: vadjusts
+                .iter()
+                .filter_map(|(at, pen)| lines.lines.iter().position(|l| l.items.contains(at)).map(|li| (li, *pen)))
+                .collect(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -3117,6 +3207,8 @@ impl<'a> Context<'a> {
             env_open,
             env_close,
             eject_before,
+            penalty_before,
+            breaking,
             vspace_before,
             addvspace_before,
             addvspace_flex,
@@ -3129,6 +3221,8 @@ impl<'a> Context<'a> {
         else {
             return;
         };
+        let first_built = blocks.len();
+        let outer_breaking = std::mem::replace(&mut self.breaking, *breaking);
         let ctx = self;
         let key_for = |tag: u8, items: &[AItem], flags: &[u64]| block_key(cache, style_fp, tag, items, flags);
             let mut first = true;
@@ -3443,6 +3537,17 @@ impl<'a> Context<'a> {
                 }
             }
             st.after_heading = false;
+        // A vertical-mode penalty before the paragraph (compiler
+        // `Block::Penalty`: `\goodbreak`, `\pagebreak[n]`, `\nobreak`, ...)
+        // sits after the previous block and before this one's `\parskip`;
+        // a page-break command before it already put a forced one there.
+        if let (Some((value, fil)), Some(b)) = (penalty_before, blocks.get_mut(first_built)) {
+            if b.vertical.penalty_before.is_none() {
+                b.vertical.penalty_before = Some(*value);
+                b.vertical.fil_break = *fil;
+            }
+        }
+        ctx.breaking = outer_breaking;
     }
 
     /// The vertical material of a float body: `\@xfloat` opens a `\vbox`
@@ -3679,6 +3784,8 @@ impl<'a> Context<'a> {
             baselineskip: Some(h.baselineskip_pt),
             vskip_after: vskips_of(&lines, &skips),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -3802,6 +3909,8 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -3879,6 +3988,8 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -3941,6 +4052,8 @@ impl<'a> Context<'a> {
                 baselineskip: None,
                 vskip_after: Vec::new(),
                 broken_penalty: Vec::new(),
+                vadjust_penalty: Vec::new(),
+                fil_break: false,
                 pre_space_after: None,
                 lineskip: None,
                 contributed: None,
@@ -4066,6 +4179,8 @@ impl<'a> Context<'a> {
             baselineskip: Some(baselineskip_pt),
             vskip_after: vskips_of(&lines, &skips),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -4467,6 +4582,8 @@ impl<'a> Context<'a> {
                 baselineskip: None,
                 vskip_after: Vec::new(),
                 broken_penalty: Vec::new(),
+                vadjust_penalty: Vec::new(),
+                fil_break: false,
                 pre_space_after: None,
                 lineskip: None,
                 contributed: None,
@@ -4543,6 +4660,8 @@ impl<'a> Context<'a> {
                 // line; the underlined fragment is one unbreakable line
                 // (`hyphenated: false`), so there is never one to follow.
                 broken_penalty: Vec::new(),
+                vadjust_penalty: Vec::new(),
+                fil_break: false,
                 depth_after: pagebuild::DepthAfter::default(),
             },
             labels: Vec::new(),
@@ -4699,6 +4818,8 @@ impl<'a> Context<'a> {
                 baselineskip: None,
                 vskip_after: Vec::new(),
                 broken_penalty: Vec::new(),
+                vadjust_penalty: Vec::new(),
+                fil_break: false,
                 pre_space_after: None,
                 lineskip: None,
                 contributed: None,
@@ -4835,6 +4956,8 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -4883,6 +5006,8 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -5224,6 +5349,8 @@ impl<'a> Context<'a> {
             baselineskip: None,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -5662,6 +5789,8 @@ impl<'a> Context<'a> {
             lineskip: Some(self.style.lineskip_pt + JOT),
             vskip_after: vskips,
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             contributed: None,
             line_penalty: Vec::new(),
@@ -5790,6 +5919,8 @@ fn table_cell_block(lines: pl::Lines, items: Vec<pl::Item>, recs: Vec<Option<usi
         baselineskip: None,
         vskip_after: Vec::new(),
         broken_penalty: Vec::new(),
+        vadjust_penalty: Vec::new(),
+        fil_break: false,
         pre_space_after: None,
         lineskip: None,
         contributed: None,
@@ -7566,6 +7697,8 @@ fn plain_vblock(lines: Vec<(f64, f64)>) -> VBlock {
         baselineskip: None,
         vskip_after: Vec::new(),
         broken_penalty: Vec::new(),
+        vadjust_penalty: Vec::new(),
+        fil_break: false,
         pre_space_after: None,
         lineskip: None,
         contributed: None,
@@ -7726,6 +7859,11 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     for (doc_index, block) in doc.blocks.iter().enumerate() {
         if doc.page_starts.binary_search(&doc_index).is_ok() {
             page_start_blocks.push(blocks.len());
+        }
+        // A body `\cleardoublepage`: the odd-page test `open_right` applies
+        // to a chapter's.
+        if doc.double_page_starts.binary_search(&doc_index).is_ok() {
+            chapter_starts.push((blocks.len(), events.len()));
         }
         match block {
             Block::Heading {

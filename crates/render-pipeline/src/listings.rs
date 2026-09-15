@@ -960,6 +960,8 @@ fn caption_block(texts: &[&str], labels: &Labels, listing: &Listing, number: &st
         env_open: None,
         env_close: false,
         eject_before: false,
+        penalty_before: None,
+        breaking: Default::default(),
         // `\vspace\lst@aboveskip` then `\abovecaptionskip`.
         vspace_before: listing.keys.aboveskip.natural + CAPTIONSKIP.natural,
         addvspace_before: 0.0,

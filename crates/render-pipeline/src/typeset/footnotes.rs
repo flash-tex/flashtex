@@ -275,6 +275,8 @@ impl<'a> Context<'a> {
             baselineskip: Some(fp.baselineskip),
             vskip_after: vskips_of(&lines, &skips),
             broken_penalty: broken_of(&lines),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,

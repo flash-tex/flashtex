@@ -231,6 +231,19 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 3u8.hash(h);
                 skip_pt.to_bits().hash(h);
             }
+            Item::Penalty { value } => (40u8, value).hash(h),
+            Item::PagePenalty { value } => (41u8, value).hash(h),
+            Item::Discretionary { pre } => {
+                42u8.hash(h);
+                if let Some(seg) = pre {
+                    seg.text.hash(h);
+                    (seg.style.bold, seg.style.italic, seg.style.family).hash(h);
+                    for c in &seg.chars {
+                        (c.start.wrapping_sub(base)).hash(h);
+                        (c.end.wrapping_sub(base)).hash(h);
+                    }
+                }
+            }
             Item::Quad { em, style } => {
                 4u8.hash(h);
                 em.to_bits().hash(h);
