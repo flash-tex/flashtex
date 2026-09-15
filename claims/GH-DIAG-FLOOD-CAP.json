@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/diag-flood-cap",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-15T08:20:20Z",
+  "state": "claimed",
+  "task_id": "GH-DIAG-FLOOD-CAP",
+  "updated_utc": "2026-09-15T08:20:20Z"
+}
