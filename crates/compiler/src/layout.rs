@@ -14,7 +14,8 @@ use crate::export::{self, ExportFont};
 use crate::math::{self, MathBox};
 use crate::parser::{
     Block, FillLeader, FontSizeLevel, Inline, LetterPart, ListLeftMargin, MathRow, ParagraphStyle,
-    TextFamily, TextStyle, CMR_EX_PER_EM,
+    TextFamily, TextStyle, CMR_EX_PER_EM, TEXT_DESCENDER_DEPTH_EM, TEXT_DESCENDER_GLYPHS,
+    UnderlineGeom,
 };
 use crate::Span;
 use flashtex_font_engine::core14::Core14;
@@ -2641,6 +2642,31 @@ pub(crate) fn style_font(style: TextStyle) -> Font {
     }
 }
 
+/// Hbox depth of underline content visible to a Core 14 layout: the
+/// pdflatex-measured descender depth ([`TEXT_DESCENDER_DEPTH_EM`] × size)
+/// when any text fragment holds a descender glyph from
+/// [`TEXT_DESCENDER_GLYPHS`] (transparent wrappers recursed into), else 0.
+/// Content that carries its own measured depth (math, rules) is picked up by
+/// the caller from the line extents instead.
+fn content_descender_depth(inlines: &[Inline], size: f64) -> f64 {
+    fn has_descender(inlines: &[Inline]) -> bool {
+        inlines.iter().any(|inline| match inline {
+            Inline::Text { text, .. } => text
+                .chars()
+                .any(|ch| TEXT_DESCENDER_GLYPHS.contains(&ch)),
+            Inline::ColorBox(b) => has_descender(&b.content),
+            Inline::Underline(u) => has_descender(&u.content),
+            Inline::Transform(b) => has_descender(&b.content),
+            _ => false,
+        })
+    }
+    if has_descender(inlines) {
+        TEXT_DESCENDER_DEPTH_EM * size
+    } else {
+        0.0
+    }
+}
+
 fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
     for inline in inlines {
         match inline {
@@ -2871,18 +2897,30 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     c.x = c.content_end;
                 }
                 let start_x = c.x;
+                let descent_before = c.line_descent;
                 emit(c, &u.content, size, font);
                 let width = c.content_end - start_x;
                 let baseline = c.y;
                 // Core 14 has no per-glyph TFM: `\uline` uses the cmr/lmr
-                // 0.25em `(` depth; kernel `\underline` uses hbox depth 0
-                // (true for no-descender words). `\sout` uses cmr ex, not
-                // Times x-height, so 0.55ex matches pdflatex within 0.01pt.
+                // 0.25em `(` depth. Kernel `\underline` keeps its hbox depth
+                // (latex.ltx `$\@@underline{\hbox{#1}}$`): descender-bearing
+                // text contributes TEXT_DESCENDER_DEPTH_EM, and content that
+                // already deepened the line (math, rules) contributes what it
+                // measured. Kernel `\underbar` zeroes the hbox first
+                // (latex.ltx `\dp\tw@\z@`), so its rule stays fixed.
+                // `\sout` uses cmr ex, not Times x-height, so 0.55ex matches
+                // pdflatex within 0.01pt.
                 let descender = 0.25 * size;
                 let ex = CMR_EX_PER_EM * size;
+                let box_depth = match u.geom {
+                    UnderlineGeom::Underbar => 0.0,
+                    _ => (c.line_descent - descent_before)
+                        .max(0.0)
+                        .max(content_descender_depth(&u.content, size)),
+                };
                 let (top, extra_depth) = u.geom.rule_top_and_depth(
                     u.thickness_pt,
-                    0.0,
+                    box_depth,
                     descender,
                     ex,
                 );

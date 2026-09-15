@@ -175,7 +175,8 @@ pub enum Nucleus {
     Radical(MathList),
     /// `\mathbf{...}`: literal text in the bold roman face.
     Bold(String),
-    /// `\boxed`, `\overline` and `\underline`: a list with real rules.
+    /// `\boxed`, `\overline`, `\underline` and (kernel, like `\underline`)
+    /// `\underbar`: a list with real rules.
     Framed {
         body: MathList,
         frame: Frame,
@@ -2130,7 +2131,7 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
-            "boxed" | "Aboxed" | "overline" | "underline" | "overbrace" | "underbrace"
+            "boxed" | "Aboxed" | "overline" | "underline" | "underbar" | "overbrace" | "underbrace"
             | "overrightarrow" | "overleftarrow" | "overleftrightarrow" | "underrightarrow"
             | "underleftarrow" | "underleftrightarrow" => {
                 let body = self.required_group(&name, span);

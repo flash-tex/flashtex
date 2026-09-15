@@ -312,6 +312,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
     ("uline", "{...}", "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)"),
     ("underline", "{...}", "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox"),
+    ("underbar", "{...}", "kernel text underline: Rule 10 rule like \\underline but content depth zeroed (fixed position)"),
     ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
     ("thinspace", "", "text kern .16667em (math: thin muskip)"),
     ("negthinspace", "", "text kern -.16667em"),
@@ -677,9 +678,9 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
     ),
     (&["text"], "{text}", "literal text in math", true),
     (
-        &["boxed", "overline", "underline"],
+        &["boxed", "overline", "underline", "underbar"],
         "{...}",
-        "real rule around, over or under the body",
+        "real rule around, over or under the body (underbar works in math like underline)",
         true,
     ),
     (

@@ -303,6 +303,7 @@
     {"name": "capitalcedilla", "mode": "text", "origin": "text_dispatch", "arguments": "{letter}", "description": "capital cedilla text accent: an alias of \\c, the precomposed character the dfu tables declare", "renders": true},
     {"name": "uline", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)", "renders": true},
     {"name": "underline", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox", "renders": true},
+    {"name": "underbar", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "kernel text underline: Rule 10 rule like \\underline but content depth zeroed (fixed position)", "renders": true},
     {"name": "sout", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)", "renders": true},
     {"name": "newtheorem", "mode": "text", "origin": "text_dispatch", "arguments": "{env}[counter]{name}", "description": "defines a numbered theorem-like environment (amsthm)", "renders": true},
     {"name": "theoremstyle", "mode": "text", "origin": "text_dispatch", "arguments": "{style}", "description": "selects the amsthm style for following \\newtheorem", "renders": true},
@@ -426,9 +427,10 @@
     {"name": "textit", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "keeps its argument in the current math face (no distinct face yet)", "renders": true},
     {"name": "textnormal", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "keeps its argument in the current math face (no distinct face yet)", "renders": true},
     {"name": "text", "mode": "math", "origin": "math_structure", "arguments": "{text}", "description": "literal text in math", "renders": true},
-    {"name": "boxed", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body", "renders": true},
-    {"name": "overline", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body", "renders": true},
-    {"name": "underline", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body", "renders": true},
+    {"name": "boxed", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body (underbar works in math like underline)", "renders": true},
+    {"name": "overline", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body (underbar works in math like underline)", "renders": true},
+    {"name": "underline", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body (underbar works in math like underline)", "renders": true},
+    {"name": "underbar", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body (underbar works in math like underline)", "renders": true},
     {"name": "Aboxed", "mode": "math", "origin": "math_structure", "arguments": "{lhs rel rhs}", "description": "mathtools: real \\boxed rule around the whole row, keeping the relation as the shared alignment point", "renders": true},
     {"name": "overbrace", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cmex brace pieces with rule fills over or under a display-style body; scripts are limits", "renders": true},
     {"name": "underbrace", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cmex brace pieces with rule fills over or under a display-style body; scripts are limits", "renders": true},
@@ -1001,7 +1003,7 @@
       "Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array"
     ],
     "rows": [
-      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 191, "percent": 46.6},
+      {"set": "kernel", "kind": "command", "canonical": 410, "supported": 192, "percent": 46.8},
       {"set": "kernel", "kind": "environment", "canonical": 30, "supported": 18, "percent": 60},
       {"set": "amsmath", "kind": "command", "canonical": 102, "supported": 44, "percent": 43.1},
       {"set": "amsmath", "kind": "environment", "canonical": 21, "supported": 17, "percent": 81},
@@ -1016,6 +1018,6 @@
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
       {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 18, "percent": 7.5}
     ],
-    "total": {"canonical": 1314, "supported": 537, "percent": 40.9}
+    "total": {"canonical": 1314, "supported": 538, "percent": 40.9}
   }
 }

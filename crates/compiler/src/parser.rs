@@ -266,9 +266,10 @@ pub enum Inline {
     },
     /// xcolor `\colorbox`/`\fcolorbox` (see [`ColorBox`]).
     ColorBox(Box<ColorBox>),
-    /// ulem `\uline`/`\sout` or kernel text-mode `\underline`: the argument
-    /// as one fragment with a rule. First step: the fragment does not
-    /// break across lines (ulem's leaders can). Geometry is [`Underline::geom`].
+    /// ulem `\uline`/`\sout` or kernel text-mode `\underline`/`\underbar`:
+    /// the argument as one fragment with a rule. First step: the fragment
+    /// does not break across lines (ulem's leaders can). Geometry is
+    /// [`Underline::geom`].
     Underline(Box<Underline>),
     /// `\includegraphics` in running text: an image box (see
     /// `crate::graphics`). Figures and tables re-derive their graphics from
@@ -404,6 +405,19 @@ pub const CMR_EX_PER_EM: f64 = 0.430554;
 /// ulem.sty `\def\sout{\bgroup \ULdepth=-.55ex \ULset}`.
 pub const SOUT_RAISE_EX: f64 = 0.55;
 
+/// Depth below the baseline of a descender-bearing text hbox, in em.
+/// pdflatex-measured (cmr10, 10pt): `\underline{g}`, `j`, `p`, `q`, `y` and
+/// capital `Q` each report `\dp` 3.94434pt = d + 5\theta with
+/// \theta = 0.39998pt, so d = 1.94444pt = 0.194444em; capital `J` reports
+/// 1.9999pt (no descender). Core 14 has no per-glyph TFM, so the layout
+/// uses this one measured depth whenever the content contains a descender
+/// glyph (see [`UnderlineGeom::MathUnderline`]).
+pub const TEXT_DESCENDER_DEPTH_EM: f64 = 0.194444;
+
+/// ASCII letters whose cmr glyphs descend below the baseline (pdflatex:
+/// each underlines 1.94444pt deeper than descender-free text at 10pt).
+pub const TEXT_DESCENDER_GLYPHS: &[char] = &['g', 'j', 'p', 'q', 'y', 'Q'];
+
 /// How [`Underline`] places its rule. Thickness is [`Underline::thickness_pt`].
 ///
 /// Offsets are positive downward from the content baseline. Core 14 has no
@@ -417,8 +431,19 @@ pub enum UnderlineGeom {
     /// latex.ltx text `\underline` = `$\@@underline{\hbox{#1}}$`. TeXbook
     /// Rule 10 / tex.web §735: kern 3\theta, rule \theta, extra depth \theta
     /// (total depth = box depth + 5\theta). Rule top is 3\theta below the
-    /// hbox depth. \theta = [`MATH_RULE_THETA_PT`].
+    /// hbox depth, which is preserved: pdflatex `\underline{y}` reports
+    /// `\dp` 3.94434pt = d + 5\theta with d = 1.94444pt at 10pt.
+    /// \theta = [`MATH_RULE_THETA_PT`]; `box_depth` is
+    /// [`TEXT_DESCENDER_DEPTH_EM`] × size when the content holds a
+    /// descender glyph, else 0.
     MathUnderline,
+    /// latex.ltx `\def\underbar#1{\underline{\sbox\tw@{#1}\dp\tw@\z@
+    /// \box\tw@}}`: the same Rule 10 construction as [`Self::MathUnderline`]
+    /// but over a depth-zeroed hbox, so the rule sits at a FIXED 3\theta
+    /// below the baseline and the total depth is always 5\theta, even for
+    /// descender content (pdflatex `\underbar{y}` reports `\dp` 1.9999pt).
+    /// `box_depth` is ignored by construction.
+    Underbar,
     /// ulem `\sout`: `\UL@setULdepth` is a no-op when `\ULdepth` is not
     /// `\maxdimen`, so `-.55ex` is kept. Leaders are
     /// `\hrule height (0.55ex+0.4pt) depth -0.55ex`: rule bottom 0.55ex
@@ -446,6 +471,9 @@ impl UnderlineGeom {
                 box_depth + 3.0 * thickness,
                 box_depth + 5.0 * thickness,
             ),
+            // `\dp\tw@\z@`: the hbox depth is zeroed before the Rule 10
+            // construction, so the rule position never follows descenders.
+            Self::Underbar => (3.0 * thickness, 5.0 * thickness),
             Self::Strike => {
                 let bottom_above = SOUT_RAISE_EX * ex;
                 (-(bottom_above + thickness), 0.0)
@@ -458,7 +486,9 @@ impl UnderlineGeom {
 ///
 /// [`UnderlineGeom::UlemDescender`] is ulem `\uline` (`\ULthickness` 0.4pt,
 /// top at 0.25em). [`UnderlineGeom::MathUnderline`] is kernel text
-/// `\underline`. [`UnderlineGeom::Strike`] is ulem `\sout`. The fragment
+/// `\underline` (content depth preserved).
+/// [`UnderlineGeom::Underbar`] is kernel `\underbar` (content depth zeroed).
+/// [`UnderlineGeom::Strike`] is ulem `\sout`. The fragment
 /// does not break across lines.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Underline {
@@ -1333,6 +1363,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "capitalcedilla",
     "uline",
     "underline",
+    "underbar",
     "sout",
 ];
 
@@ -3599,10 +3630,16 @@ impl P<'_> {
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
             // ulem `\uline`/`\sout` (need the package). Kernel text-mode
             // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
-            // Rule 10); math-mode `\underline` is in `math.rs`.
-            "uline" | "underline" | "sout" => {
+            // Rule 10); math-mode `\underline`/`\underbar` are in `math.rs`.
+            // Kernel `\underbar` (latex.ltx
+            // `\def\underbar#1{\underline{\sbox\tw@{#1}\dp\tw@\z@
+            // \box\tw@}}`) is the same Rule 10 construction over an
+            // unbreakable hbox whose depth is zeroed first, so it gets its
+            // own geometry (`UnderlineGeom::Underbar`).
+            "uline" | "underline" | "underbar" | "sout" => {
                 let geom = match name {
                     "underline" => UnderlineGeom::MathUnderline,
+                    "underbar" => UnderlineGeom::Underbar,
                     "sout" => UnderlineGeom::Strike,
                     _ => UnderlineGeom::UlemDescender,
                 };
@@ -7659,9 +7696,9 @@ impl P<'_> {
         siunitx::raw_text(tokens.iter().map(|t| &t.token))
     }
 
-    /// `\uline`/`\sout` (ulem) or kernel text-mode `\underline`. Without
-    /// ulem, the package commands diagnose and typeset the argument as
-    /// plain text. Kernel `\underline` needs no package.
+    /// `\uline`/`\sout` (ulem) or kernel text-mode `\underline`/`\underbar`.
+    /// Without ulem, the package commands diagnose and typeset the argument
+    /// as plain text. The kernel commands need no package.
     fn text_underline_cmd(
         &mut self,
         name: &str,
@@ -7672,7 +7709,10 @@ impl P<'_> {
         let space_before = self.space_precedes(self.i - 1);
         let (tokens, argument_span) = self.required_group(name, span);
         let full = span.merge(argument_span);
-        let needs_ulem = !matches!(geom, UnderlineGeom::MathUnderline);
+        let needs_ulem = !matches!(
+            geom,
+            UnderlineGeom::MathUnderline | UnderlineGeom::Underbar
+        );
         if needs_ulem && !self.packages.iter().any(|package| package == "ulem") {
             self.diags.push(Diagnostic::command_error(
                 name,
@@ -7685,7 +7725,7 @@ impl P<'_> {
         }
         let content = self.box_inlines(tokens);
         let thickness_pt = match geom {
-            UnderlineGeom::MathUnderline => MATH_RULE_THETA_PT,
+            UnderlineGeom::MathUnderline | UnderlineGeom::Underbar => MATH_RULE_THETA_PT,
             _ => UL_THICKNESS_PT,
         };
         para.push(Inline::Underline(Box::new(Underline {
