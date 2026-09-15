@@ -374,9 +374,10 @@ pub enum Block {
         /// block and this one (the compiler reports and drops the command;
         /// the break is recovered from the source bytes).
         eject_before: bool,
-        /// `\vspace{<dimen>}` blocks between the previous block and this
+        /// `\vspace{<glue>}` blocks between the previous block and this
         /// one (compiler `Block::VSpace`), summed in points; `\addvspace`
-        /// glue added before the block.
+        /// glue added before the block. The same glue's `plus`/`minus` are
+        /// summed in `vspace_flex` below.
         vspace_before: f64,
         /// LaTeX `\addvspace` glue before the block (`\@item`'s `\topsep`/
         /// `\itemsep`, `\@endparenv`'s `\@topsepadd`), in points: only
@@ -929,7 +930,10 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                     LetterPart::Recipient | LetterPart::Closing => None,
                 };
                 if *gap_before_pt != 0.0 {
-                    out.push((CBlock::VSpace { pt: *gap_before_pt }, None));
+                    out.push((
+                        CBlock::VSpace { pt: *gap_before_pt, stretch_pt: 0.0, shrink_pt: 0.0 },
+                        None,
+                    ));
                 }
                 let mut group: Vec<Inline> = Vec::new();
                 let mut prev_end: Option<Span> = None;
@@ -972,11 +976,17 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                         ));
                     }
                     if extra != 0.0 {
-                        out.push((CBlock::VSpace { pt: extra - parskip_pt }, None));
+                        out.push((
+                            CBlock::VSpace { pt: extra - parskip_pt, stretch_pt: 0.0, shrink_pt: 0.0 },
+                            None,
+                        ));
                     }
                 }
                 if *gap_after_pt != 0.0 {
-                    out.push((CBlock::VSpace { pt: *gap_after_pt }, None));
+                    out.push((
+                        CBlock::VSpace { pt: *gap_after_pt, stretch_pt: 0.0, shrink_pt: 0.0 },
+                        None,
+                    ));
                 }
                 // What is still approximate is horizontal, and only
                 // horizontal: the pipeline has no per-paragraph left offset
@@ -1794,8 +1804,12 @@ pub fn adapt_cached(
                         (Some(g), Some(pg)) => g.label.is_none() && g.level == pg.level && g.margins == pg.margins,
                         _ => false,
                     };
+                    // A zero-natural `\vspace` with rubber (`\vspace{0pt
+                    // plus 2pt}`) is still glue: rejoining across it would
+                    // drop the stretch, so the flex pair joins the guard.
                     let same_flow = !eject_before
                         && vspace_before == 0.0
+                        && unit.vspace_flex == (0.0, 0.0)
                         && unit.addvspace_before == 0.0
                         && styled.unwrap_or_default() == *prev_style
                         && same_list
@@ -2424,7 +2438,8 @@ fn join_clever(parts: &[String], oxford: bool) -> String {
 struct Unit<'p> {
     kind: UnitKind<'p>,
     eject_before: bool,
-    /// Summed `\vspace` points from compiler `VSpace` blocks before this unit.
+    /// Summed `\vspace` points from compiler `VSpace` blocks before this
+    /// unit (`vspace_flex` carries the same glue's stretch and shrink).
     vspace_before: f64,
     /// `\addvspace` glue before this unit (list skips; paragraphs only).
     addvspace_before: f64,
@@ -2507,6 +2522,9 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
     // to the next unit that holds material.
     let mut pending_eject = false;
     let mut pending_vspace = 0.0f64;
+    // The `plus`/`minus` of the same pending `\vspace` glue, in points;
+    // travels with `pending_vspace` into `Unit::vspace_flex` below.
+    let mut pending_vspace_flex = (0.0f64, 0.0f64);
     let mut pending_limitations: Vec<(&'static str, Span, String)> = Vec::new();
     // The previous unit left TeX in vertical mode (a heading or a rule).
     let mut prev_vmode = false;
@@ -2526,8 +2544,10 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                 pending_eject = true;
                 continue;
             }
-            CBlock::VSpace { pt } => {
+            CBlock::VSpace { pt, stretch_pt, shrink_pt } => {
                 pending_vspace += pt;
+                pending_vspace_flex.0 += stretch_pt;
+                pending_vspace_flex.1 += shrink_pt;
                 continue;
             }
             CBlock::TableOfContents { span } => {
@@ -2543,7 +2563,11 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                     vspace_before: std::mem::take(&mut pending_vspace),
                     addvspace_before: 0.0,
                     addvspace_flex: (0.0, 0.0),
-                    vspace_flex: (0.0, 0.0),
+                    // Carried with `vspace_before` for symmetry, though
+                    // `Block::Rule` keeps only the flat points (its
+                    // `add_vspace` consumption in `typeset.rs` is rigid):
+                    // flex before a rule stops here, pending a later slice.
+                    vspace_flex: std::mem::take(&mut pending_vspace_flex),
                     endlist_adjust: 0.0,
                     limitations: std::mem::take(&mut pending_limitations),
                 });
@@ -2559,6 +2583,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
         };
         let mut eject = std::mem::take(&mut pending_eject) || matches!((prev_end, first), (Some(p), Some(f)) if gap_has_page_break(texts, p, f));
         let mut vspace_before = std::mem::take(&mut pending_vspace);
+        let mut pending_flex = std::mem::take(&mut pending_vspace_flex);
         // The compiler evaluates `em`/`ex` in `\vspace` at a fixed 12pt;
         // LaTeX uses the class's `\normalsize`. Re-read the commands in
         // the gap before this unit when they are all there.
@@ -2569,8 +2594,14 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                     Some(_) => None,
                     None => texts.get(f.document.0).and_then(|t| t.get(..f.start)),
                 };
-                if let Some(pt) = gap.and_then(|g| vspace_in_gap(g, size)) {
-                    vspace_before = pt;
+                // The re-read replaces the compiler sum wholesale (natural
+                // and rubber together), so a gap whose `\vspace`s all parse
+                // supersedes the pending flex too; otherwise the pending
+                // pair stands (macro-generated `\vspace` is invisible here,
+                // as its natural points already were).
+                if let Some(glue) = gap.and_then(|g| vspace_in_gap(g, size)) {
+                    vspace_before = glue.natural;
+                    pending_flex = (glue.stretch, glue.shrink);
                 }
             }
         }
@@ -2609,7 +2640,9 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
         let is_heading = matches!(block, CBlock::Heading { .. });
         let mut addvspace_before = 0.0;
         let mut addvspace_flex = (0.0f64, 0.0f64);
-        let mut vspace_flex = (0.0f64, 0.0f64);
+        // The `\vspace` rubber accumulated (or re-read) above; the list
+        // adjustments below add their own flex beside it.
+        let mut vspace_flex = pending_flex;
         let mut endlist_adjust = 0.0;
         if prev_list && !is_heading {
             if let Some(gap) = first.and_then(gap_before) {
@@ -5504,11 +5537,54 @@ fn gap_has_space_after_control_word(rest: &str) -> bool {
     gap_has_space(rest)
 }
 
-/// The sum of every `\vspace{<dimen>}`/`\vspace*{<dimen>}` in `gap`, in
-/// points; `None` when there is none or one does not parse.
-fn vspace_in_gap(gap: &str, size: u32) -> Option<f64> {
+/// One `\vspace{<glue>}` argument (braces already stripped) as TeX glue:
+/// a bare dimension, or one followed by `plus <dimen>` / `minus <dimen>`
+/// in either order (finite dimensions only, mirroring the compiler's glue
+/// parse). `None` when any component does not parse, in which case the
+/// caller keeps the compiler's own sum instead of guessing.
+fn parse_glue_in(inner: &str, size: u32) -> Option<crate::style::Skip> {
+    let s = inner.trim();
+    if let Some(natural) = parse_dimen(s, size) {
+        return Some(crate::style::Skip::fixed(natural));
+    }
+    fn find_kw(s: &str, kw: &str) -> Option<usize> {
+        let mut i = 0;
+        while let Some(at) = s[i..].find(kw) {
+            let at = i + at;
+            let head_ok = at == 0 || !s[..at].ends_with(|c: char| c.is_ascii_alphanumeric());
+            let tail = &s[at + kw.len()..];
+            if head_ok && (tail.is_empty() || !tail.starts_with(|c: char| c.is_ascii_alphanumeric())) {
+                return Some(at);
+            }
+            i = at + kw.len();
+        }
+        None
+    }
+    let plus = find_kw(s, "plus");
+    let minus = find_kw(s, "minus");
+    // A repeated keyword lands inside the taken component and fails its
+    // `parse_dimen`, so no explicit repeat check is needed.
+    let first = plus.into_iter().chain(minus).min()?;
+    let natural = parse_dimen(s[..first].trim(), size)?;
+    let mut stretch = 0.0;
+    let mut shrink = 0.0;
+    if let Some(at) = plus {
+        let end = if minus.is_some_and(|m| m > at) { minus.unwrap() } else { s.len() };
+        stretch = parse_dimen(s[at + "plus".len()..end].trim(), size)?;
+    }
+    if let Some(at) = minus {
+        let end = if plus.is_some_and(|p| p > at) { plus.unwrap() } else { s.len() };
+        shrink = parse_dimen(s[at + "minus".len()..end].trim(), size)?;
+    }
+    (stretch != 0.0 || shrink != 0.0).then_some(crate::style::Skip::new(natural, stretch, shrink))
+}
+
+/// The summed `\vspace{<glue>}`/`\vspace*{<glue>}` glue in `gap` at the
+/// class size; `None` when there is none or one does not parse (then the
+/// compiler's own sum, with its fixed-12pt `em`, stands).
+fn vspace_in_gap(gap: &str, size: u32) -> Option<crate::style::Skip> {
     let mut from = 0;
-    let mut total = 0.0;
+    let mut total = crate::style::Skip::fixed(0.0);
     let mut any = false;
     while let Some(at) = find_command(&gap[from..], "vspace") {
         let abs = from + at;
@@ -5517,7 +5593,10 @@ fn vspace_in_gap(gap: &str, size: u32) -> Option<f64> {
         let rest = rest.strip_prefix('*').unwrap_or(rest).trim_start();
         let inner = rest.strip_prefix('{')?;
         let close = inner.find('}')?;
-        total += parse_dimen(&inner[..close], size)?;
+        let glue = parse_glue_in(&inner[..close], size)?;
+        total.natural += glue.natural;
+        total.stretch += glue.stretch;
+        total.shrink += glue.shrink;
         any = true;
     }
     any.then_some(total)
