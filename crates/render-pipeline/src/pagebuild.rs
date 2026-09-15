@@ -24,6 +24,31 @@ pub enum VItem {
 
 pub const INF_PENALTY: i32 = 10_000;
 pub const EJECT_PENALTY: i32 = -10_000;
+/// A forced break with no `\vfil` in front of it: `\pagebreak` and
+/// `\penalty-10000` (a bare penalty, in the vertical list or `\vadjust`ed
+/// out of a paragraph), where [`EJECT_PENALTY`] stands for `\newpage`'s
+/// `\vfil\penalty-\@M`. TeX's page builder treats every penalty at or
+/// below -10000 alike (§1005), so the distinct value only tells the page
+/// packer that, under `\flushbottom`, the page it ends is still set
+/// `\vbox to\vsize` and stretched. [`bare_penalty`] maps a penalty to it.
+pub const BARE_EJECT_PENALTY: i32 = EJECT_PENALTY - 1;
+
+/// A penalty the document wrote itself (no `\vfil` of LaTeX's before it):
+/// a forced one becomes [`BARE_EJECT_PENALTY`].
+pub fn bare_penalty(value: i32) -> i32 {
+    if value == EJECT_PENALTY {
+        BARE_EJECT_PENALTY
+    } else {
+        value
+    }
+}
+
+/// Whether the break at `list[end]` is `\newpage`'s `\vfil\penalty-\@M`,
+/// whose `\vfil` takes the page's slack: every forced penalty except a
+/// bare one ([`BARE_EJECT_PENALTY`], or a value below it the document wrote).
+fn vfil_ejected(list: &[VItem], end: usize) -> bool {
+    matches!(list.get(end), Some(VItem::Penalty(pen)) if *pen == EJECT_PENALTY)
+}
 pub const INF_BAD: i64 = 10_000;
 pub const AWFUL_BAD: i64 = 0x3FFF_FFFF;
 pub const DEPLORABLE: i64 = 100_000;
@@ -42,6 +67,12 @@ pub struct PageParams {
     /// (TeX §676). Pages ended by `\newpage`/`\clearpage` (whose `\vfil`
     /// absorbs the difference) and the last page keep natural glue.
     pub flushbottom: bool,
+    /// `\enlargethispage*` on this page (`\@make@specialcolbox` with a
+    /// `\@kludgeins` of positive width): the column is `\vbox to\@colht`
+    /// holding the material and `\vskip\@colht-\ht\@outputbox+\pageshrink`,
+    /// so its glue shrinks by `\pageshrink` (this value, the page builder's
+    /// shrink when it fired) whatever `vsize` is. 0 otherwise.
+    pub squeeze: f64,
 }
 
 /// A line placed on a page: baseline measured downward from the text
@@ -149,6 +180,14 @@ pub struct VBlock {
     /// `if disc_break then pen:=pen+broken_penalty`. Entries past the end
     /// are 0; an empty vector means no line was broken that way.
     pub broken_penalty: Vec<i32>,
+    /// `\vadjust{\penalty<n>}` after line `i` (`\pagebreak[n]`/
+    /// `\nopagebreak[n]` inside a paragraph, TeX §888 adjust material):
+    /// appended right after that line and its `vskip_after`, before the
+    /// interline penalty. An index at or past the last line puts it after
+    /// the last line.
+    pub vadjust_penalty: Vec<(usize, i32)>,
+    /// `penalty_before` is `\filbreak`'s: `\vfil \penalty<n> \vfilneg`.
+    pub fil_break: bool,
     /// Glue appended after `penalty_after` and before `space_after`, so
     /// `space_after` stays the list's `\lastskip` (`\@maketitle`'s
     /// `\@endparenv` `\topsep` before its closing `\vskip 1.5em`).
@@ -220,6 +259,13 @@ struct VRegion {
 
 /// Builds the vertical list with interline glue and penalties.
 pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
+    vlist_starts(p, blocks).0
+}
+
+/// [`vlist`] and, for each block, the index of its first item in the list
+/// (where material written between it and the block before is contributed).
+pub fn vlist_starts(p: &PageParams, blocks: &[VBlock]) -> (Vec<VItem>, Vec<usize>) {
+    let mut starts: Vec<usize> = Vec::with_capacity(blocks.len());
     let mut out: Vec<VItem> = Vec::new();
     let mut prev_depth: Option<f64> = None;
     let glue = |(w, st, sh): (f64, f64, f64)| VItem::Glue {
@@ -229,6 +275,7 @@ pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
         fil: false,
     };
     for (bi, b) in blocks.iter().enumerate() {
+        starts.push(out.len());
         if b.lines.is_empty() {
             continue;
         }
@@ -236,7 +283,13 @@ pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
         if let Some(pen) = b.penalty_before {
             // \addpenalty: skipped at the very top of the list (\if@nobreak).
             if !out.is_empty() {
+                if b.fil_break {
+                    out.push(VItem::Glue { width: 0.0, stretch: 1.0, shrink: 0.0, fil: true });
+                }
                 out.push(VItem::Penalty(pen));
+                if b.fil_break {
+                    out.push(VItem::Glue { width: 0.0, stretch: -1.0, shrink: 0.0, fil: true });
+                }
             }
         }
         if let Some(s) = b.space_before {
@@ -264,6 +317,9 @@ pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
                 if v != 0.0 {
                     out.push(glue((v, 0.0, 0.0)));
                 }
+            }
+            for (_, pen) in b.vadjust_penalty.iter().filter(|(i, _)| *i == li || (li + 1 == n && *i >= n)) {
+                out.push(VItem::Penalty(*pen));
             }
             if li + 1 < n && b.line_penalty.is_empty() {
                 let mut pen = b.interline_penalty;
@@ -297,7 +353,60 @@ pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
             out.push(glue(s));
         }
     }
-    out
+    (out, starts)
+}
+
+/// `\enlargethispage{<dimen>}`'s `\insert\@kludgeins{\vskip-<dimen>}`
+/// (latex.ltx): contributed at list index `at` (before `list[at]`), a
+/// negative insertion of `\count` 1000, so `\pagegoal` (and the size the
+/// column is packed to) grows by `pt` on whatever page contributes it. An
+/// insertion is never discarded at the top of a page (§1000).
+///
+/// `star`: `\enlargethispage*`, whose box holds `\hbox{\kern\p@}` too.
+/// The goal grows the same; the column is squeezed (see
+/// [`PageParams::squeeze`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Enlarge {
+    pub at: usize,
+    pub pt: f64,
+    pub star: bool,
+}
+
+/// A page's `\@kludgeins` box: the enlargements contributed to it so far
+/// (`pt` their sum), and whether one was starred (the box then has width).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct Kludge {
+    pub(crate) pt: f64,
+    pub(crate) star: bool,
+}
+
+impl Kludge {
+    pub(crate) fn add(&mut self, e: &Enlarge) {
+        self.pt += e.pt;
+        self.star |= e.star;
+    }
+
+    /// The parameters a page with this box is packed with: `\vsize` grown
+    /// by the enlargements, and `\enlargethispage*`'s squeeze by
+    /// `pageshrink` (`\pageshrink` in the output routine).
+    pub(crate) fn params(self, p: &PageParams, pageshrink: f64) -> PageParams {
+        PageParams {
+            vsize: p.vsize + self.pt,
+            squeeze: if self.star { pageshrink.max(0.0) } else { 0.0 },
+            ..*p
+        }
+    }
+}
+
+/// The enlargements contributed to a page whose previous page ended at
+/// `from` (`None` for the first page): the first index into the sorted
+/// `enlarge` to consider. One before the break item stays on the page the
+/// break ends.
+fn first_enlarge(enlarge: &[Enlarge], from: Option<usize>) -> usize {
+    match from {
+        None => 0,
+        Some(end) => enlarge.partition_point(|e| e.at <= end),
+    }
 }
 
 struct PageState {
@@ -498,16 +607,19 @@ fn region_box((height, depth, payload): Placed3) -> VItem {
 /// `\@colht` by the height of `\twocolumn[<material>]`'s box plus
 /// `\dbltextfloatsep` for both columns of that page.
 pub fn break_pages_shortened(base: &PageParams, list: &[VItem], short_pages: usize, short: f64) -> Vec<BuiltPage> {
-    break_pages_regions(base, list, short_pages, short, &[])
+    break_pages_regions(base, list, short_pages, short, &[], &[])
 }
 
 /// [`break_pages_shortened`] with longtable regions: inside one, the page
 /// goal is reduced by `\ht\LT@foot` (longtable.sty 226-229), a page broken
 /// inside it ends with `\LT@foot` and the next begins with `\LT@head`
 /// (`\LT@output`, 487-517).
-pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize, short: f64, regions: &[ResolvedRegion]) -> Vec<BuiltPage> {
+///
+/// `enlarge` (sorted by position): see [`Enlarge`].
+pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize, short: f64, regions: &[ResolvedRegion], enlarge: &[Enlarge]) -> Vec<BuiltPage> {
     let mut pages: Vec<BuiltPage> = Vec::new();
     let mut start = 0usize;
+    let mut prev_end: Option<usize> = None;
     // `\copy\LT@head\nobreak` at the top of a continuation page.
     let mut pending_head: Option<Placed3> = None;
     let regions = Regions(regions);
@@ -533,12 +645,20 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
         let mut best: Option<(usize, i64)> = None; // (break index, cost)
         let mut fired: Option<usize> = None;
         let mut i = start;
+        // `\pagegoal` grows with each `\enlargethispage` contributed; the
+        // page is packed to the goal in force at its best break.
+        let mut next_enlarge = first_enlarge(enlarge, prev_end);
+        let (mut enlarged, mut best_enlarged) = (Kludge::default(), Kludge::default());
         if let Some((h, d, _)) = head {
             st.total = (p.topskip - h).max(0.0) + h;
             st.depth = d;
             st.has_box = true;
         }
         while i < list.len() {
+            while let Some(e) = enlarge.get(next_enlarge).filter(|e| e.at <= i) {
+                enlarged.add(e);
+                next_enlarge += 1;
+            }
             let legal = match &list[i] {
                 VItem::Penalty(pen) => *pen < INF_PENALTY,
                 VItem::Glue { .. } => i > 0 && matches!(list[i - 1], VItem::Box { .. }),
@@ -550,7 +670,7 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
             };
             if legal && st.has_box {
                 // §1005: page badness and cost at this breakpoint.
-                let goal = p.vsize - reserved(i);
+                let goal = p.vsize + enlarged.pt - reserved(i);
                 let b = if st.total < goal {
                     if st.fil {
                         0
@@ -575,6 +695,7 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
                 };
                 if best.map_or(true, |(_, lc)| c <= lc) {
                     best = Some((i, c));
+                    best_enlarged = enlarged;
                 }
                 if c == AWFUL_BAD || pi <= EJECT_PENALTY {
                     fired = Some(best.map_or(i, |(bi, _)| bi));
@@ -621,7 +742,7 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
                     // page_shrink` is `awful_bad` at the next breakpoint):
                     // TeX fires at the best break so far. Material that the
                     // shrink absorbs stays a candidate.
-                    if st.total > p.vsize - reserved(i) + st.shrink + 1e-9 && st.lines.len() > 1 {
+                    if st.total > p.vsize + enlarged.pt - reserved(i) + st.shrink + 1e-9 && st.lines.len() > 1 {
                         if let Some((bi, _)) = best {
                             fired = Some(bi);
                             break;
@@ -645,7 +766,9 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
             Some(bi) => bi,
             None => list.len(),
         };
-        let ejected = matches!(list.get(end), Some(VItem::Penalty(pen)) if *pen <= EJECT_PENALTY);
+        let page_params = if fired.is_some() { best_enlarged } else { enlarged }.params(p, st.shrink);
+        let p = &page_params;
+        let ejected = vfil_ejected(list, end);
         // A page the longtable output routine ends carries `\vss` after
         // `\copy\LT@foot` (longtable.sty 513), which takes the column's
         // whole slack and leaves the finite glue at its natural size.
@@ -727,6 +850,7 @@ pub fn break_pages_regions(base: &PageParams, list: &[VItem], short_pages: usize
         }
         pages.push(page);
         start = end;
+        prev_end = Some(end);
         if fired.is_none() {
             break;
         }
@@ -977,7 +1101,7 @@ pub(crate) fn settle_inserts(is: InsertState, end: usize, best_ins: Option<usize
 /// (`\skip\footins`, `\footnoterule`) in the column box `\vbox
 /// to\@colht`. Returns the pages and each page's note area.
 pub fn break_pages_inserts(base: &PageParams, list: &[VItem], short_pages: usize, short: f64, ins: &Insertions) -> (Vec<BuiltPage>, Vec<Option<InsertArea>>) {
-    break_pages_inserts_regions(base, list, short_pages, short, ins, &[])
+    break_pages_inserts_regions(base, list, short_pages, short, ins, &[], &[])
 }
 
 /// [`break_pages_inserts`] with longtable regions. `\pagegoal` carries both
@@ -995,10 +1119,12 @@ pub fn break_pages_inserts_regions(
     short: f64,
     ins: &Insertions,
     regions: &[ResolvedRegion],
+    enlarge: &[Enlarge],
 ) -> (Vec<BuiltPage>, Vec<Option<InsertArea>>) {
     let mut pages: Vec<BuiltPage> = Vec::new();
     let mut areas: Vec<Option<InsertArea>> = Vec::new();
     let mut start = 0usize;
+    let mut prev_end: Option<usize> = None;
     let mut held: Vec<PageIns> = Vec::new();
     let regions = Regions(regions);
     // `\copy\LT@head\nobreak` at the top of a continuation page.
@@ -1043,6 +1169,10 @@ pub fn break_pages_inserts_regions(
         let mut best_ins: Option<usize> = is.last_ins;
         let mut fired: Option<usize> = None;
         let mut i = start;
+        // `\@kludgeins` takes its (negative) height off `\pagegoal` like
+        // any insertion; see [`Enlarge`].
+        let mut next_enlarge = first_enlarge(enlarge, prev_end);
+        let (mut enlarged, mut best_enlarged) = (Kludge::default(), Kludge::default());
         let cost = |st: &PageState, is: &InsertState, pi: i32, reserve: f64| -> i64 {
             let goal = is.goal - reserve;
             let b = if st.total < goal {
@@ -1074,6 +1204,11 @@ pub fn break_pages_inserts_regions(
             }
         };
         while i < list.len() && !body_less {
+            while let Some(e) = enlarge.get(next_enlarge).filter(|e| e.at <= i) {
+                enlarged.add(e);
+                is.goal += e.pt;
+                next_enlarge += 1;
+            }
             let legal = match &list[i] {
                 VItem::Penalty(pen) => *pen < INF_PENALTY,
                 VItem::Glue { .. } => i > 0 && matches!(list[i - 1], VItem::Box { .. }),
@@ -1088,6 +1223,7 @@ pub fn break_pages_inserts_regions(
                 if best.map_or(true, |(_, lc)| c <= lc) {
                     best = Some((i, c));
                     best_ins = is.last_ins;
+                    best_enlarged = enlarged;
                 }
                 if c == AWFUL_BAD || pi <= EJECT_PENALTY {
                     fired = Some(best.map_or(i, |(bi, _)| bi));
@@ -1149,7 +1285,9 @@ pub fn break_pages_inserts_regions(
             Some(bi) => bi,
             None => list.len(),
         };
-        let ejected = matches!(list.get(end), Some(VItem::Penalty(pen)) if *pen <= EJECT_PENALTY);
+        let page_params = if fired.is_some() { best_enlarged } else { enlarged }.params(p, st.shrink);
+        let p = &page_params;
+        let ejected = vfil_ejected(list, end);
         let placed_notes = settle_inserts(is, end, best_ins, ins.split_top_skip, &mut held);
         let has_notes = placed_notes.iter().any(|l| !l.is_empty());
         // `\LT@output`: the continuation head opens the page and the foot
@@ -1225,6 +1363,7 @@ pub fn break_pages_inserts_regions(
         }
         if !body_less {
             start = end;
+            prev_end = Some(end);
         }
         if fired.is_none() && held.is_empty() {
             break;
@@ -1369,7 +1508,7 @@ pub(crate) fn make_column(p: &PageParams, body: &[VItem], body_less: bool, vfil:
     // `\vskip-\@outputbox@depth`: the box's height ends at the last
     // baseline.
     let natural = x;
-    let excess = p.vsize - natural;
+    let excess = if p.squeeze > 0.0 { -p.squeeze } else { p.vsize - natural };
     let fil_total = f64::from(u8::from(vfil)) + if p.flushbottom { 0.0 } else { 0.0001 } + f64::from(u8::from(fil_in_body));
     // (stretch ratio for finite glue, shift given to the `\vfil`)
     let (ratio, vfil_shift) = if excess > 0.0 {
@@ -1498,7 +1637,7 @@ fn glue_set(p: &PageParams, items: &[VItem]) -> f64 {
     }
     // `\boxmaxdepth`: depth beyond `\maxdepth` counts as height.
     let natural = total + if last_box { (depth - p.maxdepth).max(0.0) } else { 0.0 };
-    let excess = p.vsize - natural;
+    let excess = if p.squeeze > 0.0 { -p.squeeze } else { p.vsize - natural };
     if excess > 0.0 {
         if fil || stretch <= 0.0 {
             0.0
@@ -1525,6 +1664,7 @@ mod tests {
             lineskip: 1.0,
             lineskiplimit: 0.0,
             flushbottom: false,
+            squeeze: 0.0,
         }
     }
 
@@ -1544,6 +1684,8 @@ mod tests {
             baselineskip: None,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -1698,6 +1840,8 @@ mod tests {
             no_interline_after: false,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
