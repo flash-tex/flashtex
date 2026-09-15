@@ -319,10 +319,31 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("enspace", "", "text kern .5em"),
     ("enskip", "", "horizontal glue of .5em"),
     ("xspace", "", "word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"),
-    ("pagebreak", "[n]", "forces a page break"),
-    ("nopagebreak", "[n]", "accepted no-op; the layout never breaks there on its own"),
-    ("linebreak", "[n]", "line break"),
-    ("nolinebreak", "[n]", "accepted no-op"),
+    ("pagebreak", "[n]", "page-break penalty -\\@getpen{n} (4: a forced break); in a paragraph, after the line it is set on"),
+    ("nopagebreak", "[n]", "page-break penalty \\@getpen{n}; in a paragraph, after the line it is set on"),
+    ("linebreak", "[n]", "line-break penalty -\\@getpen{n} (4: a forced break, the line stays justified)"),
+    ("nolinebreak", "[n]", "line-break penalty \\@getpen{n}, the space before it moved after it"),
+    ("penalty", "<number>", "penalty node: in a paragraph a line-break penalty, between paragraphs a page-break penalty"),
+    ("nobreak", "", "\\penalty10000"),
+    ("allowbreak", "", "\\penalty0"),
+    ("goodbreak", "", "ends the paragraph, then \\penalty-500"),
+    ("filbreak", "", "ends the paragraph, then \\vfil\\penalty-200\\vfilneg"),
+    ("discretionary", "{pre}{post}{nobreak}", "discretionary break (plain text of each argument)"),
+    ("nobreakdash", "- -- ---", "amsmath: the dashes that follow, with no line break after them (\\nobreak)"),
+    ("tolerance", "=<number>", "line-breaking parameter, restored at the end of its group"),
+    ("pretolerance", "=<number>", "line-breaking parameter, restored at the end of its group"),
+    ("looseness", "=<number>", "line-breaking parameter for the next paragraph end"),
+    ("widowpenalty", "=<number>", "page-breaking parameter, restored at the end of its group"),
+    ("clubpenalty", "=<number>", "page-breaking parameter, restored at the end of its group"),
+    ("interlinepenalty", "=<number>", "page-breaking parameter, restored at the end of its group"),
+    ("emergencystretch", "=<dimen>", "line-breaking parameter, restored at the end of its group"),
+    ("sloppy", "", "\\tolerance 9999, \\emergencystretch 3em, \\hfuzz .5pt"),
+    ("fussy", "", "\\tolerance 200, \\emergencystretch 0pt, \\hfuzz .1pt"),
+    ("samepage", "", "\\interlinepenalty 10000 for the rest of the group"),
+    ("raggedbottom", "", "pages keep their natural height"),
+    ("flushbottom", "", "pages are stretched to the text height"),
+    ("enlargethispage", "*{dimension}", "the current page's text height grows by the dimension (* also shrinks its glue); pt/cm/.../\\baselineskip multiples"),
+    ("hyphenation", "{words}", "hyphenation exceptions: the hyphens mark each word's only break points"),
     ("vfill", "", "vertical glue filling the rest of the page"),
     ("columnbreak", "[n]", "multicol: ends the current column of multicols (priority n, default 4)"),
     ("newcolumn", "", "multicol: ends the current column of multicols, filling it"),
@@ -491,6 +512,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         &["phantom", "hphantom", "vphantom"],
         "{x}",
         "empty box with the width and/or height and depth of the argument",
+        true,
+    ),
+    (
+        &["mathllap", "mathrlap", "mathclap"],
+        "{x}",
+        "mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\\llap/\\rlap/\\clap); needs mathtools",
         true,
     ),
     (
@@ -763,6 +790,11 @@ const CONTROL_SYMBOLS: &[(&str, Mode, &str)] = &[
         Mode::Text,
         "line break; an optional [length] is consumed",
     ),
+    (
+        "-",
+        Mode::Text,
+        "discretionary hyphen: a break point, invisible unless the line breaks there",
+    ),
     (",", Mode::Text, "text kern .16667em (\\thinspace)"),
     ("!", Mode::Text, "text kern -.16667em (\\negthinspace)"),
     (":", Mode::Text, "text kern .2222em (\\medspace)"),
@@ -819,6 +851,8 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("flushright", "right-aligned paragraphs"),
     ("quote", "indented paragraphs"),
     ("quotation", "indented paragraphs"),
+    ("sloppypar", "a paragraph set with \\sloppy"),
+    ("samepage", "\\samepage for the body"),
     ("tiny", "the tiny size for the environment body"),
     ("scriptsize", "the scriptsize size for the environment body"),
     ("footnotesize", "the footnotesize size for the environment body"),
@@ -1142,6 +1176,7 @@ pub fn inventory() -> Inventory {
         let fences = match (left, right) {
             ("", "") => String::new(),
             (l, "") => format!(" with a left {l}"),
+            ("", r) => format!(" with a right {r}"),
             (l, r) => format!(" in {l} {r}"),
         };
         let align = match align {
@@ -1532,4 +1567,29 @@ pub fn render_markdown(inventory: &Inventory) -> String {
     out.push_str(DOC_END);
     out.push('\n');
     out
+}
+
+#[cfg(test)]
+mod fence_description_tests {
+    use super::*;
+
+    /// A grid environment with no left delimiter and a real right one
+    /// (`rcases`'s exact shape, `("rcases", 'l', "", "}")`) must describe
+    /// only the right fence, not fall through to the two-sided `"in {l} {r}"`
+    /// arm with an empty `{l}` (which produced the malformed
+    /// `"...cells in  }"`, a stray double space before a lone brace).
+    #[test]
+    fn a_right_only_fence_describes_only_the_right_delimiter() {
+        let inventory = inventory();
+        let rcases = inventory
+            .environments
+            .iter()
+            .find(|e| e.name == "rcases")
+            .expect("rcases is in the inventory");
+        assert_eq!(
+            rcases.description,
+            "math grid, left-aligned cells with a right }"
+        );
+        assert!(!rcases.description.contains("  "), "{}", rcases.description);
+    }
 }
