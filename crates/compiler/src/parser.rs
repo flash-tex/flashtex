@@ -909,6 +909,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "counterwithin",
     "counterwithout",
     "caption",
+    "captionof",
     "item",
     "includegraphics",
     "scalebox",
@@ -2011,6 +2012,33 @@ impl P<'_> {
         }
     }
 
+    /// A numbered float caption: `\caption` inside its float, or caption.sty's
+    /// standalone `\captionof{<type>}`. Steps the float's counter (LaTeX's
+    /// `\refstepcounter`, so a following `\label` resolves), prefixes
+    /// "Figure N:"/"Table N:" and pushes the caption block the layout draws.
+    fn push_float_caption(
+        &mut self,
+        kind: &str,
+        label: &str,
+        tokens: Vec<InputToken>,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        self.flush_paragraph(blocks, para);
+        let number = self.counters.step(kind).unwrap_or_default();
+        self.set_current_counter(kind, Some(number.clone()));
+        let mut content = vec![Inline::Text {
+            text: format!("{label} {number}:"),
+            span,
+            style: TextStyle::default(),
+            space_before: true,
+        }];
+        content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
+        blocks.push(Block::FigureCaption { content });
+        self.finish_block_dependencies();
+    }
+
     fn command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         if self.document_ended {
             return;
@@ -2454,18 +2482,42 @@ impl P<'_> {
                     let style = self.style;
                     para.extend(self.inlines_from_tokens(tokens, style));
                 } else {
-                    self.flush_paragraph(blocks, para);
-                    let number = self.counters.step("figure").unwrap_or_default();
-                    self.set_current_counter("figure", Some(number.clone()));
-                    let mut content = vec![Inline::Text {
-                        text: format!("Figure {number}:"),
-                        span,
-                        style: TextStyle::default(),
-                        space_before: true,
-                    }];
-                    content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
-                    blocks.push(Block::FigureCaption { content });
-                    self.finish_block_dependencies();
+                    self.push_float_caption("figure", "Figure", tokens, span, blocks, para);
+                }
+            }
+            // caption.sty's `\captionof{<type>}[<short>]{<text>}`: the same
+            // numbered caption `\caption` would produce inside the named
+            // float, usable with no float around it. The `[<short>]`
+            // list-of-figures text has no list to feed here, so it is
+            // consumed and ignored, as longtable captions already do.
+            "captionof" => {
+                let (type_tokens, _) = self.required_group(name, span);
+                let float_type = token_text(&type_tokens);
+                let float_type = float_type.trim();
+                let _ = self.optional_bracket_argument();
+                let (tokens, _) = self.required_group(name, span);
+                // `if` chains, not a `match`: the inventory test scrapes this
+                // dispatch region for `"name" =>` arm heads, and inner match
+                // arms would read as commands the inventory does not list.
+                if float_type == "figure" {
+                    self.push_float_caption("figure", "Figure", tokens, span, blocks, para);
+                } else if float_type == "table" {
+                    self.push_float_caption("table", "Table", tokens, span, blocks, para);
+                } else {
+                    // A missing `{type}` already produced "\captionof
+                    // requires a braced argument" above; only diagnose a type
+                    // that was actually given.
+                    if !float_type.is_empty() {
+                        self.diags.push(Diagnostic::error(
+                            format!(
+                                "\\captionof is only supported for the figure and table float types, not '{float_type}'"
+                            ),
+                            Some(span),
+                            Some("typeset the caption text as an ordinary paragraph".into()),
+                        ));
+                    }
+                    let style = self.style;
+                    para.extend(self.inlines_from_tokens(tokens, style));
                 }
             }
             "item" => {

@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 307 text-mode and 551 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 308 text-mode and 551 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -421,6 +421,7 @@ Canonical sources:
 | `\counterwithin` | `{counter}{parent}` | counter reset by parent and printed \theparent.\arabic{counter}; starred form keeps the printed form |
 | `\counterwithout` | `{counter}{parent}` | undoes \counterwithin; starred form keeps the printed form |
 | `\caption` | `{...}` | numbered "Figure N:" caption inside figure |
+| `\captionof` | `{type}[short]{...}` | numbered caption outside a float: "Figure N:" for figure, "Table N:" for table |
 | `\item` | `[label]` | entry of an itemize, enumerate or description list |
 | `\includegraphics` | `*[keys]{file}` | image box in running text (graphicx keys as written) |
 | `\scalebox` | `{x}[y]{...}` | graphics.sty scaled box of the content |
