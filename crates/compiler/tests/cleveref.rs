@@ -111,10 +111,7 @@ fn cleveref_subsection_names_override_the_section_alias() {
     let output = compile(source);
     let rendered = text(&output);
     for expected in ["section 1", "subsec 1.1", "subsubsec 1.1.1"] {
-        assert!(
-            rendered.contains(expected),
-            "missing {expected}: {rendered}"
-        );
+        assert!(rendered.contains(expected), "missing {expected}: {rendered}");
     }
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
 }
@@ -135,11 +132,13 @@ fn cleveref_parses_starred_ranges_pages_and_labelcref() {
     );
     let output = compile(source);
     let rendered = text(&output);
-    for expected in ["sections 1 to 2", "Sections 1 to 2", "page 1", "(1)"] {
-        assert!(
-            rendered.contains(expected),
-            "missing {expected}: {rendered}"
-        );
+    for expected in [
+        "sections 1 to 2",
+        "Sections 1 to 2",
+        "page 1",
+        "(1)",
+    ] {
+        assert!(rendered.contains(expected), "missing {expected}: {rendered}");
     }
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
 }
@@ -168,10 +167,7 @@ fn cleveref_uses_english_conjunctions_groups_and_section_aliases() {
         "section 4.1",
         "sections 1 to 4.1",
     ] {
-        assert!(
-            rendered.contains(expected),
-            "missing {expected}: {rendered}"
-        );
+        assert!(rendered.contains(expected), "missing {expected}: {rendered}");
     }
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
 }

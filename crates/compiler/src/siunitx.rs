@@ -305,11 +305,8 @@ impl Settings {
                     self.range_phrase = text;
                     true
                 }
-                "retain-explicit-plus"
-                | "retain-zero-exponent"
-                | "drop-zero-decimal"
-                | "add-integer-zero"
-                | "bracket-unit-denominator" => match flag() {
+                "retain-explicit-plus" | "retain-zero-exponent" | "drop-zero-decimal"
+                | "add-integer-zero" | "bracket-unit-denominator" => match flag() {
                     Some(on) => {
                         match key.as_str() {
                             "retain-explicit-plus" => self.retain_explicit_plus = on,
@@ -539,10 +536,7 @@ fn parse_number(input: &str) -> Option<Number> {
         }
         s
     };
-    if i < chars.len()
-        && matches!(chars[i], '+' | '-')
-        && !(chars.get(i + 1) == Some(&'-') && chars[i] == '+')
-    {
+    if i < chars.len() && matches!(chars[i], '+' | '-') && !(chars.get(i + 1) == Some(&'-') && chars[i] == '+') {
         n.sign = Some(chars[i]);
         i += 1;
     }
@@ -604,12 +598,7 @@ fn parse_number(input: &str) -> Option<Number> {
 
 fn group(digits: &str, from_left: bool, separator: &str) -> String {
     let separator = ord_source(separator);
-    let separator = if separator.starts_with('\\')
-        && separator
-            .chars()
-            .nth(1)
-            .is_some_and(|c| c.is_ascii_alphabetic())
-    {
+    let separator = if separator.starts_with('\\') && separator.chars().nth(1).is_some_and(|c| c.is_ascii_alphabetic()) {
         separator + " "
     } else {
         separator
@@ -746,11 +735,7 @@ impl Context<'_> {
                         let mut digits = format!("{whole}{fraction}");
                         digits.extend(std::iter::repeat_n('0', places - fraction.len()));
                         let trimmed = digits.trim_start_matches('0');
-                        compact = Some(if trimmed.is_empty() {
-                            "0".into()
-                        } else {
-                            trimmed.into()
-                        });
+                        compact = Some(if trimmed.is_empty() { "0".into() } else { trimmed.into() });
                     }
                 }
             }
@@ -816,12 +801,7 @@ impl Context<'_> {
         out
     }
 
-    fn quantity(
-        &self,
-        number: &str,
-        unit: &str,
-        diagnostics: &mut Vec<Diagnostic>,
-    ) -> Vec<MathAtom> {
+    fn quantity(&self, number: &str, unit: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<MathAtom> {
         let mut out = self.number(number, diagnostics);
         let unit = self.unit(unit, diagnostics);
         if !unit.is_empty() {
@@ -1150,9 +1130,7 @@ impl Context<'_> {
                         }
                         i += 1;
                     } else {
-                        while i < chars.len()
-                            && (chars[i].is_ascii_digit() || (script.is_empty() && chars[i] == '-'))
-                        {
+                        while i < chars.len() && (chars[i].is_ascii_digit() || (script.is_empty() && chars[i] == '-')) {
                             script.push(chars[i]);
                             i += 1;
                         }
@@ -1426,11 +1404,7 @@ mod tests {
         );
         let mut settings = Settings::default();
         let mut diagnostics = Vec::new();
-        settings.apply(
-            "list-separator={; }, bogus=1",
-            Span::new(0, 0),
-            &mut diagnostics,
-        );
+        settings.apply("list-separator={; }, bogus=1", Span::new(0, 0), &mut diagnostics);
         assert_eq!(settings.list_separator, "; ");
         assert_eq!(diagnostics.len(), 1);
     }

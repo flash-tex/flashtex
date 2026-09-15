@@ -88,10 +88,10 @@ pub const ADVANCES: &[(char, u16)] = &[
     // bound to this resource like the rest above. These advances match what
     // pdfLaTeX sets from cmsy10 at 10pt (measured: `\sqcup` 6.66669pt against
     // 667/1000 em, `\sqsubseteq` 7.7778pt against 778/1000 em).
-    ('\u{2294}', 667), // \sqcup
-    ('\u{2293}', 667), // \sqcap
-    ('\u{2291}', 778), // \sqsubseteq
-    ('\u{2292}', 778), // \sqsupseteq
+    ('\u{2294}', 667),  // \sqcup
+    ('\u{2293}', 667),  // \sqcap
+    ('\u{2291}', 778),  // \sqsubseteq
+    ('\u{2292}', 778),  // \sqsupseteq
     // Kernel cmsy10 circled operators; advances measured with hb-shape from
     // apps/mac/Fonts/latinmodern-math.otf (font units).
     ('\u{2296}', 778),  // \ominus, cmsy10 "09

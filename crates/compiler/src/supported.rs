@@ -133,90 +133,26 @@ const TEXT_EXTRA_ARMS: &[&str] = &["newtheorem", "theoremstyle"];
 /// reaches the parser only as expanded tokens. `\newcommand`/`\renewcommand`
 /// and `\DeclareMathOperator` keep their parser-inventory entries.
 const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
-    (
-        "long",
-        "",
-        "prefix: the following definition accepts \\par in arguments",
-    ),
-    (
-        "protected",
-        "",
-        "e-TeX prefix: the following macro is not expanded inside \\edef-like contexts",
-    ),
-    (
-        "providecommand",
-        "{\\name}[n][default]{body}",
-        "defines the macro only when \\name is undefined",
-    ),
-    (
-        "DeclareRobustCommand",
-        "{\\name}[n][default]{body}",
-        "defines or redefines a macro (robustness is not modelled separately)",
-    ),
-    (
-        "newenvironment",
-        "{env}[n][default]{begin}{end}",
-        "defines an environment run by \\begin{env}/\\end{env}",
-    ),
-    (
-        "renewenvironment",
-        "{env}[n][default]{begin}{end}",
-        "redefines an environment",
-    ),
-    (
-        "newcounter",
-        "{counter}[within]",
-        "allocates a counter (\\c@counter, \\thecounter) reset by within",
-    ),
+    ("long", "", "prefix: the following definition accepts \\par in arguments"),
+    ("protected", "", "e-TeX prefix: the following macro is not expanded inside \\edef-like contexts"),
+    ("providecommand", "{\\name}[n][default]{body}", "defines the macro only when \\name is undefined"),
+    ("DeclareRobustCommand", "{\\name}[n][default]{body}", "defines or redefines a macro (robustness is not modelled separately)"),
+    ("newenvironment", "{env}[n][default]{begin}{end}", "defines an environment run by \\begin{env}/\\end{env}"),
+    ("renewenvironment", "{env}[n][default]{begin}{end}", "redefines an environment"),
+    ("newcounter", "{counter}[within]", "allocates a counter (\\c@counter, \\thecounter) reset by within"),
     ("setcounter", "{counter}{number}", "sets a counter globally"),
-    (
-        "addtocounter",
-        "{counter}{number}",
-        "adds to a counter globally",
-    ),
-    (
-        "stepcounter",
-        "{counter}",
-        "increments a counter and resets its dependants",
-    ),
-    (
-        "refstepcounter",
-        "{counter}",
-        "increments a counter and makes it the current \\label value",
-    ),
-    (
-        "value",
-        "{counter}",
-        "a counter's value in a number context",
-    ),
+    ("addtocounter", "{counter}{number}", "adds to a counter globally"),
+    ("stepcounter", "{counter}", "increments a counter and resets its dependants"),
+    ("refstepcounter", "{counter}", "increments a counter and makes it the current \\label value"),
+    ("value", "{counter}", "a counter's value in a number context"),
     ("Alph", "{counter}", "a counter as an upper-case letter"),
     ("fnsymbol", "{counter}", "a counter as a footnote symbol"),
     ("newlength", "{\\name}", "allocates a skip register"),
-    (
-        "settowidth",
-        "{\\name}{text}",
-        "sets a length from text measured by the expansion pass's box measurer (an approximation)",
-    ),
-    (
-        "settoheight",
-        "{\\name}{text}",
-        "sets a length from text height (an approximation, as \\settowidth)",
-    ),
-    (
-        "settodepth",
-        "{\\name}{text}",
-        "sets a length from text depth (an approximation, as \\settowidth)",
-    ),
-    (
-        "AtBeginDocument",
-        "{code}",
-        "stores code that runs at \\begin{document}",
-    ),
-    (
-        "AtEndDocument",
-        "{code}",
-        "stores code that runs at \\end{document}",
-    ),
+    ("settowidth", "{\\name}{text}", "sets a length from text measured by the expansion pass's box measurer (an approximation)"),
+    ("settoheight", "{\\name}{text}", "sets a length from text height (an approximation, as \\settowidth)"),
+    ("settodepth", "{\\name}{text}", "sets a length from text depth (an approximation, as \\settowidth)"),
+    ("AtBeginDocument", "{code}", "stores code that runs at \\begin{document}"),
+    ("AtEndDocument", "{code}", "stores code that runs at \\end{document}"),
     ("makeatother", "", "makes @ an other character again"),
     ("space", "", "expands to one space"),
     ("ignorespaces", "", "skips the spaces that follow"),
@@ -1015,8 +951,8 @@ pub const CANONICAL_TSV: &str = include_str!("../supported/canonical-latex.tsv")
 
 /// Canonical sets, in report order.
 pub const CANONICAL_SETS: &[&str] = &[
-    "kernel", "amsmath", "amssymb", "enumitem", "geometry", "graphicx", "hyperref", "tikz",
-    "xcolor", "siunitx",
+    "kernel", "amsmath", "amssymb", "enumitem", "geometry", "graphicx", "hyperref", "tikz", "xcolor",
+    "siunitx",
 ];
 
 fn text_description(name: &str) -> String {
@@ -1137,10 +1073,7 @@ pub fn inventory() -> Inventory {
     // amssymb/amsfonts symbols (`crate::amssymb`), which take precedence over
     // the glyph rows above for the names both list.
     for name in crate::amssymb::command_names() {
-        if MATH_STRUCTURES
-            .iter()
-            .any(|(names, ..)| names.contains(&name))
-        {
+        if MATH_STRUCTURES.iter().any(|(names, ..)| names.contains(&name)) {
             continue;
         }
         let ams = crate::amssymb::by_name(name).expect("a listed amssymb command");

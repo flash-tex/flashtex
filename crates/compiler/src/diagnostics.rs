@@ -407,10 +407,7 @@ impl Diagnostic {
 
 fn source_json(span: Span, paths: &[&str]) -> Value {
     let mut src = Value::obj();
-    src.set(
-        "path",
-        str_(paths.get(span.document.0).copied().unwrap_or("")),
-    );
+    src.set("path", str_(paths.get(span.document.0).copied().unwrap_or("")));
     src.set("start_byte", Value::Num(span.start as f64));
     src.set("end_byte", Value::Num(span.end as f64));
     src
@@ -501,9 +498,7 @@ mod tests {
             "{json}"
         );
         assert!(
-            !json.contains("\"labels\"")
-                && !json.contains("\"notes\"")
-                && !json.contains("\"help\""),
+            !json.contains("\"labels\"") && !json.contains("\"notes\"") && !json.contains("\"help\""),
             "{json}"
         );
         let typo = Diagnostic::command_error("alpah", "\\alpah is not supported", None, None);
@@ -533,33 +528,17 @@ mod tests {
     #[test]
     fn labels_notes_and_help_are_emitted_only_when_set() {
         let span = Span::new(0, 6);
-        let with = Diagnostic::error(
-            "\\tilde is not supported",
-            Some(span),
-            Some("skipped".into()),
-        )
-        .with_label(span, "this command", true)
-        .with_note("\\tilde is a math accent")
-        .with_help("wrap it in math: \\(\\tilde{c}\\)")
-        .with_replacement(span, "\\(\\tilde{c}\\)");
+        let with = Diagnostic::error("\\tilde is not supported", Some(span), Some("skipped".into()))
+            .with_label(span, "this command", true)
+            .with_note("\\tilde is a math accent")
+            .with_help("wrap it in math: \\(\\tilde{c}\\)")
+            .with_replacement(span, "\\(\\tilde{c}\\)");
         let json = crate::json::write(&with.to_json("notes.tex"));
         assert!(json.contains(r#""labels":[{"primary":true,"source":{"end_byte":6,"path":"notes.tex","start_byte":0},"text":"this command"}]"#), "{json}");
-        assert!(
-            json.contains(r#""notes":["\\tilde is a math accent"]"#),
-            "{json}"
-        );
+        assert!(json.contains(r#""notes":["\\tilde is a math accent"]"#), "{json}");
         assert!(json.contains(r#""help":{"message":"wrap it in math: \\(\\tilde{c}\\)","replacement":{"source":{"end_byte":6,"path":"notes.tex","start_byte":0},"text":"\\(\\tilde{c}\\)"}}"#), "{json}");
-        let without = Diagnostic::error(
-            "\\tilde is not supported",
-            Some(span),
-            Some("skipped".into()),
-        );
+        let without = Diagnostic::error("\\tilde is not supported", Some(span), Some("skipped".into()));
         let json = crate::json::write(&without.to_json("notes.tex"));
-        assert!(
-            !json.contains("\"labels\"")
-                && !json.contains("\"notes\"")
-                && !json.contains("\"help\""),
-            "{json}"
-        );
+        assert!(!json.contains("\"labels\"") && !json.contains("\"notes\"") && !json.contains("\"help\""), "{json}");
     }
 }

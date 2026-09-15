@@ -31,25 +31,15 @@ fn paragraphs(blocks: &[Block]) -> Vec<&Vec<Inline>> {
 #[test]
 fn a_blank_line_inside_a_footnote_is_a_paragraph_break_in_the_note() {
     for command in ["footnote", "footnotetext"] {
-        let src = doc(&format!(
-            "Before\\{command}{{First part.\n\nSecond part.}} after the note.\n\nNext paragraph."
-        ));
+        let src = doc(&format!("Before\\{command}{{First part.\n\nSecond part.}} after the note.\n\nNext paragraph."));
         let parsed = parse(&src);
         assert!(
-            !parsed
-                .diagnostics
-                .iter()
-                .any(|d| d.message.contains("missing its closing brace")
-                    || d.message.contains("unmatched")),
+            !parsed.diagnostics.iter().any(|d| d.message.contains("missing its closing brace") || d.message.contains("unmatched")),
             "\\{command}: {:?}",
             parsed.diagnostics
         );
         let paras = paragraphs(&parsed.blocks);
-        assert_eq!(
-            paras.len(),
-            2,
-            "\\{command}: the note's blank line must not end the host paragraph"
-        );
+        assert_eq!(paras.len(), 2, "\\{command}: the note's blank line must not end the host paragraph");
         let host = paras[0];
         let note = host
             .iter()
@@ -59,19 +49,10 @@ fn a_blank_line_inside_a_footnote_is_a_paragraph_break_in_the_note() {
             })
             .expect("a footnote with text");
         let note_text = texts(note);
-        assert!(
-            note_text.contains("First") && note_text.contains("Second"),
-            "\\{command}: note text {note_text:?}"
-        );
-        assert!(
-            note.iter().any(|i| matches!(i, Inline::LineBreak { .. })),
-            "\\{command}: the note keeps its paragraph break"
-        );
+        assert!(note_text.contains("First") && note_text.contains("Second"), "\\{command}: note text {note_text:?}");
+        assert!(note.iter().any(|i| matches!(i, Inline::LineBreak { .. })), "\\{command}: the note keeps its paragraph break");
         let host_text = texts(host);
-        assert!(
-            host_text.contains("after") && !host_text.contains("Second"),
-            "\\{command}: host text {host_text:?}"
-        );
+        assert!(host_text.contains("after") && !host_text.contains("Second"), "\\{command}: host text {host_text:?}");
         assert!(texts(paras[1]).contains("Next"));
     }
 }
@@ -80,14 +61,9 @@ fn a_blank_line_inside_a_footnote_is_a_paragraph_break_in_the_note() {
 fn an_unclosed_footnote_is_still_closed_at_the_end_of_its_paragraph() {
     let parsed = parse(&doc("Before\\footnote{never closed\n\nNext paragraph."));
     assert!(
-        parsed
-            .diagnostics
-            .iter()
-            .any(|d| d.message.contains("missing its closing brace")),
+        parsed.diagnostics.iter().any(|d| d.message.contains("missing its closing brace")),
         "{:?}",
         parsed.diagnostics
     );
-    assert!(paragraphs(&parsed.blocks)
-        .iter()
-        .any(|p| texts(p).contains("Next")));
+    assert!(paragraphs(&parsed.blocks).iter().any(|p| texts(p).contains("Next")));
 }

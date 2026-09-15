@@ -45,9 +45,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use flashtex_tex_expansion::{
-    self as tex, CatCode, Edit, Engine, IncrementalExpander, Limits, TokenKind as TexKind,
-};
+use flashtex_tex_expansion::{self as tex, CatCode, Edit, Engine, IncrementalExpander, Limits, TokenKind as TexKind};
 
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{tokenize_document, Token, TokenKind};
@@ -190,13 +188,9 @@ fn prepare<'a>(text: &'a str, document: DocumentId) -> Prepared<'a> {
     };
     // amsmath `\numberwithin[\alph]{..}{..}`: the format is a name the parser
     // reads, not a `\alph` call for the engine to run on `]`.
-    let has_labels = (text.contains('*')
-        && LABEL_FORMATS
-            .iter()
-            .any(|f| text.contains(&format!("\\{f}*"))))
+    let has_labels = (text.contains('*') && LABEL_FORMATS.iter().any(|f| text.contains(&format!("\\{f}*"))))
         || text.contains("\\numberwithin[");
-    let has_urls =
-        text.contains("\\url") || text.contains("\\href") || text.contains("\\nolinkurl");
+    let has_urls = text.contains("\\url") || text.contains("\\href") || text.contains("\\nolinkurl");
     if !(has_labels
         || has_urls
         || text.contains("\\verb")
@@ -249,15 +243,9 @@ fn prepare<'a>(text: &'a str, document: DocumentId) -> Prepared<'a> {
             TokenKind::Command(name)
                 if LABEL_FORMATS.contains(&name.as_str())
                     && (text.as_bytes().get(token.span.end) == Some(&b'*')
-                        || text[..token.span.start]
-                            .trim_end()
-                            .ends_with("\\numberwithin[")) =>
+                        || text[..token.span.start].trim_end().ends_with("\\numberwithin[")) =>
             {
-                let format = LABEL_FORMATS
-                    .iter()
-                    .find(|f| **f == name.as_str())
-                    .copied()
-                    .unwrap_or("arabic");
+                let format = LABEL_FORMATS.iter().find(|f| **f == name.as_str()).copied().unwrap_or("arabic");
                 for b in &mut bytes[token.span.start + 1..token.span.end] {
                     *b = b'Z';
                 }
@@ -459,8 +447,7 @@ impl<'d> Converter<'d> {
         };
         let text = self.documents[document].text;
         let (start, end) = (span.start as usize, span.end as usize);
-        (end <= text.len() && start <= end)
-            .then(|| Span::in_document(DocumentId(document), start, end))
+        (end <= text.len() && start <= end).then(|| Span::in_document(DocumentId(document), start, end))
     }
 
     fn place(&self, token: &tex::Token, origin: Option<tex::Span>) -> Placement {
@@ -471,18 +458,8 @@ impl<'d> Converter<'d> {
                     && token.span.source_id == invocation.source_id
                     && token.span.start >= invocation.end;
                 match (direct, own, self.span(invocation)) {
-                    (true, Some(own), _) => Placement {
-                        span: own,
-                        definition: None,
-                        maps: false,
-                        real: Some(own),
-                    },
-                    (_, own, Some(at)) => Placement {
-                        span: at,
-                        definition: own,
-                        maps: true,
-                        real: own,
-                    },
+                    (true, Some(own), _) => Placement { span: own, definition: None, maps: false, real: Some(own) },
+                    (_, own, Some(at)) => Placement { span: at, definition: own, maps: true, real: own },
                     (_, own, None) => Placement {
                         span: own.unwrap_or(self.last_span),
                         definition: None,
@@ -492,36 +469,20 @@ impl<'d> Converter<'d> {
                 }
             }
             None => match own {
-                Some(own) => Placement {
-                    span: own,
-                    definition: None,
-                    maps: false,
-                    real: Some(own),
-                },
-                None => Placement {
-                    span: self.last_span,
-                    definition: None,
-                    maps: true,
-                    real: None,
-                },
+                Some(own) => Placement { span: own, definition: None, maps: false, real: Some(own) },
+                None => Placement { span: self.last_span, definition: None, maps: true, real: None },
             },
         }
     }
 
     fn source_text(&self, span: Span) -> &'d str {
-        self.documents[span.document.0]
-            .text
-            .get(span.start..span.end)
-            .unwrap_or("")
+        self.documents[span.document.0].text.get(span.start..span.end).unwrap_or("")
     }
 
     fn flush_word(&mut self) {
         if let Some(word) = self.word.take() {
             self.out.push(ExpandedToken {
-                token: Token {
-                    kind: TokenKind::Word(word.text),
-                    span: word.span,
-                },
+                token: Token { kind: TokenKind::Word(word.text), span: word.span },
                 definition: word.definition,
                 maps_to_invocation: word.maps,
             });
@@ -564,10 +525,7 @@ impl<'d> Converter<'d> {
             _ => {}
         }
         self.out.push(ExpandedToken {
-            token: Token {
-                kind,
-                span: at.span,
-            },
+            token: Token { kind, span: at.span },
             definition: at.definition,
             maps_to_invocation: at.maps,
         });
@@ -630,19 +588,9 @@ impl<'d> Converter<'d> {
                 (Some(_), Some(real)) => {
                     let exact = Span::in_document(real.document, start, end);
                     if at.maps {
-                        Placement {
-                            span: at.span,
-                            definition: Some(exact),
-                            maps: true,
-                            real: Some(exact),
-                        }
+                        Placement { span: at.span, definition: Some(exact), maps: true, real: Some(exact) }
                     } else {
-                        Placement {
-                            span: exact,
-                            definition: None,
-                            maps: false,
-                            real: Some(exact),
-                        }
+                        Placement { span: exact, definition: None, maps: false, real: Some(exact) }
                     }
                 }
                 _ => at,
@@ -661,10 +609,7 @@ impl<'d> Converter<'d> {
         self.push(TokenKind::LBrace, open_at);
         self.flush_word();
         self.out.push(ExpandedToken {
-            token: Token {
-                kind: TokenKind::Word(name.to_string()),
-                span: word_at.span,
-            },
+            token: Token { kind: TokenKind::Word(name.to_string()), span: word_at.span },
             definition: word_at.definition,
             maps_to_invocation: word_at.maps,
         });
@@ -705,9 +650,7 @@ fn has_includes(text: &str) -> bool {
 }
 
 fn step_limit_hit(diagnostics: &[tex::Diagnostic]) -> bool {
-    diagnostics
-        .iter()
-        .any(|d| d.message.contains("expansion step limit exceeded"))
+    diagnostics.iter().any(|d| d.message.contains("expansion step limit exceeded"))
 }
 
 /// What the caller must do after one converted token.
@@ -724,11 +667,7 @@ impl<'d> Converter<'d> {
     fn new(documents: &'d [SourceDocument<'d>], entry: usize) -> Self {
         Converter {
             documents,
-            document_by_path: documents
-                .iter()
-                .enumerate()
-                .map(|(i, d)| (d.path, i))
-                .collect(),
+            document_by_path: documents.iter().enumerate().map(|(i, d)| (d.path, i)).collect(),
             includeonly: None,
             document_begun: false,
             source_documents: HashMap::from([(0, Some(entry))]),
@@ -751,12 +690,7 @@ impl<'d> Converter<'d> {
         self.word.is_none() && self.stretch.is_none()
     }
 
-    fn convert_token(
-        &mut self,
-        prepared: &[Prepared<'_>],
-        token: &tex::Token,
-        origin: Option<tex::Span>,
-    ) -> Flow {
+    fn convert_token(&mut self, prepared: &[Prepared<'_>], token: &tex::Token, origin: Option<tex::Span>) -> Flow {
         let conv = self;
         let at = conv.place(token, origin);
         if let Some((key, depth, mut text)) = conv.stretch.take() {
@@ -768,8 +702,7 @@ impl<'d> Converter<'d> {
                     conv.stretch = Some((key, depth + 1, text));
                 }
                 TexKind::Char(_, CatCode::EndGroup) if depth <= 1 => {
-                    conv.stretch_log
-                        .push((conv.stretch_index, key, text.clone()));
+                    conv.stretch_log.push((conv.stretch_index, key, text.clone()));
                     conv.arraystretch.insert(key, text);
                 }
                 TexKind::Char(_, CatCode::EndGroup) => {
@@ -789,11 +722,7 @@ impl<'d> Converter<'d> {
             }
             return Flow::Next;
         }
-        if !at.maps
-            && at
-                .real
-                .is_some_and(|real| prepared[real.document.0].skips(real.start))
-        {
+        if !at.maps && at.real.is_some_and(|real| prepared[real.document.0].skips(real.start)) {
             return Flow::Next;
         }
         match &token.kind {
@@ -818,9 +747,7 @@ impl<'d> Converter<'d> {
                     // Grouping bookkeeping and `\relax` produce nothing for the
                     // parser (LaTeX's environment groups included).
                     "begingroup" | "endgroup" | "relax" => {}
-                    "flashtexsetlength" => {
-                        conv.push(TokenKind::Command("setlength".to_string()), at)
-                    }
+                    "flashtexsetlength" => conv.push(TokenKind::Command("setlength".to_string()), at),
                     "flashtexaddtolength" => {
                         conv.push(TokenKind::Command("addtolength".to_string()), at)
                     }
@@ -833,16 +760,10 @@ impl<'d> Converter<'d> {
                         let begin = origin
                             .and_then(|o| conv.span(o))
                             .filter(|b| conv.source_text(*b) == "\\begin")
-                            .map(|b| Placement {
-                                span: b,
-                                definition: None,
-                                maps: false,
-                                real: Some(b),
-                            })
+                            .map(|b| Placement { span: b, definition: None, maps: false, real: Some(b) })
                             .unwrap_or(at);
                         conv.stretch_index = conv.index;
-                        conv.stretch =
-                            Some(((begin.span.document.0, begin.span.start), 0, String::new()));
+                        conv.stretch = Some(((begin.span.document.0, begin.span.start), 0, String::new()));
                         conv.push_environment("begin", env, begin);
                     }
                     "\\" => conv.push(TokenKind::LineBreak, at),
@@ -850,13 +771,11 @@ impl<'d> Converter<'d> {
                     "]" => conv.push(TokenKind::DisplayMathClose, at),
                     "(" => conv.push(TokenKind::InlineMathOpen, at),
                     ")" => conv.push(TokenKind::InlineMathClose, at),
-                    "par" if !real_text.starts_with('\\') && at.real.is_some() => {
-                        conv.push(TokenKind::ParBreak, at)
-                    }
+                    "par" if !real_text.starts_with('\\') && at.real.is_some() => conv.push(TokenKind::ParBreak, at),
                     "verb" | "verb*" => {
-                        let verb = at.real.and_then(|real| {
-                            prepared[real.document.0].verbs.get(&real.start).cloned()
-                        });
+                        let verb = at
+                            .real
+                            .and_then(|real| prepared[real.document.0].verbs.get(&real.start).cloned());
                         match verb {
                             Some(verb) => conv.push(verb.kind, at),
                             None => conv.push(TokenKind::Command(name.clone()), at),
@@ -875,9 +794,9 @@ impl<'d> Converter<'d> {
                             .unwrap_or("arabic");
                         conv.push(TokenKind::Command(original.to_string()), at);
                     }
-                    "/" if at.real.is_some_and(|real| {
-                        prepared[real.document.0].verb_markers.contains(&real.start)
-                    }) => {}
+                    "/" if at
+                        .real
+                        .is_some_and(|real| prepared[real.document.0].verb_markers.contains(&real.start)) => {}
                     "input" | "include" if origin.is_none() && real_text == format!("\\{name}") => {
                         return Flow::Include(name.clone(), at);
                     }
@@ -892,11 +811,7 @@ impl<'d> Converter<'d> {
                     // `\end<name>` carrying the `\begin` span.
                     _ if real_text == "\\begin"
                         && name.starts_with("endverbatim")
-                        && at.real.is_some_and(|real| {
-                            prepared[real.document.0]
-                                .verbatim_ends
-                                .contains_key(&real.start)
-                        }) =>
+                        && at.real.is_some_and(|real| prepared[real.document.0].verbatim_ends.contains_key(&real.start)) =>
                     {
                         let real = at.real.expect("checked above");
                         let tag = prepared[real.document.0].verbatim_ends[&real.start];
@@ -904,12 +819,7 @@ impl<'d> Converter<'d> {
                         conv.push_environment(
                             "end",
                             &name[3..],
-                            Placement {
-                                span: end,
-                                definition: None,
-                                maps: false,
-                                real: Some(end),
-                            },
+                            Placement { span: end, definition: None, maps: false, real: Some(end) },
                         );
                     }
                     _ if real_text == "\\begin" && name != "begin" => {
@@ -935,16 +845,9 @@ impl<'d> Converter<'d> {
             return;
         }
         for token in tokenize_document(&text[offset..], DocumentId(document)) {
-            let span = Span::in_document(
-                DocumentId(document),
-                token.span.start + offset,
-                token.span.end + offset,
-            );
+            let span = Span::in_document(DocumentId(document), token.span.start + offset, token.span.end + offset);
             self.out.push(ExpandedToken {
-                token: Token {
-                    kind: token.kind,
-                    span,
-                },
+                token: Token { kind: token.kind, span },
                 definition: None,
                 maps_to_invocation: false,
             });
@@ -959,19 +862,11 @@ impl<'d> Converter<'d> {
             }
             let span = self
                 .span(diagnostic.span)
-                .or(if diagnostic.span.is_synthetic() {
-                    Some(fallback)
-                } else {
-                    None
-                });
+                .or(if diagnostic.span.is_synthetic() { Some(fallback) } else { None });
             let recovery = Some(recovery_for(&diagnostic.message).to_string());
             self.diagnostics.push(match diagnostic.severity {
-                tex::Severity::Error => {
-                    Diagnostic::error(diagnostic.message.clone(), span, recovery)
-                }
-                tex::Severity::Warning => {
-                    Diagnostic::warning(diagnostic.message.clone(), span, recovery)
-                }
+                tex::Severity::Error => Diagnostic::error(diagnostic.message.clone(), span, recovery),
+                tex::Severity::Warning => Diagnostic::warning(diagnostic.message.clone(), span, recovery),
             });
         }
     }
@@ -1008,14 +903,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
                     lookahead.extend(taken);
                     continue;
                 }
-                include(
-                    &mut conv,
-                    &mut engine,
-                    &prepared,
-                    &name,
-                    path.trim(),
-                    at.span,
-                );
+                include(&mut conv, &mut engine, &prepared, &name, path.trim(), at.span);
             }
             Flow::IncludeOnly(at) => {
                 let (taken, path, ok) = read_braced_argument(&mut engine);
@@ -1039,11 +927,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     }
     let diagnostics = engine.diagnostics().to_vec();
     conv.map_diagnostics(&diagnostics);
-    Expansion {
-        tokens: Rc::new(conv.out),
-        diagnostics: conv.diagnostics,
-        arraystretch: conv.arraystretch,
-    }
+    Expansion { tokens: Rc::new(conv.out), diagnostics: conv.diagnostics, arraystretch: conv.arraystretch }
 }
 
 /// A converter state with nothing pending, recorded while converting: after
@@ -1128,10 +1012,7 @@ pub fn expand_project_cached(documents: &[SourceDocument<'_>], entry: usize) -> 
 pub(crate) fn lend_cached_tokens(entry_path: &str, tokens: &Rc<Vec<ExpandedToken>>) -> bool {
     CACHES.with(|caches| {
         let mut caches = caches.borrow_mut();
-        match caches
-            .iter_mut()
-            .find(|c| c.entry_path == entry_path && !c.lent && Rc::ptr_eq(&c.out, tokens))
-        {
+        match caches.iter_mut().find(|c| c.entry_path == entry_path && !c.lent && Rc::ptr_eq(&c.out, tokens)) {
             Some(cache) => {
                 cache.out = Rc::new(Vec::new());
                 cache.lent = true;
@@ -1146,10 +1027,7 @@ pub(crate) fn lend_cached_tokens(entry_path: &str, tokens: &Rc<Vec<ExpandedToken
 pub(crate) fn return_cached_tokens(entry_path: &str, tokens: Rc<Vec<ExpandedToken>>) {
     CACHES.with(|caches| {
         let mut caches = caches.borrow_mut();
-        if let Some(cache) = caches
-            .iter_mut()
-            .find(|c| c.entry_path == entry_path && c.lent)
-        {
+        if let Some(cache) = caches.iter_mut().find(|c| c.entry_path == entry_path && c.lent) {
             cache.out = tokens;
             cache.lent = false;
         }
@@ -1173,41 +1051,21 @@ pub fn expand_project_with_cache(
     let prepared: Vec<Prepared<'_>> = documents
         .iter()
         .enumerate()
-        .map(|(index, d)| {
-            if index == entry {
-                prepare(d.text, DocumentId(index))
-            } else {
-                Prepared::plain(d.text)
-            }
-        })
+        .map(|(index, d)| if index == entry { prepare(d.text, DocumentId(index)) } else { Prepared::plain(d.text) })
         .collect();
-    if cache
-        .as_ref()
-        .is_some_and(|c| c.halted && c.entry_path == document.path)
-    {
+    if cache.as_ref().is_some_and(|c| c.halted && c.entry_path == document.path) {
         let full = expand_project(documents, entry);
-        if full
-            .diagnostics
-            .iter()
-            .any(|d| d.message.contains("expansion step limit exceeded"))
-        {
+        if full.diagnostics.iter().any(|d| d.message.contains("expansion step limit exceeded")) {
             return full;
         }
         *cache = None;
     }
     let masked: &str = prepared[entry].text.as_ref();
     let reusable = cache.as_ref().is_some_and(|c| {
-        !c.lent
-            && c.entry_path == document.path
-            && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
+        !c.lent && c.entry_path == document.path && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
     });
     let expansion = if reusable {
-        update_cache(
-            cache.as_mut().expect("checked"),
-            documents,
-            entry,
-            &prepared,
-        )
+        update_cache(cache.as_mut().expect("checked"), documents, entry, &prepared)
     } else {
         let (fresh, expansion) = build_cache(documents, entry, &prepared);
         *cache = Some(fresh);
@@ -1226,21 +1084,12 @@ pub fn expand_project_with_cache(
     }
 }
 
-fn build_cache(
-    documents: &[SourceDocument<'_>],
-    entry: usize,
-    prepared: &[Prepared<'_>],
-) -> (ExpansionCache, Option<Expansion>) {
+fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepared<'_>]) -> (ExpansionCache, Option<Expansion>) {
     let masked: &str = prepared[entry].text.as_ref();
     let init: Rc<dyn Fn(&mut Engine)> = Rc::new(configure);
-    let expander =
-        IncrementalExpander::with_host(masked, limits_for(masked.len()), CHECKPOINT_INTERVAL, init);
+    let expander = IncrementalExpander::with_host(masked, limits_for(masked.len()), CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
-    let mut marks = vec![Mark {
-        index: 0,
-        out_len: 0,
-        last_span: conv.last_span,
-    }];
+    let mut marks = vec![Mark { index: 0, out_len: 0, last_span: conv.last_span }];
     convert_range(&mut conv, prepared, &expander, 0, &mut marks, None);
     conv.flush_word();
     let mut cache = ExpansionCache {
@@ -1291,10 +1140,7 @@ fn convert_range(
             if let Some(j) = join.as_mut() {
                 if k >= j.from {
                     let old_k = k as isize - j.offset;
-                    if let Ok(m) = j
-                        .old_marks
-                        .binary_search_by_key(&old_k, |mark| mark.index as isize)
-                    {
+                    if let Ok(m) = j.old_marks.binary_search_by_key(&old_k, |mark| mark.index as isize) {
                         let old = j.old_marks[m];
                         if old.out_len >= j.base {
                             // The converter's next decision depends only on
@@ -1302,9 +1148,7 @@ fn convert_range(
                             let old_last = if old.out_len == j.base {
                                 None
                             } else {
-                                j.old_tail
-                                    .get(old.out_len - 1 - j.base)
-                                    .map(|t| shifted(t, j.shift))
+                                j.old_tail.get(old.out_len - 1 - j.base).map(|t| shifted(t, j.shift))
                             };
                             let agrees = if old.out_len == j.base {
                                 conv.out.len() == j.base
@@ -1314,11 +1158,7 @@ fn convert_range(
                             if agrees {
                                 let out_offset = conv.out.len() as isize - old.out_len as isize;
                                 let shift = j.shift;
-                                conv.out.extend(
-                                    j.old_tail
-                                        .drain(old.out_len - j.base..)
-                                        .map(|t| shifted(&t, shift)),
-                                );
+                                conv.out.extend(j.old_tail.drain(old.out_len - j.base..).map(|t| shifted(&t, shift)));
                                 marks.extend(j.old_marks[m..].iter().map(|mark| Mark {
                                     index: (mark.index as isize + j.offset) as usize,
                                     out_len: (mark.out_len as isize + out_offset) as usize,
@@ -1330,15 +1170,8 @@ fn convert_range(
                     }
                 }
             }
-            if marks
-                .last()
-                .map_or(true, |mark| k - mark.index >= MARK_EVERY)
-            {
-                marks.push(Mark {
-                    index: k,
-                    out_len: conv.out.len(),
-                    last_span: conv.last_span,
-                });
+            if marks.last().map_or(true, |mark| k - mark.index >= MARK_EVERY) {
+                marks.push(Mark { index: k, out_len: conv.out.len(), last_span: conv.last_span });
             }
         }
         conv.index = k;
@@ -1356,10 +1189,7 @@ fn convert_range(
 
 fn shifted(token: &ExpandedToken, shift: &dyn Fn(Span) -> Span) -> ExpandedToken {
     ExpandedToken {
-        token: Token {
-            kind: token.token.kind.clone(),
-            span: shift(token.token.span),
-        },
+        token: Token { kind: token.token.kind.clone(), span: shift(token.token.span) },
         definition: token.definition.map(shift),
         maps_to_invocation: token.maps_to_invocation,
     }
@@ -1395,18 +1225,11 @@ fn update_cache(
 
     let n_new = cache.expander.tokens().len();
     let prefix = stats.prefix_reused.min(n_new);
-    let suffix = if stats.converged_at.is_some() {
-        stats.suffix_reused
-    } else {
-        0
-    };
+    let suffix = if stats.converged_at.is_some() { stats.suffix_reused } else { 0 };
     let old_marks = std::mem::take(&mut cache.marks);
-    let restart_at = old_marks
-        .partition_point(|mark| mark.index <= prefix)
-        .saturating_sub(1);
+    let restart_at = old_marks.partition_point(|mark| mark.index <= prefix).saturating_sub(1);
     let restart = old_marks[restart_at];
-    let mut out = Rc::try_unwrap(std::mem::replace(&mut cache.out, Rc::new(Vec::new())))
-        .unwrap_or_else(|shared| (*shared).clone());
+    let mut out = Rc::try_unwrap(std::mem::replace(&mut cache.out, Rc::new(Vec::new()))).unwrap_or_else(|shared| (*shared).clone());
     let mut old_tail = out.split_off(restart.out_len);
     let old_log = std::mem::take(&mut cache.stretch_log);
     let edit_start = changes.old.start;
@@ -1414,11 +1237,7 @@ fn update_cache(
     let document = DocumentId(entry);
     let shift = move |sp: Span| -> Span {
         if sp.document == document && sp.start >= old_edit_end {
-            Span::in_document(
-                sp.document,
-                (sp.start as isize + delta) as usize,
-                (sp.end as isize + delta) as usize,
-            )
+            Span::in_document(sp.document, (sp.start as isize + delta) as usize, (sp.end as isize + delta) as usize)
         } else {
             sp
         }
@@ -1429,11 +1248,7 @@ fn update_cache(
     conv.last_span = restart.last_span;
     // Records whose marker precedes the restart point are unchanged; later
     // ones are regenerated or come back with the spliced suffix.
-    conv.stretch_log = old_log
-        .iter()
-        .filter(|(index, _, _)| *index < restart.index)
-        .cloned()
-        .collect();
+    conv.stretch_log = old_log.iter().filter(|(index, _, _)| *index < restart.index).cloned().collect();
     conv.arraystretch = stretch_map(&conv.stretch_log);
     let _ = edit_start;
     let mut marks: Vec<Mark> = old_marks[..=restart_at].to_vec();
@@ -1447,30 +1262,16 @@ fn update_cache(
         base: restart.out_len,
         shift: &shift,
     });
-    let spliced = convert_range(
-        &mut conv,
-        prepared,
-        &cache.expander,
-        restart.index,
-        &mut marks,
-        join,
-    );
+    let spliced = convert_range(&mut conv, prepared, &cache.expander, restart.index, &mut marks, join);
     match spliced {
         Some(old_mark) => {
-            for (index, key, text) in old_log
-                .into_iter()
-                .filter(|(index, _, _)| *index >= old_mark.index)
-            {
+            for (index, key, text) in old_log.into_iter().filter(|(index, _, _)| *index >= old_mark.index) {
                 let key = if key.0 == entry && key.1 >= old_edit_end {
                     (key.0, (key.1 as isize + delta) as usize)
                 } else {
                     key
                 };
-                conv.stretch_log.push((
-                    (index as isize + token_offset) as usize,
-                    key,
-                    text.clone(),
-                ));
+                conv.stretch_log.push(((index as isize + token_offset) as usize, key, text.clone()));
                 conv.arraystretch.insert(key, text);
             }
             conv.last_span = shift(cache.last_span);
@@ -1508,9 +1309,7 @@ fn finish(cache: &mut ExpansionCache, conv: Converter<'_>) -> Option<Expansion> 
 }
 
 fn stretch_map(log: &[(usize, (usize, usize), String)]) -> HashMap<(usize, usize), String> {
-    log.iter()
-        .map(|(_, key, text)| (*key, text.clone()))
-        .collect()
+    log.iter().map(|(_, key, text)| (*key, text.clone())).collect()
 }
 
 fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Option<Expansion> {
@@ -1542,9 +1341,7 @@ fn recovery_for(message: &str) -> &'static str {
 /// the way `\input`/`\include`/`\includeonly` arguments are read: the taken
 /// engine tokens (for re-queueing when no group follows), the group text,
 /// and whether a group closed.
-fn read_braced_argument(
-    engine: &mut Engine,
-) -> (Vec<(tex::Token, Option<tex::Span>)>, String, bool) {
+fn read_braced_argument(engine: &mut Engine) -> (Vec<(tex::Token, Option<tex::Span>)>, String, bool) {
     let mut taken = Vec::new();
     let mut path = String::new();
     let mut ok = false;
@@ -1646,11 +1443,7 @@ fn include(
     span: Span,
 ) {
     let skip = |conv: &mut Converter<'_>, message: String, recovery: &str| {
-        conv.diagnostics.push(Diagnostic::error(
-            message,
-            Some(span),
-            Some(recovery.into()),
-        ));
+        conv.diagnostics.push(Diagnostic::error(message, Some(span), Some(recovery.into())));
     };
     if requested.is_empty() {
         return skip(
@@ -1705,10 +1498,7 @@ fn include(
         .filter_map(|id| conv.source_documents.get(&id).copied().flatten())
         .collect();
     if let Some(cycle_start) = open.iter().position(|active| *active == index) {
-        let mut cycle: Vec<&str> = open[cycle_start..]
-            .iter()
-            .map(|i| conv.documents[*i].path)
-            .collect();
+        let mut cycle: Vec<&str> = open[cycle_start..].iter().map(|i| conv.documents[*i].path).collect();
         cycle.push(conv.documents[index].path);
         return skip(
             conv,

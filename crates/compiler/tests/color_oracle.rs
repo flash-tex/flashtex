@@ -61,12 +61,8 @@ fn setup(suite: &str) -> Colors {
 
 fn evaluate(colors: &mut Colors, label: &str) -> Result<DeviceColor, String> {
     let mut with_current = |current: &str, expr: &str| {
-        let cur = colors
-            .resolve(None, current, None)
-            .map_err(|e| e.to_string())?;
-        colors
-            .resolve(None, expr, Some(cur))
-            .map_err(|e| e.to_string())
+        let cur = colors.resolve(None, current, None).map_err(|e| e.to_string())?;
+        colors.resolve(None, expr, Some(cur)).map_err(|e| e.to_string())
     };
     let undeclared = |model: &str, spec: &str| (Some(model.to_string()), spec.to_string());
     let (model, expr) = match label {
@@ -84,9 +80,7 @@ fn evaluate(colors: &mut Colors, label: &str) -> Result<DeviceColor, String> {
         l if l.starts_with("[named]") => undeclared("named", &l["[named]".len()..]),
         l => (None, l.to_string()),
     };
-    colors
-        .resolve(model.as_deref(), &expr, None)
-        .map_err(|e| e.to_string())
+    colors.resolve(model.as_deref(), &expr, None).map_err(|e| e.to_string())
 }
 
 /// Operands as values (`0.50` = `.5` = `0.5`), operator kept.
@@ -100,11 +94,7 @@ fn canonical(op: &str) -> String {
             let int = int.trim_start_matches('0');
             let int = if int.is_empty() { "0" } else { int };
             let frac = frac.trim_end_matches('0');
-            if frac.is_empty() {
-                int.to_string()
-            } else {
-                format!("{int}.{frac}")
-            }
+            if frac.is_empty() { int.to_string() } else { format!("{int}.{frac}") }
         })
         .collect();
     format!("{} {name}", values.join(" "))
@@ -121,22 +111,13 @@ fn colour_operators_match_pdftex() {
         rows += 1;
         match evaluate(colors, label) {
             Ok(d) => {
-                if d.fill_operator() != canonical(fill) || d.stroke_operator() != canonical(stroke)
-                {
-                    failures.push(format!(
-                        "{suite}\t{label}\texpected {fill} | got {}",
-                        d.fill_operator()
-                    ));
+                if d.fill_operator() != canonical(fill) || d.stroke_operator() != canonical(stroke) {
+                    failures.push(format!("{suite}\t{label}\texpected {fill} | got {}", d.fill_operator()));
                 }
             }
             Err(e) => failures.push(format!("{suite}\t{label}\texpected {fill} | error {e}")),
         }
     }
     assert!(rows > 900, "only {rows} oracle rows");
-    assert!(
-        failures.is_empty(),
-        "{} of {rows} differ:\n{}",
-        failures.len(),
-        failures.join("\n")
-    );
+    assert!(failures.is_empty(), "{} of {rows} differ:\n{}", failures.len(), failures.join("\n"));
 }

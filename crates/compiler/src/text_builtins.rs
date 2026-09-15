@@ -858,8 +858,9 @@ mod tests {
             quad: quad * 65536,
             ..DimenContext::default()
         };
-        let kern =
-            |n: &str, amsmath: bool, cx: &DimenContext| text_kern(n, amsmath).unwrap().resolve(cx);
+        let kern = |n: &str, amsmath: bool, cx: &DimenContext| {
+            text_kern(n, amsmath).unwrap().resolve(cx)
+        };
         for (quad, delta) in [(10, 20), (12, 24)] {
             let cx = at(quad);
             assert_eq!(

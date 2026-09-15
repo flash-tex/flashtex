@@ -798,14 +798,7 @@ impl LayoutCursor {
     /// line's full width is known.
     fn mark_hfill(&mut self, leader: FillLeader, size: f64, font: Font, span: Span) {
         let boundary = self.pages.last().expect("at least one page").items.len();
-        self.line_fills.push(LineFill {
-            boundary,
-            x: self.content_end,
-            leader,
-            size,
-            font,
-            span,
-        });
+        self.line_fills.push(LineFill { boundary, x: self.content_end, leader, size, font, span });
     }
 
     /// `\hspace{<dimen>}`/`\hspace*`: a fixed space with no visible glyph.
@@ -2237,7 +2230,11 @@ pub fn layout_converged(
     blocks: &[Block],
     constraints: LayoutConstraints,
 ) -> (Vec<Page>, Vec<Diagnostic>) {
-    layout_converged_with_options(blocks, constraints, &crate::xref::CleverefConfig::default())
+    layout_converged_with_options(
+        blocks,
+        constraints,
+        &crate::xref::CleverefConfig::default(),
+    )
 }
 
 pub fn layout_converged_with_options(
@@ -2443,7 +2440,10 @@ fn clever_reference_text(
     }
     if label_only {
         items.sort_by(compare_items);
-        return include_unresolved(format_clever_numbers(&items), unresolved);
+        return include_unresolved(
+            format_clever_numbers(&items),
+            unresolved,
+        );
     }
 
     let mut groups: Vec<(String, Vec<CleverReferenceItem>)> = Vec::new();
@@ -2518,13 +2518,7 @@ fn consecutive(first: &CleverReferenceItem, second: &CleverReferenceItem) -> boo
         return first.number.parse::<u32>().ok().is_some_and(|value| {
             value
                 .checked_add(1)
-                .and_then(|next| {
-                    second
-                        .number
-                        .parse::<u32>()
-                        .ok()
-                        .map(|number| (next, number))
-                })
+                .and_then(|next| second.number.parse::<u32>().ok().map(|number| (next, number)))
                 .is_some_and(|(next, number)| next == number)
         });
     };
@@ -2665,9 +2659,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 }
             }
             Inline::MathRows { rows, aligned, .. } => c.display_rows(rows, *aligned, size),
-            Inline::Label {
-                key, value, kind, ..
-            } => {
+            Inline::Label { key, value, kind, .. } => {
                 c.collected_labels.insert(
                     key.clone(),
                     ReferenceValue {
@@ -2824,9 +2816,12 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 // Times x-height, so 0.55ex matches pdflatex within 0.01pt.
                 let descender = 0.25 * size;
                 let ex = CMR_EX_PER_EM * size;
-                let (top, extra_depth) =
-                    u.geom
-                        .rule_top_and_depth(u.thickness_pt, 0.0, descender, ex);
+                let (top, extra_depth) = u.geom.rule_top_and_depth(
+                    u.thickness_pt,
+                    0.0,
+                    descender,
+                    ex,
+                );
                 c.ensure_extents(0.0, extra_depth.max(0.0));
                 if width > 0.0 && u.thickness_pt > 0.0 {
                     c.pages

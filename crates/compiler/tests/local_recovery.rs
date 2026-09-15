@@ -122,10 +122,7 @@ fn half_typed_input_never_changes_layout_after_its_paragraph() {
                 "{inserted}: item moved: {item:?} vs {expected:?}"
             );
             if let (Some(a), Some(b)) = (item.rule.as_ref(), expected.rule.as_ref()) {
-                assert!(
-                    (a.y_pt - b.y_pt).abs() <= 0.0101,
-                    "{inserted}: rule moved: {item:?} vs {expected:?}"
-                );
+                assert!((a.y_pt - b.y_pt).abs() <= 0.0101, "{inserted}: rule moved: {item:?} vs {expected:?}");
             }
         }
     }

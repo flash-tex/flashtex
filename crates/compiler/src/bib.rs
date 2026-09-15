@@ -299,10 +299,7 @@ fn group_text<T: Borrow<Token>>(tokens: &[T], mut i: usize) -> Option<(String, u
     ) {
         i += 1;
     }
-    if !matches!(
-        tokens.get(i).map(|t| &t.borrow().kind),
-        Some(TokenKind::LBrace)
-    ) {
+    if !matches!(tokens.get(i).map(|t| &t.borrow().kind), Some(TokenKind::LBrace)) {
         return None;
     }
     i += 1;

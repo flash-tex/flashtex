@@ -585,10 +585,7 @@ fn within_chapter_pieces(name: &str) -> Vec<Piece> {
     vec![
         Piece::IfPositive(
             "chapter".to_string(),
-            vec![
-                Piece::The("chapter".to_string()),
-                Piece::Text(".".to_string()),
-            ],
+            vec![Piece::The("chapter".to_string()), Piece::Text(".".to_string())],
         ),
         Piece::Value(name.to_string(), NumberStyle::Arabic),
     ]

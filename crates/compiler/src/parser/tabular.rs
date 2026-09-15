@@ -15,10 +15,9 @@ use super::{
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{Token, TokenKind};
 use crate::tabular::{
-    Align, BookRule, BoxAlign, Cell, ColorFill, ColorSpec, ColumnTemplate, Entry, FontDimen,
-    Length, Longtable, LongtableAlign, LongtableSection, Material, Multirow, MultirowPos,
-    MultirowWidth, Row, Tabular, VerticalPosition, ARRAYRULEWIDTH_PT, DOUBLERULESEP_PT,
-    TABCOLSEP_PT,
+    Align, BookRule, BoxAlign, Cell, ColorFill, ColorSpec, ColumnTemplate, Entry, FontDimen, Length,
+    Longtable, LongtableAlign, LongtableSection, Material, Multirow, MultirowPos, MultirowWidth,
+    Row, Tabular, VerticalPosition, ARRAYRULEWIDTH_PT, DOUBLERULESEP_PT, TABCOLSEP_PT,
 };
 use crate::Span;
 
@@ -124,8 +123,7 @@ fn is_table_command(name: &str, features: TableFeatures) -> bool {
                 | "pagebreak"
                 | "nopagebreak"
         ))
-        || (features.colortbl
-            && matches!(name, "rowcolor" | "arrayrulecolor" | "doublerulesepcolor"))
+        || (features.colortbl && matches!(name, "rowcolor" | "arrayrulecolor" | "doublerulesepcolor"))
 }
 
 /// Package support in force for one table.
@@ -142,19 +140,11 @@ fn font_dimen(raw: &str, body: f64) -> Option<FontDimen> {
     for (unit, is_em) in [("em", true), ("ex", false)] {
         if let Some(number) = text.strip_suffix(unit) {
             if let Ok(v) = number.trim().parse::<f64>() {
-                return Some(FontDimen {
-                    pt: 0.0,
-                    em: if is_em { v } else { 0.0 },
-                    ex: if is_em { 0.0 } else { v },
-                });
+                return Some(FontDimen { pt: 0.0, em: if is_em { v } else { 0.0 }, ex: if is_em { 0.0 } else { v } });
             }
         }
     }
-    parse_dimen_pt_at(text, body).map(|pt| FontDimen {
-        pt,
-        em: 0.0,
-        ex: 0.0,
-    })
+    parse_dimen_pt_at(text, body).map(|pt| FontDimen { pt, em: 0.0, ex: 0.0 })
 }
 
 /// A `tabular*` width or `p{}` width: a dimension, or a multiple of the text
@@ -483,9 +473,7 @@ impl P<'_> {
                     }
                     continue;
                 }
-                TokenKind::Command(command)
-                    if depth == 0 && is_table_command(command, features) =>
-                {
+                TokenKind::Command(command) if depth == 0 && is_table_command(command, features) => {
                     self.i += 1;
                     self.table_command(command, span, body, &mut row, &mut entries, &mut state);
                     continue;
@@ -693,7 +681,8 @@ impl P<'_> {
                 let (tokens, cell_color, multirow) = self.strip_cell_commands(tokens, features);
                 let outer_alignment = self.declared_alignment.take();
                 let content = self.tabular_cell_inlines(tokens);
-                let alignment = std::mem::replace(&mut self.declared_alignment, outer_alignment);
+                let alignment =
+                    std::mem::replace(&mut self.declared_alignment, outer_alignment);
                 row_cells.push(Cell {
                     content,
                     columns: columns_spanned,
@@ -985,12 +974,7 @@ impl P<'_> {
                 span,
             }) if word.starts_with('[') && word.contains(']') => {
                 let close = word.find(']').expect("checked");
-                (
-                    word[1..close].to_string(),
-                    word[close + 1..].to_string(),
-                    *span,
-                    word.len(),
-                )
+                (word[1..close].to_string(), word[close + 1..].to_string(), *span, word.len())
             }
             _ => return self.optional_bracket_argument(),
         };
@@ -1016,10 +1000,7 @@ impl P<'_> {
         let pt = parse_dimen_pt_at(raw, body);
         if pt.is_none() {
             self.diags.push(Diagnostic::error(
-                format!(
-                    "\\{command} overhang must be a dimension, got '{}'",
-                    raw.trim()
-                ),
+                format!("\\{command} overhang must be a dimension, got '{}'", raw.trim()),
                 Some(span),
                 Some("used \\tabcolsep".into()),
             ));
@@ -1028,11 +1009,7 @@ impl P<'_> {
     }
 
     /// Runs `f` with `tokens` as the input and returns what it left unread.
-    fn with_tokens<R>(
-        &mut self,
-        tokens: Vec<InputToken>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> (R, Vec<InputToken>) {
+    fn with_tokens<R>(&mut self, tokens: Vec<InputToken>, f: impl FnOnce(&mut Self) -> R) -> (R, Vec<InputToken>) {
         let outer_tokens = std::mem::replace(&mut self.t, std::rc::Rc::new(tokens));
         let outer_index = std::mem::replace(&mut self.i, 0);
         let result = f(self);
@@ -1044,21 +1021,17 @@ impl P<'_> {
 
     /// colortbl `\CT@extract`: takes `\columncolor[model]{spec}[l][r]` out of
     /// a `>{}` group.
-    fn extract_column_color(
-        &mut self,
-        group: Vec<InputToken>,
-    ) -> (Vec<InputToken>, Option<ColorFill>) {
-        let Some(at) = group.iter().position(
-            |input| matches!(&input.token.kind, TokenKind::Command(name) if name == "columncolor"),
-        ) else {
+    fn extract_column_color(&mut self, group: Vec<InputToken>) -> (Vec<InputToken>, Option<ColorFill>) {
+        let Some(at) = group
+            .iter()
+            .position(|input| matches!(&input.token.kind, TokenKind::Command(name) if name == "columncolor"))
+        else {
             return (group, None);
         };
         let span = group[at].token.span;
         let body = self.body_pt();
         let mut out = group[..at].to_vec();
-        let (fill, rest) = self.with_tokens(group[at + 1..].to_vec(), |p| {
-            p.color_fill("columncolor", span, body)
-        });
+        let (fill, rest) = self.with_tokens(group[at + 1..].to_vec(), |p| p.color_fill("columncolor", span, body));
         out.extend(rest);
         (out, Some(fill))
     }
@@ -1084,9 +1057,7 @@ impl P<'_> {
                     TokenKind::Command(name)
                         if depth == 0
                             && ((features.colortbl && name == "cellcolor")
-                                || (features.multirow
-                                    && name == "multirow"
-                                    && multirow.is_none())) =>
+                                || (features.multirow && name == "multirow" && multirow.is_none())) =>
                     {
                         found = Some(index);
                         break;
@@ -1099,13 +1070,11 @@ impl P<'_> {
                 break;
             };
             let span = rest[index].token.span;
-            let is_color =
-                matches!(&rest[index].token.kind, TokenKind::Command(name) if name == "cellcolor");
+            let is_color = matches!(&rest[index].token.kind, TokenKind::Command(name) if name == "cellcolor");
             out.extend(rest[..index].iter().cloned());
             let tail = rest[index + 1..].to_vec();
             if is_color {
-                let (c, unread) =
-                    self.with_tokens(tail, |p| p.table_color_argument("cellcolor", span));
+                let (c, unread) = self.with_tokens(tail, |p| p.table_color_argument("cellcolor", span));
                 color = Some(c);
                 rest = unread;
             } else {
@@ -1205,15 +1174,13 @@ impl P<'_> {
         // The expansion pass records the replacement text in effect at this
         // `\begin`; a missing entry means `\arraystretch` was undefined or
         // given parameters, which is not a plain number either.
-        let Some(text) = self
-            .arraystretch
-            .get(&(open.document.0, open.start))
-            .cloned()
-        else {
+        let Some(text) = self.arraystretch.get(&(open.document.0, open.start)).cloned() else {
             return 1.0;
         };
         match text.trim().parse::<f64>() {
-            Ok(value) if value.is_finite() && value >= 0.0 => value,
+            Ok(value) if value.is_finite() && value >= 0.0 => {
+                value
+            }
             _ => {
                 self.diags.push(Diagnostic::warning(
                     format!(
@@ -1404,8 +1371,7 @@ impl P<'_> {
     /// their explicit kerns.
     fn cmidrule_trim(&mut self, body: f64) -> (bool, bool, Option<FontDimen>, Option<FontDimen>) {
         self.skip_spaces();
-        if !matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Word(word)) if word.starts_with('('))
-        {
+        if !matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Word(word)) if word.starts_with('(')) {
             return (false, false, None, None);
         }
         let mut text = String::new();
@@ -1455,10 +1421,7 @@ impl P<'_> {
                     side = Some('r');
                 }
                 '{' => {
-                    let value: String = inner[index + 1..]
-                        .chars()
-                        .take_while(|c| *c != '}')
-                        .collect();
+                    let value: String = inner[index + 1..].chars().take_while(|c| *c != '}').collect();
                     for _ in 0..=value.chars().count() {
                         chars.next();
                     }
@@ -1562,11 +1525,7 @@ impl P<'_> {
                 (dependency.argument_count, dependency.replacement),
             );
         }
-        let mut content: Vec<Inline> = blocks
-            .into_iter()
-            .flat_map(block_inlines)
-            .collect::<Vec<_>>()
-            .into();
+        let mut content: Vec<Inline> = blocks.into_iter().flat_map(block_inlines).collect::<Vec<_>>().into();
         content.extend(para);
         content
     }
@@ -1832,9 +1791,7 @@ impl P<'_> {
                             "l" | "s" => BoxAlign::Left,
                             other => {
                                 self.diags.push(Diagnostic::error(
-                                    format!(
-                                        "w/W column alignment must be l, c, r or s, got '{other}'"
-                                    ),
+                                    format!("w/W column alignment must be l, c, r or s, got '{other}'"),
                                     Some(span),
                                     Some("aligned the entry left".into()),
                                 ));
@@ -2400,10 +2357,7 @@ fn substitute_parameters(body: &[InputToken], arguments: &[Vec<InputToken>]) -> 
             }
         };
         while index < bytes.len() {
-            if bytes[index] == b'#'
-                && index + 1 < bytes.len()
-                && (b'1'..=b'9').contains(&bytes[index + 1])
-            {
+            if bytes[index] == b'#' && index + 1 < bytes.len() && (b'1'..=b'9').contains(&bytes[index + 1]) {
                 flush(&mut literal, &mut out);
                 if let Some(argument) = arguments.get(usize::from(bytes[index + 1] - b'1')) {
                     out.extend(argument.iter().cloned());

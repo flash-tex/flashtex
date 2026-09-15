@@ -63,9 +63,9 @@ pub enum DateError {
 impl fmt::Display for DateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DateError::Malformed => {
-                f.write_str("date must be a civil date in YYYY-MM-DD form, e.g. \"2026-09-13\"")
-            }
+            DateError::Malformed => f.write_str(
+                "date must be a civil date in YYYY-MM-DD form, e.g. \"2026-09-13\"",
+            ),
             DateError::OutOfRange => f.write_str(
                 "date names a day that does not exist in the proleptic Gregorian calendar",
             ),

@@ -40,16 +40,13 @@ impl P<'_> {
             ));
             self.colors = Some(Colors::xcolor("", None).0);
         }
-        self.colors
-            .get_or_insert_with(|| Colors::xcolor("", None).0)
+        self.colors.get_or_insert_with(|| Colors::xcolor("", None).0)
     }
 
     fn color_error(&mut self, name: &str, error: ColorError, span: Span, recovery: &str) {
         let message = format!("\\{name}: {error}");
         self.diags.push(match error {
-            ColorError::Unsupported(_) => {
-                Diagnostic::warning(message, Some(span), Some(recovery.into()))
-            }
+            ColorError::Unsupported(_) => Diagnostic::warning(message, Some(span), Some(recovery.into())),
             _ => Diagnostic::error(message, Some(span), Some(recovery.into())),
         });
     }
@@ -70,23 +67,14 @@ impl P<'_> {
         span: Span,
         current: Option<DeviceColor>,
     ) -> Option<DeviceColor> {
-        match self
-            .colors_for(name, span)
-            .resolve(model, expression, current)
-        {
+        match self.colors_for(name, span).resolve(model, expression, current) {
             Ok(color) => Some(color),
             Err(error) => {
                 let undefined = matches!(error, ColorError::UndefinedColor(_));
-                let recovery = if undefined {
-                    "used black"
-                } else {
-                    "kept the current colour"
-                };
+                let recovery = if undefined { "used black" } else { "kept the current colour" };
                 self.color_error(name, error, span, recovery);
                 if undefined {
-                    self.colors_for(name, span)
-                        .resolve(None, "black", None)
-                        .ok()
+                    self.colors_for(name, span).resolve(None, "black", None).ok()
                 } else {
                     None
                 }
@@ -109,43 +97,23 @@ impl P<'_> {
         let (result, end) = match name {
             "colorlet" => {
                 let (target, _) = self.text_group(name, span);
-                let model = self
-                    .optional_bracket_argument()
-                    .map(|(m, _)| m)
-                    .unwrap_or_default();
+                let model = self.optional_bracket_argument().map(|(m, _)| m).unwrap_or_default();
                 let (expression, end) = self.text_group(name, span);
-                (
-                    self.colors_for(name, span).colorlet(
-                        &class,
-                        &target,
-                        &model,
-                        &expression,
-                        current,
-                    ),
-                    end,
-                )
+                (self.colors_for(name, span).colorlet(&class, &target, &model, &expression, current), end)
             }
             "definecolorset" => {
                 let (models, _) = self.text_group(name, span);
                 let (head, _) = self.text_group(name, span);
                 let (tail, _) = self.text_group(name, span);
                 let (set, end) = self.text_group(name, span);
-                (
-                    self.colors_for(name, span)
-                        .define_set(&class, &models, &head, &tail, &set),
-                    end,
-                )
+                (self.colors_for(name, span).define_set(&class, &models, &head, &tail, &set), end)
             }
             "DefineNamedColor" => {
                 let (class, _) = self.text_group(name, span);
                 let (colour, _) = self.text_group(name, span);
                 let (model, _) = self.text_group(name, span);
                 let (spec, end) = self.text_group(name, span);
-                (
-                    self.colors_for(name, span)
-                        .define(&class, &colour, &model, &spec),
-                    end,
-                )
+                (self.colors_for(name, span).define(&class, &colour, &model, &spec), end)
             }
             _ => {
                 let (colour, _) = self.text_group(name, span);
@@ -168,16 +136,8 @@ impl P<'_> {
     /// `\selectcolormodel{model}`.
     pub(super) fn select_color_model(&mut self, span: Span) {
         let (model, end) = self.text_group("selectcolormodel", span);
-        if let Err(error) = self
-            .colors_for("selectcolormodel", span)
-            .select_target(&model)
-        {
-            self.color_error(
-                "selectcolormodel",
-                error,
-                span.merge(end),
-                "kept the target model",
-            );
+        if let Err(error) = self.colors_for("selectcolormodel", span).select_target(&model) {
+            self.color_error("selectcolormodel", error, span.merge(end), "kept the target model");
         }
     }
 
@@ -186,13 +146,7 @@ impl P<'_> {
         let model = self.optional_bracket_argument().map(|(model, _)| model);
         let (expression, end) = self.text_group(name, span);
         let current = self.style.color;
-        self.resolve_color(
-            name,
-            model.as_deref(),
-            &expression,
-            span.merge(end),
-            current,
-        )
+        self.resolve_color(name, model.as_deref(), &expression, span.merge(end), current)
     }
 
     /// `\color[model]{colour}`: the rest of the group.
@@ -205,10 +159,7 @@ impl P<'_> {
     /// `\textcolor[model]{colour}{text}` = `{\color[model]{colour}text}`.
     pub(super) fn text_color(&mut self, span: Span, para: &mut Vec<Inline>) {
         let color = self.color_argument("textcolor", span).or(self.style.color);
-        let next = TextStyle {
-            color,
-            ..self.style
-        };
+        let next = TextStyle { color, ..self.style };
         self.skip_spaces();
         if let Some(open) = self.closed_group_start() {
             // Re-enter the argument as an ordinary group, like `\textbf`.
@@ -227,9 +178,7 @@ impl P<'_> {
             self.page_color = None;
             return;
         }
-        let Some(color) = self.color_argument(name, span) else {
-            return;
-        };
+        let Some(color) = self.color_argument(name, span) else { return };
         if self.page_color.is_some_and(|previous| previous != color) {
             self.diags.push(Diagnostic::warning(
                 "\\pagecolor changed after a page colour was set",
@@ -247,34 +196,20 @@ impl P<'_> {
         let model = self.optional_bracket_argument().map(|(model, _)| model);
         let frame = if name == "fcolorbox" {
             let (expression, end) = self.text_group(name, span);
-            let frame = self.resolve_color(
-                name,
-                model.as_deref(),
-                &expression,
-                span.merge(end),
-                current,
-            );
+            let frame = self.resolve_color(name, model.as_deref(), &expression, span.merge(end), current);
             Some(frame.unwrap_or(DeviceColor::BLACK))
         } else {
             None
         };
         // xcolor's `\color@fb@x`: the fill's own `[model]` defaults to the frame's.
         let fill_model = if name == "fcolorbox" {
-            self.optional_bracket_argument()
-                .map(|(model, _)| model)
-                .or(model)
+            self.optional_bracket_argument().map(|(model, _)| model).or(model)
         } else {
             model
         };
         let (expression, end) = self.text_group(name, span);
         let fill = self
-            .resolve_color(
-                name,
-                fill_model.as_deref(),
-                &expression,
-                span.merge(end),
-                current,
-            )
+            .resolve_color(name, fill_model.as_deref(), &expression, span.merge(end), current)
             .unwrap_or(DeviceColor::BLACK);
         let (tokens, body) = self.required_group(name, span);
         let content = self.box_inlines(tokens);
@@ -310,12 +245,8 @@ impl P<'_> {
             .into_iter()
             .flat_map(|block| match block {
                 Block::Paragraph(inlines)
-                | Block::Styled {
-                    content: inlines, ..
-                }
-                | Block::ListItem {
-                    content: inlines, ..
-                } => inlines,
+                | Block::Styled { content: inlines, .. }
+                | Block::ListItem { content: inlines, .. } => inlines,
                 _ => Vec::new(),
             })
             .collect()
@@ -333,12 +264,7 @@ impl P<'_> {
         self.token_color(&plain, index, current)
     }
 
-    fn token_color(
-        &mut self,
-        tokens: &[Token],
-        index: usize,
-        current: Option<DeviceColor>,
-    ) -> (usize, Option<DeviceColor>) {
+    fn token_color(&mut self, tokens: &[Token], index: usize, current: Option<DeviceColor>) -> (usize, Option<DeviceColor>) {
         let name = match &tokens[index].kind {
             TokenKind::Command(name) => name.clone(),
             _ => return (index + 1, None),
@@ -347,10 +273,7 @@ impl P<'_> {
         let Some((next, model, expression)) = color_argument_tokens(tokens, index + 1) else {
             return (index + 1, None);
         };
-        (
-            next,
-            self.resolve_color(&name, model.as_deref(), &expression, span, current),
-        )
+        (next, self.resolve_color(&name, model.as_deref(), &expression, span, current))
     }
 
     /// The colour of every atom token that `\color`/`\textcolor` changed from
@@ -399,9 +322,7 @@ impl P<'_> {
                         Some(color) => {
                             match out.last_mut() {
                                 Some((range, c))
-                                    if extend
-                                        && *c == color
-                                        && range.document == token.span.document =>
+                                    if extend && *c == color && range.document == token.span.document =>
                                 {
                                     range.end = range.end.max(token.span.end);
                                 }
@@ -421,10 +342,7 @@ impl P<'_> {
 
 /// `[model]` (optional) and `{colour}` starting at `i`: the index after the
 /// group, the model and the colour text.
-fn color_argument_tokens(
-    tokens: &[Token],
-    mut i: usize,
-) -> Option<(usize, Option<String>, String)> {
+fn color_argument_tokens(tokens: &[Token], mut i: usize) -> Option<(usize, Option<String>, String)> {
     let skip = |i: &mut usize| {
         while matches!(tokens.get(*i).map(|t| &t.kind), Some(TokenKind::Space)) {
             *i += 1;
@@ -443,13 +361,7 @@ fn color_argument_tokens(
                 }
             }
         }
-        model = Some(
-            raw.trim_start_matches('[')
-                .split(']')
-                .next()
-                .unwrap_or("")
-                .to_string(),
-        );
+        model = Some(raw.trim_start_matches('[').split(']').next().unwrap_or("").to_string());
         skip(&mut i);
     }
     if !matches!(tokens.get(i).map(|t| &t.kind), Some(TokenKind::LBrace)) {

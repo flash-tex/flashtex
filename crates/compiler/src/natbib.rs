@@ -237,12 +237,7 @@ pub fn kind(name: &str) -> Option<Kind> {
     };
     let base = base.as_str();
     // natbib's `\Cite...` forms exist only for these four plus \Citeauthor.
-    if uppercase
-        && !matches!(
-            base,
-            "citet" | "citep" | "citealt" | "citealp" | "citeauthor"
-        )
-    {
+    if uppercase && !matches!(base, "citet" | "citep" | "citealt" | "citealp" | "citeauthor") {
         return None;
     }
     let (swa, par, ctype, numeric) = match base {
@@ -320,7 +315,10 @@ impl Entry {
         let chars: Vec<char> = self.date.chars().collect();
         for take in 0..4.min(chars.len()) {
             if chars[take].is_alphabetic() {
-                return (chars[..take].iter().collect(), chars[take].to_string());
+                return (
+                    chars[..take].iter().collect(),
+                    chars[take].to_string(),
+                );
             }
         }
         let year: String = chars.iter().take(4).collect();
@@ -408,27 +406,9 @@ pub fn cite_inlines(
     let post = note_text(post);
     let numeric = options.numbers || kind.numeric;
     let body = if numeric {
-        numeric_body(
-            options,
-            kind,
-            pre.as_deref(),
-            post.as_deref(),
-            keys,
-            resolve,
-            span,
-            diags,
-        )
+        numeric_body(options, kind, pre.as_deref(), post.as_deref(), keys, resolve, span, diags)
     } else {
-        author_year_body(
-            options,
-            kind,
-            pre.as_deref(),
-            post.as_deref(),
-            keys,
-            resolve,
-            span,
-            diags,
-        )
+        author_year_body(options, kind, pre.as_deref(), post.as_deref(), keys, resolve, span, diags)
     };
     let runs = if kind.swa {
         wrap(options, kind, pre.as_deref(), post.as_deref(), body)
@@ -448,13 +428,7 @@ pub fn citetext_inlines(options: &Options, text: &str, span: Span) -> Vec<Inline
 
 /// `\NAT@cite`/`\NAT@citenum` (lines 353-358): open, pre-note and a space,
 /// the list, `\NAT@cmt` and the post-note, close.
-fn wrap(
-    options: &Options,
-    kind: Kind,
-    pre: Option<&str>,
-    post: Option<&str>,
-    body: Vec<Run>,
-) -> Vec<Run> {
+fn wrap(options: &Options, kind: Kind, pre: Option<&str>, post: Option<&str>, body: Vec<Run>) -> Vec<Run> {
     let (open, close) = delimiters(options, kind);
     let mut runs = vec![(open.to_string(), false)];
     if let Some(pre) = pre {
@@ -855,10 +829,7 @@ mod tests {
             set("citefullauthor", None, None, &["jones"]),
             "Jones, Baker, and Williams"
         );
-        assert_eq!(
-            set("citeauthor*", None, None, &["jones"]),
-            "Jones, Baker, and Williams"
-        );
+        assert_eq!(set("citeauthor*", None, None, &["jones"]), "Jones, Baker, and Williams");
         assert_eq!(set("citeauthor", None, None, &["jones"]), "Jones et al.");
     }
 

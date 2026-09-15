@@ -263,9 +263,7 @@ fn the_return_address_is_one_right_aligned_box_of_left_aligned_lines() {
     let right = page
         .items
         .iter()
-        .filter(|i| {
-            (i.baseline_y_pt - line_starting_with(&lines, "123 Example Street").1).abs() < 1e-6
-        })
+        .filter(|i| (i.baseline_y_pt - line_starting_with(&lines, "123 Example Street").1).abs() < 1e-6)
         .map(|i| i.x_pt)
         .fold(f64::MIN, f64::max);
     assert!(right < page.width_pt, "{right} vs {}", page.width_pt);
@@ -281,11 +279,7 @@ fn the_closing_sits_at_longindentation_not_half_the_measure() {
     let lines = lines(&out.pages);
     let closing = line_starting_with(&lines, "Sincerely,").2;
     let signature = line_starting_with(&lines, "Jordan Example").2;
-    close(
-        signature,
-        closing,
-        "closing and signature share a left edge",
-    );
+    close(signature, closing, "closing and signature share a left edge");
     let margin = line_starting_with(&lines, "Admissions Committee").2;
     close(closing - margin, 180.0, "\\longindentation at 11pt");
     assert!(
@@ -345,10 +339,7 @@ fn the_signature_falls_back_to_the_name() {
         "{only_name:#?}"
     );
 
-    let both = with_name.replace(
-        "\\name{From Name}",
-        "\\name{From Name}\n\\signature{From Sig}",
-    );
+    let both = with_name.replace("\\name{From Name}", "\\name{From Name}\n\\signature{From Sig}");
     let with_both = lines(&compiled(&both).pages);
     assert!(
         with_both.iter().any(|(_, _, _, t)| t == "From Sig"),
@@ -375,9 +366,7 @@ fn each_letter_after_the_first_starts_a_new_page() {
     assert_eq!(line_starting_with(&lines, "Body one.").0, 0);
     assert_eq!(line_starting_with(&lines, "Body two.").0, 1);
     // The second letter's recipient really is the second one.
-    assert!(lines
-        .iter()
-        .any(|(page, _, _, t)| *page == 1 && t == "Second"));
+    assert!(lines.iter().any(|(page, _, _, t)| *page == 1 && t == "Second"));
 }
 
 /// Every one of these is defined by letter.cls alone. In an `article`

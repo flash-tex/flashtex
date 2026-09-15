@@ -15,9 +15,8 @@ use flashtex_compiler::parser::{parse, FontSizeLevel, ParLeading};
 /// The `ParLeading` of every block that the parser recorded one for, paired
 /// with the block's first word so the assertions read like the source.
 fn leadings(body: &str) -> Vec<(String, ParLeading)> {
-    let source = format!(
-        "\\documentclass[11pt]{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"
-    );
+    let source =
+        format!("\\documentclass[11pt]{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
     let parsed = parse(&source);
     assert_eq!(
         parsed.block_par_leading.len(),
@@ -31,12 +30,8 @@ fn leadings(body: &str) -> Vec<(String, ParLeading)> {
         .filter_map(|(block, leading)| {
             let inlines = match block {
                 flashtex_compiler::parser::Block::Paragraph(inlines)
-                | flashtex_compiler::parser::Block::Styled {
-                    content: inlines, ..
-                }
-                | flashtex_compiler::parser::Block::ListItem {
-                    content: inlines, ..
-                } => inlines,
+                | flashtex_compiler::parser::Block::Styled { content: inlines, .. }
+                | flashtex_compiler::parser::Block::ListItem { content: inlines, .. } => inlines,
                 _ => return None,
             };
             let first = inlines.iter().find_map(|i| match i {
@@ -58,7 +53,10 @@ fn leadings(body: &str) -> Vec<(String, ParLeading)> {
 fn a_group_that_closes_before_the_paragraph_ends_does_not_change_the_leading() {
     assert_eq!(
         leadings("{\\small Alpha beta gamma delta.}\n\nEpsilon zeta."),
-        vec![("Alpha".to_string(), None), ("Epsilon".to_string(), None),]
+        vec![
+            ("Alpha".to_string(), None),
+            ("Epsilon".to_string(), None),
+        ]
     );
 }
 

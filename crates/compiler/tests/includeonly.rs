@@ -55,10 +55,7 @@ fn project<'a>(main: &'a str) -> [SourceDocument<'a>; 3] {
 
 #[test]
 fn includeonly_skips_unlisted_files_without_a_trace() {
-    let main = main_with(
-        "\\includeonly{a}\n",
-        "Before.\n\\include{a}\n\\include{b}\nAfter.\n",
-    );
+    let main = main_with("\\includeonly{a}\n", "Before.\n\\include{a}\n\\include{b}\nAfter.\n");
     let docs = project(&main);
     let parsed = parse_project(&docs, "main.tex");
     let text = paragraph_text(&parsed.blocks);
@@ -101,10 +98,7 @@ fn input_never_consults_includeonly() {
 fn empty_includeonly_includes_nothing() {
     // `\includeonly{}` still switches parts on, with an empty list: every
     // `\include` is skipped. (`None` — never called — is what allows all.)
-    let main = main_with(
-        "\\includeonly{}\n",
-        "Before.\n\\include{a}\n\\include{b}\nAfter.\n",
-    );
+    let main = main_with("\\includeonly{}\n", "Before.\n\\include{a}\n\\include{b}\nAfter.\n");
     let docs = project(&main);
     let parsed = parse_project(&docs, "main.tex");
     let text = paragraph_text(&parsed.blocks);
@@ -221,10 +215,7 @@ fn commented_begin_document_does_not_end_preamble() {
 
 #[test]
 fn includeonly_after_begin_document_is_ignored() {
-    let main = main_with(
-        "",
-        "Before.\n\\includeonly{a}\n\\include{a}\n\\include{b}\n",
-    );
+    let main = main_with("", "Before.\n\\includeonly{a}\n\\include{a}\n\\include{b}\n");
     let docs = project(&main);
     let parsed = parse_project(&docs, "main.tex");
     let text = paragraph_text(&parsed.blocks);
@@ -234,10 +225,8 @@ fn includeonly_after_begin_document_is_ignored() {
         "misplaced list must not filter: {text:?}"
     );
     assert!(
-        parsed
-            .diagnostics
-            .iter()
-            .any(|d| d.severity == Severity::Warning && d.message.contains("preamble")),
+        parsed.diagnostics.iter().any(|d| d.severity == Severity::Warning
+            && d.message.contains("preamble")),
         "{:?}",
         parsed.diagnostics
     );

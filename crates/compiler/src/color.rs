@@ -80,11 +80,7 @@ fn round_decimals(digits: &[u8]) -> i64 {
 /// `<decimal>pt` in scaled points; malformed text is `None`.
 fn scan_pt(text: &str) -> Option<i64> {
     let (negative, int, frac) = decimal(text)?;
-    let v = if int >= 16384 {
-        MAX_DIMEN
-    } else {
-        int * UNITY + round_decimals(&frac)
-    };
+    let v = if int >= 16384 { MAX_DIMEN } else { int * UNITY + round_decimals(&frac) };
     Some(if negative { -v } else { v })
 }
 
@@ -92,11 +88,7 @@ fn scan_pt(text: &str) -> Option<i64> {
 fn xn_over_d(x: i64, n: i64, d: i64) -> i64 {
     let q = (i128::from(x.abs()) * i128::from(n)) / i128::from(d);
     let q = q as i64;
-    if x < 0 {
-        -q
-    } else {
-        q
-    }
+    if x < 0 { -q } else { q }
 }
 
 /// `<decimal><internal dimen>` (§455): `nx_plus_y(int, v, xn_over_d(v, f, unity))`.
@@ -104,11 +96,7 @@ fn times(coefficient: &str, v: i64) -> Option<i64> {
     let (negative, int, frac) = decimal(coefficient)?;
     let y = xn_over_d(v, round_decimals(&frac), UNITY);
     let r = i128::from(int) * i128::from(v) + i128::from(y);
-    let r = if r.abs() > i128::from(MAX_DIMEN) {
-        MAX_DIMEN
-    } else {
-        r as i64
-    };
+    let r = if r.abs() > i128::from(MAX_DIMEN) { MAX_DIMEN } else { r as i64 };
     Some(if negative { -r } else { r })
 }
 
@@ -221,9 +209,7 @@ fn rdivide(dimen: i64, divisor: &str) -> Result<i64, ColorError> {
         b = lshift(b);
     }
     if b == 0 {
-        return Err(ColorError::BadSpecification(format!(
-            "division by {divisor}"
-        )));
+        return Err(ColorError::BadSpecification(format!("division by {divisor}")));
     }
     let mut cnta = a;
     let mut count = cnta / b;
@@ -252,8 +238,7 @@ fn calc_n(text: &str) -> Result<String, ColorError> {
     let text = text.trim();
     decimal(text).ok_or_else(|| bad(text))?;
     let (int, frac) = text.split_once('.').unwrap_or((text, "0"));
-    let int_val =
-        |suffix: &str| decimal(&format!("{int}{suffix}")).map(|(n, v, _)| if n { -v } else { v });
+    let int_val = |suffix: &str| decimal(&format!("{int}{suffix}")).map(|(n, v, _)| if n { -v } else { v });
     let (head, digits) = if int_val("0").unwrap_or(0) > 0 {
         ("1", "00000".to_string())
     } else if int_val("1").unwrap_or(0) < 0 {
@@ -267,11 +252,7 @@ fn calc_n(text: &str) -> Result<String, ColorError> {
     };
     let padded = format!("{digits}00000");
     let kept = &padded[..padded.find("00000").unwrap_or(5)];
-    Ok(if kept.is_empty() {
-        head.to_string()
-    } else {
-        format!("{head}.{kept}")
-    })
+    Ok(if kept.is_empty() { head.to_string() } else { format!("{head}.{kept}") })
 }
 
 /// `\XC@calcC`: `1 - x`, normalised.
@@ -290,20 +271,13 @@ fn calc_m(text: &str, scale: &str) -> Result<String, ColorError> {
     let d = mul(scale, pt(text)?)? + UNITY / 2;
     let int = print_scaled(d);
     let int = int.split('.').next().unwrap_or("0");
-    Ok(decimal(int)
-        .map(|(n, v, _)| if n { -v } else { v })
-        .unwrap_or(0)
-        .to_string())
+    Ok(decimal(int).map(|(n, v, _)| if n { -v } else { v }).unwrap_or(0).to_string())
 }
 
 /// `\XC@c@lcS`: `x * scale`.
 fn calc_s(text: &str, scale: &str) -> Result<String, ColorError> {
     let d = lshiftset(text)?;
-    let d = if pt(scale)? < 100 * UNITY {
-        rrshift(mul(&move_point(scale, 1), d)?)
-    } else {
-        rshift(mul(scale, d)?)
-    };
+    let d = if pt(scale)? < 100 * UNITY { rrshift(mul(&move_point(scale, 1), d)?) } else { rshift(mul(scale, d)?) };
     Ok(strip_pt(d))
 }
 
@@ -324,10 +298,7 @@ fn add(a: &str, b: &str) -> Result<String, ColorError> {
     Ok(strip_pt(rrshift(llshiftset(a)? + llshiftset(b)?)))
 }
 
-fn each(
-    values: &[String],
-    f: impl Fn(&str) -> Result<String, ColorError>,
-) -> Result<Vec<String>, ColorError> {
+fn each(values: &[String], f: impl Fn(&str) -> Result<String, ColorError>) -> Result<Vec<String>, ColorError> {
     values.iter().map(|v| f(v)).collect()
 }
 
@@ -343,11 +314,7 @@ fn rgb_gray(c: &[String]) -> Result<String, ColorError> {
 fn cmy_cmyk(c: &[String]) -> Result<Vec<String>, ColorError> {
     let less = |a: &str, b: &str| -> Result<bool, ColorError> { Ok(pt(a)? < pt(b)?) };
     let k = if less(&c[0], &c[1])? {
-        if less(&c[0], &c[2])? {
-            &c[0]
-        } else {
-            &c[2]
-        }
+        if less(&c[0], &c[2])? { &c[0] } else { &c[2] }
     } else if less(&c[1], &c[2])? {
         &c[1]
     } else {
@@ -374,13 +341,7 @@ fn html_numbers(text: &str) -> Result<Vec<String>, ColorError> {
     if t.len() != 6 || !t.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(bad(text));
     }
-    Ok((0..3)
-        .map(|i| {
-            u8::from_str_radix(&t[2 * i..2 * i + 2], 16)
-                .unwrap_or(0)
-                .to_string()
-        })
-        .collect())
+    Ok((0..3).map(|i| u8::from_str_radix(&t[2 * i..2 * i + 2], 16).unwrap_or(0).to_string()).collect())
 }
 
 fn hex2(n: &str) -> String {
@@ -459,69 +420,29 @@ fn convert(spec: &Spec, to: Model) -> Result<Spec, ColorError> {
     }
     let v = &spec.values;
     let done = |model, values| Ok(Spec { model, values });
-    let unsupported = || {
-        Err(ColorError::Unsupported(format!(
-            "conversion {from:?} -> {to:?}"
-        )))
-    };
+    let unsupported = || Err(ColorError::Unsupported(format!("conversion {from:?} -> {to:?}")));
     match from {
         Model::Rgb => match to {
             Model::Cmy => done(to, each(v, calc_c)?),
             Model::Cmyk => done(to, cmy_cmyk(&each(v, calc_c)?)?),
             Model::RgbInt => done(to, each(v, |x| calc_m(x, "255"))?),
-            Model::Html => done(
-                to,
-                vec![each(v, |x| calc_m(x, "255"))?
-                    .iter()
-                    .map(|n| hex2(n))
-                    .collect()],
-            ),
+            Model::Html => done(to, vec![each(v, |x| calc_m(x, "255"))?.iter().map(|n| hex2(n)).collect()]),
             Model::Gray => done(to, vec![rgb_gray(v)?]),
-            Model::GrayInt => convert(
-                &Spec {
-                    model: Model::Gray,
-                    values: vec![rgb_gray(v)?],
-                },
-                to,
-            ),
+            Model::GrayInt => convert(&Spec { model: Model::Gray, values: vec![rgb_gray(v)?] }, to),
             _ => unsupported(),
         },
         Model::Cmy => match to {
             Model::Cmyk => done(to, cmy_cmyk(v)?),
             Model::Gray => done(to, vec![calc_c(&rgb_gray(v)?)?]),
-            Model::GrayInt => convert(
-                &Spec {
-                    model: Model::Gray,
-                    values: vec![calc_c(&rgb_gray(v)?)?],
-                },
-                to,
-            ),
-            _ => convert(
-                &Spec {
-                    model: Model::Rgb,
-                    values: each(v, calc_c)?,
-                },
-                to,
-            ),
+            Model::GrayInt => convert(&Spec { model: Model::Gray, values: vec![calc_c(&rgb_gray(v)?)?] }, to),
+            _ => convert(&Spec { model: Model::Rgb, values: each(v, calc_c)? }, to),
         },
         Model::Cmyk => match to {
             Model::Gray | Model::GrayInt => {
                 let g = calc_c(&calc_t(&rgb_gray(v)?, &v[3])?)?;
-                convert(
-                    &Spec {
-                        model: Model::Gray,
-                        values: vec![g],
-                    },
-                    to,
-                )
+                convert(&Spec { model: Model::Gray, values: vec![g] }, to)
             }
-            _ => convert(
-                &Spec {
-                    model: Model::Cmy,
-                    values: cmyk_cmy(v)?,
-                },
-                to,
-            ),
+            _ => convert(&Spec { model: Model::Cmy, values: cmyk_cmy(v)? }, to),
         },
         Model::Gray => {
             let g = &v[0];
@@ -544,30 +465,12 @@ fn convert(spec: &Spec, to: Model) -> Result<Spec, ColorError> {
                 _ => unsupported(),
             }
         }
-        Model::RgbInt => convert(
-            &Spec {
-                model: Model::Rgb,
-                values: each(v, |x| calc_d(x, "255"))?,
-            },
-            to,
-        ),
+        Model::RgbInt => convert(&Spec { model: Model::Rgb, values: each(v, |x| calc_d(x, "255"))? }, to),
         Model::Html => {
             let rgb = each(&html_numbers(&v[0])?, |x| calc_d(x, "255"))?;
-            convert(
-                &Spec {
-                    model: Model::Rgb,
-                    values: rgb,
-                },
-                to,
-            )
+            convert(&Spec { model: Model::Rgb, values: rgb }, to)
         }
-        Model::GrayInt => convert(
-            &Spec {
-                model: Model::Gray,
-                values: vec![calc_d(&v[0], "15")?],
-            },
-            to,
-        ),
+        Model::GrayInt => convert(&Spec { model: Model::Gray, values: vec![calc_d(&v[0], "15")?] }, to),
         Model::Named => unsupported(),
     }
 }
@@ -578,10 +481,7 @@ fn core_model(spec: Spec) -> Result<Spec, ColorError> {
         Model::RgbInt | Model::Html => convert(&spec, Model::Rgb),
         Model::GrayInt => convert(&spec, Model::Gray),
         Model::Named => Ok(spec),
-        model => Ok(Spec {
-            model,
-            values: each(&spec.values, calc_n)?,
-        }),
+        model => Ok(Spec { model, values: each(&spec.values, calc_n)? }),
     }
 }
 
@@ -590,17 +490,9 @@ fn complement(spec: &Spec) -> Result<Spec, ColorError> {
     let values = match spec.model {
         Model::Cmyk => cmy_cmyk(&each(&cmyk_cmy(&spec.values)?, calc_c)?)?,
         Model::Rgb | Model::Cmy | Model::Gray => each(&spec.values, calc_c)?,
-        _ => {
-            return Err(ColorError::Unsupported(format!(
-                "complement in {:?}",
-                spec.model
-            )))
-        }
+        _ => return Err(ColorError::Unsupported(format!("complement in {:?}", spec.model))),
     };
-    Ok(Spec {
-        model: spec.model,
-        values,
-    })
+    Ok(Spec { model: spec.model, values })
 }
 
 /// `\XC@mix`: `p * a + (100 - p) * b`, per component.
@@ -611,10 +503,7 @@ fn mix(a: &Spec, b: &[String], percent: i64) -> Result<Spec, ColorError> {
         let d = mul(x, percent)? + mul(y, other)?;
         values.push(strip_pt(rrshift(d)));
     }
-    Ok(Spec {
-        model: a.model,
-        values,
-    })
+    Ok(Spec { model: a.model, values })
 }
 
 fn white_in(model: Model) -> Option<Vec<String>> {
@@ -655,10 +544,7 @@ pub struct DeviceColor {
 const BILLION: u64 = 1_000_000_000;
 
 impl DeviceColor {
-    pub const BLACK: DeviceColor = DeviceColor {
-        space: ColorSpace::Gray,
-        values: [0; 4],
-    };
+    pub const BLACK: DeviceColor = DeviceColor { space: ColorSpace::Gray, values: [0; 4] };
 
     /// Operand values in billionths, one per component.
     pub fn billionths(&self) -> &[u32] {
@@ -675,19 +561,12 @@ impl DeviceColor {
 
     /// Component values as `f64` (`0.0..=1.0`).
     pub fn components(&self) -> Vec<f64> {
-        self.billionths()
-            .iter()
-            .map(|v| f64::from(*v) / BILLION as f64)
-            .collect()
+        self.billionths().iter().map(|v| f64::from(*v) / BILLION as f64).collect()
     }
 
     /// Operands in shortest decimal form (`0.3 0 0.7`).
     pub fn operands(&self) -> String {
-        self.billionths()
-            .iter()
-            .map(|v| format_billionths(*v))
-            .collect::<Vec<_>>()
-            .join(" ")
+        self.billionths().iter().map(|v| format_billionths(*v)).collect::<Vec<_>>().join(" ")
     }
 
     /// The fill operator (`0.3 0 0.7 rg`).
@@ -727,10 +606,7 @@ impl DeviceColor {
 
     /// Builds a colour from operand values in billionths (tests, adapters).
     pub fn from_billionths(space: ColorSpace, values: &[u32]) -> Option<DeviceColor> {
-        let mut c = DeviceColor {
-            space,
-            values: [0; 4],
-        };
+        let mut c = DeviceColor { space, values: [0; 4] };
         if values.len() != c.len() || values.iter().any(|v| u64::from(*v) > BILLION) {
             return None;
         }
@@ -770,10 +646,7 @@ fn operand(text: &str) -> Result<u32, ColorError> {
 }
 
 fn device(space: ColorSpace, values: &[String]) -> Result<DeviceColor, ColorError> {
-    let mut c = DeviceColor {
-        space,
-        values: [0; 4],
-    };
+    let mut c = DeviceColor { space, values: [0; 4] };
     for (i, v) in values.iter().enumerate().take(4) {
         c.values[i] = operand(v)?;
     }
@@ -794,18 +667,12 @@ fn driver(spec: &Spec) -> Result<DeviceColor, ColorError> {
         }
         // `\c@lor@@RGB`: `\dimen@#1\p@ \divide\dimen@\@cclv`.
         Model::RgbInt => {
-            let v = spec
-                .values
-                .iter()
-                .map(|x| Ok(strip_pt(pt(x)? / 255)))
-                .collect::<Result<Vec<_>, ColorError>>()?;
+            let v = spec.values.iter().map(|x| Ok(strip_pt(pt(x)? / 255))).collect::<Result<Vec<_>, ColorError>>()?;
             device(ColorSpace::Rgb, &v)
         }
         Model::Html => driver(&convert(spec, Model::Rgb)?),
         Model::GrayInt => driver(&convert(spec, Model::Gray)?),
-        Model::Named => Err(ColorError::Unsupported(
-            "named colour without a definition".into(),
-        )),
+        Model::Named => Err(ColorError::Unsupported("named colour without a definition".into())),
     }
 }
 
@@ -917,10 +784,7 @@ impl Colors {
             match option {
                 "dvipsnames" => {
                     for (name, spec) in color_names::DVIPS {
-                        if let Ok(d) = driver(&Spec {
-                            model: Model::Cmyk,
-                            values: split_values(spec),
-                        }) {
+                        if let Ok(d) = driver(&Spec { model: Model::Cmyk, values: split_values(spec) }) {
                             c.named.insert(name.to_string(), d);
                         }
                     }
@@ -957,13 +821,13 @@ impl Colors {
                 "cmy" => c.target = Some(Model::Cmy),
                 "cmyk" => c.target = Some(Model::Cmyk),
                 "gray" => c.target = Some(Model::Gray),
-                "dvipsnames" | "dvipsnames*" | "svgnames" | "svgnames*" | "x11names"
-                | "x11names*" => sets.push(option.trim_end_matches('*')),
+                "dvipsnames" | "dvipsnames*" | "svgnames" | "svgnames*" | "x11names" | "x11names*" => {
+                    sets.push(option.trim_end_matches('*'))
+                }
                 // Accepted without an effect on the page: the pdfTeX driver,
                 // obsolete options, error display, and `table` (colortbl is
                 // reported where `\rowcolor`/`\cellcolor` are used).
-                "pdftex" | "usenames" | "hyperref" | "fixpdftex" | "showerrors" | "hideerrors"
-                | "table" => {}
+                "pdftex" | "usenames" | "hyperref" | "fixpdftex" | "showerrors" | "hideerrors" | "table" => {}
                 other => unsupported.push(other.to_string()),
             }
         }
@@ -1001,10 +865,7 @@ impl Colors {
     /// (`\default@color`, written by `\normalcolor` at every shipout).
     pub fn default_color(&self) -> Option<DeviceColor> {
         let target = self.target.filter(|_| self.xcolor)?;
-        let black = Spec {
-            model: Model::Gray,
-            values: vec!["0".into()],
-        };
+        let black = Spec { model: Model::Gray, values: vec!["0".into()] };
         convert(&black, target).ok().and_then(|s| driver(&s).ok())
     }
 
@@ -1028,21 +889,12 @@ impl Colors {
 
     /// `\definecolor[class]{name}{model}{spec}` (model lists like
     /// `rgb/cmyk` pick the target model's specification).
-    pub fn define(
-        &mut self,
-        class: &str,
-        name: &str,
-        models: &str,
-        spec: &str,
-    ) -> Result<(), ColorError> {
+    pub fn define(&mut self, class: &str, name: &str, models: &str, spec: &str) -> Result<(), ColorError> {
         let name = name.trim().to_string();
         if !self.xcolor {
             let m = model(models)?;
             let d = if m == Model::Named {
-                *self
-                    .named
-                    .get(spec.trim())
-                    .ok_or_else(|| ColorError::UndefinedColor(spec.trim().to_string()))?
+                *self.named.get(spec.trim()).ok_or_else(|| ColorError::UndefinedColor(spec.trim().to_string()))?
             } else {
                 driver(&Spec::new(m, spec)?)?
             };
@@ -1054,11 +906,7 @@ impl Colors {
         }
         let (m, text) = self.select(models, spec)?;
         if m == Model::Named {
-            let target = self
-                .defined
-                .get(text.trim())
-                .cloned()
-                .ok_or_else(|| ColorError::UndefinedColor(text))?;
+            let target = self.defined.get(text.trim()).cloned().ok_or_else(|| ColorError::UndefinedColor(text))?;
             self.defined.insert(name, target);
             return Ok(());
         }
@@ -1073,13 +921,7 @@ impl Colors {
     }
 
     /// `\providecolor`: `\definecolor` unless the name is defined.
-    pub fn provide(
-        &mut self,
-        class: &str,
-        name: &str,
-        models: &str,
-        spec: &str,
-    ) -> Result<(), ColorError> {
+    pub fn provide(&mut self, class: &str, name: &str, models: &str, spec: &str) -> Result<(), ColorError> {
         if self.is_defined(name) {
             return Ok(());
         }
@@ -1087,21 +929,12 @@ impl Colors {
     }
 
     /// `\definecolorset[class]{models}{head}{tail}{name,spec;...}`.
-    pub fn define_set(
-        &mut self,
-        class: &str,
-        models: &str,
-        head: &str,
-        tail: &str,
-        body: &str,
-    ) -> Result<(), ColorError> {
+    pub fn define_set(&mut self, class: &str, models: &str, head: &str, tail: &str, body: &str) -> Result<(), ColorError> {
         self.require_xcolor("\\definecolorset")?;
         let mut first = Ok(());
         for entry in body.split(';') {
             let entry = entry.trim();
-            let Some((name, spec)) = entry.split_once(',') else {
-                continue;
-            };
+            let Some((name, spec)) = entry.split_once(',') else { continue };
             let r = self.define(class, &format!("{head}{}{tail}", name.trim()), models, spec);
             if first.is_ok() {
                 first = r;
@@ -1123,11 +956,7 @@ impl Colors {
         let e = expression.trim();
         let plain = !e.contains(['>', ':', '!']) && !e.starts_with('-') && e != ".";
         if plain && model_name.trim().is_empty() && class.trim().is_empty() {
-            let target = self
-                .defined
-                .get(e)
-                .cloned()
-                .ok_or_else(|| ColorError::UndefinedColor(e.to_string()))?;
+            let target = self.defined.get(e).cloned().ok_or_else(|| ColorError::UndefinedColor(e.to_string()))?;
             self.defined.insert(name.trim().to_string(), target);
             return Ok(());
         }
@@ -1171,11 +1000,7 @@ impl Colors {
             if !self.xcolor {
                 let m = model(models)?;
                 if m == Model::Named {
-                    return self
-                        .named
-                        .get(e)
-                        .map(|d| Err(*d))
-                        .ok_or_else(|| ColorError::UndefinedColor(e.to_string()));
+                    return self.named.get(e).map(|d| Err(*d)).ok_or_else(|| ColorError::UndefinedColor(e.to_string()));
                 }
                 return Ok(Ok(Spec::new(m, e)?));
             }
@@ -1207,11 +1032,7 @@ impl Colors {
     }
 
     fn require_xcolor(&self, what: &str) -> Result<(), ColorError> {
-        if self.xcolor {
-            Ok(())
-        } else {
-            Err(ColorError::Unsupported(format!("{what} without xcolor")))
-        }
+        if self.xcolor { Ok(()) } else { Err(ColorError::Unsupported(format!("{what} without xcolor"))) }
     }
 
     /// `\XC@getmod`: the model of a `/` list that matches the target (else
@@ -1239,10 +1060,7 @@ impl Colors {
     /// The current colour `.` as an xcolor specification.
     fn current_spec(&self, current: Option<DeviceColor>) -> Spec {
         let black = || {
-            let s = Spec {
-                model: Model::Gray,
-                values: vec!["0".into()],
-            };
+            let s = Spec { model: Model::Gray, values: vec!["0".into()] };
             match self.target {
                 Some(t) => convert(&s, t).unwrap_or(s),
                 None => s,
@@ -1257,10 +1075,7 @@ impl Colors {
             ColorSpace::Rgb => Model::Rgb,
             ColorSpace::Cmyk => Model::Cmyk,
         };
-        Spec {
-            model,
-            values: d.operands().split(' ').map(str::to_string).collect(),
-        }
+        Spec { model, values: d.operands().split(' ').map(str::to_string).collect() }
     }
 
     fn lookup(&self, name: &str, current: Option<DeviceColor>) -> Result<Spec, ColorError> {
@@ -1269,9 +1084,9 @@ impl Colors {
         }
         match self.defined.get(name) {
             Some(Defined::Xcolor(s)) => Ok(s.clone()),
-            Some(Defined::Driver(_)) => Err(ColorError::Unsupported(format!(
-                "expression on color.sty colour `{name}`"
-            ))),
+            Some(Defined::Driver(_)) => {
+                Err(ColorError::Unsupported(format!("expression on color.sty colour `{name}`")))
+            }
             None => Err(ColorError::UndefinedColor(name.to_string())),
         }
     }
@@ -1286,11 +1101,7 @@ impl Colors {
         let body = &e[dashes..];
         let (name, rest) = body.split_once('!').unwrap_or((body, ""));
         let mut spec = self.lookup(name.trim(), current)?;
-        let parts: Vec<&str> = if rest.is_empty() {
-            Vec::new()
-        } else {
-            rest.split('!').collect()
-        };
+        let parts: Vec<&str> = if rest.is_empty() { Vec::new() } else { rest.split('!').collect() };
         let mut i = 0;
         while i < parts.len() {
             let pct = parts[i].trim();
@@ -1378,9 +1189,6 @@ mod tests {
         let d = c.resolve(None, "mc!50", None).unwrap();
         assert_eq!(d.fill_operator(), "0.05 0.09999 0.15001 0.2 k");
         c.define("", "mine", "RGB", "12,200,33").unwrap();
-        assert_eq!(
-            c.resolve(None, "mine", None).unwrap().operands(),
-            "0.04706 0.78432 0.12941"
-        );
+        assert_eq!(c.resolve(None, "mine", None).unwrap().operands(), "0.04706 0.78432 0.12941");
     }
 }

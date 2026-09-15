@@ -296,8 +296,8 @@ mod tests {
             for c in symbol.text.chars() {
                 match map_char(c) {
                     Glyph::LatinModernMath => {}
-                    Glyph::Unrepresentable { .. } if crate::amssymb::newcm_advance(c).is_some() => {
-                    }
+                    Glyph::Unrepresentable { .. }
+                        if crate::amssymb::newcm_advance(c).is_some() => {}
                     other => panic!("\\{} renders {c:?}: {other:?}", symbol.name),
                 }
             }
