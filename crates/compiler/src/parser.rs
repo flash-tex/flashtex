@@ -1075,6 +1075,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "pounds",
     "dots",
     "ldots",
+    "enquote",
     "textsection",
     "textparagraph",
     "textdagger",
@@ -2778,6 +2779,12 @@ impl P<'_> {
             | "capitalring" | "capitalogonek" | "capitalhungarumlaut" | "capitalcedilla" => {
                 self.text_accent(text_builtins::canonical_accent_name(name), span, para)
             }
+            // csquotes `\enquote{...}`: this compiler has no
+            // locale/babel machinery, so the honest default is the same
+            // marks a literal ``` ``...'' ``` produces (see
+            // `text_enquote`, which resolves them through the very same
+            // ligature conversion as ordinary prose).
+            "enquote" => self.text_enquote(span, para),
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
             // ulem `\uline`/`\sout` (need the package). Kernel text-mode
             // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
@@ -6262,6 +6269,56 @@ impl P<'_> {
         }
     }
 
+    /// csquotes `\enquote{...}` (issue #501). Real csquotes picks
+    /// locale-appropriate marks via babel/polyglossia; this compiler has no
+    /// locale machinery, so the faithful default is whatever a literal
+    /// ``` ``...'' ``` already typesets. The two marks are resolved through
+    /// [`apply_text_ligatures`] — the exact function ordinary prose words go
+    /// through — rather than a second table of quote glyphs, and the
+    /// argument itself is parsed as ordinary inline content, so commands,
+    /// math and spacing inside it behave exactly as they do in prose.
+    fn text_enquote(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let style = self.style;
+        let (tokens, argument_span) = self.required_group("enquote", span);
+        // The argument is spliced directly against the opening mark, so a
+        // leading word glues to it exactly as the literal ``` ``word'' ```
+        // lexes as a single word: `inlines_from_tokens` marks stream-start
+        // content `space_before: true`, which would insert a spurious
+        // inter-word space. The correction mirrors `preceded_by_space`
+        // exactly (real whitespace keeps its space; a comment glues, as TeX
+        // eats the line break it comments out).
+        let glued = !matches!(
+            tokens.first().map(|input| &input.token.kind),
+            Some(TokenKind::Space | TokenKind::ParBreak) | None
+        );
+        para.push(Inline::Text {
+            text: apply_text_ligatures("``"),
+            span,
+            style,
+            space_before,
+        });
+        let mut content = self.inlines_from_tokens(tokens, style);
+        if glued {
+            if let Some(first) = content.first_mut() {
+                match first {
+                    Inline::Text { space_before, .. }
+                    | Inline::Math { space_before, .. }
+                    | Inline::Verbatim { space_before, .. }
+                    | Inline::Logo { space_before, .. } => *space_before = false,
+                    _ => {}
+                }
+            }
+        }
+        para.extend(content);
+        para.push(Inline::Text {
+            text: apply_text_ligatures("''"),
+            span: argument_span,
+            style,
+            space_before: false,
+        });
+    }
+
     /// A siunitx typesetting command (`crate::siunitx`): its arguments are
     /// read as raw source and the result is one inline formula spanning the
     /// command and its arguments.
@@ -8711,6 +8768,78 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    /// csquotes `\enquote{...}` (issue #501): with no locale/babel
+    /// machinery the marks are whatever a literal ``` ``...'' ``` already
+    /// typesets. Each pair below must lay out identically — the same glyphs
+    /// with the same spacing around them.
+    #[test]
+    fn enquote_matches_literal_double_quote_ligature() {
+        // The quotation lexes as one word in the literal source but as
+        // several inlines under `\enquote`, so item boundaries cannot
+        // coincide — what must coincide is the glyph sequence, the
+        // paragraph start, and where the run ends (any inserted or missing
+        // glue would move that end).
+        let end = |xs: &[crate::layout::TextItem]| {
+            xs.last().map(|item| {
+                let end = item.x_pt + layout::text_width(&item.text, item.font_size_pt, item.font);
+                (end * 100.0).round() / 100.0
+            })
+        };
+        for (literal, quoted) in [
+            ("Say ``quoted'' loudly.", "Say \\enquote{quoted} loudly."),
+            ("A``b''C", "A\\enquote{b}C"),
+            ("``hello world'' done.", "\\enquote{hello world} done."),
+        ] {
+            let (lit_parsed, lit_items) = items(literal);
+            assert!(
+                lit_parsed.diagnostics.is_empty(),
+                "{:?}",
+                lit_parsed.diagnostics
+            );
+            let (parsed, enq_items) = items(quoted);
+            // The error is gone: no `unknown_command` for `\enquote`.
+            assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+            let concat = |xs: &[crate::layout::TextItem]| {
+                xs.iter().map(|item| item.text.as_str()).collect::<String>()
+            };
+            assert_eq!(concat(&enq_items), concat(&lit_items), "{quoted:?}");
+            // Same spacing: the run starts and ends at the same laid-out
+            // positions as in the literal source.
+            assert_eq!(
+                enq_items.first().map(|i| i.x_pt),
+                lit_items.first().map(|i| i.x_pt),
+                "{quoted:?}"
+            );
+            assert_eq!(end(&enq_items), end(&lit_items), "{quoted:?}");
+            assert_eq!(
+                enq_items.last().map(|i| i.baseline_y_pt),
+                lit_items.last().map(|i| i.baseline_y_pt),
+                "{quoted:?}"
+            );
+        }
+    }
+
+    /// The `\enquote` marks inherit the surrounding style, like the literal
+    /// ligature's word does.
+    #[test]
+    fn enquote_marks_follow_the_surrounding_style() {
+        let source = "{\\bfseries Say \\enquote{quoted} loudly.}";
+        let (parsed, items) = items(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(
+            items
+                .iter()
+                .all(|item| item.font == layout::Font::TimesBold),
+            "{:?}",
+            items
+                .iter()
+                .map(|item| (&item.text, item.font))
+                .collect::<Vec<_>>()
+        );
+        let concat: String = items.iter().map(|item| item.text.as_str()).collect();
+        assert_eq!(concat, "Say\u{201C}quoted\u{201D}loudly.");
     }
 
     #[test]
