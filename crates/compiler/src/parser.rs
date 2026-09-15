@@ -1091,6 +1091,10 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "textgreater",
     "textbraceleft",
     "textbraceright",
+    "textbullet",
+    "textperiodcentered",
+    "textregistered",
+    "texttrademark",
     // `text_builtins::TEXT_ACCENTS` and the
     // `text_builtins::CAPITAL_ACCENT_ALIASES` alias names.
     "c",
@@ -2767,7 +2771,8 @@ impl P<'_> {
             | "textsection" | "textparagraph" | "textdagger" | "textdaggerdbl"
             | "textcopyright" | "textsterling" | "textellipsis" | "textbackslash"
             | "textasciitilde" | "textasciicircum" | "textunderscore" | "textbar" | "textless"
-            | "textgreater" | "textbraceleft" | "textbraceright" => {
+            | "textgreater" | "textbraceleft" | "textbraceright" | "textbullet"
+            | "textperiodcentered" | "textregistered" | "texttrademark" => {
                 self.text_symbol(name, span, para)
             }
             // `text_builtins::TEXT_ACCENTS` and the
@@ -8691,6 +8696,56 @@ mod tests {
         assert!(
             texts.iter().any(|t| t.contains('\u{2019}')),
             "expected a converted apostrophe in {texts:?}"
+        );
+    }
+
+    /// GH-TEXT-SYMBOLS-1: `\textbullet` is U+2022 BULLET, like pdfLaTeX.
+    #[test]
+    fn textbullet_typesets_a_bullet() {
+        let (parsed, items) = items("x \\textbullet y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2022}')),
+            "expected U+2022 in {texts:?}"
+        );
+    }
+
+    /// GH-TEXT-SYMBOLS-1: `\textperiodcentered` is U+00B7 MIDDLE DOT — the
+    /// same character the compiler already uses for `\cdot`, so it reuses
+    /// that font-resource path rather than adding a second one.
+    #[test]
+    fn textperiodcentered_typesets_a_middle_dot() {
+        let (parsed, items) = items("x \\textperiodcentered y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00B7}')),
+            "expected U+00B7 in {texts:?}"
+        );
+    }
+
+    /// GH-TEXT-SYMBOLS-1: `\textregistered` is U+00AE REGISTERED SIGN.
+    #[test]
+    fn textregistered_typesets_a_registered_sign() {
+        let (parsed, items) = items("x \\textregistered y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{00AE}')),
+            "expected U+00AE in {texts:?}"
+        );
+    }
+
+    /// GH-TEXT-SYMBOLS-1: `\texttrademark` is U+2122 TRADE MARK SIGN.
+    #[test]
+    fn texttrademark_typesets_a_trademark_sign() {
+        let (parsed, items) = items("x \\texttrademark y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains('\u{2122}')),
+            "expected U+2122 in {texts:?}"
         );
     }
 
