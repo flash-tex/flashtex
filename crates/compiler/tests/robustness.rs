@@ -334,6 +334,17 @@ fn lists_nested_past_255_levels_are_too_deeply_nested_not_an_overflow() {
             &messages[..messages.len().min(5)]
         );
     }
+    // Levels past the limit are not stored per block: 30k nested lists
+    // held 25 GB (every block copies its enclosing frames).
+    let deep = format!(
+        "\\begin{{document}}{}\\end{{document}}\n",
+        "\\begin{itemize}\\item x\n".repeat(3000)
+    );
+    for block in parser::parse(&deep).blocks {
+        if let parser::Block::ListItem { lists, .. } | parser::Block::Styled { lists, .. } = block {
+            assert!(lists.len() <= 6, "a block stored {} list frames", lists.len());
+        }
+    }
     // Within LaTeX's limits (four itemize levels) there is no such error.
     let ok = "\\begin{document}\\begin{itemize}\\item a\\begin{itemize}\\item b\\begin{itemize}\\item c\\begin{itemize}\\item d\\end{itemize}\\end{itemize}\\end{itemize}\\end{itemize}\\end{document}\n";
     assert!(!compile_messages(ok)

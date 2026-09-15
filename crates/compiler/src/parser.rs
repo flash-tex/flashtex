@@ -1465,6 +1465,7 @@ pub fn parse_project_with(
             .collect(),
         include_stack: vec![entry],
         stream_depth: 0,
+        dropped_list_frames: 0,
         stream_depth_reported: false,
         counters: crate::xref::Counters::article(),
         subequations: Vec::new(),
@@ -1576,6 +1577,8 @@ fn gap_is_blank(documents: &[SourceDocument<'_>], a: Span, b: Span) -> bool {
 struct P<'a> {
     /// Nesting of [`P::parse_stream`] (see [`STREAM_DEPTH_LIMIT`]).
     stream_depth: usize,
+    /// List levels past LaTeX's `\@toodeep` limit, not kept in `list_frames`.
+    dropped_list_frames: usize,
     stream_depth_reported: bool,
     /// The expanded stream. Edits go through [`P::token_mut`]: when the
     /// expansion cache holds the stream, it is lent to the parser (no copy)
@@ -4487,7 +4490,9 @@ impl P<'_> {
             self.document_ended = true;
         }
         if let Some(kind) = ListEnvironment::from_name(&environment) {
-            if self
+            if self.dropped_list_frames > 0 {
+                self.dropped_list_frames -= 1;
+            } else if self
                 .list_frames
                 .last()
                 .is_some_and(|frame| frame.environment == kind)
@@ -7022,12 +7027,21 @@ impl P<'_> {
         // `enumerate` check their own depth `>\thr@@` first. The list is still
         // typeset here, at the deepest defined level.
         let kind_limited = matches!(environment, ListEnvironment::Itemize | ListEnvironment::Enumerate);
-        if list_depth > 6 || (kind_limited && kind_depth > 4) {
+        let too_deep = list_depth > 6 || (kind_limited && kind_depth > 4);
+        if too_deep {
             self.diags.push(Diagnostic::error(
                 "LaTeX Error: Too deeply nested.",
                 Some(begin_span),
                 Some("typeset the list at the deepest supported nesting level".into()),
             ));
+        }
+        // Every block copies the enclosing frames, so frames past the limit
+        // are counted, not stored: 30k nested lists held 25 GB. Once one
+        // level is dropped, the levels inside it are too, so the `\end`s
+        // pop the dropped levels first.
+        if too_deep || self.dropped_list_frames > 0 {
+            self.dropped_list_frames += 1;
+            return;
         }
         self.list_frames.push(ListFrame {
             environment,
