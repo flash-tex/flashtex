@@ -209,6 +209,21 @@ pub enum Inline {
         space_after_pt: f64,
         span: Span,
     },
+    /// `\=` inside `tabbing`: record the current horizontal position (the
+    /// end of the placed content so far, excluding reserved inter-word
+    /// space) as a tab stop for the rest of the environment. Only ever
+    /// emitted inside a [`Block::Tabbing`] line; the generic inline path
+    /// (`layout::emit`) ignores it.
+    TabStop {
+        span: Span,
+    },
+    /// `\>` inside `tabbing`: jump right to the next recorded tab stop (a
+    /// positive-only move, like `HSpace` to that stop). With no stop to the
+    /// right it stays in place and warns. Only ever emitted inside a
+    /// [`Block::Tabbing`] line; the generic inline path ignores it.
+    TabJump {
+        span: Span,
+    },
     /// `\footnote[<n>]{..}`, `\footnotemark[<n>]` or `\footnotetext[<n>]{..}`.
     /// `number` is the resolved `\thefootnote` (arabic). `span` is the
     /// command token, attributed to both superscript marks. `mark` is false
@@ -649,6 +664,19 @@ pub enum Block {
     /// on the current page, computed at layout time from the cursor's
     /// actual position (unlike `VSpace`'s flat, parse-time amount).
     VFill,
+    /// A `tabbing` environment (plain LaTeX2e kernel, not a package): rows
+    /// of text aligned at tab stops. Unlike `tabular` there is no column
+    /// spec: `\=` records the current horizontal position as a stop,
+    /// `\>` jumps right to the next recorded stop, `\\` ends a row back
+    /// at the left margin, and `\kill` ends a row that registers its
+    /// stops but produces no output (the usual dummy setup line). Stops
+    /// persist across the environment's rows in source order. `\<`, `\+`
+    /// and `\-` are not implemented yet (a follow-up slice); they warn
+    /// and are ignored.
+    Tabbing {
+        lines: Vec<TabbingLine>,
+        span: Span,
+    },
     /// A `letter.cls` block whose horizontal placement no [`ParagraphStyle`]
     /// expresses: the return address, which is a *left-aligned box pushed to
     /// the right margin* (not a ragged-left column — `\opening` sets it in a
@@ -697,6 +725,15 @@ pub enum LetterPart {
     /// `\closing`'s `\hspace*{\longindentation}\parbox{\indentedwidth}{...}`:
     /// the closing line, `6\medskipamount`, then `\fromsig` (or `\fromname`).
     Closing,
+}
+
+/// One row of a [`Block::Tabbing`]: the inline content up to the row's
+/// `\\` or `\kill` (including [`Inline::TabStop`] / [`Inline::TabJump`]
+/// markers). `killed` rows register their stops but produce no output.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TabbingLine {
+    pub content: Vec<Inline>,
+    pub killed: bool,
 }
 
 /// verse's `\\` (`\@centercr`, latex.ltx `\@xcentercr`/`\@icentercr`).
@@ -1892,6 +1929,7 @@ pub fn parse_project_with(
         paragraph_started: false,
         pending_item: None,
         pending_line_break: None,
+        tabbing_stack: Vec::new(),
         paragraph_styles: Vec::new(),
         document_global_state: false,
         cleveref: crate::xref::CleverefConfig::default(),
@@ -2127,6 +2165,11 @@ struct P<'a> {
     pending_item: Option<ItemLabel>,
     /// verse's `\\` waiting for the next paragraph.
     pending_line_break: Option<LineBreakBefore>,
+    /// Open `tabbing` environments, outermost first. While one is open the
+    /// paragraph buffer (`para`) is the current row's content: `\\`,
+    /// `\kill` and blank lines drain it into a [`TabbingLine`], and
+    /// `\end{tabbing}` drains the last row and pushes [`Block::Tabbing`].
+    tabbing_stack: Vec<TabbingFrame>,
     paragraph_styles: Vec<ParagraphStyle>,
     document_global_state: bool,
     cleveref: crate::xref::CleverefConfig,
@@ -2238,6 +2281,14 @@ struct LetterDeclarations {
     opened: bool,
 }
 
+/// One open `tabbing` environment: its finished rows so far, plus the
+/// `\begin{tabbing}` span for the eventual [`Block::Tabbing`].
+#[derive(Debug, Clone)]
+struct TabbingFrame {
+    lines: Vec<TabbingLine>,
+    span: Span,
+}
+
 /// One open `itemize`/`enumerate`/`description`/`thebibliography`.
 #[derive(Debug, Clone)]
 struct OpenList {
@@ -2335,10 +2386,23 @@ impl P<'_> {
                 TokenKind::ParBreak => {
                     self.i += 1;
                     if render {
-                        self.flush_paragraph(blocks, para);
+                        if self.tabbing_active() {
+                            // A blank line ends the row, like `\\`.
+                            self.end_tabbing_line(false, para);
+                        } else {
+                            self.flush_paragraph(blocks, para);
+                        }
                     }
                 }
                 TokenKind::Space | TokenKind::Comment => self.i += 1,
+                TokenKind::Word(word)
+                    if render
+                        && self.tabbing_active()
+                        && is_tabbing_control(&word, tok.span) =>
+                {
+                    self.i += 1;
+                    self.tabbing_control(&word, tok.span, para);
+                }
                 TokenKind::Word(word)
                     if control_symbol_kern(
                         &word,
@@ -2380,6 +2444,15 @@ impl P<'_> {
                 }
                 TokenKind::LineBreak => {
                     self.i += 1;
+                    if render && self.tabbing_active() {
+                        // `\\` ends the row back at the left margin (a new
+                        // row always starts there, never at a tab stop).
+                        // Unlike ordinary `\\` there is no `[...]` skip or
+                        // `*` form: a following `[` is ordinary row text,
+                        // as in real LaTeX's tabbing.
+                        self.end_tabbing_line(false, para);
+                        continue;
+                    }
                     // article.cls 390 `verse`: `\let\\\@centercr`, which ends
                     // the paragraph (latex.ltx `\@centercr`: `\par`, then
                     // `\@xcentercr` `\addvspace{-\parskip}` and `\@icentercr`
@@ -2480,6 +2553,15 @@ impl P<'_> {
                 | TokenKind::InlineMathClose
                 | TokenKind::Superscript
                 | TokenKind::Subscript => self.i += 1,
+                // `\kill` ends a `tabbing` row with no output (its `\=`
+                // stops still register). Outside `tabbing` it falls
+                // through to `command` and its unknown-command diagnostic.
+                TokenKind::Command(name)
+                    if render && name == "kill" && self.tabbing_active() =>
+                {
+                    self.i += 1;
+                    self.end_tabbing_line(true, para);
+                }
                 TokenKind::Command(name) => {
                     self.i += 1;
                     self.command(&name, tok.span, blocks, para);
@@ -3335,7 +3417,10 @@ impl P<'_> {
                 });
             }
             // latex.ltx `\discretionary` is TeX's primitive; `\-` is
-            // `\discretionary{\char\hyphenchar\font}{}{}`.
+            // `\discretionary{\char\hyphenchar\font}{}{}`. Inside a
+            // `tabbing` body the environment redefines `\-` (indent
+            // decrease), so the tabbing handler takes precedence there.
+            "-" if self.tabbing_active() => self.tabbing_control("-", span, para),
             "-" => para.push(Inline::Discretionary {
                 pre: "-".into(),
                 post: String::new(),
@@ -5022,6 +5107,76 @@ impl P<'_> {
         self.finish_block_dependencies();
     }
 
+    /// Whether source is inside a `tabbing` environment whose rows are
+    /// being collected (the paragraph buffer is the current row).
+    fn tabbing_active(&self) -> bool {
+        !self.tabbing_stack.is_empty()
+    }
+
+    /// A `tabbing` control symbol (`\=`, `\>`, `\<`, `\+`, `\-`; the lexer
+    /// emits each as a one-character [`TokenKind::Word`] whose span covers
+    /// the backslash too). Only call when [`P::tabbing_active`]; ordinary
+    /// text such as `a = b` never reaches here (see
+    /// [`is_tabbing_control`]).
+    fn tabbing_control(&mut self, word: &str, span: Span, para: &mut Vec<Inline>) {
+        match word {
+            "=" => para.push(Inline::TabStop { span }),
+            ">" => para.push(Inline::TabJump { span }),
+            // A follow-up slice owns `\<` (jump to the previous stop, even
+            // leftwards) and `\+`/`\-` (the indent level new rows start
+            // at); warn and ignore rather than typesetting them as text.
+            "<" | "+" | "-" => {
+                let what = match word {
+                    "<" => "the previous-tab-stop command `\\<`",
+                    "+" => "the indent-increase command `\\+`",
+                    _ => "the indent-decrease command `\\-`",
+                };
+                self.diags.push(Diagnostic::warning(
+                    format!("{what} in tabbing is not implemented yet"),
+                    Some(span),
+                    Some("ignored the command and continued".into()),
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    /// End the current `tabbing` row: drain the paragraph buffer into the
+    /// open frame. `killed` rows (`\kill`) register their `\=` stops but
+    /// produce no output; `\\` and blank lines end ordinary rows.
+    fn end_tabbing_line(&mut self, killed: bool, para: &mut Vec<Inline>) {
+        if let Some(frame) = self.tabbing_stack.last_mut() {
+            frame.lines.push(TabbingLine {
+                content: std::mem::take(para),
+                killed,
+            });
+        }
+    }
+
+    /// `\end{tabbing}`: drain the last row and push the block. An
+    /// environment with no rows and no pending content pushes nothing.
+    fn end_tabbing(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let last = std::mem::take(para);
+        if let Some(frame) = self.tabbing_stack.pop() {
+            let mut lines = frame.lines;
+            if !last.is_empty() {
+                lines.push(TabbingLine {
+                    content: last,
+                    killed: false,
+                });
+            }
+            if !lines.is_empty() {
+                blocks.push(Block::Tabbing {
+                    lines,
+                    span: frame.span,
+                });
+                self.finish_block_dependencies();
+            }
+        } else if !last.is_empty() {
+            para.extend(last);
+        }
+    }
+
     fn environment(
         &mut self,
         kind: &str,
@@ -5189,6 +5344,17 @@ impl P<'_> {
                 // ships no page (see `Block::PageBreak` in `layout`).
                 blocks.push(Block::PageBreak);
                 self.finish_block_dependencies();
+            } else if environment == "tabbing" && self.in_body {
+                // Plain LaTeX2e kernel tabbing: rows align at `\=` stops,
+                // `\\` ends a row at the left margin, `\kill` ends a row
+                // silently. The paragraph buffer becomes the current row
+                // until `\end{tabbing}` (see `P::tabbing_stack`); earlier
+                // text is its own paragraph.
+                self.flush_paragraph(blocks, para);
+                self.tabbing_stack.push(TabbingFrame {
+                    lines: Vec::new(),
+                    span: span.merge(argument_span),
+                });
             } else if environment == "sloppypar" && self.in_body {
                 // latex.ltx `\def\sloppypar{\par\sloppy}`.
                 self.flush_paragraph(blocks, para);
@@ -5353,6 +5519,8 @@ impl P<'_> {
             self.flush_paragraph(blocks, para);
         } else if environment == "figure" || self.theorems.contains_key(&environment) {
             self.flush_paragraph(blocks, para);
+        } else if environment == "tabbing" && self.in_body {
+            self.end_tabbing(blocks, para);
         } else if environment == "proof" {
             para.push(Inline::HFill { span, leader: FillLeader::None });
             para.push(Inline::Text {
@@ -9156,6 +9324,15 @@ fn preamble_source(text: &str, has_document: bool, tokens: &[InputToken]) -> Str
     end.filter(|end| *end <= text.len() && text.is_char_boundary(*end))
         .map_or("", |end| &text[..end])
         .to_string()
+}
+
+/// Whether a [`TokenKind::Word`] is really a `tabbing` control symbol
+/// (`\=`, `\>`, `\<`, `\+`, `\-`): a single character whose span covers
+/// the backslash too (two bytes), exactly like [`control_symbol_kern`]'s
+/// own test. A literal `=` typed as text (`a = b`) is one byte wide and
+/// never matches.
+fn is_tabbing_control(word: &str, span: Span) -> bool {
+    matches!(word, "=" | ">" | "<" | "+" | "-") && span.end - span.start == 2
 }
 
 /// The kern a control-symbol token (`\,` lexed as the word `,` with a
