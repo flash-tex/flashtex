@@ -127,9 +127,12 @@ fn implemented_commands() -> impl Iterator<Item = &'static str> {
 }
 
 pub fn is_known_command(name: &str) -> bool {
-    implemented_commands()
-        .chain(KNOWN_UNIMPLEMENTED_COMMANDS.iter().copied())
-        .any(|known| known == name)
+    // A set, not a scan of every table: an unknown command inside a runaway
+    // macro loop is diagnosed hundreds of thousands of times.
+    static KNOWN: std::sync::OnceLock<std::collections::HashSet<&'static str>> = std::sync::OnceLock::new();
+    KNOWN
+        .get_or_init(|| implemented_commands().chain(KNOWN_UNIMPLEMENTED_COMMANDS.iter().copied()).collect())
+        .contains(name)
 }
 
 pub fn is_known_environment(name: &str) -> bool {
@@ -161,6 +164,28 @@ pub fn is_known_environment(name: &str) -> bool {
 /// result is de-duplicated: a name repeated across tables is one candidate,
 /// not a tie with itself.
 pub fn closest_commands(name: &str) -> Vec<&'static str> {
+    // Memoised per thread: the same unknown name repeats (a runaway macro
+    // loop diagnoses it hundreds of thousands of times), and each lookup
+    // measures the distance to every vocabulary entry.
+    thread_local! {
+        static CACHE: std::cell::RefCell<std::collections::HashMap<String, Vec<&'static str>>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    if let Some(hit) = CACHE.with(|cache| cache.borrow().get(name).cloned()) {
+        return hit;
+    }
+    let result = closest_commands_uncached(name);
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= 4096 {
+            cache.clear();
+        }
+        cache.insert(name.to_string(), result.clone());
+    });
+    result
+}
+
+fn closest_commands_uncached(name: &str) -> Vec<&'static str> {
     let width = name.chars().count();
     let limit = if width <= 3 { 1 } else { 2 };
     let mut best = usize::MAX;
@@ -168,6 +193,12 @@ pub fn closest_commands(name: &str) -> Vec<&'static str> {
     for candidate in implemented_commands().chain(KNOWN_UNIMPLEMENTED_COMMANDS.iter().copied()) {
         if candidate == name {
             return Vec::new();
+        }
+        // The distance is at least the difference in length: skip before
+        // `edit_distance` copies `name` (a 100k-character control sequence
+        // was copied once per vocabulary entry).
+        if candidate.chars().count().abs_diff(width) > limit {
+            continue;
         }
         let distance = edit_distance(name, candidate);
         if distance > limit {
