@@ -2706,23 +2706,28 @@ impl P<'_> {
             }
             "addvspace" => {
                 // Honest simplification of real LaTeX's `\addvspace` (see
-                // `ltspace.dtx`'s `\@xaddvskip`): real TeX only *increases*
-                // the glue at the end of the current vertical list up to
-                // `len`, and only when that glue itself came from a previous
-                // `\addvspace` — consecutive `\addvspace`s take the maximum
-                // rather than adding up, while `\vspace`/`\bigskip` glue next
-                // to an `\addvspace` is kept in full. This compiler's
-                // vertical-spacing model cannot express that: `Block::VSpace`
-                // carries a flat point amount with no provenance (whether the
-                // preceding glue came from `\addvspace`), and the
-                // render-pipeline sums consecutive `VSpace` blocks into the
-                // next block's before-skip — the correct merge point
-                // (`page-builder`'s `VListBuilder::addvspace`) is a separate
-                // crate this change must not reach into. So `\addvspace{len}`
-                // unconditionally inserts `len` of vertical space, exactly
-                // like `\vspace{len}`: a single call matches real TeX, while
-                // two consecutive calls add up where real TeX would keep the
-                // larger.
+                // `ltspace.dtx`'s `\@xaddvskip`): real TeX merges with
+                // *whatever* glue already ends the current vertical list
+                // (`\ifdim\lastskip=\z@`, checked generically — not "only
+                // when that glue came from a previous `\addvspace`"; a
+                // preceding `\vspace`/`\bigskip` triggers the exact same
+                // merge, since `\lastskip` carries no provenance in real TeX
+                // either). The merge itself takes the *larger* of the two
+                // skips (falling back to summing only when the new length is
+                // negative and the existing one is not). This compiler's
+                // vertical-spacing model cannot express any of that:
+                // `Block::VSpace` carries a flat point amount with no
+                // provenance and no way to inspect or replace the *previous*
+                // block, and the render-pipeline sums consecutive `VSpace`
+                // blocks into the next block's before-skip — the correct
+                // merge point (`page-builder`'s `VListBuilder::addvspace`) is
+                // a separate crate this change must not reach into. So
+                // `\addvspace{len}` unconditionally inserts `len` of vertical
+                // space, exactly like `\vspace{len}`: a single call (with
+                // nothing but non-glue material before it) matches real TeX,
+                // while two consecutive calls (or an `\addvspace` right after
+                // any other vertical glue) add up where real TeX would keep
+                // the larger of the two.
                 //
                 // Unlike `\vspace`, real `\addvspace` has NO star form at
                 // all (`ltspace.dtx`'s kernel `\addvspace` takes one plain
