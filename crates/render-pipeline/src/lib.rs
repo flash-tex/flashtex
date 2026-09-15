@@ -176,7 +176,13 @@ pub fn render_cached(
     );
     #[cfg(not(feature = "request-date"))]
     let parsed = flashtex_compiler::parser::parse_project(&parse_docs, entry_path);
-    let (float_numbers, float_label_values) = floats::number(&float_envs);
+    // report/book number floats within the chapter (`floats::number`).
+    let float_chapters = texts.get(documents.iter().position(|d| d.path == entry_path).unwrap_or(0)).and_then(|t| flashtex_class_geometry::DocumentSetup::from_preamble(t)).and_then(|s| match s.class {
+        flashtex_class_geometry::ClassKind::Report => Some(false),
+        flashtex_class_geometry::ClassKind::Book => Some(true),
+        _ => None,
+    });
+    let (float_numbers, float_label_values) = floats::number(&float_envs, &texts, float_chapters);
     let mut image_cache = floats::ImageCache::default();
     let paths: Vec<&str> = documents.iter().map(|d| d.path).collect();
     let entry_index = documents.iter().position(|d| d.path == entry_path).unwrap_or(0);

@@ -9,6 +9,7 @@ use crate::mathlist::{
     Atom, AtomClass, BigSizing, Limits, MathList, Nucleus, TextPiece, TextStyle,
 };
 use crate::metrics::{Extensible, Glyph, MathFontMetrics, MathParams};
+use crate::metrics::{MathChar, OrdPair};
 use crate::source::SourceTag;
 use crate::spacing::{Space, between};
 use crate::style::Style;
@@ -136,6 +137,15 @@ fn unpacked(nucleus: &Nucleus) -> (&Nucleus, SourceTag) {
     (n, tag)
 }
 
+/// The character in an atom's nucleus after §1186 unpacking, if it is one.
+fn nucleus_char(atom: &Atom) -> Option<MathChar> {
+    match unpacked(&atom.nucleus).0 {
+        Nucleus::Symbol(ch) => Some(MathChar::Symbol(*ch)),
+        Nucleus::TextChar(ch) => Some(MathChar::Text(*ch)),
+        _ => None,
+    }
+}
+
 impl Engine<'_> {
     fn params(&self, style: Style) -> MathParams {
         self.m.params(style.size_class())
@@ -147,7 +157,7 @@ impl Engine<'_> {
         let mu = self.params(style).mu();
         let mut items: Vec<MathBox> = Vec::with_capacity(list.atoms.len() * 2);
         let mut prev: Option<AtomClass> = None;
-        for (atom, class) in list.atoms.iter().zip(classes) {
+        for (i, (atom, &class)) in list.atoms.iter().zip(&classes).enumerate() {
             if is_glue(atom) {
                 if let Nucleus::Glue {
                     mu: g,
@@ -165,7 +175,8 @@ impl Engine<'_> {
                 }
                 continue;
             }
-            let mut b = self.atom(atom, class, style);
+            let pair = self.make_ord(list, i, prev, style);
+            let mut b = self.atom(atom, class, style, pair.is_some_and(|p| p.text_font));
             // Leaves no inner atom claimed belong to this atom.
             b.inherit_tag(atom.tag);
             if let Some(p) = prev {
@@ -182,9 +193,46 @@ impl Engine<'_> {
                 }
             }
             items.push(b);
+            // The font kern sits right after the character, before any
+            // inter-atom glue Rule 20 puts ahead of the next atom.
+            if let Some(p) = pair.filter(|p| p.kern != 0.0) {
+                items.push(MathBox::kern(p.kern));
+            }
             prev = Some(class);
         }
         MathBox::hlist(items)
+    }
+
+    /// `make_ord` (tex.web §752): an Ord atom whose nucleus is a character
+    /// and which has no scripts, followed immediately (no glue between) by an
+    /// Ord..Punct atom whose nucleus is a character of the same family, gets
+    /// the kern the family's font program gives for the pair, and loses its
+    /// italic correction when that font is a text font (§755).
+    ///
+    /// TeX calls `make_ord` from its first pass only for noads that are Ord
+    /// at that moment: an Ord, or a Bin that Rule 5 turns into an Ord because
+    /// of the noad before it (`prev`). A Bin that Rule 6 or the end of the
+    /// list demotes later has already been passed, so it is not kerned.
+    /// Ligatures between math characters are not formed.
+    fn make_ord(
+        &self,
+        list: &MathList,
+        i: usize,
+        prev: Option<AtomClass>,
+        style: Style,
+    ) -> Option<OrdPair> {
+        use AtomClass::*;
+        let q = &list.atoms[i];
+        let ord_in_first_pass = q.class == Ord
+            || (q.class == Bin && matches!(prev, None | Some(Bin | Op | Rel | Open | Punct)));
+        if !ord_in_first_pass || q.superscript.is_some() || q.subscript.is_some() {
+            return None;
+        }
+        // Glue between the two is not a noad, so it blocks the pair: its
+        // nucleus is no character.
+        let p = list.atoms.get(i + 1).filter(|p| p.class != Inner)?;
+        self.m
+            .ord_pair(nucleus_char(q)?, nucleus_char(p)?, style.size_class())
     }
 
     /// `clean_box`: a subformula as a single box.
@@ -209,7 +257,15 @@ impl Engine<'_> {
         g
     }
 
-    fn atom(&mut self, atom: &Atom, class: AtomClass, style: Style) -> MathBox {
+    /// `text_font_pair`: `make_ord` found the next character in the same
+    /// text-font family, so the italic correction is dropped (§755).
+    fn atom(
+        &mut self,
+        atom: &Atom,
+        class: AtomClass,
+        style: Style,
+        text_font_pair: bool,
+    ) -> MathBox {
         if class == AtomClass::Op {
             return self.make_op(atom, style);
         }
@@ -220,10 +276,11 @@ impl Engine<'_> {
             Nucleus::Symbol(ch) => match self.glyph(*ch, style) {
                 Some(g) => {
                     let b = MathBox::glyph(&g);
-                    if atom.subscript.is_none() && g.italic != 0.0 {
-                        (MathBox::hlist(vec![b, MathBox::kern(g.italic)]), 0.0, true)
+                    let italic = if text_font_pair { 0.0 } else { g.italic };
+                    if atom.subscript.is_none() && italic != 0.0 {
+                        (MathBox::hlist(vec![b, MathBox::kern(italic)]), 0.0, true)
                     } else {
-                        (b, g.italic, true)
+                        (b, italic, true)
                     }
                 }
                 None => (MathBox::empty(), 0.0, false),
@@ -231,10 +288,11 @@ impl Engine<'_> {
             Nucleus::TextChar(ch) => match self.text_char(*ch, style) {
                 Some(g) => {
                     let b = MathBox::glyph(&g);
-                    if atom.subscript.is_none() && g.italic != 0.0 {
-                        (MathBox::hlist(vec![b, MathBox::kern(g.italic)]), 0.0, true)
+                    let italic = if text_font_pair { 0.0 } else { g.italic };
+                    if atom.subscript.is_none() && italic != 0.0 {
+                        (MathBox::hlist(vec![b, MathBox::kern(italic)]), 0.0, true)
                     } else {
-                        (b, g.italic, true)
+                        (b, italic, true)
                     }
                 }
                 None => (MathBox::empty(), 0.0, false),
@@ -339,7 +397,7 @@ impl Engine<'_> {
                     },
                     ..atom.clone()
                 };
-                return self.atom(&inner, class, style);
+                return self.atom(&inner, class, style, false);
             }
             Nucleus::Text(text) => (self.make_text(text, style), 0.0, false),
             Nucleus::TextRun(pieces) => (self.make_text_run(pieces, style), 0.0, false),
@@ -545,7 +603,7 @@ impl Engine<'_> {
                     tag: atom.tag,
                     delimiter_tags: atom.delimiter_tags,
                 };
-                (self.atom(&inner, AtomClass::Ord, style), 0.0)
+                (self.atom(&inner, AtomClass::Ord, style, false), 0.0)
             }
         };
         let mut nucleus = nucleus;

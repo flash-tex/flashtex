@@ -1,12 +1,12 @@
 use crate::span::Span;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Severity {
     Error,
     Warning,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Diagnostic {
     pub severity: Severity,
     pub message: String,
@@ -24,7 +24,7 @@ impl Diagnostic {
 
 /// Resource limits so a mid-edit infinite macro loop (very common while
 /// typing) degrades to a diagnostic instead of hanging or OOMing the IDE.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     pub max_expansion_steps: u64,
     pub max_output_tokens: u64,
