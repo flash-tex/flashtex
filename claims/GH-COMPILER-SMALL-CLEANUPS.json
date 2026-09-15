@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/compiler-small-cleanups",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pulls",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-15T12:24:14Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-COMPILER-SMALL-CLEANUPS",
-  "updated_utc": "2026-09-15T12:24:14Z"
+  "updated_utc": "2026-09-15T12:58:10Z"
 }
