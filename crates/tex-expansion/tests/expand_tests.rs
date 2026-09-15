@@ -426,3 +426,17 @@ fn a_macro_call_cut_off_by_the_end_of_file_is_aborted() {
     assert_eq!(messages, ["Runaway argument?\n! File ended while scanning use of \\loop."]);
     assert_eq!(text(&r.tokens).trim(), "");
 }
+
+/// Fuzz finding (hang): a macro that doubles its argument on every call
+/// exhausted memory long before the expansion-step limit.
+#[test]
+fn an_argument_that_doubles_every_call_exceeds_capacity() {
+    let started = std::time::Instant::now();
+    let r = expand_str(r"\def\a#1{\a{#1#1}}\a x");
+    assert!(
+        r.diagnostics.iter().any(|d| d.message == "TeX capacity exceeded, sorry [main memory size=5000000]."),
+        "{:?}",
+        r.diagnostics
+    );
+    assert!(started.elapsed().as_secs() < 60, "{:?}", started.elapsed());
+}

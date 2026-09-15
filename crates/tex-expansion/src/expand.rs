@@ -1466,6 +1466,22 @@ impl Engine {
         if aborted {
             return;
         }
+        // `\def\a#1{\a{#1#1}}\a x` doubles its argument on every call: the
+        // step limit is far away when the token lists exhaust memory. TeX
+        // runs out of main memory; so does this, at the output-token budget.
+        let size: u64 = def
+            .body
+            .iter()
+            .map(|part| match part {
+                BodyPart::Literal(_) => 1,
+                BodyPart::Param(n) => args.get(n).map_or(0, |a| a.len() as u64),
+            })
+            .sum();
+        if size > self.limits.max_output_tokens {
+            self.err("TeX capacity exceeded, sorry [main memory size=5000000].", call_tok.span);
+            self.stopped = true;
+            return;
+        }
         let expansion = substitute_body(&def.body, &args);
         self.push_tokens_with_origin(expansion, origin);
     }
