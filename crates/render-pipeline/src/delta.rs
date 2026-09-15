@@ -846,20 +846,19 @@ mod tests {
                 byte_length: 6,
             }],
             fonts: Vec::new(),
-            pages: vec![Page {
-                number: 1,
-                width: display::Tick(1),
-                height: display::Tick(1),
-                items: vec![Item::Rule(display::Rule {
+            pages: vec![Page::resident(1, display::Tick(1), display::Tick(1), vec![Item::Rule(
+                display::Rule {
                     x: display::Tick(0),
                     top: display::Tick(0),
                     width: display::Tick(10),
                     height: display::Tick(10),
                     paint: display::Paint::BLACK,
                     provenance: Provenance::Synthetic("pad".repeat(800)),
-                })],
-            }],
+                },
+            )])],
             diagnostics: vec![d],
+            window: None,
+            document_features: None,
         }
     }
 
@@ -908,6 +907,8 @@ mod tests {
             fonts: Vec::new(),
             pages: Vec::new(),
             diagnostics: vec![d],
+            window: None,
+            document_features: None,
         }
     }
 

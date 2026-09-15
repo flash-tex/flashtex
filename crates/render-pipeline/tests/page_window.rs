@@ -18,7 +18,7 @@ use flashtex_compiler::parser::SourceDocument;
 use flashtex_render_pipeline::display::{self, PageContent, PageWindow, Wire};
 use flashtex_render_pipeline::{render_windowed, FontSet, RenderCache, RenderOptions};
 
-const WIRE: Wire = Wire { images: true, device_color: true };
+const WIRE: Wire = Wire { images: true, device_color: true, diagnostics: false };
 
 fn render_win(text: &str, window: Option<PageWindow>, cache: Option<&RenderCache>) -> display::DisplayList {
     let fonts = FontSet::with_default_dirs(&[]);
