@@ -22,6 +22,7 @@ pub mod fonts;
 pub mod graphics;
 pub mod ids;
 pub mod incremental;
+pub mod inputenc;
 pub mod listings;
 pub mod longtable;
 pub mod mathalpha;

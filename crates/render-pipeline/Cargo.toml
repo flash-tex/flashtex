@@ -132,6 +132,9 @@ flashtex-pdf = { path = "vendor/pdf" }
 flashtex-font-resources = { path = "vendor/font-resources" }
 flashtex-project-files = { path = "vendor/project-files" }
 flashtex-vector-graphics = { path = "vendor/vector-graphics" }
+# utf8.def / *.dfu declarations and the NFSS text-command tables, for literal
+# UTF-8 input (`src/inputenc.rs`). Already a dependency of vendor/compiler.
+flashtex-tex-text-encoding = { path = "vendor/tex-text-encoding" }
 # The standard-class + geometry page frame (exact sp). A path to the sibling,
 # not a vendor mirror: a `git archive` of this directory alone must also
 # archive `crates/class-geometry` (zero dependencies) next to it.
