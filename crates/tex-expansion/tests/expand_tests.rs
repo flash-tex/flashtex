@@ -185,6 +185,62 @@ fn unless_negates() {
 }
 
 #[test]
+fn ifthenelse_equal() {
+    assert_eq!(run(r"\ifthenelse{\equal{a}{a}}{YES}{NO}"), "YES");
+    assert_eq!(run(r"\ifthenelse{\equal{a}{b}}{YES}{NO}"), "NO");
+    // Arguments expand before comparison.
+    assert_eq!(run(r"\def\who{Fred}\ifthenelse{\equal{\who}{Fred}}{YES}{NO}"), "YES");
+    assert_eq!(run(r"\def\who{Fred}\ifthenelse{\equal{\who}{Bob}}{YES}{NO}"), "NO");
+}
+
+#[test]
+fn ifthenelse_not() {
+    assert_eq!(run(r"\ifthenelse{\NOT{\equal{a}{b}}}{YES}{NO}"), "YES");
+    assert_eq!(run(r"\ifthenelse{\NOT{\equal{a}{a}}}{YES}{NO}"), "NO");
+}
+
+#[test]
+fn ifthenelse_and_or() {
+    assert_eq!(run(r"\ifthenelse{\AND{\equal{a}{a}}{\equal{b}{b}}}{YES}{NO}"), "YES");
+    assert_eq!(run(r"\ifthenelse{\AND{\equal{a}{a}}{\equal{b}{c}}}{YES}{NO}"), "NO");
+    assert_eq!(run(r"\ifthenelse{\OR{\equal{a}{b}}{\equal{c}{d}}}{YES}{NO}"), "NO");
+    // Combined nesting, as in real documents.
+    assert_eq!(run(r"\ifthenelse{\OR{\equal{a}{b}}{\AND{\equal{x}{x}}{\NOT{\equal{y}{z}}}}}{YES}{NO}"), "YES");
+    assert_eq!(run(r"\ifthenelse{\OR{\equal{a}{b}}{\AND{\equal{x}{x}}{\NOT{\equal{x}{x}}}}}{YES}{NO}"), "NO");
+}
+
+#[test]
+fn ifthenelse_numeric_tests() {
+    assert_eq!(run(r"\ifthenelse{\isodd{3}}{YES}{NO}"), "YES");
+    assert_eq!(run(r"\ifthenelse{\isodd{4}}{YES}{NO}"), "NO");
+    assert_eq!(run(r"\newcounter{sec}\setcounter{sec}{3}\ifthenelse{\isodd{\value{sec}}}{YES}{NO}"), "YES");
+    assert_eq!(run(r"\ifthenelse{\lengthtest{1pt<2pt}}{YES}{NO}"), "YES");
+    assert_eq!(run(r"\ifthenelse{\lengthtest{2pt<1pt}}{YES}{NO}"), "NO");
+    assert_eq!(run(r"\ifthenelse{\lengthtest{12pt=12pt}}{YES}{NO}"), "YES");
+    assert_eq!(run(r"\def\foo{x}\ifthenelse{\isundefined{\foo}}{YES}{NO}"), "NO");
+    assert_eq!(run(r"\ifthenelse{\isundefined{\nosuchcommand}}{YES}{NO}"), "YES");
+}
+
+#[test]
+fn ifthenelse_boolean() {
+    assert_eq!(run(r"\newboolean{draft}\ifthenelse{\boolean{draft}}{YES}{NO}"), "NO");
+    assert_eq!(run(r"\newboolean{draft}\setboolean{draft}{true}\ifthenelse{\boolean{draft}}{YES}{NO}"), "YES");
+    assert_eq!(
+        run(r"\newboolean{draft}\setboolean{draft}{true}\setboolean{draft}{false}\ifthenelse{\boolean{draft}}{YES}{NO}"),
+        "NO"
+    );
+    // Kernel flags share the representation, so \boolean sees them too.
+    assert_eq!(run(r"\newif\ifmyflag\myflagtrue\ifthenelse{\boolean{myflag}}{YES}{NO}"), "YES");
+    assert_eq!(run(r"\newif\ifmyflag\ifthenelse{\boolean{myflag}}{YES}{NO}"), "NO");
+}
+
+#[test]
+fn ifthenelse_inside_macro_body() {
+    assert_eq!(run(r"\def\check#1{\ifthenelse{\equal{#1}{x}}{YES}{NO}}\check{x}"), "YES");
+    assert_eq!(run(r"\def\check#1{\ifthenelse{\equal{#1}{x}}{YES}{NO}}\check{y}"), "NO");
+}
+
+#[test]
 fn catcode_and_makeatletter() {
     assert_eq!(run(r"\makeatletter\def\foo@bar{X}\foo@bar\makeatother"), "X");
 }

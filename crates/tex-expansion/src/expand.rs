@@ -312,6 +312,9 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("fi", Primitive::Fi),
     ("newif", Primitive::Newif),
     ("unless", Primitive::Unless),
+    ("ifthenelse", Primitive::Ifthenelse),
+    ("newboolean", Primitive::NewBoolean),
+    ("setboolean", Primitive::SetBoolean),
     ("count", Primitive::Count),
     ("dimen", Primitive::Dimen),
     ("skip", Primitive::Skip),
@@ -2448,6 +2451,18 @@ impl Engine {
                 self.do_newif();
                 Step::Continue
             }
+            Ifthenelse => {
+                self.do_ifthenelse(tok.span);
+                Step::Continue
+            }
+            NewBoolean => {
+                self.do_newboolean(tok.span);
+                Step::Continue
+            }
+            SetBoolean => {
+                self.do_setboolean(tok.span);
+                Step::Continue
+            }
             Count | Dimen | Skip | Toks => {
                 let idx = self.scan_number() as u16;
                 self.finish_register_assignment_or_pass(
@@ -4290,13 +4305,13 @@ impl Engine {
             Ifx => self.scan_ifx(),
             Ifnum => {
                 let a = self.scan_number();
-                let rel = self.scan_relation();
+                let rel = self.scan_relation("ifnum");
                 let b = self.scan_number();
                 apply_relation(a, b, rel)
             }
             Ifdim => {
                 let a = self.scan_dimen();
-                let rel = self.scan_relation();
+                let rel = self.scan_relation("ifdim");
                 let b = self.scan_dimen();
                 apply_relation(a, b, rel)
             }
@@ -4405,7 +4420,7 @@ impl Engine {
         meanings_equal(&m1, &m2)
     }
 
-    fn scan_relation(&mut self) -> Relation {
+    fn scan_relation(&mut self, what: &str) -> Relation {
         self.skip_spaces();
         match self.peek_one_expanding().map(|t| t.kind) {
             Some(TokenKind::Char('<', _)) => {
@@ -4421,7 +4436,7 @@ impl Engine {
                 Relation::Gt
             }
             _ => {
-                self.err("Missing = inserted for \\ifnum.", Span::synthetic());
+                self.err(format!("Missing = inserted for \\{what}."), Span::synthetic());
                 Relation::Eq
             }
         }
@@ -4543,6 +4558,13 @@ impl Engine {
                 return;
             }
         };
+        self.newif_define(&base, global);
+    }
+
+    /// Define `\if<base>` (initially `\iffalse`) plus `\<base>true` /
+    /// `\<base>false`, exactly like plain.tex's `\newif`. Shared by
+    /// `\newif\iffoo` and the `ifthen` package's `\newboolean{foo}`.
+    fn newif_define(&mut self, base: &str, global: bool) {
         let if_name = format!("if{base}");
         let true_name = format!("{base}true");
         let false_name = format!("{base}false");
@@ -4559,6 +4581,216 @@ impl Engine {
         };
         self.st.scopes.assign_cs(&true_name, Meaning::Macro(Rc::new(MacroDef::simple(mk("iftrue")))), global);
         self.st.scopes.assign_cs(&false_name, Meaning::Macro(Rc::new(MacroDef::simple(mk("iffalse")))), global);
+    }
+
+    // ---- \ifthenelse ----------------------------------------------------
+    //
+    // The `ifthen` package's `\ifthenelse{test}{true}{false}` plus its
+    // test forms (`\equal`, `\NOT`, `\AND`, `\OR`, `\isodd`,
+    // `\isundefined`, `\lengthtest`, `\boolean`), evaluated at
+    // macro-expansion time: the selected branch's tokens are spliced back
+    // into the input for normal expansion. The test-form commands are
+    // recognized by name while a test is being evaluated; anywhere else
+    // they stay undefined and pass through untouched, as before.
+
+    fn do_ifthenelse(&mut self, span: Span) {
+        let test = self.scan_braced_group(false);
+        let true_branch = self.scan_braced_group(false);
+        let false_branch = self.scan_braced_group(false);
+        let truth = self.eval_test_group(test, span);
+        self.push_tokens(if truth { true_branch } else { false_branch });
+    }
+
+    /// Evaluate already-scanned raw test tokens as an `\ifthenelse` test.
+    /// The tokens are evaluated on a temporary input source which is
+    /// discarded afterwards, so trailing spaces or macro-expansion
+    /// leftovers never leak into the surrounding stream (the same
+    /// sandboxing pattern as `scan_counter_value_arg`).
+    fn eval_test_group(&mut self, test: Vec<Token>, span: Span) -> bool {
+        self.prune_exhausted();
+        let depth = self.sources.len();
+        self.push_tokens(test);
+        let v = self.eval_ifthen_test(span);
+        while self.sources.len() > depth {
+            self.sources.pop();
+        }
+        v
+    }
+
+    /// Evaluate one `\ifthenelse` test expression from the input.
+    fn eval_ifthen_test(&mut self, span: Span) -> bool {
+        loop {
+            match self.peek_one_expanding() {
+                Some(t) if matches!(t.kind, TokenKind::Char(_, CatCode::Space)) => {
+                    self.next_raw_token();
+                }
+                _ => break,
+            }
+        }
+        // A nested `\ifthenelse` is expandable, so it would never survive
+        // the expanding read below: intercept it raw and evaluate the
+        // chosen branch's text as the test, as the package does.
+        if let Some(t) = self.peek_one() {
+            if t.is_cs("ifthenelse") {
+                self.next_raw_token();
+                let nested = self.scan_braced_group(false);
+                let t_branch = self.scan_braced_group(false);
+                let f_branch = self.scan_braced_group(false);
+                let truth = self.eval_test_group(nested, t.span);
+                return self.eval_test_group(if truth { t_branch } else { f_branch }, t.span);
+            }
+        }
+        let tok = match self.next_expanding_raw() {
+            Some(p) => p.tok,
+            None => {
+                self.err("Missing test for \\ifthenelse.", span);
+                return false;
+            }
+        };
+        let name = match &tok.kind {
+            TokenKind::ControlSequence(n) => n.clone(),
+            _ => {
+                self.err("Missing test for \\ifthenelse.", tok.span);
+                return false;
+            }
+        };
+        match name.as_str() {
+            "NOT" => {
+                let arg = self.scan_braced_group(false);
+                !self.eval_test_group(arg, tok.span)
+            }
+            "AND" => {
+                let lhs = self.scan_braced_group(false);
+                let rhs = self.scan_braced_group(false);
+                self.eval_test_group(lhs, tok.span) && self.eval_test_group(rhs, tok.span)
+            }
+            "OR" => {
+                let lhs = self.scan_braced_group(false);
+                let rhs = self.scan_braced_group(false);
+                self.eval_test_group(lhs, tok.span) || self.eval_test_group(rhs, tok.span)
+            }
+            "equal" => {
+                // Like the package's `\edef`-of-both-sides comparison:
+                // each side is expanded, then the resulting texts match.
+                let a = self.scan_braced_group(true);
+                let b = self.scan_braced_group(true);
+                self.detokenize(&a) == self.detokenize(&b)
+            }
+            "isodd" => {
+                let n = self.eval_number_group();
+                n % 2 != 0
+            }
+            "isundefined" => self.eval_isundefined(&tok),
+            "lengthtest" => self.eval_lengthtest(),
+            "boolean" => self.eval_boolean(&tok),
+            _ => {
+                self.err(format!("Unknown test `\\{name}' in \\ifthenelse."), tok.span);
+                false
+            }
+        }
+    }
+
+    /// Read a `{...}` group and scan it as a `<number>` on a temporary
+    /// input source (cf. `scan_counter_value_arg`).
+    fn eval_number_group(&mut self) -> i64 {
+        let mut toks = self.scan_braced_group(false);
+        toks.push(Token::synthetic(TokenKind::ControlSequence("relax".into())));
+        self.prune_exhausted();
+        let depth = self.sources.len();
+        self.push_tokens(toks);
+        let v = self.scan_number();
+        while self.sources.len() > depth {
+            self.sources.pop();
+        }
+        v
+    }
+
+    /// `\lengthtest{<dimen> <relation> <dimen>}`: the whole comparison is
+    /// scanned with this engine's `\ifdim` machinery, so registers,
+    /// `\value{...}` and user macros work as operands.
+    fn eval_lengthtest(&mut self) -> bool {
+        let mut toks = self.scan_braced_group(false);
+        toks.push(Token::synthetic(TokenKind::ControlSequence("relax".into())));
+        self.prune_exhausted();
+        let depth = self.sources.len();
+        self.push_tokens(toks);
+        let a = self.scan_dimen();
+        let rel = self.scan_relation("lengthtest");
+        let b = self.scan_dimen();
+        while self.sources.len() > depth {
+            self.sources.pop();
+        }
+        apply_relation(a, b, rel)
+    }
+
+    /// `\isundefined{\cmd}`: true when the control sequence has no
+    /// meaning. The argument is read raw (never expanded), matching the
+    /// package's `\string`-based check.
+    fn eval_isundefined(&mut self, tok: &Token) -> bool {
+        let toks = self.scan_braced_group(false);
+        let first = toks.iter().find(|t| !matches!(t.kind, TokenKind::Char(_, CatCode::Space)));
+        match first {
+            Some(t) => match &t.kind {
+                TokenKind::ControlSequence(name) => !self.st.scopes.is_defined(name),
+                _ => {
+                    self.err("\\isundefined requires a control sequence.", t.span);
+                    false
+                }
+            },
+            None => {
+                self.err("\\isundefined requires a control sequence.", tok.span);
+                false
+            }
+        }
+    }
+
+    /// `\boolean{name}`: true when `\if<name>` is currently `\iftrue`.
+    /// Works for `ifthen` booleans (`\newboolean`) and kernel flags
+    /// (`\newif\iffoo` uses the same representation).
+    fn eval_boolean(&mut self, tok: &Token) -> bool {
+        let name = self.read_name_arg();
+        match strip_let(self.st.scopes.meaning(&format!("if{name}"))) {
+            Meaning::Primitive(Primitive::Iftrue) => true,
+            Meaning::Primitive(Primitive::Iffalse) => false,
+            _ => {
+                self.err(format!("You have requested boolean `{name}', but the boolean is not defined."), tok.span);
+                false
+            }
+        }
+    }
+
+    /// The `ifthen` package's `\newboolean{name}`: a false boolean backed
+    /// by the `\newif` representation, so `\iffoo`, `\footrue` and
+    /// `\boolean{foo}` all agree.
+    fn do_newboolean(&mut self, span: Span) {
+        let (global, _) = self.take_prefixes();
+        let name = self.read_name_arg();
+        if name.is_empty() {
+            return;
+        }
+        if self.st.scopes.is_defined(&format!("if{name}")) {
+            self.err(format!("LaTeX Error: Command \\if{name} already defined."), span);
+            return;
+        }
+        self.newif_define(&name, global);
+    }
+
+    /// The `ifthen` package's `\setboolean{name}{true|false}` (global,
+    /// like the package's assignment).
+    fn do_setboolean(&mut self, span: Span) {
+        let name = self.read_name_arg();
+        let val_toks = self.scan_braced_group(true);
+        let val = self.detokenize(&val_toks);
+        let if_name = format!("if{name}");
+        if !self.st.scopes.is_defined(&if_name) {
+            self.err(format!("You have requested boolean `{name}', but the boolean is not defined."), span);
+            return;
+        }
+        match val.trim() {
+            "true" => self.st.scopes.assign_cs(&if_name, Meaning::Primitive(Primitive::Iftrue), true),
+            "false" => self.st.scopes.assign_cs(&if_name, Meaning::Primitive(Primitive::Iffalse), true),
+            _ => self.err("You can only set a boolean to `true' or `false'.", span),
+        }
     }
 
     // ---- \string / \meaning helpers ------------------------------------
@@ -4732,6 +4964,7 @@ fn meaning_is_expandable(m: &Meaning, expand_only: bool) -> bool {
                 | Else
                 | Fi
                 | Unless
+                | Ifthenelse
                 | Value
                 | Arabic
                 | RomanLower
@@ -4915,6 +5148,9 @@ fn primitive_name(p: Primitive) -> &'static str {
         Fi => "fi",
         Newif => "newif",
         Unless => "unless",
+        Ifthenelse => "ifthenelse",
+        NewBoolean => "newboolean",
+        SetBoolean => "setboolean",
         Count => "count",
         Dimen => "dimen",
         Skip => "skip",
