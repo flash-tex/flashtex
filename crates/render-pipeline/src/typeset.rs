@@ -9764,7 +9764,10 @@ fn math_items(
             None if g.ch == crate::mathfont::VARNOTHING_SENTINEL => r.text.push('\u{2205}'),
             // An amssymb sentinel stands for its table text.
             None if ams.is_some() => r.text.push_str(ams.expect("checked").text),
-            None => r.text.push(g.ch),
+            None => match crate::mathfont::MathFonts::extraction_text(g.ch) {
+                Some(text) => r.text.push_str(text),
+                None => r.text.push(g.ch),
+            },
         }
         let ci = r.clusters.len() as u32;
         let top = Tick::from_tex_pt(baseline_y - h);
