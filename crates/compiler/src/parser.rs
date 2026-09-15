@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use crate::bib;
+use crate::biblatex;
 use crate::date::TodayDate;
 use crate::color::{Colors, DeviceColor};
 use crate::diagnostics::Diagnostic;
@@ -146,8 +147,10 @@ pub enum Inline {
         /// the colour of the range containing its span, else `color`.
         color_ranges: Vec<(Span, DeviceColor)>,
     },
-    /// A multi-row amsmath display (`gather`, `align` and their starred forms).
-    /// `aligned` cells alternate right/left alignment around shared tab stops.
+    /// A multi-row display (`gather`, `align`, `eqnarray` and starred forms).
+    /// `aligned` cells share tab stops across rows (`align` alternates
+    /// right/left around them; `eqnarray` is right/centred/left, resolved
+    /// from the environment name where it is laid out).
     MathRows {
         rows: Vec<MathRow>,
         aligned: bool,
@@ -183,6 +186,24 @@ pub enum Inline {
         span: Span,
         /// See `Inline::Text::space_before`.
         space_before: bool,
+    },
+    /// `\thepage`: the current page's formatted number. The page is only
+    /// known once the paragraph is set, so this resolves at layout time
+    /// like `Reference { page: true }`, honouring the `\pagenumbering`
+    /// style in force at this position. `span` is the command token.
+    ThePage {
+        span: Span,
+        /// See `Inline::Text::space_before`.
+        space_before: bool,
+    },
+    /// `\pagenumbering{style}`: a zero-width marker recording a page-number
+    /// style switch (and page-counter reset to 1) at this document
+    /// position. Layout applies markers in order as it sets paragraphs,
+    /// so `\thepage` and `\pageref` after the switch use the new style.
+    /// `span` is the command token.
+    PageNumbering {
+        style: crate::xref::NumberStyle,
+        span: Span,
     },
     /// `\hfill`/`\hfil`: infinite horizontal stretch. Multiple fills on one
     /// line share the line's leftover width equally, as real TeX glue does;
@@ -234,6 +255,16 @@ pub enum Inline {
         span: Span,
         mark: bool,
         text: Option<Vec<Inline>>,
+        /// See `Inline::Text::space_before`.
+        space_before: bool,
+    },
+    /// `\marginpar[<left>]{<right>}`. The render pipeline always sets the
+    /// one-sided `<right>` note in the right margin at `\footnotesize`
+    /// (see `render-pipeline`'s `typeset::marginpar`), so the running text
+    /// carries no mark. `span` is the command token.
+    Marginpar {
+        text: Vec<Inline>,
+        span: Span,
         /// See `Inline::Text::space_before`.
         space_before: bool,
     },
@@ -1133,6 +1164,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "label",
     "ref",
     "pageref",
+    "thepage",
     "eqref",
     "cref",
     "Cref",
@@ -1147,6 +1179,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "counterwithin",
     "counterwithout",
     "caption",
+    "captionof",
     "item",
     "includegraphics",
     "scalebox",
@@ -1169,6 +1202,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "footnotemark",
     "footnotetext",
     "fnsymbol",
+    "marginpar",
     "normalfont",
     "bfseries",
     "mdseries",
@@ -1250,6 +1284,9 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "huge",
     "Huge",
     "cite",
+    "parencite",
+    "textcite",
+    "autocite",
     "citet",
     "citep",
     "citealt",
@@ -1266,6 +1303,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "Citealp",
     "Citeauthor",
     "nocite",
+    "addbibresource",
+    "printbibliography",
     "bibitem",
     "bibliography",
     "bibliographystyle",
@@ -1855,6 +1894,8 @@ pub fn parse_project_with(
     let has_document = has_document_environment(&expanded.tokens);
     let mut bibliography_diags = Vec::new();
     let bibliography = bib::prescan(&expanded.tokens[..], &mut bibliography_diags);
+    let biblatex_bibliography =
+        biblatex::prescan(&expanded.tokens[..], documents, &mut bibliography_diags);
     let mut expansions: Vec<ExpansionSite> = Vec::new();
     for token in expanded.tokens.iter() {
         if let (true, Some(definition)) = (token.maps_to_invocation, token.definition) {
@@ -1947,6 +1988,7 @@ pub fn parse_project_with(
         noted_hypersetup_keys: false,
         noted_lstset_keys: false,
         bibliography,
+        biblatex: biblatex_bibliography,
         bib_cursor: 0,
         natbib_limitations: std::collections::BTreeSet::new(),
         natbib_forced_numbers_reported: false,
@@ -2177,6 +2219,8 @@ struct P<'a> {
     /// `bib::prescan` before this parse starts — see that module's doc
     /// comment for why `\cite` does not need a page-aware two-pass pass.
     bibliography: bib::Bibliography,
+    /// The optional biblatex database, resolved from project .bib files.
+    biblatex: biblatex::Bibliography,
     /// How many of `bibliography`'s document-order `\bibitem`s this parse has
     /// reached so far; advanced by each real `\bibitem`, whose own displayed
     /// label is looked up at this index.
@@ -2597,6 +2641,33 @@ impl P<'_> {
         }
     }
 
+    /// A numbered float caption: `\caption` inside its float, or caption.sty's
+    /// standalone `\captionof{<type>}`. Steps the float's counter (LaTeX's
+    /// `\refstepcounter`, so a following `\label` resolves), prefixes
+    /// "Figure N:"/"Table N:" and pushes the caption block the layout draws.
+    fn push_float_caption(
+        &mut self,
+        kind: &str,
+        label: &str,
+        tokens: Vec<InputToken>,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        self.flush_paragraph(blocks, para);
+        let number = self.counters.step(kind).unwrap_or_default();
+        self.set_current_counter(kind, Some(number.clone()));
+        let mut content = vec![Inline::Text {
+            text: format!("{label} {number}:"),
+            span,
+            style: TextStyle::default(),
+            space_before: true,
+        }];
+        content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
+        blocks.push(Block::FigureCaption { content });
+        self.finish_block_dependencies();
+    }
+
     fn command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         if self.document_ended {
             return;
@@ -2632,6 +2703,7 @@ impl P<'_> {
             "setlength" => self.set_length(span),
             "addtolength" => self.add_to_length(span),
             "usepackage" => self.use_package(span),
+            "addbibresource" => self.add_bib_resource(name, span),
             "definecolor" | "providecolor" | "xdefinecolor" | "colorlet" | "definecolorset"
             | "DefineNamedColor" => self.define_color(name, span),
             "selectcolormodel" => self.select_color_model(span),
@@ -2836,16 +2908,21 @@ impl P<'_> {
             "thispagestyle" => {
                 let _ = self.required_group(name, span);
             }
-            // `\pagenumbering{arabic|roman}` resets the page counter and its
-            // display style. With no footer rendering to show a number in
-            // (see `\pagestyle` above) and no separate "displayed page
-            // number" distinct from `Page::number` for `\pageref` to read,
-            // there is nothing observable left for it to change; accepted
-            // with the same honest no-op rather than faking a counter reset
-            // whose only visible effect would be through those two missing
-            // features.
+            // `\pagenumbering{arabic|roman|alph|...}` resets the page
+            // counter to 1 and selects the display style `\thepage` (and
+            // `\pageref`, which prints the labelled page the same way)
+            // uses from here on. The marker is zero-width inside the
+            // paragraph, so a switch between paragraphs — or even
+            // mid-paragraph — moves no glyph; layout applies markers in
+            // document order when the paragraph is set. An unrecognised
+            // style falls back to arabic rather than diagnosing: the
+            // command itself stays accepted, as before.
             "pagenumbering" => {
-                let _ = self.required_group(name, span);
+                let (tokens, _) = self.required_group(name, span);
+                let style = crate::xref::NumberStyle::from_command(&token_text(&tokens))
+                    .unwrap_or(crate::xref::NumberStyle::Arabic);
+                self.document_global_state = true;
+                para.push(Inline::PageNumbering { style, span });
             }
             // `\hypersetup{key=value,...}` (hyperref): the same keys the
             // package options take, settable anywhere. Every key this
@@ -3064,6 +3141,15 @@ impl P<'_> {
                     space_before,
                 });
             }
+            "thepage" => {
+                // `\thepage`: the current page's formatted number. The
+                // page is only known once pagination completes, so this
+                // resolves at layout time on the same path as `\pageref`,
+                // honouring the `\pagenumbering` style in force here.
+                let space_before = self.space_precedes(self.i - 1);
+                self.document_global_state = true;
+                para.push(Inline::ThePage { span, space_before });
+            }
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
             | "labelcref" => self.clever_reference(name, span, para),
             "tableofcontents" => {
@@ -3073,6 +3159,10 @@ impl P<'_> {
                 self.finish_block_dependencies();
             }
             "cite" => {
+                if self.biblatex.enabled() {
+                    self.biblatex_cite(name, span, para);
+                    return;
+                }
                 // natbib redefines `\cite` (natbib.sty line 693): with an
                 // optional argument it is `\citep`, without one `\citet`.
                 // That asymmetry is natbib's, not a simplification here.
@@ -3111,6 +3201,7 @@ impl P<'_> {
                     ));
                 }
             }
+            "parencite" | "textcite" | "autocite" => self.biblatex_cite(name, span, para),
             "citet" | "citep" | "citealt" | "citealp" | "citeauthor" | "citefullauthor"
             | "citeyear" | "citeyearpar" | "citenum" | "Citet" | "Citep" | "Citealt"
             | "Citealp" | "Citeauthor" => self.natbib_cite(name, span, para),
@@ -3126,11 +3217,9 @@ impl P<'_> {
                     full_span,
                 ));
             }
-            // Real LaTeX's `\nocite` only writes a BibTeX aux-file entry (to
-            // pull an uncited reference into the printed bibliography); it
-            // has no visible output of its own either way, and this compiler
-            // has no `.bib`/aux-file pipeline to feed (see `bibliography`
-            // below), so consuming the argument is the whole honest behaviour.
+            "printbibliography" => self.print_bibliography(span, blocks, para),
+            // Real LaTeX's `\nocite` has no visible output; biblatex's
+            // pre-scan uses its keys to include entries in the printed list.
             "nocite" => {
                 let _ = self.required_group(name, span);
             }
@@ -3161,18 +3250,42 @@ impl P<'_> {
                     let style = self.style;
                     para.extend(self.inlines_from_tokens(tokens, style));
                 } else {
-                    self.flush_paragraph(blocks, para);
-                    let number = self.counters.step("figure").unwrap_or_default();
-                    self.set_current_counter("figure", Some(number.clone()));
-                    let mut content = vec![Inline::Text {
-                        text: format!("Figure {number}:"),
-                        span,
-                        style: TextStyle::default(),
-                        space_before: true,
-                    }];
-                    content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
-                    blocks.push(Block::FigureCaption { content });
-                    self.finish_block_dependencies();
+                    self.push_float_caption("figure", "Figure", tokens, span, blocks, para);
+                }
+            }
+            // caption.sty's `\captionof{<type>}[<short>]{<text>}`: the same
+            // numbered caption `\caption` would produce inside the named
+            // float, usable with no float around it. The `[<short>]`
+            // list-of-figures text has no list to feed here, so it is
+            // consumed and ignored, as longtable captions already do.
+            "captionof" => {
+                let (type_tokens, _) = self.required_group(name, span);
+                let float_type = token_text(&type_tokens);
+                let float_type = float_type.trim();
+                let _ = self.optional_bracket_argument();
+                let (tokens, _) = self.required_group(name, span);
+                // `if` chains, not a `match`: the inventory test scrapes this
+                // dispatch region for `"name" =>` arm heads, and inner match
+                // arms would read as commands the inventory does not list.
+                if float_type == "figure" {
+                    self.push_float_caption("figure", "Figure", tokens, span, blocks, para);
+                } else if float_type == "table" {
+                    self.push_float_caption("table", "Table", tokens, span, blocks, para);
+                } else {
+                    // A missing `{type}` already produced "\captionof
+                    // requires a braced argument" above; only diagnose a type
+                    // that was actually given.
+                    if !float_type.is_empty() {
+                        self.diags.push(Diagnostic::error(
+                            format!(
+                                "\\captionof is only supported for the figure and table float types, not '{float_type}'"
+                            ),
+                            Some(span),
+                            Some("typeset the caption text as an ordinary paragraph".into()),
+                        ));
+                    }
+                    let style = self.style;
+                    para.extend(self.inlines_from_tokens(tokens, style));
                 }
             }
             "item" => {
@@ -3308,6 +3421,7 @@ impl P<'_> {
             "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots }),
             "footnote" | "footnotemark" | "footnotetext" => self.footnote(name, span, para),
             "fnsymbol" => self.fnsymbol_command(span, para),
+            "marginpar" => self.marginpar(span, para),
             // latex.ltx `\linebreak`/`\nolinebreak` (`\@no@lnbk`): a penalty of
             // `-\@getpen{n}`/`\@getpen{n}` with the space in front of the
             // command moved after it; in vertical mode, `\@nolnerr`.
@@ -4245,6 +4359,71 @@ impl P<'_> {
         input.token.kind = TokenKind::Word(rest);
     }
 
+    /// `\addbibresource[<options>]{<file>}`. Kept out of `P::command`: that
+    /// function's frame is on the stack once per nested sub-parse, and in debug
+    /// builds every local of every arm gets its own slot in it (see
+    /// [`STREAM_DEPTH_LIMIT`]).
+    #[inline(never)]
+    fn add_bib_resource(&mut self, name: &str, span: Span) {
+        let _ = self.optional_bracket_argument();
+        let (_, argument_span) = self.required_group(name, span);
+        self.biblatex
+            .add_resource(span.merge(argument_span), &mut self.diags);
+    }
+
+    /// `\printbibliography[<options>]`; out of line for the same reason as
+    /// `P::add_bib_resource`.
+    #[inline(never)]
+    fn print_bibliography(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let options = self
+            .optional_bracket_argument()
+            .map(|(options, _)| options);
+        let printed = self.biblatex.print_bibliography(
+            options.as_deref(),
+            self.chapter_class,
+            span,
+            &mut self.diags,
+        );
+        if !printed.is_empty() {
+            self.flush_paragraph(blocks, para);
+            self.document_global_state = true;
+            for block in printed {
+                blocks.push(block);
+                self.finish_block_dependencies();
+            }
+        }
+    }
+
+    /// Reads the biblatex citation notes and key list, then delegates rendering
+    /// to the pre-resolved bibliography.
+    #[inline(never)]
+    fn biblatex_cite(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i.saturating_sub(1));
+        let (pre, post) = self.cite_notes();
+        let (tokens, argument_span) = self.required_group(name, span);
+        let full_span = span.merge(argument_span);
+        let keys = cite_keys(&tokens);
+        self.document_global_state = true;
+        if keys.is_empty() {
+            self.diags.push(Diagnostic::warning(
+                format!("\\{name} was given an empty key list"),
+                Some(full_span),
+                Some("rendered nothing for the empty citation".into()),
+            ));
+            return;
+        }
+        let inlines = self.biblatex.cite_inlines(
+            name,
+            &keys,
+            pre.as_deref(),
+            post.as_deref(),
+            full_span,
+            space_before,
+            &mut self.diags,
+        );
+        para.extend(inlines);
+    }
+
     /// The natbib options in force, or natbib's own defaults plus one error
     /// when the document never loaded the package — which is what pdfLaTeX
     /// reports too, as an undefined control sequence.
@@ -4265,7 +4444,13 @@ impl P<'_> {
     /// `\citet`, `\citep`, `\citealt`, `\citealp`, `\citeauthor`,
     /// `\citefullauthor`, `\citeyear`, `\citeyearpar`, `\citenum` and their
     /// starred and `\Cite`-capitalised forms.
+    ///
+    /// With biblatex loaded, `\citeauthor` and `\citeyear` are biblatex's.
     fn natbib_cite(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        if self.biblatex.enabled() && matches!(name, "citeauthor" | "citeyear") {
+            self.biblatex_cite(name, span, para);
+            return;
+        }
         let star = self.take_cite_star();
         let command = if star { format!("{name}*") } else { name.to_string() };
         let options = self.natbib_options(name, span);
@@ -5207,6 +5392,8 @@ impl P<'_> {
                     | "flalign*"
                     | "multline"
                     | "multline*"
+                    | "eqnarray"
+                    | "eqnarray*"
             ) && self.in_body
             {
                 self.multirow_environment(span, &environment, blocks, para);
@@ -6078,9 +6265,12 @@ impl P<'_> {
         None
     }
 
-    /// amsmath `gather`/`align` (and starred forms): rows split on top-level
-    /// `\\`, `align` cells split on top-level `&`. Numbered forms number every
-    /// row except those carrying `\nonumber`/`\notag`.
+    /// amsmath `gather`/`align` (and starred forms) and LaTeX's `eqnarray`:
+    /// rows split on top-level `\\`, `align`/`eqnarray` cells split on
+    /// top-level `&`. Numbered forms number every row except those carrying
+    /// `\nonumber`/`\notag`. `eqnarray` shares tab stops across rows (its
+    /// three columns are right/centred/left in the renderer, which re-reads
+    /// the environment name from source), so it counts as aligned here.
     fn multirow_environment(
         &mut self,
         open: Span,
@@ -6090,7 +6280,8 @@ impl P<'_> {
     ) {
         self.flush_paragraph(blocks, para);
         let numbered = !name.ends_with('*');
-        let aligned = name.starts_with("align") || name.starts_with("flalign");
+        let aligned =
+            name.starts_with("align") || name.starts_with("flalign") || name.starts_with("eqnarray");
         if name.starts_with("alignat") {
             // The column-pair count; cells are split on `&` regardless.
             let _ = self.required_group("alignat", open);
@@ -6305,6 +6496,14 @@ impl P<'_> {
                 intertext,
                 shove,
             });
+        }
+        if name == "eqnarray" || name == "eqnarray*" {
+            // ltmath.dtx `\eqnarray` opens with `\stepcounter{equation}` on
+            // top of `\@@eqncr`'s per-row `\refstepcounter`, so N rows
+            // consume N+1 numbers (the `*` form still consumes its one).
+            // Each row prints before its own step, so the extra step lands
+            // here at the end, where it moves no visible number.
+            let _ = self.counters.step("equation");
         }
         para.push(Inline::MathRows {
             rows: math_rows,
@@ -8102,6 +8301,30 @@ impl P<'_> {
         self.argument_inlines(tokens, span, TextStyle::default())
     }
 
+    /// `\marginpar[<left>]{<right>}` (latex.ltx `\@marginpar`): the
+    /// optional argument is the note for even pages of a two-sided
+    /// document, the required one the note everywhere else. This compiler
+    /// always sets the note in the right margin (the one-sided default),
+    /// so a present `[<left>]` is consumed and reported rather than set.
+    /// Margin placement breaks pages, so incremental block reuse is
+    /// disabled (the same conservative rule `\label`/`\ref` use).
+    fn marginpar(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        self.document_global_state = true;
+        if let Some((_, raw_span)) = self.optional_bracket_argument() {
+            self.diags.push(Diagnostic::warning(
+                "\\marginpar's optional [left] argument is ignored: the note is always set in the right margin",
+                Some(raw_span),
+                Some("used the required {right} argument instead".into()),
+            ));
+        }
+        // Like `\@footnotetext`, the argument is `\long`: a blank line
+        // inside it is a paragraph break in the note, not its end.
+        let (tokens, _) = self.required_group_bounded("marginpar", span, true);
+        let text = self.argument_inlines(tokens, span, TextStyle::default());
+        para.push(Inline::Marginpar { text, span, space_before });
+    }
+
     /// Parses an argument with the ordinary dispatch starting in `style`
     /// (see [`P::footnote_inlines`]); paragraph breaks become line breaks
     /// attributed to `span`.
@@ -8991,6 +9214,9 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         "natbib" => options
             .iter()
             .all(|option| crate::natbib::IMPLEMENTED_OPTIONS.contains(option)),
+        // biblatex's supported options are parsed by crate::biblatex; package
+        // loading itself has no additional layout effect.
+        "biblatex" => true,
         // siunitx v3 numbers, units, quantities, lists, ranges and angles
         // (crate::siunitx); its options are \sisetup keys, and a key that
         // is not modelled gets its own diagnostic there.
@@ -11061,6 +11287,70 @@ mod tests {
     }
 
     #[test]
+    fn eqnarray_rows_are_three_column_displays_on_the_equation_counter() {
+        let source = "\\begin{eqnarray} x^{2} &=& y \\\\ 2xyz &=& 1 \\nonumber \\\\ w &=& 3 \\end{eqnarray}";
+        let (parsed, items) = items(source);
+        // The body is math now: no `unsupported_feature`, no plain text.
+        assert!(
+            !parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.code == Some(crate::diagnostics::DiagnosticCode::UnsupportedFeature)),
+            "{:?}",
+            parsed.diagnostics
+        );
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph");
+        };
+        let Inline::MathRows { rows, aligned, .. } = &inlines[0] else {
+            panic!("expected multi-row math, got {inlines:?}");
+        };
+        assert!(aligned, "eqnarray columns share tab stops like align");
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|row| row.cells.len() == 3), "{rows:?}");
+        // `\nonumber` suppresses exactly one row's number.
+        assert_eq!(
+            rows.iter().map(|r| r.number.as_deref()).collect::<Vec<_>>(),
+            [Some("1"), None, Some("2")]
+        );
+        let equals: Vec<_> = items.iter().filter(|i| i.text == "=").collect();
+        assert_eq!(equals.len(), 3);
+        assert!(equals.iter().all(|i| (i.x_pt - equals[0].x_pt).abs() < 0.01));
+    }
+
+    #[test]
+    fn eqnarray_star_is_unnumbered_but_still_consumes_an_equation_number() {
+        // ltmath.dtx: `\eqnarray` opens with `\stepcounter{equation}` on top
+        // of `\@@eqncr`'s per-row `\refstepcounter`, so N rows consume N+1
+        // numbers however they print; the `*` form still consumes its one.
+        let source = "\\begin{eqnarray*} a &=& b \\\\ c &=& d \\end{eqnarray*}\\begin{equation} e \\end{equation}";
+        let (parsed, items) = items(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let rows = parsed
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .flatten()
+            .find_map(|i| match i {
+                Inline::MathRows { rows, .. } => Some(rows),
+                _ => None,
+            })
+            .expect("eqnarray* rows");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row.cells.len() == 3));
+        assert!(rows.iter().all(|row| row.number.is_none()));
+        let numbers: Vec<_> = items
+            .iter()
+            .filter(|i| i.text.starts_with('('))
+            .map(|i| i.text.as_str())
+            .collect();
+        assert_eq!(numbers, ["(2)"]);
+    }
+
+    #[test]
     fn aboxed_rows_keep_the_relation_at_the_shared_alignment_point() {
         // GitHub #567: each `\Aboxed{<lhs> <rel> <rhs>}` row boxes its full
         // expression while keeping the relation symbol at the same structural
@@ -13059,5 +13349,45 @@ mod tests {
         assert!(parsed.diagnostics[0]
             .message
             .contains("\\bibitem is only supported"));
+    }
+
+    #[test]
+    fn marginpar_parses_to_a_margin_note_without_diagnostics() {
+        let (parsed, _items) = items(r"Text\marginpar{note}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(parsed.document_global_state);
+        let mut notes = Vec::new();
+        for block in &parsed.blocks {
+            if let Block::Paragraph(content) = block {
+                for inline in content {
+                    if let Inline::Marginpar { text, .. } = inline {
+                        notes.push(text.clone());
+                    }
+                }
+            }
+        }
+        assert_eq!(notes.len(), 1, "{:?}", parsed.blocks);
+        let words: Vec<String> = notes[0]
+            .iter()
+            .filter_map(|i| match i {
+                Inline::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(words, vec!["note".to_string()]);
+        // The note text stays out of the running prose: the Core 14 layout
+        // has no margin model and skips it (the render pipeline places it).
+        let prose: String = _items.iter().map(|item| item.text.as_str()).collect();
+        assert!(!prose.contains("note"), "{prose:?}");
+    }
+
+    #[test]
+    fn marginpar_optional_left_argument_is_reported_and_ignored() {
+        let (parsed, _items) = items(r"Text\marginpar{left}{right}");
+        // Two braced groups: the second is ordinary prose after the note.
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let parsed = parse(r"Text\marginpar[left]{right}");
+        assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+        assert!(parsed.diagnostics[0].message.contains("[left]"));
     }
 }

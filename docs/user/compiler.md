@@ -9,8 +9,6 @@ writer are all original Rust code, linked into one binary.
 flashtex build main.tex                 # main.pdf next to it; \input/\include resolved from its folder
 flashtex build main.tex -o out.pdf --timing
 flashtex check main.tex --json          # diagnostics only, machine-readable
-flashtex check main.tex --fix           # apply did-you-mean suggestions, then re-check
-flashtex check main.tex --fix --dry-run # print a unified diff; write nothing
 flashtex watch main.tex                 # rebuild on every change; Ctrl-C stops
 flashtex supported                      # what LaTeX is implemented, with coverage
 flashtex fonts                          # which fonts/metrics this binary resolves
@@ -56,7 +54,7 @@ Any editor or CI can drive that same JSON Lines protocol directly — see
 ```
 flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
                [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
-flashtex check <main.tex> [--json] [--strict] [--fix] [--dry-run] [--project-root DIR] [--font-dir DIR]...
+flashtex check <main.tex> [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
 flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
 flashtex supported [--json|--md|--coverage]
 flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json] [--pdf out.pdf] [--timing]
@@ -101,22 +99,6 @@ output as *File › Export PDF* in the app. The file is written atomically
 `build` without output files: the same discovery, parse and layout (page
 count and every diagnostic depend on layout), diagnostics on stderr and,
 with `--json`, the report on stdout. `-o`/`--v2` are rejected.
-
-`--fix` applies every diagnostic that carries a `suggestion` and a source
-span: the span's bytes are replaced with the suggestion. Edits in one file
-are applied back-to-front so later offsets stay valid; overlapping spans are
-skipped (and reported); a file whose bytes changed between compile and apply
-is refused; files outside the project root and symlinks are never written.
-Writes are atomic (sibling temp file + rename) and keep the original mode.
-After applying, `check` is re-run and the new summary (and exit status)
-reflect that second pass. `--dry-run` (only with `--fix`) prints a unified
-diff per file and writes nothing. Either way a line
-
-```
-fixed N issue(s) in M file(s); K skipped
-```
-
-is printed.
 
 ### `watch`
 
@@ -167,23 +149,13 @@ replace an unrelated file and explains when the directory needs `sudo`.
 
 ## Diagnostics and exit status
 
-On a terminal, each diagnostic is rustc-style: a header, the source line with
-a caret underline, optional `= recovery:` and, when the compiler offered a
-replacement, a help block:
+Every diagnostic is one stderr line:
 
 ```
-= help: did you mean `\alpha`?
+file:line:col: severity[code] message (recovery: what was rendered instead)
 ```
 
-followed by the suggested line with a `+` gutter. Piped stderr (and
-`--diagnostics=short`) stays one line:
-
-```
-file:line:col: severity[code] message (recovery: what was rendered instead) (did you mean \alpha?)
-```
-
-The parenthetical suggestion is omitted when there is none. `file` is
-project-relative (`sections/intro.tex`); `line:col` are 1-based
+`file` is project-relative (`sections/intro.tex`); `line:col` are 1-based
 (column in characters) and are omitted when a diagnostic has no source
 position (font resource notes, unstable labels). A summary line follows:
 
@@ -230,9 +202,7 @@ The codes (`compiler`, `overfull_hbox`, `math_limitation`, `missing_file`,
 ```
 
 `line`, `column`, `start_byte`, `end_byte` and `recovery` are `null` when
-absent; `suggestion` is the replacement text and is omitted (not `null`) when
-there is none; `severity` is `error` or `warning`; `outputs` is empty for
-`check`. With `--fix`, the report is the re-check after edits are applied.
+absent; `severity` is `error` or `warning`; `outputs` is empty for `check`.
 
 ## Multi-file projects
 
@@ -330,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 333 text-mode and 555 math-mode command entries, 64 environments and 23 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 341 text-mode and 555 math-mode command entries, 66 environments and 24 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -338,7 +308,7 @@ Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test
 
 | Canonical set | Commands supported | Environments supported |
 | --- | ---: | ---: |
-| kernel | 191/410 (46.6%) | 19/30 (63.3%) |
+| kernel | 193/410 (47.1%) | 20/30 (66.7%) |
 | amsmath | 42/102 (41.2%) | 17/21 (81.0%) |
 | amssymb | 225/229 (98.3%) | none defined |
 | enumitem | 1/17 (5.9%) | none defined |
@@ -348,7 +318,7 @@ Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test
 | tikz | 0/43 (0.0%) | 0/2 (0.0%) |
 | xcolor | 14/71 (19.7%) | none defined |
 | siunitx | 18/240 (7.5%) | none defined |
-| **total** | **536/1314 (40.8%)** | |
+| **total** | **539/1314 (41.0%)** | |
 
 Generated by `flashtex-compiler --supported coverage` against `crates/compiler/supported/canonical-latex.tsv` (LaTeX2e reference-manual index and package sources, each name confirmed by pdfLaTeX; TeX Live 2026). The total row counts commands and environments together. Supported means handled without an unsupported diagnostic, not typographic parity.
 
@@ -438,7 +408,8 @@ Canonical sources:
 | `\include` | `{path}` | expands a project-relative document in place |
 | `\label` | `{key}` | names the current section, equation or figure number |
 | `\ref` | `{key}` | number of the labelled item |
-| `\pageref` | `{key}` | page number of the labelled item |
+| `\pageref` | `{key}` | page number of the labelled item, in the \pagenumbering style in force at the label |
+| `\thepage` |  | current page's number, resolved when the page is set, in the \pagenumbering style in force here |
 | `\eqref` | `{key}` | parenthesised equation number of the labelled item |
 | `\cref` | `*{key list}` | cleveref lower-case named references; consecutive ranges are compressed |
 | `\Cref` | `*{key list}` | cleveref capitalised named references; consecutive ranges are compressed |
@@ -453,6 +424,7 @@ Canonical sources:
 | `\counterwithin` | `{counter}{parent}` | counter reset by parent and printed \theparent.\arabic{counter}; starred form keeps the printed form |
 | `\counterwithout` | `{counter}{parent}` | undoes \counterwithin; starred form keeps the printed form |
 | `\caption` | `{...}` | numbered "Figure N:" caption inside figure |
+| `\captionof` | `{type}[short]{...}` | numbered caption outside a float: "Figure N:" for figure, "Table N:" for table |
 | `\item` | `[label]` | entry of an itemize, enumerate or description list |
 | `\includegraphics` | `*[keys]{file}` | image box in running text (graphicx keys as written) |
 | `\scalebox` | `{x}[y]{...}` | graphics.sty scaled box of the content |
@@ -475,6 +447,7 @@ Canonical sources:
 | `\footnotemark` | `[n]` | footnote mark only |
 | `\footnotetext` | `[n]{...}` | footnote text without a mark |
 | `\fnsymbol` | `{counter}` | a counter's value 1-9 as a footnote symbol |
+| `\marginpar` | `[left]{right}` | margin note set in the right margin at footnotesize; always the right side, with no collision avoidance between close notes |
 | `\normalfont` |  | resets the text face |
 | `\bfseries` |  | switches to bold |
 | `\mdseries` |  | switches to medium weight |
@@ -535,7 +508,7 @@ Canonical sources:
 | `\flushcolumns` |  | multicol: columns are stretched to one height (the default) |
 | `\pagestyle` | `{style}` | accepted; no headers or footers are rendered |
 | `\thispagestyle` | `{style}` | accepted; no headers or footers are rendered |
-| `\pagenumbering` | `{style}` | accepted; no page numbers are rendered |
+| `\pagenumbering` | `{style}` | resets the page counter to 1 and selects the \thepage/\pageref style (arabic, roman, Roman, alph, Alph); unknown styles fall back to arabic |
 | `\listfiles` |  | accepted no-op; there is no log stream |
 | `\centering` |  | centres the following paragraphs |
 | `\Centering` |  | centres the following paragraphs (ragged2e form) |
@@ -555,14 +528,17 @@ Canonical sources:
 | `\LARGE` |  | size declaration from the class size table |
 | `\huge` |  | size declaration from the class size table |
 | `\Huge` |  | size declaration from the class size table |
-| `\cite` | `[note]{keys}` | numbered citation from thebibliography entries; natbib redefines it as \citet, or as \citep when an optional argument follows |
+| `\cite` | `[note]{keys}` | numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \citet, or as \citep when an optional argument follows |
+| `\parencite` | `[pre][post]{keys}` | biblatex parenthetical citation: [n] in numeric style |
+| `\textcite` | `[pre][post]{keys}` | biblatex textual citation: Author [n] in numeric style |
+| `\autocite` | `[pre][post]{keys}` | biblatex automatic citation, equivalent to \parencite in this compiler |
 | `\citet` | `[pre][post]{keys}` | natbib textual citation: Name (Year); one optional argument is the post-note |
 | `\citep` | `[pre][post]{keys}` | natbib parenthetical citation: (Name, Year); one optional argument is the post-note |
 | `\citealt` | `[pre][post]{keys}` | natbib \citet without the parentheses: Name Year |
 | `\citealp` | `[pre][post]{keys}` | natbib \citep without the parentheses: Name, Year |
-| `\citeauthor` | `[pre][post]{keys}` | natbib author list alone; the starred form is the long list |
+| `\citeauthor` | `[pre][post]{keys}` | natbib author list alone, or biblatex author text; the starred form is the long list |
 | `\citefullauthor` | `[pre][post]{keys}` | natbib \citeauthor*: the long author list |
-| `\citeyear` | `[pre][post]{keys}` | natbib year alone |
+| `\citeyear` | `[pre][post]{keys}` | natbib year alone, or biblatex year text |
 | `\citeyearpar` | `[pre][post]{keys}` | natbib year in parentheses |
 | `\citenum` | `[pre][post]{keys}` | natbib \bibitem number alone, whatever the citation style |
 | `\citetext` | `{text}` | natbib's citation delimiters around arbitrary text |
@@ -571,7 +547,9 @@ Canonical sources:
 | `\Citealt` | `[pre][post]{keys}` | natbib \citealt with the author list's first letter uppercased |
 | `\Citealp` | `[pre][post]{keys}` | natbib \citealp with the author list's first letter uppercased |
 | `\Citeauthor` | `[pre][post]{keys}` | natbib \citeauthor with the author list's first letter uppercased |
-| `\nocite` | `{keys}` | accepted no-op; there is no .bib pipeline |
+| `\nocite` | `{keys}` | biblatex includes keys, including * for every resource entry, without visible citation output |
+| `\addbibresource` | `[location]{file}` | biblatex registers a project-relative .bib resource |
+| `\printbibliography` | `[key=value,...]` | biblatex heading and formatted entries from the registered .bib resources |
 | `\bibitem` | `[label]{key}` | entry of thebibliography; natbib's [Author(Year)] and [Author, Year] labels feed author-year citations |
 | `\bibliography` | `{files}` | diagnosed: .bib input is not read |
 | `\bibliographystyle` | `{style}` | diagnosed: no effect without .bib support |
@@ -902,6 +880,8 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `alignat*` | text | rows aligned at &; the column count is consumed |
 | `flalign` | text | rows aligned at &, each numbered |
 | `flalign*` | text | rows aligned at & |
+| `eqnarray` | text | three columns (right, centred, left) with 2\arraycolsep gaps, each row numbered |
+| `eqnarray*` | text | three columns (right, centred, left) with 2\arraycolsep gaps |
 | `multline` | text | multi-line display; only the last line is numbered |
 | `multline*` | text | multi-line display |
 | `subequations` | text | amsmath: displays inside number as the parent number plus a, b, ...; a \label right after \begin gets the parent number |
@@ -978,6 +958,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `siunitx` | `any \sisetup keys` | v3 \num, \unit, \qty, lists, ranges, \ang, \sisetup and \DeclareSIUnit; unmodelled keys are diagnosed |
 | `multicol` | `` | multicols and multicols* with preface, \columnbreak, \raggedcolumns (columns set by the render pipeline) |
 | `natbib` | `numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak` | \citet/\citep/\citealt/\citealp/\citeauthor/\citeyear/\citeyearpar/\citenum/\citetext and the \cite it redefines, with [Author(Year)] \bibitem labels; sort, compress, super and openbib are diagnosed |
+| `biblatex` | `style=numeric, sorting=none, backend=biber` | basic project-relative .bib resources with numeric citations, textcite/parencite/autocite, citeauthor/citeyear, nocite and printbibliography; authoryear labels are minimal, alphabetic warns |
 | `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
 | `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 | `ifthen` | `` | \ifthenelse with \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests, and \newif conditionals with \newboolean/\setboolean; \whiledo loops are diagnosed where they are used |

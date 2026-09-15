@@ -348,6 +348,7 @@ fn text_probe(name: &str, arguments: &str) -> String {
         // A bare `{x}` test is not a valid `\ifthenelse` test (the engine
         // reports "Missing test"), so probe the real form instead.
         "ifthenelse" => "\\ifthenelse{\\equal{a}{a}}{yes}{no}".into(),
+        "captionof" => "\\captionof{figure}{x}".into(),
         "uline" => "\\usepackage{ulem}\\uline{x}".into(),
         "sout" => "\\usepackage{ulem}\\sout{x}".into(),
         _ => with_arguments(name, arguments, "1pt"),
