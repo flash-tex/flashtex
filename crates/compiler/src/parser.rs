@@ -6245,6 +6245,38 @@ impl P<'_> {
                         });
                     }
                 }
+                // `\ref`/`\pageref`/`\eqref` reach here whenever they sit in a
+                // heading, a caption or a style argument, because those are
+                // flattened into a token list instead of being re-parsed. Without
+                // this arm the command was dropped and its braced key survived as
+                // ordinary text, so `\section{Back to \ref{sec:a}}` typeset the
+                // literal "sec:a" instead of the number. Emit the same
+                // `Inline::Reference` the main token loop builds, so resolution and
+                // the undefined-reference `??` behave identically in both places.
+                TokenKind::Command(name) if matches!(name.as_str(), "ref" | "pageref" | "eqref") => {
+                    match siunitx_group_at(&expanded, index + 1) {
+                        Some((raw, argument_span, after)) => {
+                            skip_until = after;
+                            let span = if argument_span.document == input.token.span.document {
+                                input.token.span.merge(argument_span)
+                            } else {
+                                input.token.span
+                            };
+                            content.push(Inline::Reference {
+                                key: raw.trim().to_string(),
+                                page: name == "pageref",
+                                equation: name == "eqref",
+                                span,
+                                space_before,
+                            });
+                        }
+                        None => self.diags.push(Diagnostic::error(
+                            format!("\\{name} requires an argument"),
+                            Some(input.token.span),
+                            Some("rendered nothing for the reference".into()),
+                        )),
+                    }
+                }
                 TokenKind::Command(name) if style_command(name) => {
                     pending = Some(apply_style(style, name));
                 }
@@ -9700,6 +9732,46 @@ mod tests {
     /// typed-space source below; the firing itself is pinned by the
     /// decision-function assertions plus `\today`, whose handler does read
     /// the pending space.
+    /// A cross-reference in a heading, caption or style argument goes through
+    /// `inlines_from_tokens`, which flattens tokens instead of re-parsing them.
+    /// Before the `ref`/`pageref`/`eqref` arm existed the command was dropped and
+    /// its braced key survived as ordinary text, so `\\section{Back to \\ref{sec:a}}`
+    /// typeset the literal "sec:a" instead of the section number.
+    #[test]
+    fn reference_in_a_heading_is_a_reference_not_text() {
+        let parsed = parse(
+            "\\section{Intro}\\label{sec:a}\n\\section{Back to \\ref{sec:a} again}\n",
+        );
+        let mut headings = Vec::new();
+        for block in &parsed.blocks {
+            if let Block::Heading { content, .. } = block {
+                headings.push(content.clone());
+            }
+        }
+        let second = headings.last().expect("two headings");
+        let keys: Vec<_> = second
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Reference { key, page, equation, .. } => {
+                    Some((key.clone(), *page, *equation))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            vec![("sec:a".to_string(), false, false)],
+            "the heading's \\ref must be an Inline::Reference: {second:?}"
+        );
+        assert!(
+            !second.iter().any(|inline| matches!(
+                inline,
+                Inline::Text { text, .. } if text.contains("sec:a")
+            )),
+            "the key must not survive as text: {second:?}"
+        );
+    }
+
     #[test]
     fn xspace_before_ordinary_commands_inserts_space() {
         // The decision function itself: ordinary commands fire, the
