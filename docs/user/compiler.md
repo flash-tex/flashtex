@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 307 text-mode and 552 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 308 text-mode and 552 math-mode command entries, 49 environments and 22 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -442,6 +442,7 @@ Canonical sources:
 | `\footnote` | `[n]{...}` | numbered mark and page-bottom footnote text |
 | `\footnotemark` | `[n]` | footnote mark only |
 | `\footnotetext` | `[n]{...}` | footnote text without a mark |
+| `\fnsymbol` | `{counter}` | a counter's value 1-9 as a footnote symbol |
 | `\normalfont` |  | resets the text face |
 | `\bfseries` |  | switches to bold |
 | `\mdseries` |  | switches to medium weight |
@@ -552,6 +553,7 @@ Canonical sources:
 | `\negthickspace` |  | text kern -.2777em |
 | `\enspace` |  | text kern .5em |
 | `\enskip` |  | horizontal glue of .5em |
+| `\xspace` |  | word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 | `\AA` |  | text symbol \AA: OT1 Å, T1 Å (tex-text-encoding; unavailable is a LaTeX error) |
 | `\aa` |  | text symbol \aa: OT1 å, T1 å (tex-text-encoding; unavailable is a LaTeX error) |
 | `\AE` |  | text symbol \AE: OT1 Æ, T1 Æ (tex-text-encoding; unavailable is a LaTeX error) |
@@ -643,7 +645,6 @@ Canonical sources:
 | `\refstepcounter` | `{counter}` | increments a counter and makes it the current \label value |
 | `\value` | `{counter}` | a counter's value in a number context |
 | `\Alph` | `{counter}` | a counter as an upper-case letter |
-| `\fnsymbol` | `{counter}` | a counter as a footnote symbol |
 | `\newlength` | `{\name}` | allocates a skip register |
 | `\settowidth` | `{\name}{text}` | sets a length from text measured by the expansion pass's box measurer (an approximation) |
 | `\settoheight` | `{\name}{text}` | sets a length from text height (an approximation, as \settowidth) |
@@ -905,6 +906,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `multicol` | `` | multicols and multicols* with preface, \columnbreak, \raggedcolumns (columns set by the render pipeline) |
 | `natbib` | `numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak` | \citet/\citep/\citealt/\citealp/\citeauthor/\citeyear/\citeyearpar/\citenum/\citetext and the \cite it redefines, with [Author(Year)] \bibitem labels; sort, compress, super and openbib are diagnosed |
 | `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
+| `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 
 Any other package, or these packages with other options, is recorded and reported as recognised but not implemented.
 <!-- END GENERATED supported-latex -->

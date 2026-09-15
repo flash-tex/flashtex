@@ -104,6 +104,16 @@ par-leading = []
 # Turning it on is then a one-line default-feature edit, like `amsmath-inline`
 # was.
 linebreak-skip = []
+# TeX's math font kerns (`make_ord`, tex.web §752): `TexMathMetrics` and
+# `TextRunMetrics` answer math-layout's `MathFontMetrics::ord_pair`, so an Ord
+# character followed by a character of the same family gets the font's kern
+# (cmmi `r` `,` = -0.0556 em: HW1's `$r,a,b$`, #66) and a roman character loses
+# its italic correction before the next one. Needs math-layout's `ord_pair`
+# (`crates/math-layout`, GH-MATH-FONT-KERNS); off until vendor/math-layout is
+# re-pinned past that change, and with it off no math kern is inserted, exactly
+# as before. Turning it on is then a one-line default-feature edit, like
+# `amsmath-inline` was.
+math-font-kerns = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }

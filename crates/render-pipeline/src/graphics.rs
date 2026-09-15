@@ -9,8 +9,10 @@
 //!   cm); otherwise 72 dpi.
 //! * PDF — page 1 (or `page=`) CropBox (graphicx's default `pagebox`)
 //!   clipped to the MediaBox, both inheritable through `/Parent`, with
-//!   `/Rotate`. Only uncompressed page objects are read; a PDF whose page
-//!   tree lives in compressed object streams is reported, never guessed.
+//!   `/Rotate`. Uncompressed page objects are found by a byte scan; a PDF
+//!   whose page tree lives in Flate-compressed object streams (PDF 1.5,
+//!   pdfTeX's default) is read with `flashtex_pdf::reader`. Anything
+//!   neither can read is reported, never guessed.
 //!
 //! graphicx semantics (`graphicx.sty` `\Gin@esetsize`, `\Gin@ii`): keys
 //! before the first `angle` request the size of the unrotated image
@@ -230,15 +232,58 @@ fn is_type(dict: &[u8], ty: &str) -> bool {
 }
 
 fn probe_pdf(b: &[u8], page: u32) -> Result<ImageInfo, String> {
-    let compressed = find(b, b"/ObjStm").is_some();
-    let trailer_root = find(b, b"/Root").and_then(|p| ref_num(dict_value(&b[p..], "Root")?));
-    let fail = |what: &str| {
-        if compressed {
-            format!("PDF {what}: the page tree is in a compressed object stream, which is not read yet")
-        } else {
-            format!("PDF {what}")
-        }
+    match probe_pdf_scan(b, page) {
+        // PDF 1.5 object streams (pdfTeX's default `\pdfobjcompresslevel`
+        // 2, and most other producers): the catalog and page tree are
+        // inside Flate-compressed `/ObjStm` streams that a byte scan cannot
+        // see, so the file is read with the object reader instead.
+        Err(scan) if find(b, b"/ObjStm").is_some() => probe_pdf_objects(b, page).map_err(|m| format!("PDF {m} (object streams; {scan})")),
+        other => other,
+    }
+}
+
+/// [`probe_pdf`] for a PDF whose objects live in object streams.
+fn probe_pdf_objects(b: &[u8], page: u32) -> Result<ImageInfo, String> {
+    use flashtex_pdf::reader::{Obj, PdfFile};
+    let file = PdfFile::parse(b)?;
+    let pages = file.pages()?;
+    let dict = page.checked_sub(1).and_then(|i| pages.get(i as usize)).ok_or_else(|| format!("has fewer than {page} pages"))?;
+    let number = |o: &Obj| file.resolve(o).as_number().and_then(|n| n.parse::<f64>().ok());
+    let rect = |key: &str| -> Option<[f64; 4]> {
+        let a = file.page_attr(dict, key)?.as_array()?;
+        let n: Vec<f64> = a.iter().filter_map(number).collect();
+        (a.len() == 4 && n.len() == 4).then(|| [n[0].min(n[2]), n[1].min(n[3]), n[0].max(n[2]), n[1].max(n[3])])
     };
+    let media = rect("MediaBox").ok_or("page has no readable /MediaBox")?;
+    let rotate = file.page_attr(dict, "Rotate").and_then(number).map_or(0, |r| r as i32);
+    page_info(media, rect("CropBox"), rotate, page)
+}
+
+/// The natural size of a page from its inherited boxes (graphicx's default
+/// `pagebox` is the CropBox, clipped to the MediaBox) and `/Rotate`.
+fn page_info(media: [f64; 4], crop: Option<[f64; 4]>, rotate: i32, page: u32) -> Result<ImageInfo, String> {
+    let crop = crop.map(|c| [c[0].max(media[0]), c[1].max(media[1]), c[2].min(media[2]), c[3].min(media[3])]).unwrap_or(media);
+    let rotate = rotate.rem_euclid(360);
+    let (w, h) = (crop[2] - crop[0], crop[3] - crop[1]);
+    if w <= 0.0 || h <= 0.0 {
+        return Err("PDF page box is empty".into());
+    }
+    let (w, h) = if rotate % 180 == 90 { (h, w) } else { (w, h) };
+    Ok(ImageInfo {
+        format: ImageFormat::Pdf,
+        width_bp: w,
+        height_bp: h,
+        pixels: None,
+        pdf_box: Some(crop),
+        pdf_rotate: rotate,
+        pdf_page: page,
+    })
+}
+
+/// [`probe_pdf`] by scanning the bytes for uncompressed objects.
+fn probe_pdf_scan(b: &[u8], page: u32) -> Result<ImageInfo, String> {
+    let trailer_root = find(b, b"/Root").and_then(|p| ref_num(dict_value(&b[p..], "Root")?));
+    let fail = |what: &str| format!("PDF {what}");
     let root = trailer_root.ok_or_else(|| fail("has no /Root"))?;
     let catalog = pdf_object(b, root).ok_or_else(|| fail("catalog object not found"))?;
     let pages = dict_value(catalog, "Pages").and_then(ref_num).ok_or_else(|| fail("catalog has no /Pages"))?;
@@ -284,25 +329,9 @@ fn probe_pdf(b: &[u8], page: u32) -> Result<ImageInfo, String> {
         chain.iter().rev().find_map(|n| pdf_object(b, *n).and_then(|d| dict_value(d, key)))
     };
     let media = inherited("MediaBox").and_then(number_array).ok_or_else(|| fail("page has no readable /MediaBox"))?;
-    let crop = inherited("CropBox").and_then(number_array).map(|c| [c[0].max(media[0]), c[1].max(media[1]), c[2].min(media[2]), c[3].min(media[3])]).unwrap_or(media);
-    let rotate = inherited("Rotate")
-        .and_then(|v| std::str::from_utf8(&v[..v.len().min(8)]).ok()?.split(|c: char| !(c.is_ascii_digit() || c == '-')).next()?.parse::<i32>().ok())
-        .unwrap_or(0)
-        .rem_euclid(360);
-    let (w, h) = (crop[2] - crop[0], crop[3] - crop[1]);
-    if w <= 0.0 || h <= 0.0 {
-        return Err("PDF page box is empty".into());
-    }
-    let (w, h) = if rotate % 180 == 90 { (h, w) } else { (w, h) };
-    Ok(ImageInfo {
-        format: ImageFormat::Pdf,
-        width_bp: w,
-        height_bp: h,
-        pixels: None,
-        pdf_box: Some(crop),
-        pdf_rotate: rotate,
-        pdf_page: page,
-    })
+    let crop = inherited("CropBox").and_then(number_array);
+    let rotate = inherited("Rotate").and_then(|v| std::str::from_utf8(&v[..v.len().min(8)]).ok()?.split(|c: char| !(c.is_ascii_digit() || c == '-')).next()?.parse::<i32>().ok()).unwrap_or(0);
+    page_info(media, crop, rotate, page)
 }
 
 /// Lengths a graphicx dimension may refer to, in TeX points.
@@ -654,6 +683,17 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/floats/images/box-crop.pdf");
         let info = probe(&std::fs::read(path).unwrap(), 1).unwrap();
         assert_eq!((info.width_bp, info.height_bp), (200.0, 120.0));
+    }
+
+    #[test]
+    fn pdf_object_streams_are_read() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/float-graphics/images");
+        let info = probe(&std::fs::read(format!("{dir}/objstm.pdf")).unwrap(), 1).unwrap();
+        assert_eq!((info.width_bp, info.height_bp, info.pdf_rotate), (150.0, 60.0, 0));
+        let info = probe(&std::fs::read(format!("{dir}/objstm-rotate.pdf")).unwrap(), 1).unwrap();
+        assert_eq!((info.width_bp, info.height_bp, info.pdf_rotate, info.pdf_box), (60.0, 150.0, 90, Some([0.0, 0.0, 150.0, 60.0])));
+        let err = probe(&std::fs::read(format!("{dir}/objstm.pdf")).unwrap(), 2).unwrap_err();
+        assert!(err.contains("fewer than 2 pages"), "{err}");
     }
 
     #[test]
