@@ -624,6 +624,7 @@ pub fn prepare(
     // `draft`/`demo` are per document, from the class options and every
     // `\usepackage` of `graphics`/`graphicx` in the entry file.
     let gmode = graphics::mode(texts.get(entry_index).copied().unwrap_or_default());
+    let float_package = adapter::package_options(texts.get(entry_index).copied().unwrap_or_default(), "float").is_some();
     for (d, doc_envs) in envs.iter().enumerate() {
         let path: Rc<str> = Rc::from(documents[d].path);
         let src = |span: Span| SourceRange { path: path.clone(), start_byte: span.start, end_byte: span.end };
@@ -633,8 +634,19 @@ pub fn prepare(
             // 17419); in a one-column document the star does nothing.
             let wide = f.starred && twocolumn;
             let env = if wide { &wide_env } else { &env };
+            // float.sty `\@xfloat#1[{\@ifnextchar{H}...`: exactly `[H]`, in
+            // vertical mode (a blank line before the environment). In the
+            // middle of a paragraph `\float@endH`'s `\vskip` would end it
+            // there, which the text flow here cannot do yet.
+            let exact_here = f.placement.as_deref() == Some("H") && float_package && !wide && !f.hmode;
             let bits = match placement_bits(f.placement.as_deref(), wide) {
+                _ if exact_here => 16 | 1,
                 Ok(b) => b,
+                Err(msg) if msg.starts_with("placement H") && float_package => {
+                    let why = if f.hmode { "in the middle of a paragraph (no blank line before the environment)" } else { "on a full-width float" };
+                    diags.push(Diagnostic::warning("float_placement", format!("placement H {why} is not supported yet; using h"), vec![src(f.span)]));
+                    16 | 1
+                }
                 Err(msg) => {
                     let fallback = if msg.starts_with("placement H") { 16 | 1 } else { 16 | 8 };
                     diags.push(Diagnostic::warning("float_placement", msg, vec![src(f.span)]));
@@ -745,7 +757,7 @@ pub fn prepare(
                     }
                 }
             }
-            specs.push(FloatSpec { kind: f.kind, number: number.to_string(), wide, bits, span: f.span, hmode: f.hmode, parts, labels: spec_labels });
+            specs.push(FloatSpec { kind: f.kind, number: number.to_string(), wide, bits, span: f.span, hmode: f.hmode, exact_here, parts, labels: spec_labels });
         }
     }
     (specs, diags)
