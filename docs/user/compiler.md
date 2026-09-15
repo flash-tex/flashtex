@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 329 text-mode and 552 math-mode command entries, 51 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 334 text-mode and 552 math-mode command entries, 51 environments and 22 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -522,14 +522,17 @@ Canonical sources:
 | `\LARGE` |  | size declaration from the class size table |
 | `\huge` |  | size declaration from the class size table |
 | `\Huge` |  | size declaration from the class size table |
-| `\cite` | `[note]{keys}` | numbered citation from thebibliography entries; natbib redefines it as \citet, or as \citep when an optional argument follows |
+| `\cite` | `[note]{keys}` | numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \citet, or as \citep when an optional argument follows |
+| `\parencite` | `[pre][post]{keys}` | biblatex parenthetical citation: [n] in numeric style |
+| `\textcite` | `[pre][post]{keys}` | biblatex textual citation: Author [n] in numeric style |
+| `\autocite` | `[pre][post]{keys}` | biblatex automatic citation, equivalent to \parencite in this compiler |
 | `\citet` | `[pre][post]{keys}` | natbib textual citation: Name (Year); one optional argument is the post-note |
 | `\citep` | `[pre][post]{keys}` | natbib parenthetical citation: (Name, Year); one optional argument is the post-note |
 | `\citealt` | `[pre][post]{keys}` | natbib \citet without the parentheses: Name Year |
 | `\citealp` | `[pre][post]{keys}` | natbib \citep without the parentheses: Name, Year |
-| `\citeauthor` | `[pre][post]{keys}` | natbib author list alone; the starred form is the long list |
+| `\citeauthor` | `[pre][post]{keys}` | natbib author list alone, or biblatex author text; the starred form is the long list |
 | `\citefullauthor` | `[pre][post]{keys}` | natbib \citeauthor*: the long author list |
-| `\citeyear` | `[pre][post]{keys}` | natbib year alone |
+| `\citeyear` | `[pre][post]{keys}` | natbib year alone, or biblatex year text |
 | `\citeyearpar` | `[pre][post]{keys}` | natbib year in parentheses |
 | `\citenum` | `[pre][post]{keys}` | natbib \bibitem number alone, whatever the citation style |
 | `\citetext` | `{text}` | natbib's citation delimiters around arbitrary text |
@@ -538,7 +541,9 @@ Canonical sources:
 | `\Citealt` | `[pre][post]{keys}` | natbib \citealt with the author list's first letter uppercased |
 | `\Citealp` | `[pre][post]{keys}` | natbib \citealp with the author list's first letter uppercased |
 | `\Citeauthor` | `[pre][post]{keys}` | natbib \citeauthor with the author list's first letter uppercased |
-| `\nocite` | `{keys}` | accepted no-op; there is no .bib pipeline |
+| `\nocite` | `{keys}` | biblatex includes keys, including * for every resource entry, without visible citation output |
+| `\addbibresource` | `[location]{file}` | biblatex registers a project-relative .bib resource |
+| `\printbibliography` | `[key=value,...]` | biblatex heading and formatted entries from the registered .bib resources |
 | `\bibitem` | `[label]{key}` | entry of thebibliography; natbib's [Author(Year)] and [Author, Year] labels feed author-year citations |
 | `\bibliography` | `{files}` | diagnosed: .bib input is not read |
 | `\bibliographystyle` | `{style}` | diagnosed: no effect without .bib support |
@@ -928,6 +933,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `siunitx` | `any \sisetup keys` | v3 \num, \unit, \qty, lists, ranges, \ang, \sisetup and \DeclareSIUnit; unmodelled keys are diagnosed |
 | `multicol` | `` | multicols and multicols* with preface, \columnbreak, \raggedcolumns (columns set by the render pipeline) |
 | `natbib` | `numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak` | \citet/\citep/\citealt/\citealp/\citeauthor/\citeyear/\citeyearpar/\citenum/\citetext and the \cite it redefines, with [Author(Year)] \bibitem labels; sort, compress, super and openbib are diagnosed |
+| `biblatex` | `style=numeric, sorting=none, backend=biber` | basic project-relative .bib resources with numeric citations, textcite/parencite/autocite, citeauthor/citeyear, nocite and printbibliography; authoryear labels are minimal, alphabetic warns |
 | `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
 
 Any other package, or these packages with other options, is recorded and reported as recognised but not implemented.

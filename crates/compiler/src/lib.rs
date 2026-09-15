@@ -12,6 +12,7 @@
 pub mod amssymb;
 pub mod bib;
 mod char_table;
+pub mod biblatex;
 pub mod color;
 mod color_names;
 pub mod date;

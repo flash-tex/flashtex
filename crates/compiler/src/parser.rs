@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use crate::bib;
+use crate::biblatex;
 use crate::date::TodayDate;
 use crate::color::{Colors, DeviceColor};
 use crate::diagnostics::Diagnostic;
@@ -1156,6 +1157,9 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "huge",
     "Huge",
     "cite",
+    "parencite",
+    "textcite",
+    "autocite",
     "citet",
     "citep",
     "citealt",
@@ -1172,6 +1176,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "Citealp",
     "Citeauthor",
     "nocite",
+    "addbibresource",
+    "printbibliography",
     "bibitem",
     "bibliography",
     "bibliographystyle",
@@ -1594,6 +1600,8 @@ pub fn parse_project_with(
     let has_document = has_document_environment(&expanded.tokens);
     let mut bibliography_diags = Vec::new();
     let bibliography = bib::prescan(&expanded.tokens[..], &mut bibliography_diags);
+    let biblatex_bibliography =
+        biblatex::prescan(&expanded.tokens[..], documents, &mut bibliography_diags);
     let mut expansions: Vec<ExpansionSite> = Vec::new();
     for token in expanded.tokens.iter() {
         if let (true, Some(definition)) = (token.maps_to_invocation, token.definition) {
@@ -1683,6 +1691,7 @@ pub fn parse_project_with(
         noted_hypersetup_keys: false,
         noted_lstset_keys: false,
         bibliography,
+        biblatex: biblatex_bibliography,
         bib_cursor: 0,
         natbib_limitations: std::collections::BTreeSet::new(),
         natbib_forced_numbers_reported: false,
@@ -1892,6 +1901,8 @@ struct P<'a> {
     /// `bib::prescan` before this parse starts — see that module's doc
     /// comment for why `\cite` does not need a page-aware two-pass pass.
     bibliography: bib::Bibliography,
+    /// The optional biblatex database, resolved from project .bib files.
+    biblatex: biblatex::Bibliography,
     /// How many of `bibliography`'s document-order `\bibitem`s this parse has
     /// reached so far; advanced by each real `\bibitem`, whose own displayed
     /// label is looked up at this index.
@@ -2307,6 +2318,12 @@ impl P<'_> {
             "setlength" => self.set_length(span),
             "addtolength" => self.add_to_length(span),
             "usepackage" => self.use_package(span),
+            "addbibresource" => {
+                let _ = self.optional_bracket_argument();
+                let (_, argument_span) = self.required_group(name, span);
+                self.biblatex
+                    .add_resource(span.merge(argument_span), &mut self.diags);
+            }
             "definecolor" | "providecolor" | "xdefinecolor" | "colorlet" | "definecolorset"
             | "DefineNamedColor" => self.define_color(name, span),
             "selectcolormodel" => self.select_color_model(span),
@@ -2727,6 +2744,10 @@ impl P<'_> {
                 self.finish_block_dependencies();
             }
             "cite" => {
+                if self.biblatex.enabled() {
+                    self.biblatex_cite(name, span, para);
+                    return;
+                }
                 // natbib redefines `\cite` (natbib.sty line 693): with an
                 // optional argument it is `\citep`, without one `\citet`.
                 // That asymmetry is natbib's, not a simplification here.
@@ -2765,9 +2786,18 @@ impl P<'_> {
                     ));
                 }
             }
+            "parencite" | "textcite" | "autocite" => {
+                self.biblatex_cite(name, span, para);
+            }
             "citet" | "citep" | "citealt" | "citealp" | "citeauthor" | "citefullauthor"
             | "citeyear" | "citeyearpar" | "citenum" | "Citet" | "Citep" | "Citealt"
-            | "Citealp" | "Citeauthor" => self.natbib_cite(name, span, para),
+            | "Citealp" | "Citeauthor" => {
+                if self.biblatex.enabled() && matches!(name, "citeauthor" | "citeyear") {
+                    self.biblatex_cite(name, span, para);
+                } else {
+                    self.natbib_cite(name, span, para);
+                }
+            }
             // `\citetext{...}`: natbib's delimiters around arbitrary text
             // (natbib.sty line 741).
             "citetext" => {
@@ -2780,11 +2810,27 @@ impl P<'_> {
                     full_span,
                 ));
             }
-            // Real LaTeX's `\nocite` only writes a BibTeX aux-file entry (to
-            // pull an uncited reference into the printed bibliography); it
-            // has no visible output of its own either way, and this compiler
-            // has no `.bib`/aux-file pipeline to feed (see `bibliography`
-            // below), so consuming the argument is the whole honest behaviour.
+            "printbibliography" => {
+                let options = self
+                    .optional_bracket_argument()
+                    .map(|(options, _)| options);
+                let printed = self.biblatex.print_bibliography(
+                    options.as_deref(),
+                    self.chapter_class,
+                    span,
+                    &mut self.diags,
+                );
+                if !printed.is_empty() {
+                    self.flush_paragraph(blocks, para);
+                    self.document_global_state = true;
+                    for block in printed {
+                        blocks.push(block);
+                        self.finish_block_dependencies();
+                    }
+                }
+            }
+            // Real LaTeX's `\nocite` has no visible output; biblatex's
+            // pre-scan uses its keys to include entries in the printed list.
             "nocite" => {
                 let _ = self.required_group(name, span);
             }
@@ -3835,6 +3881,35 @@ impl P<'_> {
             input.token.span = Span::in_document(span.document, span.start + len, span.end);
         }
         input.token.kind = TokenKind::Word(rest);
+    }
+
+    /// Reads the biblatex citation notes and key list, then delegates rendering
+    /// to the pre-resolved bibliography.
+    fn biblatex_cite(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i.saturating_sub(1));
+        let (pre, post) = self.cite_notes();
+        let (tokens, argument_span) = self.required_group(name, span);
+        let full_span = span.merge(argument_span);
+        let keys = cite_keys(&tokens);
+        self.document_global_state = true;
+        if keys.is_empty() {
+            self.diags.push(Diagnostic::warning(
+                format!("\\{name} was given an empty key list"),
+                Some(full_span),
+                Some("rendered nothing for the empty citation".into()),
+            ));
+            return;
+        }
+        let inlines = self.biblatex.cite_inlines(
+            name,
+            &keys,
+            pre.as_deref(),
+            post.as_deref(),
+            full_span,
+            space_before,
+            &mut self.diags,
+        );
+        para.extend(inlines);
     }
 
     /// The natbib options in force, or natbib's own defaults plus one error
@@ -8247,6 +8322,9 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         "natbib" => options
             .iter()
             .all(|option| crate::natbib::IMPLEMENTED_OPTIONS.contains(option)),
+        // biblatex's supported options are parsed by crate::biblatex; package
+        // loading itself has no additional layout effect.
+        "biblatex" => true,
         // siunitx v3 numbers, units, quantities, lists, ranges and angles
         // (crate::siunitx); its options are \sisetup keys, and a key that
         // is not modelled gets its own diagnostic there.
