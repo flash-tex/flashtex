@@ -3,6 +3,7 @@ import SwiftUI
 import XCTest
 import FlashTeXProtocol
 import FlashTeXAccessibility
+import HostedWindows
 @testable import FlashTeXMac
 
 /// Keyboard-only traversal of the secondary panels: the Settings scene
@@ -96,7 +97,8 @@ final class PanelAccessibilityTests: XCTestCase {
     private func host<V: View>(_ view: V, title: String, size: NSSize) async throws -> NSWindow {
         let hostView = NSHostingView(rootView: view)
         hostView.frame = NSRect(origin: .zero, size: size)
-        let window = NSWindow(contentRect: hostView.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+        let window = HostedWindowSupport.window(contentRect: hostView.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = title
         window.isReleasedWhenClosed = false
         window.contentView = hostView
@@ -184,6 +186,14 @@ final class PanelAccessibilityTests: XCTestCase {
 
     // MARK: Settings (⌘,)
 
+    /// Switches EditorPreferencesView puts in the focus ring, in one place so a
+    /// new toggle is updated once rather than in each Settings test: wrap long
+    /// lines, auto-close brackets, show completion list, check spelling,
+    /// relative line numbers, Vim keybindings, preview follows the caret, and
+    /// the two error-lens rows.
+    /// Both assertions below print the control list when this drifts.
+    static let preferencesSwitchCount = 9
+
     /// The Capture conversion section (ConversionPreferencesView.swift, shown
     /// in the app's Settings after the editor sections): its AppKit-backed
     /// controls — provider picker, secure key field, model picker — take
@@ -195,7 +205,7 @@ final class PanelAccessibilityTests: XCTestCase {
         let window = try await host(EditorPreferencesView(preferences: prefs, showConversion: true), title: "Editor Preferences", size: NSSize(width: 480, height: 900))
         let controls = assertControlsTakeKeyboardFocus(in: window, panel: "Settings+Conversion", atLeast: 10)
         let kinds = controls.map { String(describing: type(of: $0)) }
-        XCTAssertEqual(kinds.filter { $0.contains("Switch") }.count, 4, kinds.description)
+        XCTAssertEqual(kinds.filter { $0.contains("Switch") }.count, Self.preferencesSwitchCount, kinds.description)
         XCTAssertGreaterThanOrEqual(kinds.filter { $0.contains("PopupButton") }.count, 2, "provider + model pickers: \(kinds)")
         window.close()
     }
@@ -206,13 +216,16 @@ final class PanelAccessibilityTests: XCTestCase {
         let model = ShellModel()
         let editor = try await hostEditor(model)
         let window = try await host(EditorPreferencesView(preferences: prefs), title: "Editor Preferences", size: NSSize(width: 480, height: 640))
-        // Pop-up, slider, size stepper, wrap switch, tab-width stepper, segmented control, two typing switches.
+        // Pop-up, slider, size stepper, wrap switch, tab-width stepper, segmented
+        // control, then the Typing switches: auto-close, completion list, spelling,
+        // relative line numbers, Vim keybindings, preview-follows-the-caret and
+        // the two error-lens rows.
         let controls = assertControlsTakeKeyboardFocus(in: window, panel: "Settings", atLeast: 8)
         let kinds = controls.map { String(describing: type(of: $0)) }
         XCTAssertTrue(kinds.contains { $0.contains("PopupButton") || $0.contains("PopUpButton") }, kinds.description)
         XCTAssertTrue(kinds.contains { $0.contains("Slider") }, kinds.description)
         XCTAssertEqual(kinds.filter { $0.contains("Stepper") }.count, 2, kinds.description)
-        XCTAssertEqual(kinds.filter { $0.contains("Switch") }.count, 4, kinds.description)
+        XCTAssertEqual(kinds.filter { $0.contains("Switch") }.count, Self.preferencesSwitchCount, kinds.description)
         XCTAssertTrue(kinds.contains { $0.contains("SegmentedControl") }, kinds.description)
         // Reading order agrees with the table: pop-up first, the typing switches last.
         XCTAssertTrue(kinds.first?.contains("Popup") == true || kinds.first?.contains("PopUp") == true, kinds.description)

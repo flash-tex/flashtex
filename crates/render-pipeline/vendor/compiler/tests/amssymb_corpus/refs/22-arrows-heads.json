@@ -1,0 +1,91 @@
+{
+ "fixture": "22-arrows-heads.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Heads",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 106.8494,
+    "y_top": 83.955
+   },
+   {
+    "text": "↞",
+    "x": 116.3179,
+    "y_top": 83.955
+   },
+   {
+    "text": "b",
+    "x": 131.5967,
+    "y_top": 83.955
+   },
+   {
+    "text": "↠",
+    "x": 139.8972,
+    "y_top": 83.955
+   },
+   {
+    "text": "c",
+    "x": 155.164,
+    "y_top": 83.955
+   },
+   {
+    "text": "↢",
+    "x": 163.5254,
+    "y_top": 83.955
+   },
+   {
+    "text": "d",
+    "x": 180.1324,
+    "y_top": 83.955
+   },
+   {
+    "text": "↣",
+    "x": 189.5387,
+    "y_top": 83.955
+   },
+   {
+    "text": "e",
+    "x": 206.1457,
+    "y_top": 83.955
+   },
+   {
+    "text": "↫",
+    "x": 214.8826,
+    "y_top": 83.955
+   },
+   {
+    "text": "f",
+    "x": 230.1613,
+    "y_top": 83.955
+   },
+   {
+    "text": "↬",
+    "x": 240.5336,
+    "y_top": 83.955
+   },
+   {
+    "text": "g",
+    "x": 255.8004,
+    "y_top": 83.955
+   },
+   {
+    "text": "end.",
+    "x": 265.746,
+    "y_top": 83.955
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "brace_extents": [
+  []
+ ]
+}

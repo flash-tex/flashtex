@@ -75,9 +75,24 @@ echo "==> $OLD_VERSION ($OLD_SHA) -> $VERSION ($SHA256), dated $DATE"
 
 # One rewrite pass, stdlib only. The old version/SHA read from install.sh
 # anchor every replacement, so the pages need no template markers.
-python3 - "$CLONE" "$OLD_VERSION" "$VERSION" "$OLD_SHA" "$SHA256" "$DATE" <<'PY'
+# The DMG size for the page's download button. Best effort: an unavailable
+# size leaves the old value rather than failing the release.
+DMG_SIZE=""
+if command -v gh >/dev/null 2>&1; then
+  BYTES="$(gh api "repos/${GITHUB_REPOSITORY:-flash-tex/flashtex}/releases/tags/$VERSION" \
+    --jq '.assets[] | select(.name == "FlashTeX.dmg") | .size' 2>/dev/null || true)"
+  if [[ "$BYTES" =~ ^[0-9]+$ ]]; then
+    DMG_SIZE="$(awk -v b="$BYTES" 'BEGIN { printf "%.1f MB", b / 1048576 }')"
+    echo "==> DMG size: $DMG_SIZE"
+  else
+    echo "==> warning: could not read FlashTeX.dmg size; leaving the page's value" >&2
+  fi
+fi
+
+python3 - "$CLONE" "$OLD_VERSION" "$VERSION" "$OLD_SHA" "$SHA256" "$DATE" "$DMG_SIZE" <<'PY'
 import pathlib, re, sys
 root, old_v, new_v, old_sha, new_sha, date = sys.argv[1:7]
+new_size = sys.argv[7] if len(sys.argv) > 7 else ""
 root = pathlib.Path(root)
 changed = {}
 
@@ -106,6 +121,12 @@ def versions_and_sha(s):
 
 def download(s):
     s = versions_and_sha(s)
+    # The DMG size is generated, not rewritten by versions_and_sha, so it went
+    # stale on every release until this existed (v0.1.2 advertised 13.0 MB for a
+    # 21.4 MB file). Only rewrite when the caller supplied a size.
+    if new_size:
+        s = re.sub(r'(Apple Silicon <span class="btn-meta">)[^<]*(</span>)',
+                   lambda m: m.group(1) + new_size + m.group(2), s, count=1)
     # The date sits in the <span> right after the version badge.
     return re.sub(r'(<span class="ver">' + re.escape(new_v) + r'</span>\s*<span>)[^<]*(</span>)',
                   lambda m: m.group(1) + date + m.group(2), s, count=1)

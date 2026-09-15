@@ -9,6 +9,7 @@
 //! flattening step a pure translation with no per-kind rules.
 
 use crate::metrics::FontId;
+use crate::source::SourceTag;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BoxKind {
@@ -28,8 +29,125 @@ pub enum BoxKind {
     VBox(Vec<Child>),
     /// Horizontal space with no ink (italic corrections, script space, …).
     Kern,
-    /// Inter-atom spacing glue; carries its mu value for line breaking later.
-    Glue { mu: f64 },
+    /// Glue: inter-atom spacing (`\thinmuskip`/`\medmuskip`/`\thickmuskip`)
+    /// or explicit `\mskip`/`\hskip`. `mu` is the natural size in math units
+    /// (0 for point glue); the box `width` is the natural width in points.
+    /// `stretch`/`shrink` are TeX's glue components, already converted from
+    /// mu to points for finite orders (tex.web §716 `math_glue`), which
+    /// [`MathBox::pack_to`] sets like `hpack`.
+    Glue {
+        mu: f64,
+        stretch: Flex,
+        shrink: Flex,
+    },
+}
+
+/// The order of infinity of a glue component (tex.web §150: `normal`,
+/// `fil`, `fill`, `filll`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum GlueOrder {
+    #[default]
+    Normal,
+    Fil,
+    Fill,
+    Filll,
+}
+
+impl GlueOrder {
+    pub const ALL: [GlueOrder; 4] = [
+        GlueOrder::Normal,
+        GlueOrder::Fil,
+        GlueOrder::Fill,
+        GlueOrder::Filll,
+    ];
+
+    fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// One stretch or shrink component of a glue: `amount` in points for
+/// [`GlueOrder::Normal`], in fil units otherwise (`plus 1fill` is
+/// `Flex { amount: 1.0, order: Fill }`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Flex {
+    pub amount: f64,
+    pub order: GlueOrder,
+}
+
+impl Flex {
+    pub const ZERO: Flex = Flex {
+        amount: 0.0,
+        order: GlueOrder::Normal,
+    };
+
+    /// A finite component of `amount` points.
+    pub fn pt(amount: f64) -> Flex {
+        Flex {
+            amount,
+            order: GlueOrder::Normal,
+        }
+    }
+}
+
+/// What `hpack` sums over a list before setting it (tex.web §649
+/// `total_stretch`/`total_shrink`, indexed by [`GlueOrder`]).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct GlueTotals {
+    /// The list's natural width.
+    pub natural: f64,
+    pub stretch: [f64; 4],
+    pub shrink: [f64; 4],
+}
+
+impl GlueTotals {
+    /// tex.web §659: the highest order with nonzero total stretch.
+    pub fn stretch_order(&self) -> GlueOrder {
+        highest(&self.stretch)
+    }
+
+    /// tex.web §665: the highest order with nonzero total shrink.
+    pub fn shrink_order(&self) -> GlueOrder {
+        highest(&self.shrink)
+    }
+}
+
+fn highest(totals: &[f64; 4]) -> GlueOrder {
+    GlueOrder::ALL
+        .into_iter()
+        .rev()
+        .find(|o| totals[o.index()] != 0.0)
+        .unwrap_or(GlueOrder::Normal)
+}
+
+/// How the glue of a packed box is set (tex.web §135 `glue_sign`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GlueSign {
+    #[default]
+    Normal,
+    Stretching,
+    Shrinking,
+}
+
+/// A box's glue setting: `\showbox`'s `glue set [-]ratio[fil..]`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct GlueSet {
+    pub sign: GlueSign,
+    pub order: GlueOrder,
+    pub ratio: f64,
+}
+
+/// The result of [`MathBox::pack_to`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Packed {
+    /// The box set to the requested width, glue widths and child offsets
+    /// adjusted (glyph and rule geometry unchanged).
+    pub root: MathBox,
+    pub set: GlueSet,
+    pub totals: GlueTotals,
+    /// How far the contents still exceed the width when the finite shrink
+    /// ran out (tex.web §664 "Report an overfull hbox"); 0 otherwise.
+    pub overfull: f64,
 }
 
 /// A child box positioned inside a container.
@@ -50,11 +168,16 @@ pub struct MathBox {
     pub width: f64,
     pub height: f64,
     pub depth: f64,
+    /// Provenance of a glyph or rule leaf (see [`crate::source`]); layout
+    /// fills it from the atom that produced the leaf. Containers, kerns and
+    /// glue leave it unset. Never read for geometry.
+    pub tag: SourceTag,
 }
 
 impl MathBox {
     pub fn empty() -> MathBox {
         MathBox {
+            tag: SourceTag::NONE,
             kind: BoxKind::HBox(Vec::new()),
             width: 0.0,
             height: 0.0,
@@ -64,6 +187,7 @@ impl MathBox {
 
     pub fn kern(width: f64) -> MathBox {
         MathBox {
+            tag: SourceTag::NONE,
             kind: BoxKind::Kern,
             width,
             height: 0.0,
@@ -71,18 +195,126 @@ impl MathBox {
         }
     }
 
+    /// Rigid glue of natural `width` points (`mu` math units).
     pub fn glue(width: f64, mu: f64) -> MathBox {
+        MathBox::glue_flex(width, mu, Flex::ZERO, Flex::ZERO)
+    }
+
+    /// Glue of natural `width` points with TeX stretch and shrink.
+    pub fn glue_flex(width: f64, mu: f64, stretch: Flex, shrink: Flex) -> MathBox {
         MathBox {
-            kind: BoxKind::Glue { mu },
+            tag: SourceTag::NONE,
+            kind: BoxKind::Glue {
+                mu,
+                stretch,
+                shrink,
+            },
             width,
             height: 0.0,
             depth: 0.0,
         }
     }
 
+    /// The natural width and the total stretch and shrink per order of this
+    /// box's own list (tex.web §656): the glue among an [`BoxKind::HBox`]'s
+    /// direct children. Glue inside nested boxes is rigid to the outer box,
+    /// as in TeX, and a box that is not an hbox has no glue.
+    pub fn glue_totals(&self) -> GlueTotals {
+        let mut totals = GlueTotals {
+            natural: self.width,
+            ..GlueTotals::default()
+        };
+        if let BoxKind::HBox(children) = &self.kind {
+            for c in children {
+                if let BoxKind::Glue {
+                    stretch, shrink, ..
+                } = &c.content.kind
+                {
+                    totals.stretch[stretch.order.index()] += stretch.amount;
+                    totals.shrink[shrink.order.index()] += shrink.amount;
+                }
+            }
+        }
+        totals
+    }
+
+    /// TeX `hpack(p, width, exactly)` (tex.web §649–§667) applied to this
+    /// box's list: the excess or deficit is taken up by the glue of the
+    /// highest order present, and finite shrink is never set beyond its
+    /// total (glue set 1.0; the rest is reported as `overfull`). Only the
+    /// widths of the direct glue children change; every later child moves
+    /// by the accumulated difference. A box without glue (or not an hbox)
+    /// keeps its contents and just takes the new width, as TeX does.
+    pub fn pack_to(&self, width: f64) -> Packed {
+        let totals = self.glue_totals();
+        let x = width - totals.natural;
+        let mut set = GlueSet::default();
+        let mut overfull = 0.0;
+        if x > 0.0 {
+            let o = totals.stretch_order();
+            if totals.stretch[o.index()] != 0.0 {
+                set = GlueSet {
+                    sign: GlueSign::Stretching,
+                    order: o,
+                    ratio: x / totals.stretch[o.index()],
+                };
+            }
+        } else if x < 0.0 {
+            let o = totals.shrink_order();
+            let total = totals.shrink[o.index()];
+            if total != 0.0 {
+                set = GlueSet {
+                    sign: GlueSign::Shrinking,
+                    order: o,
+                    ratio: -x / total,
+                };
+            }
+            // §664: finite shrink cannot go past its total.
+            if total < -x && o == GlueOrder::Normal {
+                if total != 0.0 {
+                    set.ratio = 1.0;
+                }
+                overfull = -x - total;
+            }
+        }
+        let mut root = self.clone();
+        root.width = width;
+        if let BoxKind::HBox(children) = &mut root.kind
+            && set.sign != GlueSign::Normal
+        {
+            let mut shift = 0.0;
+            for c in children.iter_mut() {
+                c.dx += shift;
+                if let BoxKind::Glue {
+                    stretch, shrink, ..
+                } = c.content.kind
+                {
+                    let delta = match set.sign {
+                        GlueSign::Stretching if stretch.order == set.order => {
+                            stretch.amount * set.ratio
+                        }
+                        GlueSign::Shrinking if shrink.order == set.order => {
+                            -shrink.amount * set.ratio
+                        }
+                        _ => 0.0,
+                    };
+                    c.content.width += delta;
+                    shift += delta;
+                }
+            }
+        }
+        Packed {
+            root,
+            set,
+            totals,
+            overfull,
+        }
+    }
+
     /// A rule of `width` × (`height` + `depth`) around the baseline.
     pub fn rule(width: f64, height: f64, depth: f64) -> MathBox {
         MathBox {
+            tag: SourceTag::NONE,
             kind: BoxKind::Rule,
             width,
             height,
@@ -92,6 +324,7 @@ impl MathBox {
 
     pub fn glyph(g: &crate::metrics::Glyph) -> MathBox {
         MathBox {
+            tag: SourceTag::NONE,
             kind: BoxKind::Glyph {
                 font_id: g.font_id,
                 gid: g.gid,
@@ -124,6 +357,7 @@ impl MathBox {
             x += w;
         }
         MathBox {
+            tag: SourceTag::NONE,
             kind: BoxKind::HBox(children),
             width: x,
             height,
@@ -170,6 +404,7 @@ impl MathBox {
             });
         }
         MathBox {
+            tag: SourceTag::NONE,
             kind: BoxKind::VBox(children),
             width,
             height,
@@ -205,6 +440,29 @@ impl MathBox {
         MathBox::hlist(vec![MathBox::kern(pad), self, MathBox::kern(pad)])
     }
 
+    /// This box with `tag` on itself (a leaf).
+    pub fn with_tag(mut self, tag: SourceTag) -> MathBox {
+        self.tag = tag;
+        self
+    }
+
+    /// Fills the unset tag fields of every glyph and rule leaf from `outer`
+    /// (innermost-first inheritance, see [`crate::source`]).
+    pub fn inherit_tag(&mut self, outer: SourceTag) {
+        if outer.is_none() {
+            return;
+        }
+        match &mut self.kind {
+            BoxKind::Glyph { .. } | BoxKind::Rule => self.tag.inherit(outer),
+            BoxKind::HBox(children) | BoxKind::VBox(children) => {
+                for c in children {
+                    c.content.inherit_tag(outer);
+                }
+            }
+            BoxKind::Kern | BoxKind::Glue { .. } => {}
+        }
+    }
+
     /// Wrap in an hbox shifted by `dy` (positive down), as TeX does when it
     /// `hpack`s a box that carries a `shift_amount`.
     pub fn shifted(self, dy: f64) -> MathBox {
@@ -227,6 +485,8 @@ pub struct PositionedGlyph {
     /// (plus the italic correction where `char_box` adds it, as for
     /// delimiters), which is what pdfTeX records as the glyph's `/Widths`.
     pub width: f64,
+    /// The source span and attribute of the atom that produced the glyph.
+    pub tag: SourceTag,
 }
 
 /// A filled rectangle on the page; `y` is its top edge (downward axis).
@@ -236,6 +496,8 @@ pub struct PositionedRule {
     pub y: f64,
     pub w: f64,
     pub h: f64,
+    /// The source span and attribute of the atom that produced the rule.
+    pub tag: SourceTag,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -272,12 +534,14 @@ fn walk(b: &MathBox, x: f64, baseline: f64, out: &mut PositionedRuns) {
             baseline_y: baseline,
             size: *size,
             width: b.width,
+            tag: b.tag,
         }),
         BoxKind::Rule => out.rules.push(PositionedRule {
             x,
             y: baseline - b.height,
             w: b.width,
             h: b.height + b.depth,
+            tag: b.tag,
         }),
         BoxKind::HBox(children) | BoxKind::VBox(children) => {
             for c in children {

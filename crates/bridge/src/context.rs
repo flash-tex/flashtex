@@ -1,6 +1,6 @@
 //! Bounded lexical context, never a TeX interpreter or filesystem loader.
 //! Includes resolve only against snapshots already supplied to the bridge.
-use crate::{BridgeError, Context, ContextDependency, Document, Result, MAX_CONTEXT_BYTES};
+use crate::{caret, BridgeError, Context, ContextDependency, Document, Result, MAX_CONTEXT_BYTES};
 
 /// Upper bound on `supported_features` entries sent to a provider.
 pub const MAX_SUPPORTED_FEATURES: usize = 1024;
@@ -100,6 +100,9 @@ pub fn build<'a>(
             .push_str(" Context incomplete: scan/file/declaration budget omitted source.");
     }
     Ok(Context {
+        // Derived from the whole snapshot, not the excerpt: a `$` thousands of
+        // bytes above the window still decides whether the caret is in math.
+        caret_context: caret::derive(&doc.text, start),
         project_id: doc.project_id.clone(),
         path: doc.path.clone(),
         revision: doc.revision,

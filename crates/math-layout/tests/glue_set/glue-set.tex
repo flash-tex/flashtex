@@ -1,0 +1,24 @@
+% Oracle for tests/glue_set.rs: pdfTeX \showbox of math-list glue set by
+% hpack. Regenerate with
+%   pdflatex -interaction=nonstopmode glue-set.tex
+% and commit glue-set.log. Nothing in cargo runs TeX.
+\documentclass[10pt]{article}
+\showboxdepth=10 \showboxbreadth=10000
+\begin{document}
+% 1 natural: totals of \medmuskip / \thickmuskip at display style
+\setbox0\hbox{$\displaystyle a+b+c+d=e$}\showbox0
+% 2 shrink below natural, within the total shrink
+\setbox0\hbox to 65pt{$\displaystyle a+b+c+d=e$}\showbox0
+% 3 stretch: \medmuskip plus 2mu and \thickmuskip plus 5mu
+\setbox0\hbox to 80pt{$\displaystyle a+b+c+d=e$}\showbox0
+% 4 overfull: shrink capped at the total shrink
+\setbox0\hbox to 20pt{$\displaystyle a+b+c+d=e$}\showbox0
+% 5 explicit \mskip with plus 1fill beats finite stretch
+\setbox0\hbox to 100pt{$\displaystyle a\mskip 3mu plus 1fill b+c=d$}\showbox0
+% 6 explicit \hskip plus/minus in points, shrinking
+\setbox0\hbox to 30pt{$\displaystyle a\hskip 2pt plus 3pt minus 1pt b+c=d$}\showbox0
+% 7 text style, shrink
+\setbox0\hbox to 30pt{$a+b+c+d=e$}\showbox0
+% 8 script style: no \medmuskip/\thickmuskip at all
+\setbox0\hbox to 30pt{$\scriptstyle a+b=c$}\showbox0
+\end{document}

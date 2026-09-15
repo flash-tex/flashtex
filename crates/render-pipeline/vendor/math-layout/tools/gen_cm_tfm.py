@@ -6,7 +6,9 @@ This is a development-time data extraction tool, not part of the product path:
 the crate never reads TFM files or runs TeX at runtime. It embeds the fontdimen
 parameters and per-character width/height/depth/italic-correction fixwords of
 cmr/cmmi/cmsy at 10/7/5 pt (LaTeX 10pt), cmr/cmmi at 12/8/6 pt with cmsy8/6
-(LaTeX 12pt) and cmex10, plus each character's next-larger
+(LaTeX 12pt), cmex10, cmr9/cmmi9/cmsy9 and cmr17 (the remaining designs the
+kernel `.fd` files load at `\DeclareMathSizes` sizes) and cmex7/8/9
+(amsmath/amsfonts), plus each character's next-larger
 successor, extensible recipe, and the kern against the font's skew character
 (plain.tex: \skewchar\tenmi='177, \skewchar\tensy='60).
 
@@ -23,12 +25,17 @@ import sys
 
 FONTS = ["cmr10", "cmr7", "cmr5", "cmmi10", "cmmi7", "cmmi5",
          "cmr12", "cmr8", "cmr6", "cmmi12", "cmmi8", "cmmi6", "cmsy8", "cmsy6",
-         "cmsy10", "cmsy7", "cmsy5", "cmex10"]
+         "cmsy10", "cmsy7", "cmsy5", "cmex10",
+         # Designs LaTeX loads at the other `\DeclareMathSizes` sizes
+         # (`\small` 9pt, `\LARGE`..`\Huge` cmr17) and amsmath/amsfonts'
+         # sized OMX/cmex (`<-7.5>cmex7 <7.5-8.5>cmex8 <8.5-9.5>cmex9`).
+         "cmr9", "cmr17", "cmmi9", "cmsy9", "cmex7", "cmex8", "cmex9"]
 # umsa.fd / umsb.fd: `<-6>msam5 <6-8>msam7 <8->msam10` (and msbm alike).
 AMS_FONTS = ["msam5", "msam7", "msam10", "msbm5", "msbm7", "msbm10"]
 SKEW = {"cmmi10": 0o177, "cmmi7": 0o177, "cmmi5": 0o177,
         "cmmi12": 0o177, "cmmi8": 0o177, "cmmi6": 0o177, "cmsy8": 0o60, "cmsy6": 0o60,
-        "cmsy10": 0o60, "cmsy7": 0o60, "cmsy5": 0o60}
+        "cmsy10": 0o60, "cmsy7": 0o60, "cmsy5": 0o60,
+        "cmmi9": 0o177, "cmsy9": 0o60}
 
 
 def fix(w):

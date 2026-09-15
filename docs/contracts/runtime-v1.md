@@ -42,6 +42,23 @@ reference). `suggestion` is replacement text for the diagnostic's source range,
 currently a did-you-mean command such as `\alpha` on `unknown_command`.
 Classify by `code`, not by `message` wording.
 
+`help` carries a human `message` and an optional `replacement`: the mechanical
+edit behind Fix… / Tab-to-apply. Its range is a nested `source` object, the same
+`{path, start_byte, end_byte}` shape as `labels[].source`, so a fix can name a
+file other than the diagnostic's own:
+
+```json
+"help": {"message": "did you mean \alpha?",
+         "replacement": {"source": {"path": "main.tex", "start_byte": 5, "end_byte": 11},
+                         "text": "\alpha"}}
+```
+
+Offsets are UTF-8, zero-based and end-exclusive. A flat `start_byte`/`end_byte`
+pair directly on `replacement` is also accepted and takes precedence, and a flat
+`path` overrides `source.path`; producers should emit the nested form. A
+consumer that cannot find a range in either place must reject the replacement
+alone, never the enclosing frame.
+
 ## Capture and insertion
 
 `capture_submit`: `capture_id` (stable unique ID), `destination_id` (Mac-pinned
@@ -68,6 +85,19 @@ a secure network implementation.
 - FT-004: drawing and camera produce a `capture_submit` message. Real photographs
   and Pencil input are required for acceptance; generated fixtures are insufficient.
 - Commander: owns v1 changes until an interface owner is explicitly reassigned.
+
+## Optional request date
+
+`payload.date` (a `YYYY-MM-DD` civil date) is specified in
+[protocol/proposals/runtime-v1-request-date.md](../../protocol/proposals/runtime-v1-request-date.md)
+(implemented, despite the filename): `\today` prints the real date, and the only
+way to do that without breaking the determinism rule above is for the caller to
+read the clock and send the answer as an ordinary request input. `apps/mac`
+already sends it on every compile request (`RuntimeV1.localDate()` in
+`ShellModel.swift`); `crates/render-pipeline` threads it to the compiler by
+default (`request-date` is a default Cargo feature). An absent field means the
+Unix epoch, so every request written against this document stays valid and
+byte-identical.
 
 ## Optional negotiated layout extension
 

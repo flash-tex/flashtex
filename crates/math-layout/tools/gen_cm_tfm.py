@@ -6,9 +6,13 @@ This is a development-time data extraction tool, not part of the product path:
 the crate never reads TFM files or runs TeX at runtime. It embeds the fontdimen
 parameters and per-character width/height/depth/italic-correction fixwords of
 cmr/cmmi/cmsy at 10/7/5 pt (LaTeX 10pt), cmr/cmmi at 12/8/6 pt with cmsy8/6
-(LaTeX 12pt) and cmex10, plus each character's next-larger
+(LaTeX 12pt), cmex10, cmr9/cmmi9/cmsy9 and cmr17 (the remaining designs the
+kernel `.fd` files load at `\DeclareMathSizes` sizes) and cmex7/8/9
+(amsmath/amsfonts), plus each character's next-larger
 successor, extensible recipe, and the kern against the font's skew character
-(plain.tex: \skewchar\tenmi='177, \skewchar\tensy='60).
+(plain.tex: \skewchar\tenmi='177, \skewchar\tensy='60), and each font's
+ligature/kern program and kern table, which TeX's `make_ord` (tex.web §752)
+reads between adjacent math characters of one family.
 
 Usage: python3 tools/gen_cm_tfm.py [kpsewhich-path] > src/cm_tfm.rs
 
@@ -23,12 +27,17 @@ import sys
 
 FONTS = ["cmr10", "cmr7", "cmr5", "cmmi10", "cmmi7", "cmmi5",
          "cmr12", "cmr8", "cmr6", "cmmi12", "cmmi8", "cmmi6", "cmsy8", "cmsy6",
-         "cmsy10", "cmsy7", "cmsy5", "cmex10"]
+         "cmsy10", "cmsy7", "cmsy5", "cmex10",
+         # Designs LaTeX loads at the other `\DeclareMathSizes` sizes
+         # (`\small` 9pt, `\LARGE`..`\Huge` cmr17) and amsmath/amsfonts'
+         # sized OMX/cmex (`<-7.5>cmex7 <7.5-8.5>cmex8 <8.5-9.5>cmex9`).
+         "cmr9", "cmr17", "cmmi9", "cmsy9", "cmex7", "cmex8", "cmex9"]
 # umsa.fd / umsb.fd: `<-6>msam5 <6-8>msam7 <8->msam10` (and msbm alike).
 AMS_FONTS = ["msam5", "msam7", "msam10", "msbm5", "msbm7", "msbm10"]
 SKEW = {"cmmi10": 0o177, "cmmi7": 0o177, "cmmi5": 0o177,
         "cmmi12": 0o177, "cmmi8": 0o177, "cmmi6": 0o177, "cmsy8": 0o60, "cmsy6": 0o60,
-        "cmsy10": 0o60, "cmsy7": 0o60, "cmsy5": 0o60}
+        "cmsy10": 0o60, "cmsy7": 0o60, "cmsy5": 0o60,
+        "cmmi9": 0o177, "cmsy9": 0o60}
 
 
 def fix(w):
@@ -60,7 +69,8 @@ def parse(path):
         ii = (w >> 10) & 63; tag = (w >> 8) & 3; rem = w & 255
         if wi == 0:
             continue
-        e = {"w": W[wi], "h": H[hi], "d": D[di], "i": I[ii], "next": None, "ext": None, "kern": {}}
+        e = {"w": W[wi], "h": H[hi], "d": D[di], "i": I[ii], "next": None, "ext": None, "kern": {},
+             "lig_start": None}
         if tag == 2:
             e["next"] = rem
         if tag == 3:
@@ -71,16 +81,18 @@ def parse(path):
             first = LK[j]
             if (first >> 24) > 128:
                 j = 256 * ((first >> 8) & 255) + (first & 255)
+            # The program's first instruction, after a far-away restart.
+            e["lig_start"] = j
             while True:
                 ins = LK[j]; skip = ins >> 24; nxt = (ins >> 16) & 255
                 op = (ins >> 8) & 255; r = ins & 255
                 if op >= 128:
-                    e["kern"][nxt] = K[256 * (op - 128) + r]
+                    e["kern"].setdefault(nxt, K[256 * (op - 128) + r])
                 if skip >= 128:
                     break
                 j += skip + 1
         chars[c] = e
-    return {"design": fix(header[1]), "params": P, "chars": chars}
+    return {"design": fix(header[1]), "params": P, "chars": chars, "lig_kern": LK, "kerns": K}
 
 
 def main():
@@ -116,6 +128,16 @@ def main():
         out.append(f"    skew_char: {skew if skew is not None else 'u8::MAX'},")
         params = ", ".join(str(p) for p in t["params"])
         out.append(f"    params: &[{params}],")
+        # `lig_kern_starts`: `(code << 16) | index` of each character's first
+        # lig/kern instruction, sorted by code. `lig_kern` is the raw
+        # instruction words (skip, next char, op, remainder: tex.web §545) and
+        # `kerns` the kern table, so `TfmFont::lig_kern` walks the program as
+        # TeX does.
+        starts = ", ".join(str((c << 16) | t["chars"][c]["lig_start"])
+                           for c in sorted(t["chars"]) if t["chars"][c]["lig_start"] is not None)
+        out.append(f"    lig_kern_starts: &[{starts}],")
+        out.append(f"    lig_kern: &[{', '.join(str(x) for x in t['lig_kern'])}],")
+        out.append(f"    kerns: &[{', '.join(str(x) for x in t['kerns'])}],")
         out.append("    chars: &[")
         for c in sorted(t["chars"]):
             e = t["chars"][c]

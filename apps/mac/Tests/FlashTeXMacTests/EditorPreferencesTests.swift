@@ -1,4 +1,5 @@
 import AppKit
+import HostedWindows
 import SwiftUI
 import XCTest
 @testable import FlashTeXMac
@@ -375,7 +376,8 @@ final class EditorPreferencesTests: XCTestCase {
         let p = EditorPreferences(defaults: defaults)
         let host = NSHostingView(rootView: EditorPreferencesView(preferences: p))
         host.frame = NSRect(x: 0, y: 0, width: 480, height: 600)
-        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+        let window = HostedWindowSupport.window(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
@@ -403,7 +405,8 @@ final class EditorPreferencesTests: XCTestCase {
         p.fontFamily = monoFamily; p.fontSize = 15; p.tabWidth = 2; p.appearance = .dark
         let host = NSHostingView(rootView: EditorPreferencesView(preferences: p))
         host.frame = NSRect(x: 0, y: 0, width: 480, height: 660)
-        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+        let window = HostedWindowSupport.window(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.title = "Editor Preferences"
         window.contentView = host
         host.layoutSubtreeIfNeeded()

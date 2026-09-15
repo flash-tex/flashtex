@@ -19,7 +19,6 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use crate::path::ProjectPath;
@@ -223,8 +222,10 @@ struct Observation {
 
 impl ProjectRoot {
     /// Opens `path` as the project root. The final component must be a real
-    /// directory (not a symlink); components above it are the caller's
-    /// choice and are not inspected.
+    /// directory (not a symlink). Components *above* it are the caller's
+    /// choice: a symlinked ancestor is followed on purpose (see
+    /// [`sys::open_dir_nofollow`]), and the directory it leads to is pinned.
+    /// Symlinks are refused only inside the root.
     pub fn open(path: &Path) -> Result<ProjectRoot, SaveError> {
         if !sys::SUPPORTED {
             return Err(refused(Refused::Unsupported));
@@ -232,9 +233,9 @@ impl ProjectRoot {
         let dir = sys::open_dir_nofollow(path).map_err(|e| {
             classify_open(
                 e,
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("<root>"),
+                &path
+                    .file_name()
+                    .map_or_else(|| "<root>".into(), |n| n.to_string_lossy()),
             )
         })?;
         Ok(ProjectRoot {
@@ -245,6 +246,22 @@ impl ProjectRoot {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Whether the directory at [`Self::path`] is still the one this handle
+    /// pinned (same device and inode, not a symlink). `Ok(false)` when the
+    /// path is gone or now names something else: the root was renamed,
+    /// removed or replaced after it was opened. Ancestors of the path are
+    /// resolved normally, as in [`Self::open`].
+    pub fn is_still_at_path(&self) -> io::Result<bool> {
+        let pinned = identity(&self.dir.metadata()?);
+        match std::fs::symlink_metadata(&self.path) {
+            Ok(meta) => Ok(meta.is_dir() && identity(&meta) == pinned),
+            Err(e) if e.kind() == io::ErrorKind::NotFound || sys::errno_is(&e, sys::ENOTDIR) => {
+                Ok(false)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Walks to the directory containing `path`, refusing symlinks and
@@ -281,23 +298,57 @@ impl ProjectRoot {
         Ok(cur)
     }
 
-    /// Opens the regular file `name` in `dir` for reading without following
-    /// a symlink. `Ok(None)` when absent.
-    fn open_target(dir: &File, name: &str) -> Result<Option<File>, SaveError> {
-        match sys::open_at(dir, name, sys::O_RDONLY | sys::O_NOFOLLOW, 0) {
-            Ok(f) => Ok(Some(f)),
-            Err(e) if sys::errno_is(&e, sys::ENOENT) => Ok(None),
-            Err(e) => Err(classify_open(e, name)),
+    /// Classifies the entry `name` of `dir` with
+    /// `fstatat(AT_SYMLINK_NOFOLLOW)`: nothing is followed or opened.
+    /// `Ok(None)` when absent; a symlink is `SymlinkComponent` and any other
+    /// non-regular entry (directory, FIFO, socket, device) `NotARegularFile`.
+    fn stat_regular(dir: &File, name: &str) -> Result<Option<sys::EntryStat>, SaveError> {
+        let st = match sys::stat_at_nofollow(dir, name.as_bytes()) {
+            Ok(st) => st,
+            Err(e) if sys::errno_is(&e, sys::ENOENT) => return Ok(None),
+            Err(e) => return Err(classify_open(e, name)),
+        };
+        if st.is_symlink() {
+            return Err(refused(Refused::SymlinkComponent {
+                component: name.to_string(),
+            }));
         }
+        if !st.is_file() {
+            return Err(refused(Refused::NotARegularFile {
+                component: name.to_string(),
+            }));
+        }
+        Ok(Some(st))
     }
 
-    fn observe(
-        dir: &File,
-        name: &str,
-        limit: u64,
-    ) -> Result<Option<(Observation, Vec<u8>)>, SaveError> {
-        let Some(mut file) = Self::open_target(dir, name)? else {
+    /// Opens the regular file `name` in `dir` for reading without following
+    /// a symlink. `Ok(None)` when absent.
+    ///
+    /// The entry is classified with [`Self::stat_regular`] on the directory
+    /// descriptor *before* it is opened, so a symlink, FIFO, socket or device
+    /// that is already there is refused without ever being opened. The name
+    /// can still be swapped between that `fstatat` and the `openat`, and
+    /// POSIX has no way to close that window. For a swap in the window:
+    ///
+    /// - a symlink is refused by `O_NOFOLLOW` and never followed;
+    /// - a FIFO open returns at once because of `O_NONBLOCK`, and the
+    ///   post-open `fstat` refuses it;
+    /// - a device node is opened (with `O_NONBLOCK`) and then refused by the
+    ///   post-open `fstat`; nothing is read from it. Not hanging and not
+    ///   having an open side effect are **best-effort** here: both depend on
+    ///   the driver honouring `O_NONBLOCK`, which POSIX does not require.
+    ///   (Getting a device node into the directory at all needs either the
+    ///   privilege to create one or an existing node on the same filesystem
+    ///   to rename or hard-link.)
+    fn open_target(dir: &File, name: &str) -> Result<Option<(File, std::fs::Metadata)>, SaveError> {
+        if Self::stat_regular(dir, name)?.is_none() {
             return Ok(None);
+        }
+        race_point!(BeforeOpen, name);
+        let file = match sys::open_at(dir, name, sys::O_RDONLY | sys::O_NOFOLLOW, 0) {
+            Ok(f) => f,
+            Err(e) if sys::errno_is(&e, sys::ENOENT) => return Ok(None),
+            Err(e) => return Err(classify_open(e, name)),
         };
         let meta = file.metadata()?;
         if !meta.is_file() {
@@ -305,6 +356,17 @@ impl ProjectRoot {
                 component: name.to_string(),
             }));
         }
+        Ok(Some((file, meta)))
+    }
+
+    fn observe(
+        dir: &File,
+        name: &str,
+        limit: u64,
+    ) -> Result<Option<(Observation, Vec<u8>)>, SaveError> {
+        let Some((mut file, meta)) = Self::open_target(dir, name)? else {
+            return Ok(None);
+        };
         if meta.len() > limit {
             return Err(refused(Refused::TooLarge {
                 limit,
@@ -327,6 +389,127 @@ impl ProjectRoot {
             mode: meta.mode() & 0o7777,
         };
         Ok(Some((obs, bytes)))
+    }
+
+    /// Resolves `path`'s leaf to the name that actually backs it in `dir`,
+    /// mirroring `Discovery::resolve_existing` / `resolve_via_directory_listing`
+    /// in `graph.rs` for the save/conflict-detection path (issue #45 finding
+    /// 3, save-path extension).
+    ///
+    /// The literal spelling (`path.file_name()`) is tried first with
+    /// `fstatat(AT_SYMLINK_NOFOLLOW)` on the pinned directory `dir` (nothing
+    /// is opened). On a normalization-insensitive filesystem (APFS) that
+    /// alone already finds an NFD-spelled reference to an NFC-spelled
+    /// on-disk file. On a normalization-*sensitive* filesystem (ext4) the
+    /// literal lookup for whichever spelling isn't on disk fails (`ENOENT`),
+    /// so this lists the same pinned directory descriptor (never the
+    /// directory's path string) and matches entries by [`ProjectPath`]
+    /// identity (Unicode-NFC comparison), which is spelling-insensitive
+    /// regardless of what the filesystem does.
+    ///
+    /// This never grants extra trust: the returned name is only ever used as
+    /// the `name` argument to the fd-rooted, symlink-refusing
+    /// `fstatat`/`openat`/`renameat` calls the rest of `save_with` makes,
+    /// exactly like a literal candidate would be. An entry of any type is
+    /// returned, so a symlink or special file at either spelling is refused
+    /// by `observe` rather than treated as missing; a genuinely absent
+    /// target — no match under any spelling — falls back to the literal name
+    /// unchanged, so `check_expected` still sees `None` and reports
+    /// `DeletedExternally` / allows `NewFile` as before.
+    fn resolve_target_name(&self, dir: &File, path: &ProjectPath) -> Result<String, SaveError> {
+        let literal = path.file_name();
+        match sys::stat_at_nofollow(dir, literal.as_bytes()) {
+            Ok(_) => return Ok(literal.to_string()),
+            Err(e) if sys::errno_is(&e, sys::ENOENT) => {}
+            Err(e) => return Err(classify_open(e, literal)),
+        }
+        Ok(Self::resolve_leaf_via_directory_listing(dir, path)
+            .unwrap_or_else(|| literal.to_string()))
+    }
+
+    /// The directory-listing fallback itself, factored out so it can be unit
+    /// tested directly (see `tests::directory_listing_fallback_resolves_nfd_candidate_to_nfc_name`
+    /// below) without depending on `open_target`'s literal lookup, whose
+    /// result varies by host filesystem: APFS's own lookup is already
+    /// normalization-insensitive and would find the file before this ever
+    /// runs, so calling only `resolve_target_name` on this (macOS) machine
+    /// cannot, by itself, prove this fallback works -- exactly the same
+    /// reasoning `graph.rs`'s `resolve_via_directory_listing` unit test
+    /// documents for the discovery path this mirrors.
+    ///
+    /// `dir` must be the pinned descriptor of `path`'s parent directory (from
+    /// [`ProjectRoot::walk`]); it is listed with [`sys::list_dir`], so a
+    /// parent directory renamed away and replaced by a symlink after it was
+    /// walked is not enumerated.
+    fn resolve_leaf_via_directory_listing(dir: &File, path: &ProjectPath) -> Option<String> {
+        let parent_dir = path.parent_dir();
+        for raw in sys::list_dir(dir).ok()? {
+            let Ok(name) = String::from_utf8(raw) else {
+                continue; // not valid UTF-8; cannot match a ProjectPath
+            };
+            let candidate_str = if parent_dir.is_empty() {
+                name.clone()
+            } else {
+                format!("{parent_dir}/{name}")
+            };
+            let Ok(on_disk) = ProjectPath::normalize(&candidate_str) else {
+                continue;
+            };
+            if &on_disk == path {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    /// The on-disk spelling of `path`'s file name when it differs only by
+    /// Unicode normalization, found by listing the pinned parent directory
+    /// (see [`Self::resolve_leaf_via_directory_listing`]). `None` if the
+    /// parent cannot be walked or no entry matches.
+    pub(crate) fn resolve_leaf_spelling(&self, path: &ProjectPath) -> Option<String> {
+        let dir = self.walk(path, false).ok()?;
+        Self::resolve_leaf_via_directory_listing(&dir, path)
+    }
+
+    /// Classifies `path` through the rooted walk without following or
+    /// opening it: `Ok(None)` when absent, otherwise its
+    /// `fstatat(AT_SYMLINK_NOFOLLOW)` result of any file type. A symlink or
+    /// escaping ancestor is refused by the walk as usual.
+    pub(crate) fn stat_entry(
+        &self,
+        path: &ProjectPath,
+    ) -> Result<Option<sys::EntryStat>, SaveError> {
+        let dir = self.walk(path, false)?;
+        match sys::stat_at_nofollow(&dir, path.file_name().as_bytes()) {
+            Ok(st) => Ok(Some(st)),
+            Err(e) if sys::errno_is(&e, sys::ENOENT) => Ok(None),
+            Err(e) => Err(classify_open(e, path.file_name())),
+        }
+    }
+
+    /// Names of the entries of the project directory containing `child`,
+    /// listed from its pinned descriptor. A missing directory is `Ok(None)`.
+    pub(crate) fn list_parent_of(
+        &self,
+        child: &ProjectPath,
+    ) -> Result<Option<Vec<Vec<u8>>>, SaveError> {
+        let dir = match self.walk(child, false) {
+            Ok(dir) => dir,
+            Err(SaveError::Io(e)) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        Ok(Some(sys::list_dir(&dir)?))
+    }
+
+    /// Opens the regular file `path` through the rooted walk (no symlink
+    /// component, nothing but a regular file opened); `Ok(None)` when absent.
+    /// The watcher uses this to stat and hash tracked files.
+    pub(crate) fn open_regular(
+        &self,
+        path: &ProjectPath,
+    ) -> Result<Option<(File, std::fs::Metadata)>, SaveError> {
+        let dir = self.walk(path, false)?;
+        Self::open_target(&dir, path.file_name())
     }
 
     /// Reads `path` (at most `limit` bytes) without following any symlink.
@@ -371,9 +554,32 @@ impl ProjectRoot {
     pub fn lock(&self) -> Result<ProjectLock<'_>, SaveError> {
         let lock_path = ProjectPath::normalize(LOCK_FILE).expect("constant lock path");
         let dir = self.walk(&lock_path, true)?;
-        let flags = sys::O_RDWR | sys::O_CREAT | sys::O_NOFOLLOW;
-        let file = sys::open_at(&dir, lock_path.file_name(), flags, 0o644)
-            .map_err(|e| classify_open(e, lock_path.file_name()))?;
+        let name = lock_path.file_name();
+        // `O_CREAT | O_EXCL` never opens an existing entry, so a new lock file
+        // is created as a regular file. An existing one is classified on the
+        // directory descriptor before it is opened (see `open_target` for the
+        // residual swap window the post-open `fstat` backstops).
+        let create = sys::O_RDWR | sys::O_CREAT | sys::O_EXCL | sys::O_NOFOLLOW;
+        let file = match sys::open_at(&dir, name, create, 0o644) {
+            Ok(f) => f,
+            Err(e) if sys::errno_is(&e, sys::EEXIST) => {
+                if Self::stat_regular(&dir, name)?.is_none() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "project lock file disappeared while it was being opened",
+                    )
+                    .into());
+                }
+                sys::open_at(&dir, name, sys::O_RDWR | sys::O_NOFOLLOW, 0)
+                    .map_err(|e| classify_open(e, name))?
+            }
+            Err(e) => return Err(classify_open(e, name)),
+        };
+        if !file.metadata()?.is_file() {
+            return Err(refused(Refused::NotARegularFile {
+                component: name.to_string(),
+            }));
+        }
         if !sys::try_lock_exclusive(&file)? {
             return Err(refused(Refused::LockUnavailable {
                 lock_path: self.path.join(LOCK_FILE),
@@ -399,22 +605,120 @@ impl ProjectRoot {
     }
 }
 
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+/// Deterministic race-test support. **Not API**, and **not compiled into
+/// normal builds**: the module and every firing point exist only under
+/// `cfg(test)` or the non-default `race-hook` cargo feature, which this
+/// crate's own integration tests enable through a self dev-dependency. A
+/// release build of the library (or of any crate depending on it without
+/// that feature) contains no hook code.
+///
+/// Every check-then-use pair in this module that POSIX cannot make atomic
+/// calls [`fire`] in the exact window between the check and the syscall it
+/// guards. A test installs a callback for its own thread, swaps the entry
+/// from inside the callback, and then asserts what the operation did, so
+/// the security property is tested at the worst interleaving every run
+/// instead of by timing. The hook is thread-local: a hook installed by one
+/// test never fires in another thread's operation.
+#[cfg(any(test, feature = "race-hook"))]
+#[doc(hidden)]
+pub mod race_hook {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// The window a hook fires in.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Window {
+        /// An existing entry was classified as a regular file with
+        /// `fstatat(AT_SYMLINK_NOFOLLOW)`; `openat` is next.
+        BeforeOpen,
+        /// A save classified its target for the last time and verified that
+        /// the temp name still names the file it wrote; the rename or link
+        /// that installs it is next. Fired with the target name.
+        BeforeRename,
+        /// A save's install syscall (rename or link) returned; the check
+        /// that the target now names the written file, and for a link the
+        /// removal of the temp name, are next. Fired with the target name.
+        AfterInstall,
+        /// `remove` classified the entry as a regular file; `unlinkat` is
+        /// next.
+        BeforeUnlink,
+        /// A hard-link install verified the target and confirmed the temp
+        /// name still names the saved file; `unlinkat` of the temp name is
+        /// next. Fired with the temp name.
+        BeforeTempUnlink,
+    }
+
+    type Hook = Rc<dyn Fn(Window, &str)>;
+
+    thread_local! {
+        static HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    /// Restores the previously installed hook (usually none) on drop.
+    #[must_use = "the hook is removed when the guard is dropped"]
+    pub struct Guard(Option<Hook>);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            HOOK.with(|h| *h.borrow_mut() = previous);
+        }
+    }
+
+    /// Installs `hook` for the current thread until the guard drops. It is
+    /// called with the window and the entry name (the last path component,
+    /// relative to its pinned directory).
+    pub fn install(hook: impl Fn(Window, &str) + 'static) -> Guard {
+        let previous = HOOK.with(|h| h.borrow_mut().replace(Rc::new(hook)));
+        Guard(previous)
+    }
+
+    pub(crate) fn fire(window: Window, name: &str) {
+        // Cloned out first, so a hook may itself call into this crate.
+        let hook = HOOK.with(|h| h.borrow().clone());
+        if let Some(hook) = hook {
+            hook(window, name);
+        }
+    }
+}
+
+/// Fires [`race_hook`] at a check-then-use window; expands to nothing unless
+/// `cfg(test)` or the `race-hook` feature is on.
+macro_rules! race_point {
+    ($window:ident, $name:expr) => {
+        #[cfg(any(test, feature = "race-hook"))]
+        race_hook::fire(race_hook::Window::$window, $name);
+    };
+}
+use race_point;
 
 /// Injection points for tests; production uses [`Hooks::default`].
 pub(crate) struct Hooks<'h> {
     /// Runs after the temp file is fsynced and before the pre-rename
     /// re-verification (the window an out-of-contract writer can hit).
     pub after_temp_write: Option<&'h dyn Fn()>,
+    /// Runs after the pre-rename re-verification and before the final
+    /// no-follow check of the target that immediately precedes the rename.
+    pub before_rename: Option<&'h dyn Fn()>,
     /// Directory fsync after rename.
     pub sync_dir: fn(&File) -> io::Result<()>,
+    /// The no-replace rename (tests substitute an unsupported one).
+    pub rename_noreplace: fn(&File, &str, &str) -> io::Result<()>,
+    /// The name-based hard link used when no-replace rename is unsupported.
+    pub link: fn(&File, &str, &str) -> io::Result<()>,
+    /// The descriptor-bound hard link tried before `link` (Linux).
+    pub link_fd: fn(&File, &File, &str) -> io::Result<()>,
 }
 
 impl Default for Hooks<'_> {
     fn default() -> Self {
         Hooks {
             after_temp_write: None,
+            before_rename: None,
             sync_dir: File::sync_all,
+            rename_noreplace: sys::rename_at_noreplace,
+            link: sys::link_at,
+            link_fd: sys::link_fd_at,
         }
     }
 }
@@ -430,13 +734,24 @@ impl ProjectLock<'_> {
     ///    refusing any symlink component.
     /// 2. Observe the target with `O_NOFOLLOW` (identity, size, mtime, hash,
     ///    mode). Compare with `expected` unless `force`.
-    /// 3. Write a temp file in the same directory (`O_CREAT|O_EXCL|O_NOFOLLOW`),
-    ///    `fsync` it, copy the existing permission bits.
+    /// 3. Write a temp file with an unpredictable name in the same directory
+    ///    (`O_CREAT|O_EXCL|O_NOFOLLOW`), `fsync` it, copy the existing
+    ///    permission bits. The descriptor stays open until the save ends.
     /// 4. Re-observe the target; if it changed since step 2 (unless `force`),
     ///    remove the temp file and return `ModifiedDuringSave`. A target that
     ///    became a symlink is refused regardless of `force`.
-    /// 5. `renameat` temp over target; `fsync` the directory (a failure here
-    ///    is `DirectorySync`, durability unknown).
+    /// 5. Classify the target once more on the directory descriptor
+    ///    (`fstatat(AT_SYMLINK_NOFOLLOW)`) immediately before the rename: a
+    ///    symlink or special file is refused regardless of `force`, and
+    ///    (unless `force`) a different file than step 4 saw is
+    ///    `ModifiedDuringSave`. An absent target is created without ever
+    ///    replacing an entry that appears meanwhile (no-replace rename, else
+    ///    hard link plus unlink of the temp name, else refused unless
+    ///    `force`); an existing one is replaced with `renameat`. Before each
+    ///    name-based install call the temp name must still name the file from
+    ///    step 3, and afterwards the target must name it (see
+    ///    [`TempFile::verify`]). Then `fsync` the directory (a failure here is
+    ///    `DirectorySync`, durability unknown).
     /// 6. Re-open the target with `O_NOFOLLOW` and verify device/inode equal
     ///    the temp file's and the bytes hash to what was written; otherwise
     ///    `ModifiedDuringSave`.
@@ -458,8 +773,14 @@ impl ProjectLock<'_> {
         force: bool,
         hooks: &Hooks<'_>,
     ) -> Result<SaveReceipt, SaveError> {
-        let name = path.file_name();
         let dir = self.root.walk(path, true)?;
+        // Resolve the literal spelling to whatever actually backs it on
+        // disk (NFC/NFD-insensitive), so conflict detection below compares
+        // against the real file even when `path`'s raw bytes are a
+        // differently-normalized spelling of an existing name (ext4; see
+        // `resolve_target_name`).
+        let name = self.root.resolve_target_name(&dir, path)?;
+        let name = name.as_str();
 
         // Step 2: observe and compare.
         let before = ProjectRoot::observe(&dir, name, DEFAULT_READ_LIMIT)?.map(|(o, _)| o);
@@ -468,26 +789,38 @@ impl ProjectLock<'_> {
         }
 
         // Step 3: temp write.
-        let temp_name = temp_name(name);
+        let temp_name = temp_name(name)?;
         let mode = before.as_ref().map_or(0o644, |o| o.mode);
         let flags = sys::O_WRONLY | sys::O_CREAT | sys::O_EXCL | sys::O_NOFOLLOW;
         let mut temp = sys::open_at(&dir, &temp_name, flags, mode)
             .map_err(|e| classify_open(e, &temp_name))?;
-        let temp_identity = match (|| -> io::Result<FileIdentity> {
+        // Identity of the file we created, from its descriptor: every later
+        // use of the temp *name* is checked against it.
+        let temp_identity = match temp.metadata() {
+            Ok(meta) => identity(&meta),
+            Err(e) => {
+                // Without the identity the name cannot be recognised safely,
+                // so it is left in place rather than risk unlinking an entry
+                // someone swapped in.
+                return Err(e.into());
+            }
+        };
+        let tmp = TempFile {
+            dir: &dir,
+            name: &temp_name,
+            identity: temp_identity,
+        };
+        if let Err(e) = (|| -> io::Result<()> {
             temp.write_all(bytes)?;
             temp.sync_all()?;
             if before.is_some() {
                 temp.set_permissions(std::fs::Permissions::from_mode(mode))?;
             }
-            Ok(identity(&temp.metadata()?))
+            Ok(())
         })() {
-            Ok(id) => id,
-            Err(e) => {
-                let _ = sys::unlink_at(&dir, &temp_name);
-                return Err(e.into());
-            }
-        };
-        drop(temp);
+            tmp.discard();
+            return Err(e.into());
+        }
 
         if let Some(hook) = hooks.after_temp_write {
             hook();
@@ -497,12 +830,12 @@ impl ProjectLock<'_> {
         let recheck = match ProjectRoot::observe(&dir, name, DEFAULT_READ_LIMIT) {
             Ok(o) => o.map(|(o, _)| o),
             Err(e) => {
-                let _ = sys::unlink_at(&dir, &temp_name);
+                tmp.discard();
                 return Err(e);
             }
         };
         if !force && recheck != before {
-            let _ = sys::unlink_at(&dir, &temp_name);
+            tmp.discard();
             return Err(SaveError::Conflict(Box::new(SaveConflict {
                 path: path.clone(),
                 kind: SaveConflictKind::ModifiedDuringSave,
@@ -513,11 +846,24 @@ impl ProjectLock<'_> {
             })));
         }
 
-        // Step 5: rename + directory fsync.
-        if let Err(e) = sys::rename_at(&dir, &temp_name, name) {
-            let _ = sys::unlink_at(&dir, &temp_name);
-            return Err(e.into());
+        if let Some(hook) = hooks.before_rename {
+            hook();
         }
+
+        // Step 5: verified install + directory fsync.
+        let target = Target {
+            dir: &dir,
+            tmp: &tmp,
+            file: &temp,
+            name,
+            path,
+            bytes,
+        };
+        if let Err(e) = replace_target(&target, recheck.as_ref(), force, hooks) {
+            tmp.discard();
+            return Err(e);
+        }
+        drop(temp);
         (hooks.sync_dir)(&dir).map_err(SaveError::DirectorySync)?;
 
         // Step 6: post-rename verification.
@@ -542,21 +888,198 @@ impl ProjectLock<'_> {
         }
     }
 
-    /// Unlinks `path` (never following symlinks; a symlink at `path` is
-    /// refused rather than removed). Returns whether a file was removed.
+    /// Unlinks the regular file `path` (never following symlinks; a symlink
+    /// at `path`, wherever it points, or a non-regular entry is refused and
+    /// left in place). Returns whether a file was removed.
+    ///
+    /// **Residual race (not closable with POSIX).** The entry is classified
+    /// with `fstatat(AT_SYMLINK_NOFOLLOW)` on the pinned directory descriptor
+    /// immediately before `unlinkat`, but there is no "unlink only if still
+    /// this inode". An entry swapped in between the two calls by a process
+    /// that can write the project directory is unlinked as whatever it then
+    /// is. The only possible effect is removing that one directory entry
+    /// from the pinned directory: `unlinkat` never follows a symlink (the
+    /// link itself is removed, never its target), a directory is not removed
+    /// (`unlinkat` without `AT_REMOVEDIR` fails on it), and
+    /// nothing outside the pinned directory is touched.
     pub fn remove(&self, path: &ProjectPath) -> Result<bool, SaveError> {
         let dir = self.root.walk(path, false)?;
-        // Refuse to unlink a symlink or non-regular file so callers never
-        // "remove" something they did not create.
-        if ProjectRoot::open_target(&dir, path.file_name())?.is_none() {
+        if ProjectRoot::stat_regular(&dir, path.file_name())?.is_none() {
             return Ok(false);
         }
+        race_point!(BeforeUnlink, path.file_name());
         match sys::unlink_at(&dir, path.file_name()) {
             Ok(()) => Ok(true),
             Err(e) if sys::errno_is(&e, sys::ENOENT) => Ok(false),
             Err(e) => Err(e.into()),
         }
     }
+}
+
+/// The names step 5 of [`ProjectLock::save`] works on.
+struct Target<'a> {
+    /// The pinned parent directory.
+    dir: &'a File,
+    /// The fsynced temp file (its name in `dir` and identity).
+    tmp: &'a TempFile<'a>,
+    /// The temp file's still-open descriptor.
+    file: &'a File,
+    /// The target's name in `dir`.
+    name: &'a str,
+    path: &'a ProjectPath,
+    /// The bytes written (for conflict reports).
+    bytes: &'a [u8],
+}
+
+/// Step 5 of [`ProjectLock::save`]: moves the temp file to the target name.
+///
+/// The target is classified with `fstatat(AT_SYMLINK_NOFOLLOW)` on the pinned
+/// directory descriptor immediately before the rename, so a target swapped
+/// for a symlink or special file after the step-4 re-verification is refused
+/// (regardless of `force`), and without `force` a target replaced by a
+/// different file is `ModifiedDuringSave`.
+///
+/// **Temp file.** Before every name-based install call the temp name must
+/// still name the file this save wrote, and after the install the target
+/// must name it; see [`TempFile::verify`] and [`verify_installed`].
+///
+/// **Absent target: fail-closed no-clobber.** The temp file is installed
+/// with [`install_new`], which never replaces an entry created after the
+/// check (the kernel refuses with `EEXIST`). That entry is then refused if it
+/// is a symlink or special file, and without `force` reported as
+/// `ModifiedDuringSave`. If the filesystem supports neither primitive
+/// `install_new` uses, a non-forced save is refused and nothing is written;
+/// only `force` (which already means "replace whatever is there") falls back
+/// to a plain `renameat`.
+///
+/// **Existing target: residual race (not closable with POSIX).** There is no
+/// portable "rename only if the target is still this inode", so an entry
+/// swapped in between the final `fstatat` and `renameat`, by a process that
+/// can write the project directory, is replaced. The only possible effect is
+/// replacing that one directory entry of the pinned directory with the saved
+/// file: `renameat` never follows a symlink at the target name (the link
+/// itself is replaced, its target is never opened or written), a regular
+/// file cannot replace a directory, and nothing outside the pinned directory is
+/// touched. The post-install check and step 6 still confirm the target is the
+/// file that was written. An exchange-and-verify variant
+/// (`renameat2(RENAME_EXCHANGE)` / `renameatx_np(RENAME_SWAP)` followed by a
+/// check and a swap back) was not adopted: removing the displaced entry from
+/// the temp name has the same check-then-unlink window, so it moves the
+/// residual rather than closing it.
+fn replace_target(
+    t: &Target<'_>,
+    recheck: Option<&Observation>,
+    force: bool,
+    hooks: &Hooks<'_>,
+) -> Result<(), SaveError> {
+    let current = ProjectRoot::stat_regular(t.dir, t.name)?;
+    if !force {
+        let unchanged = match (recheck, current) {
+            (None, None) => true,
+            (Some(o), Some(st)) => {
+                o.identity
+                    == FileIdentity {
+                        dev: st.dev,
+                        ino: st.ino,
+                    }
+            }
+            _ => false,
+        };
+        if !unchanged {
+            return Err(modified_during_save(t.dir, t.name, t.path, t.bytes));
+        }
+    }
+    if current.is_none() {
+        match install_new(t, hooks) {
+            Ok(()) => return Ok(()),
+            Err(NoClobber::Save(e)) => return Err(e),
+            Err(NoClobber::Exists) => {
+                // Created after the check: never replace a symlink or special
+                // file, and never another writer's file without `force`.
+                ProjectRoot::stat_regular(t.dir, t.name)?;
+                if !force {
+                    return Err(modified_during_save(t.dir, t.name, t.path, t.bytes));
+                }
+            }
+            Err(NoClobber::Unsupported(link_err)) => {
+                if !force {
+                    return Err(SaveError::Io(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        format!(
+                            "refusing to create {}: this filesystem supports neither a \
+                             no-replace rename nor hard links ({link_err}), so a file created \
+                             there concurrently could be overwritten; nothing was written",
+                            t.path
+                        ),
+                    )));
+                }
+            }
+            Err(NoClobber::Io(e)) => return Err(e.into()),
+        }
+    }
+    t.tmp.verify(t.path)?;
+    race_point!(BeforeRename, t.name);
+    sys::rename_at(t.dir, t.tmp.name, t.name)?;
+    race_point!(AfterInstall, t.name);
+    verify_installed(t.dir, t.name, t.path, t.tmp.identity, t.bytes)
+}
+
+/// Why [`install_new`] did not install the temp file.
+enum NoClobber {
+    /// An entry already exists at the target name; nothing was replaced.
+    Exists,
+    /// Neither a no-replace rename nor a hard link is available here (the
+    /// link error is kept for the message); nothing was changed.
+    Unsupported(io::Error),
+    Io(io::Error),
+    /// A temp-file or post-install check failed (see [`TempFile`]).
+    Save(SaveError),
+}
+
+/// Installs the temp file at an absent target name without ever replacing an
+/// entry that exists by then, and never falling back to a plain rename:
+///
+/// 1. `renameat2(RENAME_NOREPLACE)` / `renameatx_np(RENAME_EXCL)` of the
+///    verified temp name.
+/// 2. Where that is unsupported, a hard link, which also fails with `EEXIST`
+///    atomically: on Linux first bound to the open descriptor
+///    (`linkat(fd, "", AT_EMPTY_PATH)`, else `/proc/self/fd/N`; see
+///    [`sys::link_fd_at`]), so a swap of the temp name cannot redirect it;
+///    otherwise `linkat` of the re-verified temp name.
+/// 3. After a link, the target must name the written file, and the temp name
+///    is removed with [`TempFile::remove_after_link`], whose failure is an
+///    error rather than a silent second link to the saved content.
+fn install_new(t: &Target<'_>, hooks: &Hooks<'_>) -> Result<(), NoClobber> {
+    t.tmp.verify(t.path).map_err(NoClobber::Save)?;
+    race_point!(BeforeRename, t.name);
+    match (hooks.rename_noreplace)(t.dir, t.tmp.name, t.name) {
+        Ok(()) => {
+            race_point!(AfterInstall, t.name);
+            return verify_installed(t.dir, t.name, t.path, t.tmp.identity, t.bytes)
+                .map_err(NoClobber::Save);
+        }
+        Err(e) if sys::errno_is(&e, sys::EEXIST) => return Err(NoClobber::Exists),
+        Err(e) if sys::noreplace_unsupported(&e) => {}
+        Err(e) => return Err(NoClobber::Io(e)),
+    }
+    let bound = match (hooks.link_fd)(t.file, t.dir, t.name) {
+        Ok(()) => true,
+        Err(e) if sys::errno_is(&e, sys::EEXIST) => return Err(NoClobber::Exists),
+        // Not available here (macOS, no capability, no /proc): use the name.
+        Err(_) => false,
+    };
+    if !bound {
+        t.tmp.verify(t.path).map_err(NoClobber::Save)?;
+        match (hooks.link)(t.dir, t.tmp.name, t.name) {
+            Ok(()) => {}
+            Err(e) if sys::errno_is(&e, sys::EEXIST) => return Err(NoClobber::Exists),
+            Err(e) if sys::link_unsupported(&e) => return Err(NoClobber::Unsupported(e)),
+            Err(e) => return Err(NoClobber::Io(e)),
+        }
+    }
+    race_point!(AfterInstall, t.name);
+    verify_installed(t.dir, t.name, t.path, t.tmp.identity, t.bytes).map_err(NoClobber::Save)?;
+    t.tmp.remove_after_link(t.path).map_err(NoClobber::Save)
 }
 
 fn check_expected(
@@ -586,9 +1109,165 @@ fn check_expected(
     })))
 }
 
-fn temp_name(name: &str) -> String {
-    let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!(".{name}.flashtex-tmp-{}-{n}", std::process::id())
+/// A temp file name no other process can predict: 128 bits from the OS
+/// random source (see [`sys::random_bytes`]). Together with
+/// `O_CREAT|O_EXCL|O_NOFOLLOW` this means the name cannot be pre-planted, and
+/// a writer who wants to swap it has to discover it by listing the directory
+/// first.
+fn temp_name(name: &str) -> io::Result<String> {
+    let mut random = [0u8; 16];
+    sys::random_bytes(&mut random)?;
+    let suffix: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!(".{name}.flashtex-tmp-{suffix}"))
+}
+
+/// The temp file of one save: its name in the pinned directory and the
+/// identity of the file this save created there.
+struct TempFile<'a> {
+    dir: &'a File,
+    name: &'a str,
+    identity: FileIdentity,
+}
+
+impl TempFile<'_> {
+    /// Whether the temp name still names the file this save wrote (regular
+    /// file, same device and inode), classified with
+    /// `fstatat(AT_SYMLINK_NOFOLLOW)` so nothing is followed or opened.
+    fn still_ours(&self) -> io::Result<bool> {
+        match sys::stat_at_nofollow(self.dir, self.name.as_bytes()) {
+            Ok(st) => Ok(st.is_file()
+                && FileIdentity {
+                    dev: st.dev,
+                    ino: st.ino,
+                } == self.identity),
+            Err(e) if sys::errno_is(&e, sys::ENOENT) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The check around a save's install, and its residual.
+    ///
+    /// Immediately before the temp file is renamed (or linked) into place, the
+    /// temp name is classified with `fstatat(AT_SYMLINK_NOFOLLOW)` and must name
+    /// the regular file this save created and fsynced (same device and inode as
+    /// the still-open descriptor); otherwise the save is refused and nothing is
+    /// installed. Immediately after, the target name must name that same file;
+    /// otherwise the save is `ModifiedDuringSave` and never reports success.
+    ///
+    /// **Residual (not closable with POSIX `renameat`):** the rename binds a
+    /// *name*. A process that can write the project directory, has discovered
+    /// the random temp name, and swaps it in the window between the check and
+    /// the rename gets its entry moved to the target name. That entry is never
+    /// followed or opened by the rename (a symlink is moved as a link), nothing
+    /// outside the pinned directory is touched, the post-install check turns the
+    /// save into a conflict, and that process could have created or replaced the
+    /// target entry directly anyway. A hard-link install on Linux is bound to
+    /// the open descriptor instead (see [`install_new`]), which has no such
+    /// window.
+    fn verify(&self, path: &ProjectPath) -> Result<(), SaveError> {
+        if self.still_ours()? {
+            return Ok(());
+        }
+        Err(SaveError::Io(io::Error::other(format!(
+            "save of {path} refused: its temp file {} was replaced or removed by \
+             another process before it was installed; nothing was installed",
+            self.name
+        ))))
+    }
+
+    /// After a hard-link install: removes the temp name, which still links
+    /// the saved file. It is unlinked only while it still names that file,
+    /// and an `unlinkat` failure is retried once. If the name cannot be
+    /// removed (or was replaced), the save returns an error that names the
+    /// leftover link instead of reporting success; the installed file itself
+    /// is in place and verified.
+    fn remove_after_link(&self, path: &ProjectPath) -> Result<(), SaveError> {
+        let mut last: Option<io::Error> = None;
+        for _ in 0..2 {
+            match self.still_ours() {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(SaveError::Io(io::Error::other(format!(
+                        "{path} was saved, but its temp name {} was replaced by another \
+                         process after the link; the entry there was left alone",
+                        self.name
+                    ))));
+                }
+                Err(e) => {
+                    last = Some(e);
+                    continue;
+                }
+            }
+            race_point!(BeforeTempUnlink, self.name);
+            match sys::unlink_at(self.dir, self.name) {
+                Ok(()) => return Ok(()),
+                Err(e) => last = Some(e),
+            }
+        }
+        let e = last.expect("the loop records every failure");
+        Err(SaveError::Io(io::Error::new(
+            e.kind(),
+            format!(
+                "{path} was saved, but its temp hard link {} could not be removed \
+                 ({e}); a second link to the saved content is left in the directory",
+                self.name
+            ),
+        )))
+    }
+
+    /// Best-effort cleanup on a failed save: unlinks the temp name only if it
+    /// still names our file, so an entry someone else put there is left
+    /// alone. (The same check-then-unlink residual as `remove` applies.)
+    fn discard(&self) {
+        if let Ok(true) = self.still_ours() {
+            let _ = sys::unlink_at(self.dir, self.name);
+        }
+    }
+}
+
+/// After the install syscall: the target must now name the file this save
+/// wrote. Checked with `fstatat(AT_SYMLINK_NOFOLLOW)` first; on a mismatch
+/// the save is `ModifiedDuringSave` (never success), describing whatever is
+/// there now through the no-follow, regular-files-only observer.
+fn verify_installed(
+    dir: &File,
+    name: &str,
+    path: &ProjectPath,
+    written: FileIdentity,
+    bytes: &[u8],
+) -> Result<(), SaveError> {
+    let installed = match sys::stat_at_nofollow(dir, name.as_bytes()) {
+        Ok(st) => {
+            st.is_file()
+                && FileIdentity {
+                    dev: st.dev,
+                    ino: st.ino,
+                } == written
+        }
+        Err(e) if sys::errno_is(&e, sys::ENOENT) => false,
+        Err(e) => return Err(e.into()),
+    };
+    if installed {
+        Ok(())
+    } else {
+        Err(modified_during_save(dir, name, path, bytes))
+    }
+}
+
+/// The `ModifiedDuringSave` conflict for whatever is at `name` now.
+fn modified_during_save(dir: &File, name: &str, path: &ProjectPath, bytes: &[u8]) -> SaveError {
+    let theirs = match ProjectRoot::observe(dir, name, DEFAULT_READ_LIMIT) {
+        Ok(o) => o.map(|(o, _)| o),
+        Err(e) => return e,
+    };
+    SaveError::Conflict(Box::new(SaveConflict {
+        path: path.clone(),
+        kind: SaveConflictKind::ModifiedDuringSave,
+        ours: Some(sha256(bytes)),
+        theirs: theirs.as_ref().map(|o| o.sha256),
+        mtime: theirs.as_ref().map(|o| o.mtime),
+        size: theirs.as_ref().map(|o| o.size),
+    }))
 }
 
 /// Convenience: open `root`, lock, save, unlock.
@@ -617,6 +1296,9 @@ pub fn save_atomic_bytes(
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     struct Temp(PathBuf);
     impl Temp {
@@ -650,7 +1332,9 @@ mod tests {
         }
         let hooks = Hooks {
             after_temp_write: None,
+            before_rename: None,
             sync_dir: failing,
+            ..Hooks::default()
         };
         let err = lock
             .save_with(&pp("a.tex"), b"payload", Expected::NewFile, false, &hooks)
@@ -670,7 +1354,9 @@ mod tests {
         let interfere = move || fs::write(&target, "sneaky").unwrap();
         let hooks = Hooks {
             after_temp_write: Some(&interfere),
+            before_rename: None,
             sync_dir: File::sync_all,
+            ..Hooks::default()
         };
         let err = lock
             .save_with(
@@ -711,7 +1397,9 @@ mod tests {
         let create = move || fs::write(&target, "created meanwhile").unwrap();
         let hooks = Hooks {
             after_temp_write: Some(&create),
+            before_rename: None,
             sync_dir: File::sync_all,
+            ..Hooks::default()
         };
         let err = lock
             .save_with(&pp("new.tex"), b"mine", Expected::NewFile, false, &hooks)
@@ -747,7 +1435,9 @@ mod tests {
         };
         let hooks = Hooks {
             after_temp_write: Some(&swap),
+            before_rename: None,
             sync_dir: File::sync_all,
+            ..Hooks::default()
         };
         let err = lock
             .save_with(
@@ -770,5 +1460,660 @@ mod tests {
                 .is_symlink(),
             "symlink left in place"
         );
+    }
+
+    /// CI failure at `tests/recovery.rs:287`
+    /// (`nfc_nfd_spelling_does_not_bypass_save_conflict_detection`): on ext4
+    /// an NFD-spelled path is a *different* file from the NFC one, so a
+    /// literal `openat` lookup for the NFD candidate against an NFC on-disk
+    /// file fails (`ENOENT`) and used to make save-conflict detection
+    /// observe "target missing" (`DeletedExternally`) instead of "modified
+    /// by A" (`ModifiedExternally`).
+    ///
+    /// This deterministically simulates that ext4 behavior by calling the
+    /// directory-listing fallback (`resolve_leaf_via_directory_listing`)
+    /// directly, bypassing the literal `open_target` lookup that precedes it
+    /// in `resolve_target_name`. That bypass is necessary for the test to be
+    /// meaningful on any host: APFS's own `openat` is normalization
+    /// *insensitive*, so it already finds an NFC file for an NFD-spelled
+    /// lookup before the fallback would ever run -- calling only the
+    /// composed `resolve_target_name` on this (macOS) machine would pass
+    /// whether or not this fallback existed, exactly as `graph.rs`'s
+    /// `resolve_via_directory_listing` unit test documents for the
+    /// discovery path this mirrors.
+    #[test]
+    fn directory_listing_fallback_resolves_nfd_candidate_to_nfc_name_simulating_ext4() {
+        let t = Temp::new("save-nfc-nfd-fallback");
+        let nfc_stem = "caf\u{e9}"; // "café", 'é' precomposed (NFC) -- the only file written to disk
+        let nfd_stem = "cafe\u{301}"; // "café", 'e' + combining acute (NFD) -- how it's looked up
+        fs::write(t.0.join(format!("{nfc_stem}.tex")), "original").unwrap();
+
+        let root = ProjectRoot::open(&t.0).unwrap();
+        let nfd_candidate = pp(&format!("{nfd_stem}.tex"));
+        let resolved = ProjectRoot::resolve_leaf_via_directory_listing(&root.dir, &nfd_candidate)
+            .expect(
+                "directory listing must find the on-disk NFC file for an NFD-spelled candidate",
+            );
+        assert_eq!(
+            resolved,
+            format!("{nfc_stem}.tex"),
+            "must resolve to the on-disk (NFC) raw bytes, not the NFD spelling it was looked up with"
+        );
+
+        // Exactly one physical file backs this -- the fallback must never
+        // itself create or duplicate anything, only report a name.
+        assert_eq!(fs::read_dir(&t.0).unwrap().count(), 1);
+    }
+
+    /// Full pipeline, through the public `save` API: an NFD-spelled save
+    /// against a since-modified NFC file must be refused as
+    /// `ModifiedExternally` (never bypassed into `DeletedExternally` or a
+    /// silent overwrite), and the refusal must leave exactly the original
+    /// NFC file on disk -- no NFD-spelled duplicate or leftover temp file
+    /// from the attempted write. `directory_listing_fallback_resolves_nfd_candidate_to_nfc_name_simulating_ext4`
+    /// above proves the resolution primitive itself is correct on any
+    /// filesystem; this proves `save_with` actually wires it in.
+    #[test]
+    fn save_through_nfd_spelling_conflicts_against_modified_nfc_file_without_duplicating() {
+        let t = Temp::new("save-nfc-nfd-conflict");
+        let nfc_stem = "caf\u{e9}";
+        let nfd_stem = "cafe\u{301}";
+        let path_nfc = pp(&format!("{nfc_stem}.tex"));
+        let path_nfd = pp(&format!("{nfd_stem}.tex"));
+        assert_eq!(path_nfc, path_nfd, "sanity: same ProjectPath identity");
+
+        let root = ProjectRoot::open(&t.0).unwrap();
+        let lock = root.lock().unwrap();
+        let base = lock
+            .save(&path_nfc, b"original", Expected::NewFile, false)
+            .unwrap();
+
+        // "Editor A" saves under the NFC spelling.
+        lock.save(&path_nfc, b"edit-A", Expected::Hash(base.sha256), false)
+            .unwrap();
+
+        // "Editor B" saves under the NFD spelling with the stale base hash.
+        let err = lock
+            .save(&path_nfd, b"edit-B", Expected::Hash(base.sha256), false)
+            .unwrap_err();
+        match err {
+            SaveError::Conflict(c) => {
+                assert_eq!(c.kind, SaveConflictKind::ModifiedExternally);
+                assert_eq!(c.theirs, Some(sha256(b"edit-A")));
+            }
+            other => panic!("expected ModifiedExternally, got {other:?}"),
+        }
+
+        // Exactly one `.tex` file on disk, still holding A's content, spelled
+        // NFC (`.flashtex/` -- the project lock directory `root.lock()`
+        // created -- is unrelated to this check and excluded).
+        let entries: Vec<_> = fs::read_dir(&t.0)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n != ".flashtex")
+            .collect();
+        assert_eq!(
+            entries,
+            vec![format!("{nfc_stem}.tex")],
+            "no second (NFD-spelled or temp) file may exist after the refused save"
+        );
+        assert_eq!(
+            fs::read_to_string(t.0.join(format!("{nfc_stem}.tex"))).unwrap(),
+            "edit-A"
+        );
+    }
+
+    /// A target that was never created under any spelling -- not a
+    /// normalization twin of an existing file -- must still resolve to the
+    /// literal (missing) name and report `DeletedExternally`, exactly as
+    /// before this change: the directory-listing fallback must not invent a
+    /// match, and a genuinely absent file is not confused with a
+    /// differently-spelled reference to an existing one.
+    #[test]
+    fn truly_missing_target_still_reports_deleted_externally() {
+        let t = Temp::new("save-missing-target");
+        let root = ProjectRoot::open(&t.0).unwrap();
+        let lock = root.lock().unwrap();
+
+        let missing = pp("never-existed.tex");
+        let err = lock
+            .save(
+                &missing,
+                b"new content",
+                Expected::Hash(sha256(b"whatever")),
+                false,
+            )
+            .unwrap_err();
+        match err {
+            SaveError::Conflict(c) => {
+                assert_eq!(c.kind, SaveConflictKind::DeletedExternally);
+                assert_eq!(c.theirs, None);
+            }
+            other => panic!("expected DeletedExternally, got {other:?}"),
+        }
+        assert!(!t.0.join("never-existed.tex").exists());
+
+        // Also true for an NFD-spelled path with no NFC twin on disk.
+        let missing_nfd = pp("cafe\u{301}-missing.tex");
+        assert!(ProjectRoot::resolve_leaf_via_directory_listing(&root.dir, &missing_nfd).is_none());
+        let err2 = lock
+            .save(
+                &missing_nfd,
+                b"new content",
+                Expected::Hash(sha256(b"whatever")),
+                false,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err2,
+            SaveError::Conflict(c) if c.kind == SaveConflictKind::DeletedExternally
+        ));
+    }
+
+    /// Review finding 4: the normalization fallback lists the pinned parent
+    /// descriptor. A parent renamed away after it was walked and replaced by
+    /// a symlink to a directory holding a matching name is not enumerated.
+    #[cfg(unix)]
+    #[test]
+    fn directory_listing_fallback_lists_the_pinned_directory_not_its_path() {
+        let outside = Temp::new("listing-outside");
+        fs::write(outside.0.join("caf\u{e9}.tex"), "external").unwrap();
+        let t = Temp::new("listing-pinned");
+        fs::create_dir(t.0.join("sub")).unwrap();
+        fs::write(t.0.join("sub/other.tex"), "inside").unwrap();
+        let root = ProjectRoot::open(&t.0).unwrap();
+        let nfd = pp("sub/cafe\u{301}.tex");
+        let dir = root.walk(&nfd, false).unwrap();
+
+        fs::rename(t.0.join("sub"), t.0.join("moved")).unwrap();
+        std::os::unix::fs::symlink(&outside.0, t.0.join("sub")).unwrap();
+        assert_eq!(
+            ProjectRoot::resolve_leaf_via_directory_listing(&dir, &nfd),
+            None,
+            "must not enumerate the directory the swapped-in symlink points to"
+        );
+        // The pinned directory itself is still what is listed.
+        fs::write(t.0.join("moved/caf\u{e9}.tex"), "inside twin").unwrap();
+        assert_eq!(
+            ProjectRoot::resolve_leaf_via_directory_listing(&dir, &nfd).as_deref(),
+            Some("caf\u{e9}.tex")
+        );
+    }
+
+    fn assert_no_temp_left(dir: &Path) {
+        let leftovers: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n.contains("flashtex-tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp file cleaned up: {leftovers:?}");
+    }
+
+    /// Review finding 5: a target swapped for a symlink after the step-4
+    /// re-verification (the window right before the rename) is refused,
+    /// with and without `force`, and the symlink is left in place.
+    #[cfg(unix)]
+    #[test]
+    fn target_swapped_for_symlink_right_before_rename_is_refused() {
+        for force in [false, true] {
+            let outside = Temp::new("pre-rename-outside");
+            let victim = outside.0.join("victim.tex");
+            fs::write(&victim, "untouchable").unwrap();
+            let t = Temp::new("pre-rename-symlink");
+            fs::write(t.0.join("a.tex"), "base").unwrap();
+            let root = ProjectRoot::open(&t.0).unwrap();
+            let lock = root.lock().unwrap();
+            let target = t.0.join("a.tex");
+            let swap = || {
+                fs::remove_file(&target).unwrap();
+                std::os::unix::fs::symlink(&victim, &target).unwrap();
+            };
+            let hooks = Hooks {
+                after_temp_write: None,
+                before_rename: Some(&swap),
+                sync_dir: File::sync_all,
+                ..Hooks::default()
+            };
+            let err = lock
+                .save_with(
+                    &pp("a.tex"),
+                    b"mine",
+                    Expected::Hash(sha256(b"base")),
+                    force,
+                    &hooks,
+                )
+                .unwrap_err();
+            assert!(
+                matches!(&err, SaveError::Refused(Refused::SymlinkComponent { component }) if component == "a.tex"),
+                "force={force}: {err:?}"
+            );
+            assert!(
+                fs::symlink_metadata(&target)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            assert_eq!(fs::read_to_string(&victim).unwrap(), "untouchable");
+            assert_no_temp_left(&t.0);
+        }
+    }
+
+    /// Review finding 5, new-file case: a symlink planted at an absent
+    /// target right before the rename is refused, not replaced.
+    #[cfg(unix)]
+    #[test]
+    fn symlink_planted_at_new_file_target_right_before_rename_is_refused() {
+        for force in [false, true] {
+            let t = Temp::new("pre-rename-new");
+            let root = ProjectRoot::open(&t.0).unwrap();
+            let lock = root.lock().unwrap();
+            let target = t.0.join("new.tex");
+            let plant = || std::os::unix::fs::symlink(t.0.join("elsewhere.tex"), &target).unwrap();
+            let hooks = Hooks {
+                after_temp_write: None,
+                before_rename: Some(&plant),
+                sync_dir: File::sync_all,
+                ..Hooks::default()
+            };
+            let err = lock
+                .save_with(&pp("new.tex"), b"mine", Expected::NewFile, force, &hooks)
+                .unwrap_err();
+            assert!(
+                matches!(&err, SaveError::Refused(Refused::SymlinkComponent { component }) if component == "new.tex"),
+                "force={force}: {err:?}"
+            );
+            assert!(
+                fs::symlink_metadata(&target)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            assert_no_temp_left(&t.0);
+        }
+    }
+
+    /// Review finding 5: without `force`, a target replaced by a different
+    /// regular file right before the rename is a conflict and their file is
+    /// left alone.
+    #[test]
+    fn target_replaced_right_before_rename_conflicts() {
+        let t = Temp::new("pre-rename-replace");
+        fs::write(t.0.join("a.tex"), "base").unwrap();
+        let root = ProjectRoot::open(&t.0).unwrap();
+        let lock = root.lock().unwrap();
+        let (dir, target) = (t.0.clone(), t.0.join("a.tex"));
+        let replace = move || {
+            fs::write(dir.join("theirs.tmp"), "theirs").unwrap();
+            fs::rename(dir.join("theirs.tmp"), &target).unwrap();
+        };
+        let hooks = Hooks {
+            after_temp_write: None,
+            before_rename: Some(&replace),
+            sync_dir: File::sync_all,
+            ..Hooks::default()
+        };
+        let err = lock
+            .save_with(
+                &pp("a.tex"),
+                b"mine",
+                Expected::Hash(sha256(b"base")),
+                false,
+                &hooks,
+            )
+            .unwrap_err();
+        match err {
+            SaveError::Conflict(c) => {
+                assert_eq!(c.kind, SaveConflictKind::ModifiedDuringSave);
+                assert_eq!(c.theirs, Some(sha256(b"theirs")));
+            }
+            other => panic!("expected conflict, got {other:?}"),
+        }
+        assert_eq!(fs::read_to_string(t.0.join("a.tex")).unwrap(), "theirs");
+        assert_no_temp_left(&t.0);
+    }
+
+    fn noreplace_unsupported(_: &File, _: &str, _: &str) -> io::Result<()> {
+        Err(io::Error::from_raw_os_error(sys::ENOTSUP))
+    }
+
+    fn link_unsupported(_: &File, _: &str, _: &str) -> io::Result<()> {
+        Err(io::Error::from_raw_os_error(sys::EPERM))
+    }
+
+    fn link_fd_unsupported(_: &File, _: &File, _: &str) -> io::Result<()> {
+        Err(io::Error::from_raw_os_error(sys::ENOTSUP))
+    }
+
+    /// Finding 3: without a no-replace rename, a new file is installed with
+    /// `linkat` + `unlinkat`, and no temp name is left behind.
+    #[test]
+    fn new_file_without_noreplace_rename_is_linked_into_place() {
+        let t = Temp::new("noclobber-link");
+        let root = ProjectRoot::open(&t.0).unwrap();
+        let lock = root.lock().unwrap();
+        let hooks = Hooks {
+            rename_noreplace: noreplace_unsupported,
+            ..Hooks::default()
+        };
+        let receipt = lock
+            .save_with(&pp("new.tex"), b"mine", Expected::NewFile, false, &hooks)
+            .unwrap();
+        assert_eq!(receipt.sha256, sha256(b"mine"));
+        assert_eq!(fs::read(t.0.join("new.tex")).unwrap(), b"mine");
+        assert_eq!(fs::metadata(t.0.join("new.tex")).unwrap().nlink(), 1);
+        assert_no_temp_left(&t.0);
+    }
+
+    /// Finding 3: without a no-replace rename, an entry created in the
+    /// window right before the install (a regular file, or a symlink) is
+    /// never overwritten: `linkat` fails with `EEXIST`.
+    #[cfg(unix)]
+    #[test]
+    fn new_file_without_noreplace_rename_never_clobbers_a_concurrent_entry() {
+        for (symlink, force) in [(false, false), (true, false), (true, true)] {
+            let t = Temp::new("noclobber-race");
+            let root = ProjectRoot::open(&t.0).unwrap();
+            let lock = root.lock().unwrap();
+            let target = t.0.join("new.tex");
+            let plant = target.clone();
+            let _guard = race_hook::install(move |w, name| {
+                if w == race_hook::Window::BeforeRename && name == "new.tex" {
+                    if symlink {
+                        std::os::unix::fs::symlink("elsewhere.tex", &plant).unwrap();
+                    } else {
+                        fs::write(&plant, "theirs").unwrap();
+                    }
+                }
+            });
+            let hooks = Hooks {
+                rename_noreplace: noreplace_unsupported,
+                ..Hooks::default()
+            };
+            let err = lock
+                .save_with(&pp("new.tex"), b"mine", Expected::NewFile, force, &hooks)
+                .unwrap_err();
+            let what = format!("symlink={symlink} force={force}");
+            if symlink {
+                assert!(
+                    matches!(&err, SaveError::Refused(Refused::SymlinkComponent { component }) if component == "new.tex"),
+                    "{what}: {err:?}"
+                );
+                assert!(
+                    fs::symlink_metadata(&target)
+                        .unwrap()
+                        .file_type()
+                        .is_symlink()
+                );
+            } else {
+                assert!(
+                    matches!(&err, SaveError::Conflict(c) if c.kind == SaveConflictKind::ModifiedDuringSave
+                        && c.theirs == Some(sha256(b"theirs"))),
+                    "{what}: {err:?}"
+                );
+                assert_eq!(fs::read_to_string(&target).unwrap(), "theirs");
+            }
+            assert_no_temp_left(&t.0);
+        }
+    }
+
+    /// Finding 3: with neither a no-replace rename nor hard links, a
+    /// non-forced save is refused (fail closed) and writes nothing; `force`
+    /// still saves with a plain rename.
+    #[test]
+    fn new_file_without_any_noclobber_primitive_is_refused_unless_forced() {
+        let t = Temp::new("noclobber-none");
+        let root = ProjectRoot::open(&t.0).unwrap();
+        let lock = root.lock().unwrap();
+        let hooks = Hooks {
+            rename_noreplace: noreplace_unsupported,
+            link: link_unsupported,
+            link_fd: link_fd_unsupported,
+            ..Hooks::default()
+        };
+        for expected in [Expected::NewFile, Expected::Any] {
+            let err = lock
+                .save_with(&pp("new.tex"), b"mine", expected, false, &hooks)
+                .unwrap_err();
+            match &err {
+                SaveError::Io(e) => {
+                    assert_eq!(e.kind(), io::ErrorKind::Unsupported, "{e}");
+                    assert!(e.to_string().contains("refusing to create new.tex"), "{e}");
+                }
+                other => panic!("expected a refusal, got {other:?}"),
+            }
+            assert!(fs::symlink_metadata(t.0.join("new.tex")).is_err());
+            assert_no_temp_left(&t.0);
+        }
+        lock.save_with(&pp("new.tex"), b"forced", Expected::NewFile, true, &hooks)
+            .unwrap();
+        assert_eq!(fs::read(t.0.join("new.tex")).unwrap(), b"forced");
+        assert_no_temp_left(&t.0);
+    }
+
+    fn temp_entries(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n.contains("flashtex-tmp"))
+            .collect()
+    }
+
+    /// Temp names carry 128 random bits, not a pid and a counter.
+    #[test]
+    fn temp_names_are_unpredictable() {
+        let (a, b) = (temp_name("a.tex").unwrap(), temp_name("a.tex").unwrap());
+        assert_ne!(a, b);
+        for n in [&a, &b] {
+            let suffix = n.strip_prefix(".a.tex.flashtex-tmp-").unwrap();
+            assert_eq!(suffix.len(), 32, "{n}");
+            assert!(suffix.bytes().all(|c| c.is_ascii_hexdigit()), "{n}");
+        }
+    }
+
+    /// Third review, finding 1: a temp name swapped for a symlink (or any
+    /// other entry) after the write is refused before the rename. Nothing is
+    /// installed, the target keeps its content, and the swapped-in entry is
+    /// not unlinked by the cleanup.
+    #[cfg(unix)]
+    #[test]
+    fn temp_name_swapped_before_install_is_refused() {
+        for force in [false, true] {
+            let outside = Temp::new("temp-swap-outside");
+            let victim = outside.0.join("victim.tex");
+            fs::write(&victim, "untouchable").unwrap();
+            let t = Temp::new("temp-swap");
+            fs::write(t.0.join("a.tex"), "base").unwrap();
+            let root = ProjectRoot::open(&t.0).unwrap();
+            let lock = root.lock().unwrap();
+            let (dir, victim2) = (t.0.clone(), victim.clone());
+            let swap = move || {
+                let [name] = temp_entries(&dir).try_into().unwrap();
+                fs::remove_file(dir.join(&name)).unwrap();
+                std::os::unix::fs::symlink(&victim2, dir.join(&name)).unwrap();
+            };
+            let hooks = Hooks {
+                after_temp_write: Some(&swap),
+                ..Hooks::default()
+            };
+            let err = lock
+                .save_with(
+                    &pp("a.tex"),
+                    b"mine",
+                    Expected::Hash(sha256(b"base")),
+                    force,
+                    &hooks,
+                )
+                .unwrap_err();
+            assert!(
+                matches!(&err, SaveError::Io(e) if e.to_string().contains("temp file")),
+                "force={force}: {err:?}"
+            );
+            assert_eq!(fs::read_to_string(t.0.join("a.tex")).unwrap(), "base");
+            assert_eq!(fs::read_to_string(&victim).unwrap(), "untouchable");
+            let [left] = temp_entries(&t.0).try_into().unwrap();
+            assert!(
+                fs::symlink_metadata(t.0.join(left))
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
+                "the swapped-in entry is not ours to unlink"
+            );
+        }
+    }
+
+    /// Third review, finding 1, residual: a temp name swapped in the window
+    /// between the temp check and the rename is moved to the target as an
+    /// entry (never followed), and the save is a conflict, never success.
+    #[cfg(unix)]
+    #[test]
+    fn temp_name_swapped_in_the_rename_window_is_never_reported_as_saved() {
+        let outside = Temp::new("rename-window-outside");
+        let victim = outside.0.join("victim.tex");
+        fs::write(&victim, "untouchable").unwrap();
+        let t = Temp::new("rename-window-temp");
+        fs::write(t.0.join("a.tex"), "base").unwrap();
+        let root = ProjectRoot::open(&t.0).unwrap();
+        let lock = root.lock().unwrap();
+        let (dir, victim2) = (t.0.clone(), victim.clone());
+        let _guard = race_hook::install(move |w, name| {
+            if w == race_hook::Window::BeforeRename && name == "a.tex" {
+                let [temp] = temp_entries(&dir).try_into().unwrap();
+                fs::remove_file(dir.join(&temp)).unwrap();
+                std::os::unix::fs::symlink(&victim2, dir.join(&temp)).unwrap();
+            }
+        });
+        let result = lock.save(
+            &pp("a.tex"),
+            b"mine",
+            Expected::Hash(sha256(b"base")),
+            false,
+        );
+        assert!(
+            matches!(
+                &result,
+                Err(SaveError::Refused(Refused::SymlinkComponent { .. }))
+            ),
+            "{result:?}"
+        );
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "untouchable");
+        assert!(
+            fs::symlink_metadata(t.0.join("a.tex"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    /// Third review, finding 1: if the target stops naming the written file
+    /// right after the install, the save is `ModifiedDuringSave`.
+    #[test]
+    fn target_replaced_right_after_install_is_a_conflict() {
+        let t = Temp::new("after-install");
+        fs::write(t.0.join("a.tex"), "base").unwrap();
+        let root = ProjectRoot::open(&t.0).unwrap();
+        let lock = root.lock().unwrap();
+        let dir = t.0.clone();
+        let _guard = race_hook::install(move |w, name| {
+            if w == race_hook::Window::AfterInstall && name == "a.tex" {
+                fs::write(dir.join("theirs.tmp"), "theirs").unwrap();
+                fs::rename(dir.join("theirs.tmp"), dir.join("a.tex")).unwrap();
+            }
+        });
+        let err = lock
+            .save(
+                &pp("a.tex"),
+                b"mine",
+                Expected::Hash(sha256(b"base")),
+                false,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&err, SaveError::Conflict(c) if c.kind == SaveConflictKind::ModifiedDuringSave
+                && c.theirs == Some(sha256(b"theirs"))),
+            "{err:?}"
+        );
+    }
+
+    /// Third review, finding 2: when the temp name cannot be removed after a
+    /// hard-link install, the save is an error that names the leftover link,
+    /// never success. The unlink is made to fail from the race hook by
+    /// making the directory read-only right before it.
+    #[cfg(unix)]
+    #[test]
+    fn temp_link_that_cannot_be_removed_is_an_error_not_success() {
+        // SAFETY: `geteuid` has no preconditions.
+        if unsafe { libc::geteuid() } == 0 {
+            return; // root ignores directory permissions
+        }
+        for link_fd in [sys::link_fd_at, link_fd_unsupported] {
+            let t = Temp::new("temp-unlink-fails");
+            let root = ProjectRoot::open(&t.0).unwrap();
+            let lock = root.lock().unwrap();
+            let dir = t.0.clone();
+            let fired = std::rc::Rc::new(std::cell::Cell::new(0u32));
+            let count = fired.clone();
+            let _guard = race_hook::install(move |w, _| {
+                if w == race_hook::Window::BeforeTempUnlink {
+                    fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+                    count.set(count.get() + 1);
+                }
+            });
+            let hooks = Hooks {
+                rename_noreplace: noreplace_unsupported,
+                link_fd,
+                ..Hooks::default()
+            };
+            let result = lock.save_with(&pp("new.tex"), b"mine", Expected::NewFile, false, &hooks);
+            fs::set_permissions(&t.0, fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(fired.get(), 2, "unlink attempted, then retried once");
+            match &result {
+                Err(SaveError::Io(e)) => {
+                    assert!(e.to_string().contains("could not be removed"), "{e}")
+                }
+                other => panic!("expected an error, got {other:?}"),
+            }
+            assert_eq!(fs::read(t.0.join("new.tex")).unwrap(), b"mine");
+        }
+    }
+
+    /// Third review, finding 1: a hard-link install bound to the descriptor
+    /// is not redirected by a temp name swapped right before it; where only
+    /// the name-based link exists, the re-check refuses the swap. Either way
+    /// the swapped-in entry is never installed at the target and the save
+    /// never reports success.
+    #[cfg(unix)]
+    #[test]
+    fn temp_name_swapped_before_link_install_is_never_installed() {
+        for link_fd in [sys::link_fd_at, link_fd_unsupported] {
+            let outside = Temp::new("link-swap-outside");
+            let victim = outside.0.join("victim.tex");
+            fs::write(&victim, "untouchable").unwrap();
+            let t = Temp::new("link-swap");
+            let root = ProjectRoot::open(&t.0).unwrap();
+            let lock = root.lock().unwrap();
+            let (dir, victim2) = (t.0.clone(), victim.clone());
+            let _guard = race_hook::install(move |w, name| {
+                if w == race_hook::Window::BeforeRename && name == "new.tex" {
+                    let [temp] = temp_entries(&dir).try_into().unwrap();
+                    fs::remove_file(dir.join(&temp)).unwrap();
+                    std::os::unix::fs::symlink(&victim2, dir.join(&temp)).unwrap();
+                }
+            });
+            let hooks = Hooks {
+                rename_noreplace: noreplace_unsupported,
+                link_fd,
+                ..Hooks::default()
+            };
+            let result = lock.save_with(&pp("new.tex"), b"mine", Expected::NewFile, false, &hooks);
+            assert!(result.is_err(), "{result:?}");
+            assert_eq!(fs::read_to_string(&victim).unwrap(), "untouchable");
+            match fs::symlink_metadata(t.0.join("new.tex")) {
+                Err(_) => {} // refused before linking
+                Ok(meta) => {
+                    assert!(meta.file_type().is_file(), "only our file may be linked");
+                    assert_eq!(fs::read(t.0.join("new.tex")).unwrap(), b"mine");
+                }
+            }
+        }
     }
 }

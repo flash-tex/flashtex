@@ -203,6 +203,12 @@ struct TypingBenchConfig: Equatable {
     var typingBudgetMs: Double = 120_000
     /// Insert before `\end{document}` when present so every character lays out.
     var insertBeforeEndDocument = true
+    /// `FLASHTEX_TYPING_BENCH_AT=<needle>`: type right after the first occurrence
+    /// of `needle` instead (an edit on a visible page: the end of a document is
+    /// on its last page, which the v2 pane's lazy stack never materializes at
+    /// the bench window size, so no paint of the edited page is observed there).
+    /// `first-paragraph` is the end of the first paragraph after `\begin{document}`.
+    var insertAfterNeedle: String?
 
     static func parse(_ env: [String: String]) -> TypingBenchConfig? {
         guard let path = env["FLASHTEX_TYPING_BENCH"], !path.isEmpty else { return nil }
@@ -212,6 +218,7 @@ struct TypingBenchConfig: Equatable {
         if let s = env["FLASHTEX_TYPING_BENCH_SETTLE_MS"], let ms = Double(s), ms > 0 { c.settleTimeoutMs = ms }
         if let s = env["FLASHTEX_TYPING_BENCH_MAX_MS"], let ms = Double(s), ms > 0 { c.typingBudgetMs = ms }
         if env["FLASHTEX_TYPING_BENCH_APPEND"] == "1" { c.insertBeforeEndDocument = false }
+        if let at = env["FLASHTEX_TYPING_BENCH_AT"], !at.isEmpty { c.insertAfterNeedle = at }
         return c
     }
 
@@ -221,9 +228,22 @@ struct TypingBenchConfig: Equatable {
         text.replacingOccurrences(of: "\r\n", with: "\n").map { String($0) }
     }
 
-    /// UTF-16 offset to start typing at: the `\end{document}` line, else the end.
-    static func insertionOffset(in text: String, beforeEndDocument: Bool) -> Int {
+    /// UTF-16 offset to start typing at: after `needle` when given and found
+    /// (`first-paragraph`: the first blank line after `\begin{document}`), else
+    /// the `\end{document}` line, else the end.
+    static func insertionOffset(in text: String, beforeEndDocument: Bool, afterNeedle needle: String? = nil) -> Int {
         let ns = text as NSString
+        if let needle {
+            if needle == "first-paragraph" {
+                let begin = ns.range(of: "\\begin{document}")
+                let from = begin.location == NSNotFound ? 0 : NSMaxRange(begin)
+                let blank = ns.range(of: "\n\n", options: [], range: NSRange(location: from, length: ns.length - from))
+                if blank.location != NSNotFound { return blank.location }
+            } else {
+                let r = ns.range(of: needle)
+                if r.location != NSNotFound { return NSMaxRange(r) }
+            }
+        }
         guard beforeEndDocument else { return ns.length }
         let r = ns.range(of: "\\end{document}", options: .backwards)
         return r.location == NSNotFound ? ns.length : r.location
@@ -403,7 +423,7 @@ final class TypingBenchDriver {
     }
 
     func begin(in tv: NSTextView) {
-        let offset = TypingBenchConfig.insertionOffset(in: tv.string, beforeEndDocument: config.insertBeforeEndDocument)
+        let offset = TypingBenchConfig.insertionOffset(in: tv.string, beforeEndDocument: config.insertBeforeEndDocument, afterNeedle: config.insertAfterNeedle)
         tv.setSelectedRange(NSRange(location: offset, length: 0))
         bytesBefore = tv.string.utf8.count
         bench.reset()

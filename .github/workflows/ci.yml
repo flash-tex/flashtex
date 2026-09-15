@@ -21,6 +21,21 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  # The Mac app's bundled command inventory must stay byte-identical to the
+  # compiler's. That gate lived only in `mac-app` below, on a macOS runner --
+  # and macOS runners queue for hours behind ~90 branches, so in practice a
+  # compiler PR could drift the inventory and nothing would say so until
+  # someone ran the Mac suite by hand. It is a sha256 comparison of two files;
+  # it does not need a Mac.
+  inventory:
+    name: bundled inventory matches the compiler
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Completion vocabulary is the compiler's inventory
+        run: apps/mac/scripts/sync-supported-latex.sh --check
+
   rust:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -30,7 +45,8 @@ jobs:
       # app bundle, so the render-pipeline/pdf tests that need them run
       # instead of skipping (no TeX installation on the runners).
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
-      FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm
+      # Latin Modern, EC (T1 without lmodern) and AMS symbol metrics — the same three trees the app bundles.
+      FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
       FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
     strategy:
       fail-fast: false
@@ -62,7 +78,12 @@ jobs:
         run: cargo build --release --locked ${{ matrix.features }}
       - name: cargo test --release
         working-directory: crates/${{ matrix.crate }}
-        run: cargo test --release --locked ${{ matrix.features }}
+        # --no-fail-fast: without it cargo aborts at the first failing test
+        # binary, so the rest of the crate's targets never execute and the job
+        # reports only the first casualty. render-pipeline was reporting
+        # "92 passed" while a local --no-fail-fast run at the same commit
+        # executed 177 -- roughly half the suite had never run in CI.
+        run: cargo test --release --locked --no-fail-fast ${{ matrix.features }}
 
   mac-app:
     name: mac app (swift build + test)

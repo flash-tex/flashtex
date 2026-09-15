@@ -15,11 +15,30 @@ flashtex fonts                          # which fonts/metrics this binary resolv
 flashtex --version
 ```
 
+## Install
+
+This is the engine + CLI, independent of the Mac app — it runs on macOS or
+Linux, with no TeX installation:
+
+```sh
+curl -fsSL https://flash-tex.github.io/flashtex/install-cli.sh | sh
+```
+
+Detects your OS/CPU, downloads the matching
+`flashtex-cli-<version>-<platform>.tar.gz` from
+[Releases](https://github.com/flash-tex/flashtex/releases), verifies it
+against that release's `SHA256SUMS` (refuses on a mismatch), and installs
+`flashtex` into `~/.local/bin` plus its fonts/metrics into
+`~/.local/share/flashtex`. Flags: `--prefix DIR` (e.g. `/usr/local`, may need
+sudo), `--version vX.Y.Z` (default: the latest release), `--uninstall`. For
+the Mac app instead (SwiftUI GUI, bundles this same CLI), see
+[Getting started](README.md#install).
+
 Where it lives:
 
 | Install | Path |
 |---|---|
-| CLI tarball (`flashtex-cli-<version>-<platform>.tar.gz` from [Releases](https://github.com/flash-tex/flashtex/releases)) | `bin/flashtex`, fonts and metrics in `share/flashtex/` — extract anywhere; `bin/flashtex install-cli` links it into `/usr/local/bin` |
+| `install-cli.sh`, or the CLI tarball extracted by hand (`flashtex-cli-<version>-<platform>.tar.gz` from [Releases](https://github.com/flash-tex/flashtex/releases)) | `bin/flashtex`, fonts and metrics in `share/flashtex/` — extract anywhere; `bin/flashtex install-cli` links it into `/usr/local/bin` |
 | Mac app | `/Applications/FlashTeX.app/Contents/MacOS/flashtex-cli` (uses the app's `Contents/Resources/{Fonts,texmf}`) |
 | Source build | `crates/flashtex-cli/target/release/flashtex` — add `--font-dir apps/mac/Fonts` and `FLASHTEX_TFM_DIRS=apps/mac/Fonts/texmf/fonts/tfm/public/lm`, or install the tarball layout ([Fonts](#fonts-and-metrics)) |
 
@@ -27,6 +46,8 @@ The older helpers (`flashtex-render`, `flashtex-compiler`, `flashtex-pdf`,
 `flashtex-pdf-exact`) still ship next to it and are described
 [below](#helper-binaries); `flashtex` is the same engine with a proper front
 end, and its `worker` subcommand is byte-for-byte the protocol the IDE speaks.
+Any editor or CI can drive that same JSON Lines protocol directly — see
+[Extending FlashTeX](../extensibility.md).
 
 ## Subcommands
 
@@ -225,10 +246,14 @@ and embeds the Latin Modern OpenType faces (plus New Computer Modern Math for
 Without the TFMs the OpenType metrics are used and a `tfm_missing` /
 `math_metrics_opentype` warning says so; a missing required metric set is the
 blocking `required_metrics_unavailable` error, never a silent fallback. The
-bundle covers Latin Modern Roman regular/bold/italic at 5–17 pt and the math
-faces; sans, typewriter and small caps are not bundled. The PDF writer
-resolves each face by content hash in the same directories, so the embedded
-program is exactly the file the layout used.
+bundle covers Latin Modern Roman regular/bold/italic at 5–17 pt, the math
+faces, and — despite older notes here — sans (`lmsans*`, including demi-condensed),
+slanted (`lmromanslant*`/`lmmonoslant*`), small caps (`lmromancaps*`/
+`lmmonocaps*`) and typewriter (`lmmono*`, including bold via `lmmonolt*`):
+`\textsf`/`\texttt`/`\textsl`/small caps all resolve to real bundled faces
+(`crates/render-pipeline/src/fonts.rs`'s `latin_modern_file`), not a
+substitution. The PDF writer resolves each face by content hash in the same
+directories, so the embedded program is exactly the file the layout used.
 
 ## Helper binaries
 
@@ -275,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 200 text-mode and 522 math-mode command entries, 43 environments and 6 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 342 text-mode and 560 math-mode command entries, 67 environments and 24 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -283,17 +308,21 @@ Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test
 
 | Canonical set | Commands supported | Environments supported |
 | --- | ---: | ---: |
-| kernel | 162/410 (39.5%) | 15/30 (50.0%) |
-| amsmath | 39/102 (38.2%) | 17/21 (81.0%) |
+| kernel | 194/410 (47.3%) | 20/30 (66.7%) |
+| amsmath | 44/102 (43.1%) | 17/21 (81.0%) |
 | amssymb | 225/229 (98.3%) | none defined |
 | enumitem | 1/17 (5.9%) | none defined |
 | geometry | 0/7 (0.0%) | none defined |
-| graphicx | 0/8 (0.0%) | none defined |
-| hyperref | 2/132 (1.5%) | 0/2 (0.0%) |
+| graphicx | 6/8 (75.0%) | none defined |
+| hyperref | 3/132 (2.3%) | 0/2 (0.0%) |
 | tikz | 0/43 (0.0%) | 0/2 (0.0%) |
-| **total** | **461/1003 (46.0%)** | |
+| xcolor | 14/71 (19.7%) | none defined |
+| siunitx | 18/240 (7.5%) | none defined |
+| **total** | **542/1314 (41.2%)** | |
 
 Generated by `flashtex-compiler --supported coverage` against `crates/compiler/supported/canonical-latex.tsv` (LaTeX2e reference-manual index and package sources, each name confirmed by pdfLaTeX; TeX Live 2026). The total row counts commands and environments together. Supported means handled without an unsupported diagnostic, not typographic parity.
+
+**The denominator excludes math-mode symbol commands entirely.** `canonical-latex.tsv`'s candidates are `@findex`/`@EnvIndex` entries from the LaTeX2e reference manual plus each listed package's own source files (see `crates/compiler/scripts/canonical_latex.py`'s header); math symbols such as `\alpha` and `\odot` are neither in that manual's index nor in any of the nine package source lists, so they never become candidates and are absent from the table. The compiler tracks math-command support separately (`crates/compiler/src/math.rs`'s `COMMAND_GLYPHS`/`OPERATOR_NAMES`, `crates/compiler/src/supported.rs`'s `Origin::MathSymbol`/`MathOperator`/`MathStructure`; the full list is in `docs/user/compiler.md`'s math tables), but `--supported coverage` does not count them.
 
 Canonical sources:
 
@@ -306,15 +335,35 @@ Canonical sources:
 - Source graphicx: tokens of graphicx.sty, graphics.sty (graphicx.sty 2024/12/31 v1.2e Enhanced LaTeX Graphics (DPC,SPQR); graphics.sty 2024/08/06 v1.4g Standard LaTeX Graphics (DPC,SPQR)); dependency baseline: keyval, trig
 - Source hyperref: tokens of hyperref.sty, nameref.sty (hyperref.sty 2026-01-29 v7.01p Hypertext links for LaTeX; nameref.sty 2026-01-29 v2.58 Cross-referencing by name of section); dependency baseline: iftex, keyval, kvsetkeys, kvdefinekeys, pdfescape, ltxcmds, pdftexcmds, infwarerr, hycolor, refcount, gettitlestring, kvoptions, etoolbox, stringenc, intcalc, url, bitset, bigintcalc, rerunfilecheck, uniquecounter
 - Source tikz: tokens of tikz.sty, tikz.code.tex (tikz.sty 2025-08-29 v3.1.11a (3.1.11a); pgf 3.1.11a); dependency baseline: pgf, pgfrcs, pgfcore, graphicx, keyval, graphics, trig, pgfsys, xcolor, pgfcomp-version-0-65, pgfcomp-version-1-18, pgffor, pgfkeys, pgfmath
+- Source xcolor: tokens of xcolor.sty (xcolor.sty 2024/09/29 v3.02 LaTeX color extensions (UK)); dependency baseline: none
+- Source siunitx: tokens of siunitx.sty (siunitx.sty 2025-07-09 v3.4.14 A comprehensive (SI) units package); dependency baseline: translations, etoolbox, pdftexcmds, infwarerr, iftex, ltxcmds, amstext, amsgen, array
 
 ### Text commands
 
 | Command | Arguments | Behaviour |
 | --- | --- | --- |
+| `\num` | `[options]{number}` | siunitx number: digit groups, decimal marker, exponent, uncertainty, as an upright formula |
+| `\qty` | `[options]{number}{units}` | siunitx quantity: number, unbreakable thin space, unit |
+| `\unit` | `[options]{units}` | siunitx unit: prefixes, powers, \per as a power, fraction or solidus; literal m/s |
+| `\si` | `[options]{units}` | siunitx v2 name of \unit |
+| `\SI` | `[options]{number}[pre-unit]{units}` | siunitx v2 name of \qty with an optional pre-unit |
+| `\numlist` | `[options]{numbers}` | siunitx list of ;-separated numbers joined by list-separator and " and " |
+| `\numrange` | `[options]{number}{number}` | siunitx range: two numbers joined by range-phrase " to " |
+| `\qtylist` | `[options]{numbers}{units}` | siunitx list of quantities, the unit repeated |
+| `\qtyrange` | `[options]{number}{number}{units}` | siunitx range of quantities, the unit repeated |
+| `\SIlist` | `[options]{numbers}{units}` | siunitx v2 name of \qtylist |
+| `\SIrange` | `[options]{number}{number}{units}` | siunitx v2 name of \qtyrange |
+| `\ang` | `[options]{degrees;minutes;seconds}` | siunitx angle with degree, minute and second marks |
+| `\sisetup` | `{options}` | siunitx settings for the following commands (document-global in this model) |
+| `\DeclareSIUnit` | `[options]{\name}{units}` | defines a siunitx unit macro usable inside \unit and \qty |
 | `\section` | `{...}` | numbered section heading; starred form unnumbered |
 | `\subsection` | `{...}` | numbered subsection heading; starred form unnumbered |
 | `\subsubsection` | `{...}` | numbered subsubsection heading; starred form unnumbered |
+| `\paragraph` | `{...}` | run-in heading: bold, flush, set into the first line of the paragraph that follows it |
+| `\subparagraph` | `{...}` | run-in heading indented by \parindent, set into the first line of the paragraph that follows it |
 | `\tableofcontents` |  | article contents list from the previous layout pass |
+| `\index` | `{entry}` | makeidx index entry (\|modifier, @sort key and !subentry live inside the braces): accepted, never typeset (no indexing backend) |
+| `\glossary` | `{entry}` | glossary entry: accepted, never typeset (no glossary backend) |
 | `\textbf` | `{...}` | bold text |
 | `\textmd` | `{...}` | medium-weight text |
 | `\emph` | `{...}` | emphasis: toggles italic |
@@ -330,11 +379,28 @@ Canonical sources:
 | `\end` | `{env}` | closes the innermost open environment |
 | `\par` |  | ends the paragraph |
 | `\documentclass` | `[options]{class}` | records the class and its 10pt/11pt/12pt size option; only the document body is typeset |
-| `\setlength` | `{\length}{dimension}` | preamble \parskip, and \parindent of 0pt; other lengths warn |
+| `\setlength` | `{\length}{dimension}` | preamble page geometry and \parskip; \parindent of 0pt; other lengths warn |
+| `\addtolength` | `{\length}{dimension}` | preamble page geometry and \parskip; accumulates onto the current value |
 | `\usepackage` | `[options]{a,b,c}` | records packages; layout-neutral ones are silent, every other package warns that it is not implemented |
+| `\definecolor` | `[class]{name}{model}{spec}` | colour definition in rgb, cmy, cmyk, gray, RGB, HTML or Gray (model lists pick the target model) |
+| `\providecolor` | `[class]{name}{model}{spec}` | \definecolor unless the colour is already defined |
+| `\xdefinecolor` | `[class]{name}{model}{spec}` | xcolor synonym of \definecolor |
+| `\colorlet` | `[class]{name}[model]{expression}` | names an xcolor expression, optionally converted to a model |
+| `\definecolorset` | `[class]{models}{head}{tail}{set}` | defines name,spec;... colours in one go |
+| `\DefineNamedColor` | `{named}{name}{model}{spec}` | driver named colour, as dvipsnam.def uses it |
+| `\selectcolormodel` | `{model}` | xcolor target model: natural, rgb, cmy, cmyk or gray |
+| `\color` | `[model]{expression}` | text colour for the rest of the group; pdfTeX's exact operator values |
+| `\textcolor` | `[model]{expression}{text}` | text in a colour |
+| `\pagecolor` | `[model]{expression}` | page background colour, document-wide |
+| `\nopagecolor` |  | removes the page background colour |
+| `\normalcolor` |  | back to the default text colour |
+| `\colorbox` | `[model]{expression}{text}` | text on a filled box \fboxsep larger than its content |
+| `\fcolorbox` | `[model]{frame}{fill}{text}` | \colorbox inside a \fboxrule frame |
 | `\newcolumntype` | `{X}[n]{spec}` | array column type expanded in later tabular specifications |
 | `\arraybackslash` |  | array no-op: \\ already ends the row inside p, m and b entries |
-| `\setlist` | `[list]{options}` | enumitem itemsep and topsep; other keys warn |
+| `\arrayrulecolor` | `[model]{colour}` | colortbl: colour of later table rules |
+| `\doublerulesepcolor` | `[model]{colour}` | colortbl: colour of the gap between double rules |
+| `\setlist` | `[list]{options}` | enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn |
 | `\newcommand` | `{\name}[n]{body}` | defines a macro with 0-9 arguments; rejects an existing name |
 | `\renewcommand` | `{\name}[n]{body}` | redefines an existing macro |
 | `\DeclareMathOperator` | `*{\name}{text}` | defines \name as \operatorname{text}; the starred form takes limits |
@@ -342,19 +408,46 @@ Canonical sources:
 | `\include` | `{path}` | expands a project-relative document in place |
 | `\label` | `{key}` | names the current section, equation or figure number |
 | `\ref` | `{key}` | number of the labelled item |
-| `\pageref` | `{key}` | page number of the labelled item |
+| `\pageref` | `{key}` | page number of the labelled item, in the \pagenumbering style in force at the label |
+| `\thepage` |  | current page's number, resolved when the page is set, in the \pagenumbering style in force here |
 | `\eqref` | `{key}` | parenthesised equation number of the labelled item |
+| `\cref` | `*{key list}` | cleveref lower-case named references; consecutive ranges are compressed |
+| `\Cref` | `*{key list}` | cleveref capitalised named references; consecutive ranges are compressed |
+| `\crefrange` | `*{first}{last}` | cleveref named reference range |
+| `\Crefrange` | `*{first}{last}` | capitalised cleveref named reference range |
+| `\cpageref` | `*{key list}` | cleveref named page references |
+| `\Cpageref` | `*{key list}` | capitalised cleveref named page references |
+| `\labelcref` | `*{key list}` | cleveref label text without the reference name |
+| `\crefname` | `{type}{singular}{plural}` | cleveref lower-case singular and plural name override |
+| `\Crefname` | `{type}{singular}{plural}` | cleveref capitalised singular and plural name override |
+| `\numberwithin` | `[\style]{counter}{parent}` | amsmath: counter reset by parent and printed \theparent.\style{counter} (equation, figure, table; theorem counters within section) |
+| `\counterwithin` | `{counter}{parent}` | counter reset by parent and printed \theparent.\arabic{counter}; starred form keeps the printed form |
+| `\counterwithout` | `{counter}{parent}` | undoes \counterwithin; starred form keeps the printed form |
 | `\caption` | `{...}` | numbered "Figure N:" caption inside figure |
-| `\item` |  | entry of an itemize or enumerate list |
-| `\url` | `{url}` | monospaced URL text; links are not clickable |
+| `\captionof` | `{type}[short]{...}` | numbered caption outside a float: "Figure N:" for figure, "Table N:" for table |
+| `\item` | `[label]` | entry of an itemize, enumerate or description list |
+| `\includegraphics` | `*[keys]{file}` | image box in running text (graphicx keys as written) |
+| `\scalebox` | `{x}[y]{...}` | graphics.sty scaled box of the content |
+| `\resizebox` | `*{width}{height}{...}` | graphics.sty box scaled to a width and/or height; ! keeps the aspect ratio |
+| `\rotatebox` | `[keys]{angle}{...}` | graphicx rotated box; the box is the rotated bounding box |
+| `\reflectbox` | `{...}` | graphics.sty box mirrored left to right |
+| `\graphicspath` | `{{dir/}...}` | image search directories; no material |
+| `\hypersetup` | `{key=value,...}` | hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them |
+| `\lstset` | `{key=value,...}` | listings defaults, global from that point on; the key names are checked and nothing is typeset here |
+| `\allowdisplaybreaks` | `[0-4]` | amsmath page-break permission inside displays; no material |
+| `\url` | `{url}` | monospaced URL text, breaking as url.sty does; links are not clickable |
 | `\href` | `{url}{text}` | link text; links are not clickable |
-| `\nolinkurl` | `{url}` | monospaced URL text without a link |
+| `\nolinkurl` | `{url}` | monospaced URL text without a link, breaking as url.sty does |
 | `\hfill` |  | infinite-stretch horizontal glue |
+| `\hrulefill` |  | \hfill filled with a 0.4pt baseline rule (latex.ltx \leaders\hrule\hfill) |
+| `\dotfill` |  | \hfill filled with dots in 0.44em boxes, centred (latex.ltx \cleaders) |
 | `\hfil` |  | infinite-stretch horizontal glue (same order as \hfill) |
 | `\hspace` | `{dimension}` | fixed horizontal space; starred form identical |
 | `\footnote` | `[n]{...}` | numbered mark and page-bottom footnote text |
 | `\footnotemark` | `[n]` | footnote mark only |
 | `\footnotetext` | `[n]{...}` | footnote text without a mark |
+| `\fnsymbol` | `{counter}` | a counter's value 1-9 as a footnote symbol |
+| `\marginpar` | `[left]{right}` | margin note set in the right margin at footnotesize; always the right side, with no collision avoidance between close notes |
 | `\normalfont` |  | resets the text face |
 | `\bfseries` |  | switches to bold |
 | `\mdseries` |  | switches to medium weight |
@@ -383,14 +476,39 @@ Canonical sources:
 | `\newpage` |  | forces a page break |
 | `\clearpage` |  | forces a page break |
 | `\cleardoublepage` |  | forces a page break (one-sided article) |
-| `\pagebreak` | `[n]` | forces a page break |
-| `\nopagebreak` | `[n]` | accepted no-op; the layout never breaks there on its own |
-| `\linebreak` | `[n]` | line break |
-| `\nolinebreak` | `[n]` | accepted no-op |
+| `\pagebreak` | `[n]` | page-break penalty -\@getpen{n} (4: a forced break); in a paragraph, after the line it is set on |
+| `\nopagebreak` | `[n]` | page-break penalty \@getpen{n}; in a paragraph, after the line it is set on |
+| `\linebreak` | `[n]` | line-break penalty -\@getpen{n} (4: a forced break, the line stays justified) |
+| `\nolinebreak` | `[n]` | line-break penalty \@getpen{n}, the space before it moved after it |
+| `\penalty` | `<number>` | penalty node: in a paragraph a line-break penalty, between paragraphs a page-break penalty |
+| `\nobreak` |  | \penalty10000 |
+| `\allowbreak` |  | \penalty0 |
+| `\goodbreak` |  | ends the paragraph, then \penalty-500 |
+| `\filbreak` |  | ends the paragraph, then \vfil\penalty-200\vfilneg |
+| `\discretionary` | `{pre}{post}{nobreak}` | discretionary break (plain text of each argument) |
+| `\nobreakdash` | `- -- ---` | amsmath: the dashes that follow, with no line break after them (\nobreak) |
+| `\tolerance` | `=<number>` | line-breaking parameter, restored at the end of its group |
+| `\pretolerance` | `=<number>` | line-breaking parameter, restored at the end of its group |
+| `\looseness` | `=<number>` | line-breaking parameter for the next paragraph end |
+| `\widowpenalty` | `=<number>` | page-breaking parameter, restored at the end of its group |
+| `\clubpenalty` | `=<number>` | page-breaking parameter, restored at the end of its group |
+| `\interlinepenalty` | `=<number>` | page-breaking parameter, restored at the end of its group |
+| `\emergencystretch` | `=<dimen>` | line-breaking parameter, restored at the end of its group |
+| `\sloppy` |  | \tolerance 9999, \emergencystretch 3em, \hfuzz .5pt |
+| `\fussy` |  | \tolerance 200, \emergencystretch 0pt, \hfuzz .1pt |
+| `\samepage` |  | \interlinepenalty 10000 for the rest of the group |
+| `\raggedbottom` |  | pages keep their natural height |
+| `\flushbottom` |  | pages are stretched to the text height |
+| `\enlargethispage` | `*{dimension}` | the current page's text height grows by the dimension (* also shrinks its glue); pt/cm/.../\baselineskip multiples |
+| `\hyphenation` | `{words}` | hyphenation exceptions: the hyphens mark each word's only break points |
 | `\vfill` |  | vertical glue filling the rest of the page |
+| `\columnbreak` | `[n]` | multicol: ends the current column of multicols (priority n, default 4) |
+| `\newcolumn` |  | multicol: ends the current column of multicols, filling it |
+| `\raggedcolumns` |  | multicol: columns keep their natural height |
+| `\flushcolumns` |  | multicol: columns are stretched to one height (the default) |
 | `\pagestyle` | `{style}` | accepted; no headers or footers are rendered |
 | `\thispagestyle` | `{style}` | accepted; no headers or footers are rendered |
-| `\pagenumbering` | `{style}` | accepted; no page numbers are rendered |
+| `\pagenumbering` | `{style}` | resets the page counter to 1 and selects the \thepage/\pageref style (arabic, roman, Roman, alph, Alph); unknown styles fall back to arabic |
 | `\listfiles` |  | accepted no-op; there is no log stream |
 | `\centering` |  | centres the following paragraphs |
 | `\Centering` |  | centres the following paragraphs (ragged2e form) |
@@ -410,15 +528,50 @@ Canonical sources:
 | `\LARGE` |  | size declaration from the class size table |
 | `\huge` |  | size declaration from the class size table |
 | `\Huge` |  | size declaration from the class size table |
-| `\cite` | `[note]{keys}` | numbered citation from thebibliography entries |
-| `\nocite` | `{keys}` | accepted no-op; there is no .bib pipeline |
-| `\bibitem` | `[label]{key}` | entry of thebibliography |
+| `\cite` | `[note]{keys}` | numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \citet, or as \citep when an optional argument follows |
+| `\parencite` | `[pre][post]{keys}` | biblatex parenthetical citation: [n] in numeric style |
+| `\textcite` | `[pre][post]{keys}` | biblatex textual citation: Author [n] in numeric style |
+| `\autocite` | `[pre][post]{keys}` | biblatex automatic citation, equivalent to \parencite in this compiler |
+| `\citet` | `[pre][post]{keys}` | natbib textual citation: Name (Year); one optional argument is the post-note |
+| `\citep` | `[pre][post]{keys}` | natbib parenthetical citation: (Name, Year); one optional argument is the post-note |
+| `\citealt` | `[pre][post]{keys}` | natbib \citet without the parentheses: Name Year |
+| `\citealp` | `[pre][post]{keys}` | natbib \citep without the parentheses: Name, Year |
+| `\citeauthor` | `[pre][post]{keys}` | natbib author list alone, or biblatex author text; the starred form is the long list |
+| `\citefullauthor` | `[pre][post]{keys}` | natbib \citeauthor*: the long author list |
+| `\citeyear` | `[pre][post]{keys}` | natbib year alone, or biblatex year text |
+| `\citeyearpar` | `[pre][post]{keys}` | natbib year in parentheses |
+| `\citenum` | `[pre][post]{keys}` | natbib \bibitem number alone, whatever the citation style |
+| `\citetext` | `{text}` | natbib's citation delimiters around arbitrary text |
+| `\Citet` | `[pre][post]{keys}` | natbib \citet with the author list's first letter uppercased |
+| `\Citep` | `[pre][post]{keys}` | natbib \citep with the author list's first letter uppercased |
+| `\Citealt` | `[pre][post]{keys}` | natbib \citealt with the author list's first letter uppercased |
+| `\Citealp` | `[pre][post]{keys}` | natbib \citealp with the author list's first letter uppercased |
+| `\Citeauthor` | `[pre][post]{keys}` | natbib \citeauthor with the author list's first letter uppercased |
+| `\nocite` | `{keys}` | biblatex includes keys, including * for every resource entry, without visible citation output |
+| `\addbibresource` | `[location]{file}` | biblatex registers a project-relative .bib resource |
+| `\printbibliography` | `[key=value,...]` | biblatex heading and formatted entries from the registered .bib resources |
+| `\bibitem` | `[label]{key}` | entry of thebibliography; natbib's [Author(Year)] and [Author, Year] labels feed author-year citations |
 | `\bibliography` | `{files}` | diagnosed: .bib input is not read |
 | `\bibliographystyle` | `{style}` | diagnosed: no effect without .bib support |
 | `\title` | `{...}` | title for \maketitle |
 | `\author` | `{...}` | author block for \maketitle; \and and \thanks inside it |
 | `\date` | `{...}` | date for \maketitle; \today inside it |
 | `\maketitle` |  | article.cls title block |
+| `\address` | `{lines}` | letter.cls return address (\\-separated lines), set by \opening |
+| `\signature` | `{name}` | letter.cls name under the closing; falls back to \name |
+| `\name` | `{name}` | letter.cls \fromname, used when \signature is empty |
+| `\location` | `{text}` | letter.cls \fromlocation: recorded; only the firstpage footer would set it |
+| `\telephone` | `{number}` | letter.cls \telephonenum: recorded; only the firstpage footer would set it |
+| `\opening` | `{salutation}` | letter.cls: return address and date flush right, the recipient, then the salutation |
+| `\closing` | `{text}` | letter.cls: closing and signature at \longindentation, 6\parskip apart |
+| `\cc` | `{text}` | letter.cls carbon-copy line, labelled 'cc:' |
+| `\encl` | `{text}` | letter.cls enclosure line, labelled 'encl:' |
+| `\ps` |  | letter.cls postscript: a paragraph break and nothing else — it takes no argument |
+| `\startbreaks` |  | letter.cls: re-allows page breaks after \closing; no effect on this layout |
+| `\stopbreaks` |  | letter.cls: forbids page breaks inside the closing; no effect on this layout |
+| `\stopletter` |  | letter.cls hook run at \end{letter}; empty in the class itself |
+| `\makelabels` |  | letter.cls address-label page: accepted, not produced (no .aux round trip) |
+| `\today` |  | the date carried by the compile request; this compiler never reads the clock |
 | `\TeX` |  | latex.ltx logo: T, kern -.1667em, E lowered .5ex, kern -.125em, X |
 | `\LaTeX` |  | latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \TeX |
 | `\LaTeXe` |  | \LaTeX, kern .15em, 2 and a text-style subscript varepsilon |
@@ -431,6 +584,7 @@ Canonical sources:
 | `\negthickspace` |  | text kern -.2777em |
 | `\enspace` |  | text kern .5em |
 | `\enskip` |  | horizontal glue of .5em |
+| `\xspace` |  | word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 | `\AA` |  | text symbol \AA: OT1 Å, T1 Å (tex-text-encoding; unavailable is a LaTeX error) |
 | `\aa` |  | text symbol \aa: OT1 å, T1 å (tex-text-encoding; unavailable is a LaTeX error) |
 | `\AE` |  | text symbol \AE: OT1 Æ, T1 Æ (tex-text-encoding; unavailable is a LaTeX error) |
@@ -479,9 +633,28 @@ Canonical sources:
 | `\textgreater` |  | text symbol \textgreater: OT1 >, T1 > (tex-text-encoding; unavailable is a LaTeX error) |
 | `\textbraceleft` |  | text symbol \textbraceleft: OT1 {, T1 { (tex-text-encoding; unavailable is a LaTeX error) |
 | `\textbraceright` |  | text symbol \textbraceright: OT1 }, T1 } (tex-text-encoding; unavailable is a LaTeX error) |
+| `\c` | `{letter}` | cedilla text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning |
+| `\v` | `{letter}` | caron text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning |
+| `\u` | `{letter}` | breve text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning |
+| `\H` | `{letter}` | double acute text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning |
+| `\r` | `{letter}` | ring text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning |
+| `\k` | `{letter}` | ogonek text accent (T1 only; OT1 reports it unavailable): the precomposed character the dfu tables declare; without one the bare letter and a warning |
+| `\d` | `{letter}` | dot-below text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning |
+| `\b` | `{letter}` | bar-below text accent: no dfu declarations, so the bare letter and a warning |
+| `\capitalcaron` | `{letter}` | capital caron text accent: an alias of \v, the precomposed character the dfu tables declare |
+| `\capitalbreve` | `{letter}` | capital breve text accent: an alias of \u, the precomposed character the dfu tables declare |
+| `\capitalring` | `{letter}` | capital ring text accent: an alias of \r, the precomposed character the dfu tables declare |
+| `\capitalogonek` | `{letter}` | capital ogonek text accent: an alias of \k (T1 only; OT1 reports it unavailable) |
+| `\capitalhungarumlaut` | `{letter}` | capital double-acute text accent: an alias of \H, the precomposed character the dfu tables declare |
+| `\capitalcedilla` | `{letter}` | capital cedilla text accent: an alias of \c, the precomposed character the dfu tables declare |
+| `\uline` | `{...}` | ulem underline: 0.4pt rule under the argument (single-line; needs ulem) |
+| `\underline` | `{...}` | kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox |
+| `\underbar` | `{...}` | kernel text underline: Rule 10 rule like \underline but content depth zeroed (fixed position) |
+| `\sout` | `{...}` | ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem) |
 | `\newtheorem` | `{env}[counter]{name}` | defines a numbered theorem-like environment (amsthm) |
 | `\theoremstyle` | `{style}` | selects the amsthm style for following \newtheorem |
 | `\\` |  | line break; an optional [length] is consumed |
+| `\-` |  | discretionary hyphen: a break point, invisible unless the line breaks there |
 | `\,` |  | text kern .16667em (\thinspace) |
 | `\!` |  | text kern -.16667em (\negthinspace) |
 | `\:` |  | text kern .2222em (\medspace) |
@@ -505,7 +678,6 @@ Canonical sources:
 | `\refstepcounter` | `{counter}` | increments a counter and makes it the current \label value |
 | `\value` | `{counter}` | a counter's value in a number context |
 | `\Alph` | `{counter}` | a counter as an upper-case letter |
-| `\fnsymbol` | `{counter}` | a counter as a footnote symbol |
 | `\newlength` | `{\name}` | allocates a skip register |
 | `\settowidth` | `{\name}{text}` | sets a length from text measured by the expansion pass's box measurer (an approximation) |
 | `\settoheight` | `{\name}{text}` | sets a length from text height (an approximation, as \settowidth) |
@@ -516,6 +688,7 @@ Canonical sources:
 | `\space` |  | expands to one space |
 | `\ignorespaces` |  | skips the spaces that follow |
 | `\jobname` |  | expands to texput |
+| `\ifthenelse` | `{test}{true}{false}` | the ifthen package's conditional: \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests select one branch at expansion time |
 
 ### Math structures
 
@@ -528,6 +701,21 @@ Canonical sources:
 | `\ ` |  | control space (6mu) |
 | `\!` |  | negative thin space (-3mu) |
 | `\\|` |  | double vertical bar |
+| `\color` | `[model]{expression}` | colours the rest of the math group |
+| `\textcolor` | `[model]{expression}{body}` | math body in a colour |
+| `\num` | `[options]{number}` | siunitx number or ;-separated list inside a formula |
+| `\numlist` | `[options]{number}` | siunitx number or ;-separated list inside a formula |
+| `\unit` | `[options]{units}` | siunitx unit inside a formula |
+| `\si` | `[options]{units}` | siunitx unit inside a formula |
+| `\qty` | `[options]{number}{units}` | siunitx quantity (3mu thin space before the unit) or number range inside a formula |
+| `\numrange` | `[options]{number}{units}` | siunitx quantity (3mu thin space before the unit) or number range inside a formula |
+| `\SI` | `[options]{number}[pre-unit]{units}` | siunitx v2 quantity inside a formula |
+| `\qtylist` | `[options]{numbers}{units}` | siunitx list of quantities inside a formula |
+| `\SIlist` | `[options]{numbers}{units}` | siunitx list of quantities inside a formula |
+| `\qtyrange` | `[options]{number}{number}{units}` | siunitx range of quantities inside a formula |
+| `\SIrange` | `[options]{number}{number}{units}` | siunitx range of quantities inside a formula |
+| `\ang` | `[options]{angle}` | siunitx angle inside a formula |
+| `\sisetup` | `{options}` | siunitx settings changed inside a formula |
 | `\rule` | `[raise]{dimension}{dimension}` | latex.ltx \rule box in a formula, em/ex of the text font |
 | `\frac` | `{num}{den}` | fraction; \cfrac lays out as \frac |
 | `\cfrac` | `{num}{den}` | fraction; \cfrac lays out as \frac |
@@ -537,6 +725,9 @@ Canonical sources:
 | `\phantom` | `{x}` | empty box with the width and/or height and depth of the argument |
 | `\hphantom` | `{x}` | empty box with the width and/or height and depth of the argument |
 | `\vphantom` | `{x}` | empty box with the width and/or height and depth of the argument |
+| `\mathllap` | `{x}` | mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\llap/\rlap/\clap); needs mathtools |
+| `\mathrlap` | `{x}` | mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\llap/\rlap/\clap); needs mathtools |
+| `\mathclap` | `{x}` | mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\llap/\rlap/\clap); needs mathtools |
 | `\xrightarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
 | `\xleftarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
 | `\xleftrightarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
@@ -552,6 +743,12 @@ Canonical sources:
 | `\underset` | `{script}{base}` | script-size list centred above or below a base |
 | `\operatorname` | `{name}` | upright named operator (\mathop); starred and withlimits forms take limits |
 | `\operatornamewithlimits` | `{name}` | upright named operator (\mathop); starred and withlimits forms take limits |
+| `\colon` |  | function-arrow colon: punctuation (0mu/3mu) as the kernel declares it, amsmath's 2mu/6mu when amsmath is loaded |
+| `\eqqcolon` |  | mathtools =: (reverse of \coloneqq) as a relation; needs mathtools |
+| `\Coloneqq` |  | mathtools ::= and =:: (each three real glyphs) as one relation; needs mathtools |
+| `\Eqqcolon` |  | mathtools ::= and =:: (each three real glyphs) as one relation; needs mathtools |
+| `\vcentcolon` |  | mathtools vertically centred colon: the same glyph as \colon as a relation; needs mathtools |
+| `\dblcolon` |  | mathtools double vertically centred colon (two \vcentcolon) as one relation; needs mathtools |
 | `\bmod` |  | upright mod |
 | `\mod` |  | upright mod |
 | `\pmod` | `{n}` | parenthesised (mod n) |
@@ -586,9 +783,11 @@ Canonical sources:
 | `\textit` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\textnormal` | `{...}` | keeps its argument in the current math face (no distinct face yet) |
 | `\text` | `{text}` | literal text in math |
-| `\boxed` | `{...}` | real rule around, over or under the body |
-| `\overline` | `{...}` | real rule around, over or under the body |
-| `\underline` | `{...}` | real rule around, over or under the body |
+| `\boxed` | `{...}` | real rule around, over or under the body (underbar works in math like underline) |
+| `\overline` | `{...}` | real rule around, over or under the body (underbar works in math like underline) |
+| `\underline` | `{...}` | real rule around, over or under the body (underbar works in math like underline) |
+| `\underbar` | `{...}` | real rule around, over or under the body (underbar works in math like underline) |
+| `\Aboxed` | `{lhs rel rhs}` | mathtools: real \boxed rule around the whole row, keeping the relation as the shared alignment point |
 | `\overbrace` | `{body}` | cmex brace pieces with rule fills over or under a display-style body; scripts are limits |
 | `\underbrace` | `{body}` | cmex brace pieces with rule fills over or under a display-style body; scripts are limits |
 | `\overrightarrow` | `{body}` | amsmath \arrowfill@ as wide as the body, over or under it |
@@ -610,10 +809,13 @@ Canonical sources:
 | `\ddot` | `{body}` | base-14 accent glyph centred over the body |
 | `\acute` | `{body}` | base-14 accent glyph centred over the body |
 | `\grave` | `{body}` | base-14 accent glyph centred over the body |
+| `\mathring` | `{body}` | base-14 accent glyph centred over the body |
 | `\widehat` | `{body}` | cmex successor-chain accent grown to the body (msbm extra-wide form past 2em with amsfonts) |
 | `\widetilde` | `{body}` | cmex successor-chain accent grown to the body (msbm extra-wide form past 2em with amsfonts) |
 | `\check` | `{body}` | parsed, but no base-14 glyph exists: diagnosed and typeset without a mark |
 | `\breve` | `{body}` | parsed, but no base-14 glyph exists: diagnosed and typeset without a mark |
+| `\dddot` | `{body}` | amsmath mathop-limits shape: three/four text dots centred above the body |
+| `\ddddot` | `{body}` | amsmath mathop-limits shape: three/four text dots centred above the body |
 | `\left` |  | consumes the following delimiter, kept at ordinary size |
 | `\right` |  | consumes the following delimiter, kept at ordinary size |
 | `\big` |  | consumes the following delimiter, kept at ordinary size |
@@ -660,7 +862,7 @@ Canonical sources:
 
 ### Math symbols
 
-`\alpha` α, `\beta` β, `\gamma` γ, `\delta` δ, `\theta` θ, `\lambda` λ, `\mu` μ, `\pi` π, `\sigma` σ, `\phi` φ, `\omega` ω, `\epsilon` ε, `\varepsilon` ε, `\zeta` ζ, `\eta` η, `\vartheta` ϑ, `\iota` ι, `\kappa` κ, `\nu` ν, `\xi` ξ, `\varpi` ϖ, `\rho` ρ, `\varsigma` ς, `\tau` τ, `\upsilon` υ, `\varphi` ϕ, `\chi` χ, `\psi` ψ, `\Gamma` Γ, `\Delta` Δ, `\Theta` Θ, `\Lambda` Λ, `\Xi` Ξ, `\Pi` Π, `\Sigma` Σ, `\Upsilon` Υ, `\Phi` Φ, `\Psi` Ψ, `\Omega` Ω, `\le` ≤, `\ge` ≥, `\ne` ≠, `\equiv` ≡, `\sim` ∼, `\cong` ≅, `\propto` ∝, `\perp` ⊥, `\partial` ∂, `\nabla` ∇, `\prod` ∏, `\ast` ∗, `\prime` ′, `\cup` ∪, `\cap` ∩, `\subset` ⊂, `\subseteq` ⊆, `\supset` ⊃, `\supseteq` ⊇, `\notin` ∉, `\ni` ∋, `\emptyset` ∅, `\oplus` ⊕, `\otimes` ⊗, `\wedge` ∧, `\land` ∧, `\lor` ∨, `\to` →, `\rightarrow` →, `\leftarrow` ←, `\gets` ←, `\uparrow` ↑, `\downarrow` ↓, `\leftrightarrow` ↔, `\Leftarrow` ⇐, `\Leftrightarrow` ⇔, `\Uparrow` ⇑, `\Downarrow` ⇓, `\angle` ∠, `\aleph` ℵ, `\Re` ℜ, `\Im` ℑ, `\wp` ℘, `\langle` 〈, `\rangle` 〉, `\lvert` ∣, `\rvert` ∣, `\lVert` ∣∣, `\rVert` ∣∣, `\times` ×, `\div` ÷, `\pm` ±, `\leq` ≤, `\geq` ≥, `\neq` ≠, `\approx` ≈, `\cdot` ⋅, `\infty` ∞, `\sum` ∑, `\int` ∫, `\in` ∈, `\forall` ∀, `\exists` ∃, `\vee` ∨, `\Rightarrow` ⇒, `\mid` ∣, `\setminus` ∖, `\Longrightarrow` ⟹, `\mp` ∓, `\ll` ≪, `\gg` ≫, `\simeq` ≃, `\vdots` ⋮, `\ddots` ⋱, `\lfloor` ⌊, `\rfloor` ⌋, `\lceil` ⌈, `\rceil` ⌉, `\oint` ∮, `\mapsto` ↦, `\ell` ℓ, `\hbar` ℏ, `\circ` ∘, `\parallel` ∥, `\coloneqq` ≔, `\hookrightarrow` ↪, `\models` ⊨, `\vdash` ⊢, `\dashv` ⊣, `\top` ⊤, `\Longleftrightarrow` ⟺, `\longrightarrow` ⟶, `\longleftarrow` ⟵, `\Longleftarrow` ⟸, `\longleftrightarrow` ⟷, `\triangle` △, `\bigtriangledown` ▽, `\boxdot` ⊡, `\boxplus` ⊞, `\boxtimes` ⊠, `\square` □, `\blacksquare` ■, `\centerdot` ⬝, `\lozenge` ◊, `\blacklozenge` ⧫, `\circlearrowright` ↻, `\circlearrowleft` ↺, `\leftrightharpoons` ⇋, `\boxminus` ⊟, `\Vdash` ⊩, `\Vvdash` ⊪, `\vDash` ⊨, `\twoheadrightarrow` ↠, `\twoheadleftarrow` ↞, `\leftleftarrows` ⇇, `\rightrightarrows` ⇉, `\upuparrows` ⇈, `\downdownarrows` ⇊, `\upharpoonright` ↾, `\downharpoonright` ⇂, `\upharpoonleft` ↿, `\downharpoonleft` ⇃, `\rightarrowtail` ↣, `\leftarrowtail` ↢, `\leftrightarrows` ⇆, `\rightleftarrows` ⇄, `\Lsh` ↰, `\Rsh` ↱, `\rightsquigarrow` ⇝, `\leftrightsquigarrow` ↭, `\looparrowleft` ↫, `\looparrowright` ↬, `\circeq` ≗, `\succsim` ≿, `\gtrsim` ≳, `\gtrapprox` ⪆, `\multimap` ⊸, `\therefore` ∴, `\because` ∵, `\doteqdot` ≑, `\triangleq` ≜, `\precsim` ≾, `\lesssim` ≲, `\lessapprox` ⪅, `\eqslantless` ⪕, `\eqslantgtr` ⪖, `\curlyeqprec` ⋞, `\curlyeqsucc` ⋟, `\preccurlyeq` ≼, `\leqq` ≦, `\leqslant` ⩽, `\lessgtr` ≶, `\backprime` ‵, `\risingdotseq` ≓, `\fallingdotseq` ≒, `\succcurlyeq` ≽, `\geqq` ≧, `\geqslant` ⩾, `\gtrless` ≷, `\vartriangleright` ⊳, `\vartriangleleft` ⊲, `\trianglerighteq` ⊵, `\trianglelefteq` ⊴, `\bigstar` ★, `\between` ≬, `\blacktriangledown` ▾, `\blacktriangleright` ▶, `\blacktriangleleft` ◀, `\vartriangle` ▵, `\blacktriangle` ▴, `\triangledown` ▿, `\eqcirc` ≖, `\lesseqgtr` ⋚, `\gtreqless` ⋛, `\lesseqqgtr` ⪋, `\gtreqqless` ⪌, `\Rrightarrow` ⇛, `\Lleftarrow` ⇚, `\veebar` ⊻, `\barwedge` ⊼, `\doublebarwedge` ⩞, `\measuredangle` ∡, `\sphericalangle` ∢, `\varpropto` ∝, `\smallsmile` ⌣, `\smallfrown` ⌢, `\Subset` ⋐, `\Supset` ⋑, `\Cup` ⋓, `\Cap` ⋒, `\curlywedge` ⋏, `\curlyvee` ⋎, `\leftthreetimes` ⋋, `\rightthreetimes` ⋌, `\subseteqq` ⫅, `\supseteqq` ⫆, `\bumpeq` ≏, `\Bumpeq` ≎, `\lll` ⋘, `\ggg` ⋙, `\circledS` Ⓢ, `\pitchfork` ⋔, `\dotplus` ∔, `\backsim` ∽, `\backsimeq` ⋍, `\complement` ∁, `\intercal` ⊺, `\circledcirc` ⊚, `\circledast` ⊛, `\circleddash` ⊝, `\lvertneqq` ≨, `\gvertneqq` ≩, `\nleq` ≰, `\ngeq` ≱, `\nless` ≮, `\ngtr` ≯, `\nprec` ⊀, `\nsucc` ⊁, `\lneqq` ≨, `\gneqq` ≩, `\nleqslant` ⩽̸, `\ngeqslant` ⩾̸, `\lneq` ⪇, `\gneq` ⪈, `\npreceq` ⋠, `\nsucceq` ⋡, `\precnsim` ⋨, `\succnsim` ⋩, `\lnsim` ⋦, `\gnsim` ⋧, `\nleqq` ≦̸, `\ngeqq` ≧̸, `\precneqq` ⪵, `\succneqq` ⪶, `\precnapprox` ⪹, `\succnapprox` ⪺, `\lnapprox` ⪉, `\gnapprox` ⪊, `\nsim` ≁, `\ncong` ≇, `\diagup` ⟋, `\diagdown` ⟍, `\varsubsetneq` ⊊, `\varsupsetneq` ⊋, `\nsubseteqq` ⫅̸, `\nsupseteqq` ⫆̸, `\subsetneqq` ⫋, `\supsetneqq` ⫌, `\varsubsetneqq` ⫋, `\varsupsetneqq` ⫌, `\subsetneq` ⊊, `\supsetneq` ⊋, `\nsubseteq` ⊈, `\nsupseteq` ⊉, `\nparallel` ∦, `\nmid` ∤, `\nshortmid` ∤, `\nshortparallel` ∦, `\nvdash` ⊬, `\nVdash` ⊮, `\nvDash` ⊭, `\nVDash` ⊯, `\ntrianglerighteq` ⋭, `\ntrianglelefteq` ⋬, `\ntriangleleft` ⋪, `\ntriangleright` ⋫, `\nleftarrow` ↚, `\nrightarrow` ↛, `\nLeftarrow` ⇍, `\nRightarrow` ⇏, `\nLeftrightarrow` ⇎, `\nleftrightarrow` ↮, `\divideontimes` ⋇, `\nexists` ∄, `\Finv` Ⅎ, `\Game` ⅁, `\eth` ð, `\eqsim` ≂, `\beth` ℶ, `\gimel` ℷ, `\daleth` ℸ, `\lessdot` ⋖, `\gtrdot` ⋗, `\ltimes` ⋉, `\rtimes` ⋊, `\shortmid` ∣, `\shortparallel` ∥, `\smallsetminus` ∖, `\thicksim` ∼, `\thickapprox` ≈, `\approxeq` ≊, `\succapprox` ⪸, `\precapprox` ⪷, `\curvearrowleft` ↶, `\curvearrowright` ↷, `\digamma` ϝ, `\varkappa` ϰ, `\Bbbk` 𝕜, `\hslash` ℏ, `\backepsilon` ϶, `\ulcorner` ⌜, `\urcorner` ⌝, `\llcorner` ⌞, `\lrcorner` ⌟, `\yen` ¥, `\checkmark` ✓, `\circledR` ®, `\maltese` ✠, `\restriction` ↾, `\Doteq` ≑, `\doublecup` ⋓, `\doublecap` ⋒, `\llless` ⋘, `\gggtr` ⋙.
+`\alpha` α, `\beta` β, `\gamma` γ, `\delta` δ, `\theta` θ, `\lambda` λ, `\mu` μ, `\pi` π, `\sigma` σ, `\phi` φ, `\omega` ω, `\epsilon` ϵ, `\varepsilon` ε, `\zeta` ζ, `\eta` η, `\vartheta` ϑ, `\iota` ι, `\kappa` κ, `\nu` ν, `\xi` ξ, `\varpi` ϖ, `\rho` ρ, `\varsigma` ς, `\tau` τ, `\upsilon` υ, `\varphi` ϕ, `\chi` χ, `\psi` ψ, `\Gamma` Γ, `\Delta` Δ, `\Theta` Θ, `\Lambda` Λ, `\Xi` Ξ, `\Pi` Π, `\Sigma` Σ, `\Upsilon` Υ, `\Phi` Φ, `\Psi` Ψ, `\Omega` Ω, `\le` ≤, `\ge` ≥, `\ne` ≠, `\equiv` ≡, `\sim` ∼, `\cong` ≅, `\propto` ∝, `\perp` ⊥, `\partial` ∂, `\nabla` ∇, `\prod` ∏, `\ast` ∗, `\prime` ′, `\cup` ∪, `\cap` ∩, `\sqcup` ⊔, `\sqcap` ⊓, `\subset` ⊂, `\subseteq` ⊆, `\sqsubseteq` ⊑, `\supset` ⊃, `\supseteq` ⊇, `\sqsupseteq` ⊒, `\notin` ∉, `\ni` ∋, `\emptyset` ∅, `\oplus` ⊕, `\otimes` ⊗, `\ominus` ⊖, `\oslash` ⊘, `\odot` ⊙, `\bigcirc` ◯, `\wedge` ∧, `\land` ∧, `\lor` ∨, `\to` →, `\rightarrow` →, `\leftarrow` ←, `\gets` ←, `\uparrow` ↑, `\downarrow` ↓, `\leftrightarrow` ↔, `\Leftarrow` ⇐, `\Leftrightarrow` ⇔, `\Uparrow` ⇑, `\Downarrow` ⇓, `\angle` ∠, `\aleph` ℵ, `\Re` ℜ, `\Im` ℑ, `\wp` ℘, `\langle` ⟨, `\rangle` ⟩, `\lvert` ∣, `\rvert` ∣, `\lVert` ‖, `\rVert` ‖, `\times` ×, `\div` ÷, `\pm` ±, `\leq` ≤, `\geq` ≥, `\neq` ≠, `\approx` ≈, `\cdot` ⋅, `\infty` ∞, `\sum` ∑, `\int` ∫, `\in` ∈, `\forall` ∀, `\exists` ∃, `\vee` ∨, `\Rightarrow` ⇒, `\mid` ∣, `\setminus` ∖, `\Longrightarrow` ⟹, `\mp` ∓, `\ll` ≪, `\gg` ≫, `\simeq` ≃, `\vdots` ⋮, `\ddots` ⋱, `\lfloor` ⌊, `\rfloor` ⌋, `\lceil` ⌈, `\rceil` ⌉, `\oint` ∮, `\mapsto` ↦, `\ell` ℓ, `\hbar` ℏ, `\circ` ∘, `\parallel` ∥, `\coloneqq` ≔, `\hookrightarrow` ↪, `\models` ⊨, `\vdash` ⊢, `\dashv` ⊣, `\top` ⊤, `\Box` □, `\Longleftrightarrow` ⟺, `\longrightarrow` ⟶, `\longleftarrow` ⟵, `\Longleftarrow` ⟸, `\longleftrightarrow` ⟷, `\triangle` △, `\bigtriangledown` ▽, `\boxdot` ⊡, `\boxplus` ⊞, `\boxtimes` ⊠, `\square` □, `\blacksquare` ■, `\centerdot` ⬝, `\lozenge` ◊, `\blacklozenge` ⧫, `\circlearrowright` ↻, `\circlearrowleft` ↺, `\leftrightharpoons` ⇋, `\boxminus` ⊟, `\Vdash` ⊩, `\Vvdash` ⊪, `\vDash` ⊨, `\twoheadrightarrow` ↠, `\twoheadleftarrow` ↞, `\leftleftarrows` ⇇, `\rightrightarrows` ⇉, `\upuparrows` ⇈, `\downdownarrows` ⇊, `\upharpoonright` ↾, `\downharpoonright` ⇂, `\upharpoonleft` ↿, `\downharpoonleft` ⇃, `\rightarrowtail` ↣, `\leftarrowtail` ↢, `\leftrightarrows` ⇆, `\rightleftarrows` ⇄, `\Lsh` ↰, `\Rsh` ↱, `\rightsquigarrow` ⇝, `\leftrightsquigarrow` ↭, `\looparrowleft` ↫, `\looparrowright` ↬, `\circeq` ≗, `\succsim` ≿, `\gtrsim` ≳, `\gtrapprox` ⪆, `\multimap` ⊸, `\therefore` ∴, `\because` ∵, `\doteqdot` ≑, `\triangleq` ≜, `\precsim` ≾, `\lesssim` ≲, `\lessapprox` ⪅, `\eqslantless` ⪕, `\eqslantgtr` ⪖, `\curlyeqprec` ⋞, `\curlyeqsucc` ⋟, `\preccurlyeq` ≼, `\leqq` ≦, `\leqslant` ⩽, `\lessgtr` ≶, `\backprime` ‵, `\risingdotseq` ≓, `\fallingdotseq` ≒, `\succcurlyeq` ≽, `\geqq` ≧, `\geqslant` ⩾, `\gtrless` ≷, `\vartriangleright` ⊳, `\vartriangleleft` ⊲, `\trianglerighteq` ⊵, `\trianglelefteq` ⊴, `\bigstar` ★, `\between` ≬, `\blacktriangledown` ▾, `\blacktriangleright` ▶, `\blacktriangleleft` ◀, `\vartriangle` ▵, `\blacktriangle` ▴, `\triangledown` ▿, `\eqcirc` ≖, `\lesseqgtr` ⋚, `\gtreqless` ⋛, `\lesseqqgtr` ⪋, `\gtreqqless` ⪌, `\Rrightarrow` ⇛, `\Lleftarrow` ⇚, `\veebar` ⊻, `\barwedge` ⊼, `\doublebarwedge` ⩞, `\measuredangle` ∡, `\sphericalangle` ∢, `\varpropto` ∝, `\smallsmile` ⌣, `\smallfrown` ⌢, `\Subset` ⋐, `\Supset` ⋑, `\Cup` ⋓, `\Cap` ⋒, `\curlywedge` ⋏, `\curlyvee` ⋎, `\leftthreetimes` ⋋, `\rightthreetimes` ⋌, `\subseteqq` ⫅, `\supseteqq` ⫆, `\bumpeq` ≏, `\Bumpeq` ≎, `\lll` ⋘, `\ggg` ⋙, `\circledS` Ⓢ, `\pitchfork` ⋔, `\dotplus` ∔, `\backsim` ∽, `\backsimeq` ⋍, `\complement` ∁, `\intercal` ⊺, `\circledcirc` ⊚, `\circledast` ⊛, `\circleddash` ⊝, `\lvertneqq` ≨, `\gvertneqq` ≩, `\nleq` ≰, `\ngeq` ≱, `\nless` ≮, `\ngtr` ≯, `\nprec` ⊀, `\nsucc` ⊁, `\lneqq` ≨, `\gneqq` ≩, `\nleqslant` ⩽̸, `\ngeqslant` ⩾̸, `\lneq` ⪇, `\gneq` ⪈, `\npreceq` ⋠, `\nsucceq` ⋡, `\precnsim` ⋨, `\succnsim` ⋩, `\lnsim` ⋦, `\gnsim` ⋧, `\nleqq` ≦̸, `\ngeqq` ≧̸, `\precneqq` ⪵, `\succneqq` ⪶, `\precnapprox` ⪹, `\succnapprox` ⪺, `\lnapprox` ⪉, `\gnapprox` ⪊, `\nsim` ≁, `\ncong` ≇, `\diagup` ⟋, `\diagdown` ⟍, `\varsubsetneq` ⊊, `\varsupsetneq` ⊋, `\nsubseteqq` ⫅̸, `\nsupseteqq` ⫆̸, `\subsetneqq` ⫋, `\supsetneqq` ⫌, `\varsubsetneqq` ⫋, `\varsupsetneqq` ⫌, `\subsetneq` ⊊, `\supsetneq` ⊋, `\nsubseteq` ⊈, `\nsupseteq` ⊉, `\nparallel` ∦, `\nmid` ∤, `\nshortmid` ∤, `\nshortparallel` ∦, `\nvdash` ⊬, `\nVdash` ⊮, `\nvDash` ⊭, `\nVDash` ⊯, `\ntrianglerighteq` ⋭, `\ntrianglelefteq` ⋬, `\ntriangleleft` ⋪, `\ntriangleright` ⋫, `\nleftarrow` ↚, `\nrightarrow` ↛, `\nLeftarrow` ⇍, `\nRightarrow` ⇏, `\nLeftrightarrow` ⇎, `\nleftrightarrow` ↮, `\divideontimes` ⋇, `\nexists` ∄, `\Finv` Ⅎ, `\Game` ⅁, `\eth` ð, `\eqsim` ≂, `\beth` ℶ, `\gimel` ℷ, `\daleth` ℸ, `\lessdot` ⋖, `\gtrdot` ⋗, `\ltimes` ⋉, `\rtimes` ⋊, `\shortmid` ∣, `\shortparallel` ∥, `\smallsetminus` ∖, `\thicksim` ∼, `\thickapprox` ≈, `\approxeq` ≊, `\succapprox` ⪸, `\precapprox` ⪷, `\curvearrowleft` ↶, `\curvearrowright` ↷, `\digamma` ϝ, `\varkappa` ϰ, `\Bbbk` 𝕜, `\hslash` ℏ, `\backepsilon` ϶, `\ulcorner` ⌜, `\urcorner` ⌝, `\llcorner` ⌞, `\lrcorner` ⌟, `\yen` ¥, `\checkmark` ✓, `\circledR` ®, `\maltese` ✠, `\restriction` ↾, `\Doteq` ≑, `\doublecup` ⋓, `\doublecap` ⋒, `\llless` ⋘, `\gggtr` ⋙.
 
 ### Operator names
 
@@ -671,6 +873,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | Environment | Mode | Behaviour |
 | --- | --- | --- |
 | `document` | text | the typeset body; preamble content is not typeset |
+| `letter` | text | letter.cls: one letter to {recipient\\address}, starting a new page |
 | `equation` | text | numbered display |
 | `equation*` | text | unnumbered display |
 | `displaymath` | text | unnumbered display |
@@ -682,23 +885,45 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `alignat*` | text | rows aligned at &; the column count is consumed |
 | `flalign` | text | rows aligned at &, each numbered |
 | `flalign*` | text | rows aligned at & |
+| `eqnarray` | text | three columns (right, centred, left) with 2\arraycolsep gaps, each row numbered |
+| `eqnarray*` | text | three columns (right, centred, left) with 2\arraycolsep gaps |
 | `multline` | text | multi-line display; only the last line is numbered |
 | `multline*` | text | multi-line display |
+| `subequations` | text | amsmath: displays inside number as the parent number plus a, b, ...; a \label right after \begin gets the parent number |
 | `figure` | text | numbered captions; no floating |
+| `frame` | text | rule-bordered box around its body (\fboxsep padding, \fboxrule rule in the current colour) |
 | `center` | text | centred paragraphs |
 | `flushleft` | text | left-aligned paragraphs |
 | `flushright` | text | right-aligned paragraphs |
 | `quote` | text | indented paragraphs |
 | `quotation` | text | indented paragraphs |
-| `itemize` | text | bulleted list |
-| `enumerate` | text | numbered list; enumitem [label] templates a, A, i, I, 1 |
-| `tabular` | text | table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \extrarowheight |
+| `sloppypar` | text | a paragraph set with \sloppy |
+| `samepage` | text | \samepage for the body |
+| `tiny` | text | the tiny size for the environment body |
+| `scriptsize` | text | the scriptsize size for the environment body |
+| `footnotesize` | text | the footnotesize size for the environment body |
+| `small` | text | the small size for the environment body |
+| `normalsize` | text | the body size for the environment body |
+| `large` | text | the large size for the environment body |
+| `Large` | text | the Large size for the environment body |
+| `LARGE` | text | the LARGE size for the environment body |
+| `huge` | text | the huge size for the environment body |
+| `Huge` | text | the Huge size for the environment body |
+| `verse` | text | indented lines; each \\ ends a line |
+| `tabbing` | text | tab stops: \= sets a stop, \> jumps right, \\ ends a row, \kill ends a row silently (\<, \+ and \- warn and are ignored) |
+| `itemize` | text | bulleted list; article labels per depth, \item[label] |
+| `enumerate` | text | numbered list; article labels per depth, enumitem label/label*/shortlabels, start and resume |
+| `description` | text | list of bold \item[term] labels |
+| `tabular` | text | table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned |
 | `tabular*` | text | table of a given width |
 | `verbatim` | text | literal monospaced lines |
 | `verbatim*` | text | literal monospaced lines with visible spaces |
 | `lstlisting` | text | literal monospaced lines (basic listings) |
+| `comment` | text | body discarded unread, even invalid commands inside (comment package) |
 | `proof` | text | amsthm proof with a closing square |
 | `thebibliography` | text | References section with numbered \bibitem entries |
+| `multicols` | text | multicol {n}[preface][premulticols]: balanced columns, laid out by the render pipeline |
+| `multicols*` | text | multicol {n}[preface][premulticols]: unbalanced columns, laid out by the render pipeline |
 | `array` | math | math grid, centred cells |
 | `matrix` | math | math grid, centred cells |
 | `smallmatrix` | math | math grid, centred cells |
@@ -709,6 +934,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `Vmatrix` | math | math grid, centred cells in ‖ ‖ |
 | `cases` | math | math grid, left-aligned cells with a left { |
 | `dcases` | math | math grid, left-aligned cells with a left { |
+| `rcases` | math | math grid, left-aligned cells with a right } |
 | `aligned` | math | math grid, centred cells |
 | `alignedat` | math | math grid, centred cells |
 | `split` | math | math grid, centred cells |
@@ -720,13 +946,38 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | --- | --- | --- |
 | `inputenc` | `utf8` | source text is already decoded as UTF-8 |
 | `fontenc` | `T1` | text glyphs are mapped from Unicode |
+| `hyperref` | `colorlinks, hidelinks, bookmarks, bookmarksopen, bookmarksnumbered, linktoc, breaklinks, unicode, pageanchor, hyperfootnotes, pdfstartview, pdfpagemode` | loading hyperref moves no glyph (measured against pdflatex, TeX Live 2025: the same document with and without it is 1062 words on 4 pages, 0 moved), and the link-colour, border, outline, viewer and pdf* metadata keys are accepted with it; \url, \href and \nolinkurl are typeset, while the PDF links, bookmarks and link colours still missing are reported once by their own diagnostic; backref and pagebackref add bibliography text and keep warning |
+| `cleveref` | `capitalise, noabbrev` | named cross-references with compressed ranges; unknown package options are silently ignored |
+| `color` | `dvipsnames, usenames` | color.sty colours with pdfTeX's exact operator values |
+| `xcolor` | `natural, rgb, cmy, cmyk, gray, dvipsnames, svgnames, x11names, table` | xcolor 3.02 definitions, expressions and target models with pdfTeX's exact operator values; hsb models, colour series and table colours are diagnosed |
+| `amsmath` | `centertags, sumlimits, nointlimits, namelimits, reqno` | the align, gather, multline, split, aligned, gathered, cases and matrix families; \dfrac, \tfrac, \binom, \genfrac, \cfrac, \substack, \operatorname, \DeclareMathOperator, \boxed, \phantom, \overset/\underset, the extensible arrows, \text in math, \tag/\notag and \eqref, with \lim-family, \sum and \prod display limits and amsmath's wider \colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \sideset, \shoveleft, \smash, \mspace, \hdotsfor and \varinjlim are each diagnosed where they are used |
+| `amssymb` | `` | the full AMSa/AMSb (msam/msbm) inventory of amssymb.sty -- 203 names base LaTeX2e leaves undefined (\square, \nleq, ...) -- plus everything amsfonts declares; loading the package is what makes the names exist, and a name whose file was not loaded is diagnosed |
+| `amsfonts` | `` | amsfonts.sty's 22-name symbol subset (\ulcorner, \square, \yen, the dashed arrows) and the \mathbb and \mathfrak alphabets; the rest of amssymb stays undefined without \usepackage{amssymb} |
 | `amsthm` | `` | \newtheorem, \theoremstyle and the proof environment |
 | `array` | `` | tabular >{} <{} !{} m b w columns, \newcolumntype and \extrarowheight |
-| `enumitem` | `shortlabels` | enumerate label templates; \setlist itemsep/topsep |
+| `booktabs` | `` | \toprule, \midrule, \bottomrule, \cmidrule(trim), \addlinespace, \specialrule, \morecmidrules |
+| `longtable` | `` | the page-breaking longtable environment: \endfirsthead, \endhead, \endfoot, \endlastfoot, \caption, \kill, \\* |
+| `multirow` | `` | \multirow[vpos]{rows}[bigstruts]{width}[vmove]{text} in table entries |
+| `colortbl` | `` | \rowcolor, \cellcolor, >{\columncolor}, \arrayrulecolor, \doublerulesepcolor |
+| `enumitem` | `shortlabels` | list keys (label, start, resume, seps, margins) parsed as options; \setlist |
 | `geometry` | `letterpaper, margin=1in` | matches the fixed US Letter page with 1in margins |
+| `siunitx` | `any \sisetup keys` | v3 \num, \unit, \qty, lists, ranges, \ang, \sisetup and \DeclareSIUnit; unmodelled keys are diagnosed |
+| `multicol` | `` | multicols and multicols* with preface, \columnbreak, \raggedcolumns (columns set by the render pipeline) |
+| `natbib` | `numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak` | \citet/\citep/\citealt/\citealp/\citeauthor/\citeyear/\citeyearpar/\citenum/\citetext and the \cite it redefines, with [Author(Year)] \bibitem labels; sort, compress, super and openbib are diagnosed |
+| `biblatex` | `style=numeric, sorting=none, backend=biber` | basic project-relative .bib resources with numeric citations, textcite/parencite/autocite, citeauthor/citeyear, nocite and printbibliography; authoryear labels are minimal, alphabetic warns |
+| `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
+| `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
+| `ifthen` | `` | \ifthenelse with \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests, and \newif conditionals with \newboolean/\setboolean; \whiledo loops are diagnosed where they are used |
 
 Any other package, or these packages with other options, is recorded and reported as recognised but not implemented.
 <!-- END GENERATED supported-latex -->
+
+Through `flashtex-render` (what the `flashtex` CLI and the app run), packages the
+render pipeline sets on the compiler's behalf are silent too, with any options:
+`amsmath`, `amssymb`, `amsfonts`, `lmodern`, `microtype`, `geometry`, `graphicx`
+and `tikz`. The same goes for `\pagestyle` in the preamble of a document with a
+`\documentclass`, which the pipeline's page-frame reader takes. Running
+`flashtex-compiler` on its own still reports them.
 
 ## Troubleshooting
 

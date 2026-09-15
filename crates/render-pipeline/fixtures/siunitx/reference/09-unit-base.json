@@ -1,0 +1,71 @@
+{
+ "fixture": "09-unit-base.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "m",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765,
+   "end": 157.014
+  },
+  {
+   "page": 1,
+   "text": "kg",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 160.331,
+   "baseline": 134.765,
+   "end": 170.571
+  },
+  {
+   "page": 1,
+   "text": "s",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 174.038,
+   "baseline": 134.765,
+   "end": 177.967
+  },
+  {
+   "page": 1,
+   "text": "A",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 181.285,
+   "baseline": 134.765,
+   "end": 188.757
+  },
+  {
+   "page": 1,
+   "text": "K",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 192.074,
+   "baseline": 134.765,
+   "end": 199.823
+  },
+  {
+   "page": 1,
+   "text": "mol",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 203.151,
+   "baseline": 134.765,
+   "end": 219.201
+  },
+  {
+   "page": 1,
+   "text": "cd",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 222.519,
+   "baseline": 134.765,
+   "end": 232.482
+  }
+ ],
+ "warnings": []
+}

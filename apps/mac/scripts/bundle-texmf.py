@@ -59,7 +59,13 @@ TEXMF_PREFIX = "texmf/"
 FONTS_PREFIX = "Fonts/"
 SUPPLEMENTARY = "SUPPLEMENTARY-METRICS.json"
 SUPPLEMENTARY_FACES = "SUPPLEMENTARY-FACES.json"
-MAX_SUPPLEMENTARY = 65536
+# Sanity bound on an in-repo sidecar so a corrupt or runaway file is not parsed
+# wholesale; it is not a trust boundary. Every entry inside is still checked
+# individually (byte_length + sha256) and any vendored file no pin lists is still
+# refused as `unpinned`, so this bound only has to scale with the number of
+# pinned files. 65536 fitted 155 metric entries; the sans/slanted/small-caps
+# tier takes SUPPLEMENTARY-METRICS.json to 322 (~68 KB).
+MAX_SUPPLEMENTARY = 262144
 
 
 def load_verifier():

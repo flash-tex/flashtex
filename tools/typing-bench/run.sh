@@ -17,7 +17,12 @@
 # Usage: tools/typing-bench/run.sh [--intervals "30 0"] [--seeds "demo body60k fixture"]
 #                                  [--producers "compiler render controller v2"]
 #                                  [--quiet-load 8] [--quiet-wait 900] [--load-limit 10]
-#                                  [--no-render] [--out <evidence.md>]
+#                                  [--no-render] [--out <evidence.md>] [--at <needle>]
+#   --at first-paragraph   type at the end of the first paragraph after
+#                          \begin{document} (a visible page) instead of before
+#                          \end{document}; any other value is a literal needle
+#                          typed after its first occurrence (FLASHTEX_TYPING_BENCH_AT)
+#   seeds also accept hw1 (fixtures/real-world/hw1/HW1.tex)
 # Env:   FLASHTEX_RENDER=<path>            use an already built flashtex-render
 #        FLASHTEX_RENDER_REF=<git ref>     (default origin/agent/mac-render-pipeline/unified)
 #        FLASHTEX_PREVIEW_CONTROLLER=<path> use an already built helper
@@ -35,6 +40,7 @@ WANT_RENDER=1
 QUIET_LOAD=8
 QUIET_WAIT=900
 LOAD_LIMIT=10
+AT=""
 UTC="$(date -u +%Y-%m-%dT%H%M%SZ)"
 
 while [[ $# -gt 0 ]]; do
@@ -47,6 +53,7 @@ while [[ $# -gt 0 ]]; do
     --quiet-wait) QUIET_WAIT="$2"; shift 2 ;;
     --load-limit) LOAD_LIMIT="$2"; shift 2 ;;
     --no-render) WANT_RENDER=0; shift ;;
+    --at) AT="$2"; shift 2 ;;
     -h|--help) sed -n '2,26p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "run.sh: unknown argument $1" >&2; exit 1 ;;
   esac
@@ -59,6 +66,7 @@ RAW_DIR="$(dirname "$OUT")/typing-bench-$UTC"
 mkdir -p "$RAW_DIR"
 NOTES_FILE="$WORK/producers.txt"
 : > "$NOTES_FILE"
+[[ -z "$AT" ]] || echo "typing position: after '$AT' (FLASHTEX_TYPING_BENCH_AT)" >> "$NOTES_FILE"
 
 step() { echo "==> $*"; }
 note() { echo "$*" >> "$NOTES_FILE"; }
@@ -171,7 +179,9 @@ req = json.load(open(os.path.join(root, "protocol/fixtures/compile-request.json"
 docs = req["payload"]["documents"]
 text = next(d["text"] for d in docs if d["path"] == req["payload"]["entry_path"])
 open(os.path.join(work, "fixture.tex"), "w", encoding="utf-8").write(text)
-for n in ("demo", "body60k", "fixture"):
+hw1 = open(os.path.join(root, "fixtures/real-world/hw1/HW1.tex"), encoding="utf-8").read()
+open(os.path.join(work, "hw1.tex"), "w", encoding="utf-8").write(hw1)
+for n in ("demo", "body60k", "fixture", "hw1"):
     print("    seed %-8s %6d bytes" % (n, os.path.getsize(os.path.join(work, n + ".tex"))))
 PY
 
@@ -211,6 +221,7 @@ run_one() { # route kind executable seed interval -> $RAW_DIR/<route>-<seed>-<in
       FLASHTEX_SEED_FILE="$cell/$seed.tex" FLASHTEX_LOG="$log" \
       FLASHTEX_TYPING_BENCH="$TYPED" FLASHTEX_TYPING_BENCH_MS="$ms" FLASHTEX_TYPING_BENCH_OUT="$json" \
       FLASHTEX_TYPING_BENCH_SETTLE_MS=60000 FLASHTEX_TYPING_BENCH_MAX_MS=120000 \
+      FLASHTEX_TYPING_BENCH_AT="$AT" \
       "${extra[@]}" "$APP_BIN" >/dev/null 2>&1 &
     pid=$!
     for _ in $(seq 1 600); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done

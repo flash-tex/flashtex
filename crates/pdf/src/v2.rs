@@ -33,12 +33,37 @@
 //!   `opentype-cff` (the pipeline's documented deviation from the schema
 //!   token) or `static-truetype`; `core14-afm` has no bytes and is refused
 //!   when a run uses it.
-//! - `rule` items become `Op::rule`. Paint must be opaque; black is the
-//!   default fill, any other opaque colour is written as an exact `rg`.
+//! - `rule` items become `Op::rule`. Black is the
+//!   default fill, any other opaque sRGB colour is written as `rg` with each
+//!   component rounded to [`COLOR_DECIMAL_DIGITS`] (xcolor's precision:
+//!   pdflatex writes `\definecolor{c}{RGB}{20,80,170}` as `0.07843 0.31374
+//!   0.66667 rg`), through [`pdf_number`], never in exponent notation.
+//! - `path_fill` / `path_stroke` items (TikZ, proposal path-v0) become
+//!   `q [colour] [clip path W n]… [w M d J j] path f|f*|S Q`, in the operator
+//!   order pgf's pdfTeX driver writes (measured, pdflatex 1.40: `1 0 0 rg 1 0
+//!   0 RG`, `/pgf@CA0.4 gs`, `4.98138 w`, `4.5 M`, `[…] 0.0 d`, `1 J`, `2 j`,
+//!   path, `S`). Path
+//!   coordinates are exact tick decimals like every other coordinate here;
+//!   `M` is written only when the limit differs from PDF's default 10, `J`
+//!   and `j` only when not butt/miter, `d` only for a dashed line.
+//! - A paint alpha below 1 selects pgf's ExtGState right after the colour,
+//!   inside the item's `q … Q` (measured, pdflatex 1.40 with pgf: `\fill[red,
+//!   fill opacity=.3]` is `q 1 0 0 rg 1 0 0 RG /pgf@ca0.3 gs … f Q`, the page
+//!   resources `/pgf@ca0.3 << /ca 0.3 >>`): `path_stroke` sets the stroking
+//!   alpha (`/pgf@CA<a>`, `draw opacity`), `path_fill`, `rule` and
+//!   `glyph_run` the non-stroking one (`/pgf@ca<a>`, `fill`/`text opacity`).
+//!   The display list carries one alpha per item, so TikZ's `opacity=` (pgf
+//!   writes both states) sets only the one the item paints with; the other
+//!   would not change a pixel. The value is rounded like a colour component.
 //! - Cluster ActualText is reduced to a per-glyph ToUnicode entry (the
 //!   cluster's text); a glyph seen with two different texts keeps the first
 //!   and the report says so. Marked-content `/ActualText` is outside the
-//!   bounded operator set.
+//!   bounded operator set. Only a cluster of *one* glyph names that glyph's
+//!   text: the three periods of an ellipsis share the cluster `…`, and
+//!   mapping the period glyph to `…` would make every period of the document
+//!   extract as `…` (and the ellipsis as `………`). A glyph seen only in
+//!   clusters of several glyphs takes the character the font's own `cmap`
+//!   maps to it (`.`, as pdfTeX's `. . .` extracts), else the cluster text.
 //! - `image` items (`display-list-v2-images`,
 //!   `protocol/proposals/display-list-v2-image.md`) need
 //!   a project root ([`from_v2_rooted`]): the file is read under it without following
@@ -121,6 +146,8 @@ pub struct V2Report {
     pub glyphs: usize,
     pub runs: usize,
     pub rules: usize,
+    /// `path_fill` and `path_stroke` items painted.
+    pub paths: usize,
     /// Image items placed (`q … cm /ImN Do Q`).
     pub images: usize,
     /// Distinct image XObjects embedded.
@@ -191,56 +218,152 @@ pub fn bp(t: i128) -> Result<Decimal, String> {
         .ok_or_else(|| format!("tick value {t} has no terminating decimal (impossible for 2^20)"))
 }
 
-/// Exact decimal of a finite `f64` in `[0, 1]` (colour component).
-fn exact_unit(v: f64, what: &str) -> Result<Decimal, String> {
+/// Fractional digits of an sRGB colour component: xcolor computes its
+/// components in TeX arithmetic and pdfTeX writes at most five decimals
+/// (measured: `\definecolor{c}{RGB}{20,80,170}` is `0.07843 0.31374 0.66667
+/// rg`, `blue!20` is `0.8 0.8 1 rg`).
+pub const COLOR_DECIMAL_DIGITS: usize = 5;
+/// Fractional digits of the other `f64` operands (the miter limit): pgf's
+/// driver writes dimensions through TeX's `\the`, five decimals at most.
+pub const PDF_DECIMAL_DIGITS: usize = 5;
+
+/// A finite `f64` as a PDF number token with at most `digits` fractional
+/// digits, the way pdfTeX bounds its output: the shortest round-trip decimal
+/// of `v` (what the producer wrote in the JSON) rounded half away from zero,
+/// trailing zeros and a bare point dropped, `-0` written `0`, and never an
+/// exponent (`1e-7` is `0`, `1e15` is `1000000000000000`). Deterministic:
+/// string arithmetic on Rust's shortest representation, no float rounding.
+/// A value whose token is longer than the exact writer's 64-character bound
+/// (about 1e60 and beyond) is an error, as is NaN or an infinity.
+pub fn pdf_number(v: f64, digits: usize) -> Result<Decimal, String> {
+    if !v.is_finite() {
+        return Err(format!("{v} is not a finite number"));
+    }
+    // `Display` for f64 is the shortest round-trip decimal, never exponent.
+    let shortest = format!("{}", v.abs());
+    let (int, frac) = shortest.split_once('.').unwrap_or((&shortest, ""));
+    let mut body: Vec<u8> = int
+        .bytes()
+        .chain(frac.bytes().chain(std::iter::repeat(b'0')).take(digits))
+        .collect();
+    if frac.as_bytes().get(digits).is_some_and(|&d| d >= b'5') {
+        let mut i = body.len();
+        loop {
+            if i == 0 {
+                body.insert(0, b'1');
+                break;
+            }
+            i -= 1;
+            if body[i] == b'9' {
+                body[i] = b'0';
+            } else {
+                body[i] += 1;
+                break;
+            }
+        }
+    }
+    let (ip, fp) = body.split_at(body.len() - digits);
+    let fp_len = fp.iter().rposition(|&d| d != b'0').map_or(0, |p| p + 1);
+    let ip = std::str::from_utf8(ip).expect("ascii digits");
+    let fp = std::str::from_utf8(&fp[..fp_len]).expect("ascii digits");
+    let zero = fp.is_empty() && ip.bytes().all(|d| d == b'0');
+    let mut token = String::with_capacity(ip.len() + fp.len() + 2);
+    if v < 0.0 && !zero {
+        token.push('-');
+    }
+    token.push_str(ip);
+    if !fp.is_empty() {
+        token.push('.');
+        token.push_str(fp);
+    }
+    Decimal::new(&token).map_err(|e| format!("{v}: {e}"))
+}
+
+/// A colour component in `[0, 1]`, rounded to [`COLOR_DECIMAL_DIGITS`].
+fn unit_component(v: f64, what: &str) -> Result<Decimal, String> {
     if !v.is_finite() || !(0.0..=1.0).contains(&v) {
         return Err(format!("{what}: {v} is not in [0, 1]"));
     }
-    if v == 0.0 {
-        return Ok(Decimal::from_i64(0));
-    }
-    if v == 1.0 {
-        return Ok(Decimal::from_i64(1));
-    }
-    let bits = v.to_bits();
-    let exponent = ((bits >> 52) & 2047) as i32;
-    let mantissa = (bits & ((1u64 << 52) - 1)) | (1u64 << 52);
-    let shift = 1075 - exponent;
-    if exponent == 0 || !(0..64).contains(&shift) {
-        return Err(format!(
-            "{what}: {v} is not exactly representable within the decimal bound"
-        ));
-    }
-    Decimal::from_ratio(mantissa as i128, 1u128 << shift, 20)
-        .ok_or_else(|| format!("{what}: {v} needs more than 20 decimal digits"))
+    pdf_number(v, COLOR_DECIMAL_DIGITS).map_err(|e| format!("{what}: {e}"))
 }
 
 struct Paint {
-    rgb: Option<[Decimal; 3]>,
+    /// Fill and stroke operators to set before painting (`None`: black,
+    /// the page default). A `device_color` (proposal
+    /// `display-list-v2-device-color`) is written exactly as pdfTeX does,
+    /// fill then stroke (`pdftex.def`: `r g b rg r g b RG`); an sRGB paint
+    /// becomes an exact `rg`.
+    ops: Option<Vec<Op>>,
+    /// The paint's alpha when below 1, rounded like a colour component.
+    alpha: Option<Decimal>,
+}
+
+/// `paint.device_color`: `{"space": "rgb"|"cmyk"|"gray", "values": [..]}`
+/// with decimal strings, copied verbatim into the operators.
+fn device_color(v: &Value, what: &str) -> Result<Vec<Op>, String> {
+    let space = s(v.get("space"), &format!("{what}.device_color.space"))?;
+    let values = arr(v.get("values"), &format!("{what}.device_color.values"))?
+        .iter()
+        .enumerate()
+        .map(|(i, x)| {
+            let w = format!("{what}.device_color.values[{i}]");
+            let text = x.as_str().ok_or_else(|| format!("{w}: expected a decimal string"))?;
+            let d = Decimal::new(text).map_err(|e| format!("{w}: {e}"))?;
+            if d.approx() < 0.0 || d.approx() > 1.0 {
+                return Err(format!("{w}: {text} is not in [0, 1]"));
+            }
+            Ok(d)
+        })
+        .collect::<Result<Vec<Decimal>, String>>()?;
+    let n = |k: usize| -> Result<(), String> {
+        if values.len() == k {
+            Ok(())
+        } else {
+            Err(format!("{what}.device_color: {space} takes {k} values, found {}", values.len()))
+        }
+    };
+    let v = &values;
+    Ok(match space {
+        "gray" => {
+            n(1)?;
+            vec![Op::FillGray(v[0].clone()), Op::StrokeGray(v[0].clone())]
+        }
+        "rgb" => {
+            n(3)?;
+            let c = [v[0].clone(), v[1].clone(), v[2].clone()];
+            vec![Op::FillRgb(c.clone()), Op::StrokeRgb(c)]
+        }
+        "cmyk" => {
+            n(4)?;
+            let c = [v[0].clone(), v[1].clone(), v[2].clone(), v[3].clone()];
+            vec![Op::FillCmyk(c.clone()), Op::StrokeCmyk(c)]
+        }
+        other => return Err(format!("{what}.device_color.space: unknown colour space {other}")),
+    })
 }
 
 fn paint(v: Option<&Value>, what: &str) -> Result<Paint, String> {
     let Some(p) = v else {
-        return Ok(Paint { rgb: None });
+        return Ok(Paint { ops: None, alpha: None });
     };
-    let a = f(p.get("a"), &format!("{what}.paint.a"))?;
-    if a != 1.0 {
-        return Err(format!(
-            "{what}: paint alpha {a} is not 1; alpha needs an ExtGState, which is outside the bounded operator set"
-        ));
+    let a = unit_component(f(p.get("a"), &format!("{what}.paint.a"))?, &format!("{what}.paint.a"))?;
+    let alpha = (a.as_str() != "1").then_some(a);
+    if let Some(dc) = p.get("device_color") {
+        return Ok(Paint { ops: Some(device_color(dc, &format!("{what}.paint"))?), alpha });
     }
     let r = f(p.get("r"), &format!("{what}.paint.r"))?;
     let g = f(p.get("g"), &format!("{what}.paint.g"))?;
     let b = f(p.get("b"), &format!("{what}.paint.b"))?;
     if r == 0.0 && g == 0.0 && b == 0.0 {
-        return Ok(Paint { rgb: None });
+        return Ok(Paint { ops: None, alpha });
     }
     Ok(Paint {
-        rgb: Some([
-            exact_unit(r, what)?,
-            exact_unit(g, what)?,
-            exact_unit(b, what)?,
-        ]),
+        ops: Some(vec![Op::FillRgb([
+            unit_component(r, what)?,
+            unit_component(g, what)?,
+            unit_component(b, what)?,
+        ])]),
+        alpha,
     })
 }
 
@@ -411,6 +534,10 @@ pub fn from_v2_rooted(
     struct Used {
         gids: BTreeSet<u16>,
         to_unicode: BTreeMap<u16, String>,
+        /// The first text of a cluster of several glyphs each glyph was
+        /// seen in; used only for glyphs with no one-glyph cluster and no
+        /// `cmap` character.
+        shared: BTreeMap<u16, String>,
         conflicts: usize,
         /// Observed `advance_x` per glyph as a reduced ratio in 1000/em
         /// (`advance_x * 1000 / font_size`), with occurrence counts. The
@@ -430,7 +557,8 @@ pub fn from_v2_rooted(
         Run {
             resource: String,
             size_ticks: i128,
-            rgb: Option<[Decimal; 3]>,
+            color: Option<Vec<Op>>,
+            alpha: Option<Decimal>,
             glyphs: Vec<Glyph>,
         },
         Ops(Vec<Op>),
@@ -482,14 +610,21 @@ pub fn from_v2_rooted(
                     let u = used.entry(font_id.to_string()).or_insert_with(|| Used {
                         gids: BTreeSet::new(),
                         to_unicode: BTreeMap::new(),
+                        shared: BTreeMap::new(),
                         conflicts: 0,
                         advances: BTreeMap::new(),
                     });
                     let mut glyphs = Vec::new();
-                    for (gi, gv) in arr(iv.get("glyphs"), &format!("{iw}.glyphs"))?
-                        .iter()
-                        .enumerate()
-                    {
+                    let glyph_values = arr(iv.get("glyphs"), &format!("{iw}.glyphs"))?;
+                    // Glyphs per cluster index (out-of-range indices are
+                    // refused below, glyph by glyph).
+                    let mut cluster_glyphs: BTreeMap<usize, usize> = BTreeMap::new();
+                    for gv in glyph_values.iter() {
+                        if let Some(c) = gv.get("cluster").and_then(|c| c.as_f64()) {
+                            *cluster_glyphs.entry(c as usize).or_default() += 1;
+                        }
+                    }
+                    for (gi, gv) in glyph_values.iter().enumerate() {
                         let gw = format!("{iw}.glyphs[{gi}]");
                         let gid = f(gv.get("gid"), &format!("{gw}.gid"))?;
                         if gid.fract() != 0.0 || !(0.0..=65535.0).contains(&gid) {
@@ -519,11 +654,15 @@ pub fn from_v2_rooted(
                         let b = f(cv.get("text_end_byte"), "cluster.text_end_byte")? as usize;
                         let cluster_text = text.get(a..b).unwrap_or("").to_string();
                         if let Some(t) = text.get(a..b) {
-                            match u.to_unicode.get(&gid) {
-                                Some(prev) if prev != t => u.conflicts += 1,
-                                Some(_) => {}
-                                None => {
-                                    u.to_unicode.insert(gid, t.to_string());
+                            if cluster_glyphs.get(&cluster).copied().unwrap_or(0) > 1 {
+                                u.shared.entry(gid).or_insert_with(|| t.to_string());
+                            } else {
+                                match u.to_unicode.get(&gid) {
+                                    Some(prev) if prev != t => u.conflicts += 1,
+                                    Some(_) => {}
+                                    None => {
+                                        u.to_unicode.insert(gid, t.to_string());
+                                    }
                                 }
                             }
                         }
@@ -555,7 +694,8 @@ pub fn from_v2_rooted(
                     items.push(Pending::Run {
                         resource: entry.resource.clone(),
                         size_ticks: size,
-                        rgb: pt.rgb,
+                        color: pt.ops.clone(),
+                        alpha: pt.alpha.clone(),
                         glyphs,
                     });
                 }
@@ -568,15 +708,66 @@ pub fn from_v2_rooted(
                         return Err(format!("{iw}: rule {w}x{h} ticks is not positive"));
                     }
                     let mut ops = Vec::new();
-                    if let Some(rgb) = pt.rgb {
+                    let state = pt.ops.is_some() || pt.alpha.is_some();
+                    if state {
                         ops.push(Op::Save);
-                        ops.push(Op::FillRgb(rgb));
+                        ops.extend(pt.ops.iter().flatten().cloned());
+                        ops.extend(pt.alpha.clone().map(Op::FillAlpha));
                     }
                     ops.extend(Op::rule(bp(x)?, bp(height - top - h)?, bp(w)?, bp(h)?));
-                    if ops.len() == 4 {
+                    if state {
                         ops.push(Op::Restore);
                     }
                     report.rules += 1;
+                    items.push(Pending::Ops(ops));
+                }
+                "path_fill" | "path_stroke" => {
+                    let path = path_ops(iv.get("path"), height, &iw)?;
+                    if path.is_empty() {
+                        // Nothing to paint (and `f`/`S` need a path).
+                        continue;
+                    }
+                    let mut ops = vec![Op::Save];
+                    if let Some(color) = &pt.ops {
+                        ops.extend(fill_and_stroke(color));
+                    }
+                    if let Some(a) = &pt.alpha {
+                        ops.push(if kind == "path_fill" {
+                            Op::FillAlpha(a.clone())
+                        } else {
+                            Op::StrokeAlpha(a.clone())
+                        });
+                    }
+                    let clips = match iv.get("clips") {
+                        None => &[][..],
+                        v => arr(v, &format!("{iw}.clips"))?,
+                    };
+                    for (ci, cv) in clips.iter().enumerate() {
+                        let cw = format!("{iw}.clips[{ci}]");
+                        let ck = s(cv.get("kind"), &format!("{cw}.kind"))?;
+                        if ck != "path" {
+                            return Err(format!("{cw}: clip kind {ck:?} is not path"));
+                        }
+                        let even_odd = fill_rule(cv.get("fill_rule"), &cw)?;
+                        let clip = path_ops(cv.get("path"), height, &cw)?;
+                        if clip.is_empty() {
+                            return Err(format!("{cw}: empty clip path"));
+                        }
+                        ops.extend(clip);
+                        ops.push(if even_odd { Op::ClipEvenOdd } else { Op::ClipNonZero });
+                        ops.push(Op::EndPath);
+                    }
+                    if kind == "path_fill" {
+                        let even_odd = fill_rule(iv.get("fill_rule"), &iw)?;
+                        ops.extend(path);
+                        ops.push(if even_odd { Op::FillEvenOdd } else { Op::Fill });
+                    } else {
+                        ops.extend(stroke_style(iv.get("stroke"), &iw)?);
+                        ops.extend(path);
+                        ops.push(Op::Stroke);
+                    }
+                    ops.push(Op::Restore);
+                    report.paths += 1;
                     items.push(Pending::Ops(ops));
                 }
                 "image" => {
@@ -678,7 +869,7 @@ pub fn from_v2_rooted(
                 }
                 other => {
                     return Err(format!(
-                        "{iw}: item kind {other:?} is not supported by the exact route (glyph_run, rule and image only)"
+                        "{iw}: item kind {other:?} is not supported by the exact route (glyph_run, rule, path_fill, path_stroke and image only)"
                     ));
                 }
             }
@@ -763,8 +954,14 @@ pub fn from_v2_rooted(
                 entry.postscript_name, entry.format
             ));
         }
+        let mut to_unicode = u.to_unicode.clone();
+        for (gid, text) in &u.shared {
+            to_unicode
+                .entry(*gid)
+                .or_insert_with(|| font.char_for_glyph(*gid).map_or_else(|| text.clone(), String::from));
+        }
         let (mut exact, outcome, note) =
-            ExactFont::cid_from_opentype(&font, &u.gids, u.to_unicode.clone())
+            ExactFont::cid_from_opentype(&font, &u.gids, to_unicode)
                 .map_err(|e| e.to_string())?;
         let replaced = apply_display_widths(&mut exact, &u.advances);
         if replaced > 0 {
@@ -868,7 +1065,7 @@ pub fn from_v2_rooted(
         // boundaries an extractor reads from geometry.
         let mut last: Option<(i128, i128, i128, String)> = None;
         for item in items {
-            let (resource, size_ticks, rgb, glyphs) = match item {
+            let (resource, size_ticks, color, alpha, glyphs) = match item {
                 Pending::Ops(o) => {
                     ops.extend(o);
                     continue;
@@ -887,9 +1084,10 @@ pub fn from_v2_rooted(
                 Pending::Run {
                     resource,
                     size_ticks,
-                    rgb,
+                    color,
+                    alpha,
                     glyphs,
-                } => (resource, size_ticks, rgb, glyphs),
+                } => (resource, size_ticks, color, alpha, glyphs),
             };
             let widths = cid_widths(&exact_fonts[&resource]);
             let mut placed = Vec::with_capacity(glyphs.len());
@@ -963,9 +1161,10 @@ pub fn from_v2_rooted(
                 glyphs: placed,
             };
             let run_ops = run.to_ops().map_err(|e| e.to_string())?;
-            if let Some(c) = rgb {
+            if color.is_some() || alpha.is_some() {
                 ops.push(Op::Save);
-                ops.push(Op::FillRgb(c));
+                ops.extend(color.into_iter().flatten());
+                ops.extend(alpha.map(Op::FillAlpha));
                 ops.extend(run_ops);
                 ops.push(Op::Restore);
             } else {
@@ -990,6 +1189,129 @@ pub fn from_v2_rooted(
         },
         report,
     ))
+}
+
+/// `fill_rule`: `nonzero` (false) or `evenodd` (true).
+fn fill_rule(v: Option<&Value>, what: &str) -> Result<bool, String> {
+    match s(v, &format!("{what}.fill_rule"))? {
+        "nonzero" => Ok(false),
+        "evenodd" => Ok(true),
+        other => Err(format!("{what}.fill_rule: {other:?} is not nonzero or evenodd")),
+    }
+}
+
+/// The paint's colour operators with a stroking colour added: pdfTeX sets
+/// both (`r g b rg r g b RG`); a device colour already carries both.
+fn fill_and_stroke(color: &[Op]) -> Vec<Op> {
+    let mut out = color.to_vec();
+    if !color
+        .iter()
+        .any(|o| matches!(o, Op::StrokeGray(_) | Op::StrokeRgb(_) | Op::StrokeCmyk(_)))
+    {
+        for o in color {
+            if let Op::FillRgb(c) = o {
+                out.push(Op::StrokeRgb(c.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// A display-list path (`[["m",x,y],["l",x,y],["c",x1,y1,x2,y2,x3,y3],["z"]]`,
+/// ticks, y down) as exact path-construction operators in PDF's y-up space.
+fn path_ops(v: Option<&Value>, page_height: i128, what: &str) -> Result<Vec<Op>, String> {
+    let cmds = arr(v, &format!("{what}.path"))?;
+    let mut ops = Vec::with_capacity(cmds.len());
+    for (k, c) in cmds.iter().enumerate() {
+        let bad = |m: &str| format!("{what}.path[{k}]: {m}");
+        let parts = c.as_array().ok_or_else(|| bad("expected an array"))?;
+        let (name, rest) = parts.split_first().ok_or_else(|| bad("empty command"))?;
+        let name = name.as_str().ok_or_else(|| bad("expected an operator string"))?;
+        let arity = match name {
+            "m" | "l" => 2,
+            "c" => 6,
+            "z" => 0,
+            other => return Err(bad(&format!("unknown path operator {other:?}"))),
+        };
+        if rest.len() != arity {
+            return Err(bad(&format!("{name} takes {arity} numbers, found {}", rest.len())));
+        }
+        let mut xy = Vec::with_capacity(arity);
+        for (j, t) in rest.iter().enumerate() {
+            let n = t.as_f64().filter(|n| n.is_finite() && n.fract() == 0.0 && n.abs() <= 9.0e15);
+            let t = n.ok_or_else(|| bad(&format!("operand {} is not an integer tick value", j + 1)))? as i128;
+            xy.push(bp(if j % 2 == 0 { t } else { page_height - t })?);
+        }
+        let mut xy = xy.into_iter();
+        let mut next = || xy.next().expect("arity checked");
+        ops.push(match name {
+            "m" => Op::Move(next(), next()),
+            "l" => Op::Line(next(), next()),
+            "c" => Op::Cubic([next(), next(), next(), next(), next(), next()]),
+            _ => Op::Close,
+        });
+    }
+    Ok(ops)
+}
+
+/// A `path_stroke` item's `stroke` object as graphics-state operators, in
+/// pgf's order: `w`, `M` (limit other than 10), `d` (dashed), `J` (cap other
+/// than butt), `j` (join other than miter).
+fn stroke_style(v: Option<&Value>, what: &str) -> Result<Vec<Op>, String> {
+    let st = v.ok_or_else(|| format!("{what}: path_stroke without a stroke"))?;
+    let sw = format!("{what}.stroke");
+    let width = ticks(st.get("width"), &format!("{sw}.width"))?;
+    if width < 0 {
+        return Err(format!("{sw}.width: {width} ticks is negative"));
+    }
+    let cap = match s(st.get("cap"), &format!("{sw}.cap"))? {
+        "butt" => 0,
+        "round" => 1,
+        "square" => 2,
+        other => return Err(format!("{sw}.cap: unknown line cap {other:?}")),
+    };
+    let join = match s(st.get("join"), &format!("{sw}.join"))? {
+        "miter" => 0,
+        "round" => 1,
+        "bevel" => 2,
+        other => return Err(format!("{sw}.join: unknown line join {other:?}")),
+    };
+    let miter = f(st.get("miter_limit"), &format!("{sw}.miter_limit"))?;
+    if !miter.is_finite() || miter < 1.0 {
+        return Err(format!("{sw}.miter_limit: {miter} is not a miter limit (at least 1)"));
+    }
+    let mut ops = vec![Op::LineWidth(bp(width)?)];
+    if miter != 10.0 {
+        ops.push(Op::MiterLimit(
+            pdf_number(miter, PDF_DECIMAL_DIGITS).map_err(|e| format!("{sw}.miter_limit: {e}"))?,
+        ));
+    }
+    if let Some(dash) = st.get("dash") {
+        let dw = format!("{sw}.dash");
+        let mut array = Vec::new();
+        let mut any = false;
+        for (k, t) in arr(dash.get("array"), &format!("{dw}.array"))?.iter().enumerate() {
+            let t = ticks(Some(t), &format!("{dw}.array[{k}]"))?;
+            if t < 0 {
+                return Err(format!("{dw}.array[{k}]: {t} ticks is negative"));
+            }
+            any |= t > 0;
+            array.push(bp(t)?);
+        }
+        if !array.is_empty() {
+            if !any {
+                return Err(format!("{dw}.array: every length is zero"));
+            }
+            ops.push(Op::Dash(array, bp(ticks(dash.get("phase"), &format!("{dw}.phase"))?)?));
+        }
+    }
+    if cap != 0 {
+        ops.push(Op::LineCap(cap));
+    }
+    if join != 0 {
+        ops.push(Op::LineJoin(join));
+    }
+    Ok(ops)
 }
 
 /// The display list's number as a PDF token: Rust's shortest round-trip
@@ -1140,14 +1462,49 @@ mod tests {
     }
 
     #[test]
-    fn colour_components_are_exact_or_refused() {
-        assert_eq!(exact_unit(0.5, "c").unwrap().as_str(), "0.5");
-        assert_eq!(exact_unit(0.125, "c").unwrap().as_str(), "0.125");
-        assert!(
-            exact_unit(0.1, "c").is_err(),
-            "0.1 is not a short binary fraction"
-        );
-        assert!(exact_unit(1.5, "c").is_err());
+    fn colour_components_round_to_xcolor_precision() {
+        assert_eq!(unit_component(0.5, "c").unwrap().as_str(), "0.5");
+        assert_eq!(unit_component(0.125, "c").unwrap().as_str(), "0.125");
+        assert_eq!(unit_component(0.1, "c").unwrap().as_str(), "0.1");
+        // The two corpus failures (#42): `blue!20` and RGB 20/255.
+        assert_eq!(unit_component(0.8, "c").unwrap().as_str(), "0.8");
+        assert_eq!(unit_component(0.07843, "c").unwrap().as_str(), "0.07843");
+        assert_eq!(unit_component(20.0 / 255.0, "c").unwrap().as_str(), "0.07843");
+        assert_eq!(unit_component(0.0, "c").unwrap().as_str(), "0");
+        assert_eq!(unit_component(1.0, "c").unwrap().as_str(), "1");
+        assert!(unit_component(1.5, "c").is_err());
+        assert!(unit_component(f64::NAN, "c").is_err());
+    }
+
+    #[test]
+    fn pdf_numbers_are_bounded_and_never_exponents() {
+        let n = |v: f64, d: usize| pdf_number(v, d).unwrap().as_str().to_string();
+        assert_eq!(n(0.8, 4), "0.8");
+        assert_eq!(n(20.0 / 255.0, 4), "0.0784");
+        assert_eq!(n(20.0 / 255.0, 5), "0.07843");
+        assert_eq!(n(1e-7, 4), "0");
+        assert_eq!(n(-1e-7, 4), "0");
+        assert_eq!(n(-0.0, 4), "0");
+        assert_eq!(n(0.0, 4), "0");
+        assert_eq!(n(-2.5, 4), "-2.5");
+        // Half away from zero on the shortest decimal, with carries.
+        assert_eq!(n(0.00005, 4), "0.0001");
+        assert_eq!(n(-0.00005, 4), "-0.0001");
+        assert_eq!(n(0.015625, 5), "0.01563");
+        assert_eq!(n(9.99996, 4), "10");
+        assert_eq!(n(-99.99999, 4), "-100");
+        assert_eq!(n(28.346456692913385, 4), "28.3465");
+        // Large values are plain integers, not `1e15`.
+        assert_eq!(n(1e15, 4), "1000000000000000");
+        assert_eq!(n(-123456789.123456, 4), "-123456789.1235");
+        assert_eq!(n(1e20, 4), "100000000000000000000");
+        for v in [1e-7, 1e15, 1e20, -3.0e-300, 5e59] {
+            let t = n(v, 4);
+            assert!(!t.contains(['e', 'E']), "{v} -> {t}");
+        }
+        assert!(pdf_number(1e70, 4).is_err(), "longer than the 64-character token bound");
+        assert!(pdf_number(f64::INFINITY, 4).is_err());
+        assert!(pdf_number(f64::NAN, 4).is_err());
     }
 
     #[test]

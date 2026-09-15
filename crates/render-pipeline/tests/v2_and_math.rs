@@ -16,7 +16,7 @@ fn v1_items_are_positioned_exactly_where_v2_glyph_runs_start() {
         return;
     }
     let r = render_one(MATH_DOC);
-    let v1 = v1_of(&r, Capabilities { rules: true, font_hints: true, display_list: false, images: false });
+    let v1 = v1_of(&r, Capabilities { rules: true, font_hints: true, display_list: false, images: false, device_color: false, ..Capabilities::default() });
     // Only the outline-resource profile notes for lmmi/lmex (drawn from
     // Latin Modern Math) are expected; they make the status `recovered`.
     assert!(v1.diagnostics.iter().all(|d| d.code == "math_resource_profile"), "{:?}", v1.diagnostics);
@@ -128,7 +128,7 @@ fn fraction_bars_are_explicit_rules_in_v2_and_negotiated_in_v1() {
     assert!((dash.0 * 0.0857 - rule.height.to_bp()).abs() < 1e-6);
     assert!((dash.1 - (rule.top.to_bp() + rule.height.to_bp())).abs() < 1e-6);
     // Negotiated route: typed rule with top-left corner and source.
-    let typed = v1_of(&r, Capabilities { rules: true, font_hints: false, display_list: false, images: false });
+    let typed = v1_of(&r, Capabilities { rules: true, font_hints: false, display_list: false, images: false, device_color: false, ..Capabilities::default() });
     let typed_rule = typed
         .pages[0]
         .items
@@ -140,7 +140,7 @@ fn fraction_bars_are_explicit_rules_in_v2_and_negotiated_in_v1() {
         .expect("typed rule");
     assert!((typed_rule.1 - rule.top.to_bp()).abs() < 1e-9);
     assert!((typed_rule.3 - rule.height.to_bp()).abs() < 1e-9);
-    assert_eq!(&*typed_rule.4.path, "main.tex");
+    assert_eq!(&*typed_rule.4.as_ref().expect("a fraction bar keeps its source").path, "main.tex");
     assert!(typed.pages[0].items.iter().all(|i| !matches!(i, V1Item::Text { text, .. } if text.contains('\u{2500}'))));
     // No font hints unless accepted.
     assert!(typed.pages[0].items.iter().all(|i| !matches!(i, V1Item::Text { font: Some(_), .. })));

@@ -1,0 +1,20 @@
+flashtex-render: HW1.tex: recovered, 3 pages -> v2 /private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/base/HW1.v2.json
+flashtex-render: HW2.tex: recovered, 3 pages -> v2 /private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/base/HW2.v2.json
+cc8f0092abe2629ad5bdad90be978e3e
+537ac1a5ab319c66cdf91a8bd93f5e0e
+ 1153880 /private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/base/HW1.v2.json
+ 1032218 /private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/base/HW2.v2.json
+ 2186098 total
+load before ipc: { 5.78 8.21 8.96 }
+HW1.tex      v2=True  steps=20 first(cold) 66.6 ms (v1 185140 B, v2 1153880 B) | warm p50 4.67 p95 5.11 max 5.35 ms | v1 185633 B v2 1157718 B | md5 8f6dea647fcdbb8f
+HW1.tex      v2=False steps=20 first(cold) 66.1 ms (v1 185122 B, v2 0 B) | warm p50 2.54 p95 2.91 max 2.94 ms | v1 185615 B v2 0 B | md5 1e71c7d63e23bd5e
+demo.tex     v2=True  steps=20 first(cold) 26.4 ms (v1 222044 B, v2 1941498 B) | warm p50 6.23 p95 6.76 max 7.14 ms | v1 222541 B v2 1945350 B | md5 f3733bc5fabace0b
+demo.tex     v2=False steps=20 first(cold) 23.6 ms (v1 222026 B, v2 0 B) | warm p50 3.00 p95 3.26 max 3.68 ms | v1 222523 B v2 0 B | md5 bc85374917d1bd66
+body60k.tex  v2=True  steps=20 first(cold) 60.3 ms (v1 2493699 B, v2 0 B) | warm p50 27.37 p95 29.08 max 32.44 ms | v1 2494207 B v2 0 B | md5 a08c2e68ee71446f
+body60k.tex  v2=False steps=20 first(cold) 57.4 ms (v1 2493471 B, v2 0 B) | warm p50 26.32 p95 81.97 max 150.78 ms | v1 2493979 B v2 0 B | md5 075ca71a8973cbb0
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/ipc_bench.py", line 16, in <module>
+    text = open(path, encoding="utf-8").read()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/doc500k.tex'
+load after ipc: { 5.64 8.14 8.93 }

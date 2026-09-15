@@ -18,9 +18,16 @@ final class ShellModel {
         var token = 0 // bump so the same range re-applies
     }
 
-    var documents: [RuntimeV1.Document] = []
+    var documents: [RuntimeV1.Document] = [] {
+        didSet { refreshDocumentMirror() }
+    }
     var activePath: String = "main.tex"
-    var result: RuntimeV1.CompileResult?
+    var result: RuntimeV1.CompileResult? {
+        didSet {
+            refreshToolbarMirrors()
+            if result != nil { caretFollow.note(.recompile) } // CaretFollow.swift: the preview moved on, re-aim at the caret
+        }
+    }
     var resultID: String?
     var fixtureURL: URL?
     var loadError: String?
@@ -34,8 +41,16 @@ final class ShellModel {
     // The panel state is shared with the palette so Next/Previous
     // Occurrence work from there too (DiagnosticsPanel.swift).
     var problemsVisible = true
+    /// Below the width where editor and preview both fit, the preview
+    /// collapses to a toggle instead of being crushed (design-principles §4).
+    /// `narrowLayout` mirrors the split's available width; the toggle picks
+    /// which column the narrow window shows.
+    var narrowLayout = false
+    var narrowPreviewShown = false
     var problemsSeverityFilter: RuntimeV1.Severity?
     var commandPaletteShown = false
+    /// Rename Symbol / Wrap in Environment / Go to Symbol / Go to Line sheets (ShellModel+EditorNavigation.swift).
+    var editorNavigation = EditorNavigationState()
     let problemsPanel = DiagnosticsPanelState()
     /// Debounced, background word/document-statistics scan (GH68), read by
     /// the status bar's word count item (DocumentStatistics.swift). Kicked
@@ -43,7 +58,14 @@ final class ShellModel {
     /// scheduling logic lives here.
     let wordCount = WordCountModel()
     /// The display-list-v2 pane (PreviewV2View.swift) is the default; `FLASHTEX_PREVIEW_V2=0` selects the v1 pane.
-    var previewV2 = ProcessInfo.processInfo.environment["FLASHTEX_PREVIEW_V2"] != "0"
+    var previewV2 = ProcessInfo.processInfo.environment["FLASHTEX_PREVIEW_V2"] != "0" {
+        // Leaving the v2 pane: a result whose v1 pages were elided
+        // (`display-list-v2-only`) is re-requested with pages.
+        didSet { if oldValue, !previewV2, v1PagesElided, autoCompile, workerAttached { compile() } }
+    }
+    /// Whether the applied result's runtime-v1 `pages` were elided at this
+    /// shell's request (`display-list-v2-only`, DisplayListDelta.swift).
+    var v1PagesElided: Bool { negotiation.accepted.contains(DisplayListDelta.v2OnlyCapability) }
     /// Preview debug status (compile status word, "provisional rendering", v2 frame/font identity line,
     /// display-list diagnostics under the pages): off by default; View > Show Preview Debug Status.
     var previewDebugStatus = UserDefaults.standard.bool(forKey: ShellModel.previewDebugStatusKey) {
@@ -56,7 +78,15 @@ final class ShellModel {
     }
     /// Fit-to-width scale the preview pane last laid out with (written by the pane; drives Actual Size and the percentage).
     var previewFitScale: CGFloat = 1
-    var displayListV2: V2PreviewState?
+    /// Zoom multiplier that fits the tallest page's height to the pane
+    /// (PreviewView reports it with the pane geometry; View > Fit Page).
+    var previewFitPageZoom: CGFloat = 1
+    var displayListV2: V2PreviewState? {
+        didSet {
+            refreshToolbarMirrors()
+            if case .loaded = displayListV2 { caretFollow.note(.recompile) } // CaretFollow.swift
+        }
+    }
     var previewSource: PreviewSource = .none
     /// File backing the entry document, if any, and its last saved contents.
     var documentURL: URL?
@@ -72,9 +102,26 @@ final class ShellModel {
         var revision: Int? = nil
         /// What to give back when a capture insertion is refused.
         var captureRefund: CaptureRefund? = nil
+        /// When non-empty, these replacements (original-text coordinates) are
+        /// applied last-first as one undo group instead of `nsRange`/`text`.
+        /// Change Environment uses the two name spans so the body is not rewritten.
+        var groupedEdits: [EditorKeyHandling.LineEdit] = []
     }
     struct CaptureRefund: Equatable { var proposal: RuntimeV1.CaptureProposal; var anchorBefore: InsertionAnchor }
-    var caretUTF16: Int = 0
+    var caretUTF16: Int = 0 {
+        didSet { if caretUTF16 != oldValue { caretFollow.noteCaretMove() } } // CaretFollow.swift: re-arms across a line/page boundary
+    }
+    /// Debounced "the preview follows what you are editing" (CaretFollow.swift).
+    /// Triggers: `updateActiveText` (edit), a result or v2 frame landing
+    /// (recompile), a caret move, and ⌘⇧J (explicit).
+    @ObservationIgnored let caretFollow = CaretFollowController()
+    /// Clicking an internal hyperref destination: a one-shot scroll request
+    /// the v2 pane's `PreviewAnchorKeeper` acts on (token space separate from
+    /// caret following).
+    var previewReveal: CaretFollowController.Request?
+    /// Last link activation (tests); never opens a URL by itself.
+    private(set) var lastPreviewLinkAction: DisplayListLinks.Action?
+    private var previewRevealTokens = 0
     var anchor: InsertionAnchor?
     var proposals: [RuntimeV1.CaptureProposal] = []
     var reviewing: RuntimeV1.CaptureProposal?
@@ -99,7 +146,95 @@ final class ShellModel {
     private(set) var bridge: BridgeSession?
     /// Deadline for each `capture_status` during restart reconciliation.
     var bridgeStatusTimeout: TimeInterval = 15
-    var workerStatus: String = "no worker attached" { didSet { FlashTeXLog.write("status: " + workerStatus) } }
+    var workerStatus: String = "no worker attached" { didSet { FlashTeXLog.write("status: " + workerStatus); refreshToolbarMirrors() } }
+
+    // MARK: change-only mirrors for the window toolbar (ContentView.WorkspaceToolbar)
+    //
+    // The toolbar's body read `result`, `displayListV2`, `displayedDiagnostics`
+    // and `workerStatus` directly, so every compile result, every v2 frame and
+    // both status lines of every request re-evaluated the toolbar content and
+    // re-laid out the NSToolbar with the whole window (typing-bench sample,
+    // 2026-09-13: the toolbar preference update and NSToolbarItemViewer layout
+    // were ~20% of a saturated main thread while typing; app code < 2%).
+    // These mirrors are assigned only when their value changes, so observation
+    // fires for the toolbar exactly when something it shows changes.
+    private(set) var toolbarHasResult = false
+    private(set) var toolbarHasV2Frame = false
+    private(set) var toolbarProblemCount = 0
+    /// `result?.pages.count`, change-only, so File > Print… can refuse a failed
+    /// or empty-page result without the App scene reading `result` per reply.
+    private(set) var toolbarPageCount = 0
+    /// `!documents.isEmpty`, change-only: File > Print Source… must not read
+    /// `documents` from the App scene (a keystroke reassigns the array).
+    private(set) var toolbarHasDocument = false
+    /// The producer as attached ("attached: flashtex-render"), not the
+    /// per-request status line: tooltips read this instead of `workerStatus`.
+    private(set) var producerSummary = "no worker attached"
+    /// `displayedDiagnostics` assigned only when the list changes, for the
+    /// Problems panel: `displayedDiagnostics` itself reads `result`, so every
+    /// reply re-evaluated the panel's List (an AppKit table) while typing.
+    private(set) var problemsList: [RuntimeV1.Diagnostic] = []
+    /// `result?.status`, change-only, for the Problems panel header.
+    private(set) var resultStatus: RuntimeV1.Status?
+    /// Throttled mirror the status bar / preview header / tab bar read (ShellChrome.swift).
+    let chrome = ShellChrome()
+    @ObservationIgnored private var chromeRefreshPending = false
+
+    /// Refreshes the chrome mirror from the current state and re-arms the
+    /// tracking: the first later change to anything the refresh read
+    /// schedules the next refresh one `ShellChrome.interval` later.
+    private func refreshChrome() {
+        var again = false
+        withObservationTracking {
+            again = chrome.refresh(from: self)
+        } onChange: { [weak self] in
+            // Observation calls this at the mutation (main actor: every writer is).
+            MainActor.assumeIsolated { self?.scheduleChromeRefresh() }
+        }
+        if again { scheduleChromeRefresh() }
+    }
+
+    private func scheduleChromeRefresh() {
+        guard !chromeRefreshPending else { return }
+        chromeRefreshPending = true
+        // A run-loop timer, not the main dispatch queue: AppKit drains that
+        // queue late under typing (TypingBench.nextRunLoopTurn).
+        let timer = Timer(timeInterval: ShellChrome.interval, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.chromeRefreshPending = false
+                self.refreshChrome()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    /// Applies pending chrome changes now (tests, and the bench's paint point).
+    func flushChrome() { chromeRefreshPending = false; refreshChrome() }
+
+    private func refreshDocumentMirror() {
+        let has = !documents.isEmpty
+        if toolbarHasDocument != has { toolbarHasDocument = has }
+    }
+
+    private func refreshToolbarMirrors() {
+        let hasResult = result != nil
+        if toolbarHasResult != hasResult { toolbarHasResult = hasResult }
+        let pages = result?.pages.count ?? 0
+        if toolbarPageCount != pages { toolbarPageCount = pages }
+        let hasFrame = displayListV2?.frame != nil
+        if toolbarHasV2Frame != hasFrame { toolbarHasV2Frame = hasFrame }
+        let diagnostics = displayedDiagnostics
+        if toolbarProblemCount != diagnostics.count { toolbarProblemCount = diagnostics.count }
+        if problemsList != diagnostics { problemsList = diagnostics }
+        if resultStatus != result?.status { resultStatus = result?.status }
+        refreshDocumentMirror()
+        let summary: String
+        if controllerAttached { summary = "helper attached: \(controller?.executable.lastPathComponent ?? "flashtex-preview-controller")" }
+        else if let worker, worker.isRunning { summary = "attached: \(worker.executable.lastPathComponent)" }
+        else { summary = "no worker attached" }
+        if producerSummary != summary { producerSummary = summary }
+    }
     let nearbyInbox = NearbyInbox() // captures from paired companions (ShellModel+Nearby.swift)
     let captureInbox = CaptureInbox() // Captures inspector rows (CaptureInbox.swift)
     var captureInboxVisible = ProcessInfo.processInfo.environment["FLASHTEX_SHOW_CAPTURES"] == "1" // View > Captures (⌘⇧I)
@@ -149,6 +284,11 @@ final class ShellModel {
         var layoutCapabilities: [String] = []
     }
     private(set) var inFlightRequests: [String: InFlight] = [:]
+    /// `display-list-v2-delta`: the live v2 frame currently published, as the
+    /// producer may relocate it (DisplayListDelta.swift). Set only when a live
+    /// frame is published after full validation; cleared by any refusal,
+    /// worker exit or relaunch, or a result that did not accept `display-list-v2`.
+    @ObservationIgnored var deltaInstalled: DisplayListDelta.Installed?
     /// Id of the most recently sent compile request. A reply to any older
     /// request is valid but stale (`scripts/check_runtime.py`: `stale_ignore`):
     /// it is checked, logged and dropped, and never changes the preview or the
@@ -178,7 +318,7 @@ final class ShellModel {
     private(set) var fontSubstitutions: [PreviewFonts.Substitution] = []
     /// Source-aware errors for unknown primitives in the applied result
     /// (negotiated route only; the legacy route still skips unknown kinds).
-    private(set) var layoutDiagnostics: [RuntimeV1.Diagnostic] = []
+    private(set) var layoutDiagnostics: [RuntimeV1.Diagnostic] = [] { didSet { refreshToolbarMirrors() } }
     /// Producer diagnostics followed by the shell's own layout diagnostics.
     var displayedDiagnostics: [RuntimeV1.Diagnostic] { (result?.diagnostics ?? []) + layoutDiagnostics }
 
@@ -200,11 +340,40 @@ final class ShellModel {
 
     /// Binds a result's negotiation state, substitutions, and layout diagnostics.
     func bindLayout(of applied: RuntimeV1.CompileResult, requested: [String]) {
-        negotiation = LayoutNegotiation(requested: requested, accepted: applied.layoutCapabilities ?? [])
-        fontSubstitutions = PreviewFonts.substitutions(in: applied)
-        layoutDiagnostics = LayoutNegotiation.unsupportedPrimitiveDiagnostics(in: applied, negotiation: negotiation)
+        // Change-only (see handle(.result)): these are read by the preview header and toolbar.
+        // The per-request opt-ins are decided by the producer per reply; their
+        // absence is never a missing capability.
+        let bound = LayoutNegotiation(requested: DisplayListDelta.stripPerRequest(requested), accepted: applied.layoutCapabilities ?? [])
+        if negotiation != bound { negotiation = bound }
+        if !negotiation.accepted.contains(V2Live.capability) { deltaInstalled = nil }
+        let substitutions = PreviewFonts.substitutions(in: applied)
+        if fontSubstitutions != substitutions { fontSubstitutions = substitutions }
+        let diagnostics = LayoutNegotiation.unsupportedPrimitiveDiagnostics(in: applied, negotiation: negotiation)
+        if layoutDiagnostics != diagnostics { layoutDiagnostics = diagnostics }
         for note in capabilityNotes { log(note) }
         for d in layoutDiagnostics { log(d.message) }
+    }
+
+    /// Click on a v2 link: allowlisted URIs go through `NSWorkspace`;
+    /// internal destinations scroll the preview. Scheme policy is the app's
+    /// (proposal §6: writer does not filter).
+    func activatePreviewLink(_ link: RenderingV2.Navigation.Link, in list: RenderingV2.DisplayList) {
+        let destinations = list.navigation?.destinations ?? [:]
+        let action = DisplayListLinks.action(for: link, destinations: destinations)
+        lastPreviewLinkAction = action
+        switch action {
+        case .openURI(let url):
+            if DisplayListLinks.openURL(url) { navigationNote = "Opened \(url.absoluteString)" }
+            else { navigationNote = "Could not open \(url.absoluteString)" }
+        case .reveal(let dest):
+            previewRevealTokens += 1
+            previewReveal = CaretFollowController.Request(token: previewRevealTokens, target: DisplayListLinks.previewTarget(for: dest), reason: .explicit)
+            navigationNote = "Scrolled to page \(dest.page)"
+        case .rejectedScheme(let scheme):
+            navigationNote = "Blocked link scheme ‘\(scheme.isEmpty ? "none" : scheme)’ (allowed: http, https, mailto)"
+        case .unknownDestination(let name):
+            navigationNote = "Unknown destination \(name)"
+        }
     }
     var autoCompile = true
     private(set) var lastLatencyMs: Double?
@@ -311,6 +480,18 @@ final class ShellModel {
     /// "Fix…" on a diagnostics row: prepare the suggestion against the current
     /// buffer and show the preview; refusals go to the footer.
     func previewQuickFix(diagnosticIndex: Int, suggestion: Int = 0) {
+        let diags = displayedDiagnostics
+        if diags.indices.contains(diagnosticIndex) {
+            let d = diags[diagnosticIndex]
+            if EditorDiagnostics.canApplyHelpReplacement(d, path: activePath, currentText: activeText,
+                                                         compiledRevision: result?.revision, editorRevision: editorRevision) {
+                let compiled = compiledDocuments[activePath] ?? activeText
+                switch EditorDiagnostics.prepareHelpReplacement(d, path: activePath, in: activeText, compiledText: compiled) {
+                case .success(let preview): quickFix = preview; quickFixIndex = diagnosticIndex; navigationNote = nil; return
+                case .failure(let why): quickFix = nil; navigationNote = "Fix not applied: " + why.text; return
+                }
+            }
+        }
         guard let x = explanations.explanation(resultID: resultID, index: diagnosticIndex) else {
             navigationNote = "No explanation for this diagnostic yet."; return
         }
@@ -334,6 +515,54 @@ final class ShellModel {
                             token: nextEditToken(), revision: editorRevision)
         navigationNote = "Applied: \(preview.summary) (undo with ⌘Z)"
         quickFix = nil
+    }
+
+    // MARK: the fix at the caret (Tab)
+
+    /// Set by Esc while a caret fix is showing, so the hint stays down until
+    /// the caret moves somewhere else. Dismissing must also hand Tab straight
+    /// back to indentation — that is the whole point of Esc here.
+    @ObservationIgnored private var dismissedCaretFix: EditorDiagnostics.CaretFix?
+
+    /// The mechanical fix offered where the caret is, or `nil`.
+    ///
+    /// This is the single source of truth for both halves of the feature: the
+    /// editor draws a hint exactly when it is non-nil, and Tab accepts a fix
+    /// exactly when it is non-nil. They cannot disagree, so Tab can never
+    /// silently do something the author was not shown.
+    var caretFix: EditorDiagnostics.CaretFix? {
+        let diagnostics = displayedDiagnostics
+        // Cheap bail-out before `caretByte`, whose UTF-16 → UTF-8 conversion is
+        // linear in the document: this is read on every keystroke, and most
+        // documents carry no mechanical fix at all.
+        guard result?.revision == editorRevision,
+              diagnostics.contains(where: { $0.help?.replacement != nil || $0.suggestion != nil })
+        else { return nil }
+        guard let caretByte, let fix = EditorDiagnostics.fixOffered(
+            at: caretByte, in: diagnostics, path: activePath,
+            currentText: activeText, compiledRevision: result?.revision,
+            editorRevision: editorRevision
+        ) else { return nil }
+        return fix == dismissedCaretFix ? nil : fix
+    }
+
+    /// Esc: take the hint down and leave Tab alone until the caret moves onto
+    /// a different fix.
+    func dismissCaretFix() {
+        guard let fix = caretFix else { return }
+        dismissedCaretFix = fix
+    }
+
+    /// Tab on a visible caret fix. Routed through `previewQuickFix` /
+    /// `applyQuickFix` rather than a second application path, so the edit
+    /// ledger, the revision counter and undo behave exactly as they do for
+    /// "Fix…" in the Problems panel — one undo step.
+    func acceptCaretFix() {
+        guard let fix = caretFix else { return }
+        previewQuickFix(diagnosticIndex: fix.diagnosticIndex)
+        guard quickFix != nil else { return } // refusal already in the footer
+        applyQuickFix()
+        dismissedCaretFix = nil
     }
 
     /// Asks the helper once per result; the cache is read by `editorMarkReport`.
@@ -373,6 +602,15 @@ final class ShellModel {
 
     init() {
         let env = ProcessInfo.processInfo.environment
+        // Caret following asks for the target only when a follow actually
+        // fires, so this closure runs at most once per debounce interval.
+        caretFollow.target = { [weak self] in self?.caretPreviewTarget() }
+        // Only read while disarmed (a manual scroll happened): the line the
+        // caret is on, so a move to another line re-arms following.
+        caretFollow.currentLine = { [weak self] in
+            guard let self, let byte = self.caretByte else { return nil }
+            return EditorDiagnostics.lineNumber(ofByte: byte, in: self.activeText)
+        }
         defer {
             // Demo/automation hooks: seed the editor from a .tex file and attach the
             // built compiler at launch when FLASHTEX_AUTOATTACH=1 (opt-in so tests
@@ -406,6 +644,7 @@ final class ShellModel {
                BridgeClient.locateBridge() != nil {
                 attachDiscoveredBridge()
             }
+            refreshChrome() // ShellChrome.swift: from here on the chrome follows the model, throttled
         }
         if let fixtures = Self.locateFixturesDirectory() {
             loadFixtures(request: fixtures.appendingPathComponent("compile-request.json"),
@@ -553,6 +792,7 @@ final class ShellModel {
         editorRevision += 1
         TypingBench.shared.noteRevision(editorRevision) // keystroke -> paint instrumentation
         scheduleAutoCompile()
+        caretFollow.note(.edit) // CaretFollow.swift: an edit also re-arms following after a manual scroll
         bridgeTextChanged(path: activePath, old: old, new: text, base: base, revision: editorRevision)
     }
 
@@ -714,13 +954,13 @@ final class ShellModel {
         debounce?.cancel()
         let capabilities = requestedLayoutCapabilities
         if let latestID = latestRequestID, let latest = inFlightRequests[latestID] {
-            guard latest.layoutCapabilities != capabilities else {
+            guard DisplayListDelta.stripPerRequest(latest.layoutCapabilities) != capabilities else {
                 compileQueued = true
                 return
             }
             log("layout capability switch while \(latestID) is in flight: re-requesting revision \(editorRevision) under \(LayoutNegotiation.describe(capabilities))")
         } else if let current = result, previewSource != .fixture, current.revision == editorRevision,
-                  negotiation.requested == capabilities {
+                  negotiation.requested == capabilities, previewV2 || !v1PagesElided {
             return // buffers and capability set unchanged since the applied result
         }
         let id = "mac-\(nextRequestID)"
@@ -730,20 +970,42 @@ final class ShellModel {
         // fresh from disk (never a project member, never durable) — see
         // ProjectDocuments.implicitClosureDocuments().
         let sendDocuments = documents + project.implicitClosureDocuments().map { RuntimeV1.Document(path: $0.path, text: $0.text) }
+        let projectId = result?.projectId ?? "demo"
+        // Per-request opt-ins next to `display-list-v2` (never a mode switch):
+        // the v1 pages are elided while the v2 pane paints, and the installed
+        // v2 frame is acknowledged so the producer may answer with a delta.
+        var sent = capabilities
+        var displayListBase: RuntimeV1.CompileRequest.DisplayListBase?
+        if previewV2, capabilities.contains(V2Live.capability) {
+            if DisplayListDelta.v2OnlyEnabled { sent.append(DisplayListDelta.v2OnlyCapability) }
+            if DisplayListDelta.enabled, let installed = deltaInstalled, installed.list.projectId == projectId {
+                sent.append(DisplayListDelta.capability)
+                displayListBase = installed.acknowledgement
+            }
+        }
+        sent = DisplayListLinks.sent(with: sent)
         let request = RuntimeV1.CompileRequest(
-            projectId: result?.projectId ?? "demo",
+            projectId: projectId,
             revision: editorRevision,
             entryPath: project.entryPath, // the entry stays first whichever document is being edited
             documents: sendDocuments,
-            layoutCapabilities: capabilities.isEmpty ? nil : capabilities,
+            layoutCapabilities: sent.isEmpty ? nil : sent,
+            displayListBase: displayListBase,
             // display-list-v2-images: the producer sizes `\includegraphics`
             // files under the open project's directory (V2ImageStore.swift).
-            projectRoot: capabilities.contains(RenderingV2.imagesCapability) ? project.projectRoot?.path : nil)
+            projectRoot: capabilities.contains(RenderingV2.imagesCapability) ? project.projectRoot?.path : nil,
+            // `\today` must print today's date, and the compiler is forbidden
+            // from reading a clock (runtime-v1 requires byte-identical output
+            // for byte-identical input). So the app reads it -- in the user's
+            // own timezone, which is the whole point of a *local* calendar date
+            // -- and sends it as an ordinary request input.
+            // protocol/proposals/runtime-v1-request-date.md
+            date: RuntimeV1.localDate())
         do {
             if TypingBench.isBenchActive { FlashTeXLog.write("compile: sending revision \(editorRevision) at \(MonotonicClock.nowNs())") }
             try worker.send(request, id: id)
             inFlightRequests[id] = InFlight(projectId: request.projectId, revision: request.revision,
-                                            documents: sendDocuments, sentAt: Date(), layoutCapabilities: capabilities)
+                                            documents: sendDocuments, sentAt: Date(), layoutCapabilities: sent)
             latestRequestID = id
             inFlightRevision = editorRevision
             workerStatus = "compiling revision \(editorRevision) (\(id))…"
@@ -816,8 +1078,11 @@ final class ShellModel {
             }
             result = incoming
             resultID = env.id
-            previewSource = .worker(worker?.executable.lastPathComponent ?? "worker")
-            historicalPreview = nil
+            // Change-only: `@Observable` fires for every assignment, equal or not,
+            // and each of these re-evaluated the header/status views per reply.
+            let source = PreviewSource.worker(worker?.executable.lastPathComponent ?? "worker")
+            if previewSource != source { previewSource = source }
+            if historicalPreview != nil { historicalPreview = nil }
             bindLayout(of: incoming, requested: sent.layoutCapabilities)
             compiledDocuments = Dictionary(uniqueKeysWithValues: sent.documents.map { ($0.path, $0.text) })
             retainMarksAfterResultBound() // ShellModel+DiagnosticRetention.swift
@@ -830,7 +1095,7 @@ final class ShellModel {
             if latenciesMs.count > 100 { latenciesMs.removeFirst(latenciesMs.count - 100) }
             let latencyText = String(format: " in %.0f ms", ms)
             workerStatus = "revision \(incoming.revision): \(incoming.status.rawValue), \(incoming.diagnostics.count) diagnostics\(latencyText)"
-            selection = nil
+            if selection != nil { selection = nil } // the editor observes `selection`; a nil-to-nil write still invalidates it
             if compileQueued {
                 compileQueued = false
                 compile() // no-op when buffers and capability set are unchanged
@@ -860,6 +1125,7 @@ final class ShellModel {
             log(text.trimmingCharacters(in: .whitespacesAndNewlines))
         case .exited(let code):
             inFlightRequests.removeAll()
+            deltaInstalled = nil // a restarted producer holds no snapshot
             latestRequestID = nil
             inFlightRevision = nil
             compileQueued = false
@@ -961,6 +1227,23 @@ final class ShellModel {
         if reviewing == nil { reviewing = proposals.first }
     }
 
+    /// Closes the review sheet without deciding anything.
+    ///
+    /// The sheet is window-modal, so while it is up every other control in
+    /// the window — including the Captures inspector's "Insert at caret" —
+    /// is unclickable. Before this existed the only ways out were Reject
+    /// (destructive) and a successful Approve, so a proposal the reviewer
+    /// wanted to insert from the inspector instead could not be reached at
+    /// all: the inspector's Insert is enabled only while the proposal is in
+    /// `proposals`, which is exactly when the blocking sheet is raised.
+    ///
+    /// The proposal stays queued and insertable; only the sheet goes away.
+    func dismissReviewWithoutDeciding() {
+        guard let p = reviewing else { return }
+        reviewing = nil
+        captureNote = "Review of \(p.captureId) closed; it is still queued — insert it from the Captures inspector (⌘⇧I)."
+    }
+
     func rejectProposal(_ proposal: RuntimeV1.CaptureProposal) {
         proposals.removeAll { $0.captureId == proposal.captureId }
         if reviewing?.captureId == proposal.captureId { reviewing = proposals.first }
@@ -1004,7 +1287,17 @@ final class ShellModel {
             captureNote = "Cannot insert \(proposal.captureId): \(why). Pin a new insertion point."
             return .needsReselection(why)
         }
-        let insert = Insertion.insertionText(latex, into: doc.text, atByte: byte)
+        // Make the proposal legal where it is actually landing before it becomes
+        // an edit: a formula recognised at a text caret is wrapped, and one
+        // recognised inside an existing `$…$` has its own delimiters removed
+        // rather than producing `$a + $x^2$ + b$` (issue #2, owner report).
+        // The bridge-attached path gets the same treatment inside the bridge.
+        let normalized = Insertion.captureInsertion(latex, into: doc.text, atByte: byte)
+        guard let insert = normalized.text else {
+            captureNote = "Cannot insert \(proposal.captureId) here: "
+                + (normalized.advisories.first ?? "the proposal is not legal LaTeX at this caret.")
+            return .needsReselection("unsafe at caret")
+        }
         guard let ns = doc.text.nsRange(utf8Bytes: .init(path: anchor.path, startByte: byte, endByte: byte)) else {
             captureNote = "Anchor offset is not a valid position."; return .needsReselection("invalid offset")
         }
@@ -1019,7 +1312,8 @@ final class ShellModel {
         // Keep the anchor after the inserted text so successive captures append in order.
         self.anchor = InsertionAnchor(id: anchor.id, path: anchor.path, byteOffset: byte + insert.utf8.count,
                                       revision: editorRevision, contextAfter: anchor.contextAfter)
-        captureNote = "Inserted \(proposal.captureId) at byte \(byte) (undo with ⌘Z)."
+        captureNote = "Inserted \(proposal.captureId) at byte \(byte) (\(normalized.caret.label); undo with ⌘Z)."
+            + (normalized.advisories.isEmpty ? "" : " " + normalized.advisories.joined(separator: " "))
         return .inserted(byteOffset: byte)
     }
 
@@ -1031,7 +1325,12 @@ final class ShellModel {
     func editRefused(_ edit: PendingEdit, reason: String) {
         if pendingEdit == edit { pendingEdit = nil }
         guard let refund = edit.captureRefund else {
+            // Bridge inserts build their pendingEdit without a refund, so this
+            // is the path a refused capture insertion takes. navigationNote
+            // alone only reaches the status bar, which is behind the modal
+            // review sheet — the refusal looked like a dead Insert button.
             navigationNote = "Edit not applied: \(reason)."
+            captureNote = "Nothing was inserted: \(reason)."
             return
         }
         let id = refund.proposal.captureId

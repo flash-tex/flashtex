@@ -1,0 +1,188 @@
+{
+ "fixture": "12-dollars-eqno.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "This",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "paragraph",
+    "x": 172.0155,
+    "y_top": 134.765
+   },
+   {
+    "text": "line",
+    "x": 220.2166,
+    "y_top": 134.765
+   },
+   {
+    "text": "is",
+    "x": 239.5908,
+    "y_top": 134.765
+   },
+   {
+    "text": "long",
+    "x": 250.1542,
+    "y_top": 134.765
+   },
+   {
+    "text": "enough",
+    "x": 272.2951,
+    "y_top": 134.765
+   },
+   {
+    "text": "that",
+    "x": 307.1572,
+    "y_top": 134.765
+   },
+   {
+    "text": "it",
+    "x": 329.2981,
+    "y_top": 134.765
+   },
+   {
+    "text": "reaches",
+    "x": 339.8156,
+    "y_top": 134.765
+   },
+   {
+    "text": "the",
+    "x": 375.0364,
+    "y_top": 134.765
+   },
+   {
+    "text": "right",
+    "x": 392.7499,
+    "y_top": 134.765
+   },
+   {
+    "text": "margin",
+    "x": 417.4073,
+    "y_top": 134.765
+   },
+   {
+    "text": "of",
+    "x": 451.7424,
+    "y_top": 134.765
+   },
+   {
+    "text": "the",
+    "x": 463.6437,
+    "y_top": 134.765
+   },
+   {
+    "text": "text",
+    "x": 133.768,
+    "y_top": 146.72
+   },
+   {
+    "text": "block",
+    "x": 154.5211,
+    "y_top": 146.72
+   },
+   {
+    "text": "so",
+    "x": 180.8194,
+    "y_top": 146.72
+   },
+   {
+    "text": "the",
+    "x": 193.0485,
+    "y_top": 146.72
+   },
+   {
+    "text": "display",
+    "x": 210.2041,
+    "y_top": 146.72
+   },
+   {
+    "text": "gets",
+    "x": 244.0181,
+    "y_top": 146.72
+   },
+   {
+    "text": "the",
+    "x": 264.56,
+    "y_top": 146.72
+   },
+   {
+    "text": "normal",
+    "x": 281.7156,
+    "y_top": 146.72
+   },
+   {
+    "text": "skip",
+    "x": 315.5028,
+    "y_top": 146.72
+   },
+   {
+    "text": "before",
+    "x": 336.3116,
+    "y_top": 146.72
+   },
+   {
+    "text": "it",
+    "x": 366.2283,
+    "y_top": 146.72
+   },
+   {
+    "text": "and",
+    "x": 376.1979,
+    "y_top": 146.72
+   },
+   {
+    "text": "a",
+    "x": 285.967,
+    "y_top": 168.638
+   },
+   {
+    "text": "+",
+    "x": 293.4449,
+    "y_top": 168.638
+   },
+   {
+    "text": "b",
+    "x": 303.4055,
+    "y_top": 168.638
+   },
+   {
+    "text": "=",
+    "x": 310.4511,
+    "y_top": 168.638
+   },
+   {
+    "text": "c",
+    "x": 320.9696,
+    "y_top": 168.638
+   },
+   {
+    "text": "(7)",
+    "x": 464.7478,
+    "y_top": 168.638
+   },
+   {
+    "text": "after",
+    "x": 133.768,
+    "y_top": 190.555
+   },
+   {
+    "text": "the",
+    "x": 157.3166,
+    "y_top": 190.555
+   },
+   {
+    "text": "display.",
+    "x": 174.4722,
+    "y_top": 190.555
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

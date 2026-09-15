@@ -403,6 +403,62 @@ enum Completion {
         }
     }
 
+    // MARK: what typing opens on its own
+
+    /// The token at the caret together with its UTF-16 start in the whole text.
+    struct CaretToken: Equatable {
+        /// What the caret is on. Read this for the token's *kind* — a control
+        /// word, or a word and its argument context. Its `start`/`end` are
+        /// UTF-8 offsets into the window `caretToken` read, **not** into the
+        /// whole text; rebasing them would cost a scan of everything before
+        /// the window, which is exactly what this type exists to avoid.
+        /// `startUTF16` is the only offset that indexes the whole text.
+        let token: Token
+        /// UTF-16 offset of the token's first character (its `\` for a control
+        /// word) in the whole text.
+        let startUTF16: Int
+    }
+
+    /// How much text before the caret `caretToken` reads. Every token this
+    /// file recognises is short — a control word, or an argument key plus the
+    /// `\command{` opener that gives it meaning — so a window this wide gives
+    /// the same answer as scanning the whole document, at a cost that does not
+    /// grow with it. Only a pathological token (a `\cite{…}` key list longer
+    /// than this) is missed, and the miss is one-sided: the list does not open
+    /// by itself, ⌃Space still reads the whole text.
+    static let caretTokenWindow = 1024
+
+    /// The token at the caret, read from at most `window` UTF-16 units before
+    /// it. This is the cheap main-thread gate for automatic completion: it is
+    /// O(window), never O(document), so it may run on every keystroke.
+    static func caretToken(in text: NSString, caretUTF16: Int, window: Int = caretTokenWindow) -> CaretToken? {
+        let caret = max(0, min(caretUTF16, text.length))
+        var from = max(0, caret - max(1, window))
+        if from > 0, from < text.length { from = text.rangeOfComposedCharacterSequence(at: from).location }
+        guard from <= caret else { return nil }
+        let slice = text.substring(with: NSRange(location: from, length: caret - from))
+        guard let token = token(in: slice, caretUTF16: (slice as NSString).length),
+              let ns = slice.nsRange(utf8Bytes: .init(path: "", startByte: token.start, endByte: token.end))
+        else { return nil }
+        return CaretToken(token: token, startUTF16: from + ns.location)
+    }
+
+    /// Whether typing should open the list without an explicit ⌃Space.
+    ///
+    /// Yes for a control word — including the `\` on its own, which lists the
+    /// vocabulary — and for an argument key whose command gives it meaning
+    /// (`\begin{`, `\end{`, `\ref{`, `\cite{`, `\label{`, `\usepackage{`,
+    /// `\input{`). No for a plain prose word: `wordSuggestions` offers words
+    /// counted from the document, which is worth asking for with ⌃Space and is
+    /// noise over every fourth letter of a sentence.
+    static func opensAutomatically(_ token: Token?) -> Bool {
+        switch token {
+        case .command: return true
+        case .word(_, _, _, let context): return context != .none
+        case nil: return false
+        }
+    }
+
     // MARK: fuzzy matching
 
     /// 0 exact, 1 prefix, 2 subsequence (the typed characters appear in order,
@@ -450,6 +506,24 @@ enum Completion {
         return ns
     }
 
+    // MARK: math mode at the caret
+
+    /// Whether the caret sits in math mode — inside `$…$`, `$$…$$`, `\\(…\\)`,
+    /// `\\[…\\]` or a math environment.
+    ///
+    /// The answer comes from `SyntaxHighlighter`'s own lexer, which already
+    /// owns this knowledge (delimiters, nesting depth, verbatim), so there is
+    /// no second set of rules to drift. Pass the editor's in-sync model and it
+    /// costs one line's worth of lexing; pass nil (tests, any caller without
+    /// one) and the text is lexed whole.
+    static func isMathMode(in text: NSString, caretUTF16: Int, highlighter: SyntaxHighlighter? = nil) -> Bool {
+        guard text.length > 0 else { return false }
+        var model = highlighter ?? SyntaxHighlighter()
+        if highlighter == nil { model.reset(text) }
+        guard model.length == text.length else { return false }
+        return model.mode(at: caretUTF16, text: text).isMath
+    }
+
     // MARK: suggestions
 
     /// Compatibility entry point: the caller asserts that `result` was compiled
@@ -464,15 +538,19 @@ enum Completion {
     /// `Metadata.bound(to:)`); unbound metadata is the caller's bug, never
     /// this function's to detect. `cancelled` is polled between scan phases
     /// so an off-main computation stops early; a cancelled call returns `[]`.
+    /// `mathMode` says whether the caret is in math mode (`isMathMode`). The
+    /// caller passes it because it can answer cheaply from the editor's own
+    /// syntax model; the default, false, keeps the plain text-mode order.
     static func suggestions(in text: String, caretUTF16: Int, metadata: Metadata?,
                             supported: [String] = defaultSupported, projectFiles: [String] = [],
+                            mathMode: Bool = false,
                             cancelled: () -> Bool = { false }) -> [Suggestion] {
         guard let token = token(in: text, caretUTF16: caretUTF16), !cancelled() else { return [] }
         let out: [Suggestion]
         switch token {
         case .command(let prefix, _, _):
             out = commandSuggestions(prefix: prefix, tokenStart: token.start, text: text,
-                                     metadata: metadata, supported: supported, cancelled: cancelled)
+                                     metadata: metadata, supported: supported, mathMode: mathMode, cancelled: cancelled)
         case .word(let prefix, _, _, let context):
             guard prefix.unicodeScalars.count >= 2 || context != .none else { return [] }
             switch context {
@@ -497,7 +575,7 @@ enum Completion {
     }
 
     private static func commandSuggestions(prefix: String, tokenStart: Int, text: String, metadata: Metadata?,
-                                           supported: [String], cancelled: () -> Bool) -> [Suggestion] {
+                                           supported: [String], mathMode: Bool, cancelled: () -> Bool) -> [Suggestion] {
         var out: [Suggestion] = []
         let scan = scanCommands(in: text, tokenStart: tokenStart, prefix: prefix)
         if cancelled() { return [] }
@@ -512,19 +590,37 @@ enum Completion {
         //    the user's macro, not a builtin). Within the vocabulary the
         //    command spelled exactly as typed comes first (`\sec` before
         //    `\section`); the rest keep table order.
+        //    In math mode the compiler's math commands float above the text
+        //    ones — `\\alpha` and `\\approx` are what `\\a` means inside `$…$`,
+        //    while the table's text-first order buries them under `\\addvspace`.
+        //    The exactly-typed spelling and the project's own declarations stay
+        //    on top of both, and in text mode the order is untouched.
         var offered = Set<String>()
         let declared: [String: Metadata.Item] = Dictionary((metadata?.commands ?? []).filter { $0.definitions > 0 }.map { ($0.name, $0) },
                                                            uniquingKeysWith: { a, _ in a })
         let exact = supported.contains(prefix) ? [prefix] : []
+        /// 0 the exact spelling, 1 a project declaration, 2 a math command,
+        /// 3 everything else. Only consulted when `mathMode` is on.
+        var vocabulary: [(suggestion: Suggestion, rank: Int)] = []
         for name in exact + supported where name.hasPrefix(prefix) && offered.insert(name).inserted {
             if let item = declared[name], let metadata {
-                out.append(Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command,
-                                      detail: item.detail(noun: "declared", revision: metadata.revision) + " · overrides the builtin"))
+                vocabulary.append((Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command,
+                                              detail: item.detail(noun: "declared", revision: metadata.revision) + " · overrides the builtin"),
+                                   name == prefix ? 0 : 1))
             } else {
                 let entry = Vocabulary.byName[name] ?? Vocabulary.generic(name)
-                out.append(Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail,
-                                      snippet: entry.snippet))
+                vocabulary.append((Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail,
+                                              snippet: entry.snippet),
+                                   name == prefix ? 0 : entry.mode == .math ? 2 : 3))
             }
+        }
+        if mathMode {
+            // Stable: equal ranks keep the table order they were filled in.
+            out += vocabulary.enumerated().sorted { a, b in
+                a.element.rank != b.element.rank ? a.element.rank < b.element.rank : a.offset < b.offset
+            }.map(\.element.suggestion)
+        } else {
+            out += vocabulary.map(\.suggestion)
         }
         if let metadata {
             for item in metadata.commands where item.name.hasPrefix(prefix) && item.name != prefix && offered.insert(item.name).inserted {
@@ -823,12 +919,9 @@ enum Completion {
     /// Names of environments appearing in `\begin{…}` anywhere in the document.
     static func documentEnvironments(in text: String) -> [String] {
         var out: [String] = []
-        withBytes(text) { b in
-            forEachCommand(in: b, upTo: b.count) { name, _, arg in
-                guard let arg, bytes(name, equal: "begin") else { return }
-                let env = String(decoding: arg, as: UTF8.self)
-                if !out.contains(env) { out.append(env) }
-            }
+        for u in EditorNavigation.uses(in: text as NSString) {
+            guard u.name == "begin", let arg = u.arg, !arg.isEmpty else { continue }
+            if !out.contains(arg) { out.append(arg) }
         }
         return out
     }
@@ -1465,6 +1558,9 @@ final class CompletionScheduler {
         var supported: [String] = Completion.defaultSupported
         /// Project document paths offered after `\input{`, `\include{` and `\includegraphics{`.
         var projectFiles: [String] = []
+        /// Whether the caret is in math mode (`Completion.isMathMode`), decided
+        /// on the main thread where the editor's syntax model is in sync.
+        var mathMode = false
     }
 
     struct Outcome: Equatable {
@@ -1537,7 +1633,8 @@ final class CompletionScheduler {
             let range = Completion.completionRange(in: request.text, caretUTF16: request.caretUTF16)
             let items = job.isCancelled ? [] : Completion.suggestions(in: request.text, caretUTF16: request.caretUTF16,
                                                                      metadata: request.metadata, supported: request.supported,
-                                                                     projectFiles: request.projectFiles, cancelled: { job.isCancelled })
+                                                                     projectFiles: request.projectFiles, mathMode: request.mathMode,
+                                                                     cancelled: { job.isCancelled })
             let t1 = MonotonicClock.nowNs()
             let outcome = Outcome(generation: job.generation, caretUTF16: request.caretUTF16, range: range, items: items,
                                   computeMs: Double(t1 - t0) / 1e6, queuedMs: Double(t0 - scheduledAt) / 1e6, computedAtNs: t1)
@@ -1603,14 +1700,15 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
     private let table = NSTableView()
     /// Documentation pane under the list: the selected candidate's kind,
     /// origin and — for commands/environments — its syntax (IntelliSense style).
+    private var chrome: PopupChrome?
     private let docTitle = NSTextField(labelWithString: "")
     private let docBody = NSTextField(wrappingLabelWithString: "")
     private let docHint = NSTextField(labelWithString: "↑↓ choose · ⏎ insert · esc close")
     private let docSeparator = NSBox()
     private(set) var items: [Completion.Suggestion] = []
-    static let rowHeight: CGFloat = 24
-    static let width: CGFloat = 480
-    static let docHeight: CGFloat = 58
+    static let rowHeight: CGFloat = DS.Row.completion
+    static let width: CGFloat = DS.Layout.completionWidth
+    static let docHeight: CGFloat = DS.Layout.completionDocHeight
 
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.rowHeight * 4 + Self.docHeight),
@@ -1656,20 +1754,20 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         docSeparator.frame = NSRect(x: 0, y: Self.docHeight - 1, width: Self.width, height: 1)
         docSeparator.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docSeparator)
-        docTitle.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        docTitle.font = DS.NSFonts.header
         docTitle.textColor = .labelColor
         docTitle.lineBreakMode = .byTruncatingTail
         docTitle.frame = NSRect(x: 10, y: Self.docHeight - 20, width: Self.width - 20, height: 15)
         docTitle.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docTitle)
-        docBody.font = NSFont.systemFont(ofSize: 11)
+        docBody.font = DS.NSFonts.secondary
         docBody.textColor = .secondaryLabelColor
         docBody.maximumNumberOfLines = 2
         docBody.lineBreakMode = .byTruncatingTail
         docBody.frame = NSRect(x: 10, y: 15, width: Self.width - 20, height: 24)
         docBody.autoresizingMask = [.width, .minYMargin]
         doc.addSubview(docBody)
-        docHint.font = NSFont.systemFont(ofSize: 10)
+        docHint.font = DS.NSFonts.secondary
         docHint.textColor = .tertiaryLabelColor
         docHint.frame = NSRect(x: 10, y: 2, width: Self.width - 20, height: 13)
         docHint.autoresizingMask = [.width, .minYMargin]
@@ -1679,12 +1777,51 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
         doc.setAccessibilityLabel("Completion documentation")
         contentView?.addSubview(doc)
         contentView?.wantsLayer = true
-        contentView?.layer?.cornerRadius = 8
-        contentView?.layer?.borderWidth = 1
-        contentView?.layer?.borderColor = NSColor.separatorColor.cgColor
+        contentView?.layer?.cornerRadius = DS.Radius.panel
+        contentView?.layer?.borderWidth = DS.Size.hairline
         backgroundColor = .clear
         isOpaque = false
-        contentView?.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        // The chrome colours are re-resolved on every appearance change; see
+        // `PopupChrome`. A CGColor taken here would be frozen against whatever
+        // appearance was current at init.
+        chrome = PopupChrome(view: contentView)
+        chrome?.refresh()
+    }
+
+    /// Keeps the panel's layer-backed chrome in step with the effective
+    /// appearance.
+    ///
+    /// `CALayer` takes `CGColor`s, which carry no appearance: they are resolved
+    /// once, from whatever appearance is current when they are assigned. This
+    /// panel is built before it is attached to a window, so a colour set in
+    /// `init` is resolved against the *application's* appearance rather than the
+    /// window's, and it then never changes when the user (or the system) switches
+    /// between light and dark. That left the documentation pane painted with the
+    /// dark `windowBackgroundColor` while its text used the light `labelColor`,
+    /// which is the unreadable combination the owner reported.
+    ///
+    /// Text colours are unaffected: `NSTextField.textColor` holds the dynamic
+    /// `NSColor` and resolves it at draw time, which is why only the chrome was wrong.
+    final class PopupChrome {
+        private weak var view: NSView?
+        private var observation: NSKeyValueObservation?
+
+        init(view: NSView?) {
+            self.view = view
+            observation = view?.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+                self?.refresh()
+            }
+        }
+
+        /// Resolves `windowBackgroundColor`/`separatorColor` against the view's
+        /// current appearance and applies them.
+        func refresh() {
+            guard let view, let layer = view.layer else { return }
+            view.effectiveAppearance.performAsCurrentDrawingAppearance {
+                layer.backgroundColor = NSColor.windowBackgroundColor.cgColor
+                layer.borderColor = NSColor.separatorColor.cgColor
+            }
+        }
     }
 
     override var canBecomeKey: Bool { false }
@@ -1845,14 +1982,14 @@ final class CompletionPopup: NSPanel, NSTableViewDataSource, NSTableViewDelegate
             out.append(NSAttributedString(string: " "))
         }
         out.append(NSAttributedString(string: s.label, attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.labelColor,
+            .font: DS.NSFonts.monoCandidate, .foregroundColor: NSColor.labelColor,
         ]))
         out.append(NSAttributedString(string: "  \(s.kind.badge) · \(s.detail)", attributes: [
-            .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor,
+            .font: DS.NSFonts.secondary, .foregroundColor: NSColor.secondaryLabelColor,
         ]))
         if let doc = documentation(for: s) {
             out.append(NSAttributedString(string: " — \(doc)", attributes: [
-                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.tertiaryLabelColor,
+                .font: DS.NSFonts.secondary, .foregroundColor: NSColor.tertiaryLabelColor,
             ]))
         }
         return out
@@ -1888,13 +2025,13 @@ final class CompletionRowView: NSView {
         icon.frame = NSRect(x: 8, y: 4, width: 16, height: 16)
         icon.autoresizingMask = [.maxXMargin]
         addSubview(icon)
-        label.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        label.font = DS.NSFonts.monoCandidate
         label.textColor = .labelColor
         label.lineBreakMode = .byTruncatingTail
         label.frame = NSRect(x: 30, y: 4, width: 220, height: 16)
         label.autoresizingMask = [.maxXMargin]
         addSubview(label)
-        detail.font = NSFont.systemFont(ofSize: 11)
+        detail.font = DS.NSFonts.secondary
         detail.textColor = .secondaryLabelColor
         detail.alignment = .right
         detail.lineBreakMode = .byTruncatingMiddle
@@ -1992,6 +2129,21 @@ final class CompletingTextView: NSTextView {
     var supportedCommands = Completion.defaultSupported
     /// Project document paths for `\input{`/`\include{`/`\includegraphics{` (the owner sets them).
     var projectFiles: [String] = []
+    /// Whether the caret is in math mode, answered by the owner from its
+    /// in-sync `SyntaxHighlighter` (`SourceEditorView`), which costs one
+    /// line's lexing. Unwired — a bare text view in a test — it says no, and
+    /// the list keeps the plain text-mode order.
+    var mathModeAtCaret: (Int) -> Bool = { _ in false }
+    /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
+    let folds = EditorFoldStore()
+
+    /// Whether a mechanical fix hint is showing at the caret (the owner
+    /// answers from `ShellModel.caretFix`). Only Esc is handled here; Tab
+    /// accepts the fix in `SourceEditorView.handleTab`, after this view has
+    /// had its say on completion and snippet placeholders. Unwired — a bare
+    /// text view in a test — it says no and Esc keeps its old meaning.
+    var caretFixVisible: () -> Bool = { false }
+    var dismissCaretFix: () -> Void = {}
 
     // MARK: snippet tab stops (Snippets: Tab / ⇧Tab between placeholders, Esc leaves)
 
@@ -2091,6 +2243,38 @@ final class CompletingTextView: NSTextView {
 
     // MARK: ⌘/ line comment
 
+    /// ⌥⇧↓ / ⌥⇧↑: copy the line (or every line the selection touches) below or
+    /// above itself, leaving the caret on the copy. One undo step, like
+    /// `toggleLineComment`. A menu key equivalent and `keyDown` must not both
+    /// apply the same event: `performKeyEquivalent` consumes it, and a second
+    /// call with that event's timestamp is ignored.
+    private var lastDuplicateEventTimestamp: TimeInterval = -.infinity
+    private var lastDuplicateEventKeyCode: UInt16 = 0
+
+    func duplicateLines(below: Bool, event: NSEvent? = nil) {
+        if let ev = event ?? Self.duplicateChordEvent(NSApp.currentEvent) {
+            if ev.timestamp == lastDuplicateEventTimestamp, ev.keyCode == lastDuplicateEventKeyCode { return }
+            lastDuplicateEventTimestamp = ev.timestamp
+            lastDuplicateEventKeyCode = ev.keyCode
+        }
+        guard !hasMarkedText() else { return }
+        let sel = selectedRange()
+        guard let (edit, selection) = EditorKeyHandling.duplicateLinesEdit(in: string, range: sel, below: below) else { return }
+        breakUndoCoalescing()
+        insertText(edit.replacement, replacementRange: edit.range)
+        setSelectedRange(selection)
+        undoManager?.setActionName(selection.length > 0 || sel.length > 0 ? "Duplicate Lines" : "Duplicate Line")
+        breakUndoCoalescing()
+    }
+
+    /// ⌥⇧↓ / ⌥⇧↑, the chord both `keyDown` and the Editor menu bind.
+    private static func duplicateChordEvent(_ event: NSEvent?) -> NSEvent? {
+        guard let event else { return nil }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 else { return nil }
+        return event
+    }
+
     /// Toggles `% ` on every line the selection touches (one undo step).
     func toggleLineComment() {
         guard !hasMarkedText() else { return }
@@ -2165,6 +2349,98 @@ final class CompletingTextView: NSTextView {
     private var lastCaret: NSRange?
     private var storageObserver: NSObjectProtocol?
 
+    // MARK: automatic completion (typing opens the list; no ⌃Space needed)
+
+    /// How long typing must pause before the list opens on its own. The wait
+    /// is what keeps the automatic list cheap: the scan reads the whole
+    /// document, so one burst of typing must cost one scan, not one per
+    /// keystroke. Narrowing an already-open list stays immediate.
+    var automaticCompletionDelay: TimeInterval = 0.05
+    private var automaticTimer: Timer?
+    /// Typing is waiting to open the list.
+    var hasPendingAutomaticCompletion: Bool { automaticTimer != nil }
+    /// Lists opened by typing alone, for tests and evidence.
+    private(set) var automaticOpenCount = 0
+    /// True only while a key event this view received is being delivered to
+    /// AppKit, so a text change that follows is known to be the user typing.
+    /// A programmatic replacement (a document switch, the owner's paste) is
+    /// not a key event and never opens the list.
+    private var typingKey = false
+    /// UTF-16 start of the token Esc dismissed the list for. Typing more of
+    /// that same token must not bring it back; any other token, or a caret
+    /// move, re-arms the automatic open. ⌃Space and Esc always work.
+    private var escapeSuppressedTokenStart: Int?
+
+    /// Whether `event` types a character, as opposed to a shortcut, a
+    /// deletion, or a navigation/function key. Deleting back through a word
+    /// must not pop the list open, so only insertion arms it.
+    static func typesACharacter(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .control]).isEmpty,
+              let characters = event.characters, !characters.isEmpty else { return false }
+        for scalar in characters.unicodeScalars {
+            // Control characters (Return, Tab, Esc, Delete) and the private-use
+            // range AppKit gives arrows and function keys never type text.
+            if scalar.value < 0x20 || scalar.value == 0x7F { return false }
+            if (0xF700...0xF8FF).contains(scalar.value) { return false }
+        }
+        return true
+    }
+
+    /// The token at the caret, read from a bounded window (O(window), never
+    /// O(document)) so this may run on every keystroke.
+    private var caretToken: Completion.CaretToken? {
+        guard let storage = textStorage else { return nil }
+        let caret = selectedRange()
+        guard caret.length == 0 else { return nil }
+        // `mutableString` is the storage's own NSString, not a bridged copy.
+        return Completion.caretToken(in: storage.mutableString, caretUTF16: caret.location)
+    }
+
+    /// Arms the automatic open after a typed character. Nothing is scanned
+    /// here: the token at the caret decides, and it is read from a window.
+    private func scheduleAutomaticCompletion() {
+        cancelAutomaticCompletion()
+        guard EditorPreferences.shared.completionPopup, !hasMarkedText() else { return }
+        let token = caretToken
+        if escapeSuppressedTokenStart != nil, escapeSuppressedTokenStart != token?.startUTF16 {
+            escapeSuppressedTokenStart = nil // a different token: Esc's dismissal is spent
+        }
+        guard escapeSuppressedTokenStart == nil, Completion.opensAutomatically(token?.token) else { return }
+        let timer = Timer(timeInterval: max(0, automaticCompletionDelay), repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.fireAutomaticCompletion() }
+        }
+        automaticTimer = timer
+        // `.common`, so the list still opens while a scroll or menu tracks.
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func cancelAutomaticCompletion() {
+        automaticTimer?.invalidate()
+        automaticTimer = nil
+    }
+
+    /// Fires a pending automatic open now instead of when its timer would.
+    /// Tests use it to stay synchronous; nothing in the app calls it.
+    func flushAutomaticCompletion() {
+        guard automaticTimer != nil else { return }
+        cancelAutomaticCompletion()
+        fireAutomaticCompletion()
+    }
+
+    private func fireAutomaticCompletion() {
+        automaticTimer = nil
+        // The caret may have moved, or the token ended, while the timer waited.
+        guard escapeSuppressedTokenStart == nil, Completion.opensAutomatically(caretToken?.token) else { return }
+        automaticOpenCount += 1
+        requestCompletion()
+    }
+
+    /// Records the token Esc dismissed, so typing more of it stays quiet.
+    private func suppressAutomaticCompletionForCurrentToken() {
+        cancelAutomaticCompletion()
+        escapeSuppressedTokenStart = caretToken?.startUTF16
+    }
+
     // Editor-intelligence hooks (SourceEditorView's coordinator sets them; EditorIntelligence.swift).
     /// ⌘-click on a character index; return true to consume the click.
     var commandClickHandler: ((Int) -> Bool)?
@@ -2175,6 +2451,11 @@ final class CompletingTextView: NSTextView {
     /// a hand-typed `{` (EditorKeyHandling.swift). Called with the UTF-16
     /// offset of the closer, once, right after `insertSnippet` places the caret.
     var onCloserInserted: ((Int) -> Void)?
+    /// The other half of `onCloserInserted`: answers whether the UTF-16 offset
+    /// still holds a closer this editor inserted and the user has not passed
+    /// (SourceEditorView's `pendingClosers`). Nil outside the hosted editor,
+    /// where nothing is auto-closed.
+    var isPendingCloser: ((Int) -> Bool)?
 
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command), !event.modifierFlags.contains(.shift), event.clickCount == 1,
@@ -2189,6 +2470,15 @@ final class CompletingTextView: NSTextView {
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         backgroundDecorator?(rect)
+    }
+
+    /// Draws over the text (error-lens messages at line ends; ErrorLens.swift).
+    var foregroundDecorator: ((NSRect) -> Void)?
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        foregroundDecorator?(dirtyRect)
+        folds.drawPlaceholders(in: dirtyRect, textView: self)
     }
 
     /// Scroll view + text view pair, like `NSTextView.scrollableTextView()`
@@ -2210,6 +2500,7 @@ final class CompletingTextView: NSTextView {
 
     deinit {
         if let storageObserver { NotificationCenter.default.removeObserver(storageObserver) }
+        automaticTimer?.invalidate()
     }
 
     // MARK: synchronous AppKit completion API (kept for callers and tests)
@@ -2258,7 +2549,8 @@ final class CompletingTextView: NSTextView {
         lastCaret = caret
         let metadata = boundMetadata
         let request = CompletionScheduler.Request(text: string, caretUTF16: caret.location, metadata: metadata,
-                                                  supported: supportedCommands, projectFiles: projectFiles)
+                                                  supported: supportedCommands, projectFiles: projectFiles,
+                                                  mathMode: mathModeAtCaret(caret.location))
         scheduler.schedule(request) { [weak self] outcome in
             self?.present(outcome, metadataRevision: metadata?.revision)
         }
@@ -2298,6 +2590,7 @@ final class CompletingTextView: NSTextView {
 
     func close(_ reason: CloseReason) {
         lastCloseReason = reason
+        if reason == .escape { suppressAutomaticCompletionForCurrentToken() } else { cancelAutomaticCompletion() }
         guard session != nil else { return }
         session = nil
         popup.hide()
@@ -2306,6 +2599,16 @@ final class CompletingTextView: NSTextView {
     func moveSelection(by delta: Int) {
         guard let s = session, !s.items.isEmpty else { return }
         selectCompletion(at: (s.selectedIndex + delta + s.items.count) % s.items.count)
+    }
+
+    /// Drops the session's selection (to an index no item has) so tests can
+    /// check that a list with nothing selected hands keys back to the editor
+    /// instead of eating them. No app path produces this state today; the
+    /// guard in `keyDown` exists so a future one cannot swallow Return.
+    func dropSessionSelectionForTesting() {
+        guard var s = session else { return }
+        s.selectedIndex = -1
+        session = s
     }
 
     func selectCompletion(at index: Int) {
@@ -2330,14 +2633,53 @@ final class CompletingTextView: NSTextView {
             return
         }
         applyingCompletion = true
+        let range = rangeConsumingStaleCloser(s.range, inserting: item.snippet?.text ?? item.insertText)
         if let snippet = item.snippet {
-            insertSnippet(snippet, replacing: s.range, kind: item.kind)
+            insertSnippet(snippet, replacing: range, kind: item.kind)
+        } else if range.length != s.range.length {
+            // AppKit's `insertCompletion` recomputes the range it replaces from
+            // `rangeForUserCompletion` (the bare token) instead of using the one
+            // it is handed, so a grown range never reaches the storage through
+            // it — measured: the stale `}` survived as `\end{itemize}}`. This
+            // one goes in directly, with the same effect and one undo step.
+            insertPlainCompletion(item.insertText, replacing: range)
         } else {
-            insertCompletion(item.insertText, forPartialWordRange: s.range, movement: NSReturnTextMovement, isFinal: true)
+            insertCompletion(item.insertText, forPartialWordRange: range, movement: NSReturnTextMovement, isFinal: true)
         }
         applyingCompletion = false
         scheduler.cancel()
         close(.accepted)
+    }
+
+    /// The session range, grown by one unit when an auto-inserted closer sits
+    /// immediately after it and `inserted` supplies that closer itself. Without
+    /// this the editor's `}` survives the replacement and strands itself past
+    /// the completion: `\begin{` auto-closes, `proof` is accepted as
+    /// `proof}\n\n\end{proof}`, and the buffer ends `\end{proof}}` (GH#2).
+    /// Only offsets the editor is still tracking are eaten, so a brace the user
+    /// typed is never removed and `pendingClosers` keeps its invariant: every
+    /// tracked offset points at a closer this editor inserted and the user has
+    /// not yet passed (the delegate drops this one as the edit overlaps it).
+    private func rangeConsumingStaleCloser(_ range: NSRange, inserting inserted: String) -> NSRange {
+        let end = NSMaxRange(range)
+        let ns = string as NSString
+        guard end < ns.length, isPendingCloser?(end) == true,
+              let closer = ns.substring(with: NSRange(location: end, length: 1)).first,
+              EditorKeyHandling.supersedesTrackedCloser(inserted, closer: closer) else { return range }
+        return NSRange(location: range.location, length: range.length + 1)
+    }
+
+    /// What `insertCompletion(_:forPartialWordRange:movement:isFinal:)` does —
+    /// replace the range, leave the caret after the word, one undo step — for
+    /// the range this view chose rather than the one AppKit would recompute.
+    private func insertPlainCompletion(_ word: String, replacing range: NSRange) {
+        breakUndoCoalescing()
+        guard shouldChangeText(in: range, replacementString: word) else { return }
+        textStorage?.replaceCharacters(in: range, with: word)
+        didChangeText() // registers the undo step, fires textDidChange
+        undoManager?.setActionName("Insert Completion")
+        setSelectedRange(NSRange(location: range.location + (word as NSString).length, length: 0))
+        breakUndoCoalescing()
     }
 
     /// One undo step: the typed partial token is closed off first so ⌘Z
@@ -2362,10 +2704,86 @@ final class CompletingTextView: NSTextView {
         }
     }
 
+    // MARK: Vim keybindings (VimMode.swift)
+
+    /// The modal state machine; consulted only while `isVimEnabled`.
+    private(set) lazy var vim: VimMode = {
+        let v = VimMode(textView: self)
+        v.onStateChange = { [weak self] in self?.vimStateChanged() }
+        return v
+    }()
+    /// Tests pin the preference per view; nil follows `EditorPreferences.shared.vimKeybindings`.
+    var vimEnabledOverride: Bool? { didSet { applyVimPreference(isVimEnabled) } }
+    var isVimEnabled: Bool { vimEnabledOverride ?? EditorPreferences.shared.vimKeybindings }
+    private var vimActive = false
+
+    /// The preference changed (EditorPreferences.apply): enter normal mode, or drop back to plain editing.
+    func applyVimPreference(_ on: Bool) {
+        guard on != vimActive else { return }
+        vimActive = on
+        if on { vim.activate() } else { vim.deactivate() }
+        vimStateChanged()
+    }
+
+    private func vimStateChanged() {
+        insertionPointColor = NSColor.textColor
+        setNeedsDisplay(bounds)
+    }
+
+    /// Esc in insert mode closes what the editor's Esc would have (the list, a snippet, signature help).
+    func dismissCompletionForVim() {
+        if session != nil { scheduler.cancel(); close(.escape) }
+        endSnippet()
+        hideSignatureHelp()
+    }
+
+    /// Normal/visual mode: a block over the character under the caret.
+    override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        guard vimActive, vim.wantsBlockCaret else { super.drawInsertionPoint(in: rect, color: color, turnedOn: flag); return }
+        var r = rect
+        r.size.width = vimBlockWidth()
+        if flag {
+            color.withAlphaComponent(0.45).setFill()
+            r.fill()
+        } else {
+            setNeedsDisplay(r.insetBy(dx: -1, dy: -1), avoidAdditionalLayout: true)
+        }
+    }
+
+    override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
+        var r = rect
+        if vimActive, vim.wantsBlockCaret { r.size.width += vimBlockWidth() }
+        super.setNeedsDisplay(r, avoidAdditionalLayout: flag)
+    }
+
+    private func vimBlockWidth() -> CGFloat {
+        let f = font ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let caret = selectedRange().location
+        let s = string as NSString
+        if caret < s.length, s.character(at: caret) != 0x0A {
+            return max(2, (s.substring(with: NSRange(location: caret, length: 1)) as NSString).size(withAttributes: [.font: f]).width)
+        }
+        return max(2, (" " as NSString).size(withAttributes: [.font: f]).width)
+    }
+
     // MARK: events
+
+    /// Consumes ⌥⇧↓ / ⌥⇧↑ before the Editor menu's key equivalent can fire
+    /// the same chord a second time. `keyDown` still handles the chord when
+    /// the event never goes through `performKeyEquivalent` (hosted tests).
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if hasMarkedText() { return super.performKeyEquivalent(with: event) }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 {
+            duplicateLines(below: event.keyCode == 125, event: event)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 
     override func keyDown(with event: NSEvent) {
         if hasMarkedText() { super.keyDown(with: event); return } // IME composition owns the keys (mac-editor-accessibility)
+        if vimActive, let key = VimMode.Key(event: event), vim.handle(key) { return } // VimMode.swift: normal/visual keys, Esc in insert
         if event.modifierFlags.contains(.control), event.charactersIgnoringModifiers == " " {
             requestCompletion()
             return
@@ -2379,6 +2797,15 @@ final class CompletingTextView: NSTextView {
             toggleLineComment()
             return
         }
+        // ⌥⇧↓ / ⌥⇧↑: duplicate the line(s) down/up (the Overleaf shortcut).
+        // This takes the key from AppKit's extend-selection-by-paragraph
+        // binding, which no LaTeX editor's users reach for and which ⇧↓ and
+        // ⌥↓ still cover between them. `performKeyEquivalent` also consumes
+        // this chord so an Editor-menu key equivalent cannot apply it twice.
+        if modifiers == [.option, .shift], event.keyCode == 125 || event.keyCode == 126 {
+            duplicateLines(below: event.keyCode == 125, event: event)
+            return
+        }
         guard session != nil else {
             let plain = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
             if plain, event.keyCode == 48, isSnippetActive { // Tab / ⇧Tab between snippet placeholders
@@ -2390,12 +2817,25 @@ final class CompletingTextView: NSTextView {
                 hideSignatureHelp()
                 return
             }
+            // Esc takes the caret-fix hint down (and with it Tab's claim on the
+            // key) before Esc's other meaning, opening the completion list.
+            if plain, event.keyCode == 53, caretFixVisible() {
+                dismissCaretFix()
+                return
+            }
             // Esc opens the list (AppKit's own `cancelOperation:` → `complete:`
             // binding is not reliable outside a key window, so it is explicit).
             if event.keyCode == 53, plain {
                 requestCompletion()
             } else {
+                // A typed character arms the automatic open (`textChanged`);
+                // everything else (deletion, navigation, Return) does not.
+                // Vim normal/visual mode never arms it: a key `vim.handle`
+                // left unhandled (e.g. an unmapped letter) still reaches
+                // here, but it is a command key, not inserted text.
+                typingKey = Self.typesACharacter(event) && (!vimActive || vim.mode == .insert)
                 super.keyDown(with: event)
+                typingKey = false
             }
             return
         }
@@ -2403,6 +2843,13 @@ final class CompletingTextView: NSTextView {
             // Shortcuts (⌘Z, ⌘A, …) act on the editor, never on the list.
             scheduler.cancel()
             close(.caretMoved)
+            super.keyDown(with: event)
+            return
+        }
+        // A session with nothing selected must not swallow keys — least of all
+        // Return and Tab, which the editor owns. Close it and pass the event on.
+        guard session?.selected != nil else {
+            close(.noCandidates)
             super.keyDown(with: event)
             return
         }
@@ -2427,10 +2874,17 @@ final class CompletingTextView: NSTextView {
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting stillSelectingFlag: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelectingFlag)
+        if vimActive, !stillSelectingFlag { vim.selectionDidChange(selectedRange()) } // a mouse selection enters visual mode
         guard !typingThroughSession, !applyingCompletion else { return }
         let caret = selectedRange()
         if isSnippetActive, caret.length != 0 || caret.location < snippetStart || caret.location > (snippetStops.last ?? 0) { endSnippet() }
         if isSignatureHelpVisible { refreshSignatureHelp(open: false) }
+        if !typingKey {
+            // Moving the caret (click, arrow, Find) abandons a pending open and
+            // spends Esc's dismissal: the list may open again where the caret is.
+            cancelAutomaticCompletion()
+            escapeSuppressedTokenStart = nil
+        }
         guard let last = lastCaret, caret != last else { return }
         lastCaret = caret
         scheduler.cancel()
@@ -2482,12 +2936,15 @@ final class CompletingTextView: NSTextView {
         guard !typingThroughSession, !applyingCompletion else { return }
         scheduler.cancel()
         if session != nil { close(.textChanged) }
+        // Typing opens the list on its own; a programmatic replacement (a
+        // document switch, the owner's paste) only cancels a pending open.
+        if typingKey { scheduleAutomaticCompletion() } else { cancelAutomaticCompletion() }
     }
 
     override func resignFirstResponder() -> Bool {
         let ok = super.resignFirstResponder()
         if ok, session != nil { scheduler.cancel(); close(.resignedFirstResponder) }
-        if ok { hideSignatureHelp() }
+        if ok { cancelAutomaticCompletion(); hideSignatureHelp() }
         return ok
     }
 }

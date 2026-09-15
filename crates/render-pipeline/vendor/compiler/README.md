@@ -119,8 +119,9 @@ Implemented and tested:
 - `\verb|...|` (any matching delimiter, `\verb*` shows interword spaces as a
   middle dot) and the `verbatim`/`verbatim*`/`lstlisting` environments: raw
   source text set in Courier at body size, one output line per source line,
-  tabs expanded, with `%`, `\`, `$`, `{`, and `}` never given their usual
-  meaning. `lstlisting`'s `[options]` are parsed and honestly discarded (no
+  each tab set as a single space (as LaTeX's active tab is, rather than as an
+  editor-style jump to a column stop), with `%`, `\`, `$`, `{`, and `}` never
+  given their usual meaning. `lstlisting`'s `[options]` are parsed and honestly discarded (no
   syntax highlighting); an unterminated `\verb` gets a source-located
   diagnostic and recovers at end of line.
 - `compile` → `compile_result`, and `error` envelopes for unknown protocol
@@ -301,8 +302,9 @@ So do `\epsilon`, `\varepsilon`, `\zeta`, `\eta`, `\vartheta`, `\iota`, `\kappa`
 `\wp`, `\langle`, `\rangle`, `\lvert`, `\rvert`, `\lVert`, `\rVert`,
 `\setminus`, and `\Longrightarrow`. `\mathbb{A}` through `\mathbb{Z}` map to
 the Unicode double-struck capitals; other arguments are rejected explicitly.
-Symbol has no lunate epsilon, so `\epsilon` shares the open `\varepsilon`
-glyph; it has no double bar, so `\lVert`, `\rVert` and `\|` are two real
+`\epsilon` is the lunate U+03F5 and `\varepsilon` the open U+03B5 (cmmi
+`"0F`/`"22`); the base-14 Symbol export has no lunate epsilon and draws both
+with the open glyph. Symbol has no double bar, so `\lVert`, `\rVert` and `\|` are two real
 vertical bars. `\iint` and `\iiint` repeat the integral glyph (Symbol has no
 U+222C/U+222D). `\oint`, `\mapsto`, `\mp`, `\ll`, `\gg`, `\lfloor`, `\lceil`,
 `\vdots`, `\ddots`, `\ell` and `\hbar` have no Symbol glyph and stay diagnostics.

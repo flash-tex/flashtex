@@ -16,6 +16,9 @@
 //!                      the TeX Live defaults; `FLASHTEX_FONT_DIRS` too)
 //!   --class-options <opts>  class options assumed for body-only input
 //!                      (default `12pt`, the compiler's implicit preamble)
+//!   --date YYYY-MM-DD  what `\today` renders when a request carries no
+//!                      `payload.date` of its own (default 1970-01-01, the
+//!                      Unix epoch this binary has always printed)
 //!   --secnumdepth <n>  section numbering depth when the source does not
 //!                      set the counter (default 2; the oracle preamble is 0)
 //!   --timing           print per-request wall time to stderr
@@ -25,6 +28,7 @@ use std::path::{Path, PathBuf};
 
 use flashtex_compiler::json;
 
+use flashtex_render_pipeline::TodayDate;
 use flashtex_render_pipeline::{protocol, FontSet, RenderOptions, Rendered};
 
 /// Side outputs shared by both modes: `--v2` / `--pdf` of the last render.
@@ -32,6 +36,14 @@ struct Outputs {
     v2: Option<PathBuf>,
     pdf: Option<PathBuf>,
     timing: bool,
+    /// `--device-color`: `--v2` paints carry `device_color` (proposal).
+    device_color: bool,
+    /// `--images`: `--v2` serialises image items (FT-063,
+    /// `display-list-v2-images`). Off by default, so every existing caller's
+    /// `--v2` bytes are unchanged; a caller that wants to see, export or
+    /// measure `\includegraphics` output must ask for it, exactly as a
+    /// runtime-v1 client asks by negotiating the capability.
+    images: bool,
 }
 
 impl Outputs {
@@ -40,7 +52,8 @@ impl Outputs {
             eprintln!("flashtex-render: {id} rendered in {:.2} ms", r.elapsed_ms);
         }
         if let Some(p) = &self.v2 {
-            let text = r.v2.write_json(id);
+            let wire = flashtex_render_pipeline::display::Wire { images: self.images, device_color: self.device_color };
+            let text = r.v2.write_json_wire(id, wire);
             if let Err(e) = std::fs::write(p, text) {
                 eprintln!("flashtex-render: cannot write {}: {e}", p.display());
             }
@@ -68,6 +81,8 @@ fn main() {
         v2: None,
         pdf: None,
         timing: false,
+        device_color: false,
+        images: false,
     };
     let mut dirs: Vec<PathBuf> = Vec::new();
     let mut options = RenderOptions::default();
@@ -96,9 +111,30 @@ fn main() {
                 // from when a request carries no `project_root`.
                 options.project_root = args.next().map(PathBuf::from);
             }
+            "--date" => {
+                // The date `\today` renders when a request carries no `date`
+                // of its own. This binary is a caller as well as a worker, so
+                // it may resolve the clock -- the pipeline itself may not.
+                // protocol/proposals/runtime-v1-request-date.md
+                match args.next().as_deref().map(TodayDate::parse_iso) {
+                    Some(Ok(date)) => options.today = date,
+                    Some(Err(error)) => {
+                        eprintln!("flashtex-render: --date {error}");
+                        std::process::exit(2);
+                    }
+                    None => {
+                        eprintln!("flashtex-render: --date needs a YYYY-MM-DD value");
+                        std::process::exit(2);
+                    }
+                }
+            }
             "--timing" => outputs.timing = true,
+            "--device-color" => outputs.device_color = true,
+            "--images" => outputs.images = true,
             "-h" | "--help" => {
-                eprintln!("usage: flashtex-render [--tex main.tex] [--v2 out.json] [--pdf out.pdf] [--font-dir DIR]... [--class-options OPTS] [--secnumdepth N] [--timing]");
+                eprintln!("usage: flashtex-render [--tex main.tex] [--v2 out.json] [--pdf out.pdf] [--font-dir DIR]... [--class-options OPTS] [--secnumdepth N] [--date YYYY-MM-DD] [--timing] [--device-color] [--images]");
+                eprintln!("  --images: --v2 also serialises image items (display-list-v2-images); off by default");
+                eprintln!("  --date: what \\today renders (default 1970-01-01); a request's own payload.date wins");
                 eprintln!("  without --tex: runtime-v1 JSON Lines worker (compile requests on stdin, one compile_result per line on stdout)");
                 return;
             }

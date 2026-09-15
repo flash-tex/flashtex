@@ -1,4 +1,5 @@
 import AppKit
+import HostedWindows
 import XCTest
 @testable import FlashTeXProtocol
 @testable import FlashTeXMac
@@ -36,7 +37,8 @@ final class CompletionLatencyTests: XCTestCase {
     private var tv: CompletingTextView!
 
     override func setUp() async throws {
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+        window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -115,7 +117,7 @@ final class CompletionLatencyTests: XCTestCase {
             pickup.samples.append(msUntil("popup \(i)", from: t0) { tv.session != nil && tv.completionPopup.isVisible })
             afterPresent.samples.append(pickup.samples.last! - keystroke.samples.last! - (tv.lastOutcome?.queuedMs ?? 0)
                                         - (tv.lastOutcome?.computeMs ?? 0) - tv.lastDeliveryLagMs - tv.lastPresentMs)
-            XCTAssertEqual(tv.session?.items.first?.label, "\\section{...}")
+            XCTAssertEqual(tv.session?.items.first?.label, CompletionTestVocabulary.labels(forPrefix: "s").first)
             XCTAssertEqual(tv.session?.range, NSRange(location: caret - 2, length: 2))
             XCTAssertEqual(tv.completionPopup.selectedRow, 0)
             compute.samples.append(tv.lastOutcome?.computeMs ?? .nan)
@@ -240,7 +242,7 @@ final class CompletionLatencyTests: XCTestCase {
         tv.requestCompletion()
         exec.runAll()
         spin("session A") { tv.session != nil }
-        XCTAssertEqual(tv.session?.items.first?.label, "\\section{...}")
+        XCTAssertEqual(tv.session?.items.first?.label, CompletionTestVocabulary.labels(forPrefix: "s").first)
         XCTAssertTrue(tv.completionPopup.isVisible)
         // Typing through the list queues a narrowing scan for A...
         key("u", code: 32)

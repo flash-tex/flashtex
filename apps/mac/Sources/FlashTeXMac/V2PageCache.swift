@@ -169,6 +169,8 @@ extension V2Frame {
             prepared.append(p)
             tokens.append(token)
         }
-        return V2Frame(id: envelope.id, list: envelope.payload, fonts: fonts, prepared: prepared, pageTokens: tokens, reusedPages: reused.count)
+        var frame = V2Frame(id: envelope.id, list: envelope.payload, fonts: fonts, prepared: prepared, pageTokens: tokens, reusedPages: reused.count)
+        frame.pageBytes = decoded.pageRanges.map(\.count)
+        return frame
     }
 }

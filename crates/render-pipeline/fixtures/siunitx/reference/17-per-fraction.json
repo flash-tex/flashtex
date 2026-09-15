@@ -1,0 +1,98 @@
+{
+ "fixture": "17-per-fraction.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "m",
+   "font": "CMR7",
+   "size": 6.9738,
+   "x": 149.908,
+   "baseline": 130.842,
+   "end": 156.453
+  },
+  {
+   "page": 1,
+   "text": "s",
+   "font": "CMR7",
+   "size": 6.9738,
+   "x": 151.602,
+   "baseline": 138.2,
+   "end": 154.758
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 160.969,
+   "baseline": 134.765,
+   "end": 177.021
+  },
+  {
+   "page": 1,
+   "text": "kg",
+   "font": "CMR7",
+   "size": 6.9738,
+   "x": 182.621,
+   "baseline": 130.32,
+   "end": 190.778
+  },
+  {
+   "page": 1,
+   "text": "m",
+   "font": "CMR7",
+   "size": 6.9738,
+   "x": 181.537,
+   "baseline": 138.2,
+   "end": 188.082
+  },
+  {
+   "page": 1,
+   "text": "3",
+   "font": "CMR5",
+   "size": 4.9813,
+   "x": 188.081,
+   "baseline": 136.208,
+   "end": 191.471
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 196.486,
+   "baseline": 134.765,
+   "end": 212.538
+  },
+  {
+   "page": 1,
+   "text": "3",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 215.855,
+   "baseline": 134.765,
+   "end": 220.837
+  },
+  {
+   "page": 1,
+   "text": "N",
+   "font": "CMR7",
+   "size": 6.9738,
+   "x": 224.027,
+   "baseline": 130.842,
+   "end": 229.908
+  },
+  {
+   "page": 1,
+   "text": "m",
+   "font": "CMR7",
+   "size": 6.9738,
+   "x": 223.695,
+   "baseline": 138.2,
+   "end": 230.24
+  }
+ ],
+ "warnings": []
+}

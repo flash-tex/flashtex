@@ -272,6 +272,14 @@ struct V2Frame: @unchecked Sendable {
     /// Distinct for every `prepare` call: identifies this frame instance,
     /// independent of the envelope id or file.
     var preparedNonce: UInt64 = V2Frame.nextNonce()
+    /// `display-list-v2-delta`: the snapshot this frame installs when it is
+    /// published as the live v2 frame (digests computed off-main with the
+    /// preparation); nil when the frame cannot be a base (a file, a decode
+    /// path without page byte lengths, or over the retention caps).
+    var installedBase: DisplayListDelta.Installed? = nil
+    /// Exact byte length of every page object on the wire (fast-reader path
+    /// only); the delta consumer's `page_bytes` for a full frame.
+    var pageBytes: [Int]? = nil
 
     private static let nonceLock = NSLock()
     private static var nonce: UInt64 = 0

@@ -71,7 +71,8 @@ const SYMBOL_ENCODING: &[(char, u8)] = &[
     ('\u{2228}', 0xDA), // logical or (\vee)
     ('\u{21D2}', 0xDE), // double right arrow (\Rightarrow)
     ('\u{2223}', 0x7C), // verticalbar (\mid)
-    ('\u{3B5}', 0x65),  // epsilon
+    ('\u{3B5}', 0x65),  // epsilon (\varepsilon)
+    ('\u{3F5}', 0x65),  // lunate epsilon (\epsilon): Symbol has only the open form
     ('\u{3B6}', 0x7A),  // zeta
     ('\u{3B7}', 0x68),  // eta
     ('\u{3D1}', 0x4A),  // theta1 (\vartheta)
@@ -138,6 +139,8 @@ const SYMBOL_ENCODING: &[(char, u8)] = &[
     ('\u{2118}', 0xC3), // weierstrass
     ('\u{2329}', 0xE1), // angleleft
     ('\u{232A}', 0xF1), // angleright
+    ('\u{27E8}', 0xE1), // mathematical angle bracket (\langle): Symbol's angleleft
+    ('\u{27E9}', 0xF1), // mathematical angle bracket (\rangle): Symbol's angleright
 ];
 
 /// WinAnsiEncoding's 0x80..0x9F block, which is NOT Latin-1.
@@ -308,6 +311,20 @@ mod tests {
             reason.contains("rule item type"),
             "reason should name the contract gap: {reason}"
         );
+    }
+
+    #[test]
+    fn mathematical_angle_brackets_encode_as_symbol_angles() {
+        for (math, symbol) in [('\u{27E8}', '\u{2329}'), ('\u{27E9}', '\u{232A}')] {
+            assert_eq!(map_char(math), map_char(symbol));
+            assert!(matches!(
+                map_char(math),
+                Glyph::Encodable {
+                    font: ExportFont::Symbol,
+                    ..
+                }
+            ));
+        }
     }
 
     #[test]

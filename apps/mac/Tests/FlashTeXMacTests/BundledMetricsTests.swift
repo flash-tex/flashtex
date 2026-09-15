@@ -47,9 +47,20 @@ final class BundledMetricsTests: XCTestCase {
         let doc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: pinURL)) as? [String: Any])
         XCTAssertEqual(doc["schema_version"] as? Int, 1)
         let entries = try XCTUnwrap(doc["entries"] as? [[String: Any]])
-        // 23 Latin Modern + 70 EC (5 families x 14 t1cmr.fd sizes) + 6 AMS
-        // symbols (msbm/msam at 5/7/10 pt) + 2 license files (ec, amsfonts).
-        XCTAssertEqual(entries.count, 101)
+        // Latin Modern (latin_modern_tfm): 23 roman + 10 typewriter
+        // (ec-lmtt8/9/10/12 plus one 10 pt design each for
+        // tti/tto/tcsc/tcso/tk/tko) + 25 sans/slanted/caps (ec-lmro at
+        // 8/9/10/12/17 plus bxo10, csc10, csco10, u10, b10, bo10; ec-lmss and
+        // ec-lmsso at 8/9/10/12/17 plus ssbx10, ssbo10, ssdc10, ssdo10) = 58.
+        // T1 Computer Modern (ec_tfm_file): 70 roman (ecrm/ecbx/ecti/ecbi/ecsl
+        // x 14 t1cmr.fd sizes) + 98 further roman shapes
+        // (eccc/ecsc/ecoc/ecui/ecbl/ecrb/ecxc x the same 14) + 44 typewriter
+        // (ectt/ecst/ecit/ectc) + 44 sans (ecss/ecsi/ecsx/ecso); the last two
+        // groups take the 11 distinct sizes their .fd files reach, which
+        // declare <5><6><7><8>#50800 so 5/6/7 pt share 0800 = 256.
+        // Plus 6 AMS symbols (msbm/msam at 5/7/10 pt) and 2 license files
+        // (ec, amsfonts). 58 + 256 + 6 + 2 = 322.
+        XCTAssertEqual(entries.count, 322)
         let pinnedPaths = Set(Self.pinned.map(\.path))
         var listed = Set<String>()
         for e in entries {

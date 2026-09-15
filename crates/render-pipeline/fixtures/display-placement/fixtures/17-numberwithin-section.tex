@@ -1,0 +1,15 @@
+\documentclass[10pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath}
+\numberwithin{equation}{section}
+\pagestyle{empty}
+\begin{document}
+\section{First}
+Text.
+\begin{equation} a = b \end{equation}
+\section{Second}
+Text.
+\begin{equation} c = d \label{e:c} \end{equation}
+Ref \eqref{e:c}.
+\end{document}

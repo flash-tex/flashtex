@@ -1,0 +1,183 @@
+{
+ "fixture": "20-enumerate-nested-display.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "1.",
+    "x": 145.945,
+    "y_top": 134.765
+   },
+   {
+    "text": "Outer",
+    "x": 158.6752,
+    "y_top": 134.765
+   },
+   {
+    "text": "item.",
+    "x": 187.4821,
+    "y_top": 134.765
+   },
+   {
+    "text": "(a)",
+    "x": 162.881,
+    "y_top": 154.69
+   },
+   {
+    "text": "Inner",
+    "x": 180.5925,
+    "y_top": 154.69
+   },
+   {
+    "text": "item",
+    "x": 206.5899,
+    "y_top": 154.69
+   },
+   {
+    "text": "text",
+    "x": 228.9609,
+    "y_top": 154.69
+   },
+   {
+    "text": "that",
+    "x": 249.3952,
+    "y_top": 154.69
+   },
+   {
+    "text": "is",
+    "x": 270.6594,
+    "y_top": 154.69
+   },
+   {
+    "text": "long",
+    "x": 280.356,
+    "y_top": 154.69
+   },
+   {
+    "text": "enough",
+    "x": 301.6301,
+    "y_top": 154.69
+   },
+   {
+    "text": "to",
+    "x": 335.6155,
+    "y_top": 154.69
+   },
+   {
+    "text": "reach",
+    "x": 347.48,
+    "y_top": 154.69
+   },
+   {
+    "text": "toward",
+    "x": 373.4754,
+    "y_top": 154.69
+   },
+   {
+    "text": "the",
+    "x": 406.3859,
+    "y_top": 154.69
+   },
+   {
+    "text": "right",
+    "x": 423.2227,
+    "y_top": 154.69
+   },
+   {
+    "text": "margin",
+    "x": 447.0134,
+    "y_top": 154.69
+   },
+   {
+    "text": "of",
+    "x": 180.593,
+    "y_top": 166.645
+   },
+   {
+    "text": "the",
+    "x": 191.9364,
+    "y_top": 166.645
+   },
+   {
+    "text": "list",
+    "x": 209.102,
+    "y_top": 166.645
+   },
+   {
+    "text": "a",
+    "x": 309.379,
+    "y_top": 178.6
+   },
+   {
+    "text": "+",
+    "x": 316.8569,
+    "y_top": 178.6
+   },
+   {
+    "text": "b",
+    "x": 326.8175,
+    "y_top": 178.6
+   },
+   {
+    "text": "=",
+    "x": 333.8631,
+    "y_top": 178.6
+   },
+   {
+    "text": "c",
+    "x": 344.3816,
+    "y_top": 178.6
+   },
+   {
+    "text": "after.",
+    "x": 180.593,
+    "y_top": 196.533
+   },
+   {
+    "text": "2.",
+    "x": 145.945,
+    "y_top": 216.458
+   },
+   {
+    "text": "Outer",
+    "x": 158.6752,
+    "y_top": 216.458
+   },
+   {
+    "text": "again",
+    "x": 187.4821,
+    "y_top": 216.458
+   },
+   {
+    "text": "p",
+    "x": 306.527,
+    "y_top": 228.413
+   },
+   {
+    "text": "=",
+    "x": 314.3088,
+    "y_top": 228.413
+   },
+   {
+    "text": "q",
+    "x": 324.8273,
+    "y_top": 228.413
+   },
+   {
+    "text": "(1)",
+    "x": 464.746,
+    "y_top": 228.413
+   },
+   {
+    "text": "tail.",
+    "x": 158.675,
+    "y_top": 246.346
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

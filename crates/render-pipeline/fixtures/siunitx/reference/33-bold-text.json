@@ -1,0 +1,125 @@
+{
+ "fixture": "33-bold-text.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Mass",
+   "font": "CMBX10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765,
+   "end": 174.195
+  },
+  {
+   "page": 1,
+   "text": "1",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 178.011,
+   "baseline": 134.765,
+   "end": 182.992
+  },
+  {
+   "page": 1,
+   "text": ".",
+   "font": "CMMI10",
+   "size": 9.9626,
+   "x": 182.992,
+   "baseline": 134.765,
+   "end": 185.76
+  },
+  {
+   "page": 1,
+   "text": "5",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 185.76,
+   "baseline": 134.765,
+   "end": 190.741
+  },
+  {
+   "page": 1,
+   "text": "kg",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 192.654,
+   "baseline": 134.765,
+   "end": 202.894
+  },
+  {
+   "page": 1,
+   "text": "here",
+   "font": "CMBX10",
+   "size": 9.9626,
+   "x": 206.849,
+   "baseline": 134.765,
+   "end": 228.435
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 231.762,
+   "baseline": 134.765,
+   "end": 247.804
+  },
+  {
+   "page": 1,
+   "text": "speed",
+   "font": "CMTI10",
+   "size": 9.9626,
+   "x": 251.132,
+   "baseline": 134.765,
+   "end": 273.02
+  },
+  {
+   "page": 1,
+   "text": "3",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 276.587,
+   "baseline": 134.765,
+   "end": 281.568
+  },
+  {
+   "page": 1,
+   "text": "m",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 283.272,
+   "baseline": 134.765,
+   "end": 291.574
+  },
+  {
+   "page": 1,
+   "text": "s",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 293.227,
+   "baseline": 134.765,
+   "end": 297.157
+  },
+  {
+   "page": 1,
+   "text": "−",
+   "font": "CMSY7",
+   "size": 6.9738,
+   "x": 297.16,
+   "baseline": 131.149,
+   "end": 303.387
+  },
+  {
+   "page": 1,
+   "text": "1",
+   "font": "CMR7",
+   "size": 6.9738,
+   "x": 303.387,
+   "baseline": 131.149,
+   "end": 307.358
+  }
+ ],
+ "warnings": []
+}

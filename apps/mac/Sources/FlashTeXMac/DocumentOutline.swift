@@ -32,8 +32,52 @@ enum DocumentOutline {
         var utf16: NSRange
         /// 1-based line of the command's start.
         var line: Int
+        /// For a float or theorem-like environment: its `\caption{…}`, the
+        /// `\begin{thm}[title]` optional title, or the first words of its body.
+        var caption: String? = nil
 
         var id: String { "\(kind.rawValue):\(utf16.location)" }
+        /// Sidebar text: the caption when there is one ("figure: Loss curves").
+        var displayTitle: String { caption.map { "\(title): \($0)" } ?? title }
+    }
+
+    /// Environments whose caption/title is shown in the outline: floats and
+    /// the standard theorem-like names (plus every `\newtheorem{name}` of the buffer).
+    static let floatEnvironments: Set<String> = ["figure", "figure*", "table", "table*", "algorithm", "listing", "wrapfigure", "wraptable", "subfigure"]
+    static let theoremEnvironments: Set<String> = [
+        "theorem", "lemma", "proposition", "corollary", "definition", "remark", "example", "proof", "claim", "conjecture",
+        "exercise", "problem", "solution", "axiom", "notation", "assumption", "fact", "observation",
+    ]
+
+    /// The current item for follow-caret highlighting: the last sectioning
+    /// command at or before `caret`, else the innermost environment whose
+    /// `\begin` is at or before it.
+    static func current(at caret: Int, in items: [Item]) -> Item? {
+        var section: Item?
+        for i in items where i.utf16.location <= caret {
+            if i.kind == .section { section = i }
+        }
+        return section ?? items.last { $0.kind == .environment && $0.utf16.location <= caret }
+    }
+
+    /// The status bar's LaTeX-semantic breadcrumb (design-principles §5):
+    /// the enclosing sectioning chain at `caret`, outermost first —
+    /// `Chapter 2 › 2.3 Experimental Setup`. Ancestors are the nearest
+    /// preceding sections of strictly lower level; environments and labels
+    /// are left out because the lexical scan records no `\end` positions,
+    /// and a segment that may already be closed would lie.
+    static func breadcrumb(at caret: Int, in items: [Item]) -> [Item] {
+        var innermost: Item?
+        for i in items where i.utf16.location <= caret {
+            if i.kind == .section { innermost = i }
+        }
+        guard let last = innermost else { return [] }
+        var chain = [last]
+        var level = last.level
+        for i in items.reversed() where i.kind == .section && i.utf16.location < last.utf16.location {
+            if i.level < level { chain.insert(i, at: 0); level = i.level }
+        }
+        return chain
     }
 
     /// Sectioning commands and their level (chapter 0 … paragraph 4).
@@ -104,7 +148,62 @@ enum DocumentOutline {
                 }
             }
         }
+        annotateCaptions(&out, text: ns)
         return out
+    }
+
+    /// Fills `caption` for floats and theorem-like environments: the first
+    /// `\caption{…}` before the matching `\end`, else the `[title]` right
+    /// after `\begin{…}`, else the body's first words (≤ 60 characters).
+    static func annotateCaptions(_ items: inout [Item], text ns: NSString) {
+        var theoremNames = theoremEnvironments
+        for m in newtheoremPattern.matches(in: ns as String, range: NSRange(location: 0, length: ns.length)) {
+            theoremNames.insert(ns.substring(with: m.range(at: 1)))
+        }
+        for i in items.indices where items[i].kind == .environment {
+            let name = items[i].title
+            let isFloat = floatEnvironments.contains(name), isTheorem = theoremNames.contains(name)
+            guard isFloat || isTheorem else { continue }
+            let start = NSMaxRange(items[i].utf16)
+            let endMarker = ns.range(of: "\\end{\(name)}", options: .literal, range: NSRange(location: start, length: ns.length - start))
+            let bodyEnd = endMarker.location == NSNotFound ? ns.length : endMarker.location
+            let body = NSRange(location: start, length: bodyEnd - start)
+            if isFloat {
+                let cap = ns.range(of: "\\caption{", options: .literal, range: body)
+                guard cap.location != NSNotFound, let arg = bracedArgument(in: ns, openBrace: NSMaxRange(cap) - 1) else { continue }
+                items[i].caption = summarize(arg)
+            } else {
+                if start < ns.length, ns.character(at: start) == 0x5B, // `[title]`
+                   case let close = ns.range(of: "]", options: .literal, range: NSRange(location: start, length: bodyEnd - start)), close.location != NSNotFound {
+                    items[i].caption = summarize(ns.substring(with: NSRange(location: start + 1, length: close.location - start - 1)))
+                } else {
+                    let words = ns.substring(with: body).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !words.isEmpty { items[i].caption = summarize(words) }
+                }
+            }
+        }
+    }
+
+    private static let newtheoremPattern = try! NSRegularExpression(pattern: "\\\\newtheorem\\*?\\{([A-Za-z*]+)\\}")
+
+    /// The balanced `{…}` argument starting at `openBrace`, or nil when unclosed.
+    static func bracedArgument(in ns: NSString, openBrace: Int) -> String? {
+        guard openBrace < ns.length, ns.character(at: openBrace) == 0x7B else { return nil }
+        var depth = 0
+        var i = openBrace
+        while i < ns.length {
+            let c = ns.character(at: i)
+            if c == 0x5C { i += 2; continue }
+            if c == 0x7B { depth += 1 } else if c == 0x7D { depth -= 1; if depth == 0 { return ns.substring(with: NSRange(location: openBrace + 1, length: i - openBrace - 1)) } }
+            i += 1
+        }
+        return nil
+    }
+
+    /// One line, whitespace collapsed, ≤ 60 characters with an ellipsis.
+    static func summarize(_ s: String) -> String {
+        let flat = s.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return flat.count > 60 ? String(flat.prefix(59)) + "…" : flat
     }
 
     /// Items of one kind, in document order.

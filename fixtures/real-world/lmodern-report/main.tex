@@ -1,0 +1,175 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+
+\title{Quarterly Operations Review: Warehouse Efficiency Initiative}
+\author{Operations Analytics Team}
+\date{Third Quarter, Fiscal Year 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\section{Executive Summary}
+This report summarizes the findings of the warehouse efficiency initiative
+launched at the start of the fiscal year, covering staffing, equipment
+utilization, and fulfillment throughput across the five regional
+distribution centers. Overall, the initiative has delivered a
+\textbf{measurable} improvement in order-to-ship time, though results vary
+considerably by site --- some facilities have exceeded their targets while
+others continue to struggle with fixture and layout constraints that were
+only partially addressed during the mid-year renovation window. The
+sections that follow walk through staffing changes, throughput metrics,
+outstanding risks, and a set of recommendations for the coming quarter.
+
+\section{Background}
+The warehouse efficiency initiative was chartered in response to a steady
+increase in order volume that had begun to outpace the capacity of existing
+fulfillment workflows. Waiting times at pick stations had crept upward over
+several consecutive quarters, and exit surveys from departing staff
+frequently cited \emph{workflow friction} and \emph{unclear task
+prioritization} as sources of frustration. Management commissioned a
+cross-functional working group --- drawn from operations, facilities, and
+workforce planning --- to diagnose the underlying causes and propose a
+coordinated set of fixes rather than a series of one-off patches applied
+site by site.
+
+\subsection{Scope of the Review}
+This review covers the period from January through September and draws on
+throughput logs, staffing rosters, and a series of structured interviews
+conducted at each of the five regional facilities. It does not cover the
+separate transportation-network optimization project, which is reported
+elsewhere, although the two initiatives are closely related and share a
+common data infrastructure.
+
+\subsubsection{Data Sources}
+Quantitative figures in this report are drawn from the warehouse management
+system's event log, which records every pick, pack, and staging
+transaction with a timestamp accurate to the second. Where system data was
+incomplete --- most notably at the newly opened facility, which was still
+being migrated onto the current platform for much of the review period ---
+we supplement the analysis with manually collected shift logs.
+
+\subsubsection{Interview Methodology}
+Structured interviews were conducted with a representative sample of
+floor staff and shift supervisors at each site, using a fixed set of
+open-ended questions designed to surface recurring pain points without
+leading respondents toward any particular conclusion.
+
+\section{Findings}
+
+\subsection{Throughput Improvements}
+Table~\ref{tab:throughput} summarizes order-to-ship time, measured in
+hours, at each facility before and after the initiative's key process
+changes were rolled out.
+
+\begin{table}[h]
+\centering
+\caption{Median order-to-ship time by facility (hours).}
+\label{tab:throughput}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Facility & Baseline & Current & Change \\
+\midrule
+Northgate    & 14.2 & 9.8  & $-31\%$ \\
+Riverside    & 11.5 & 10.9 & $-5\%$  \\
+Fairview     & 16.0 & 10.1 & $-37\%$ \\
+Union Yard   & 12.8 & 12.1 & $-5\%$  \\
+Crestline    & 15.4 & 9.2  & $-40\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The improvement at Crestline and Fairview is particularly notable given
+that both facilities began the review period with above-average
+order-to-ship times; the working group attributes the gains chiefly to the
+reorganization of pick paths and to the officially efficient --- staff
+frequently used the word ``efficient'' unprompted in interviews --- new
+staging area layout introduced in the second quarter.
+
+\subsection{Persistent Bottlenecks}
+Not every facility responded equally well to the process changes.
+Riverside and Union Yard showed only modest improvement, and interviews at
+both sites pointed to a common set of underlying issues:
+
+\begin{itemize}
+  \item \textbf{Fixture constraints.} Older shelving at both facilities
+  was not compatible with the new pick-path routing, forcing staff to
+  deviate from the recommended sequence.
+  \item \textbf{Staffing turnover.} Both sites reported above-average
+  turnover among newly hired pickers, which limited the benefit of
+  process training delivered earlier in the year.
+  \item \textbf{Dock congestion.} Outbound dock scheduling at Union Yard
+  remains a recurring source of delay during peak afternoon shipping
+  windows.
+\end{itemize}
+
+\subsection{Staffing and Training}
+The initiative also restructured onboarding for new pick-and-pack staff,
+replacing a single multi-day training session with a shorter session
+followed by structured on-floor coaching during the first two weeks of
+employment. Early results are encouraging: facilities that adopted the new
+onboarding model report the following outcomes, summarized by category
+below.
+
+\begin{description}
+  \item[Time to full productivity] Reduced from roughly three weeks to
+  roughly ten working days on average.
+  \item[Ninety-day retention] Improved modestly across all facilities that
+  adopted the new model, though the sample size remains small.
+  \item[Supervisor workload] Increased in the short term, since coaching
+  requires more direct supervisor time than the previous classroom-style
+  session.
+\end{description}
+
+\section{Risks and Open Questions}
+Several risks warrant continued attention as the initiative moves into its
+next phase. Facilities that have not yet completed the shelving retrofit
+described above are unlikely to see further throughput gains without
+additional capital investment, and current budget guidance does not
+guarantee that investment will be available before year end. There is also
+a standing question --- raised repeatedly during the interview process ---
+about whether the on-floor coaching model can scale to the two additional
+facilities planned for next year without a corresponding increase in
+supervisor headcount.
+
+\begin{quote}
+``The new layout works, but only if the shelving actually supports it. We
+were told the retrofit was coming and then it just \dots\ didn't, for us
+at least.''\\
+\textit{--- Shift supervisor, Riverside facility}
+\end{quote}
+
+This sentiment, echoed by several other supervisors, underscores that
+process redesign and facility investment need to be sequenced together
+rather than treated as independent workstreams; a facility, however well
+its floor is organized on paper, cannot realize the benefit of a new pick
+path if $\lambda$, the effective per-shift throughput rate, is bottlenecked
+by a fixture constraint that the process change does not address.
+
+\section{Recommendations}
+\begin{enumerate}
+  \item Prioritize the shelving retrofit at Riverside and Union Yard in the
+  next capital planning cycle, since both facilities have demonstrated
+  that the process changes alone are insufficient without it.
+  \item Formalize the on-floor coaching model into a repeatable training
+  curriculum before extending it to the two facilities opening next year.
+  \item Continue monitoring dock scheduling at Union Yard and consider a
+  staggered outbound shipping window as an interim mitigation.\footnote{A
+  staggered-window pilot was proposed at the mid-year review but deferred
+  pending the outcome of this report.}
+\end{enumerate}
+
+\section{Conclusion}
+The warehouse efficiency initiative has delivered real, if uneven, gains
+across the regional network. The facilities that paired process redesign
+with the necessary physical investment saw the largest improvements, while
+those that received the process changes alone without a matching facility
+investment lagged behind. The recommendations above are intended to close
+that gap heading into the next fiscal year, so that the benefits observed
+at Northgate, Fairview, and Crestline can be extended network-wide rather
+than remaining the exception.
+
+\end{document}

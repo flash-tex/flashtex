@@ -1,4 +1,5 @@
 import AppKit
+import HostedWindows
 import XCTest
 @testable import FlashTeXMac
 
@@ -49,7 +50,14 @@ final class SnippetTests: XCTestCase {
         XCTAssertEqual(labels(s).first, "\\subsection{...}")
         XCTAssertTrue(s.allSatisfy { Completion.matchRank($0.insertText.dropFirst().description, prefix: "sbs") == 2 })
         let se = Completion.suggestions(in: "x \\se", caretUTF16: 5, result: nil)
-        XCTAssertEqual(labels(se), ["\\section{...}", "\\setlength{\\length}{dimension}", "\\setlist[list]{options}", "\\sec", "\\setminus"], "prefix matches only, in table order")
+        // Computed from the live vocabulary (not a hand-copied snapshot) so this
+        // tracks the compiler's inventory as it grows.
+        XCTAssertEqual(labels(se), CompletionTestVocabulary.labels(forPrefix: "se"), "prefix matches only, in table order")
+        // The rule itself, isolated from the compiler's vocabulary through a
+        // synthetic `supported:` list injected via the seam on
+        // `Completion.suggestions`: prefix matches keep table order.
+        let syntheticSe = Completion.suggestions(in: "x \\se", caretUTF16: 5, result: nil, supported: ["set", "search", "sea", "xyz"])
+        XCTAssertEqual(syntheticSe.map(\.insertText), ["\\set", "\\search", "\\sea"])
         // Labels: `\ref{main}` finds `eq:main` only when no key starts with `main`.
         let text = "\\label{eq:main}\\label{main}\\label{sec:domain} \\ref{main"
         XCTAssertEqual(labels(Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil)), ["main"])
@@ -158,7 +166,8 @@ final class SnippetTests: XCTestCase {
 
     @MainActor
     func testTabMovesBetweenPlaceholdersAndEscLeaves() async throws {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)

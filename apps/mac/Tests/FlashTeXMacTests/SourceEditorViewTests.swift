@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 import FlashTeXProtocol
+import HostedWindows
 @testable import FlashTeXMac
 
 /// `SourceEditorView`: VoiceOver label/value/selection and line-column
@@ -80,8 +81,9 @@ final class SourceEditorViewTests: XCTestCase {
     }
 
     private func host(_ model: ShellModel, probe: Probe) async throws -> (NSWindow, NSTextView) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                                                backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model, probe: probe))
         window.orderFrontRegardless() // never makeKey
         var found: NSTextView?
@@ -252,8 +254,9 @@ final class SourceEditorViewTests: XCTestCase {
         let scroll = CompletingTextView.scrollable()
         let tv = scroll.documentView as! NSTextView
         _ = tv.layoutManager
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-                              backing: .buffered, defer: false)
+        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                                                backing: .buffered, defer: false)
         window.contentView = scroll
         window.orderFrontRegardless()
         defer { window.orderOut(nil) }
@@ -747,8 +750,9 @@ final class SourceEditorViewTests: XCTestCase {
         // pending scan can never reopen it while marked text exists.
         completing.requestCompletion()
         try await waitUntil("completion list") { completing.session != nil }
-        // The vocabulary lane shows the argument shape in the label ("\section{...}").
-        XCTAssertTrue(completing.session?.items.first?.label.hasPrefix("\\section") == true, completing.session?.items.first?.label ?? "nil")
+        // The vocabulary lane shows the argument shape in the label (computed
+        // from the live vocabulary, not a hand-copied snapshot).
+        XCTAssertEqual(completing.session?.items.first?.label, CompletionTestVocabulary.labels(forPrefix: "s").first)
         compose(tv, "か")
         completing.requestCompletion() // what the list's key path does after every keystroke
         try await waitUntil("list closed by the composition") { completing.session == nil }

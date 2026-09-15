@@ -4,7 +4,7 @@ import FlashTeXProtocol
 @testable import FlashTeXMac
 
 /// ISOLATED `display-list-v2-delta` consumer gate (proposal r5 §10.2; Commander
-/// 5647057936). Drives the REAL producer (`FLASHTEX_COMPILER`, a
+/// 5647057936). Drives the REAL producer (`FLASHTEX_RENDER`, else `FLASHTEX_COMPILER`, a
 /// `flashtex-render` built from `agent/mac-render-pipeline/delta-proposal`
 /// b956304a+) over its stdin/stdout: worker A runs the delta chain with
 /// installed-base acknowledgements, worker B is the fresh-full oracle for the
@@ -107,7 +107,8 @@ final class DisplayListDeltaTests: XCTestCase {
     /// before any sibling is awaited, so an ordinary v1 compiler (no
     /// `display-list-v2`) and a producer without `-delta` both skip finitely.
     func session() throws -> Session {
-        guard let path = ProcessInfo.processInfo.environment["FLASHTEX_COMPILER"], FileManager.default.isExecutableFile(atPath: path) else { throw XCTSkip("set FLASHTEX_COMPILER to a delta-capable flashtex-render") }
+        let environment = ProcessInfo.processInfo.environment
+        guard let path = environment["FLASHTEX_RENDER"] ?? environment["FLASHTEX_COMPILER"], FileManager.default.isExecutableFile(atPath: path) else { throw XCTSkip("set FLASHTEX_RENDER (or FLASHTEX_COMPILER) to a delta-capable flashtex-render") }
         let url = URL(fileURLWithPath: path)
         if url.lastPathComponent == "flashtex-compiler" { throw XCTSkip("FLASHTEX_COMPILER is the plain compiler; the delta gate needs flashtex-render from agent/mac-render-pipeline/delta-proposal") }
         guard V2FontStore.shared.fonts.contains(where: { $0.url.lastPathComponent.hasPrefix("lmroman12") }) else { throw XCTSkip("Latin Modern not bundled") }

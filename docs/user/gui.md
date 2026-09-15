@@ -153,6 +153,16 @@ without leaving the app, or open an existing `.tex` file.
   (`\centering`, `\includegraphics`, `\caption`, `\label{fig:}`), `\begin{table}`
   a table skeleton; other environments an indented empty body line and the
   matching `\end`.
+- **Completion opens on its own while you type** — you do not need ⌃Space:
+  typing a control word (including a bare `\`, which lists the vocabulary) or
+  an argument key for a command that has completions (`\begin{`, `\end{`,
+  `\ref{`, `\cite{`, `\label{`, `\usepackage{`, `\input{`) opens the list a
+  short pause (50 ms) after the keystroke, so one burst of fast typing costs
+  one scan rather than one per character. A plain prose word does not open it
+  on its own — word suggestions from the document are still available, just
+  via explicit ⌃Space, since offering them on every letter would be noise.
+  Esc dismisses the list for that token; typing more of the same token stays
+  quiet. Turn the feature off with *Show completion list* in Preferences.
 - **Signature help**: typing `{` after a command (or pressing **⌘⇧Space**
   inside a command's argument) shows the argument pattern with the current
   argument highlighted and a one-line description; it closes on `}`, Esc, or
@@ -171,7 +181,12 @@ without leaving the app, or open an existing `.tex` file.
 - **Hover**: rest the pointer on a token for about half a second to see what
   it is (command with documentation, label, citation key, file, package,
   environment) plus any diagnostic at that position with its recovery note
-  and explanation.
+  and explanation. Resting the pointer on an inline formula (`$…$`, `\(…\)`)
+  instead shows a small preview of the formula as already rendered, cropped
+  out of the current preview page — nothing is re-rendered to show it, so it
+  can go blank right after an edit until the preview catches up, and it
+  doesn't cover display math (`$$…$$`, `\[…\]`) or math environments, or a
+  formula split across more than two lines.
 - **⌘-click** (or ⌘⇧D, *Navigate › Go to Matching*): `\ref{key}` → its
   `\label`; `\label` → cycles through its references; `\begin` ↔ `\end`;
   `\input{file}` → opens the file. `\cite{key}` and user macros resolve
@@ -201,6 +216,36 @@ without leaving the app, or open an existing `.tex` file.
 - **Rename Citation** (*Edit › Rename Citation…*, also in the toolbar): plans
   a rename of a citation key across the project, shows every affected place,
   and applies it as one group after you confirm. Helper route only.
+- **Environments**: a caret on `\begin{X}` or `\end{X}` highlights both ends
+  like a bracket pair (nesting of the same name and stray `\end`s are
+  tolerated). **⌘⇧A** (*Navigate › Select Environment*) selects the innermost
+  environment around the caret and, pressed again, the enclosing one.
+  **⌘⇧W** (*Wrap Selection in Environment…*) asks for a name — common
+  environments first, then the ones the document already uses — and wraps
+  the selection: whole lines become an indented block on their own lines,
+  anything else is wrapped inline; one undoable edit, caret at the body.
+- **Go to definition** (⌘-click a `\foo`, or ⌃⌘J): selects the
+  `\newcommand`/`\renewcommand`/`\def`/`\let`/`\DeclareMathOperator`/
+  `\NewDocumentCommand` (for `\begin{X}`: `\newenvironment`/`\newtheorem`)
+  definition in whichever open document holds it. Hovering a user command
+  peeks its definition body under the standard documentation.
+- **Go to symbol** (⌘⇧T): a fuzzy picker over every heading, environment and
+  label of the open documents; Return goes there.
+- **Rename symbol** (⌥⇧R, *Navigate › Rename Symbol…*): with the caret on a
+  `\label{key}` or any `\ref`/`\eqref`/`\pageref`/`\autoref`/`\cref` use of it,
+  or on a command defined by `\newcommand`/`\def`, *Plan Rename* lists the
+  occurrences per open document (word-boundary aware — `\foo` never touches
+  `\foobar` — comments and verbatim skipped; a name that already exists is
+  refused) and *Apply* rewrites them: one undoable edit per document, or one
+  guarded `apply_group` per file (ledger undo) when the durable helper is
+  attached. Buffer-only: files that are not open are not touched.
+- **Outline** (sidebar): parts, chapters, sections and subsections nest by
+  depth; theorem-like environments and figures/tables show their caption or
+  first line; the row of the caret's section is highlighted and clicking any
+  row jumps to it.
+- **Error lens** (Preferences › *Show diagnostics inline*): each line with a
+  diagnostic shows its message dimmed at the end of the line (errors only by
+  default; a second toggle adds warnings), from the same marks as the gutter.
 - **Editor font size**: ⌘⌥= / ⌘⌥- / ⌘⌥0 (8–36 pt, default 13), or pinch over
   the editor.
 
@@ -263,8 +308,21 @@ FlashTeX compiles through a **producer** process that ships inside the app.
   click is refused with "recompile to navigate" rather than selecting the
   wrong text.
 - **Caret sync**: preview text whose source contains the editor caret is
-  highlighted (accent fill + underline) and the page scrolls into view;
+  highlighted (accent fill + underline);
   *Navigate › Reveal Caret in Preview* (⌘⇧J) selects the whole span.
+- **The preview follows what you are editing** (Preferences › *Preview follows
+  the caret*, on by default): shortly after you stop typing — and after the
+  recompiled preview lands — the pane scrolls to the text the caret is in, but
+  only when that text is off screen or within a line of an edge; anything
+  already in view is left exactly where it is, so the preview never twitches
+  while you type. Scrolling the preview yourself (wheel, trackpad, scroller)
+  stops it following; it starts again on your next edit, or the moment the
+  caret lands on a different line or page (moving it around within the same
+  line does not wake it back up — that's still just reading). A caret that
+  maps to nothing — a comment, the preamble, text the compiler has not laid
+  out yet — moves nothing. Short hops are animated; long jumps, and "Reduce
+  motion", are instant. ⌘⇧J always scrolls to the caret at once, whether or
+  not the preference above is even on.
 - **Dark preview** (toolbar switch): inverts page and text colours on screen
   only; exports are unaffected. Its initial state follows the editor
   appearance preference.
@@ -402,8 +460,10 @@ you trust.
 | Tab width 2–8, indent with spaces or tab | 4, spaces |
 | Editor appearance: System / Light / Dark (also seeds the dark-preview switch) | System |
 | Auto-close brackets & math | on |
-| Show completion list (off disables ⌃Space / Esc completion) | on |
-| Capture conversion: provider (None / xAI), key in Keychain, model | None |
+| Show completion list (off disables both automatic-while-typing and explicit ⌃Space / Esc completion) | on |
+| Vim keybindings (also View › Toggle Vim Keybindings, ⌃⌘V) | off |
+| Preview follows the caret while you edit | on |
+| Capture conversion: provider (None / xAI), key in Keychain, model | xAI (no-op until a key is added) |
 | Restore Defaults | |
 
 ## Keyboard shortcuts
@@ -425,7 +485,7 @@ you trust.
 | ⌘⇧E | Export PDF… (CoreGraphics) |
 | ⌘⌥E | Export PDF via Rust writer… |
 | ⌘Z | Undo (including an applied fix or capture insertion) |
-| Esc / ⌃Space | Open the completion list |
+| Esc / ⌃Space | Open the completion list explicitly (it also opens on its own — see below) |
 | ↑ ↓ / Tab ⇧Tab / Return / Esc | While the list is open: choose / insert / close |
 | Tab / ⇧Tab / Esc | After inserting a snippet: next / previous placeholder / leave |
 | Tab / ⇧Tab | Otherwise: indent / outdent the touched line(s) |
@@ -434,6 +494,11 @@ you trust.
 | ⌘E / ⌘J | Use selection for Find / jump to (center) the current selection |
 | ⌘/ | Comment or uncomment the selected lines |
 | ⌘-click / ⌘⇧D | Go to matching `\label`↔`\ref`, `\begin`↔`\end`, open `\input` file |
+| ⌘-click / ⌃⌘J | Go to definition of a `\newcommand`/`\def`/`\DeclareMathOperator`/`\newenvironment` symbol |
+| ⌘⇧T | Go to symbol… (fuzzy picker over headings, environments and labels of the open documents) |
+| ⌘⇧A | Select environment (innermost `\begin`…`\end` around the caret; again widens) |
+| ⌘⇧W | Wrap selection in environment… |
+| ⌥⇧R | Rename symbol (`\label` key or user command, across the open documents) |
 | ⌘⇧] / ⌘⇧[ | Next / previous diagnostic |
 | ⌘⌥] / ⌘⌥[ | Next / previous occurrence within the selected Problems group |
 | ⌘⇧M | Toggle Problems panel |
@@ -461,14 +526,52 @@ Everything in this table is also reachable from the command palette (⌘⇧P) an
 is read by VoiceOver; *Help › FlashTeX Accessibility Help* documents the focus
 order of each pane.
 
+## Vim mode
+
+Settings › Typing › *Vim keybindings* (or View › Toggle Vim Keybindings, ⌃⌘V)
+turns the source editor modal. The status bar shows `-- NORMAL --`,
+`-- INSERT --`, `-- VISUAL --` / `-- VISUAL LINE --`, and the `:` or `/` line
+as you type it; the caret is a block outside insert mode.
+
+**Supported**
+
+- Modes: normal, insert (`i a I A o O s S c C`), visual (`v`), visual line (`V`),
+  `r{char}`. Esc or ⌃[ returns to normal. Selecting with the mouse enters
+  visual mode.
+- Insert mode is the ordinary editor: input methods, dead keys, completion,
+  snippets and signature help work as usual; only Esc is taken (and not while
+  a composition is in progress). ⌘-shortcuts always work.
+- Counts; motions `h j k l w b e W B E 0 ^ $ gg G { } ( ) f F t T ; , % H M L`,
+  ⌃D ⌃U ⌃F ⌃B (`%` also jumps between `\begin` and `\end`).
+- Visual-row motions `gj gk g0 g^ g$`: one *screen* row rather than one logical
+  line. Line wrapping is on by default, so a wrapped paragraph is many rows but
+  one line, and plain `j` jumps over all of it; `gj` moves the way the text
+  looks. They keep their own remembered column, so mixing `j` and `gj` does not
+  make either drift, and they take counts and operators (`3gj`, `dgj`). With
+  wrapping off — or on a line that does not wrap — `gj` is exactly `j`.
+- Operators `d c y > <` with motions, `dd cc yy >> <<`, and text objects
+  `iw aw i( a( i[ a[ i{ a{ i" a" i$ a$` (inline math) and `ie ae` (LaTeX environment).
+- `x X D C Y p P J u ⌃R . ~`, marks `m a` / `'a` / `` `a ``, registers `"a`–`"z`
+  and `"+` / `"*` (system clipboard).
+- `/` `?` search with incremental preview, `n N *` (smart-case; the term is
+  shared with the find bar, so ⌘G continues it).
+- `:w :q :q! :wq :x :e file :%s/a/b/g :s/a/b/ :noh :set nu :set nonu`.
+- `u` / ⌃R are the editor's normal undo: one step per insert session, one per operator.
+
+**Not yet**
+
+- `.` does not repeat visual-mode changes; `o`/`cw` followed by typing are two undo steps.
+- No `gu gU gq =`, no `ip ap it at iS aS` objects, no regular expressions in
+  `/` and `:s` (literal text), no `:g`, macros (`q`), jump list (⌃O / ⌃I),
+  block mode (⌃V), replace mode (`R`), or key mappings / `.vimrc`.
+- Marks do not move with edits above them.
+
 ## Not yet supported
 
 - Automatic attachment of the Latin Modern render pipeline at launch (press
   ⌘⇧R); a menu item for the preview-controller helper route, so Find in
   Project, Rename Citation, Durable History and `\cite` navigation need the
   environment-variable launch described under *Compiling*.
-- Completion does not pop up while typing (open it with ⌃Space / Esc); signature help does.
-- `\begin{X}` ↔ `\end{X}` are not highlighted as a pair (use ⌘⇧D to jump).
 - `\includegraphics` outside a `figure`/`table` float (and its `trim`/`clip`/
   `viewport` keys), tables, bibliographies and other constructs listed under
   [Supported LaTeX](compiler.md#supported-latex) render as diagnostics, not

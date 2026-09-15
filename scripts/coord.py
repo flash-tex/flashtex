@@ -7,15 +7,33 @@ import fcntl
 import json
 import os
 from pathlib import Path, PurePosixPath
+import random
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
 
 DEADLINE = '2026-09-12T14:00:00Z'
 ID = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$')
 BRANCH = re.compile(r'^agent/([a-zA-Z0-9][a-zA-Z0-9_-]{0,63})/[a-zA-Z0-9][a-zA-Z0-9_/-]*$')
 STATES = ['registered', 'accepted', 'in_progress', 'blocked', 'ready_for_integration', 'integrated', 'cancelled']
+
+CLAIMS_BRANCH = 'coordination-claims'
+OPEN_CLAIM_STATE = 'claimed'
+CLAIM_STATES = ('claimed', 'released', 'closed')
+MAX_CLAIM_ATTEMPTS = 6
+CLAIM_STALE_DEFAULT_HOURS = 24
+
+
+class ClaimLost(RuntimeError):
+    """Another actor already holds an open claim on this task."""
+
+
+class ClaimNotCounted(RuntimeError):
+    """The outcome of a claims write is unknown; nothing was confirmed on origin."""
 
 
 def run(argv, cwd=None, timeout=45, check=True):
@@ -330,10 +348,277 @@ def checkpoint(root, emit=True):
             write_json(path, previous)
             raise RuntimeError('Fetch failed; prior state retained and marked stale. ' + str(exc))
         obj = inspect_fleet(root, previous)
+        obj['claims'] = claims_report(root)
         write_json(path, obj)
     if emit:
         print(json.dumps(obj, indent=2))
+        claims = obj['claims']
+        if claims['caller_open']:
+            print(f"Open claims for {claims['caller_actor']}: " + ', '.join(sorted(claims['caller_open'])))
+        if claims['stale']:
+            print(f"STALE claims (>{claims['stale_threshold_hours']}h, no fresher branch activity): "
+                  + ', '.join(sorted(claims['stale'])))
     return obj
+
+
+# --- Claims: a dedicated-branch, first-non-force-push-wins task lock -------
+#
+# Claims live one-file-per-task at claims/<task-id>.json on the orphan branch
+# `coordination-claims` (never main). Every write happens in a throwaway
+# `git worktree add` scratch checkout so the caller's own checkout, branch,
+# and index are never touched. A write is only ever a plain (non-force) push;
+# a losing/raced push is rejected by the remote and retried on the winner's
+# fetched tip, which is what gives first-non-force-push-wins semantics and
+# also how the branch itself gets created the first time it is needed.
+
+
+def _claim_path(task):
+    return f'claims/{task}.json'
+
+
+def _fetch_claims_tip(root):
+    """Fetch everything (claims branch plus any branch a claim references, for
+    staleness checks) and return the current origin/coordination-claims SHA, or
+    None if the branch does not exist on origin yet."""
+    git(root, 'fetch', 'origin', '--prune')
+    return git(root, 'rev-parse', '--verify', '--quiet', f'origin/{CLAIMS_BRANCH}', check=False) or None
+
+
+def _read_claim(root, ref, task):
+    path = _claim_path(task)
+    if not git(root, 'ls-tree', '--name-only', ref, '--', path, check=False):
+        return None
+    return json.loads(git(root, 'show', f'{ref}:{path}'))
+
+
+def _read_all_claims(root, ref):
+    paths = git(root, 'ls-tree', '-r', '--name-only', ref, '--', 'claims', check=False).splitlines()
+    out = {}
+    for p in paths:
+        if not p.endswith('.json'):
+            continue
+        task = p[len('claims/'):-len('.json')]
+        try:
+            out[task] = json.loads(git(root, 'show', f'{ref}:{p}'))
+        except ValueError:
+            continue
+    return out
+
+
+def _stage_claim_commit(root, task, mutate, message, attempts=MAX_CLAIM_ATTEMPTS):
+    """Apply mutate(existing_claim_or_None) -> new_claim_obj as one commit on
+    origin/coordination-claims and push it non-force, retrying with jitter on
+    races (including the branch not existing yet). mutate is re-run against a
+    freshly fetched base on every attempt, so it must raise ValueError/ClaimLost
+    itself if the freshly observed state makes the write invalid; such a raise
+    propagates immediately and is never retried. Never touches root's own
+    checkout, branch, or index."""
+    identifier(task)
+    last_error = 'unknown'
+    for attempt in range(attempts):
+        tip = _fetch_claims_tip(root)
+        existing = _read_claim(root, f'origin/{CLAIMS_BRANCH}', task) if tip else None
+        obj = mutate(existing)
+        if existing == obj:
+            # Desired state already matches what's confirmed on origin (e.g. a
+            # refresh landing within the same timestamp second as the prior
+            # write); nothing to commit, and nothing needs to be.
+            return obj
+        scratch = Path(tempfile.mkdtemp(prefix='flashtex-claims-'))
+        stage_branch = f'claims-stage-{uuid.uuid4().hex[:12]}'
+        pushed = False
+        try:
+            if tip is None:
+                run(['git', 'worktree', 'add', '--detach', '--no-checkout', str(scratch), 'HEAD'], cwd=root, timeout=45)
+                run(['git', 'checkout', '--orphan', stage_branch], cwd=scratch, timeout=45)
+                run(['git', 'read-tree', '--empty'], cwd=scratch, timeout=45)
+                local_ref = stage_branch
+            else:
+                run(['git', 'worktree', 'add', '--detach', str(scratch), tip], cwd=root, timeout=45)
+                local_ref = 'HEAD'
+            write_json(scratch / _claim_path(task), obj)
+            git(scratch, 'add', '--', _claim_path(task))
+            git(scratch, 'commit', '-m', message)
+            push = run(['git', 'push', 'origin', f'{local_ref}:refs/heads/{CLAIMS_BRANCH}'], cwd=scratch, timeout=45, check=False)
+            if push.returncode == 0:
+                pushed = True
+            else:
+                last_error = (push.stderr or push.stdout or 'git push failed').strip()[-800:]
+        finally:
+            run(['git', 'worktree', 'remove', '--force', str(scratch)], cwd=root, timeout=45, check=False)
+            shutil.rmtree(scratch, ignore_errors=True)
+            if tip is None:
+                run(['git', 'branch', '-D', stage_branch], cwd=root, timeout=45, check=False)
+        if pushed:
+            confirmed_tip = _fetch_claims_tip(root)
+            confirmed = _read_claim(root, f'origin/{CLAIMS_BRANCH}', task) if confirmed_tip else None
+            for key in ('actor', 'state', 'updated_utc'):
+                if not confirmed or confirmed.get(key) != obj.get(key):
+                    raise ClaimNotCounted('post-push verification against origin did not match the pushed claim')
+            return obj
+        time.sleep(random.uniform(0.02, 0.08) * (attempt + 1))
+    raise ClaimNotCounted(f'exhausted {attempts} attempts pushing to origin/{CLAIMS_BRANCH}: {last_error}')
+
+
+def _authority_commander_id(root):
+    path = root / 'coordination' / 'authority.json'
+    if not path.exists():
+        return None
+    try:
+        obj = json.loads(path.read_text())
+    except ValueError:
+        return None
+    if not isinstance(obj, dict) or obj.get('schema_version') != 1:
+        return None
+    return obj.get('commander_id')
+
+
+def _authorize_release(root, existing, actor, force_by_commander):
+    if existing.get('actor') == actor:
+        return
+    if force_by_commander and force_by_commander == _authority_commander_id(root):
+        return
+    raise ValueError(f"refused: held by {existing['actor']}, not {actor}")
+
+
+def _is_stale(root, claim, hours):
+    updated = parse_time(claim['updated_utc'])
+    if (datetime.now(timezone.utc) - updated).total_seconds() <= hours * 3600:
+        return False
+    branch_name = claim.get('branch')
+    if not branch_name:
+        return True
+    sha = git(root, 'rev-parse', '--verify', '--quiet', f'origin/{branch_name}', check=False)
+    if not sha:
+        return True
+    committed = git(root, 'show', '-s', '--format=%cI', sha, check=False)
+    if not committed:
+        return True
+    return datetime.fromisoformat(committed.strip()) <= updated
+
+
+def _caller_actor_id(root):
+    name = git(root, 'symbolic-ref', '--quiet', '--short', 'HEAD', check=False)
+    match = BRANCH.fullmatch(name) if name else None
+    return match.group(1) if match else None
+
+
+def claims_report(root):
+    """Open claims for the calling agent branch and any project-wide stale
+    claims; used by `checkpoint` and safe to call after `checkpoint` has
+    already fetched (no fetch performed here)."""
+    tip = git(root, 'rev-parse', '--verify', '--quiet', f'origin/{CLAIMS_BRANCH}', check=False) or None
+    open_claims = {t: c for t, c in (_read_all_claims(root, f'origin/{CLAIMS_BRANCH}') if tip else {}).items()
+                   if c.get('state') == OPEN_CLAIM_STATE}
+    caller = _caller_actor_id(root)
+    return {
+        'caller_actor': caller,
+        'caller_open': {t: c for t, c in open_claims.items() if caller and c.get('actor') == caller},
+        'stale': {t: c for t, c in open_claims.items() if _is_stale(root, c, CLAIM_STALE_DEFAULT_HOURS)},
+        'stale_threshold_hours': CLAIM_STALE_DEFAULT_HOURS,
+    }
+
+
+def claim_cmd(root, args):
+    task, actor, machine = identifier(args.task), identifier(args.actor), identifier(args.machine)
+    now = stamp()
+
+    def mutate(existing):
+        if existing is not None and existing.get('state') == OPEN_CLAIM_STATE and existing.get('actor') != actor:
+            raise ClaimLost(f"LOST: held by {existing['actor']} since {existing.get('started_utc')}")
+        holding = bool(existing) and existing.get('actor') == actor and existing.get('state') == OPEN_CLAIM_STATE
+        return {
+            'task_id': task, 'actor': actor, 'machine': machine,
+            'branch': args.branch if args.branch is not None else (existing.get('branch') if holding else None),
+            'gh_ref': args.gh_ref if args.gh_ref is not None else (existing.get('gh_ref') if holding else None),
+            'started_utc': existing['started_utc'] if holding else now,
+            'updated_utc': now, 'state': OPEN_CLAIM_STATE,
+            'note': args.note if args.note is not None else (existing.get('note') if holding else None),
+        }
+    try:
+        _stage_claim_commit(root, task, mutate, f'claim {task} by {actor}@{machine}')
+    except ClaimLost as exc:
+        print(str(exc))
+        return 1
+    print('CLAIMED')
+    return 0
+
+
+def release_cmd(root, args):
+    task, actor = identifier(args.task), identifier(args.actor)
+
+    def mutate(existing):
+        if existing is None or existing.get('state') != OPEN_CLAIM_STATE:
+            raise ValueError('no open claim for this task' if existing is None else f"claim already {existing['state']}")
+        _authorize_release(root, existing, actor, args.force_by_commander)
+        obj = dict(existing, state='released', updated_utc=stamp())
+        if args.note is not None:
+            obj['note'] = args.note
+        return obj
+    _stage_claim_commit(root, task, mutate, f'release {task} by {actor}')
+    print('RELEASED')
+    return 0
+
+
+def close_cmd(root, args):
+    task, actor = identifier(args.task), identifier(args.actor)
+
+    def mutate(existing):
+        if existing is None or existing.get('state') != OPEN_CLAIM_STATE:
+            raise ValueError('no open claim for this task' if existing is None else f"claim already {existing['state']}")
+        _authorize_release(root, existing, actor, args.force_by_commander)
+        obj = dict(existing, state='closed', updated_utc=stamp())
+        if args.gh_ref is not None:
+            obj['gh_ref'] = args.gh_ref
+        if args.note is not None:
+            obj['note'] = args.note
+        return obj
+    _stage_claim_commit(root, task, mutate, f'close {task} by {actor}')
+    print('CLOSED')
+    return 0
+
+
+def _emit_claims(claims, as_json):
+    if as_json:
+        print(json.dumps(claims, indent=2, sort_keys=True))
+    elif not claims:
+        print('No matching claims.')
+    else:
+        for task in sorted(claims):
+            c = claims[task]
+            print(f"{task}: {c.get('actor')}@{c.get('machine')} state={c.get('state')} "
+                  f"started={c.get('started_utc')} updated={c.get('updated_utc')} branch={c.get('branch')}")
+
+
+def claims_cmd(root, args):
+    if args.touch:
+        task = identifier(args.touch)
+        if not args.actor:
+            raise ValueError('--touch requires --actor')
+        actor = identifier(args.actor)
+
+        def mutate(existing):
+            if existing is None or existing.get('state') != OPEN_CLAIM_STATE:
+                raise ValueError('no open claim for this task to touch')
+            if existing.get('actor') != actor:
+                raise ValueError(f"refused: held by {existing['actor']}, not {actor}")
+            return dict(existing, updated_utc=stamp())
+        _stage_claim_commit(root, task, mutate, f'touch {task} by {actor}')
+        print('TOUCHED')
+        return 0
+    tip = _fetch_claims_tip(root)
+    open_claims = {t: c for t, c in (_read_all_claims(root, f'origin/{CLAIMS_BRANCH}') if tip else {}).items()
+                   if c.get('state') == OPEN_CLAIM_STATE}
+    if args.actor:
+        open_claims = {t: c for t, c in open_claims.items() if c.get('actor') == identifier(args.actor)}
+    if args.stale is not None:
+        if args.stale <= 0:
+            raise ValueError('--stale must be a positive number of hours')
+        stale = {t: c for t, c in open_claims.items() if _is_stale(root, c, args.stale)}
+        _emit_claims(stale, args.json)
+        return 2 if stale else 0
+    _emit_claims(open_claims, args.json)
+    return 0
 
 
 def watch(root, args):
@@ -460,6 +745,14 @@ def parser():
     r.add_argument('--implementation', required=True); r.add_argument('--allocation', required=True)
     r.add_argument('--timeout', type=int, default=180)
     r.add_argument('--direct-agent-commit', action='store_true', help='explicit user-authorized fallback after Cursor quota exhaustion; truthful direct Git provenance')
+    r = sub.add_parser('claim'); r.add_argument('task'); r.add_argument('--actor', required=True)
+    r.add_argument('--machine', required=True); r.add_argument('--branch'); r.add_argument('--gh-ref'); r.add_argument('--note')
+    r = sub.add_parser('release'); r.add_argument('task'); r.add_argument('--actor', required=True)
+    r.add_argument('--force-by-commander'); r.add_argument('--note')
+    r = sub.add_parser('close'); r.add_argument('task'); r.add_argument('--actor', required=True)
+    r.add_argument('--force-by-commander'); r.add_argument('--gh-ref'); r.add_argument('--note')
+    r = sub.add_parser('claims'); r.add_argument('--json', action='store_true')
+    r.add_argument('--stale', type=int); r.add_argument('--actor'); r.add_argument('--touch')
     return p
 
 
@@ -468,9 +761,16 @@ def main():
     try:
         root = root_dir()
         action = {'register': register, 'report': report, 'dispatch': dispatch, 'ack': acknowledge,
-                  'watch': watch, 'publish': publish}.get(args.command)
-        checkpoint(root) if args.command == 'checkpoint' else action(root, args)
-        return 0
+                  'watch': watch, 'publish': publish, 'claim': claim_cmd, 'release': release_cmd,
+                  'close': close_cmd, 'claims': claims_cmd}.get(args.command)
+        if args.command == 'checkpoint':
+            checkpoint(root)
+            return 0
+        result = action(root, args)
+        return result if isinstance(result, int) else 0
+    except ClaimNotCounted as exc:
+        print(f'NOT_COUNTED: {exc}', file=sys.stderr)
+        return 3
     except (RuntimeError, ValueError, KeyError, OSError, subprocess.TimeoutExpired) as exc:
         print(f'coord: {exc}', file=sys.stderr)
         return 1

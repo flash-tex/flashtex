@@ -1,0 +1,133 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{siunitx}
+
+\title{Results: Thermal Conductivity Measurements Across Sample Batches}
+\author{Materials Characterization Group}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+This document reports thermal conductivity, density, and tensile strength
+measurements collected across four sample batches of a composite laminate
+material. All measurements were performed under controlled laboratory
+conditions, with uncertainties reported at the one-standard-deviation
+level unless otherwise noted. Section~\ref{sec:conductivity} reports the
+conductivity results using the modern \texttt{siunitx} unit macros, while
+Section~\ref{sec:density} reports density and strength results using the
+legacy \texttt{\textbackslash SI} and \texttt{\textbackslash si} macros for
+comparison, since both forms remain common in the literature this study
+draws on.
+
+\section{Thermal Conductivity}
+\label{sec:conductivity}
+Table~\ref{tab:conductivity} summarizes the measured thermal conductivity
+for each batch at three test temperatures, given as
+\qty{25}{\celsius}, \qty{75}{\celsius}, and \qty{125}{\celsius}. Values are
+reported in \unit{\watt\per\meter\per\kelvin}, with sample counts and
+standard deviations given alongside each mean.
+
+\begin{table}[h]
+\centering
+\caption{Thermal conductivity (\unit{\watt\per\meter\per\kelvin}) by batch and
+temperature.}
+\label{tab:conductivity}
+\begin{tabular}{l S[table-format=1.3] S[table-format=1.3] S[table-format=1.3]}
+\toprule
+{Batch} & {\qty{25}{\celsius}} & {\qty{75}{\celsius}} & {\qty{125}{\celsius}} \\
+\midrule
+A1 & 0.842 & 0.901 & 0.958 \\
+A2 & 0.831 & 0.889 & 0.947 \\
+B1 & 0.917 & 0.972 & 1.034 \\
+B2 & 0.905 & 0.963 & 1.021 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Across all four batches, conductivity increases approximately linearly
+with temperature over the tested range, and batches B1 and B2 consistently
+outperform A1 and A2, which is consistent with the higher filler fraction
+used in the B-series formulation. The largest single measurement,
+\qty{1.034}{\watt\per\meter\per\kelvin} for batch B1 at
+\qty{125}{\celsius}, remains well within the manufacturer's rated
+operating envelope of \qty{1.2}{\watt\per\meter\per\kelvin}.
+
+Table~\ref{tab:stats} reports summary statistics across all batches
+combined, including the sample count, mean, and standard deviation at each
+temperature, using \texttt{multicolumn} and \texttt{cmidrule} to group the
+per-temperature statistics under shared headers.
+
+\begin{table}[h]
+\centering
+\caption{Summary statistics across all batches.}
+\label{tab:stats}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+& \multicolumn{3}{c}{\qty{25}{\celsius}} & \multicolumn{3}{c}{\qty{75}{\celsius}} & \multicolumn{3}{c}{\qty{125}{\celsius}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+{} & {$n$} & {Mean} & {SD} & {$n$} & {Mean} & {SD} & {$n$} & {Mean} & {SD} \\
+\midrule
+All batches & 4 & 0.874 & 0.041 & 4 & 0.931 & 0.040 & 4 & 0.990 & 0.041 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The standard deviation at each temperature is small relative to the mean,
+of order \num{4e-2}, indicating good repeatability across the four
+batches. We note that the sample size per batch was $n = \num{12}$
+individual coupons, so the batch means reported in
+Table~\ref{tab:conductivity} are themselves averages over a reasonably
+large number of measurements, and the pooled standard deviations in
+Table~\ref{tab:stats} should be interpreted accordingly.
+
+\section{Density and Tensile Strength}
+\label{sec:density}
+For comparison with legacy laboratory notebooks, this section reports
+density and tensile strength using the older \si{} and \SI{} macro forms.
+Density was measured as \SI{1.58}{\gram\per\centi\meter\cubed} for the
+A-series batches and \SI{1.64}{\gram\per\centi\meter\cubed} for the
+B-series batches, consistent with the higher filler loading noted above.
+Table~\ref{tab:strength} reports tensile strength alongside elongation at
+break for all four batches.
+
+\begin{table}[h]
+\centering
+\caption{Tensile strength and elongation at break.}
+\label{tab:strength}
+\begin{tabular}{l S[table-format=3.1] S[table-format=1.2]}
+\toprule
+{Batch} & {Strength (\si{\mega\pascal})} & {Elongation (\si{\percent})} \\
+\midrule
+A1 & 142.3 & 2.11 \\
+A2 & 138.7 & 2.04 \\
+B1 & 156.9 & 1.87 \\
+B2 & 151.2 & 1.92 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The B-series batches show higher tensile strength but lower elongation at
+break than the A-series batches, a trade-off that is typical of increased
+filler loading in composite laminates: the additional filler stiffens the
+matrix and raises peak strength, at the cost of the ductility that allows
+the A-series material to elongate further before fracture. Combined with
+the conductivity results in Section~\ref{sec:conductivity}, these
+measurements suggest that batch selection should be guided by the relative
+importance of thermal performance versus mechanical ductility in the
+intended application, since no single batch dominates on every axis
+studied here.
+
+\section{Conclusion}
+Across all measured properties, the B-series formulation offers higher
+thermal conductivity and tensile strength than the A-series formulation,
+at the cost of reduced elongation at break. These results, summarized in
+Tables~\ref{tab:conductivity}, \ref{tab:stats}, and \ref{tab:strength},
+will inform the batch selection guidance issued alongside the next
+revision of the material datasheet.
+
+\end{document}

@@ -140,6 +140,13 @@ Git commits with truthful provenance and the authenticated local user as coautho
 Do not wait for exhausted Cursor quota. Other missing-authentication cases must
 use an already-authorized execution route or publish a concrete recovery blocker.
 
+Before starting a task, claim it with `coord.py claim <task-id> --actor <id> --machine
+<alias>` on the dedicated `coordination-claims` branch (never main); it refuses with
+`LOST: held by <actor> since <utc>` if another actor already holds it. Call `coord.py
+claims --touch <task-id> --actor <id>` at each checkpoint to keep the claim fresh, and
+`coord.py release`/`close` it (the latter with `--gh-ref`) when you stop or merge. See
+[Claims](docs/coordination-cli.md#claims) for the full mechanics and exit codes.
+
 There is exactly one active Commander. A successor may claim command only after
 either (a) the current Commander publishes an explicit quiesced handoff naming that
 successor and confirms its publication/integration jobs are stopped, or (b) the

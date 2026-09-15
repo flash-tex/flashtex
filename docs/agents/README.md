@@ -10,6 +10,12 @@ Run `python3 scripts/coord.py checkpoint` to fetch updates and discover assignme
 Registration, reports, explicit acknowledgements, dispatch, guarded Cursor
 publication, and a deadline-bounded watcher are implemented with no Python dependencies.
 
+Claim before starting a task (`coord.py claim <task-id> --actor <id> --machine <alias>`),
+call `coord.py claims --touch <task-id> --actor <id>` at each checkpoint, and close it
+on merge (`coord.py close <task-id> --actor <id> --gh-ref <url>`) — see
+[Claims](../coordination-cli.md#claims). Claims live on the dedicated
+`coordination-claims` branch; never claim on main.
+
 Start with the [orchestration master plan](../../ORCHESTRATION.md) and the
 [Commander bulletin](../../coordination/COMMANDER.md). The user designated the primary
 Codex agent on `linux-primary` as Commander. Workers register, acknowledge bounded

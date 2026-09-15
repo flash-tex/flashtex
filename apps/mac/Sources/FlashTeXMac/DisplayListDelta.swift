@@ -2,11 +2,13 @@ import CryptoKit
 import Foundation
 import FlashTeXProtocol
 
-/// ISOLATED consumer of `display-list-v2-delta`
-/// (crates/render-pipeline/docs/proposals/display-list-v2-delta.md r5,
-/// Commander 5647057936: implementation/testing only). Nothing here runs
-/// unless `FLASHTEX_DISPLAY_DELTA=1`; the helper route is untouched (FT-049
-/// sibling-type change pending); the full `display_list` path is unchanged.
+/// Consumer of `display-list-v2-delta` (docs/proposals/display-list-v2-delta.md
+/// r5) on the direct worker route: requested next to `display-list-v2` whenever
+/// the v2 pane holds an installed base (`ShellModel.compile`), applied in
+/// `receiveDisplayListV2`. The producer decides per request; a full
+/// `display_list` line is handled exactly as before. The helper route is
+/// untouched (FT-049 sibling-type change pending). `FLASHTEX_DISPLAY_DELTA=0`
+/// turns the request off (the producer then always answers full).
 ///
 /// Responsibilities: `dl2-canon-1` digests over the semantic model; exact
 /// `page_bytes` verification (changed pages: the wire length recorded by the
@@ -23,8 +25,18 @@ enum DisplayListDelta {
     static let maxSnapshotPages = 1024
     static let maxSnapshotBytes = 16 * 1024 * 1024
 
-    /// `FLASHTEX_DISPLAY_DELTA=1` opts the direct worker route in; anything else is OFF.
-    static var enabled: Bool { ProcessInfo.processInfo.environment["FLASHTEX_DISPLAY_DELTA"] == "1" }
+    /// On unless `FLASHTEX_DISPLAY_DELTA=0`.
+    static var enabled: Bool { ProcessInfo.processInfo.environment["FLASHTEX_DISPLAY_DELTA"] != "0" }
+    /// `protocol/proposals/display-list-v2-only.md`: with the v2 pane active the
+    /// runtime-v1 `pages` are dead weight (2.5 MB per keystroke on a 60 KB
+    /// body); the producer elides them when it emits a sibling. On unless
+    /// `FLASHTEX_DISPLAY_V2_ONLY=0`.
+    static let v2OnlyCapability = "display-list-v2-only"
+    static var v2OnlyEnabled: Bool { ProcessInfo.processInfo.environment["FLASHTEX_DISPLAY_V2_ONLY"] != "0" }
+    /// The per-request capabilities (never part of the mode set
+    /// `requestedLayoutCapabilities`; echoed only on replies that honour them).
+    static let perRequestCapabilities: Set<String> = [capability, v2OnlyCapability]
+    static func stripPerRequest(_ caps: [String]) -> [String] { caps.filter { !perRequestCapabilities.contains($0) } }
 
     // MARK: dl2-canon-1
 
@@ -351,7 +363,7 @@ enum DisplayListDelta {
         let list = RenderingV2.DisplayList(renderFormat: d.renderFormat, coordinateUnit: d.coordinateUnit, colorSpace: d.colorSpace,
                                            textExtraction: d.textExtraction, projectId: d.projectId, revision: d.revision,
                                            requiredFeatures: d.requiredFeatures, documents: d.documents, fonts: d.fonts,
-                                           pages: pages, diagnostics: d.diagnostics)
+                                           pages: pages, diagnostics: d.diagnostics, navigation: installed.list.navigation)
         guard hex(listDigest(list, pageDigests: digests)) == d.listDigest else { throw Refusal.listDigestMismatch }
         return (RenderingV2.Envelope(protocolVersion: d.protocolVersion, id: d.id, type: RenderingV2.messageType, payload: list), d.pageBytes, target)
     }

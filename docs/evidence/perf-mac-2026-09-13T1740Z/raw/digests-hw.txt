@@ -1,0 +1,20 @@
+33129d73db44a740 HW1 delete-restore-line
+bbd07d9f37b998ae HW1 delete-restore-line +v2
+159d3b4f1dd919e5 HW1 full
+9004a8fc271f105b HW1 full +v2
+3d72278f62d4a508 HW1 type-display-eq
+3daa1e8a45575704 HW1 type-display-eq +v2
+74a7696c1da9658e HW1 type-inline-math
+7d470842ca93ec2e HW1 type-inline-math +v2
+24eb940f75511daa HW1 type-paragraph
+48cc5e02255c169e HW1 type-paragraph +v2
+a475d11b86ce4fc3 HW2 delete-restore-line
+fa62d8cde4d90db7 HW2 delete-restore-line +v2
+c8dffdfca481f5f5 HW2 full
+aca3de8d73c99934 HW2 full +v2
+fad6ad9d5bc5f585 HW2 type-display-eq
+43c88ebe112a557c HW2 type-display-eq +v2
+43cd5205a8b52291 HW2 type-inline-math
+4cf225c64f80a6cb HW2 type-inline-math +v2
+f21885146278ea7d HW2 type-paragraph
+59868a282cf7895f HW2 type-paragraph +v2

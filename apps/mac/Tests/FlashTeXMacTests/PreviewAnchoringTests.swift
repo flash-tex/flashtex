@@ -1,12 +1,14 @@
 import XCTest
 import SwiftUI
 import FlashTeXProtocol
+import HostedWindows
 @testable import FlashTeXMac
 
 /// Gap 5 — preview scroll anchoring across a page-count change, a stale
 /// candidate and a pane resize. Pure `PreviewAnchor` checks first; then the
 /// `PreviewAnchorKeeper` probe measured inside real `NSScrollView`s hosted
-/// off-screen (a window at x = -10000, never made key: no focus is stolen).
+/// off-screen by `HostedWindowSupport.window` (never made key: no focus is
+/// stolen, and the window is parked clear of every display).
 /// Corrections are reported in points; the real-compiler and real
 /// `PreviewView` cases print what they measured and assert only what the
 /// hosted view actually contains (the v1 hook lives in a parent-retained file
@@ -141,7 +143,8 @@ final class PreviewAnchoringTests: XCTestCase {
         let window: NSWindow
         let hosting: NSHostingView<V>
         init(_ view: V, width: CGFloat, height: CGFloat) {
-            window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: width, height: height), styleMask: [.titled], backing: .buffered, defer: false)
+            HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+            window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.titled], backing: .buffered, defer: false)
             hosting = NSHostingView(rootView: view)
             window.contentView = hosting
             window.orderFrontRegardless() // off-screen and never key: no focus change

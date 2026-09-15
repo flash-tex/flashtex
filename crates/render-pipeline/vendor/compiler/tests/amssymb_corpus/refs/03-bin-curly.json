@@ -1,0 +1,101 @@
+{
+ "fixture": "03-bin-curly.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Curly",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 104.8385,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋓",
+    "x": 113.6495,
+    "y_top": 83.955
+   },
+   {
+    "text": "b",
+    "x": 124.2741,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋒",
+    "x": 131.9051,
+    "y_top": 83.955
+   },
+   {
+    "text": "c",
+    "x": 142.5297,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋏",
+    "x": 150.2217,
+    "y_top": 83.955
+   },
+   {
+    "text": "d",
+    "x": 161.9784,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋎",
+    "x": 170.7153,
+    "y_top": 83.955
+   },
+   {
+    "text": "e",
+    "x": 182.4601,
+    "y_top": 83.955
+   },
+   {
+    "text": "⊻",
+    "x": 190.5394,
+    "y_top": 83.955
+   },
+   {
+    "text": "f",
+    "x": 200.4993,
+    "y_top": 83.955
+   },
+   {
+    "text": "⊼",
+    "x": 210.2141,
+    "y_top": 83.955
+   },
+   {
+    "text": "g",
+    "x": 220.1739,
+    "y_top": 83.955
+   },
+   {
+    "text": "⩞",
+    "x": 228.8642,
+    "y_top": 83.955
+   },
+   {
+    "text": "h",
+    "x": 238.8241,
+    "y_top": 83.955
+   },
+   {
+    "text": "end.",
+    "x": 249.4606,
+    "y_top": 83.955
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "brace_extents": [
+  []
+ ]
+}

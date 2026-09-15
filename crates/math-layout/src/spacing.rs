@@ -4,14 +4,19 @@ use crate::mathlist::AtomClass;
 use crate::style::Style;
 
 /// The amount of space between two adjacent atoms.
+///
+/// The muskip values are plain.tex's (TeX Live 2026
+/// `tex/plain/base/plain.tex` lines 373–375), which LaTeX keeps:
+/// `\thinmuskip=3mu`, `\medmuskip=4mu plus 2mu minus 4mu`,
+/// `\thickmuskip=5mu plus 5mu`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Space {
     None,
     /// `\thinmuskip` = 3mu.
     Thin,
-    /// `\medmuskip` = 4mu (plus 2mu minus 4mu; stretch is ignored here).
+    /// `\medmuskip` = 4mu plus 2mu minus 4mu.
     Medium,
-    /// `\thickmuskip` = 5mu (plus 5mu; stretch is ignored here).
+    /// `\thickmuskip` = 5mu plus 5mu.
     Thick,
 }
 
@@ -23,6 +28,23 @@ impl Space {
             Space::Thin => 3.0,
             Space::Medium => 4.0,
             Space::Thick => 5.0,
+        }
+    }
+
+    /// The stretch in mu.
+    pub fn stretch_mu(self) -> f64 {
+        match self {
+            Space::Medium => 2.0,
+            Space::Thick => 5.0,
+            Space::None | Space::Thin => 0.0,
+        }
+    }
+
+    /// The shrink in mu.
+    pub fn shrink_mu(self) -> f64 {
+        match self {
+            Space::Medium => 4.0,
+            Space::None | Space::Thin | Space::Thick => 0.0,
         }
     }
 }

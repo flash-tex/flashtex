@@ -305,6 +305,14 @@ also listed in `docs/proposals/rendering-abi.md`:
   (TeX §1076, `\hbox` in math is an Ord). `mathtext.rs` currently passes a
   placeholder through `Nucleus::Text` + `text_glyph` and substitutes the hbox
   after layout; the variant removes that indirection.
+- **math-layout**: re-pin `vendor/math-layout` to PR #161 (`SourceTag` on
+  atoms and placed glyphs/rules), then enable the `math-glyph-spans` feature
+  (and promote it to `default`, as `amsmath-inline` was): math clusters and
+  rules then carry the source range of the atom that produced them (scripts,
+  fraction parts, `\left`/`\right` each to its own command, radical signs,
+  accents, `\text` runs, grid fences) instead of the whole formula, and
+  `MathRec::span_paints` paints leaves per source range (the hook for xcolor
+  ranges from #150/#158). Positions are unchanged; `tests/math_glyph_spans.rs`.
 - **compiler**: adopt the `Nucleus::Text` candidate (hw1-text-candidate +
   comment-fix) so `\text{...}` reaches the pipeline; then re-pin
   `vendor/compiler` and drop the `compiler-text-nucleus` feature gate.

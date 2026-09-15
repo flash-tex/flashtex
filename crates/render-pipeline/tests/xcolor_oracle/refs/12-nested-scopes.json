@@ -1,0 +1,97 @@
+{
+ "fixture": "12-nested-scopes.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; glyphs [text, x, y_top, fill]; rules [x, top, width, height, fill]",
+ "pages": [
+  {
+   "glyphs": [
+    [
+     "a",
+     89.559,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "b",
+     99.3097,
+     83.955,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "c",
+     109.7226,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     118.8229,
+     83.955,
+     "0 1 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     129.224,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "f",
+     138.3362,
+     83.955,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "g",
+     145.8106,
+     83.955,
+     "0.5 0 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     155.5732,
+     83.955,
+     "1 0.5 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     165.9742,
+     83.955,
+     "0.5 0 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "j",
+     173.1235,
+     83.955,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "k",
+     180.6098,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     ".",
+     186.7883,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ]
+   ],
+   "rules": []
+  }
+ ]
+}

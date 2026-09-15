@@ -1,0 +1,475 @@
+{
+ "passed": 35,
+ "total": 36,
+ "tolerance_bp": 0.5,
+ "fixtures": [
+  {
+   "fixture": "01-short-line-bracket",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 10,
+   "within_tol": 10,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "02-long-line-bracket",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 34,
+   "within_tol": 34,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "03-par-start-bracket",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 11,
+   "within_tol": 11,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "04-equation-short",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 12,
+   "unaligned": 0,
+   "worst_bp": 0.003,
+   "sample": []
+  },
+  {
+   "fixture": "05-equation-long",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 36,
+   "within_tol": 36,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "06-equation-leqno",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 42,
+   "within_tol": 42,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "07-equation-fleqn",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 41,
+   "within_tol": 41,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "08-fleqn-leqno",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 12,
+   "unaligned": 0,
+   "worst_bp": 0.002,
+   "sample": []
+  },
+  {
+   "fixture": "09-long-equation-number-below",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 38,
+   "within_tol": 38,
+   "unaligned": 0,
+   "worst_bp": 0.003,
+   "sample": []
+  },
+  {
+   "fixture": "10-long-equation-leqno-above",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 38,
+   "within_tol": 38,
+   "unaligned": 0,
+   "worst_bp": 0.002,
+   "sample": []
+  },
+  {
+   "fixture": "11-dollars-short",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 10,
+   "within_tol": 10,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "12-dollars-eqno",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 35,
+   "within_tol": 35,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "13-dollars-leqno",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 11,
+   "within_tol": 11,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "14-equation-star",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 37,
+   "within_tol": 37,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "15-align-tag-notag-eqref",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 22,
+   "within_tol": 22,
+   "unaligned": 4,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "16-gather-numbers",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 20,
+   "within_tol": 20,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "17-numberwithin-section",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 16,
+   "within_tol": 16,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "18-subequations",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 24,
+   "within_tol": 24,
+   "unaligned": 0,
+   "worst_bp": 0.109,
+   "sample": []
+  },
+  {
+   "fixture": "19-itemize-display",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 26,
+   "within_tol": 26,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "20-enumerate-nested-display",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 34,
+   "within_tol": 34,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "21-after-heading",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 16,
+   "within_tol": 16,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "22-page-bottom",
+   "pass": true,
+   "pages": [
+    2,
+    2
+   ],
+   "aligned": 708,
+   "within_tol": 708,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "23-page-top",
+   "pass": true,
+   "pages": [
+    2,
+    2
+   ],
+   "aligned": 734,
+   "within_tol": 734,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "24-11pt-short-long",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 38,
+   "within_tol": 38,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "25-12pt-short-long",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 38,
+   "within_tol": 38,
+   "unaligned": 0,
+   "worst_bp": 0.006,
+   "sample": []
+  },
+  {
+   "fixture": "26-multline-number",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 18,
+   "within_tol": 18,
+   "unaligned": 0,
+   "worst_bp": 0.004,
+   "sample": []
+  },
+  {
+   "fixture": "27-display-then-blank-line",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 11,
+   "within_tol": 11,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "28-line-ends-inline-math",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 17,
+   "within_tol": 17,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "29-quote-display",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 16,
+   "within_tol": 16,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "30-widow-display",
+   "pass": true,
+   "pages": [
+    2,
+    2
+   ],
+   "aligned": 686,
+   "within_tol": 686,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "31-tag-equation",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 11,
+   "within_tol": 11,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "32-consecutive-displays",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 12,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "33-wide-tag-shifts-formula",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 43,
+   "within_tol": 43,
+   "unaligned": 0,
+   "worst_bp": 0.004,
+   "sample": []
+  },
+  {
+   "fixture": "34-parindent-medium-line",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 17,
+   "within_tol": 17,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "35-12pt-fleqn-leqno-align",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 10,
+   "within_tol": 10,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  },
+  {
+   "fixture": "36-cm-default-fonts",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 38,
+   "within_tol": 38,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
+  }
+ ]
+}

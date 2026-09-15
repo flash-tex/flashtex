@@ -9,20 +9,28 @@
 //! TeX engine is invoked at any point. See README.md for scope, sibling
 //! pins and limitations.
 
+pub mod date;
+pub use date::TodayDate;
+pub mod abstractenv;
 pub mod adapter;
+pub(crate) mod amsthm;
 pub mod cff;
+pub mod delta;
 pub mod display;
 pub mod floats;
 pub mod fonts;
 pub mod graphics;
 pub mod ids;
 pub mod incremental;
+pub mod listings;
+pub mod longtable;
 pub mod mathalpha;
 pub mod mathfont;
 pub mod mathgrid;
 pub mod mathtex;
 pub mod mathtext;
 pub mod nfss;
+pub mod packages;
 pub mod pagebuild;
 pub mod params;
 pub mod pdf;
@@ -30,6 +38,7 @@ pub mod protocol;
 pub mod shape;
 pub mod style;
 pub mod table;
+pub mod tablecolor;
 pub mod tfm;
 pub mod tikz;
 pub mod toc;
@@ -77,6 +86,23 @@ pub struct RenderOptions {
     /// (through project-files' rooted reads). `None`: images are reported
     /// unavailable.
     pub project_root: Option<std::path::PathBuf>,
+    /// The date `\today` renders, supplied by the caller in the compile
+    /// request (`payload.date`) rather than read from the clock here: this
+    /// pipeline must stay a pure function of its inputs
+    /// (`protocol/proposals/runtime-v1-request-date.md`).
+    ///
+    /// The default is [`TodayDate::EPOCH`], byte-for-byte what the pipeline
+    /// rendered before the field existed, so every old client and every
+    /// committed fixture is unchanged.
+    ///
+    /// **Reaches the parser.** `vendor/compiler` (pin `ea4ee5c8`) carries
+    /// `parser::parse_project_with`, and `request-date` is a default Cargo
+    /// feature (`Cargo.toml`), so this value is threaded, cache-keyed and
+    /// handed to the compiler by default: `\today` renders the supplied date,
+    /// not the epoch, in an ordinary build. Same convention as
+    /// `amsmath-inline`, which went default after its own re-pin.
+    /// `--no-default-features` still builds against the epoch-only path.
+    pub today: TodayDate,
 }
 
 impl Default for RenderOptions {
@@ -86,6 +112,7 @@ impl Default for RenderOptions {
             default_parindent_pt: 0.0,
             default_secnumdepth: 2,
             project_root: None,
+            today: TodayDate::EPOCH,
         }
     }
 }
@@ -123,12 +150,45 @@ pub fn render_cached(
     let any_floats = float_envs.iter().any(|e| !e.is_empty());
     let masked: Vec<String> = documents.iter().zip(&float_envs).map(|(d, e)| if e.is_empty() { String::new() } else { floats::mask(d.text, e) }).collect();
     let texts: Vec<&str> = documents.iter().zip(&float_envs).zip(&masked).map(|((d, e), m)| if e.is_empty() { d.text } else { m.as_str() }).collect();
+    // `multicols` environments are laid out by `typeset::multicol`: their
+    // markup is blanked before the compiler parses (offsets unchanged).
+    let multicol_scans: Vec<typeset::multicol::Scan> = texts.iter().map(|t| typeset::multicol::scan(t)).collect();
+    let multicol_masked: Vec<Option<String>> = texts.iter().zip(&multicol_scans).map(|(t, s)| s.masked(t)).collect();
+    let texts: Vec<&str> = texts.iter().zip(&multicol_masked).map(|(t, m)| m.as_deref().unwrap_or(t)).collect();
     let parse_docs: Vec<SourceDocument<'_>> = documents.iter().zip(&texts).map(|(d, t)| SourceDocument { path: d.path, text: t }).collect();
+    // The request's date reaches `\today` here. `request-date` is a default
+    // Cargo feature (vendor/compiler carries `parser::parse_project_with`),
+    // so this is the normal build path; `--no-default-features` falls back to
+    // the vendored parser rendering the epoch, as it always has. See
+    // `RenderOptions::today`.
+    #[cfg(feature = "request-date")]
+    let parsed = flashtex_compiler::parser::parse_project_with(
+        &parse_docs,
+        entry_path,
+        &flashtex_compiler::parser::ParseOptions {
+            today: flashtex_compiler::date::TodayDate::new(
+                options.today.year(),
+                options.today.month(),
+                options.today.day(),
+            )
+            .expect("RenderOptions::today is already a validated civil date"),
+        },
+    );
+    #[cfg(not(feature = "request-date"))]
     let parsed = flashtex_compiler::parser::parse_project(&parse_docs, entry_path);
-    let (float_numbers, float_label_values) = floats::number(&float_envs);
-    let mut image_cache = floats::ImageCache::default();
+    // report/book number floats within the chapter (`floats::number`).
+    let float_chapters = texts.get(documents.iter().position(|d| d.path == entry_path).unwrap_or(0)).and_then(|t| flashtex_class_geometry::DocumentSetup::from_preamble(t)).and_then(|s| match s.class {
+        flashtex_class_geometry::ClassKind::Report => Some(false),
+        flashtex_class_geometry::ClassKind::Book => Some(true),
+        _ => None,
+    });
     let paths: Vec<&str> = documents.iter().map(|d| d.path).collect();
     let entry_index = documents.iter().position(|d| d.path == entry_path).unwrap_or(0);
+    // Floats are numbered, and listed, in the order the `\input`/`\include`
+    // tree is read, not in `documents` order.
+    let reading_order = adapter::reading_order(&texts, &paths, entry_index);
+    let (float_numbers, float_label_values) = floats::number(&float_envs, &texts, &reading_order, float_chapters);
+    let mut image_cache = floats::ImageCache::default();
     // The compiler does not know `tikzpicture`: it reports the environment
     // and every TikZ command inside it, and the pipeline typesets the
     // picture itself (`adapter` / `tikz`). Those compiler diagnostics are
@@ -140,14 +200,30 @@ pub fn render_cached(
     let in_picture = |s: &flashtex_compiler::Span| picture_ranges.get(s.document.0).is_some_and(|r| r.iter().any(|(a, b)| s.start >= *a && s.start < *b));
     let mut labels = adapter::Labels::from_parsed(&parsed);
     labels.values.extend(float_label_values);
+    // `\label` given inside an `lstlisting`'s keys (`crate::listings`).
+    labels.values.extend(listings::label_values(&texts));
     // Contents lists: entry pages come from the previous pass (`toc`).
     let entry_text = texts.get(entry_index).copied().unwrap_or("");
     let has_lists = toc::has_lists(entry_text);
-    labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>());
+    let has_class = adapter::class_options(entry_text).is_some();
+    labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>(), &float_numbers);
+    if has_lists && listings::present(&texts) {
+        labels.floats.extend(toc::listing_entries(&texts));
+    }
+    labels.reading_order = reading_order;
     // Entry titles from source bytes (`\addcontentsline`, `\chapter`,
     // `\part`, captions) are set as body text: one parse per document.
-    if has_lists {
-        let spans = toc::entry_spans(entry_text, flashtex_compiler::DocumentId(entry_index), &labels.floats);
+    // A `listings` caption may hold any body command
+    // (`caption={Generating a starter \texttt{ftxc.toml}}`), so its range
+    // is parsed the same way.
+    let has_listings = listings::present(&texts);
+    if has_lists || has_listings {
+        let mut spans = if has_lists {
+            toc::entry_spans(entry_text, flashtex_compiler::DocumentId(entry_index), &labels.floats)
+        } else {
+            Vec::new()
+        };
+        spans.extend(listings::caption_spans(&texts));
         labels.entry_items = toc::entry_items(documents, entry_index, &texts, options, &labels, &spans);
     }
     // The compiler reports the list commands, `\addcontentsline` and
@@ -158,14 +234,32 @@ pub fn render_cached(
     let mut passes = 0;
     loop {
         passes += 1;
+        if let Some(c) = cache {
+            c.note_label_pass();
+        }
         let doc = adapter::adapt_cached(&texts, entry_index, &parsed, options, &labels, cache);
         let mut diagnostics: Vec<display::Diagnostic> = parsed
             .diagnostics
             .iter()
             .filter(|d| !d.span.as_ref().is_some_and(&in_picture))
             .filter(|d| !d.span.as_ref().is_some_and(&is_superseded))
+            .filter(|d| !packages::preamble_command_superseded(&d.message, has_class))
             .map(|d| display::Diagnostic::from_compiler(d, &paths))
+            // `\usepackage` gaps the pipeline fills (`packages`).
+            .filter_map(|mut d| {
+                d.message = packages::supersede_message(&d.message)?;
+                Some(d)
+            })
             .collect();
+        // `abstract`: the pipeline sets what the compiler reported as an
+        // unimplemented environment (`adapter::Doc::superseded`).
+        diagnostics.retain(|d| {
+            !doc.superseded.iter().any(|s| {
+                d.sources.iter().any(|r| {
+                    r.start_byte == s.start && paths.get(s.document.0).copied() == Some(&*r.path)
+                })
+            })
+        });
         diagnostics.extend(doc.diagnostics.iter().cloned());
         diagnostics.extend(doc.limitations.iter().map(|(code, span, message)| {
             display::Diagnostic::warning(
@@ -183,16 +277,19 @@ pub fn render_cached(
         } else {
             (Vec::new(), Vec::new())
         };
-        // `prepare` makes one spec per float, in `float_envs` order: the
+        // `prepare` makes one spec per float read, in `float_envs` order: the
         // caption's `\addcontentsline` lands on the float's page.
         if has_lists {
-            let keys = float_envs.iter().enumerate().flat_map(|(d, envs)| (0..envs.len()).map(move |i| toc::float_key(d, i)));
+            let keys = float_numbers.iter().enumerate().flat_map(|(d, nums)| nums.iter().enumerate().filter(|(_, n)| n.is_some()).map(move |(i, _)| toc::float_key(d, i)));
             for (spec, key) in float_specs.iter_mut().zip(keys) {
                 spec.labels.push(key);
             }
         }
         diagnostics.extend(float_diagnostics);
         let mut ctx = typeset::Context::with_texts(fonts, &doc.style, &paths, &texts);
+        ctx.set_math_colors(doc.math_colors.clone());
+        ctx.set_reading_order(labels.reading_order.clone());
+        typeset::multicol::attach(&mut ctx, &multicol_scans);
         let laid = typeset::build_with_floats(&mut ctx, &doc, cache, &float_specs);
         diagnostics.extend(ctx.take_diagnostics());
         if max_passes > 1 {
@@ -215,7 +312,7 @@ pub fn render_cached(
                 ));
             }
         }
-        let v2 = typeset::assemble(project_id, revision, documents, &doc.style, fonts, laid, diagnostics, cache);
+        let v2 = typeset::assemble(project_id, revision, documents, &doc.style, fonts, laid, diagnostics, cache, doc.page_color, doc.default_color);
         return Rendered {
             v2,
             elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,

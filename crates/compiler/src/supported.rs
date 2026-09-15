@@ -111,11 +111,19 @@ pub struct Inventory {
 }
 
 /// Text commands that have a dispatch arm but only ever emit a diagnostic.
-pub const TEXT_DIAGNOSTIC_ONLY: &[&str] = &["includegraphics", "frac", "sqrt"];
-
-/// `parser::BUILT_INS` names read only inside another command's argument
-/// (`\maketitle`'s title/author block); on their own they are diagnosed.
-pub const TEXT_CONTEXT_ONLY: &[&str] = &["thanks", "and", "today"];
+///
+/// `thanks` and `and` are meaningful only inside a `\title`/`\author`/`\date`
+/// argument, where `strip_thanks` and the `\and` author split consume them.
+/// They used to sit in a separate `TEXT_CONTEXT_ONLY` list documented as
+/// "on their own they are diagnosed", which was not true: neither had an arm,
+/// so both reached `parser::P::unsupported`, whose `debug_assert` on
+/// `BUILT_INS` panicked the debug build instead. They now have arms that
+/// really do diagnose, which is what this list means.
+///
+/// `today` was in that list too, and was wrong for a further reason: it
+/// renders in ordinary body text like any other kernel macro, so it is an
+/// inventory entry rather than a diagnostic.
+pub const TEXT_DIAGNOSTIC_ONLY: &[&str] = &["frac", "sqrt", "thanks", "and"];
 
 /// Dispatch arms that are not `parser::BUILT_INS` entries.
 const TEXT_EXTRA_ARMS: &[&str] = &["newtheorem", "theoremstyle"];
@@ -138,7 +146,6 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("refstepcounter", "{counter}", "increments a counter and makes it the current \\label value"),
     ("value", "{counter}", "a counter's value in a number context"),
     ("Alph", "{counter}", "a counter as an upper-case letter"),
-    ("fnsymbol", "{counter}", "a counter as a footnote symbol"),
     ("newlength", "{\\name}", "allocates a skip register"),
     ("settowidth", "{\\name}{text}", "sets a length from text measured by the expansion pass's box measurer (an approximation)"),
     ("settoheight", "{\\name}{text}", "sets a length from text height (an approximation, as \\settowidth)"),
@@ -149,6 +156,7 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("space", "", "expands to one space"),
     ("ignorespaces", "", "skips the spaces that follow"),
     ("jobname", "", "expands to texput"),
+    ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
 ];
 
 /// (name, arguments, description) for every `parser::BUILT_INS` entry that
@@ -156,9 +164,26 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
 const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("documentclass", "[options]{class}", "records the class and its 10pt/11pt/12pt size option; only the document body is typeset"),
     ("usepackage", "[options]{a,b,c}", "records packages; layout-neutral ones are silent, every other package warns that it is not implemented"),
-    ("setlength", "{\\length}{dimension}", "preamble \\parskip, and \\parindent of 0pt; other lengths warn"),
-    ("setlist", "[list]{options}", "enumitem itemsep and topsep; other keys warn"),
+    ("definecolor", "[class]{name}{model}{spec}", "colour definition in rgb, cmy, cmyk, gray, RGB, HTML or Gray (model lists pick the target model)"),
+    ("providecolor", "[class]{name}{model}{spec}", "\\definecolor unless the colour is already defined"),
+    ("xdefinecolor", "[class]{name}{model}{spec}", "xcolor synonym of \\definecolor"),
+    ("colorlet", "[class]{name}[model]{expression}", "names an xcolor expression, optionally converted to a model"),
+    ("definecolorset", "[class]{models}{head}{tail}{set}", "defines name,spec;... colours in one go"),
+    ("DefineNamedColor", "{named}{name}{model}{spec}", "driver named colour, as dvipsnam.def uses it"),
+    ("selectcolormodel", "{model}", "xcolor target model: natural, rgb, cmy, cmyk or gray"),
+    ("color", "[model]{expression}", "text colour for the rest of the group; pdfTeX's exact operator values"),
+    ("textcolor", "[model]{expression}{text}", "text in a colour"),
+    ("pagecolor", "[model]{expression}", "page background colour, document-wide"),
+    ("nopagecolor", "", "removes the page background colour"),
+    ("normalcolor", "", "back to the default text colour"),
+    ("colorbox", "[model]{expression}{text}", "text on a filled box \\fboxsep larger than its content"),
+    ("fcolorbox", "[model]{frame}{fill}{text}", "\\colorbox inside a \\fboxrule frame"),
+    ("setlength", "{\\length}{dimension}", "preamble page geometry and \\parskip; \\parindent of 0pt; other lengths warn"),
+    ("addtolength", "{\\length}{dimension}", "preamble page geometry and \\parskip; accumulates onto the current value"),
+    ("setlist", "[list]{options}", "enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn"),
     ("newcolumntype", "{X}[n]{spec}", "array column type expanded in later tabular specifications"),
+    ("arrayrulecolor", "[model]{colour}", "colortbl: colour of later table rules"),
+    ("doublerulesepcolor", "[model]{colour}", "colortbl: colour of the gap between double rules"),
     ("arraybackslash", "", "array no-op: \\\\ already ends the row inside p, m and b entries"),
     ("newcommand", "{\\name}[n]{body}", "defines a macro with 0-9 arguments; rejects an existing name"),
     ("renewcommand", "{\\name}[n]{body}", "redefines an existing macro"),
@@ -172,9 +197,24 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("subsection", "{...}", "numbered subsection heading; starred form unnumbered"),
     ("label", "{key}", "names the current section, equation or figure number"),
     ("ref", "{key}", "number of the labelled item"),
-    ("pageref", "{key}", "page number of the labelled item"),
+    ("pageref", "{key}", "page number of the labelled item, in the \\pagenumbering style in force at the label"),
+    ("thepage", "", "current page's number, resolved when the page is set, in the \\pagenumbering style in force here"),
+    ("cref", "*{key list}", "cleveref lower-case named references; consecutive ranges are compressed"),
+    ("Cref", "*{key list}", "cleveref capitalised named references; consecutive ranges are compressed"),
+    ("crefrange", "*{first}{last}", "cleveref named reference range"),
+    ("Crefrange", "*{first}{last}", "capitalised cleveref named reference range"),
+    ("cpageref", "*{key list}", "cleveref named page references"),
+    ("Cpageref", "*{key list}", "capitalised cleveref named page references"),
+    ("labelcref", "*{key list}", "cleveref label text without the reference name"),
+    ("crefname", "{type}{singular}{plural}", "cleveref lower-case singular and plural name override"),
+    ("Crefname", "{type}{singular}{plural}", "cleveref capitalised singular and plural name override"),
     ("caption", "{...}", "numbered \"Figure N:\" caption inside figure"),
-    ("item", "", "entry of an itemize or enumerate list"),
+    (
+        "captionof",
+        "{type}[short]{...}",
+        "numbered caption outside a float: \"Figure N:\" for figure, \"Table N:\" for table",
+    ),
+    ("item", "[label]", "entry of an itemize, enumerate or description list"),
     ("textbf", "{...}", "bold text"),
     ("textmd", "{...}", "medium-weight text"),
     ("textit", "{...}", "italic text"),
@@ -216,6 +256,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("Huge", "", "size declaration from the class size table"),
     ("par", "", "ends the paragraph"),
     ("hfill", "", "infinite-stretch horizontal glue"),
+    ("hrulefill", "", "\\hfill filled with a 0.4pt baseline rule (latex.ltx \\leaders\\hrule\\hfill)"),
+    ("dotfill", "", "\\hfill filled with dots in 0.44em boxes, centred (latex.ltx \\cleaders)"),
     ("hfil", "", "infinite-stretch horizontal glue (same order as \\hfill)"),
     ("hspace", "{dimension}", "fixed horizontal space; starred form identical"),
     ("quad", "", "1em of horizontal space"),
@@ -229,20 +271,56 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("pagestyle", "{style}", "accepted; no headers or footers are rendered"),
     ("noindent", "", "accepted no-op; paragraphs are never indented"),
     ("subsubsection", "{...}", "numbered subsubsection heading; starred form unnumbered"),
+    ("paragraph", "{...}", "run-in heading: bold, flush, set into the first line of the paragraph that follows it"),
+    ("subparagraph", "{...}", "run-in heading indented by \\parindent, set into the first line of the paragraph that follows it"),
     ("tableofcontents", "", "article contents list from the previous layout pass"),
     ("eqref", "{key}", "parenthesised equation number of the labelled item"),
-    ("url", "{url}", "monospaced URL text; links are not clickable"),
+    ("numberwithin", "[\\style]{counter}{parent}", "amsmath: counter reset by parent and printed \\theparent.\\style{counter} (equation, figure, table; theorem counters within section)"),
+    ("counterwithin", "{counter}{parent}", "counter reset by parent and printed \\theparent.\\arabic{counter}; starred form keeps the printed form"),
+    ("counterwithout", "{counter}{parent}", "undoes \\counterwithin; starred form keeps the printed form"),
+    ("hypersetup", "{key=value,...}", "hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them"),
+    ("lstset", "{key=value,...}", "listings defaults, global from that point on; the key names are checked and nothing is typeset here"),
+    ("url", "{url}", "monospaced URL text, breaking as url.sty does; links are not clickable"),
     ("href", "{url}{text}", "link text; links are not clickable"),
-    ("nolinkurl", "{url}", "monospaced URL text without a link"),
+    ("nolinkurl", "{url}", "monospaced URL text without a link, breaking as url.sty does"),
     ("footnote", "[n]{...}", "numbered mark and page-bottom footnote text"),
     ("footnotemark", "[n]", "footnote mark only"),
     ("footnotetext", "[n]{...}", "footnote text without a mark"),
+    ("fnsymbol", "{counter}", "a counter's value 1-9 as a footnote symbol"),
+    ("marginpar", "[left]{right}", "margin note set in the right margin at footnotesize; always the right side, with no collision avoidance between close notes"),
+    ("includegraphics", "*[keys]{file}", "image box in running text (graphicx keys as written)"),
+    ("scalebox", "{x}[y]{...}", "graphics.sty scaled box of the content"),
+    ("resizebox", "*{width}{height}{...}", "graphics.sty box scaled to a width and/or height; ! keeps the aspect ratio"),
+    ("rotatebox", "[keys]{angle}{...}", "graphicx rotated box; the box is the rotated bounding box"),
+    ("reflectbox", "{...}", "graphics.sty box mirrored left to right"),
+    ("graphicspath", "{{dir/}...}", "image search directories; no material"),
+    ("allowdisplaybreaks", "[0-4]", "amsmath page-break permission inside displays; no material"),
+    ("index", "{entry}", "makeidx index entry (|modifier, @sort key and !subentry live inside the braces): accepted, never typeset (no indexing backend)"),
+    ("glossary", "{entry}", "glossary entry: accepted, never typeset (no glossary backend)"),
     ("clearpage", "", "forces a page break"),
     ("cleardoublepage", "", "forces a page break (one-sided article)"),
+    ("c", "{letter}", "cedilla text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning"),
+    ("v", "{letter}", "caron text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning"),
+    ("u", "{letter}", "breve text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning"),
+    ("H", "{letter}", "double acute text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning"),
+    ("r", "{letter}", "ring text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning"),
+    ("k", "{letter}", "ogonek text accent (T1 only; OT1 reports it unavailable): the precomposed character the dfu tables declare; without one the bare letter and a warning"),
+    ("d", "{letter}", "dot-below text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning"),
+    ("b", "{letter}", "bar-below text accent: no dfu declarations, so the bare letter and a warning"),
+    ("capitalcaron", "{letter}", "capital caron text accent: an alias of \\v, the precomposed character the dfu tables declare"),
+    ("capitalbreve", "{letter}", "capital breve text accent: an alias of \\u, the precomposed character the dfu tables declare"),
+    ("capitalring", "{letter}", "capital ring text accent: an alias of \\r, the precomposed character the dfu tables declare"),
+    ("capitalogonek", "{letter}", "capital ogonek text accent: an alias of \\k (T1 only; OT1 reports it unavailable)"),
+    ("capitalhungarumlaut", "{letter}", "capital double-acute text accent: an alias of \\H, the precomposed character the dfu tables declare"),
+    ("capitalcedilla", "{letter}", "capital cedilla text accent: an alias of \\c, the precomposed character the dfu tables declare"),
     ("TeX", "", "latex.ltx logo: T, kern -.1667em, E lowered .5ex, kern -.125em, X"),
     ("LaTeX", "", "latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \\TeX"),
     ("LaTeXe", "", "\\LaTeX, kern .15em, 2 and a text-style subscript varepsilon"),
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
+    ("uline", "{...}", "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)"),
+    ("underline", "{...}", "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox"),
+    ("underbar", "{...}", "kernel text underline: Rule 10 rule like \\underline but content depth zeroed (fixed position)"),
+    ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
     ("thinspace", "", "text kern .16667em (math: thin muskip)"),
     ("negthinspace", "", "text kern -.16667em"),
     ("medspace", "", "text kern .2222em"),
@@ -251,13 +329,39 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("negthickspace", "", "text kern -.2777em"),
     ("enspace", "", "text kern .5em"),
     ("enskip", "", "horizontal glue of .5em"),
-    ("pagebreak", "[n]", "forces a page break"),
-    ("nopagebreak", "[n]", "accepted no-op; the layout never breaks there on its own"),
-    ("linebreak", "[n]", "line break"),
-    ("nolinebreak", "[n]", "accepted no-op"),
+    ("xspace", "", "word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"),
+    ("pagebreak", "[n]", "page-break penalty -\\@getpen{n} (4: a forced break); in a paragraph, after the line it is set on"),
+    ("nopagebreak", "[n]", "page-break penalty \\@getpen{n}; in a paragraph, after the line it is set on"),
+    ("linebreak", "[n]", "line-break penalty -\\@getpen{n} (4: a forced break, the line stays justified)"),
+    ("nolinebreak", "[n]", "line-break penalty \\@getpen{n}, the space before it moved after it"),
+    ("penalty", "<number>", "penalty node: in a paragraph a line-break penalty, between paragraphs a page-break penalty"),
+    ("nobreak", "", "\\penalty10000"),
+    ("allowbreak", "", "\\penalty0"),
+    ("goodbreak", "", "ends the paragraph, then \\penalty-500"),
+    ("filbreak", "", "ends the paragraph, then \\vfil\\penalty-200\\vfilneg"),
+    ("discretionary", "{pre}{post}{nobreak}", "discretionary break (plain text of each argument)"),
+    ("nobreakdash", "- -- ---", "amsmath: the dashes that follow, with no line break after them (\\nobreak)"),
+    ("tolerance", "=<number>", "line-breaking parameter, restored at the end of its group"),
+    ("pretolerance", "=<number>", "line-breaking parameter, restored at the end of its group"),
+    ("looseness", "=<number>", "line-breaking parameter for the next paragraph end"),
+    ("widowpenalty", "=<number>", "page-breaking parameter, restored at the end of its group"),
+    ("clubpenalty", "=<number>", "page-breaking parameter, restored at the end of its group"),
+    ("interlinepenalty", "=<number>", "page-breaking parameter, restored at the end of its group"),
+    ("emergencystretch", "=<dimen>", "line-breaking parameter, restored at the end of its group"),
+    ("sloppy", "", "\\tolerance 9999, \\emergencystretch 3em, \\hfuzz .5pt"),
+    ("fussy", "", "\\tolerance 200, \\emergencystretch 0pt, \\hfuzz .1pt"),
+    ("samepage", "", "\\interlinepenalty 10000 for the rest of the group"),
+    ("raggedbottom", "", "pages keep their natural height"),
+    ("flushbottom", "", "pages are stretched to the text height"),
+    ("enlargethispage", "*{dimension}", "the current page's text height grows by the dimension (* also shrinks its glue); pt/cm/.../\\baselineskip multiples"),
+    ("hyphenation", "{words}", "hyphenation exceptions: the hyphens mark each word's only break points"),
     ("vfill", "", "vertical glue filling the rest of the page"),
+    ("columnbreak", "[n]", "multicol: ends the current column of multicols (priority n, default 4)"),
+    ("newcolumn", "", "multicol: ends the current column of multicols, filling it"),
+    ("raggedcolumns", "", "multicol: columns keep their natural height"),
+    ("flushcolumns", "", "multicol: columns are stretched to one height (the default)"),
     ("thispagestyle", "{style}", "accepted; no headers or footers are rendered"),
-    ("pagenumbering", "{style}", "accepted; no page numbers are rendered"),
+    ("pagenumbering", "{style}", "resets the page counter to 1 and selects the \\thepage/\\pageref style (arabic, roman, Roman, alph, Alph); unknown styles fall back to arabic"),
     ("centering", "", "centres the following paragraphs"),
     ("Centering", "", "centres the following paragraphs (ragged2e form)"),
     ("raggedright", "", "left-aligned following paragraphs"),
@@ -265,17 +369,69 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("raggedleft", "", "right-aligned following paragraphs"),
     ("RaggedLeft", "", "right-aligned following paragraphs (ragged2e form)"),
     ("indent", "", "accepted; the first-line indent is diagnosed, not drawn"),
-    ("cite", "[note]{keys}", "numbered citation from thebibliography entries"),
-    ("nocite", "{keys}", "accepted no-op; there is no .bib pipeline"),
-    ("bibitem", "[label]{key}", "entry of thebibliography"),
+    ("cite", "[note]{keys}", "numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \\citet, or as \\citep when an optional argument follows"),
+    ("parencite", "[pre][post]{keys}", "biblatex parenthetical citation: [n] in numeric style"),
+    ("textcite", "[pre][post]{keys}", "biblatex textual citation: Author [n] in numeric style"),
+    ("autocite", "[pre][post]{keys}", "biblatex automatic citation, equivalent to \\parencite in this compiler"),
+    ("citet", "[pre][post]{keys}", "natbib textual citation: Name (Year); one optional argument is the post-note"),
+    ("citep", "[pre][post]{keys}", "natbib parenthetical citation: (Name, Year); one optional argument is the post-note"),
+    ("citealt", "[pre][post]{keys}", "natbib \\citet without the parentheses: Name Year"),
+    ("citealp", "[pre][post]{keys}", "natbib \\citep without the parentheses: Name, Year"),
+    ("citeauthor", "[pre][post]{keys}", "natbib author list alone, or biblatex author text; the starred form is the long list"),
+    ("citefullauthor", "[pre][post]{keys}", "natbib \\citeauthor*: the long author list"),
+    ("citeyear", "[pre][post]{keys}", "natbib year alone, or biblatex year text"),
+    ("citeyearpar", "[pre][post]{keys}", "natbib year in parentheses"),
+    ("citenum", "[pre][post]{keys}", "natbib \\bibitem number alone, whatever the citation style"),
+    ("citetext", "{text}", "natbib's citation delimiters around arbitrary text"),
+    ("Citet", "[pre][post]{keys}", "natbib \\citet with the author list's first letter uppercased"),
+    ("Citep", "[pre][post]{keys}", "natbib \\citep with the author list's first letter uppercased"),
+    ("Citealt", "[pre][post]{keys}", "natbib \\citealt with the author list's first letter uppercased"),
+    ("Citealp", "[pre][post]{keys}", "natbib \\citealp with the author list's first letter uppercased"),
+    ("Citeauthor", "[pre][post]{keys}", "natbib \\citeauthor with the author list's first letter uppercased"),
+    ("nocite", "{keys}", "biblatex includes keys, including * for every resource entry, without visible citation output"),
+    ("addbibresource", "[location]{file}", "biblatex registers a project-relative .bib resource"),
+    ("printbibliography", "[key=value,...]", "biblatex heading and formatted entries from the registered .bib resources"),
+    ("bibitem", "[label]{key}", "entry of thebibliography; natbib's [Author(Year)] and [Author, Year] labels feed author-year citations"),
     ("bibliography", "{files}", "diagnosed: .bib input is not read"),
     ("bibliographystyle", "{style}", "diagnosed: no effect without .bib support"),
     ("title", "{...}", "title for \\maketitle"),
     ("author", "{...}", "author block for \\maketitle; \\and and \\thanks inside it"),
     ("date", "{...}", "date for \\maketitle; \\today inside it"),
     ("maketitle", "", "article.cls title block"),
+    // letter.cls. Every one of these exists only under
+    // \documentclass{letter}; in any other class they are diagnosed, exactly
+    // as pdflatex's "Undefined control sequence" does.
+    ("address", "{lines}", "letter.cls return address (\\\\-separated lines), set by \\opening"),
+    ("signature", "{name}", "letter.cls name under the closing; falls back to \\name"),
+    ("name", "{name}", "letter.cls \\fromname, used when \\signature is empty"),
+    ("location", "{text}", "letter.cls \\fromlocation: recorded; only the firstpage footer would set it"),
+    ("telephone", "{number}", "letter.cls \\telephonenum: recorded; only the firstpage footer would set it"),
+    ("opening", "{salutation}", "letter.cls: return address and date flush right, the recipient, then the salutation"),
+    ("closing", "{text}", "letter.cls: closing and signature at \\longindentation, 6\\parskip apart"),
+    ("cc", "{text}", "letter.cls carbon-copy line, labelled 'cc:'"),
+    ("encl", "{text}", "letter.cls enclosure line, labelled 'encl:'"),
+    ("ps", "", "letter.cls postscript: a paragraph break and nothing else — it takes no argument"),
+    ("startbreaks", "", "letter.cls: re-allows page breaks after \\closing; no effect on this layout"),
+    ("stopbreaks", "", "letter.cls: forbids page breaks inside the closing; no effect on this layout"),
+    ("stopletter", "", "letter.cls hook run at \\end{letter}; empty in the class itself"),
+    ("makelabels", "", "letter.cls address-label page: accepted, not produced (no .aux round trip)"),
+    ("today", "", "the date carried by the compile request; this compiler never reads the clock"),
     ("newtheorem", "{env}[counter]{name}", "defines a numbered theorem-like environment (amsthm)"),
     ("theoremstyle", "{style}", "selects the amsthm style for following \\newtheorem"),
+    ("num", "[options]{number}", "siunitx number: digit groups, decimal marker, exponent, uncertainty, as an upright formula"),
+    ("unit", "[options]{units}", "siunitx unit: prefixes, powers, \\per as a power, fraction or solidus; literal m/s"),
+    ("si", "[options]{units}", "siunitx v2 name of \\unit"),
+    ("qty", "[options]{number}{units}", "siunitx quantity: number, unbreakable thin space, unit"),
+    ("SI", "[options]{number}[pre-unit]{units}", "siunitx v2 name of \\qty with an optional pre-unit"),
+    ("numlist", "[options]{numbers}", "siunitx list of ;-separated numbers joined by list-separator and \" and \""),
+    ("numrange", "[options]{number}{number}", "siunitx range: two numbers joined by range-phrase \" to \""),
+    ("qtylist", "[options]{numbers}{units}", "siunitx list of quantities, the unit repeated"),
+    ("qtyrange", "[options]{number}{number}{units}", "siunitx range of quantities, the unit repeated"),
+    ("SIlist", "[options]{numbers}{units}", "siunitx v2 name of \\qtylist"),
+    ("SIrange", "[options]{number}{number}{units}", "siunitx v2 name of \\qtyrange"),
+    ("ang", "[options]{degrees;minutes;seconds}", "siunitx angle with degree, minute and second marks"),
+    ("sisetup", "{options}", "siunitx settings for the following commands (document-global in this model)"),
+    ("DeclareSIUnit", "[options]{\\name}{units}", "defines a siunitx unit macro usable inside \\unit and \\qty"),
 ];
 
 const SIZE_DECLARATIONS: &[&str] = &[
@@ -294,6 +450,56 @@ const SIZE_DECLARATIONS: &[&str] = &[
 /// Math `command_atom` arms and list-level switches, grouped by behaviour:
 /// (names, arguments, description, renders).
 const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
+    (&["color"], "[model]{expression}", "colours the rest of the math group", true),
+    (&["textcolor"], "[model]{expression}{body}", "math body in a colour", true),
+    (
+        &["num", "numlist"],
+        "[options]{number}",
+        "siunitx number or ;-separated list inside a formula",
+        true,
+    ),
+    (
+        &["unit", "si"],
+        "[options]{units}",
+        "siunitx unit inside a formula",
+        true,
+    ),
+    (
+        &["qty", "numrange"],
+        "[options]{number}{units}",
+        "siunitx quantity (3mu thin space before the unit) or number range inside a formula",
+        true,
+    ),
+    (
+        &["SI"],
+        "[options]{number}[pre-unit]{units}",
+        "siunitx v2 quantity inside a formula",
+        true,
+    ),
+    (
+        &["qtylist", "SIlist"],
+        "[options]{numbers}{units}",
+        "siunitx list of quantities inside a formula",
+        true,
+    ),
+    (
+        &["qtyrange", "SIrange"],
+        "[options]{number}{number}{units}",
+        "siunitx range of quantities inside a formula",
+        true,
+    ),
+    (
+        &["ang"],
+        "[options]{angle}",
+        "siunitx angle inside a formula",
+        true,
+    ),
+    (
+        &["sisetup"],
+        "{options}",
+        "siunitx settings changed inside a formula",
+        true,
+    ),
     (
         &["rule"],
         "[raise]{dimension}{dimension}",
@@ -322,6 +528,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         &["phantom", "hphantom", "vphantom"],
         "{x}",
         "empty box with the width and/or height and depth of the argument",
+        true,
+    ),
+    (
+        &["mathllap", "mathrlap", "mathclap"],
+        "{x}",
+        "mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\\llap/\\rlap/\\clap); needs mathtools",
         true,
     ),
     (
@@ -364,6 +576,36 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         &["operatorname", "operatornamewithlimits"],
         "{name}",
         "upright named operator (\\mathop); starred and withlimits forms take limits",
+        true,
+    ),
+    (
+        &["colon"],
+        "",
+        "function-arrow colon: punctuation (0mu/3mu) as the kernel declares it, amsmath's 2mu/6mu when amsmath is loaded",
+        true,
+    ),
+    (
+        &["eqqcolon"],
+        "",
+        "mathtools =: (reverse of \\coloneqq) as a relation; needs mathtools",
+        true,
+    ),
+    (
+        &["Coloneqq", "Eqqcolon"],
+        "",
+        "mathtools ::= and =:: (each three real glyphs) as one relation; needs mathtools",
+        true,
+    ),
+    (
+        &["vcentcolon"],
+        "",
+        "mathtools vertically centred colon: the same glyph as \\colon as a relation; needs mathtools",
+        true,
+    ),
+    (
+        &["dblcolon"],
+        "",
+        "mathtools double vertically centred colon (two \\vcentcolon) as one relation; needs mathtools",
         true,
     ),
     (&["bmod", "mod"], "", "upright mod", true),
@@ -448,9 +690,15 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
     ),
     (&["text"], "{text}", "literal text in math", true),
     (
-        &["boxed", "overline", "underline"],
+        &["boxed", "overline", "underline", "underbar"],
         "{...}",
-        "real rule around, over or under the body",
+        "real rule around, over or under the body (underbar works in math like underline)",
+        true,
+    ),
+    (
+        &["Aboxed"],
+        "{lhs rel rhs}",
+        "mathtools: real \\boxed rule around the whole row, keeping the relation as the shared alignment point",
         true,
     ),
     (
@@ -482,7 +730,7 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
     (&["bold"], "{text}", "obsolete amsfonts alias of \\mathbf", true),
     (
         &[
-            "hat", "bar", "vec", "tilde", "dot", "ddot", "acute", "grave",
+            "hat", "bar", "vec", "tilde", "dot", "ddot", "acute", "grave", "mathring",
         ],
         "{body}",
         "base-14 accent glyph centred over the body",
@@ -499,6 +747,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         "{body}",
         "parsed, but no base-14 glyph exists: diagnosed and typeset without a mark",
         false,
+    ),
+    (
+        &["dddot", "ddddot"],
+        "{body}",
+        "amsmath mathop-limits shape: three/four text dots centred above the body",
+        true,
     ),
     (
         &[
@@ -564,6 +818,11 @@ const CONTROL_SYMBOLS: &[(&str, Mode, &str)] = &[
         Mode::Text,
         "line break; an optional [length] is consumed",
     ),
+    (
+        "-",
+        Mode::Text,
+        "discretionary hyphen: a break point, invisible unless the line breaks there",
+    ),
     (",", Mode::Text, "text kern .16667em (\\thinspace)"),
     ("!", Mode::Text, "text kern -.16667em (\\negthinspace)"),
     (":", Mode::Text, "text kern .2222em (\\medspace)"),
@@ -584,6 +843,10 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "document",
         "the typeset body; preamble content is not typeset",
     ),
+    (
+        "letter",
+        "letter.cls: one letter to {recipient\\\\address}, starting a new page",
+    ),
     ("equation", "numbered display"),
     ("equation*", "unnumbered display"),
     ("displaymath", "unnumbered display"),
@@ -602,30 +865,73 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("flalign", "rows aligned at &, each numbered"),
     ("flalign*", "rows aligned at &"),
     (
+        "eqnarray",
+        "three columns (right, centred, left) with 2\\arraycolsep gaps, each row numbered",
+    ),
+    (
+        "eqnarray*",
+        "three columns (right, centred, left) with 2\\arraycolsep gaps",
+    ),
+    (
         "multline",
         "multi-line display; only the last line is numbered",
     ),
     ("multline*", "multi-line display"),
+    (
+        "subequations",
+        "amsmath: displays inside number as the parent number plus a, b, ...; a \\label right after \\begin gets the parent number",
+    ),
     ("figure", "numbered captions; no floating"),
+    (
+        "frame",
+        "rule-bordered box around its body (\\fboxsep padding, \\fboxrule rule in the current colour)",
+    ),
     ("center", "centred paragraphs"),
     ("flushleft", "left-aligned paragraphs"),
     ("flushright", "right-aligned paragraphs"),
     ("quote", "indented paragraphs"),
     ("quotation", "indented paragraphs"),
-    ("itemize", "bulleted list"),
+    ("sloppypar", "a paragraph set with \\sloppy"),
+    ("samepage", "\\samepage for the body"),
+    ("tiny", "the tiny size for the environment body"),
+    ("scriptsize", "the scriptsize size for the environment body"),
+    ("footnotesize", "the footnotesize size for the environment body"),
+    ("small", "the small size for the environment body"),
+    ("normalsize", "the body size for the environment body"),
+    ("large", "the large size for the environment body"),
+    ("Large", "the Large size for the environment body"),
+    ("LARGE", "the LARGE size for the environment body"),
+    ("huge", "the huge size for the environment body"),
+    ("Huge", "the Huge size for the environment body"),
+    ("verse", "indented lines; each \\\\ ends a line"),
+    (
+        "tabbing",
+        "tab stops: \\= sets a stop, \\> jumps right, \\\\ ends a row, \\kill ends a row silently (\\<, \\+ and \\- warn and are ignored)",
+    ),
+    ("itemize", "bulleted list; article labels per depth, \\item[label]"),
     (
         "enumerate",
-        "numbered list; enumitem [label] templates a, A, i, I, 1",
+        "numbered list; article labels per depth, enumitem label/label*/shortlabels, start and resume",
     ),
-    ("tabular", "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight"),
+    ("description", "list of bold \\item[term] labels"),
+    ("tabular", "table with l/c/r/p columns, rules and multicolumn; with array also >{} <{} !{} m b w and \\extrarowheight; with siunitx S[options] number and s unit columns, centred rather than decimal-aligned"),
     ("tabular*", "table of a given width"),
     ("verbatim", "literal monospaced lines"),
     ("verbatim*", "literal monospaced lines with visible spaces"),
     ("lstlisting", "literal monospaced lines (basic listings)"),
+    ("comment", "body discarded unread, even invalid commands inside (comment package)"),
     ("proof", "amsthm proof with a closing square"),
     (
         "thebibliography",
         "References section with numbered \\bibitem entries",
+    ),
+    (
+        "multicols",
+        "multicol {n}[preface][premulticols]: balanced columns, laid out by the render pipeline",
+    ),
+    (
+        "multicols*",
+        "multicol {n}[preface][premulticols]: unbalanced columns, laid out by the render pipeline",
     ),
 ];
 
@@ -638,6 +944,37 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     ),
     ("fontenc", "T1", "text glyphs are mapped from Unicode"),
     (
+        "hyperref",
+        "colorlinks, hidelinks, bookmarks, bookmarksopen, bookmarksnumbered, linktoc, breaklinks, unicode, pageanchor, hyperfootnotes, pdfstartview, pdfpagemode",
+        "loading hyperref moves no glyph (measured against pdflatex, TeX Live 2025: the same document with and without it is 1062 words on 4 pages, 0 moved), and the link-colour, border, outline, viewer and pdf* metadata keys are accepted with it; \\url, \\href and \\nolinkurl are typeset, while the PDF links, bookmarks and link colours still missing are reported once by their own diagnostic; backref and pagebackref add bibliography text and keep warning",
+    ),
+    (
+        "cleveref",
+        "capitalise, noabbrev",
+        "named cross-references with compressed ranges; unknown package options are silently ignored",
+    ),
+    ("color", "dvipsnames, usenames", "color.sty colours with pdfTeX's exact operator values"),
+    (
+        "xcolor",
+        "natural, rgb, cmy, cmyk, gray, dvipsnames, svgnames, x11names, table",
+        "xcolor 3.02 definitions, expressions and target models with pdfTeX's exact operator values; hsb models, colour series and table colours are diagnosed",
+    ),
+    (
+        "amsmath",
+        "centertags, sumlimits, nointlimits, namelimits, reqno",
+        "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\sideset, \\shoveleft, \\smash, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used",
+    ),
+    (
+        "amssymb",
+        "",
+        "the full AMSa/AMSb (msam/msbm) inventory of amssymb.sty -- 203 names base LaTeX2e leaves undefined (\\square, \\nleq, ...) -- plus everything amsfonts declares; loading the package is what makes the names exist, and a name whose file was not loaded is diagnosed",
+    ),
+    (
+        "amsfonts",
+        "",
+        "amsfonts.sty's 22-name symbol subset (\\ulcorner, \\square, \\yen, the dashed arrows) and the \\mathbb and \\mathfrak alphabets; the rest of amssymb stays undefined without \\usepackage{amssymb}",
+    ),
+    (
         "amsthm",
         "",
         "\\newtheorem, \\theoremstyle and the proof environment",
@@ -648,14 +985,69 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "tabular >{} <{} !{} m b w columns, \\newcolumntype and \\extrarowheight",
     ),
     (
+        "booktabs",
+        "",
+        "\\toprule, \\midrule, \\bottomrule, \\cmidrule(trim), \\addlinespace, \\specialrule, \\morecmidrules",
+    ),
+    (
+        "longtable",
+        "",
+        "the page-breaking longtable environment: \\endfirsthead, \\endhead, \\endfoot, \\endlastfoot, \\caption, \\kill, \\\\*",
+    ),
+    (
+        "multirow",
+        "",
+        "\\multirow[vpos]{rows}[bigstruts]{width}[vmove]{text} in table entries",
+    ),
+    (
+        "colortbl",
+        "",
+        "\\rowcolor, \\cellcolor, >{\\columncolor}, \\arrayrulecolor, \\doublerulesepcolor",
+    ),
+    (
         "enumitem",
         "shortlabels",
-        "enumerate label templates; \\setlist itemsep/topsep",
+        "list keys (label, start, resume, seps, margins) parsed as options; \\setlist",
     ),
     (
         "geometry",
         "letterpaper, margin=1in",
         "matches the fixed US Letter page with 1in margins",
+    ),
+    (
+        "siunitx",
+        "any \\sisetup keys",
+        "v3 \\num, \\unit, \\qty, lists, ranges, \\ang, \\sisetup and \\DeclareSIUnit; unmodelled keys are diagnosed",
+    ),
+    (
+        "multicol",
+        "",
+        "multicols and multicols* with preface, \\columnbreak, \\raggedcolumns (columns set by the render pipeline)",
+    ),
+    (
+        "natbib",
+        "numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak",
+        "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; sort, compress, super and openbib are diagnosed",
+    ),
+    (
+        "biblatex",
+        "style=numeric, sorting=none, backend=biber",
+        "basic project-relative .bib resources with numeric citations, textcite/parencite/autocite, citeauthor/citeyear, nocite and printbibliography; authoryear labels are minimal, alphabetic warns",
+    ),
+    (
+        "ulem",
+        "normalem",
+        "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined",
+    ),
+    (
+        "xspace",
+        "",
+        "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)",
+    ),
+    (
+        "ifthen",
+        "",
+        "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used",
     ),
 ];
 
@@ -664,7 +1056,8 @@ pub const CANONICAL_TSV: &str = include_str!("../supported/canonical-latex.tsv")
 
 /// Canonical sets, in report order.
 pub const CANONICAL_SETS: &[&str] = &[
-    "kernel", "amsmath", "amssymb", "enumitem", "geometry", "graphicx", "hyperref", "tikz",
+    "kernel", "amsmath", "amssymb", "enumitem", "geometry", "graphicx", "hyperref", "tikz", "xcolor",
+    "siunitx",
 ];
 
 fn text_description(name: &str) -> String {
@@ -706,7 +1099,7 @@ fn text_arguments(name: &str) -> &'static str {
 pub fn inventory() -> Inventory {
     let mut commands = Vec::new();
     for &name in parser::BUILT_INS.iter().chain(TEXT_EXTRA_ARMS) {
-        if TEXT_DIAGNOSTIC_ONLY.contains(&name) || TEXT_CONTEXT_ONLY.contains(&name) {
+        if TEXT_DIAGNOSTIC_ONLY.contains(&name) {
             continue;
         }
         let origin = if SIZE_DECLARATIONS.contains(&name) {
@@ -794,12 +1187,22 @@ pub fn inventory() -> Inventory {
             crate::amssymb::SymbolFont::Msbm => "msbm",
         };
         let class = format!("{:?}", ams.class).to_lowercase();
+        // Which `\usepackage` the document has to load: base LaTeX2e defines
+        // none of these names, and `math::command_atom` diagnoses the command
+        // when its package is absent, so the inventory has to say so.
+        let package = match ams.provider {
+            crate::amssymb::Provider::Amsfonts => "amsfonts",
+            crate::amssymb::Provider::Amssymb => "amssymb",
+        };
         commands.push(Command {
             name,
             mode: Mode::Math,
             origin: Origin::MathSymbol,
             arguments: "",
-            description: format!("symbol {} (\\math{class}, {font} \"{:02X})", ams.text, ams.slot),
+            description: format!(
+                "symbol {} (\\math{class}, {font} \"{:02X}; needs {package})",
+                ams.text, ams.slot
+            ),
             glyph: Some(ams.text),
             renders: true,
         });
@@ -828,6 +1231,7 @@ pub fn inventory() -> Inventory {
         let fences = match (left, right) {
             ("", "") => String::new(),
             (l, "") => format!(" with a left {l}"),
+            ("", r) => format!(" with a right {r}"),
             (l, r) => format!(" in {l} {r}"),
         };
         let align = match align {
@@ -1095,6 +1499,13 @@ pub fn render_coverage_markdown(inventory: &Inventory) -> String {
          commands and environments together. Supported means handled without an unsupported \
          diagnostic, not typographic parity.\n",
     );
+    // #254 added this caveat to `supported/coverage.md` by hand. That file is
+    // generated, so the note broke `generated_artifacts_are_current` and the
+    // next regeneration would have silently deleted it. It belongs here, where
+    // regeneration reproduces it.
+    out.push_str(
+        "\n**The denominator excludes math-mode symbol commands entirely.** `canonical-latex.tsv`'s candidates are `@findex`/`@EnvIndex` entries from the LaTeX2e reference manual plus each listed package's own source files (see `crates/compiler/scripts/canonical_latex.py`'s header); math symbols such as `\\alpha` and `\\odot` are neither in that manual's index nor in any of the nine package source lists, so they never become candidates and are absent from the table. The compiler tracks math-command support separately (`crates/compiler/src/math.rs`'s `COMMAND_GLYPHS`/`OPERATOR_NAMES`, `crates/compiler/src/supported.rs`'s `Origin::MathSymbol`/`MathOperator`/`MathStructure`; the full list is in `docs/user/compiler.md`'s math tables), but `--supported coverage` does not count them.\n",
+    );
     out
 }
 
@@ -1211,4 +1622,29 @@ pub fn render_markdown(inventory: &Inventory) -> String {
     out.push_str(DOC_END);
     out.push('\n');
     out
+}
+
+#[cfg(test)]
+mod fence_description_tests {
+    use super::*;
+
+    /// A grid environment with no left delimiter and a real right one
+    /// (`rcases`'s exact shape, `("rcases", 'l', "", "}")`) must describe
+    /// only the right fence, not fall through to the two-sided `"in {l} {r}"`
+    /// arm with an empty `{l}` (which produced the malformed
+    /// `"...cells in  }"`, a stray double space before a lone brace).
+    #[test]
+    fn a_right_only_fence_describes_only_the_right_delimiter() {
+        let inventory = inventory();
+        let rcases = inventory
+            .environments
+            .iter()
+            .find(|e| e.name == "rcases")
+            .expect("rcases is in the inventory");
+        assert_eq!(
+            rcases.description,
+            "math grid, left-aligned cells with a right }"
+        );
+        assert!(!rcases.description.contains("  "), "{}", rcases.description);
+    }
 }

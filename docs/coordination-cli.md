@@ -172,3 +172,46 @@ Cursor to publish the update. It does not invent work when a queue is exhausted,
 mark reported-ready work integrated, or automatically spend another provider's funds.
 Commander replenishes queues and performs actual integration in parallel. The daemon
 fast-forwards its clean checkout when main advances and honors project stop control.
+
+## Claims
+
+Before starting a task, claim it so a second lane doesn't duplicate the work; release
+or close it when you stop. Claims live on a dedicated `coordination-claims` branch
+(never main), one file per task at `claims/<task-id>.json`, and are read/written with
+first-non-force-push-wins semantics: every write is a plain push, so a losing write is
+rejected by the remote and transparently retried on the winner's tip (this is also how
+the branch itself gets created the first time it's needed). Every claims command runs
+in a throwaway `git worktree`; it never touches your own checkout, branch, or index.
+
+```sh
+python3 scripts/coord.py claim FT-003 --actor worker-a --machine mac-a --branch agent/worker-a/mac-shell
+python3 scripts/coord.py claims --touch FT-003 --actor worker-a   # at each checkpoint
+python3 scripts/coord.py close FT-003 --actor worker-a --gh-ref https://github.com/.../pull/12
+```
+
+`claim` prints `CLAIMED` and exits 0 once a post-push re-read from origin confirms it.
+If someone else already holds an open claim on that task it refuses without writing
+anything, prints `LOST: held by <actor> since <started_utc>`, and exits 1. Calling
+`claim` again as the same actor is idempotent: it only refreshes `updated_utc` (and any
+newly given `--branch`/`--gh-ref`/`--note`), keeping the original `started_utc`. If the
+write's outcome can't be confirmed on origin after retrying (transport failure, not a
+lock refusal), the command prints `NOT_COUNTED: ...` and exits 3 — treat that as unknown,
+not as failure or success, and re-run `coord.py claims` to see the actual current state
+before deciding whether to retry.
+
+`release`/`close` require you to hold the claim; a Commander may override with
+`--force-by-commander <commander-id>` matching `commander_id` in `coordination/authority.json`.
+`close` additionally records `--gh-ref` (the merged PR, typically).
+
+```sh
+python3 scripts/coord.py claims                       # list open claims
+python3 scripts/coord.py claims --actor worker-a       # filter to one actor
+python3 scripts/coord.py claims --json --stale 8       # open claims idle >8h
+```
+
+`claims --stale N` lists open claims whose `updated_utc` is more than `N` hours old
+*and* whose recorded `--branch` has no commit on origin newer than that `updated_utc`
+(a claim with no branch is stale by age alone); it exits non-zero when any are found,
+so a `watch`-style loop can alert on it. `coord.py checkpoint` also surfaces the
+caller's own open claims and any project-wide stale claims (at a fixed 24h default) as
+part of its normal output.

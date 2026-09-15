@@ -1,0 +1,68 @@
+{
+ "fixture": "13-dollars-leqno.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Short",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "line:",
+    "x": 175.8581,
+    "y_top": 134.765
+   },
+   {
+    "text": "(8)",
+    "x": 133.768,
+    "y_top": 156.682
+   },
+   {
+    "text": "a",
+    "x": 285.9646,
+    "y_top": 156.682
+   },
+   {
+    "text": "+",
+    "x": 293.4426,
+    "y_top": 156.682
+   },
+   {
+    "text": "b",
+    "x": 303.4131,
+    "y_top": 156.682
+   },
+   {
+    "text": "=",
+    "x": 310.4487,
+    "y_top": 156.682
+   },
+   {
+    "text": "c",
+    "x": 320.9672,
+    "y_top": 156.682
+   },
+   {
+    "text": "after",
+    "x": 133.768,
+    "y_top": 178.6
+   },
+   {
+    "text": "the",
+    "x": 157.3166,
+    "y_top": 178.6
+   },
+   {
+    "text": "display.",
+    "x": 174.4722,
+    "y_top": 178.6
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

@@ -102,7 +102,7 @@ struct FlashTeXMacApp: App {
             ContentView()
                 .environment(model)
                 .environmentObject(nearby) // Captures inspector: status pill, pairing code (CaptureInbox.swift)
-                .frame(minWidth: 1200, minHeight: 640) // sidebar + editor + preview + Problems panel
+                .frame(minWidth: DS.Layout.windowMinWidth, minHeight: DS.Layout.windowMinHeight) // usable from ~900pt: below three columns the preview collapses to a toggle
                 .onAppear {
                     appDelegate.model = model; nearby.attach(sink: model, destinations: model); TypingBench.shared.install(model: model)
                     // A paired iPad reconnects at launch without opening any window (mac-capture-fluid).
@@ -131,10 +131,19 @@ struct FlashTeXMacApp: App {
                 }
         }
         .defaultSize(width: 1500, height: 950) // first launch; the saved frame wins afterwards
+        // The menu bar is part of the App scene graph: any model property a
+        // command reads re-evaluates the whole scene when it changes, and SwiftUI
+        // then re-reads every window's root preferences (toolbar, title…) —
+        // `AppKitWindowController.updateRootView` was ~20 % of the main thread
+        // while typing (FT-071 sample) because `result`/`displayListV2` were
+        // read here per reply. Commands read the change-only mirrors instead.
         .commands {
-            NavigationCommands(model: model) // Navigation.swift
+            NavigationCommands(model: model) // Navigation.swift: Navigate menu
             DiagnosticsCommands(model: model) // DiagnosticsPanel.swift: Edit > Copy Diagnostics as Text (⌘⌥C)
-            FindCommands() // EditorFind.swift: Edit > Find submenu (⌘F, ⌥⌘F, ⌘G, ⇧⌘G, ⌘E, ⌘J)
+            Group {
+                FindCommands() // EditorFind.swift: Edit > Find submenu (⌘F, ⌥⌘F, ⌘G, ⇧⌘G, ⌘E, ⌘J)
+                EditorMenuCommands(model: model) // EditorMenu.swift: one Editor menu (line commands + Change Environment…)
+            }
             ProjectSearchCommands(openWindow: openWindow) // ProjectSearchPanel.swift: ⌘⇧F Find in Project…
             CitationRenameCommands(openWindow: openWindow) // CitationRename.swift: Edit > Rename Citation… (no shortcut)
             CommandGroup(after: .toolbar) {
@@ -155,6 +164,8 @@ struct FlashTeXMacApp: App {
                     .keyboardShortcut("m", modifiers: [.command, .shift])
                 Button("Toggle Captures") { model.captureInboxVisible.toggle() } // CaptureInbox.swift
                     .keyboardShortcut("i", modifiers: [.command, .shift])
+                Button("Toggle Vim Keybindings") { EditorPreferences.shared.vimKeybindings.toggle() } // VimMode.swift: modal editing in the source editor
+                    .keyboardShortcut("v", modifiers: [.control, .command])
                 Divider()
                 // Preview zoom (PreviewZoom.swift): multiplier over fit-to-width.
                 Button("Zoom In") { model.previewZoomIn() }
@@ -165,6 +176,8 @@ struct FlashTeXMacApp: App {
                     .keyboardShortcut("0")
                 Button("Fit Width") { model.previewFitWidth() }
                     .keyboardShortcut("9")
+                Button("Fit Page") { model.previewFitPage() }
+                    .keyboardShortcut("9", modifiers: [.command, .shift])
                 Divider()
                 // Editor text size: EditorPreferences.fontSize (8…36 pt).
                 Button("Increase Editor Font Size") { model.increaseEditorFontSize() }
@@ -178,6 +191,10 @@ struct FlashTeXMacApp: App {
                 Button("FlashTeX Accessibility Help") { openWindow(id: AccessibilityHelpView.windowID) }
             }
             CommandGroup(after: .pasteboard) {
+                Divider()
+                Button("Re-indent Lines") { EditorIndentationAction.reindentLines() }
+                    .keyboardShortcut("i", modifiers: [.control])
+                Button("Re-indent Document") { EditorIndentationAction.reindentDocument() }
                 Divider()
                 Button("Pin Insertion Point") { model.pinAnchorAtCaret() }
                     .keyboardShortcut("p", modifiers: [.command, .option]) // ⌘⇧P is the command palette (View)
@@ -230,12 +247,12 @@ struct FlashTeXMacApp: App {
                 Button("Open Display List (v2)…") { model.openDisplayListV2Panel() } // experimental, PreviewV2View.swift
                 Button("Export PDF…") { model.exportPDF() }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
-                    .disabled(model.result == nil)
+                    .disabled(!model.toolbarHasResult)
                 Button("Export PDF via Rust Writer…") { model.exportPDFViaRust() }
                     .keyboardShortcut("e", modifiers: [.command, .option])
-                    .disabled(model.result == nil)
+                    .disabled(!model.toolbarHasResult) // change-only mirror (see .commands)
                 Button("Export PDF (exact, v2)…") { model.exportPDFExact() } // ExactPDFExport.swift
-                    .disabled(model.displayListV2?.frame == nil)
+                    .disabled(!model.toolbarHasV2Frame) // change-only mirror (see .commands)
                 Divider()
                 Button("Attach Built Compiler") { model.attachDiscoveredWorker() }
                     .keyboardShortcut("k", modifiers: [.command, .shift])
@@ -251,6 +268,20 @@ struct FlashTeXMacApp: App {
                     .disabled(!model.workerAttached)
             }
         }
+        .commands {
+            // Separate `.commands` so this is not an 11th child of the builder
+            // above (SwiftUI's CommandsBuilder limit). Replaces the system Print
+            // that would otherwise print the editor view.
+            CommandGroup(replacing: .printItem) {
+                Button("Print…") { model.printDocument() }
+                    .keyboardShortcut("p")
+                    .disabled(!PrintController.documentEnabled(model)) // change-only mirrors (see PrintController)
+                    .help(PrintController.documentHelp(model))
+                Button("Print Source…") { model.printSource() }
+                    .disabled(!PrintController.sourceEnabled(model))
+                    .help(PrintController.sourceHelp(model))
+            }
+        }
         Window("Nearby Companion", id: "nearby") {
             NearbyView().environmentObject(nearby).environment(model)
         }
@@ -261,7 +292,7 @@ struct FlashTeXMacApp: App {
         Window("Accessibility Help", id: AccessibilityHelpView.windowID) {
             AccessibilityHelpView() // FlashTeXAccessibility: focus order, VoiceOver notes, command table
         }
-        Settings { EditorPreferencesView() } // EditorPreferences.swift (⌘,)
+        Settings { SettingsRootView() } // EditorPreferences.swift (⌘,): Editor and Conversion tabs, applying live
         ProjectSearchWindow(model: model) // ProjectSearchPanel.swift: Find in Project (⌘⇧F)
         CitationRenameWindow(model: model) // CitationRename.swift: Rename Citation (reviewed plan_citation_rename → apply_group)
     }

@@ -23,10 +23,12 @@
 //!   [`crate::parser::Parsed::expansions`]). Tokens substituted for a
 //!   macro's arguments keep their own source spans.
 //! - **Verbatim.** `\verb` arguments and the bodies of `verbatim`,
-//!   `verbatim*` and `lstlisting` are hidden from the engine before it reads
-//!   the source (their bytes are blanked in a private copy; offsets do not
-//!   move), so no `%`, `\`, `$`, `{`, `}` or macro in them is interpreted.
-//!   The parser keeps reading those regions from the original text.
+//!   `verbatim*`, `lstlisting` and `comment` are hidden from the engine
+//!   before it reads the source (their bytes are blanked in a private
+//!   copy; offsets do not move), so no `%`, `\`, `$`, `{`, `}` or macro
+//!   in them is interpreted. The parser keeps reading the verbatim-like
+//!   regions from the original text; `comment` bodies are discarded there
+//!   instead (see `parser`'s `comment` environment handling).
 //! - **Environments.** The engine turns `\begin{name}` into `\name` (so a
 //!   `\newenvironment` definition runs); an undefined `\name` produced that
 //!   way is turned back into `\begin`, `{`, `name`, `}` with the exact spans
@@ -86,6 +88,11 @@ pub struct Expansion {
     /// `\arraystretch`'s replacement text in effect at each
     /// `\begin{tabular}`/`tabular*`/`array`, keyed by that `\begin`'s span.
     pub arraystretch: HashMap<(usize, usize), String>,
+    /// `\@currentlabel`'s expansion just after each bare `\refstepcounter`
+    /// (which the engine runs with no output tokens, so the parser would
+    /// otherwise never hear about it), keyed by the pushed
+    /// `flashtexcurrentlabel` token's own span.
+    pub current_label_by_marker: HashMap<(usize, usize), String>,
 }
 
 /// Host definitions run before the document. `\DeclareMathOperator` is
@@ -93,23 +100,56 @@ pub struct Expansion {
 /// `\operatorname{text}` (`\operatorname*{text}` when starred).
 /// LaTeX's `\tabular`/`\array` read `\arraystretch` when the environment begins; here they emit a
 /// marker plus `\arraystretch`'s current expansion, which the converter
-/// turns back into `\begin{<env>}` and records for the parser.
+/// turns back into `\begin{<env>}` and records for the parser. Likewise
+/// `\refstepcounter` (which the engine runs with no output tokens) emits a
+/// marker plus `\@currentlabel`'s current expansion, recorded in
+/// [`Expansion::current_label_by_marker`].
 ///
 /// Kernel definitions that would intercept a command the parser typesets
-/// itself (`\\setlength`, `\\label`, `\\verb`, whose argument the pass has
-/// already hidden, and `\\:`, which latex.ltx only uses while building
-/// `\\@ifnextchar` before redefining it as a math space) are removed, so they
-/// pass through.
-pub const HOST_PRELUDE: &str = "\\let\\setlength\\flashtexundefined
-\\let\\label\\flashtexundefined
+/// itself (`\\label`, `\\verb`, whose argument the pass has already hidden,
+/// `\\:`, which latex.ltx only uses while building `\\@ifnextchar`
+/// before redefining it as a math space, and `\\fnsymbol`, whose counter
+/// the parser resolves against its own `footnote`/`mpfootnote` counters
+/// that the engine never defines) are removed, so they pass through.
+///
+/// `\\setlength`/`\\addtolength` keep the kernel meaning when `#1` is already
+/// defined (a `\\newlength` skip, so `\\the` can read it back). An undefined
+/// target (`\\textwidth`, `\\parindent`, `\\fboxsep`, ...) is rewritten to a
+/// host command the converter maps back, so the parser sees the original
+/// name with its argument still a control sequence, not consumed as a
+/// skip assignment, which would yield `\\addtolength{\\}`.
+///
+/// `\\AtBeginDocument` keeps the kernel queuing behavior, but wraps each
+/// queued chunk in `\\flashtexatbeginstart...\\flashtexatbeginend` markers
+/// (left undefined, so the engine passes them through): the converter holds
+/// marked output back and re-emits it after `\\begin{document}` closes, so
+/// the hook typesets ahead of the body instead of being dropped as
+/// preamble. Like the kernel's `\\g@addto@macro`, the append routes through
+/// the `\\toks@` register so the chunk is stored unexpanded and only
+/// resolves when the hook runs at `\\begin{document}` (a bare `\\xdef` would
+/// bake preamble definitions in eagerly). Calls after `\\begin{document}`
+/// bypass the wrapper entirely (`\\AtBeginDocument` is `\\let` to
+/// `\\@firstofone` by then) and run in the body, as in LaTeX.
+pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
+\\let\\counterwithin\\flashtexundefined
+\\let\\counterwithout\\flashtexundefined
+\\let\\fnsymbol\\flashtexundefined
+\\def\\setlength#1#2{\\ifdefined#1#1 #2\\relax\\else\\flashtexsetlength{#1}{#2}\\fi}%
+\\def\\addtolength#1#2{\\ifdefined#1\\advance#1 #2\\relax\\else\\flashtexaddtolength{#1}{#2}\\fi}%
 \\long\\def\\flashtexdeclaremathop#1#2#3{\\newcommand#2{\\operatorname#1{#3}}}%
 \\expandafter\\def\\expandafter\\DeclareMathOperator\\expandafter{\\csname @ifstar\\endcsname{\\flashtexdeclaremathop*}{\\flashtexdeclaremathop{}}}%
 \\def\\arraystretch{1}%
 \\def\\tabular{\\flashtexbegintabular\\expandafter{\\arraystretch}}%
 \\expandafter\\def\\csname tabular*\\endcsname{\\flashtexbegintabularstar\\expandafter{\\arraystretch}}%
 \\def\\array{\\flashtexbeginarray\\expandafter{\\arraystretch}}%
+\\long\\def\\flashtexaddtobeginhook#1#2{\\begingroup\\csname toks@\\endcsname\\expandafter{#1\\flashtexatbeginstart#2\\flashtexatbeginend}\\xdef#1{\\the\\csname toks@\\endcsname}\\endgroup}%
+\\long\\def\\AtBeginDocument#1{\\expandafter\\flashtexaddtobeginhook\\csname @begindocumenthook\\endcsname{#1}}%
+\\makeatletter
+\\let\\flashtexrealrefstepcounter\\refstepcounter
+\\def\\refstepcounter#1{\\flashtexrealrefstepcounter{#1}\\flashtexcurrentlabelmarker\\expandafter{\\@currentlabel}}%
+\\makeatother
 ";
 
 /// Engine diagnostics that duplicate the parser's own reports, or only note
@@ -177,13 +217,18 @@ fn prepare<'a>(text: &'a str, document: DocumentId) -> Prepared<'a> {
         skip: Vec::new(),
         verbatim_ends: HashMap::new(),
     };
-    let has_labels = text.contains('*') && LABEL_FORMATS.iter().any(|f| text.contains(&format!("\\{f}*")));
+    // amsmath `\numberwithin[\alph]{..}{..}`: the format is a name the parser
+    // reads, not a `\alph` call for the engine to run on `]`.
+    let has_labels = (text.contains('*') && LABEL_FORMATS.iter().any(|f| text.contains(&format!("\\{f}*"))))
+        || text.contains("\\numberwithin[");
     let has_urls = text.contains("\\url") || text.contains("\\href") || text.contains("\\nolinkurl");
     if !(has_labels
         || has_urls
         || text.contains("\\verb")
+        || text.contains("\\lstinline")
         || text.contains("verbatim")
-        || text.contains("lstlisting"))
+        || text.contains("lstlisting")
+        || text.contains("comment"))
     {
         return prepared;
     }
@@ -198,6 +243,16 @@ fn prepare<'a>(text: &'a str, document: DocumentId) -> Prepared<'a> {
                 let (start, end) = (token.span.start, token.span.end);
                 prepared.verbs.insert(start, token.clone());
                 prepared.skip.push((start + 1, end));
+                // listings' `\lstinline[keys]<d>...<d>` is spelled over as
+                // `\verb` in the copy the engine reads. The engine then
+                // takes the same `\verb` path (the body is all blanks by
+                // then, so what it reads is one space-delimited empty
+                // argument), and the conversion below maps the position
+                // back to *this* token — the one the compiler's own lexer
+                // built, which carries the listing's real text. So
+                // `\lstinline` needs no expansion primitive of its own and
+                // its keys and delimiters never reach the engine.
+                bytes[start..start + 5].copy_from_slice(b"\\verb");
                 // `\verb` + blanks + `\/`: the engine reads one undefined
                 // control word (mapped back to this token) and a control
                 // symbol that restores mid-line state, so a space after the
@@ -219,7 +274,8 @@ fn prepare<'a>(text: &'a str, document: DocumentId) -> Prepared<'a> {
             }
             TokenKind::Command(name)
                 if LABEL_FORMATS.contains(&name.as_str())
-                    && text.as_bytes().get(token.span.end) == Some(&b'*') =>
+                    && (text.as_bytes().get(token.span.end) == Some(&b'*')
+                        || text[..token.span.start].trim_end().ends_with("\\numberwithin[")) =>
             {
                 let format = LABEL_FORMATS.iter().find(|f| **f == name.as_str()).copied().unwrap_or("arabic");
                 for b in &mut bytes[token.span.start + 1..token.span.end] {
@@ -257,7 +313,7 @@ fn prepare<'a>(text: &'a str, document: DocumentId) -> Prepared<'a> {
                     i += 1;
                     continue;
                 };
-                if !matches!(env.as_str(), "verbatim" | "verbatim*" | "lstlisting") {
+                if !matches!(env.as_str(), "verbatim" | "verbatim*" | "lstlisting" | "comment") {
                     i += 1;
                     continue;
                 }
@@ -273,7 +329,11 @@ fn prepare<'a>(text: &'a str, document: DocumentId) -> Prepared<'a> {
                     *b = b' ';
                 }
                 prepared.skip.push((content_start, tag_start));
-                if env != "lstlisting" {
+                if !matches!(env.as_str(), "lstlisting" | "comment") {
+                    // `comment` needs no entry: unlike `verbatim`, the
+                    // LaTeX kernel defines no `comment` environment, so
+                    // the engine can never read one of its bodies itself
+                    // and close it with a frozen `\endcomment`.
                     prepared.verbatim_ends.insert(token.span.start, tag_start);
                 }
                 blanked = true;
@@ -354,10 +414,23 @@ fn after_bracket_option(text: &str, from: usize) -> usize {
     if newlines >= 2 || bytes.get(j) != Some(&b'[') {
         return from;
     }
-    match text[j..].find(']') {
-        Some(offset) => j + offset + 1,
-        None => from,
+    // A `]` inside braces does not close the option
+    // (`[caption={[short]long}]`). A backslash takes the next byte with it,
+    // as TeX reads a control symbol: `\]` is display-math close, not a
+    // bracket, and `\{`/`\}` do not change the brace depth.
+    let mut depth = 0usize;
+    let mut k = j + 1;
+    while k < bytes.len() {
+        match bytes[k] {
+            b'\\' => k += 1,
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            b']' if depth == 0 => return k + 1,
+            _ => {}
+        }
+        k += 1;
     }
+    from
 }
 
 struct Converter<'d> {
@@ -370,19 +443,53 @@ struct Converter<'d> {
     out: Vec<ExpandedToken>,
     diagnostics: Vec<Diagnostic>,
     arraystretch: HashMap<(usize, usize), String>,
+    /// Names from a preamble `\includeonly{...}` (`None`: never used).
+    /// Replaced wholesale by each call, so the last call wins, and read by
+    /// [`include`]; each entry is kept trimmed and, when suffixed, stripped
+    /// of one trailing `.tex`, mirroring `\include`'s own lookup.
+    includeonly: Option<HashSet<String>>,
+    /// Set once the converter emits `\begin{document}` (see [`push`]): what
+    /// [`in_preamble`] reads to gate preamble-only `\includeonly`.
+    document_begun: bool,
     /// Characters of the word being assembled, with its provenance.
     word: Option<PendingWord>,
     last_span: Span,
     /// Reading the `{<\arraystretch>}` group after a table marker: the key
     /// it is recorded under, brace depth, and the text so far.
     stretch: Option<((usize, usize), usize, String)>,
+    /// Reading the `{<\@currentlabel>}` group after a `\refstepcounter`
+    /// marker: the marker's span (re-keyed to the pushed
+    /// `flashtexcurrentlabel` token's own span when the capture completes),
+    /// brace depth, and the text so far.
+    current_label: Option<((usize, usize), usize, String)>,
+    /// `\@currentlabel`'s expansion just after each bare `\refstepcounter`,
+    /// keyed by the pushed `flashtexcurrentlabel` token's own span.
+    current_label_by_marker: HashMap<(usize, usize), String>,
     /// Engine token index being converted, and the index of the marker that
     /// opened the current `\arraystretch` capture.
     index: usize,
     stretch_index: usize,
+    /// Engine token index of the marker that opened the current
+    /// `\@currentlabel` capture.
+    current_label_index: usize,
     /// Every `\arraystretch` record in production order, with its marker's
     /// engine token index (what the incremental cache keeps and splices).
     stretch_log: Vec<(usize, (usize, usize), String)>,
+    /// While true, converted tokens are `\AtBeginDocument` hook output that
+    /// must typeset after `\begin{document}`: they accumulate in
+    /// `atbegin_buffer` instead of `out`. Set by the
+    /// `\flashtexatbeginstart` marker the host prelude wraps each queued
+    /// hook chunk in; cleared by its end marker, and forcibly by the real
+    /// `\begin{document}` re-emission (the end marker can be swallowed when
+    /// a hook chunk ends in an argument-taking macro).
+    atbegin_capturing: bool,
+    /// Hook output held back while `atbegin_capturing` (possibly across
+    /// several `\AtBeginDocument` chunks), flushed into `out` right after
+    /// the real `\begin{document}` closes.
+    atbegin_buffer: Vec<ExpandedToken>,
+    /// Every `\@currentlabel` record in production order, with its marker's
+    /// engine token index (kept and spliced like `stretch_log`).
+    current_label_log: Vec<(usize, (usize, usize), String)>,
 }
 
 struct PendingWord {
@@ -449,7 +556,7 @@ impl<'d> Converter<'d> {
 
     fn flush_word(&mut self) {
         if let Some(word) = self.word.take() {
-            self.out.push(ExpandedToken {
+            self.emit(ExpandedToken {
                 token: Token { kind: TokenKind::Word(word.text), span: word.span },
                 definition: word.definition,
                 maps_to_invocation: word.maps,
@@ -457,21 +564,74 @@ impl<'d> Converter<'d> {
         }
     }
 
+    /// Push one finished token to the active sink: the held-back hook buffer
+    /// while capturing `\AtBeginDocument` output, the parser stream
+    /// otherwise.
+    fn emit(&mut self, token: ExpandedToken) {
+        if self.atbegin_capturing {
+            self.atbegin_buffer.push(token);
+        } else {
+            self.out.push(token);
+        }
+    }
+
+    /// End of the `\AtBeginDocument` window (the real `\begin{document}`
+    /// close, or end of input as a safety net): re-emit the held-back hook
+    /// run after the marker, so it typesets ahead of the body. The pending
+    /// word is flushed first so it keeps engine order — it belongs to the
+    /// hook when capture is still on, to the stream once it is off.
+    fn drain_atbegin(&mut self) {
+        self.flush_word();
+        self.atbegin_capturing = false;
+        if !self.atbegin_buffer.is_empty() {
+            let buffered = std::mem::take(&mut self.atbegin_buffer);
+            self.out.extend(buffered);
+        }
+    }
+
+    /// True when the output tail is `\begin{document` awaiting its closing
+    /// brace — `Command("begin")`, `LBrace`, `Word("document")`, skipping
+    /// spaces — the same shape the parser's own `document_begin_end`
+    /// matches. This covers both the pass-through token sequence and
+    /// [`push_environment`]'s fused emission, which funnels its closing
+    /// brace through [`push`].
+    fn closes_document_begin(&self) -> bool {
+        let mut tail = self
+            .out
+            .iter()
+            .rev()
+            .filter(|t| !matches!(t.token.kind, TokenKind::Space))
+            .map(|t| &t.token.kind);
+        matches!(tail.next(), Some(TokenKind::Word(name)) if name == "document")
+            && matches!(tail.next(), Some(TokenKind::LBrace))
+            && matches!(tail.next(), Some(TokenKind::Command(name)) if name == "begin")
+    }
+
     fn push(&mut self, kind: TokenKind, at: Placement) {
         self.flush_word();
+        if matches!(kind, TokenKind::RBrace) && self.closes_document_begin() {
+            self.document_begun = true;
+        }
         self.last_span = at.span;
         // Whitespace runs collapse the way the parser's own tokenizer
         // produces them: one `Space`, or one `ParBreak` if the run holds a
-        // paragraph break.
-        match (&kind, self.out.last().map(|t| &t.token.kind)) {
+        // paragraph break. While capturing `\AtBeginDocument` output the
+        // run collapses against the held-back buffer, never the frozen
+        // stream behind it.
+        let sink = if self.atbegin_capturing {
+            &mut self.atbegin_buffer
+        } else {
+            &mut self.out
+        };
+        match (&kind, sink.last().map(|t| &t.token.kind)) {
             (TokenKind::Space, Some(TokenKind::Space | TokenKind::ParBreak)) => return,
             (TokenKind::ParBreak, Some(TokenKind::ParBreak)) => return,
             (TokenKind::ParBreak, Some(TokenKind::Space)) => {
-                self.out.pop();
+                sink.pop();
             }
             _ => {}
         }
-        self.out.push(ExpandedToken {
+        sink.push(ExpandedToken {
             token: Token { kind, span: at.span },
             definition: at.definition,
             maps_to_invocation: at.maps,
@@ -555,7 +715,7 @@ impl<'d> Converter<'d> {
         self.push(TokenKind::Command(command.to_string()), command_at);
         self.push(TokenKind::LBrace, open_at);
         self.flush_word();
-        self.out.push(ExpandedToken {
+        self.emit(ExpandedToken {
             token: Token { kind: TokenKind::Word(name.to_string()), span: word_at.span },
             definition: word_at.definition,
             maps_to_invocation: word_at.maps,
@@ -588,14 +748,116 @@ fn configure(engine: &mut Engine) {
         engine.declare_host_command(name);
     }
     engine.declare_host_command("include");
+    // `\global\setlength{\parskip}{..}` is valid LaTeX: `\setlength` is a
+    // macro, so TeX applies the prefix to the register assignment.
+    engine.declare_host_assignment("flashtexsetlength");
+    engine.declare_host_assignment("flashtexaddtolength");
+}
+
+/// The expansion engine's `em`/`ex` come from the text font its tracked font
+/// commands select ([`crate::font_units`]).
+fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts) {
+    configure(engine);
+    for (name, switch) in crate::font_units::font_switches() {
+        engine.declare_font_switch(name, switch);
+    }
+    engine.set_font_metrics(Rc::new(crate::font_units::EngineFontMetrics {
+        setup: fonts.setup,
+        preamble_latin_modern: fonts.preamble_latin_modern,
+    }));
+}
+
+/// The document-wide font inputs the engine needs before it executes any
+/// `\setlength`: the class size option, `fontenc` and `lmodern`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DocumentFonts {
+    setup: crate::font_units::FontSetup,
+    /// `lmodern` was loaded before `\usepackage[T1]{fontenc}`, whose
+    /// `\selectfont` then switches the preamble to Latin Modern already.
+    preamble_latin_modern: bool,
+}
+
+/// The words of `tokens` from `index` up to the next `{`, and the words of
+/// that brace group.
+fn option_and_group_words(tokens: &[Token], index: usize) -> (String, String) {
+    let mut options = String::new();
+    let mut group = String::new();
+    let mut in_group = false;
+    for token in &tokens[index..] {
+        match &token.kind {
+            TokenKind::LBrace if !in_group => in_group = true,
+            TokenKind::RBrace if in_group => break,
+            TokenKind::Word(word) if in_group => group.push_str(word),
+            TokenKind::Word(word) => options.push_str(word),
+            TokenKind::Space => {}
+            _ if in_group => break,
+            _ => {}
+        }
+    }
+    (options.trim_matches(|c| matches!(c, '[' | ']')).to_string(), group)
+}
+
+fn document_fonts(documents: &[SourceDocument<'_>]) -> DocumentFonts {
+    let mut class_pt = None;
+    let mut t1 = false;
+    let mut latin_modern = false;
+    let mut preamble_latin_modern = false;
+    for (document_index, document) in documents.iter().enumerate() {
+        let tokens = tokenize_document(document.text, DocumentId(document_index));
+        for (index, token) in tokens.iter().enumerate() {
+            let TokenKind::Command(name) = &token.kind else {
+                continue;
+            };
+            match name.as_str() {
+                "documentclass" if class_pt.is_none() => {
+                    let (options, _) = option_and_group_words(&tokens, index + 1);
+                    class_pt = options.split(',').find_map(|option| match option.trim() {
+                        "10pt" => Some(10.0),
+                        "11pt" => Some(11.0),
+                        "12pt" => Some(12.0),
+                        _ => None,
+                    });
+                }
+                "usepackage" => {
+                    let (options, group) = option_and_group_words(&tokens, index + 1);
+                    for package in group.split(',').map(str::trim) {
+                        match package {
+                            "lmodern" => latin_modern = true,
+                            "fontenc" => {
+                                if let Some(encoding) = crate::text_builtins::fontenc_encoding(&options) {
+                                    t1 = encoding == flashtex_tex_text_encoding::encoding::Encoding::T1;
+                                    preamble_latin_modern = latin_modern;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    DocumentFonts {
+        setup: crate::font_units::FontSetup::new(class_pt, t1, latin_modern),
+        preamble_latin_modern: preamble_latin_modern && t1,
+    }
 }
 
 fn has_includes(text: &str) -> bool {
     text.contains("\\input") || text.contains("\\include")
 }
 
+/// The engine stopped on the step limit or on TeX's "capacity exceeded"
+/// (input stack, main memory): the rest of the document is then typeset
+/// unexpanded from where the engine stood. A stop on the output token limit
+/// is not resumed (see [`tex::output_limit_message`]).
 fn step_limit_hit(diagnostics: &[tex::Diagnostic]) -> bool {
-    diagnostics.iter().any(|d| d.message.contains("expansion step limit exceeded"))
+    diagnostics.iter().any(|d| is_stop_limit(&d.message) && !tex::is_output_limit(&d.message))
+}
+
+/// Any stop on a resource limit, the output token limit included.
+pub(crate) fn is_stop_limit(message: &str) -> bool {
+    message.contains("expansion step limit exceeded") || message.starts_with("TeX capacity exceeded, sorry [")
 }
 
 /// What the caller must do after one converted token.
@@ -604,6 +866,8 @@ enum Flow {
     /// A source-level `\input`/`\include`: its braced path is still to be
     /// read.
     Include(String, Placement),
+    /// A source-level `\includeonly`: its braced list is still to be read.
+    IncludeOnly(Placement),
 }
 
 impl<'d> Converter<'d> {
@@ -611,6 +875,8 @@ impl<'d> Converter<'d> {
         Converter {
             documents,
             document_by_path: documents.iter().enumerate().map(|(i, d)| (d.path, i)).collect(),
+            includeonly: None,
+            document_begun: false,
             source_documents: HashMap::from([(0, Some(entry))]),
             entry,
             out: Vec::new(),
@@ -618,17 +884,30 @@ impl<'d> Converter<'d> {
             arraystretch: HashMap::new(),
             word: None,
             last_span: Span::in_document(DocumentId(entry), 0, 0),
+            atbegin_capturing: false,
+            atbegin_buffer: Vec::new(),
             stretch: None,
+            current_label: None,
+            current_label_by_marker: HashMap::new(),
             index: 0,
             stretch_index: 0,
+            current_label_index: 0,
             stretch_log: Vec::new(),
+            current_label_log: Vec::new(),
         }
     }
 
-    /// No partially built word or `\arraystretch` capture: the output so far
-    /// does not depend on tokens still to come.
+    /// No partially built word, `\arraystretch` capture, `\@currentlabel`
+    /// capture, or held-back `\AtBeginDocument` output: the output so far
+    /// does not depend on tokens still to come. (The incremental cache only
+    /// records marks and splices while clean, so a capture window is always
+    /// re-converted from an earlier mark with a fresh converter.)
     fn clean(&self) -> bool {
-        self.word.is_none() && self.stretch.is_none()
+        self.word.is_none()
+            && self.stretch.is_none()
+            && self.current_label.is_none()
+            && !self.atbegin_capturing
+            && self.atbegin_buffer.is_empty()
     }
 
     fn convert_token(&mut self, prepared: &[Prepared<'_>], token: &tex::Token, origin: Option<tex::Span>) -> Flow {
@@ -663,6 +942,43 @@ impl<'d> Converter<'d> {
             }
             return Flow::Next;
         }
+        // `\@currentlabel` capture after a `\refstepcounter` marker, mirroring
+        // the `\arraystretch` capture above. Unlike a table marker there is
+        // no enclosing environment to key by: when the group closes, a
+        // literal `flashtexcurrentlabel` command token is pushed (exactly
+        // what the default arm below would have produced for that name) and
+        // the text is keyed by that pushed token's own span.
+        if let Some((key, depth, mut text)) = conv.current_label.take() {
+            match &token.kind {
+                TexKind::Char(_, CatCode::BeginGroup) => {
+                    if depth > 0 {
+                        text.push('{');
+                    }
+                    conv.current_label = Some((key, depth + 1, text));
+                }
+                TexKind::Char(_, CatCode::EndGroup) if depth <= 1 => {
+                    conv.push(TokenKind::Command("flashtexcurrentlabel".into()), at);
+                    let pushed = (conv.last_span.document.0, conv.last_span.start);
+                    conv.current_label_log.push((conv.current_label_index, pushed, text.clone()));
+                    conv.current_label_by_marker.insert(pushed, text);
+                }
+                TexKind::Char(_, CatCode::EndGroup) => {
+                    text.push('}');
+                    conv.current_label = Some((key, depth - 1, text));
+                }
+                TexKind::Char(c, _) | TexKind::ActiveChar(c) => {
+                    text.push(*c);
+                    conv.current_label = Some((key, depth, text));
+                }
+                TexKind::ControlSequence(cs) => {
+                    text.push('\\');
+                    text.push_str(cs);
+                    conv.current_label = Some((key, depth, text));
+                }
+                _ => conv.current_label = Some((key, depth, text)),
+            }
+            return Flow::Next;
+        }
         if !at.maps && at.real.is_some_and(|real| prepared[real.document.0].skips(real.start)) {
             return Flow::Next;
         }
@@ -688,6 +1004,10 @@ impl<'d> Converter<'d> {
                     // Grouping bookkeeping and `\relax` produce nothing for the
                     // parser (LaTeX's environment groups included).
                     "begingroup" | "endgroup" | "relax" => {}
+                    "flashtexsetlength" => conv.push(TokenKind::Command("setlength".to_string()), at),
+                    "flashtexaddtolength" => {
+                        conv.push(TokenKind::Command("addtolength".to_string()), at)
+                    }
                     "flashtexbegintabular" | "flashtexbegintabularstar" | "flashtexbeginarray" => {
                         let env = match name.as_str() {
                             "flashtexbegintabular" => "tabular",
@@ -703,9 +1023,37 @@ impl<'d> Converter<'d> {
                         conv.stretch = Some(((begin.span.document.0, begin.span.start), 0, String::new()));
                         conv.push_environment("begin", env, begin);
                     }
+                    // `\AtBeginDocument` hook output: the host prelude wraps
+                    // every chunk queued before `\begin{document}` in these
+                    // markers. The engine runs the hook ahead of the real
+                    // `\begin{document}` re-emission, while the parser still
+                    // drops pre-marker content as preamble — so hold the
+                    // marked tokens back and re-emit them once the real
+                    // `\begin{document}` closes (see the `document` arm
+                    // below). The markers themselves are invisible.
+                    "flashtexatbeginstart" => {
+                        conv.flush_word();
+                        conv.atbegin_capturing = true;
+                    }
+                    "flashtexatbeginend" => {
+                        conv.flush_word();
+                        conv.atbegin_capturing = false;
+                    }
+                    // The `{<\@currentlabel>}` group after this marker is
+                    // captured above and re-emitted as a literal
+                    // `flashtexcurrentlabel` token carrying no output of its
+                    // own — exactly like the real `\refstepcounter`, which
+                    // the engine runs with no output tokens.
+                    "flashtexcurrentlabelmarker" => {
+                        conv.current_label_index = conv.index;
+                        conv.current_label =
+                            Some(((at.span.document.0, at.span.start), 0, String::new()));
+                    }
                     "\\" => conv.push(TokenKind::LineBreak, at),
                     "[" => conv.push(TokenKind::DisplayMathOpen, at),
                     "]" => conv.push(TokenKind::DisplayMathClose, at),
+                    "(" => conv.push(TokenKind::InlineMathOpen, at),
+                    ")" => conv.push(TokenKind::InlineMathClose, at),
                     "par" if !real_text.starts_with('\\') && at.real.is_some() => conv.push(TokenKind::ParBreak, at),
                     "verb" | "verb*" => {
                         let verb = at
@@ -735,6 +1083,12 @@ impl<'d> Converter<'d> {
                     "input" | "include" if origin.is_none() && real_text == format!("\\{name}") => {
                         return Flow::Include(name.clone(), at);
                     }
+                    "includeonly" if origin.is_none() && real_text == "\\includeonly" => {
+                        return Flow::IncludeOnly(at);
+                    }
+                    // `\-` (the discretionary hyphen) stays a command: it is
+                    // not the character it looks like.
+                    "-" => conv.push(TokenKind::Command(name.clone()), at),
                     _ if name.chars().count() == 1 && !name.chars().all(char::is_alphabetic) => {
                         conv.flush_word();
                         conv.push(TokenKind::Word(name.clone()), at);
@@ -755,7 +1109,25 @@ impl<'d> Converter<'d> {
                         );
                     }
                     _ if real_text == "\\begin" && name != "begin" => {
-                        conv.push_environment("begin", name, at);
+                        if name == "document" {
+                            // The engine's real `\begin{document}`: the
+                            // user's literal never reaches the converter
+                            // (the engine intercepts it), so this frozen
+                            // `\document` re-emission carrying the source
+                            // `\begin` span is the one true marker. Anything
+                            // captured above ran ahead of it as hook output;
+                            // the pending word belongs to the hook too while
+                            // capture is still on (a swallowed end marker),
+                            // so flush before releasing the capture, then
+                            // re-emit the held-back run right after the
+                            // marker closes, ahead of the body.
+                            conv.flush_word();
+                            conv.atbegin_capturing = false;
+                            conv.push_environment("begin", name, at);
+                            conv.drain_atbegin();
+                        } else {
+                            conv.push_environment("begin", name, at);
+                        }
                     }
                     _ if real_text == "\\end" && name.len() > 3 && name.starts_with("end") => {
                         conv.push_environment("end", &name[3..], at);
@@ -778,7 +1150,7 @@ impl<'d> Converter<'d> {
         }
         for token in tokenize_document(&text[offset..], DocumentId(document)) {
             let span = Span::in_document(DocumentId(document), token.span.start + offset, token.span.end + offset);
-            self.out.push(ExpandedToken {
+            self.emit(ExpandedToken {
                 token: Token { kind: token.kind, span },
                 definition: None,
                 maps_to_invocation: false,
@@ -814,61 +1186,57 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
         .collect();
     let total_bytes: usize = documents.iter().map(|d| d.text.len()).sum();
     let entry_text: &str = prepared.get(entry).map_or("", |p| p.text.as_ref());
-    let mut engine = Engine::with_limits(entry_text, limits_for(total_bytes));
-    configure(&mut engine);
+    let limits = limits_for(total_bytes);
+    let mut engine = Engine::with_limits(entry_text, limits);
+    configure_with_fonts(&mut engine, document_fonts(documents));
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
+    // Engine tokens taken so far. The output token limit is the incremental
+    // expander's (`IncrementalExpander`'s run loop): the token that goes past
+    // it is still converted, then the run stops with the same diagnostic and
+    // nothing after it is typeset.
+    let mut pulled: u64 = 0;
     loop {
         let next = match lookahead.pop_front() {
             Some(t) => Some(t),
-            None => engine.next_content_token_with_origin(),
+            None if pulled > limits.max_output_tokens => {
+                let message = tex::output_limit_message(limits.max_output_tokens);
+                engine.push_diagnostic(tex::Diagnostic::error(message, tex::Span::synthetic()));
+                break;
+            }
+            None => {
+                pulled += 1;
+                engine.next_content_token_with_origin()
+            }
         };
         let Some((token, origin)) = next else { break };
-        let Flow::Include(name, at) = conv.convert_token(&prepared, &token, origin) else {
-            continue;
-        };
-        // Read the braced path through the engine.
-        let mut taken = Vec::new();
-        let mut path = String::new();
-        let mut ok = false;
-        let mut depth = 0usize;
-        while let Some((t, o)) = engine.next_content_token_with_origin() {
-            let kind = t.kind.clone();
-            taken.push((t, o));
-            match kind {
-                TexKind::Char(_, CatCode::Space) if depth == 0 => {}
-                TexKind::Char(_, CatCode::BeginGroup) => {
-                    depth += 1;
-                    if depth > 1 {
-                        path.push('{');
-                    }
+        match conv.convert_token(&prepared, &token, origin) {
+            Flow::Next => continue,
+            Flow::Include(name, at) => {
+                // Read the braced path through the engine.
+                let (taken, path, ok) = read_braced_argument(&mut engine);
+                pulled += taken.len() as u64;
+                if !ok {
+                    conv.push(TokenKind::Command(name), at);
+                    lookahead.extend(taken);
+                    continue;
                 }
-                TexKind::Char(_, CatCode::EndGroup) if depth > 0 => {
-                    depth -= 1;
-                    if depth == 0 {
-                        ok = true;
-                        break;
-                    }
-                    path.push('}');
+                include(&mut conv, &mut engine, &prepared, &name, path.trim(), at.span);
+            }
+            Flow::IncludeOnly(at) => {
+                let (taken, path, ok) = read_braced_argument(&mut engine);
+                pulled += taken.len() as u64;
+                if !ok {
+                    conv.push(TokenKind::Command("includeonly".to_string()), at);
+                    lookahead.extend(taken);
+                    continue;
                 }
-                _ if depth == 0 => break,
-                TexKind::Char(c, _) | TexKind::ActiveChar(c) => path.push(c),
-                TexKind::ControlSequence(cs) => {
-                    path.push('\\');
-                    path.push_str(&cs);
-                }
-                _ => {}
+                record_includeonly(&mut conv, path.trim(), at.span);
             }
         }
-        if !ok {
-            conv.push(TokenKind::Command(name), at);
-            lookahead.extend(taken);
-            continue;
-        }
-        include(&mut conv, &mut engine, &prepared, &name, path.trim(), at.span);
     }
-    conv.flush_word();
+    conv.drain_atbegin();
 
     if step_limit_hit(engine.diagnostics()) {
         if let Some((source, offset)) = engine.input_position() {
@@ -879,7 +1247,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     }
     let diagnostics = engine.diagnostics().to_vec();
     conv.map_diagnostics(&diagnostics);
-    Expansion { tokens: Rc::new(conv.out), diagnostics: conv.diagnostics, arraystretch: conv.arraystretch }
+    Expansion { tokens: Rc::new(conv.out), diagnostics: conv.diagnostics, arraystretch: conv.arraystretch, current_label_by_marker: conv.current_label_by_marker }
 }
 
 /// A converter state with nothing pending, recorded while converting: after
@@ -906,13 +1274,15 @@ pub struct ExpansionCache {
     out: Rc<Vec<ExpandedToken>>,
     marks: Vec<Mark>,
     stretch_log: Vec<(usize, (usize, usize), String)>,
+    current_label_log: Vec<(usize, (usize, usize), String)>,
     last_span: Span,
     /// Engine tokens the previous run produced.
     old_engine_tokens: usize,
-    /// The last revision ran into the step limit: re-expand from scratch
-    /// until it no longer does (an incremental run would hit the same limit
-    /// and still need the full run for its recovery).
-    halted: bool,
+    /// The class size and font packages change the engine's `em`/`ex`.
+    fonts: DocumentFonts,
+    /// Tokens at the end of `out` typeset unexpanded after the engine
+    /// stopped (see [`Converter::resume_unexpanded`]); no marks cover them.
+    recovered: usize,
     /// `out` is lent to a parser ([`lend_cached_tokens`]). A cache whose
     /// stream never came back is rebuilt instead of reused.
     lent: bool,
@@ -1005,45 +1375,57 @@ pub fn expand_project_with_cache(
         .enumerate()
         .map(|(index, d)| if index == entry { prepare(d.text, DocumentId(index)) } else { Prepared::plain(d.text) })
         .collect();
-    if cache.as_ref().is_some_and(|c| c.halted && c.entry_path == document.path) {
-        let full = expand_project(documents, entry);
-        if full.diagnostics.iter().any(|d| d.message.contains("expansion step limit exceeded")) {
-            return full;
-        }
-        *cache = None;
-    }
     let masked: &str = prepared[entry].text.as_ref();
+    let fonts = document_fonts(documents);
+    // The same limits as `expand_project`, which the expander applies to
+    // every edit (`IncrementalExpander::edit_with_limits`).
+    let limits = limits_for(documents.iter().map(|d| d.text.len()).sum());
     let reusable = cache.as_ref().is_some_and(|c| {
-        !c.lent && c.entry_path == document.path && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
+        !c.lent
+            && c.entry_path == document.path
+            && c.fonts == fonts
+            && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
     });
     let expansion = if reusable {
-        update_cache(cache.as_mut().expect("checked"), documents, entry, &prepared)
+        update_cache(cache.as_mut().expect("checked"), documents, entry, &prepared, limits)
     } else {
-        let (fresh, expansion) = build_cache(documents, entry, &prepared);
+        let (fresh, expansion) = build_cache(documents, entry, &prepared, limits);
         *cache = Some(fresh);
         expansion
     };
-    match expansion {
-        Some(expansion) => expansion,
-        None => {
-            // Runaway expansion: the full path's recovery reads the engine's
-            // own stop position, which the cache does not keep.
-            if let Some(cache) = cache.as_mut() {
-                cache.halted = true;
-            }
-            expand_project(documents, entry)
-        }
+    // The incremental expander equals a full run across stops, so the
+    // unexpanded recovery after one is the full path's too, and so is a
+    // stop on the output token limit. Debug builds check that on every
+    // stopped run.
+    #[cfg(debug_assertions)]
+    if cache.as_ref().expect("cache kept").expander.diagnostics().iter().any(|d| is_stop_limit(&d.message)) {
+        let full = expand_project(documents, entry);
+        debug_assert!(
+            *full.tokens == *expansion.tokens && full.diagnostics == expansion.diagnostics && full.arraystretch == expansion.arraystretch,
+            "cached expansion of a stopped run differs from a full expansion"
+        );
     }
+    expansion
 }
 
-fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepared<'_>]) -> (ExpansionCache, Option<Expansion>) {
+fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepared<'_>], limits: Limits) -> (ExpansionCache, Expansion) {
     let masked: &str = prepared[entry].text.as_ref();
-    let init: Rc<dyn Fn(&mut Engine)> = Rc::new(configure);
-    let expander = IncrementalExpander::with_host(masked, limits_for(masked.len()), CHECKPOINT_INTERVAL, init);
+    let fonts = document_fonts(documents);
+    let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
+        configure_with_fonts(engine, fonts);
+    });
+    let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
     let mut marks = vec![Mark { index: 0, out_len: 0, last_span: conv.last_span }];
+    // One allocation for the converted stream: growing it by doubling frees
+    // a chain of blocks as large as the stream (hundreds of MB on a runaway
+    // document), which the allocator keeps resident through the rest of the
+    // compile. The stream is rarely longer than the engine's tokens plus the
+    // bytes of the unexpanded rest; `finish` trims what is left over.
+    let rest = expander.input_position().map_or(0, |(_, offset)| masked.len().saturating_sub(offset));
+    conv.out.reserve_exact(expander.tokens().len() + rest);
     convert_range(&mut conv, prepared, &expander, 0, &mut marks, None);
-    conv.flush_word();
+    conv.drain_atbegin();
     let mut cache = ExpansionCache {
         entry_path: documents[entry].path.to_string(),
         masked: masked.to_string(),
@@ -1052,9 +1434,11 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         out: Rc::new(Vec::new()),
         marks,
         stretch_log: Vec::new(),
+        current_label_log: Vec::new(),
         last_span: conv.last_span,
         old_engine_tokens: 0,
-        halted: false,
+        fonts,
+        recovered: 0,
         lent: false,
     };
     let expansion = finish(&mut cache, conv);
@@ -1127,8 +1511,13 @@ fn convert_range(
             }
         }
         conv.index = k;
-        if let Flow::Include(name, at) = conv.convert_token(prepared, &tokens[k], origins[k]) {
-            conv.push(TokenKind::Command(name), at);
+        // Includes never reach this path (`has_includes` sends their
+        // documents through the full expansion above); pass both commands
+        // through untouched so the parser, not the cache, reports them.
+        match conv.convert_token(prepared, &tokens[k], origins[k]) {
+            Flow::Include(name, at) => conv.push(TokenKind::Command(name), at),
+            Flow::IncludeOnly(at) => conv.push(TokenKind::Command("includeonly".to_string()), at),
+            Flow::Next => {}
         }
     }
     None
@@ -1147,25 +1536,33 @@ fn update_cache(
     documents: &[SourceDocument<'_>],
     entry: usize,
     prepared: &[Prepared<'_>],
-) -> Option<Expansion> {
+    limits: Limits,
+) -> Expansion {
     let masked: &str = prepared[entry].text.as_ref();
-    let changes = crate::incremental::changed_bytes(&cache.masked, masked);
+    let mut changes = crate::incremental::changed_bytes(&cache.masked, masked);
     if changes.old.is_empty() && changes.new.is_empty() && cache.masked.len() == masked.len() {
-        let mut conv = Converter::new(documents, entry);
-        conv.out = Vec::new();
-        conv.last_span = cache.last_span;
-        conv.stretch_log = cache.stretch_log.clone();
-        conv.arraystretch = stretch_map(&conv.stretch_log);
-        let tokens = cache.out.clone();
-        let mut expansion = finish_diagnostics(cache, conv)?;
-        expansion.tokens = tokens;
-        return Some(expansion);
+        if cache.expander.limits() == limits {
+            let mut conv = Converter::new(documents, entry);
+            conv.out = Vec::new();
+            conv.last_span = cache.last_span;
+            conv.stretch_log = cache.stretch_log.clone();
+            conv.arraystretch = stretch_map(&conv.stretch_log);
+            conv.current_label_log = cache.current_label_log.clone();
+            conv.current_label_by_marker = stretch_map(&conv.current_label_log);
+            let tokens = cache.out.clone();
+            let mut expansion = finish_diagnostics(cache, conv);
+            expansion.tokens = tokens;
+            return expansion;
+        }
+        // Only the limits changed (another project document's size): an
+        // empty edit at the end re-runs as little as they allow.
+        changes.old = masked.len()..masked.len();
+        changes.new = masked.len()..masked.len();
     }
-    let stats = cache.expander.edit(&Edit {
-        start: changes.old.start,
-        end: changes.old.end,
-        replacement: masked[changes.new.clone()].to_string(),
-    });
+    let stats = cache.expander.edit_with_limits(
+        &Edit { start: changes.old.start, end: changes.old.end, replacement: masked[changes.new.clone()].to_string() },
+        limits,
+    );
     let delta = masked.len() as isize - cache.masked.len() as isize;
     cache.masked.clear();
     cache.masked.push_str(masked);
@@ -1177,8 +1574,10 @@ fn update_cache(
     let restart_at = old_marks.partition_point(|mark| mark.index <= prefix).saturating_sub(1);
     let restart = old_marks[restart_at];
     let mut out = Rc::try_unwrap(std::mem::replace(&mut cache.out, Rc::new(Vec::new()))).unwrap_or_else(|shared| (*shared).clone());
+    out.truncate(out.len() - std::mem::take(&mut cache.recovered));
     let mut old_tail = out.split_off(restart.out_len);
     let old_log = std::mem::take(&mut cache.stretch_log);
+    let old_label_log = std::mem::take(&mut cache.current_label_log);
     let edit_start = changes.old.start;
     let old_edit_end = changes.old.end;
     let document = DocumentId(entry);
@@ -1197,6 +1596,9 @@ fn update_cache(
     // ones are regenerated or come back with the spliced suffix.
     conv.stretch_log = old_log.iter().filter(|(index, _, _)| *index < restart.index).cloned().collect();
     conv.arraystretch = stretch_map(&conv.stretch_log);
+    conv.current_label_log =
+        old_label_log.iter().filter(|(index, _, _)| *index < restart.index).cloned().collect();
+    conv.current_label_by_marker = stretch_map(&conv.current_label_log);
     let _ = edit_start;
     let mut marks: Vec<Mark> = old_marks[..=restart_at].to_vec();
     let old_count = cache.engine_token_count(n_new, &stats);
@@ -1221,9 +1623,21 @@ fn update_cache(
                 conv.stretch_log.push(((index as isize + token_offset) as usize, key, text.clone()));
                 conv.arraystretch.insert(key, text);
             }
+            for (index, key, text) in
+                old_label_log.into_iter().filter(|(index, _, _)| *index >= old_mark.index)
+            {
+                let key = if key.0 == entry && key.1 >= old_edit_end {
+                    (key.0, (key.1 as isize + delta) as usize)
+                } else {
+                    key
+                };
+                conv.current_label_log
+                    .push(((index as isize + token_offset) as usize, key, text.clone()));
+                conv.current_label_by_marker.insert(key, text);
+            }
             conv.last_span = shift(cache.last_span);
         }
-        None => conv.flush_word(),
+        None => conv.drain_atbegin(),
     }
     cache.marks = marks;
     cache.last_span = conv.last_span;
@@ -1241,35 +1655,49 @@ impl ExpansionCache {
 }
 
 /// Store the converted stream in the cache and map the engine diagnostics.
-/// `None` when expansion ran away (the caller falls back to the full path).
-fn finish(cache: &mut ExpansionCache, conv: Converter<'_>) -> Option<Expansion> {
+/// After a stop the rest of the entry is typeset unexpanded, as
+/// [`expand_project`] does.
+fn finish(cache: &mut ExpansionCache, conv: Converter<'_>) -> Expansion {
     let mut conv = conv;
-    let out = std::mem::take(&mut conv.out);
+    if step_limit_hit(cache.expander.diagnostics()) {
+        if let Some((source, offset)) = cache.expander.input_position() {
+            if let Some(Some(document)) = conv.source_documents.get(&source).copied() {
+                let before = conv.out.len();
+                conv.resume_unexpanded(document, offset);
+                cache.recovered = conv.out.len() - before;
+            }
+        }
+    }
+    let mut out = std::mem::take(&mut conv.out);
+    // The cache keeps the stream between revisions: at most an eighth of it
+    // spare, so an edit that adds a few tokens still extends it in place.
+    if out.capacity() > out.len() + out.len() / 4 {
+        out.shrink_to(out.len() + out.len() / 8);
+    }
     cache.stretch_log = conv.stretch_log.clone();
+    cache.current_label_log = conv.current_label_log.clone();
     cache.last_span = conv.last_span;
     cache.old_engine_tokens = cache.expander.tokens().len();
     let tokens = Rc::new(out);
     cache.out = tokens.clone();
-    let mut expansion = finish_diagnostics(cache, conv)?;
+    let mut expansion = finish_diagnostics(cache, conv);
     expansion.tokens = tokens;
-    Some(expansion)
+    expansion
 }
 
 fn stretch_map(log: &[(usize, (usize, usize), String)]) -> HashMap<(usize, usize), String> {
     log.iter().map(|(_, key, text)| (*key, text.clone())).collect()
 }
 
-fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Option<Expansion> {
-    if step_limit_hit(cache.expander.diagnostics()) {
-        return None;
-    }
+fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Expansion {
     conv.last_span = cache.last_span;
     conv.map_diagnostics(cache.expander.diagnostics());
-    Some(Expansion {
+    Expansion {
         tokens: Rc::new(Vec::new()),
         diagnostics: conv.diagnostics,
         arraystretch: conv.arraystretch,
-    })
+        current_label_by_marker: conv.current_label_by_marker,
+    }
 }
 
 fn recovery_for(message: &str) -> &'static str {
@@ -1277,10 +1705,115 @@ fn recovery_for(message: &str) -> &'static str {
         "kept the existing command definition"
     } else if message.contains("LaTeX Error: Command") && message.contains("undefined") {
         "defined the command anyway"
-    } else if message.contains("limit exceeded") {
+    } else if tex::is_output_limit(message) {
+        "stopped expanding; the rest of the document was not typeset"
+    } else if message == "group nesting limit exceeded" {
+        // The engine drops the `{` without opening a group and goes on.
+        "the extra group was ignored and expansion continued"
+    } else if message == "conditional nesting limit exceeded" {
+        // The engine drops the `\if...` token; its test is read as text.
+        "the extra conditional was ignored without evaluating its test, and expansion continued"
+    } else if is_stop_limit(message) {
         "stopped expanding; the rest of the document was typeset without macro expansion"
     } else {
         "continued expanding after the problem"
+    }
+}
+
+/// Read a `{...}` group through the engine (macro-expanding its content),
+/// the way `\input`/`\include`/`\includeonly` arguments are read: the taken
+/// engine tokens (for re-queueing when no group follows), the group text,
+/// and whether a group closed.
+fn read_braced_argument(engine: &mut Engine) -> (Vec<(tex::Token, Option<tex::Span>)>, String, bool) {
+    let mut taken = Vec::new();
+    let mut path = String::new();
+    let mut ok = false;
+    let mut depth = 0usize;
+    while let Some((t, o)) = engine.next_content_token_with_origin() {
+        let kind = t.kind.clone();
+        taken.push((t, o));
+        match kind {
+            TexKind::Char(_, CatCode::Space) if depth == 0 => {}
+            TexKind::Char(_, CatCode::BeginGroup) => {
+                depth += 1;
+                if depth > 1 {
+                    path.push('{');
+                }
+            }
+            TexKind::Char(_, CatCode::EndGroup) if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    ok = true;
+                    break;
+                }
+                path.push('}');
+            }
+            _ if depth == 0 => break,
+            TexKind::Char(c, _) | TexKind::ActiveChar(c) => path.push(c),
+            TexKind::ControlSequence(cs) => {
+                path.push('\\');
+                path.push_str(&cs);
+            }
+            _ => {}
+        }
+    }
+    (taken, path, ok)
+}
+
+/// True while `\begin{document}` has not been emitted yet: `\includeonly`
+/// is a preamble-only command (real LaTeX's `\@onlypreamble`), and
+/// expansion runs in document order, so the converter's own flag is the
+/// boundary — no raw-text scan. Fragments without a document environment
+/// never set the flag, so every position counts as preamble there. An
+/// `\includeonly` in an `\input`-ed preamble config file counts (it is
+/// processed before the boundary), and a commented `% \begin{document}`
+/// emits nothing, so it cannot end the preamble early.
+fn in_preamble(conv: &Converter<'_>) -> bool {
+    !conv.document_begun
+}
+
+/// Record a preamble `\includeonly{...}` list for [`include`]: comma-split
+/// and trimmed (real LaTeX allows spaces after commas), each entry kept both
+/// as written and stripped of one trailing `.tex`, mirroring [`include`]'s
+/// exact-then-`+.tex` lookup. Like real LaTeX's `\let\@partlist\@empty`
+/// reset, each call completely replaces the recorded set, so the last call
+/// wins. A post-preamble use warns and is ignored (`diagnostics.rs` carries
+/// no preamble-only pattern to reuse).
+fn record_includeonly(conv: &mut Converter<'_>, list: &str, span: Span) {
+    if !in_preamble(conv) {
+        conv.diagnostics.push(Diagnostic::warning(
+            "\\includeonly must appear in the preamble; ignored this use and continued",
+            Some(span),
+            Some("ignored the misplaced \\includeonly and continued".into()),
+        ));
+        return;
+    }
+    let mut set = HashSet::new();
+    for name in list.split(',') {
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        set.insert(name.to_string());
+        if let Some(stripped) = name.strip_suffix(".tex") {
+            set.insert(stripped.to_string());
+        }
+    }
+    conv.includeonly = Some(set);
+}
+
+/// True when `requested` names a file in the recorded `\includeonly` set:
+/// the trimmed name itself, the name minus one `.tex`, or the name plus
+/// `.tex` — the same two-way match [`include`] performs against the project
+/// documents.
+fn include_allowed(allowed: &HashSet<String>, requested: &str) -> bool {
+    let requested = requested.trim();
+    if allowed.contains(requested) {
+        return true;
+    }
+    match requested.strip_suffix(".tex") {
+        Some(stripped) => allowed.contains(stripped),
+        None => allowed.contains(&format!("{requested}.tex")),
     }
 }
 
@@ -1309,6 +1842,21 @@ fn include(
             "skipped the unsafe include and continued",
         );
     }
+    // A recorded, non-empty `\includeonly` list selects which `\include`d
+    // files are read: any other file is a pure no-op. (`\include` has no
+    // page-break or paragraph-flush side effect of its own, so there is
+    // nothing to replay for the skipped file.) `\input` never consults the
+    // list — real LaTeX tests `\@partlist` only in `\@include`. With no
+    // `\includeonly` at all (`None`), every `\include` behaves exactly as
+    // before; a recorded list — even an empty one from `\includeonly{}`,
+    // which switches `\@partsw` on with an empty `\@partlist` — selects.
+    if command == "include" {
+        if let Some(allowed) = conv.includeonly.as_ref() {
+            if !include_allowed(allowed, requested) {
+                return;
+            }
+        }
+    }
     let appended = format!("{requested}.tex");
     let Some(index) = conv
         .document_by_path
@@ -1316,11 +1864,16 @@ fn include(
         .copied()
         .or_else(|| conv.document_by_path.get(appended.as_str()).copied())
     else {
-        return skip(
-            conv,
-            format!("included file not found: looked for '{requested}' and '{appended}'"),
-            "skipped the missing include and continued",
-        );
+        return {
+            conv.diagnostics.push(Diagnostic::error(
+                format!("included file not found: looked for '{requested}' and '{appended}'"),
+                Some(span),
+                Some("skipped the missing include and continued".into()),
+            )
+            .with_help(format!(
+                "add '{requested}' or '{appended}' to the project documents, or fix the \\input path"
+            )));
+        };
     };
     let open: Vec<usize> = engine
         .open_input_ids()
@@ -1348,4 +1901,37 @@ fn include(
     }
     let id = engine.push_input(prepared[index].text.as_ref());
     conv.source_documents.insert(id, Some(index));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::after_bracket_option;
+
+    /// The byte index just past the options that `after_bracket_option`
+    /// finds in `text` (whose `[` follows `\begin{lstlisting}` at index 0).
+    fn options_of(text: &str) -> &str {
+        &text[..after_bracket_option(text, 0)]
+    }
+
+    #[test]
+    fn bracket_option_ends_at_the_first_unbraced_bracket() {
+        assert_eq!(options_of("[language=C]\nx]"), "[language=C]");
+        assert_eq!(options_of("[caption={[Short]Long}]\nx]"), "[caption={[Short]Long}]");
+    }
+
+    /// A backslash takes the next byte with it: `\]` does not close the
+    /// options, and `\{` / `\}` do not change the brace depth.
+    #[test]
+    fn bracket_option_skips_escaped_bytes() {
+        assert_eq!(options_of("[caption=Has a \\] mark]\nx]"), "[caption=Has a \\] mark]");
+        assert_eq!(options_of("[caption={Open \\{ only}]\nx]"), "[caption={Open \\{ only}]");
+        assert_eq!(options_of("[caption=Close \\} only]\nx]"), "[caption=Close \\} only]");
+        assert_eq!(options_of("[caption=Two \\\\]\nx]"), "[caption=Two \\\\]");
+    }
+
+    #[test]
+    fn bracket_option_without_a_close_leaves_the_body_start() {
+        assert_eq!(after_bracket_option("[caption={open]", 0), 0);
+        assert_eq!(after_bracket_option("\n\n[language=C]", 0), 0);
+    }
 }

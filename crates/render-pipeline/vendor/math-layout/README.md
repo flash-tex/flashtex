@@ -45,8 +45,8 @@ let runs = positioned_runs(&root, (72.0, 700.0));         // glyphs + rules in p
   offsets from the parent's reference point (left end of the baseline),
   `dy` positive downwards (TeX's `shift_amount` sign).
 - `positioned_runs(&box, origin_top_left) -> PositionedRuns { glyphs, rules }`:
-  `PositionedGlyph { font_id, gid, ch, x, baseline_y, size }` and
-  `PositionedRule { x, y, w, h }` in pt with a y-down axis; `origin` is the
+  `PositionedGlyph { font_id, gid, ch, x, baseline_y, size, width, tag }` and
+  `PositionedRule { x, y, w, h, tag }` in pt with a y-down axis; `origin` is the
   box's top-left corner, so the baseline is at `origin.1 + root.height`.
   For a PDF page (y up): `y_pdf = page_height - y`; place a glyph's text
   matrix at `(x, y_pdf(baseline_y))` and fill a rule as the rectangle
@@ -55,6 +55,19 @@ let runs = positioned_runs(&root, (72.0, 700.0));         // glyphs + rules in p
   provider's points: TeX points (1/72.27 in) for `CmMathMetrics`, so a
   consumer emitting PDF points multiplies by 7200/7227 once, as that
   proposal specifies; `TimesApproxMetrics` is already in PDF points.
+- Source provenance (`source.rs`): `Atom::tag` is a `SourceTag { span:
+  Option<SourceSpan { document, start, end }>, attr: Option<u32> }` and
+  `Atom::delimiter_tags` gives `\left`/`\right` (or `\genfrac`) delimiters
+  their own. Layout copies them onto the glyph and rule leaves each atom
+  produces (`MathBox::tag`), innermost atom first and per field, so
+  `PositionedGlyph::tag`/`PositionedRule::tag` map every placed glyph back to
+  its source bytes (click-to-source) and carry a caller attribute id (colour,
+  link). Fraction bars, radical signs and vincula, accents, operator text,
+  extensible delimiter and arrow pieces and brace fills take the spanned
+  atom that built them; scripts, numerators, radicands, rows and bodies keep
+  their own atoms' tags. Tags are never read for geometry: every golden and
+  fixture lays out bit-identically with and without them
+  (`tests/source_spans.rs`).
 
 ## Metrics providers
 

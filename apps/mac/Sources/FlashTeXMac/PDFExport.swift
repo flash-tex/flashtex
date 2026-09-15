@@ -76,14 +76,23 @@ enum PDFExport {
 }
 
 extension ShellModel {
+    /// Why `File > Export PDF…` would refuse right now, or nil if it would open
+    /// the save panel. Print… shares this predicate (`PrintController.exportWouldProceed`)
+    /// so the two commands do not copy the historical / no-result / v1-elided guards.
+    func exportPDFRefusal() -> String? {
+        if let why = historicalRefusal(of: "export") { return why }
+        guard let result else { return "Nothing to export: no compile result loaded." }
+        if result.pages.isEmpty, v1PagesElided {
+            return "The v1 layout pages were elided for the v2 pane (display-list-v2-only); use Export Exact PDF, or switch the v2 pane off and recompile."
+        }
+        return nil
+    }
+
     /// `File > Export PDF…`: writes the current preview via `PDFExport.render`.
     /// Reports the saved path (or failure) in `captureNote`.
     func exportPDF() {
-        if let why = historicalRefusal(of: "export") { captureNote = why; return }
-        guard let result else {
-            captureNote = "Nothing to export: no compile result loaded."
-            return
-        }
+        if let why = exportPDFRefusal() { captureNote = why; return }
+        guard let result else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = "\(result.projectId)-r\(result.revision).pdf"

@@ -1,8 +1,9 @@
 name: Publish website
 
 # Re-renders the GitHub Pages site whenever a release is published, so the
-# download page, DMG links, checksum and install.sh always point at the latest
-# release. Also runs when the site source on main changes, and on demand.
+# download page, DMG/CLI-tarball links, checksums, install.sh and
+# install-cli.sh always point at the latest release. Also runs when the site
+# source on main changes, and on demand.
 on:
   release:
     types: [published]
@@ -51,6 +52,7 @@ jobs:
           python3 source/site/render.py rendered ${TAG:+--tag "$TAG"} > values.json
           cat values.json
           sh -n rendered/install.sh
+          sh -n rendered/install-cli.sh
           echo "tag=$(python3 -c 'import json; print(json.load(open("values.json"))["TAG"])')" >> "$GITHUB_OUTPUT"
 
       - name: Publish to gh-pages

@@ -16,7 +16,9 @@ struct FlashTeXPadApp: App {
                     // Auto-reconnect to the last paired Mac (Keychain pairing; remembered
                     // address, then Bonjour by fingerprint). Skipped when a test pairs
                     // explicitly or asks for a quiet launch.
-                    if !args.contains("-flashtexpad-test-mac"), !args.contains("-flashtexpad-no-autoreconnect"), model.pairedMac != nil {
+                    if !args.contains("-flashtexpad-test-mac"), !args.contains("-flashtexpad-no-autoreconnect"),
+                       ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+                       model.pairedMac != nil {
                         Task { await model.autoReconnect() }
                     }
                     if let i = args.firstIndex(of: "-flashtexpad-open"), i + 1 < args.count {

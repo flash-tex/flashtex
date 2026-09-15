@@ -367,10 +367,11 @@ fn math_and_unsupported_commands_are_reported_never_silent() {
         .iter()
         .map(|d| d.get("message").unwrap().as_str().unwrap().to_string())
         .collect();
+    // `$x^2$` is implemented and reports nothing. This used to assert a
+    // "math mode is not implemented" message, which was satisfied only by
+    // the same suffix wrongly appended to the unsupported *text* command.
     assert!(
-        messages
-            .iter()
-            .any(|m| m.contains("math mode is not implemented")),
+        !messages.iter().any(|m| m.contains("math mode")),
         "got {:?}",
         messages
     );
@@ -520,4 +521,49 @@ fn a_large_project_reply_fits_the_transport_frame_and_says_what_it_dropped() {
         announced,
         "pages were truncated without an explicit diagnostic saying so"
     );
+}
+
+#[test]
+fn punctuation_after_a_style_group_survives_macro_expansion() {
+    // GH-MACRO-BODY-COMMA: `\newcommand{\w}{\textit{leaf}, then}\w` must
+    // typeset exactly like the directly-typed `\textit{leaf}, then` — the
+    // comma is ordinary text, not the `\,` kern control symbol. The scope is
+    // general to every kern control symbol (`,`, `;`, `:`, `!`), not
+    // comma-specific; `.` and `?` were never affected.
+    fn texts(text: &str) -> Vec<String> {
+        items(&reply(&compile_line("punct", 1, "main.tex", text)))
+            .iter()
+            .filter_map(|item| {
+                item.get("text")
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect()
+    }
+    assert_eq!(texts("\\textit{leaf}, then"), ["leaf", ",", "then"]);
+    assert_eq!(
+        texts("\\newcommand{\\w}{\\textit{leaf}, then}\\w"),
+        ["leaf", ",", "then"]
+    );
+    for punct in [";", ":", "!"] {
+        let body = format!("\\textit{{leaf}}{punct} then");
+        assert_eq!(
+            texts(&format!("\\newcommand{{\\w}}{{{body}}}\\w")),
+            ["leaf", punct, "then"],
+            "punctuation {punct:?} after a style group must survive macro expansion"
+        );
+    }
+    // Untouched witnesses: `.` and `?` are not kern control symbols.
+    assert_eq!(
+        texts("\\newcommand{\\w}{\\textit{leaf}. then}\\w"),
+        ["leaf", ".", "then"]
+    );
+    assert_eq!(
+        texts("\\newcommand{\\w}{\\textit{leaf}? then}\\w"),
+        ["leaf", "?", "then"]
+    );
+    // Flip side: a genuine `\,` inside a longer-named macro is still a kern —
+    // it typesets no "," text item, exactly like the direct `\,`.
+    assert!(!texts("\\,").contains(&",".to_string()));
+    assert!(!texts("\\newcommand{\\ww}{\\,}\\ww").contains(&",".to_string()));
 }

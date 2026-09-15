@@ -1,0 +1,91 @@
+{
+ "fixture": "10-rel-triangles.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Triangles",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 122.4701,
+    "y_top": 83.955
+   },
+   {
+    "text": "⊲",
+    "x": 131.9266,
+    "y_top": 83.955
+   },
+   {
+    "text": "b",
+    "x": 144.5489,
+    "y_top": 83.955
+   },
+   {
+    "text": "⊳",
+    "x": 152.8494,
+    "y_top": 83.955
+   },
+   {
+    "text": "c",
+    "x": 165.4717,
+    "y_top": 83.955
+   },
+   {
+    "text": "⊴",
+    "x": 173.8332,
+    "y_top": 83.955
+   },
+   {
+    "text": "d",
+    "x": 186.4435,
+    "y_top": 83.955
+   },
+   {
+    "text": "⊵",
+    "x": 195.8499,
+    "y_top": 83.955
+   },
+   {
+    "text": "e",
+    "x": 208.4722,
+    "y_top": 83.955
+   },
+   {
+    "text": "≬",
+    "x": 217.221,
+    "y_top": 83.955
+   },
+   {
+    "text": "f",
+    "x": 226.5102,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋔",
+    "x": 236.8825,
+    "y_top": 83.955
+   },
+   {
+    "text": "g",
+    "x": 248.1766,
+    "y_top": 83.955
+   },
+   {
+    "text": "end.",
+    "x": 258.1102,
+    "y_top": 83.955
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "brace_extents": [
+  []
+ ]
+}

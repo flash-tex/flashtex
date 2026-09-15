@@ -8,6 +8,18 @@ Oracle tooling only; pdflatex never runs in the product path.
     # measure a flashtex-render build against the pinned references
     python3 oracle.py check --render path/to/flashtex-render --fonts apps/mac/Fonts
 
+`--fonts` and `--tfm-dirs` both take colon-separated lists, and an exported
+`FLASHTEX_FONT_DIRS` / `FLASHTEX_TFM_DIRS` takes precedence over either (the
+harness must never discard a correctly configured environment). When the
+metrics directories are not given, they are derived by walking
+`<fonts>/texmf` for directories holding `.tfm` files -- `--fonts` alone does
+not reach the bundled texmf, whose roots are relative to the executable.
+
+Any font diagnostic (`font_unavailable`, `required_metrics_unavailable`,
+`ec_metrics_unavailable`, ...) fails the fixture: the renderer used
+substituted metrics, so its positions are not comparable to the reference and
+scoring the run would report a fallback as a pass.
+
 Words are formed identically on both sides from glyph origins (a gap wider
 than 0.16 em or a new baseline starts a word; PDF text objects are ignored),
 using tools/visual-oracle/pdftext.py for the reference PDF and the
@@ -38,6 +50,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "tools", "visual-oracle"))
 sys.path.insert(0, os.path.join(REPO, "tools", "real-world-corpus"))
+import fontenv  # noqa: E402
 import pdftext  # noqa: E402
 import rank  # noqa: E402
 
@@ -61,11 +74,15 @@ def regroup(glyphs):
     # Glyphs whose origins coincide within TIE bp (amsmath's `\relbar`
     # and arrow head, 14mu apart by construction) have no reading order:
     # pdfTeX's quantised TJ offsets and FlashTeX's exact arithmetic may put
-    # them either way round, so they are ordered by text.
+    # them either way round, so they are ordered by text. A minus sign
+    # orders as the hyphen-minus the pinned references read it as
+    # (rank.norm aligns the two), or `−→` and `-→` sort differently.
+    def key(g):
+        return g["text"].replace("\u2212", "-")
     for i in range(1, len(glyphs)):
         j = i
         while (j > 0 and round(glyphs[j]["y_top"], 1) == round(glyphs[j - 1]["y_top"], 1)
-               and glyphs[j]["x"] - glyphs[j - 1]["x"] < TIE and glyphs[j]["text"] < glyphs[j - 1]["text"]):
+               and glyphs[j]["x"] - glyphs[j - 1]["x"] < TIE and key(glyphs[j]) < key(glyphs[j - 1])):
             glyphs[j], glyphs[j - 1] = glyphs[j - 1], glyphs[j]
             j -= 1
     return [{"text": w["text"], "x": round(w["x"], 4), "y_top": round(w["y_top"], 4)}
@@ -154,6 +171,8 @@ def cmd_refs(args):
 
 def cmd_check(args):
     passed, rows = 0, []
+    env = fontenv.render_env(args.fonts, args.tfm_dirs)
+    print(fontenv.describe(env))
     with tempfile.TemporaryDirectory() as work:
         for name in fixtures(args.only):
             pinned = json.load(open(os.path.join(REFS, name + ".json"), encoding="utf-8"))
@@ -161,20 +180,21 @@ def cmd_check(args):
             ref_cols = pinned.get("extension_columns") or [[] for _ in ref]
             text = open(os.path.join(FIXTURES, name + ".tex"), encoding="utf-8").read()
             req = {"protocol_version": 1, "id": name, "type": "compile",
-                   "payload": {"project_id": "amsmath-corpus", "revision": 1, "entry_path": "main.tex",
+                   "payload": {"project_id": "amsmath-corpus", "revision": 1, "entry_path": "main.tex", "date": "1970-01-01",
                                "documents": [{"path": "main.tex", "text": text}]}}
             v2 = os.path.join(work, name + ".v2.json")
-            env = dict(os.environ, FLASHTEX_FONT_DIRS=args.fonts, FLASHTEX_TFM_DIRS=args.fonts)
             p = subprocess.run([args.render, "--v2", v2], input=(json.dumps(req) + "\n").encode(), env=env,
                                capture_output=True, timeout=120)
-            diags = []
+            diags, font_bad = [], []
             for line in p.stdout.decode("utf-8", "replace").splitlines():
                 try:
                     m = json.loads(line)
                 except json.JSONDecodeError:
                     continue
                 if m.get("type") == "compile_result":
-                    diags = [d for d in m["payload"].get("diagnostics", [])
+                    all_diags = m["payload"].get("diagnostics", [])
+                    font_bad = fontenv.font_diagnostics(all_diags)
+                    diags = [d for d in all_diags
                              if d.get("severity") == "error" or d.get("code") == "math_limitation"]
             cand = cand_pages(v2) if os.path.isfile(v2) else []
             n = ok = unaligned = 0
@@ -191,19 +211,25 @@ def cmd_check(args):
                 for rx, cx in zip(rc, cc):
                     worst = max(worst, abs(rx - cx))
                     cols_ok = cols_ok and abs(rx - cx) <= TOL
-            good = len(ref) == len(cand) == 1 and n > 0 and ok == n and unaligned == 0 and cols_ok
+            good = (len(ref) == len(cand) == 1 and n > 0 and ok == n
+                    and unaligned == 0 and cols_ok and not font_bad)
+            if font_bad:
+                fontenv.report_font_failure(name, font_bad, env)
             passed += good
             ncols = [sum(len(c) for c in ref_cols), sum(len(c) for _, c in cand)]
             row = {"fixture": name, "pass": good, "pages": [len(ref), len(cand)], "aligned": n, "within_tol": ok,
                    "unaligned": unaligned, "extension_columns": ncols, "worst_bp": round(worst, 3),
-                   "diagnostics": [(d.get("code"), (d.get("message") or "")[:120]) for d in diags]}
+                   "diagnostics": [(d.get("code"), (d.get("message") or "")[:120]) for d in diags],
+                   "font_diagnostics": [(d.get("code"), (d.get("message") or "")[:120]) for d in font_bad]}
             rows.append(row)
             print(f"{'PASS' if good else 'FAIL'} {name:26} words {n:3} ok {ok:3} unaligned {unaligned:3} "
                   f"ext cols {ncols[0]:2}/{ncols[1]:2} worst {worst:8.3f}")
     print(f"TOTAL {passed}/{len(rows)} within {TOL} bp")
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
-            json.dump({"passed": passed, "total": len(rows), "tolerance_bp": TOL, "fixtures": rows}, f, indent=1)
+            json.dump({"passed": passed, "total": len(rows), "tolerance_bp": TOL,
+                       "font_dirs": env.get("FLASHTEX_FONT_DIRS"), "tfm_dirs": env.get("FLASHTEX_TFM_DIRS"),
+                       "fixtures": rows}, f, indent=1)
             f.write("\n")
     return 0 if passed == len(rows) else 1
 
@@ -216,7 +242,7 @@ def main():
     r.add_argument("only", nargs="*")
     c = sub.add_parser("check")
     c.add_argument("--render", required=True)
-    c.add_argument("--fonts", default=os.path.join(REPO, "apps", "mac", "Fonts"))
+    fontenv.add_font_arguments(c, REPO)
     c.add_argument("--json")
     c.add_argument("only", nargs="*")
     args = ap.parse_args()

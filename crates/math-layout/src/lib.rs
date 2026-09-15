@@ -19,18 +19,24 @@ pub mod fixtures;
 pub mod layout;
 pub mod mathlist;
 pub mod metrics;
+pub mod source;
 pub mod spacing;
 pub mod style;
 pub mod tfm;
 pub mod times;
 
 pub use boxes::{
-    BoxKind, Child, MathBox, PositionedGlyph, PositionedRule, PositionedRuns, positioned_runs,
+    BoxKind, Child, Flex, GlueOrder, GlueSet, GlueSign, GlueTotals, MathBox, Packed,
+    PositionedGlyph, PositionedRule, PositionedRuns, positioned_runs,
 };
 pub use cm::CmMathMetrics;
 pub use layout::{Layout, Limitation, layout, layout_with_report};
-pub use mathlist::{Atom, AtomClass, Limits, MathList, Nucleus};
+pub use mathlist::{
+    Atom, AtomClass, BigSizing, Limits, MathFlex, MathList, Nucleus, TextPiece, TextStyle,
+};
 pub use metrics::{FontId, Glyph, MathFontMetrics, MathParams, OpenTypeMathConstants, SizeClass};
+pub use metrics::{MathChar, OrdLigature, OrdPair};
+pub use source::{SourceSpan, SourceTag};
 pub use spacing::{Space, between};
 pub use style::{Style, StyleLevel};
 pub use times::TimesApproxMetrics;

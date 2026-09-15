@@ -4,9 +4,10 @@
 //! Every rule is implemented against [`MathFontMetrics`] parameters, so the
 //! numbers below are TeX's when the Computer Modern adapter is used.
 
-use crate::boxes::{BoxKind, Child, MathBox};
-use crate::mathlist::{Atom, AtomClass, Limits, MathList, Nucleus};
+use crate::boxes::{BoxKind, Child, Flex, MathBox};
+use crate::mathlist::{Atom, AtomClass, BigSizing, Limits, MathList, Nucleus};
 use crate::metrics::{Extensible, Glyph, MathFontMetrics, MathParams};
+use crate::source::SourceTag;
 use crate::spacing::{Space, between};
 use crate::style::Style;
 
@@ -101,6 +102,38 @@ fn is_glue(atom: &Atom) -> bool {
         && atom.subscript.is_none()
 }
 
+/// TeX §1186: when a math group closes holding exactly one ordinary atom
+/// without scripts, the group's nucleus is replaced by that atom's nucleus,
+/// so `{x}^2` and `\mathrm{K}^{-1}` place their scripts on a character
+/// (Rule 18a, `shift_up` starts at 0) and `\mathop{x}` centres a character
+/// on the axis (`make_op`), instead of treating a boxed sub-list. Glue is not
+/// a noad and blocks the replacement.
+///
+/// Also returns the source tag of the innermost unpacked atom (`SourceTag::
+/// NONE` when no unpacking happened), so the caller can apply it to the
+/// resulting box before the enclosing atom's own tag only fills in what that
+/// leaves missing (`SourceTag::inherit`'s innermost-wins rule) -- otherwise
+/// an unpacked atom's own span/attribute would be lost in favour of the
+/// outer (unpacked-away) atom's.
+fn unpacked(nucleus: &Nucleus) -> (&Nucleus, SourceTag) {
+    let mut n = nucleus;
+    let mut tag = SourceTag::NONE;
+    while let Nucleus::List(list) = n {
+        match list.atoms.as_slice() {
+            [a] if a.class == AtomClass::Ord
+                && a.superscript.is_none()
+                && a.subscript.is_none()
+                && !matches!(a.nucleus, Nucleus::Glue { .. }) =>
+            {
+                n = &a.nucleus;
+                tag = a.tag;
+            }
+            _ => break,
+        }
+    }
+    (n, tag)
+}
+
 impl Engine<'_> {
     fn params(&self, style: Style) -> MathParams {
         self.m.params(style.size_class())
@@ -114,16 +147,36 @@ impl Engine<'_> {
         let mut prev: Option<AtomClass> = None;
         for (atom, class) in list.atoms.iter().zip(classes) {
             if is_glue(atom) {
-                if let Nucleus::Glue { mu: g, pt } = atom.nucleus {
-                    items.push(MathBox::glue(g * mu + pt, g));
+                if let Nucleus::Glue {
+                    mu: g,
+                    pt,
+                    stretch,
+                    shrink,
+                } = atom.nucleus
+                {
+                    items.push(MathBox::glue_flex(
+                        g * mu + pt,
+                        g,
+                        stretch.resolve(mu),
+                        shrink.resolve(mu),
+                    ));
                 }
                 continue;
             }
-            let b = self.atom(atom, class, style);
+            let mut b = self.atom(atom, class, style);
+            // Leaves no inner atom claimed belong to this atom.
+            b.inherit_tag(atom.tag);
             if let Some(p) = prev {
                 let space = between(p, class, style);
                 if space != Space::None {
-                    items.push(MathBox::glue(space.mu() * mu, space.mu()));
+                    // Rule 20 with plain.tex's muskips, stretch and shrink
+                    // included (§716 `math_glue` scales all three by mu).
+                    items.push(MathBox::glue_flex(
+                        space.mu() * mu,
+                        space.mu(),
+                        Flex::pt(space.stretch_mu() * mu),
+                        Flex::pt(space.shrink_mu() * mu),
+                    ));
                 }
             }
             items.push(b);
@@ -145,14 +198,35 @@ impl Engine<'_> {
         g
     }
 
+    /// A character of the upright text family (`\fam0`) at this style's size.
+    fn text_char(&mut self, ch: char, style: Style) -> Option<Glyph> {
+        let g = self.m.text_glyph(ch, style.size_class());
+        if g.is_none() {
+            self.limitations.push(Limitation::MissingGlyph(ch));
+        }
+        g
+    }
+
     fn atom(&mut self, atom: &Atom, class: AtomClass, style: Style) -> MathBox {
         if class == AtomClass::Op {
             return self.make_op(atom, style);
         }
         // The nucleus, TeX's `delta` (italic correction still to be applied),
         // and whether the nucleus is a bare character (Rule 18a).
-        let (nucleus, delta, is_char) = match &atom.nucleus {
+        let (unpacked_nucleus, unpacked_tag) = unpacked(&atom.nucleus);
+        let (nucleus, delta, is_char) = match unpacked_nucleus {
             Nucleus::Symbol(ch) => match self.glyph(*ch, style) {
+                Some(g) => {
+                    let b = MathBox::glyph(&g);
+                    if atom.subscript.is_none() && g.italic != 0.0 {
+                        (MathBox::hlist(vec![b, MathBox::kern(g.italic)]), 0.0, true)
+                    } else {
+                        (b, g.italic, true)
+                    }
+                }
+                None => (MathBox::empty(), 0.0, false),
+            },
+            Nucleus::TextChar(ch) => match self.text_char(*ch, style) {
                 Some(g) => {
                     let b = MathBox::glyph(&g);
                     if atom.subscript.is_none() && g.italic != 0.0 {
@@ -171,13 +245,14 @@ impl Engine<'_> {
                 thickness,
                 left,
                 right,
-            } => (
-                self.make_fraction(numerator, denominator, *thickness, (*left, *right), style),
-                0.0,
-                false,
-            ),
-            Nucleus::BigDelimiter { delim, factor } => {
-                (self.make_big_delimiter(*delim, *factor), 0.0, false)
+            } => {
+                let mut b =
+                    self.make_fraction(numerator, denominator, *thickness, (*left, *right), style);
+                tag_delimiters(&mut b, atom.delimiter_tags);
+                (b, 0.0, false)
+            }
+            Nucleus::BigDelimiter { delim, sizing } => {
+                (self.make_big_delimiter(*delim, *sizing), 0.0, false)
             }
             Nucleus::Phantom {
                 body,
@@ -204,7 +279,7 @@ impl Engine<'_> {
                 false,
             ),
             // Scripted glue (not a TeX construct): a kern carrying the scripts.
-            Nucleus::Glue { mu, pt } => {
+            Nucleus::Glue { mu, pt, .. } => {
                 (MathBox::kern(mu * self.params(style).mu() + pt), 0.0, false)
             }
             Nucleus::Radical { radicand, degree } => (
@@ -222,7 +297,9 @@ impl Engine<'_> {
                 (self.make_accent(*accent, base, None, style), 0.0, false)
             }
             Nucleus::Delimited { left, right, body } => {
-                (self.make_left_right(*left, *right, body, style), 0.0, false)
+                let mut b = self.make_left_right(*left, *right, body, style);
+                tag_delimiters(&mut b, atom.delimiter_tags);
+                (b, 0.0, false)
             }
             Nucleus::Brace { body, under } => (self.make_brace(body, *under), 0.0, false),
             Nucleus::OverArrow {
@@ -248,7 +325,11 @@ impl Engine<'_> {
                 let reported = self.limitations.len();
                 let measured = self.clean_box(base, Style::TEXT).width;
                 self.limitations.truncate(reported);
-                let accent = if measured > *threshold { *wide } else { *narrow };
+                let accent = if measured > *threshold {
+                    *wide
+                } else {
+                    *narrow
+                };
                 let inner = Atom {
                     nucleus: Nucleus::Accent {
                         accent,
@@ -263,6 +344,8 @@ impl Engine<'_> {
             Nucleus::Underline(body) => (self.make_under(body, style), 0.0, false),
             Nucleus::Styled { style: inner, body } => (self.clean_box(body, *inner), 0.0, false),
         };
+        let mut nucleus = nucleus;
+        nucleus.inherit_tag(unpacked_tag);
         self.make_scripts(nucleus, delta, is_char, atom, style)
     }
 
@@ -296,6 +379,10 @@ impl Engine<'_> {
             superscript: atom.superscript.clone(),
             subscript: atom.subscript.clone(),
             limits: Limits::default(),
+            // The character keeps its own provenance; the accent glyph
+            // inherits the accent atom's when the caller's list tags it.
+            tag: base.atoms[0].tag,
+            delimiter_tags: [SourceTag::NONE; 2],
         };
         let g = self.m.glyph(*ch, style.size_class())?;
         Some(self.make_accent(accent, &MathList::from(scripted), Some((*ch, g)), style))
@@ -338,6 +425,7 @@ impl Engine<'_> {
         let w = x.width;
         let rule_dy = x.depth + 3.0 * theta + theta;
         MathBox {
+            tag: SourceTag::NONE,
             width: w,
             height: x.height,
             depth: x.depth + 3.0 * theta + theta + theta,
@@ -364,10 +452,15 @@ impl Engine<'_> {
             Limits::Limits => true,
             Limits::NoLimits => false,
         };
-        let (nucleus, delta) = match &atom.nucleus {
-            Nucleus::Symbol(ch) => {
-                let mut g = self.glyph(*ch, style);
-                if style.is_display()
+        let (unpacked_nucleus, unpacked_tag) = unpacked(&atom.nucleus);
+        let (nucleus, delta) = match unpacked_nucleus {
+            n @ (Nucleus::Symbol(_) | Nucleus::TextChar(_)) => {
+                let mut g = match n {
+                    Nucleus::Symbol(ch) => self.glyph(*ch, style),
+                    Nucleus::TextChar(ch) => self.text_char(*ch, style),
+                    _ => None,
+                };
+                if let (true, Nucleus::Symbol(ch)) = (style.is_display(), n)
                     && let Some(large) = self.m.large_operator(*ch, style.size_class())
                 {
                     g = Some(large);
@@ -397,10 +490,14 @@ impl Engine<'_> {
                     superscript: None,
                     subscript: None,
                     limits: Limits::default(),
+                    tag: atom.tag,
+                    delimiter_tags: atom.delimiter_tags,
                 };
                 (self.atom(&inner, AtomClass::Ord, style), 0.0)
             }
         };
+        let mut nucleus = nucleus;
+        nucleus.inherit_tag(unpacked_tag);
         self.op_scripts(nucleus, delta, limits, atom, style)
     }
 
@@ -468,6 +565,7 @@ impl Engine<'_> {
             });
         }
         MathBox {
+            tag: SourceTag::NONE,
             kind: BoxKind::VBox(children),
             width: w,
             height,
@@ -551,6 +649,8 @@ impl Engine<'_> {
             superscript: script(above),
             subscript: script(below),
             limits: Limits::Limits,
+            tag: SourceTag::NONE,
+            delimiter_tags: [SourceTag::NONE; 2],
         };
         self.op_scripts(nucleus, 0.0, true, &op, style)
     }
@@ -605,6 +705,7 @@ impl Engine<'_> {
             content: right,
         });
         MathBox {
+            tag: SourceTag::NONE,
             kind: BoxKind::HBox(children),
             width,
             height,
@@ -654,11 +755,23 @@ impl Engine<'_> {
         } else {
             [0x7A, 0x7D, 0x7C, 0x7B]
         };
+        // `\downbracefill`/`\upbracefill` set `\braceld`..`\braceru` inside
+        // their own `$...$` (plain.tex 352-360), so the pieces come from
+        // `\textfont3` of the current math size however deeply the brace is
+        // nested in scripts — never `\scriptfont3`. pdfTeX `\showbox` of an
+        // 11 pt article loading amsmath (where the two differ: `\textfont3`
+        // is `cmex10 at 10.95pt`, `\scriptfont3` is `cmex8`) gives the same
+        // 1.31396 pt piece from cmex10 at 10.95 pt for `\overbrace{a+b}`,
+        // `x^{\overbrace{a+b}}`, `x^{y^{\overbrace{a+b}}}` and an
+        // `\underbrace` in a fraction numerator; in `\footnotesize` all of
+        // them come from cmex9 instead. Hence [`SizeClass::Text`], not the
+        // style's own size class.
+        let at = crate::metrics::SizeClass::Text;
         let pieces: Option<Vec<Glyph>> = codes
             .iter()
-            .map(|c| self.m.extension_glyph(*c, ch))
+            .map(|c| self.m.extension_glyph(*c, ch, at))
             .collect();
-        let (Some(pieces), Some(ld)) = (pieces, self.m.extension_glyph(0x7A, ch)) else {
+        let (Some(pieces), Some(ld)) = (pieces, self.m.extension_glyph(0x7A, ch, at)) else {
             self.limitations.push(Limitation::MissingGlyph(ch));
             return x;
         };
@@ -743,6 +856,7 @@ impl Engine<'_> {
         let height = x.height + shift_up;
         let depth = y.depth + shift_down;
         let scripts = MathBox {
+            tag: SourceTag::NONE,
             kind: BoxKind::VBox(vec![
                 Child {
                     dx: delta,
@@ -833,6 +947,7 @@ impl Engine<'_> {
             content: z,
         });
         let body = MathBox {
+            tag: SourceTag::NONE,
             kind: BoxKind::VBox(children),
             width: w,
             height,
@@ -850,25 +965,41 @@ impl Engine<'_> {
         MathBox::hlist(vec![open, body, close])
     }
 
-    /// amsmath `\bBigg@` (`amsmath.sty`: `\left#2\vcenter to#1\big@size{}\right.`
-    /// inside `\@mathmeasure` with `\nulldelimiterspace\z@`; `\big@size` =
-    /// 1.2`\ht\Mathstrutbox@` + 1.2`\dp\Mathstrutbox@`, the text font's `(`).
+    /// `\big`/`\Big`/`\bigg`/`\Bigg` under either definition ([`BigSizing`]).
     /// The inner formula is text style whatever the outer style is.
-    fn make_big_delimiter(&mut self, delim: Option<char>, factor: f64) -> MathBox {
+    ///
+    /// Both spellings are `\left<delim><empty box><no delimiter>`, so the
+    /// delimiter comes from Rule 19 applied to that empty box; the two
+    /// differ in the box.
+    ///
+    /// * amsmath (`\vcenter to <factor>\big@size{}`) straddles the axis:
+    ///   height `s/2 + a`, depth `s/2 - a`, so δ = `s/2` and the target
+    ///   `2δ` is `s` itself.
+    /// * the kernel (`\vbox to <pt>{}`) has height `pt` and depth **0**, so
+    ///   δ = `max(pt - a, a)` and the target is `2 max(pt - a, a)`. For
+    ///   `\Big` at 10pt that is `2 max(11.5 - 2.5, 2.5)` = 18pt, which is
+    ///   why the kernel's `\Big[` lands on `cmex` `h` (18.00017pt) at every
+    ///   body size while amsmath's follows the math size.
+    fn make_big_delimiter(&mut self, delim: Option<char>, sizing: BigSizing) -> MathBox {
         let p = self.params(Style::TEXT);
-        let strut = self
-            .m
-            .text_glyph('(', crate::metrics::SizeClass::Text)
-            .map(|g| g.height + g.depth)
-            .unwrap_or(p.size);
-        let size = factor * 1.2 * strut;
         let a = p.axis_height;
-        // The empty `\vcenter to size`: height size/2 + a, depth size/2 - a.
-        let (vh, vd) = (size / 2.0 + a, size / 2.0 - a);
+        // `target` is Rule 19's 2δ; `(vh, vd)` the empty box's own height
+        // and depth, which the result is still at least as large as.
+        let (target, vh, vd) = match sizing {
+            BigSizing::Amsmath { factor } => {
+                let strut = self
+                    .m
+                    .text_glyph('(', crate::metrics::SizeClass::Text)
+                    .map(|g| g.height + g.depth)
+                    .unwrap_or(p.size);
+                let s = factor * 1.2 * strut;
+                (s, s / 2.0 + a, s / 2.0 - a)
+            }
+            BigSizing::Kernel { pt } => (2.0 * (pt - a).max(a), pt, 0.0),
+        };
         let mut items = Vec::new();
         if let Some(ch) = delim {
-            // Rule 19 with δ = size/2 exactly.
-            let wanted = (size * p.delimiter_factor).max(size - p.delimiter_shortfall);
+            let wanted = (target * p.delimiter_factor).max(target - p.delimiter_shortfall);
             let d = self.left_right_delimiter(Some(ch), wanted, Style::TEXT, &p);
             items.push(d);
         }
@@ -895,6 +1026,7 @@ impl Engine<'_> {
             },
         );
         MathBox {
+            tag: SourceTag::NONE,
             kind: BoxKind::HBox(Vec::new()),
             width: if horizontal { b.width } else { 0.0 },
             height: if vertical { b.height } else { 0.0 },
@@ -948,6 +1080,7 @@ impl Engine<'_> {
             })
             .collect();
         MathBox {
+            tag: SourceTag::NONE,
             kind: BoxKind::VBox(children),
             width,
             height,
@@ -1040,6 +1173,7 @@ impl Engine<'_> {
         // an extra kern of the rule thickness above the rule, so the box is
         // taller than the sign by exactly one rule thickness.
         let overbar = MathBox {
+            tag: SourceTag::NONE,
             width: x.width,
             height: x.height + clr + 2.0 * rule_thickness,
             depth: x.depth,
@@ -1137,6 +1271,7 @@ impl Engine<'_> {
             height = h;
         }
         MathBox {
+            tag: SourceTag::NONE,
             width: x.width,
             height,
             depth: x.depth,
@@ -1201,10 +1336,25 @@ impl Engine<'_> {
     }
 }
 
+/// Gives the delimiter boxes of a `[open, body, close]` hlist
+/// (`make_fraction`, `make_left_right`) their own commands' provenance.
+fn tag_delimiters(b: &mut MathBox, tags: [SourceTag; 2]) {
+    if tags.iter().all(SourceTag::is_none) {
+        return;
+    }
+    if let BoxKind::HBox(children) = &mut b.kind
+        && let [open, _, close] = children.as_mut_slice()
+    {
+        open.content.inherit_tag(tags[0]);
+        close.content.inherit_tag(tags[1]);
+    }
+}
+
 /// `overbar(b, k, t)`: vpack(kern t, rule t, kern k, b); baseline of `b`.
 fn overbar(b: MathBox, k: f64, t: f64) -> MathBox {
     let w = b.width;
     MathBox {
+        tag: SourceTag::NONE,
         width: w,
         height: b.height + k + 2.0 * t,
         depth: b.depth,
@@ -1266,6 +1416,7 @@ fn stack_extensible(r: &Extensible, wanted: f64) -> MathBox {
         y_top += g.total_height();
     }
     MathBox {
+        tag: SourceTag::NONE,
         width: r.rep.width + r.rep.italic,
         height,
         depth: w - height,

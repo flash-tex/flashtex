@@ -77,11 +77,22 @@ extension EditorDiagnostics {
     ///     -:0: warning: Overfull line
     static func copyLine(_ d: RuntimeV1.Diagnostic, texts: [String: String] = [:]) -> String {
         let severity = d.severity == .error ? "error" : "warning"
-        guard let s = d.source else { return "-:0: \(severity): \(d.message)" }
-        if let text = texts[s.path], let line = lineNumber(ofByte: s.startByte, in: text) {
-            return "\(s.path):\(line): \(severity): \(d.message)"
+        let header: String
+        if let s = d.source {
+            if let text = texts[s.path], let line = lineNumber(ofByte: s.startByte, in: text) {
+                header = "\(s.path):\(line): \(severity): \(d.message)"
+            } else {
+                header = "\(s.path):byte\(s.startByte): \(severity): \(d.message)"
+            }
+        } else {
+            header = "-:0: \(severity): \(d.message)"
         }
-        return "\(s.path):byte\(s.startByte): \(severity): \(d.message)"
+        var lines = [header]
+        if let notes = d.notes {
+            for note in notes where !note.isEmpty { lines.append("= note: \(note)") }
+        }
+        if let help = d.help?.message, !help.isEmpty { lines.append("= help: \(help)") }
+        return lines.joined(separator: "\n")
     }
 
     /// The clipboard text for the panel: the selected group's occurrences in
@@ -92,6 +103,14 @@ extension EditorDiagnostics {
         let chosen = groups.first { $0.id == selection }.map { [$0] } ?? groups
         return chosen.flatMap { g in g.occurrences.compactMap { diagnostics.indices.contains($0) ? copyLine(diagnostics[$0], texts: texts) : nil } }
             .joined(separator: "\n")
+    }
+
+    /// Secondary label captions for the row hover (`.help`); nil when there
+    /// are none. Primary labels are the diagnostic span itself.
+    static func secondaryLabelHelp(_ d: RuntimeV1.Diagnostic) -> String? {
+        guard let labels = d.labels else { return nil }
+        let texts = labels.filter { !$0.primary }.map(\.text).filter { !$0.isEmpty }
+        return texts.isEmpty ? nil : texts.joined(separator: "\n")
     }
 }
 
@@ -234,7 +253,8 @@ struct DiagnosticsListView: View {
     let maxHeight: CGFloat
 
     init(diagnostics: [RuntimeV1.Diagnostic], panel: DiagnosticsPanelState? = nil,
-         severityFilter: RuntimeV1.Severity? = nil, showsHeader: Bool = true, maxHeight: CGFloat = 180) {
+         severityFilter: RuntimeV1.Severity? = nil, showsHeader: Bool = true,
+         maxHeight: CGFloat = DS.Layout.diagnosticsListMaxHeight) {
         self.diagnostics = diagnostics
         self.severityFilter = severityFilter
         self.showsHeader = showsHeader
@@ -244,23 +264,26 @@ struct DiagnosticsListView: View {
 
     var body: some View {
         let diags = diagnostics
-        let groups = EditorDiagnostics.groups(of: diags, documentOrder: model.documents.map(\.path))
+        // Change-only / throttled reads (ShellModel mirrors, ShellChrome): `documents`,
+        // `result` and `editorMarkReport` change on every keystroke or reply and
+        // re-evaluated this List (an AppKit table) with each of them.
+        let groups = EditorDiagnostics.groups(of: diags, documentOrder: model.chrome.listing.map(\.path))
             .filter { severityFilter == nil || $0.severity == severityFilter }
-        let status = model.result?.status ?? .ok
+        let status = model.resultStatus ?? .ok
         VStack(alignment: .leading, spacing: 0) {
             if showsHeader {
                 Text("Diagnostics (\(diags.count)\(groups.count < diags.count ? " in \(groups.count) groups" : "")) — the preview above is still shown; errors are not hidden")
-                    .font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 4)
+                    .font(DS.Fonts.header).padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
             }
-            if let carried = model.editorMarkReport.carried {
-                Text("Underlines \(carried.line); the list below is the failed result's.")
-                    .font(.caption).foregroundStyle(.orange).padding(.horizontal, 8).padding(.bottom, 4)
+            if let carriedLine = model.chrome.carriedLine {
+                Text("Underlines \(carriedLine); the list below is the failed result's.")
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning).padding(.horizontal, DS.Space.m).padding(.bottom, DS.Space.xs)
             }
             List(groups, selection: $panel.selection) { g in
                 row(g, in: diags, status: status)
             }
             .accessibilityIdentifier(Self.listIdentifier)
-            .frame(minHeight: 80, maxHeight: maxHeight)
+            .frame(minHeight: DS.Layout.diagnosticsListMinHeight, maxHeight: maxHeight)
             .onKeyPress(.return) { model.goToSelectedOccurrence(panel: panel); return .handled }
             .onKeyPress(.escape) { model.returnKeyboardToEditor(); return .handled }
             .copyable([model.diagnosticsCopyText(panel: panel)])
@@ -286,61 +309,97 @@ struct DiagnosticsListView: View {
         let k = panel.currentOccurrence(of: g)
         let i = g.first
         let d = diags[i]
+        let selected = panel.selection == g.id
         let group = EditorDiagnostics.groupInfo(g, occurrence: k, in: diags, texts: model.compiledDocuments)
-        let gap = EditorDiagnostics.isGap(d.message) // FlashTeX gap, not an authoring error: grey puzzle piece
-        HStack(alignment: .top) {
-            Image(systemName: gap ? "puzzlepiece.extension" : d.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(gap ? Color.secondary : d.severity == .error ? .red : .orange)
-            VStack(alignment: .leading) {
-                // Title and location on one line: a 30-diagnostic TeX list is two lines per row, not three.
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(g.title)
-                    Text(location(of: g, occurrence: k, diagnostic: d, group: group)).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+        let gap = EditorDiagnostics.isGap(d) // FlashTeX gap, not an authoring error: grey puzzle piece
+        let helpFix = EditorDiagnostics.canApplyHelpReplacement(
+            d, path: model.activePath, currentText: model.activeText,
+            compiledRevision: model.result?.revision, editorRevision: model.editorRevision)
+        let secondaryHelp = EditorDiagnostics.secondaryLabelHelp(d)
+        VStack(alignment: .leading, spacing: DS.Space.xxs) {
+            // The IntelliJ row (F1): severity glyph, the human-readable
+            // message, then the dimmed location at the trailing edge. Detail
+            // lines collapse under the selected row (§9) — selecting is the
+            // disclosure; Return / double-click jumps to the source.
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
+                Image(systemName: gap ? "puzzlepiece.extension" : d.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(gap ? DS.Colors.textSecondary : d.severity == .error ? DS.Colors.severityError : DS.Colors.severityWarning)
+                Text(g.title)
+                Spacer(minLength: DS.Space.m)
+                if helpFix {
+                    Button("Fix…") { model.previewQuickFix(diagnosticIndex: i) }
+                        .help(d.help?.message ?? "Preview a suggested fix")
+                } else if let x = model.explanations.explanation(resultID: model.resultID, index: i),
+                   x.suggestions.contains(where: { !$0.edits.isEmpty }) {
+                    Button("Fix…") { model.previewQuickFix(diagnosticIndex: i) }
+                        .help(x.suggestions.first { !$0.edits.isEmpty }?.text ?? "Preview a suggested fix")
+                } else if let fix = MissingIncludeFix.quickFix(for: d, projectRoot: model.project.projectRoot) { // ProjectScaffold.swift
+                    Button("Create \(fix.path)") { Task { _ = await model.project.createMissingInclude(fix.argument, from: fix.from); model.navigationNote = model.project.status } }
+                        .help("Create the empty file \(fix.path) under the project root and open it as included from \(fix.from)")
                 }
-                if let line = EditorDiagnostics.recoveryLine(recovery: d.recovery, status: status) {
-                    Text("↳ \(line)").font(.caption).foregroundStyle(d.recovery == nil ? .tertiary : .secondary)
-                }
-                if let explain = model.explanations.explanation(resultID: model.resultID, index: i)?.line {
-                    Text("↳ \(explain)").font(.caption).foregroundStyle(.secondary)
-                }
-                if let result = model.result,
-                   let id = EditorDiagnostics.identity(resultID: model.resultID, index: i, in: result),
-                   model.editorMarkReport.staleIdentities.contains(id) {
-                    Text("underline withheld: span edited since the compile").font(.caption2).foregroundStyle(.orange)
-                }
-            }
-            Spacer()
-            if g.count > 1 {
-                Menu("\(g.count) places") {
-                    ForEach(0..<g.count, id: \.self) { j in
-                        Button(EditorDiagnostics.occurrenceLabel(j, of: g, in: diags, texts: model.compiledDocuments)) {
-                            model.goToOccurrence(j, of: g, panel: panel)
+                if g.count > 1 {
+                    Menu("\(g.count) places") {
+                        ForEach(0..<g.count, id: \.self) { j in
+                            Button(EditorDiagnostics.occurrenceLabel(j, of: g, in: diags, texts: model.compiledDocuments)) {
+                                model.goToOccurrence(j, of: g, panel: panel)
+                            }
+                            .disabled(EditorDiagnostics.occurrence(j, of: g, in: diags) == nil)
                         }
-                        .disabled(EditorDiagnostics.occurrence(j, of: g, in: diags) == nil)
+                    }
+                    .fixedSize()
+                    .help("Jump to one occurrence of this diagnostic (⌘⌥] / ⌘⌥[ step through them)")
+                }
+                Text(location(of: g, occurrence: k, diagnostic: d, group: group))
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).lineLimit(1)
+            }
+            if selected {
+                // The disclosure inside the selected problem: notes, help,
+                // recovery, catalogue explanation, and withheld-underline
+                // state — the raw detail, not a separate destination.
+                VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                    if let notes = d.notes {
+                        ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
+                            Text("= note: \(note)").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                        }
+                    }
+                    if let help = d.help?.message, !help.isEmpty {
+                        Text("= help: \(help)").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                    }
+                    if let line = EditorDiagnostics.recoveryLine(recovery: d.recovery, status: status) {
+                        Text("↳ \(line)").font(DS.Fonts.secondary).foregroundStyle(d.recovery == nil ? DS.Colors.textTertiary : DS.Colors.textSecondary)
+                    }
+                    if let explain = model.explanations.explanation(resultID: model.resultID, index: i)?.line {
+                        Text("↳ \(explain)").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                    }
+                    if let result = model.result,
+                       let id = EditorDiagnostics.identity(resultID: model.resultID, index: i, in: result),
+                       model.editorMarkReport.staleIdentities.contains(id) {
+                        Text("underline withheld: span edited since the compile").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning)
                     }
                 }
-                .fixedSize()
-                .help("Jump to one occurrence of this diagnostic (⌘⌥] / ⌘⌥[ step through them)")
-            } else if d.source != nil {
-                Button("Go to source") { model.goToOccurrence(0, of: g, panel: panel) }
-                    .help("Select the diagnostic's span in the editor (Return does the same)")
-            }
-            if let x = model.explanations.explanation(resultID: model.resultID, index: i),
-               x.suggestions.contains(where: { !$0.edits.isEmpty }) {
-                Button("Fix…") { model.previewQuickFix(diagnosticIndex: i) }
-                    .help(x.suggestions.first { !$0.edits.isEmpty }?.text ?? "Preview a suggested fix")
-            } else if let fix = MissingIncludeFix.quickFix(for: d, projectRoot: model.project.projectRoot) { // ProjectScaffold.swift
-                Button("Create \(fix.path)") { Task { await model.project.createMissingInclude(fix.argument, from: fix.from); model.navigationNote = model.project.status } }
-                    .help("Create the empty file \(fix.path) under the project root and open it as included from \(fix.from)")
+                .padding(.leading, DS.Space.xxl)
             }
         }
+        .frame(minHeight: DS.Row.problem - 2 * DS.Space.xxs)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { model.goToOccurrence(k, of: g, panel: panel) }
         .contextMenu {
             if d.source != nil { Button("Go to source") { model.goToOccurrence(k, of: g, panel: panel) } }
         }
         .controlSize(.small) // 30 TeX diagnostics must fit a 260 pt panel: small trailing controls, tight rows
         .tag(g.id)
+        .modifier(SecondaryLabelHelp(text: secondaryHelp))
         .accessibleDiagnostic(d, index: i, total: diags.count, status: status,
                               explanation: model.explanations.explanation(resultID: model.resultID, index: i)?.line,
                               group: group) { model.goToOccurrence(k, of: g, panel: panel) } // FlashTeXAccessibility
+    }
+}
+
+/// Attaches `.help` only when secondary labels have caption text, so an empty
+/// hover does not override the Fix… / Go to source tooltips.
+private struct SecondaryLabelHelp: ViewModifier {
+    var text: String?
+    @ViewBuilder func body(content: Content) -> some View {
+        if let text { content.help(text) } else { content }
     }
 }

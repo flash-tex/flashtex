@@ -417,7 +417,14 @@ fn expected_rules(list: &MathList) -> usize {
             let scripts = a.superscript.as_ref().map(expected_rules).unwrap_or(0)
                 + a.subscript.as_ref().map(expected_rules).unwrap_or(0);
             let own = match &a.nucleus {
-                Nucleus::Symbol(_) | Nucleus::Empty | Nucleus::Text(_) => 0,
+                Nucleus::Symbol(_) | Nucleus::Empty | Nucleus::Text(_) | Nucleus::TextChar(_) => 0,
+                Nucleus::TextRun(pieces) => pieces
+                    .iter()
+                    .filter_map(|piece| match piece {
+                        flashtex_math_layout::TextPiece::Text { .. } => None,
+                        flashtex_math_layout::TextPiece::Math(list) => Some(expected_rules(list)),
+                    })
+                    .sum(),
                 Nucleus::List(l) | Nucleus::Styled { body: l, .. } => expected_rules(l),
                 Nucleus::BigDelimiter { .. } | Nucleus::Glue { .. } => 0,
                 Nucleus::Phantom { .. } => 0,

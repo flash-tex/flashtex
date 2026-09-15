@@ -8,9 +8,13 @@ import SwiftUI
 /// so nothing caches it). Tests inject `override`.
 ///
 /// What it changes:
-/// - `animate(_:_:)`: SwiftUI `withAnimation` becomes an immediate change,
-///   used for the caret-page `scrollTo` in `PreviewView` (v1 preview; the v2
-///   preview has no animated site).
+/// - `animate(_:_:)`: SwiftUI `withAnimation` becomes an immediate change.
+///   (The v1 pane's caret-page `scrollTo` that used it is gone; caret
+///   following is the animated site now, and it reads `isEnabled` through
+///   `PreviewAnchorProbe.reduceMotion` below.)
+/// - `CaretFollow` (CaretFollow.swift): a follow scroll is animated only when
+///   reduce motion is off (and the hop is short); otherwise the preview jumps
+///   straight to the caret with no animation.
 /// - `PreviewAnchorProbe`: the settle window keeps every *synchronous*
 ///   anchor correction (they run inside SwiftUI's layout pass, before the
 ///   frame is drawn, and are what keeps the content still) but no longer

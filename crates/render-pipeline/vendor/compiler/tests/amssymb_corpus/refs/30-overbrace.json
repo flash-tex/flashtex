@@ -1,0 +1,71 @@
+{
+ "fixture": "30-overbrace.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "n",
+    "x": 124.931,
+    "y_top": 76.428
+   },
+   {
+    "text": "Brace",
+    "x": 72.0,
+    "y_top": 93.896
+   },
+   {
+    "text": "a",
+    "x": 105.002,
+    "y_top": 93.896
+   },
+   {
+    "text": "+",
+    "x": 113.801,
+    "y_top": 93.896
+   },
+   {
+    "text": "b",
+    "x": 125.5602,
+    "y_top": 93.896
+   },
+   {
+    "text": "+",
+    "x": 133.2031,
+    "y_top": 93.896
+   },
+   {
+    "text": "c",
+    "x": 144.9623,
+    "y_top": 93.896
+   },
+   {
+    "text": "=",
+    "x": 153.3237,
+    "y_top": 93.896
+   },
+   {
+    "text": "x",
+    "x": 165.7404,
+    "y_top": 93.896
+   },
+   {
+    "text": "end.",
+    "x": 176.3016,
+    "y_top": 93.896
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "brace_extents": [
+  [
+   [
+    105.002,
+    149.9982
+   ]
+  ]
+ ]
+}

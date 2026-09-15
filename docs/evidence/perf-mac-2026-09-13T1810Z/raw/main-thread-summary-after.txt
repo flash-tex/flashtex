@@ -1,0 +1,19 @@
+main thread samples: 3941 (of ~5000); idle (mach_msg) 1; busy 3940 = 79% of wall
+  SwiftUI NSRunLoop.flushObservers (graph updates): 2940 (75% of busy)
+  CA::Transaction::commit (layout + commit): 891 (23% of busy)
+    of which AppKit layoutIfNeeded / NSHostingView.layout: 563 (14% of busy)
+  NSApplication.sendEvent (key events, text view): 0 (0% of busy)
+  app code frames (in FlashTeXMac), outermost: 210 (5% of busy)
+  top app frames:
+       36  thunk for @escaping @callee_guaranteed @Sendable (@guaranteed NSTimer) -> ()
+       35  thunk for @escaping @callee_guaranteed () -> ()
+       28  protocol witness for NSViewRepresentable.updateNSView(_:context:) in conformance SourceEdi
+       23  partial apply for specialized closure #1 in closure #1 in List.init<A, B>(_:selection:rowC
+       23  @objc LineNumberGutter.drawHashMarksAndLabels(in:)
+        6  protocol witness for View.body.getter in conformance ProblemsSection
+        6  FlashTeXMacApp.body.getter
+        5  protocol witness for View.body.getter in conformance DiagnosticsListView
+        4  closure #1 in PreviewV2View.body.getter
+        3  CaptureInboxPanel.body.getter
+        3  ContentView.body.getter
+        3  ProjectMenu.body.getter

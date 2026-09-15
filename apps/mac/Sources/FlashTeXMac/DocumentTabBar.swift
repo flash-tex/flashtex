@@ -18,34 +18,39 @@ struct DocumentTabBar: View {
     var body: some View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
-                    ForEach(model.project.listing) { doc in
+                HStack(spacing: DS.Space.xxs) {
+                    ForEach(model.chrome.listing) { doc in // throttled, change-only copy (ShellChrome.swift): `project.listing` reads `documents` per keystroke
                         DocumentTab(doc: doc, active: doc.path == model.activePath, kind: model.documentKinds.kind(of: doc.path))
                     }
                 }
-                .padding(.horizontal, 6)
+                .padding(.horizontal, DS.Space.s)
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Open documents")
             .accessibilityIdentifier(Self.identifier)
-            Spacer(minLength: 8)
+            Spacer(minLength: DS.Space.m)
+            if model.narrowLayout {
+                // The collapsed preview's way back (design-principles §4):
+                // the window is too narrow for both columns.
+                Toggle(isOn: Binding(get: { model.narrowPreviewShown }, set: { model.narrowPreviewShown = $0 })) {
+                    Image(systemName: "doc.richtext")
+                }
+                .toggleStyle(.button).buttonStyle(.accessoryBar).controlSize(.small)
+                .help("Show the preview (the window is too narrow for editor and preview side by side)")
+                .accessibilityLabel("Show preview")
+            }
             ProjectMenu()
             DocumentKindIndicator() // DocumentKinds.swift: helper-reported bibliography kind, read-only
-            if let url = model.documentURL {
-                let dirty = model.project.isDirty(model.activePath)
-                Text(dirty ? "edited" : "saved")
-                    .font(.caption).foregroundStyle(dirty ? .orange : .secondary)
-                    .help(model.activePath == model.project.entryPath ? url.path : url.deletingLastPathComponent().appendingPathComponent(model.activePath).path)
+            if model.documentURL == nil {
+                // No file identity yet: the one state the modified dot cannot carry.
+                Text("unsaved buffer").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                    .padding(.trailing, DS.Space.m)
             } else {
-                Text("unsaved buffer").font(.caption).foregroundStyle(.secondary)
+                Spacer().frame(width: DS.Space.m)
             }
-            Text("\(model.activeText.utf8.count) B · \((model.activeText as NSString).length) u16")
-                .font(.caption).foregroundStyle(.tertiary).monospacedDigit()
-                .help("\(model.activeText.utf8.count) UTF-8 bytes · \((model.activeText as NSString).length) UTF-16 units")
-                .padding(.trailing, 8)
         }
-        .frame(height: 30)
-        .background(.bar)
+        .frame(height: DS.Row.tab)
+        .background(DS.Colors.surfaceSecondary) // the recessed strip the active tab is raised against
     }
 }
 
@@ -55,18 +60,19 @@ private struct DocumentTab: View {
     let active: Bool
     let kind: DocumentKind?
     @State private var hovering = false
+    @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: kind == .bibliography ? "books.vertical" : (doc.role == .entry ? "doc.text.fill" : "doc.text"))
-                .font(.caption).foregroundStyle(active ? Color.accentColor : Color.secondary)
-            Text(doc.path).font(.callout).lineLimit(1)
-                .foregroundStyle(active ? Color.primary : Color.secondary)
-            if let r = doc.durableRevision {
-                Text("r\(r)").font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
-            }
+        let style = FileTypeStyle.of(path: doc.path, entry: doc.role == .entry, bibliography: kind == .bibliography)
+        Button { model.switchOrNote(doc.path) } label: {
+        HStack(spacing: DS.Space.xs) {
+            // Colour-coded file identity, same vocabulary as the tree (§6).
+            Image(systemName: style.systemImage)
+                .font(DS.Fonts.secondary).foregroundStyle(style.color)
+            Text(doc.path).font(DS.Fonts.base).lineLimit(1)
+                .foregroundStyle(active ? DS.Colors.textPrimary : DS.Colors.textSecondary)
             if doc.isDirty {
-                Circle().fill(.orange).frame(width: 6, height: 6).accessibilityHidden(true)
+                Circle().fill(DS.Colors.statusModified).frame(width: DS.Size.modifiedDot, height: DS.Size.modifiedDot).accessibilityHidden(true)
             }
             if doc.role != .entry {
                 Button {
@@ -77,25 +83,38 @@ private struct DocumentTab: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "xmark").font(.caption2.bold())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 14, height: 14)
-                        .background(hovering ? Color.primary.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 3))
+                    Image(systemName: "xmark").font(DS.Fonts.header)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                        .frame(width: DS.Size.inlineIconButton, height: DS.Size.inlineIconButton)
+                        .background(hovering ? DS.Colors.textPrimary.opacity(DS.State.pressedOpacity) : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.control))
                 }
                 .buttonStyle(.plain)
-                .opacity(hovering || active ? 1 : 0.35)
+                // Close affordance on hover and on the active tab only (§5).
+                .opacity(hovering || active ? 1 : 0)
                 .help("Detach \(doc.path) for this session (" + ProjectDocuments.detachScopeNote + ")")
                 .accessibilityLabel("Detach \(doc.path)")
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 5)
-        .background(active ? Color.accentColor.opacity(0.14) : (hovering ? Color.primary.opacity(0.05) : .clear),
-                    in: RoundedRectangle(cornerRadius: 6))
-        .overlay(alignment: .bottom) {
-            if active { Rectangle().fill(Color.accentColor).frame(height: 2).padding(.horizontal, 4) }
+        .padding(.horizontal, DS.Space.m)
+        .frame(height: DS.Row.tab - DS.Space.xs)
+        // Islands treatment (§5): the active tab is a filled, rounded card
+        // raised out of the recessed strip; inactive tabs carry no chrome.
+        // An unfocused window's card drops its shadow so the active tab
+        // reads weaker without moving (§14).
+        .background(active ? AnyShapeStyle(DS.Colors.surfaceRaised)
+                           : hovering ? AnyShapeStyle(DS.Colors.textPrimary.opacity(DS.State.hoverOpacity)) : AnyShapeStyle(.clear),
+                    in: RoundedRectangle(cornerRadius: DS.Radius.tab))
+        .overlay {
+            if active {
+                RoundedRectangle(cornerRadius: DS.Radius.tab)
+                    .strokeBorder(DS.Colors.separator, lineWidth: DS.Size.hairline)
+            }
         }
+        .shadow(color: active && activeState != .inactive ? DS.Colors.textPrimary.opacity(DS.State.hoverOpacity) : .clear,
+                radius: DS.Space.xxs, y: DS.Size.hairline)
         .contentShape(Rectangle())
-        .onTapGesture { model.switchOrNote(doc.path) }
+        }
+        .buttonStyle(PressableStyle())
         .onHover { hovering = $0 }
         .contextMenu {
             Button("Show \(doc.path)") { model.switchOrNote(doc.path) }.disabled(active)
@@ -135,9 +154,9 @@ struct ProjectMenu: View {
             // The transitive closure (chapter → section → …), depth-first in
             // source order, indented by depth; cycles and missing files are
             // listed with their reason. Bounded: 8 levels, 256 documents.
-            let closure = model.project.discoverClosure()
+            let closure = model.chrome.closure // throttled copy (ShellChrome): `discoverClosure()` reads the entry text per keystroke
             if closure.nodes.isEmpty {
-                Text("No \\input or \\include in \(model.project.entryPath)")
+                Text("No \\input or \\include in \(model.chrome.entryPath)")
             }
             ForEach(Array(closure.nodes.enumerated()), id: \.offset) { _, n in
                 let indent = String(repeating: "    ", count: max(0, n.depth))
@@ -161,7 +180,7 @@ struct ProjectMenu: View {
                 Text("Open All: \(report.unresolvable.count) unresolvable")
                 ForEach(Array(report.unresolvable.enumerated()), id: \.offset) { _, line in Text(line) }
             }
-            if model.activePath != model.project.entryPath {
+            if model.activePath != model.chrome.entryPath {
                 Divider()
                 Button("Save \(model.activePath)") { Task { await model.project.saveDocument(model.activePath) } }
                     .disabled(model.documentURL == nil)

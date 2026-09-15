@@ -49,6 +49,12 @@ pub struct HeadingStyle {
     pub bold: bool,
     pub before: Skip,
     pub after: Skip,
+    /// `\@startsection`'s `#5` when it is negative: the heading runs into
+    /// the following paragraph and `\@xsect` puts `\hskip -#5` (this many
+    /// `em` of the heading font) after it instead of vertical glue.
+    /// `None` for a display heading, which uses [`Self::after`].
+    /// article.cls: `\paragraph`/`\subparagraph` are `-1em`.
+    pub run_in_after_em: Option<f64>,
 }
 
 /// `\usepackage[...]{microtype}` as pdfTeX sees it: the package options
@@ -96,6 +102,16 @@ pub struct Stylesheet {
     pub abovedisplayshortskip: Skip,
     pub belowdisplayskip: Skip,
     pub belowdisplayshortskip: Skip,
+    /// amsmath `leqno` (a class or package option): `\veqno` is `\leqno`,
+    /// equation numbers sit at the left of the display.
+    pub leqno: bool,
+    /// amsmath `fleqn`: displays are set flush left, `\@mathmargin`
+    /// (`\leftmargini`) in from the display's left edge.
+    pub fleqn: bool,
+    /// Whether family 3 (the `cmex` extension family, `largesymbols`)
+    /// follows the sizes amsmath/amsfonts declare instead of the kernel's
+    /// `sfixed*cmex10`; see [`cmex_designs`].
+    pub cmex_designs: bool,
     pub script_size_pt: f64,
     pub scriptscript_size_pt: f64,
     pub tolerance: f64,
@@ -122,7 +138,7 @@ pub struct Stylesheet {
     /// `\labelsep` (article: `.5em` of `\normalsize`): the gap between a
     /// list label's right edge and the item text.
     pub labelsep_pt: f64,
-    headings: [HeadingStyle; 3],
+    headings: [HeadingStyle; 5],
     /// The resolved class + geometry frame this stylesheet was built from
     /// ([`Stylesheet::from_resolved`]); `None` for [`Stylesheet::article`].
     pub class_geometry: Option<Box<ResolvedDocument>>,
@@ -169,11 +185,13 @@ impl Stylesheet {
         };
         let heading = |level: u8| -> HeadingStyle {
             let h = ds.resolve(&[Block::Document, Block::Heading(level)]);
-            let spec = flashtex_document_style::section_spec(level).expect("levels 1..=3");
+            let spec = flashtex_document_style::section_spec(level).expect("levels 1..=5");
             let before = spec.before_ex.scale(ex);
-            let after = match spec.after {
-                flashtex_document_style::SectionAfter::VerticalEx(s) => s.scale(ex),
-                flashtex_document_style::SectionAfter::RunInEm(_) => flashtex_document_style::Skip::ZERO,
+            let (after, run_in_after_em) = match spec.after {
+                flashtex_document_style::SectionAfter::VerticalEx(s) => (s.scale(ex), None),
+                // A run-in heading has no vertical after-skip at all: the
+                // `em` becomes horizontal space on the paragraph's first line.
+                flashtex_document_style::SectionAfter::RunInEm(em) => (flashtex_document_style::Skip::ZERO, Some(em)),
             };
             HeadingStyle {
                 size_pt: h.font_size.0,
@@ -181,6 +199,7 @@ impl Stylesheet {
                 bold: h.bold,
                 before: Skip::new(before.pt, before.plus, before.minus),
                 after: Skip::new(after.pt, after.plus, after.minus),
+                run_in_after_em,
             }
         };
         let parskip = ds.parskip();
@@ -210,6 +229,9 @@ impl Stylesheet {
             abovedisplayshortskip: above_short,
             belowdisplayskip: above,
             belowdisplayshortskip: below_short,
+            leqno: false,
+            fleqn: false,
+            cmex_designs: false,
             script_size_pt: script,
             scriptscript_size_pt: scriptscript,
             tolerance: 200.0,
@@ -224,7 +246,7 @@ impl Stylesheet {
             leftmargini_pt: list.leftmargin.0,
             parsep: Skip::new(list.parsep.pt, list.parsep.plus, list.parsep.minus),
             labelsep_pt: list.labelsep.0,
-            headings: [heading(1), heading(2), heading(3)],
+            headings: [heading(1), heading(2), heading(3), heading(4), heading(5)],
             class_geometry: None,
             microtype: None,
         }
@@ -269,7 +291,22 @@ impl Stylesheet {
         s.topskip_pt = frame_pt(p.topskip);
         s.maxdepth_pt = frame_pt(p.maxdepth);
         s.parindent_pt = frame_pt(p.parindent);
-        s.raggedbottom = !(doc.flags.twoside || doc.flags.twocolumn);
+        // `\parskip` is a *class* length, not a shared default: article and
+        // friends set `0pt plus 1pt`, letter.cls line 91 sets `0.7em`
+        // (7.66498pt rigid at 11pt), and reading it from the resolved class
+        // instead of `Stylesheet::article`'s is what puts a letter's
+        // paragraphs where pdflatex puts them. Before this the whole page
+        // rode 7.6 bp per paragraph too high.
+        s.parskip = Skip::new(
+            frame_pt(p.parskip.natural),
+            frame_pt(p.parskip.stretch),
+            frame_pt(p.parskip.shrink),
+        );
+        // article/report/book guard it (`\if@twoside\else\raggedbottom\fi`);
+        // letter.cls line 404 is a plain `\raggedbottom` with no guard at
+        // all, so a `[twoside]` letter is ragged-bottom too.
+        s.raggedbottom = doc.options.kind == flashtex_class_geometry::ClassKind::Letter
+            || !(doc.flags.twoside || doc.flags.twocolumn);
         s.columnseprule_pt = frame_pt(frame.columnseprule);
         if doc.flags.twocolumn {
             s.tolerance = 9999.0;
@@ -303,8 +340,100 @@ impl Stylesheet {
     }
 
     pub fn heading(&self, level: u8) -> HeadingStyle {
-        self.headings[usize::from(level.clamp(1, 3) - 1)]
+        self.headings[usize::from(level.clamp(1, 5) - 1)]
     }
+
+    /// `\small` as `size1x.clo` declares it: `\@setfontsize\small` (the size
+    /// and that size's own `\baselineskip`, from document-style's table) and
+    /// the `\@listi` the command *redefines* while it is in force.
+    ///
+    /// `\small` only `\def`s `\@listi`; it does not execute it, so `\topsep`
+    /// keeps `\normalsize`'s value ([`Stylesheet::topsep`]) until a `\list`
+    /// at depth 1 runs inside the smaller size. `\partopsep` is a plain
+    /// length none of the size commands touch, so it is shared with
+    /// [`Stylesheet::partopsep`].
+    ///
+    /// size10.clo 62-67, size11.clo 58-68, size12.clo 58-68 (v1.4n,
+    /// TeX Live 2025).
+    pub fn small(&self) -> SmallSize {
+        let fs = flashtex_document_style::font_size(self.base, flashtex_document_style::SizeName::Small);
+        let (topsep, parsep) = match self.base {
+            BaseSize::Pt10 => (Skip::new(4.0, 2.0, 2.0), Skip::new(2.0, 1.0, 1.0)),
+            BaseSize::Pt11 => (Skip::new(6.0, 2.0, 2.0), Skip::new(3.0, 2.0, 1.0)),
+            BaseSize::Pt12 => (Skip::new(9.0, 3.0, 5.0), Skip::new(4.5, 2.0, 1.0)),
+        };
+        SmallSize {
+            size_pt: fs.size.0,
+            baselineskip_pt: fs.baselineskip.0,
+            topsep,
+            parsep,
+            partopsep: self.partopsep,
+        }
+    }
+}
+
+/// `\small` in the class's `size1x.clo` (see [`Stylesheet::small`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SmallSize {
+    pub size_pt: f64,
+    pub baselineskip_pt: f64,
+    /// `\topsep` of the `\@listi` `\small` defines (4pt at a 10pt base, not
+    /// `\normalsize`'s 8pt).
+    pub topsep: Skip,
+    pub parsep: Skip,
+    /// `\partopsep`, which no size command redefines.
+    pub partopsep: Skip,
+}
+
+impl SmallSize {
+    /// `\@topsepadd` of a level-1 `\list` opened while `\small` is in force:
+    /// `\topsep` plus `\partopsep` (`\@trivlist` adds `\partopsep` when the
+    /// `\begin` was read in vertical mode, which `\quotation` inside
+    /// `abstract` always is). This is the glue `\endlist`'s `\@endparenv`
+    /// puts after the environment.
+    pub fn topsepadd(self) -> Skip {
+        Skip::new(
+            self.topsep.natural + self.partopsep.natural,
+            self.topsep.stretch + self.partopsep.stretch,
+            self.topsep.shrink + self.partopsep.shrink,
+        )
+    }
+}
+
+/// Packages that redeclare `OMX/cmex/m/n` with amsfonts' size ranges, so
+/// family 3 is loaded at the math size instead of `sfixed` at 10pt:
+/// `amsfonts.sty` 36-41 (`<-7.5>cmex7<7.5-8.5>cmex8<8.5-9.5>cmex9<9.5->cmex10`)
+/// and `amsmath.sty` 109-114, which amsmath, amssymb and every package
+/// loading them inherit.
+const CMEX_DESIGN_PACKAGES: [&str; 5] = ["amsmath", "amsfonts", "amssymb", "mathtools", "physics"];
+
+/// Whether family 3 (`largesymbols`) follows the sizes amsmath/amsfonts
+/// declare instead of the LaTeX kernel's `omxcmex.fd` `<->sfixed*cmex10`.
+///
+/// `lmodern` wins over amsmath in either load order, because it rebinds the
+/// symbol font itself (`\DeclareSymbolFont{largesymbols}{OMX}{lmex}{m}{n}`)
+/// rather than the `cmex` shape amsmath redeclares, and `omxlmex.fd` keeps
+/// `sfixed*lmex10`. amsmath's `cmex10` option restores the kernel's
+/// declaration.
+///
+/// Measured with `\fontname\textfont3` under pdfTeX 3.141592653-2.6-1.40.27
+/// (TeX Live 2025), `article`:
+///
+/// | packages | 10pt | 11pt | 12pt |
+/// |---|---|---|---|
+/// | (none), `amsthm`, `siunitx` | `cmex10` | `cmex10` | `cmex10` |
+/// | `amsmath` / `amsfonts` / `amssymb` / `mathtools` / `physics` | `cmex10` | `cmex10 at 10.95pt` | `cmex10 at 12.0pt` |
+/// | any of those **+ `lmodern`** (either order) | `lmex10` | `lmex10` | `lmex10` |
+/// | `[cmex10]{amsmath}` | `cmex10` | `cmex10` | `cmex10` |
+///
+/// `\scriptfont3`/`\scriptscriptfont3` follow the same declaration:
+/// `cmex7`/`cmex7 at 5.0pt` at 10pt and `cmex8`/`cmex7 at 6.0pt` at 11 and
+/// 12pt, which is why the 10pt case still differs from `sfixed` inside
+/// scripts even though its text size agrees.
+pub fn cmex_designs(packages: &[String], cmex10_option: bool) -> bool {
+    !cmex10_option
+        && !packages.iter().any(|p| p == "lmodern")
+        && packages.iter().any(|p| CMEX_DESIGN_PACKAGES.contains(&p.as_str()))
 }
 
 /// A frame length in TeX points for the f64 layout. `len` is exact (sp);
@@ -401,6 +530,30 @@ mod tests {
         assert!(crate::adapter::t1_encoding("\\usepackage[OT1, T1]{fontenc}"));
         assert!(!crate::adapter::t1_encoding("\\usepackage[T1,OT1]{fontenc}"));
         assert!(!crate::adapter::t1_encoding("\\usepackage{lmodern}"));
+    }
+
+    /// Every row is the `\fontname\textfont3` pdfTeX (TeX Live 2025)
+    /// reports for that package set; see [`cmex_designs`].
+    #[test]
+    fn amsfonts_sizes_family_three_unless_lmodern_or_the_cmex10_option() {
+        let p = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // cmex10, sfixed: the kernel's own declaration.
+        assert!(!cmex_designs(&p(&[]), false));
+        assert!(!cmex_designs(&p(&["amsthm"]), false));
+        assert!(!cmex_designs(&p(&["siunitx"]), false));
+        // cmex10 at the math size, in amsfonts' designs.
+        assert!(cmex_designs(&p(&["amsmath"]), false));
+        assert!(cmex_designs(&p(&["amsfonts"]), false));
+        assert!(cmex_designs(&p(&["amssymb"]), false));
+        assert!(cmex_designs(&p(&["mathtools"]), false));
+        assert!(cmex_designs(&p(&["physics"]), false));
+        assert!(cmex_designs(&p(&["amsmath", "amssymb", "amsthm"]), false));
+        // lmodern rebinds `largesymbols` to `lmex`, which stays sfixed,
+        // and wins in either load order.
+        assert!(!cmex_designs(&p(&["lmodern", "amssymb"]), false));
+        assert!(!cmex_designs(&p(&["amsfonts", "lmodern"]), false));
+        // `\usepackage[cmex10]{amsmath}` restores the kernel's declaration.
+        assert!(!cmex_designs(&p(&["amsmath"]), true));
     }
 
     #[test]

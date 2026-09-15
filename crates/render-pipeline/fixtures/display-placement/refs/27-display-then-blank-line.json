@@ -1,0 +1,68 @@
+{
+ "fixture": "27-display-then-blank-line.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Short",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "line:",
+    "x": 175.8581,
+    "y_top": 134.765
+   },
+   {
+    "text": "a",
+    "x": 294.211,
+    "y_top": 146.72
+   },
+   {
+    "text": "=",
+    "x": 302.2468,
+    "y_top": 146.72
+   },
+   {
+    "text": "b",
+    "x": 312.7653,
+    "y_top": 146.72
+   },
+   {
+    "text": "New",
+    "x": 148.712,
+    "y_top": 164.653
+   },
+   {
+    "text": "paragraph",
+    "x": 171.1249,
+    "y_top": 164.653
+   },
+   {
+    "text": "after",
+    "x": 218.778,
+    "y_top": 164.653
+   },
+   {
+    "text": "a",
+    "x": 242.3365,
+    "y_top": 164.653
+   },
+   {
+    "text": "blank",
+    "x": 250.6354,
+    "y_top": 164.653
+   },
+   {
+    "text": "line.",
+    "x": 278.0305,
+    "y_top": 164.653
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

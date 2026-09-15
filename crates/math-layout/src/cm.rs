@@ -19,7 +19,8 @@
 
 use crate::cm_tfm::*;
 use crate::metrics::{Extensible, FontId, Glyph, MathFontMetrics, MathParams, SizeClass};
-use crate::tfm::{TfmChar, TfmFont, scale};
+use crate::metrics::{MathChar, OrdLigature, OrdPair};
+use crate::tfm::{LigKern, TfmChar, TfmFont, scale};
 
 /// Family 0: roman (`cmr`), 1: math italic (`cmmi`), 2: symbols (`cmsy`),
 /// 3: extension (`cmex`).
@@ -41,15 +42,129 @@ pub enum ExtensionSizing {
     Fixed,
     /// `cmex10` scaled to the script sizes (7pt, 5pt), so rule thickness and
     /// big-operator spacing shrink with the style. Approximates `amsfonts`,
-    /// which loads real `cmex7`/`cmex8`/`cmex9` fonts at smaller sizes.
+    /// which loads real `cmex7`/`cmex8`/`cmex9` fonts at smaller sizes; see
+    /// [`ExtensionSizing::Designs`] for the exact declaration.
     Scaled,
+    /// `amsmath.sty` (default `cmex7` option, lines 109-114:
+    /// `<-8>cmex7<8>cmex8<9>cmex9<10><10.95>..cmex10`) and `amsfonts.sty`
+    /// (lines 36-41: `<-7.5>cmex7<7.5-8.5>cmex8<8.5-9.5>cmex9<9.5->cmex10`)
+    /// redeclare `OMX/cmex/m/n` without `sfixed`: family 3 is loaded at the
+    /// math size itself, in the design [`extension_design`] names. A
+    /// Computer Modern document loading amsmath or amssymb gets this (pdfTeX
+    /// `\fontname\textfont3` in an 11pt article: `cmex10 at 10.95pt`,
+    /// `\scriptfont3` `cmex8`, `\scriptscriptfont3` `cmex7 at 6.0pt`).
+    /// `lmodern` keeps `omxlmex.fd`'s `sfixed*lmex10` ([`ExtensionSizing::Fixed`]).
+    Designs,
 }
 
 /// Every embedded font, indexed by `FontId`.
-pub static ALL_FONTS: [&TfmFont; 18] = [
+///
+/// New designs are appended so that existing ids stay stable.
+pub static ALL_FONTS: [&TfmFont; 25] = [
     &CMR10, &CMR7, &CMR5, &CMMI10, &CMMI7, &CMMI5, &CMSY10, &CMSY7, &CMSY5, &CMEX10, &CMR12, &CMR8,
-    &CMR6, &CMMI12, &CMMI8, &CMMI6, &CMSY8, &CMSY6,
+    &CMR6, &CMMI12, &CMMI8, &CMMI6, &CMSY8, &CMSY6, &CMR9, &CMR17, &CMMI9, &CMSY9, &CMEX7, &CMEX8,
+    &CMEX9,
 ];
+
+/// The embedded TFM called `name` (`"cmmi9"`), if any.
+pub fn tfm_by_name(name: &str) -> Option<&'static TfmFont> {
+    ALL_FONTS.iter().copied().find(|f| f.name == name)
+}
+
+/// The math sizes `[text, script, scriptscript]` LaTeX uses at a text size.
+///
+/// `fontmath.ltx` lines 75-86: `\DeclareMathSizes{5}{5}{5}{5}`, `{6}{6}{5}{5}`,
+/// `{7}{7}{5}{5}`, `{8}{8}{6}{5}`, `{9}{9}{6}{5}`, `{10}{10}{7}{5}`,
+/// `{10.95}{10.95}{8}{6}`, `{12}{12}{8}{6}`, `{14.4}{14.4}{10}{7}`,
+/// `{17.28}{17.28}{12}{10}`, `{20.74}{20.74}{14.4}{12}`,
+/// `{24.88}{24.88}{20.74}{17.28}`. `size10.clo`/`size11.clo`/`size12.clo`
+/// only choose which of these a size command selects (10pt class:
+/// `\footnotesize` 8, `\small` 9, `\Large` 14.4; 11pt: 9, 10, 14.4; 12pt:
+/// 10, 10.95, 17.28). Any other size gets `\calculate@math@sizes`
+/// (latex.ltx 10742-10754): `\defaultscriptratio` .7 and
+/// `\defaultscriptscriptratio` .5 of the text size, multiplied as TeX does
+/// (the factor in 2^-16 units, truncated to the scaled point).
+pub fn declare_math_sizes(text_pt: f64) -> [f64; 3] {
+    const TABLE: [[f64; 3]; 12] = [
+        [5.0, 5.0, 5.0],
+        [6.0, 5.0, 5.0],
+        [7.0, 5.0, 5.0],
+        [8.0, 6.0, 5.0],
+        [9.0, 6.0, 5.0],
+        [10.0, 7.0, 5.0],
+        [10.95, 8.0, 6.0],
+        [12.0, 8.0, 6.0],
+        [14.4, 10.0, 7.0],
+        [17.28, 12.0, 10.0],
+        [20.74, 14.4, 12.0],
+        [24.88, 20.74, 17.28],
+    ];
+    if let Some(row) = TABLE.iter().find(|row| (row[0] - text_pt).abs() < 0.005) {
+        return *row;
+    }
+    let sp = (text_pt * 65536.0).round() as i64;
+    let scaled = |f: i64| ((sp * f) >> 16) as f64 / 65536.0;
+    [text_pt, scaled(45875), scaled(32768)]
+}
+
+/// The design of `family` that LaTeX loads at `size_pt`.
+///
+/// Computer Modern (`ot1cmr.fd`, `omlcmm.fd`, `omscmsy.fd`) lists exact
+/// sizes: cmr `<5>..<9><10><12>gen*cmr <10.95>cmr10 <14.4>cmr12
+/// <17.28><20.74><24.88>cmr17`, cmmi `<5>..<9>gen*cmmi <10><10.95>cmmi10
+/// <12>..<24.88>cmmi12`, cmsy `<5>..<10>gen*cmsy <10.95>..<24.88>cmsy10`.
+/// Latin Modern (`ot1lmr.fd`, `omllmm.fd`, `omslmsy.fd`) uses ranges that
+/// select the same design at every one of those sizes and are used here for
+/// the rest: roman `<-5.5>5 <5.5-6.5>6 <6.5-7.5>7 <7.5-8.5>8 <8.5-9.5>9
+/// <9.5-11>10 <11-15>12 <15->17`, math italic the same up to `<9.5-11>10
+/// <11->12`, symbols up to `<9.5->10` (`lmr`/`lmmi`/`lmsy` are metric
+/// copies of the CM designs). Family 3 is [`extension_design`]'s.
+pub fn design_for(family: Family, size_pt: f64) -> &'static TfmFont {
+    let s = size_pt;
+    match family {
+        Family::Roman => match s {
+            s if s < 5.5 => &CMR5,
+            s if s < 6.5 => &CMR6,
+            s if s < 7.5 => &CMR7,
+            s if s < 8.5 => &CMR8,
+            s if s < 9.5 => &CMR9,
+            s if s < 11.0 => &CMR10,
+            s if s < 15.0 => &CMR12,
+            _ => &CMR17,
+        },
+        Family::Italic => match s {
+            s if s < 5.5 => &CMMI5,
+            s if s < 6.5 => &CMMI6,
+            s if s < 7.5 => &CMMI7,
+            s if s < 8.5 => &CMMI8,
+            s if s < 9.5 => &CMMI9,
+            s if s < 11.0 => &CMMI10,
+            _ => &CMMI12,
+        },
+        Family::Symbol => match s {
+            s if s < 5.5 => &CMSY5,
+            s if s < 6.5 => &CMSY6,
+            s if s < 7.5 => &CMSY7,
+            s if s < 8.5 => &CMSY8,
+            s if s < 9.5 => &CMSY9,
+            _ => &CMSY10,
+        },
+        Family::Extension => extension_design(s),
+    }
+}
+
+/// The `cmex` design amsmath/amsfonts load at `size_pt`
+/// ([`ExtensionSizing::Designs`]): cmex7 below 7.5pt, cmex8 below 8.5pt,
+/// cmex9 below 9.5pt, else cmex10 (amsfonts' ranges; amsmath's exact sizes
+/// agree at every declared size).
+pub fn extension_design(size_pt: f64) -> &'static TfmFont {
+    match size_pt {
+        s if s < 7.5 => &CMEX7,
+        s if s < 8.5 => &CMEX8,
+        s if s < 9.5 => &CMEX9,
+        _ => &CMEX10,
+    }
+}
 
 fn font_id_of(font: &'static TfmFont) -> FontId {
     let i = ALL_FONTS
@@ -100,6 +215,29 @@ impl CmMathMetrics {
         }
     }
 
+    /// The math fonts LaTeX selects when the current text size is `text_pt`
+    /// (`\normalsize` of a class, `\footnotesize` in a footnote, `\Large` in
+    /// a `\section` title): [`declare_math_sizes`] with [`design_for`] each
+    /// family at each size, and family 3 fixed at cmex10 (the kernel's and
+    /// lmodern's `sfixed`). A Computer Modern document with amsmath or
+    /// amsfonts uses [`CmMathMetrics::with_extension`]`(Designs)`.
+    /// `for_text_size(10.0)` and `for_text_size(12.0)` equal
+    /// [`CmMathMetrics::latex_10pt`] and [`CmMathMetrics::latex_12pt`].
+    pub fn for_text_size(text_pt: f64) -> CmMathMetrics {
+        let sizes = declare_math_sizes(text_pt);
+        let row = |family: Family| sizes.map(|s| design_for(family, s));
+        CmMathMetrics {
+            sizes,
+            extension: ExtensionSizing::Fixed,
+            families: [row(Family::Roman), row(Family::Italic), row(Family::Symbol)],
+        }
+    }
+
+    /// `self` with family 3 sized as `extension`.
+    pub fn with_extension(self, extension: ExtensionSizing) -> CmMathMetrics {
+        CmMathMetrics { extension, ..self }
+    }
+
     /// Alias of [`CmMathMetrics::latex_10pt`]: plain TeX uses the same sizes.
     pub fn plain() -> CmMathMetrics {
         CmMathMetrics::latex_10pt()
@@ -135,12 +273,13 @@ impl CmMathMetrics {
             Family::Italic => 1,
             Family::Symbol => 2,
             Family::Extension => {
-                let at = match self.extension {
+                let (font, at) = match self.extension {
                     // cmex10 is `sfixed` at its 10pt design size in LaTeX.
-                    ExtensionSizing::Fixed => CMEX10.design_size,
-                    ExtensionSizing::Scaled => self.sizes[i],
+                    ExtensionSizing::Fixed => (&CMEX10, CMEX10.design_size),
+                    ExtensionSizing::Scaled => (&CMEX10, self.sizes[i]),
+                    ExtensionSizing::Designs => (extension_design(self.sizes[i]), self.sizes[i]),
                 };
-                return (&CMEX10, font_id_of(&CMEX10), at);
+                return (font, font_id_of(font), at);
             }
         };
         let font = self.families[fam][i];
@@ -268,11 +407,27 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
         '\u{00AC}' => (Symbol, 0x3A),
         '\u{2205}' => (Symbol, 0x3B),
         '\u{2207}' => (Symbol, 0x72),
+        // fontmath.ltx 224: `\DeclareMathSymbol{\prime}{\mathord}{symbols}{"30}`,
+        // the large prime that `'` (`^\prime`, latex.ltx 15683) sets in scripts.
+        '\u{2032}' => (Symbol, 0x30),
         '\u{2202}' => (Italic, 0x40),
         '\u{2227}' => (Symbol, 0x5E),
         '\u{2228}' => (Symbol, 0x5F),
         '\u{2229}' => (Symbol, 0x5C),
         '\u{222A}' => (Symbol, 0x5B),
+        // The square relations, cmsy "74-"77. These are base LaTeX2e kernel
+        // symbols, not amssymb: `fontmath.ltx` 279/278 declare `\sqcup`/
+        // `\sqcap` `\mathbin` at symbols "74/"75 and 301/302 `\sqsubseteq`/
+        // `\sqsupseteq` `\mathrel` at "76/"77. Confirmed with pdfTeX
+        // 3.141592653 (TeX Live 2025), where `\show` gives \mathchar"2274,
+        // "2275, "3276 and "3277 with and without amssymb loaded; at 10pt the
+        // glyphs measure 6.66669pt (cmsy10 "74/"75) and 7.7778pt ("76/"77).
+        // (amsfonts' strict `\sqsubset`/`\sqsupset` are msam, not cmsy, and
+        // are not reachable through this table.)
+        '\u{2294}' => (Symbol, 0x74),
+        '\u{2293}' => (Symbol, 0x75),
+        '\u{2291}' => (Symbol, 0x76),
+        '\u{2292}' => (Symbol, 0x77),
         '\u{2295}' => (Symbol, 0x08),
         '\u{2297}' => (Symbol, 0x0A),
         '\u{2216}' => (Symbol, 0x6E),
@@ -292,7 +447,8 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
         '\u{03B2}' => (Italic, 0x0C),
         '\u{03B3}' => (Italic, 0x0D),
         '\u{03B4}' => (Italic, 0x0E),
-        '\u{03B5}' => (Italic, 0x0F),
+        // TeX \varepsilon (cmmi "22, the open ε); \epsilon is the lunate U+03F5 below.
+        '\u{03B5}' => (Italic, 0x22),
         '\u{03B6}' => (Italic, 0x10),
         '\u{03B7}' => (Italic, 0x11),
         '\u{03B8}' => (Italic, 0x12),
@@ -342,6 +498,58 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
         '\u{22C1}' => (Extension, 0x57),
         '\u{22C0}' => (Extension, 0x56),
         '\u{2210}' => (Extension, 0x60),
+        // fontmath.ltx 262/250: \bigsqcup and \biguplus, the two
+        // `largesymbols` \mathop operators the table was missing.
+        '\u{2A06}' => (Extension, 0x46),
+        '\u{2A04}' => (Extension, 0x55),
+        // LaTeX kernel \DeclareMathSymbol rows from the `symbols` family
+        // (cmsy), fontmath.ltx line in the comment.
+        '\u{2296}' => (Symbol, 0x09), // \ominus 289
+        '\u{2298}' => (Symbol, 0x0B), // \oslash 287
+        '\u{2299}' => (Symbol, 0x0C), // \odot 286
+        '\u{25EF}' => (Symbol, 0x0D), // \bigcirc 294
+        '\u{2219}' => (Symbol, 0x0F), // \bullet 283
+        '\u{22C4}' => (Symbol, 0x05), // \diamond 282
+        '\u{224D}' => (Symbol, 0x10), // \asymp 346
+        '\u{2AAF}' => (Symbol, 0x16), // \preceq 324
+        '\u{2AB0}' => (Symbol, 0x17), // \succeq 323
+        '\u{227A}' => (Symbol, 0x1E), // \prec 321
+        '\u{227B}' => (Symbol, 0x1F), // \succ 320
+        '\u{2197}' => (Symbol, 0x25), // \nearrow 307
+        '\u{2198}' => (Symbol, 0x26), // \searrow 308
+        '\u{2196}' => (Symbol, 0x2D), // \nwarrow 309
+        '\u{2199}' => (Symbol, 0x2E), // \swarrow 310
+        '\u{228E}' => (Symbol, 0x5D), // \uplus 280
+        '\u{2240}' => (Symbol, 0x6F), // \wr 284
+        '\u{221A}' => (Symbol, 0x70), // \surd 242 (\mathchar"1270, braced -> Ord)
+        '\u{2A3F}' => (Symbol, 0x71), // \amalg 281
+        '\u{2294}' => (Symbol, 0x74), // \sqcup 279
+        '\u{2293}' => (Symbol, 0x75), // \sqcap 278
+        '\u{2291}' => (Symbol, 0x76), // \sqsubseteq 301
+        '\u{2292}' => (Symbol, 0x77), // \sqsupseteq 302
+        '\u{00A7}' => (Symbol, 0x78), // \mathsection 508
+        '\u{2020}' => (Symbol, 0x79), // \dagger 277
+        '\u{2021}' => (Symbol, 0x7A), // \ddagger 276
+        '\u{00B6}' => (Symbol, 0x7B), // \mathparagraph 507
+        '\u{2663}' => (Symbol, 0x7C), // \clubsuit 237
+        '\u{2662}' => (Symbol, 0x7D), // \diamondsuit 238
+        '\u{2661}' => (Symbol, 0x7E), // \heartsuit 239
+        '\u{2660}' => (Symbol, 0x7F), // \spadesuit 240
+        // Kernel rows from the `letters` family (cmmi).
+        '\u{21BC}' => (Italic, 0x28), // \leftharpoonup 349
+        '\u{21BD}' => (Italic, 0x29), // \leftharpoondown 350
+        '\u{21C0}' => (Italic, 0x2A), // \rightharpoonup 351
+        '\u{21C1}' => (Italic, 0x2B), // \rightharpoondown 352
+        '\u{25B7}' => (Italic, 0x2E), // \triangleright 265
+        '\u{25C1}' => (Italic, 0x2F), // \triangleleft 264
+        '\u{22C6}' => (Italic, 0x3F), // \star 299
+        '\u{266D}' => (Italic, 0x5B), // \flat 234
+        '\u{266E}' => (Italic, 0x5C), // \natural 235
+        '\u{266F}' => (Italic, 0x5D), // \sharp 236
+        '\u{2323}' => (Italic, 0x5E), // \smile 347
+        '\u{2322}' => (Italic, 0x5F), // \frown 348
+        // Kernel row from the `operators` family (cmr): fontmath.ltx 509.
+        '$' => (Roman, 0x24), // \mathdollar
         // Accents (plain.tex \mathaccent slots).
         '^' | '\u{02C6}' => (Roman, 0x5E),
         '~' | '\u{02DC}' => (Roman, 0x7E),
@@ -354,8 +562,12 @@ pub fn symbol_slot(ch: char) -> Option<(Family, u8)> {
         '\u{02C7}' => (Roman, 0x14),
         '\u{20D7}' => (Italic, 0x7E),
         // \imath, \jmath
-        '\u{0131}' => (Italic, 0x7B),
-        '\u{0237}' => (Italic, 0x7C),
+        // Both the text dotless pair and the Mathematical Alphanumeric pair
+        // `unicode-math` names for these two commands, which is what the
+        // compiler emits (it is 0.322456 em / 0.384030 em wide in Latin Modern
+        // Math, cmmi10's width; the text pair is 14% and 20% narrow there).
+        '\u{0131}' | '\u{1D6A4}' => (Italic, 0x7B),
+        '\u{0237}' | '\u{1D6A5}' => (Italic, 0x7C),
         _ => return None,
     })
 }
@@ -476,14 +688,17 @@ impl MathFontMetrics for CmMathMetrics {
         self.extension_recipe(0x70, '\u{221A}', size)
     }
 
-    /// `\operator@font` is the roman family (cmr) at the current size.
-    fn extension_glyph(&self, code: u8, ch: char) -> Option<Glyph> {
-        self.make_glyph(Family::Extension, code, ch, SizeClass::Text)
+    fn extension_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
+        self.make_glyph(Family::Extension, code, ch, size)
     }
 
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
-        let code = if ch.is_ascii() { ch as u8 } else { return None };
-        self.make_glyph(Family::Roman, code, ch, size)
+        self.make_glyph(Family::Roman, ot1_text_slot(ch)?, ch, size)
+    }
+
+    fn text_space(&self, size: SizeClass) -> f64 {
+        let (font, _, at) = self.font(Family::Roman, size);
+        font.fontdimen(2, at)
     }
 
     fn accent_sizes(&self, ch: char, size: SizeClass) -> Vec<Glyph> {
@@ -509,6 +724,88 @@ impl MathFontMetrics for CmMathMetrics {
         }
         out
     }
+
+    fn ord_pair(&self, left: MathChar, right: MathChar, size: SizeClass) -> Option<OrdPair> {
+        let slot = |c: MathChar| match c {
+            MathChar::Symbol(ch) => symbol_slot(ch),
+            MathChar::Text(ch) => Some((Family::Roman, ot1_text_slot(ch)?)),
+        };
+        let ((family, l), (right_family, r)) = (slot(left)?, slot(right)?);
+        if family != right_family {
+            return None;
+        }
+        let (font, _, at) = self.font(family, size);
+        let text_font = font.params.get(1).is_some_and(|&space| space != 0);
+        let (kern, ligature) = match font.lig_kern(l, r) {
+            Some(LigKern::Kern(fixword)) => (scale(fixword, at), None),
+            Some(LigKern::Ligature { op, rem }) => (
+                0.0,
+                ligature_char(left, family, rem).map(|ch| OrdLigature { op, ch }),
+            ),
+            None => (0.0, None),
+        };
+        Some(OrdPair {
+            kern,
+            text_font,
+            ligature,
+        })
+    }
+}
+
+/// The ligature characters of the OT1 text fonts (`cmr`, `cmti`, `cmbx`,
+/// `cmss`), as the Unicode characters that stand for them in a math list:
+/// the lig/kern programs produce these slots, and [`ot1_text_slot`] puts
+/// them back. `cmtt`'s two ligatures (`!``, `?``) go to slots 0o16/0o17 of
+/// its own layout and are not covered.
+const OT1_LIGATURES: [(u8, char); 11] = [
+    (0o13, '\u{FB00}'),  // ff
+    (0o14, '\u{FB01}'),  // fi
+    (0o15, '\u{FB02}'),  // fl
+    (0o16, '\u{FB03}'),  // ffi
+    (0o17, '\u{FB04}'),  // ffl
+    (0o42, '\u{201D}'),  // ''
+    (0o74, '\u{00A1}'),  // !`
+    (0o76, '\u{00BF}'),  // ?`
+    (0o134, '\u{201C}'), // ``
+    (0o173, '\u{2013}'), // --
+    (0o174, '\u{2014}'), // ---
+];
+
+/// The character a ligature instruction of `family`'s font produces at slot
+/// `rem`, of the same kind as the pair's `left` character: a text character
+/// ([`ot1_text_char`]), or a symbol that [`symbol_slot`] puts back at that
+/// slot. `None` when no character stands for the slot (CM's math families
+/// have no ligatures, so a symbol pair never misses in practice); the
+/// ligature is then not formed.
+pub fn ligature_char(left: MathChar, family: Family, rem: u8) -> Option<MathChar> {
+    let ch = ot1_text_char(rem)?;
+    match left {
+        MathChar::Text(_) => Some(MathChar::Text(ch)),
+        MathChar::Symbol(_) => {
+            (symbol_slot(ch) == Some((family, rem))).then_some(MathChar::Symbol(ch))
+        }
+    }
+}
+
+/// The OT1 text-font slot of a text character: its ASCII code, or the slot
+/// of a ligature character ([`OT1_LIGATURES`]).
+pub fn ot1_text_slot(ch: char) -> Option<u8> {
+    if ch.is_ascii() {
+        return Some(ch as u8);
+    }
+    OT1_LIGATURES
+        .iter()
+        .find(|(_, c)| *c == ch)
+        .map(|(slot, _)| *slot)
+}
+
+/// The text character standing for OT1 slot `slot` of a ligature result:
+/// a ligature character, or the printable ASCII character at that code.
+pub fn ot1_text_char(slot: u8) -> Option<char> {
+    match OT1_LIGATURES.iter().find(|(s, _)| *s == slot) {
+        Some((_, ch)) => Some(*ch),
+        None => (slot.is_ascii_graphic()).then_some(slot as char),
+    }
 }
 
 /// Size in pt of a size class under these metrics (for tests and reports).
@@ -519,6 +816,69 @@ pub fn size_pt(m: &CmMathMetrics, size: SizeClass) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `\overbrace`/`\underbrace` set `\braceld`..`\braceru` inside
+    /// `\downbracefill`/`\upbracefill`'s own `$...$`, so the pieces always
+    /// come from `\textfont3` — never `\scriptfont3`, however deeply the
+    /// brace sits in scripts.
+    ///
+    /// The two differ only when family 3 is not one fixed font, which is
+    /// what amsmath's redeclaration does ([`ExtensionSizing::Designs`]). In
+    /// an 11 pt article loading amsmath, pdfTeX 3.141592653 (TeX Live 2025)
+    /// reports `\fontname\textfont3` = `cmex10 at 10.95pt` and
+    /// `\fontname\scriptfont3` = `cmex8`, and `\showbox` of `\overbrace{a+b}`,
+    /// `x^{\overbrace{a+b}}`, `x^{y^{\overbrace{a+b}}}` and an `\underbrace`
+    /// in a fraction numerator all place the same `\hbox(1.31396+0.0)` piece
+    /// from cmex10 at 10.95 pt.
+    #[test]
+    fn brace_pieces_come_from_textfont3_even_inside_scripts() {
+        use crate::mathlist::{Atom, MathList};
+        let m = CmMathMetrics::for_text_size(10.95).with_extension(ExtensionSizing::Designs);
+        assert_eq!(m.sizes, [10.95, 8.0, 6.0]);
+        let brace = || Atom::brace(MathList::new(vec![Atom::ord('a')]), false);
+        let bare = MathList::new(vec![brace()]);
+        let mut x = Atom::ord('x');
+        x.superscript = Some(MathList::new(vec![brace()]));
+        let mut y = Atom::ord('y');
+        y.superscript = Some(MathList::new(vec![x.clone()]));
+        for list in [bare, MathList::new(vec![x]), MathList::new(vec![y])] {
+            let root = crate::layout(&list, crate::Style::DISPLAY, &m);
+            let pieces: Vec<_> = crate::positioned_runs(&root, (0.0, 0.0))
+                .glyphs
+                .into_iter()
+                .filter(|g| g.ch == '\u{23DE}')
+                .collect();
+            assert_eq!(pieces.len(), 4, "four `\\downbracefill` pieces");
+            for p in pieces {
+                assert_eq!(p.font_id, font_id_of(&CMEX10), "cmex10, not cmex8");
+                assert_eq!(format!("{:.5}", p.size), "10.95000");
+                // cmex10 "7A height 0.119997 em: pdfTeX's 1.31396 pt piece.
+                let g = m.extension_glyph(0x7A, '\u{23DE}', SizeClass::Text).expect("piece");
+                assert_eq!(format!("{:.5}", g.height), "1.31396");
+            }
+        }
+    }
+
+    /// `fontmath.ltx` 278-279 and 301-302 put the square relations in the
+    /// `symbols` (cmsy) family, so they box from the cmsy TFM exactly as
+    /// pdfLaTeX sets them. pdfTeX 3.141592653 (TeX Live 2025) `\show` gives
+    /// \mathchar"2274, "2275, "3276 and "3277 -- family 2, slots "74-"77 --
+    /// both with and without amssymb loaded, and the glyphs measure 6.66669pt
+    /// ("74/"75) and 7.7778pt ("76/"77) at 10pt.
+    #[test]
+    fn square_relations_are_cmsy_74_through_77() {
+        assert_eq!(symbol_slot('\u{2294}'), Some((Family::Symbol, 0x74))); // \sqcup
+        assert_eq!(symbol_slot('\u{2293}'), Some((Family::Symbol, 0x75))); // \sqcap
+        assert_eq!(symbol_slot('\u{2291}'), Some((Family::Symbol, 0x76))); // \sqsubseteq
+        assert_eq!(symbol_slot('\u{2292}'), Some((Family::Symbol, 0x77))); // \sqsupseteq
+        // The widths the cmsy TFM actually carries at the 10pt text size.
+        let m = CmMathMetrics::latex_10pt();
+        let five = |c: char| format!("{:.5}", m.glyph(c, SizeClass::Text).expect("glyph").width);
+        assert_eq!(five('\u{2294}'), "6.66669");
+        assert_eq!(five('\u{2293}'), "6.66669");
+        assert_eq!(five('\u{2291}'), "7.77780");
+        assert_eq!(five('\u{2292}'), "7.77780");
+    }
 
     #[test]
     fn parameters_match_plain_tex_fontdimens() {

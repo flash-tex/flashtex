@@ -55,6 +55,10 @@ pub struct Paint {
     pub g: f64,
     pub b: f64,
     pub a: f64,
+    /// PROPOSAL (`protocol/proposals/display-list-v2-device-color.md`): the
+    /// colour exactly as pdfTeX writes it (`k`, `rg`, `g` operands); `r`,
+    /// `g`, `b` are then its naive sRGB preview. `None`: the default colour.
+    pub device: Option<flashtex_compiler::color::DeviceColor>,
 }
 
 impl Paint {
@@ -63,7 +67,27 @@ impl Paint {
         g: 0.0,
         b: 0.0,
         a: 1.0,
+        device: None,
     };
+
+    /// The paint of a compiler colour (`None`: black, the default).
+    pub fn of(color: Option<flashtex_compiler::color::DeviceColor>) -> Paint {
+        match color {
+            None => Paint::BLACK,
+            Some(device) => {
+                let (r, g, b) = device.to_rgb();
+                Paint { r, g, b, a: 1.0, device: Some(device) }
+            }
+        }
+    }
+}
+
+/// Negotiated display-list proposals: image items (FT-063) and device
+/// colours (`display-list-v2-device-color`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Wire {
+    pub images: bool,
+    pub device_color: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +105,11 @@ pub struct Caret {
     pub top: Tick,
     pub height: Tick,
 }
+
+/// Synthetic-provenance reason for page furniture the typesetter creates
+/// with no source of its own: page numbers, header/footer marks, and the
+/// column separator rule.
+pub const PAGE_CHROME: &str = "page chrome";
 
 /// Where a cluster's bytes came from: exact source ranges, or a stated
 /// reason when the pipeline synthesised it.
@@ -390,6 +419,9 @@ pub struct Diagnostic {
     pub sources: Vec<SourceRange>,
     /// The compiler's recovery note, when it produced this diagnostic.
     pub recovery: Option<String>,
+    /// Replacement text for the source range (runtime-v1 `suggestion`).
+    /// Never serialised on display-list-v2 (`additionalProperties: false`).
+    pub suggestion: Option<String>,
 }
 
 impl Diagnostic {
@@ -400,6 +432,7 @@ impl Diagnostic {
             severity: Severity::Error,
             sources,
             recovery: None,
+            suggestion: None,
         }
     }
     pub fn warning(code: &str, message: impl Into<String>, sources: Vec<SourceRange>) -> Diagnostic {
@@ -409,33 +442,108 @@ impl Diagnostic {
             severity: Severity::Warning,
             sources,
             recovery: None,
+            suggestion: None,
         }
     }
 
     /// Converts a compiler diagnostic; `paths` is indexed by `DocumentId`.
+    ///
+    /// The compiler's structured diagnostics (#346/#389) carry three fields
+    /// beyond the code and suggestion this already forwarded (#354): `labels`
+    /// (extra spans with a word about each), `notes` (`= note:` strings) and
+    /// `help` (a suggested fix, optionally with a mechanical `replacement`).
+    /// display-list-v2's `diagnostic` object is
+    /// `additionalProperties: false` over exactly `{code, message, severity,
+    /// sources}` (`protocol/rendering-v2.schema.json`), so there is no wire
+    /// field to put them in and inventing one is the protocol owner's call,
+    /// not this converter's. They are folded onto the fields that already
+    /// mean the same thing instead of being dropped:
+    ///
+    /// * every label's span joins `sources` behind the diagnostic's own span,
+    ///   which is what `sources` is for (v1 still reads `sources.first()`, so
+    ///   its single `source` stays the primary one);
+    /// * each label's text, each note and the help message are appended to
+    ///   `message` as bracketed `[note: ...]` / `[help: ...]` clauses,
+    ///   because the label spans alone would say where without saying what.
+    ///   They stay on **one line**: `message` is a single-line human string
+    ///   here — `flashtex-render --tex` prints one diagnostic per line as
+    ///   `severity[code] message (line:col)` — so rustc's multi-line
+    ///   `= note:` rendering would split the line and lose the position
+    ///   suffix (`tests/cli_e2e.rs`);
+    /// * `help.replacement` back-fills runtime-v1's `suggestion` when the
+    ///   compiler set the structured replacement but not the legacy field.
+    ///
+    /// Both wire limits are respected: `sources` `maxItems` 128 and `message`
+    /// `maxLength` 4096.
     pub fn from_compiler(d: &flashtex_compiler::diagnostics::Diagnostic, paths: &[&str]) -> Diagnostic {
         use flashtex_compiler::diagnostics::Severity as S;
+
+        let range = |s: flashtex_compiler::Span| SourceRange {
+            path: std::rc::Rc::from(paths.get(s.document.0).copied().unwrap_or("")),
+            start_byte: s.start,
+            end_byte: s.end,
+        };
+
+        let mut sources: Vec<SourceRange> = d.span.map(range).into_iter().collect();
+        for l in &d.labels {
+            if sources.len() >= MAX_DIAGNOSTIC_SOURCES {
+                break;
+            }
+            let r = range(l.span);
+            // A label on the diagnostic's own span adds no location.
+            if !sources.contains(&r) {
+                sources.push(r);
+            }
+        }
+
+        let mut message = d.message.clone();
+        let mut push_clause = |prefix: &str, text: &str| {
+            // One line, and no embedded newline from the compiler either.
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if text.is_empty() {
+                return;
+            }
+            let clause = format!(" [{prefix}: {text}]");
+            if message.len() + clause.len() <= MAX_DIAGNOSTIC_MESSAGE {
+                message.push_str(&clause);
+            }
+        };
+        for l in &d.labels {
+            push_clause("note", &l.text);
+        }
+        for n in &d.notes {
+            push_clause("note", n);
+        }
+        if let Some(h) = &d.help {
+            push_clause("help", &h.message);
+        }
+
         Diagnostic {
-            code: "compiler".into(),
-            message: d.message.clone(),
+            // Exactly the compiler's own `code`: its constructors already apply
+            // `default_code`, and a `None` is deliberate (request validation), so
+            // re-deriving one here would disagree with the compiler's runtime-v1 reply.
+            code: d.code.map_or("compiler", |c| c.as_str()).into(),
+            message,
             severity: match d.severity {
                 S::Error => Severity::Error,
                 _ => Severity::Warning,
             },
-            sources: d
-                .span
-                .map(|s| {
-                    vec![SourceRange {
-                        path: std::rc::Rc::from(paths.get(s.document.0).copied().unwrap_or("")),
-                        start_byte: s.start,
-                        end_byte: s.end,
-                    }]
-                })
-                .unwrap_or_default(),
+            sources,
             recovery: d.recovery.clone(),
+            suggestion: d.suggestion.clone().or_else(|| {
+                d.help
+                    .as_ref()
+                    .and_then(|h| h.replacement.as_ref())
+                    .map(|r| r.text.clone())
+            }),
         }
     }
 }
+
+/// `protocol/rendering-v2.schema.json`: `diagnostic.sources` `maxItems`.
+const MAX_DIAGNOSTIC_SOURCES: usize = 128;
+/// `protocol/rendering-v2.schema.json`: `diagnostic.message` `maxLength`.
+const MAX_DIAGNOSTIC_MESSAGE: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplayList {
@@ -477,6 +585,12 @@ impl DisplayList {
 
     /// `images`: whether image items are serialised (adds `image`).
     pub fn required_features_with(&self, images: bool) -> Vec<&'static str> {
+        self.required_features_wire(Wire { images, device_color: false })
+    }
+
+    /// `device-color` is listed when negotiated and some paint carries one.
+    pub fn required_features_wire(&self, wire: Wire) -> Vec<&'static str> {
+        let images = wire.images;
         let mut f = vec!["glyph_run", "rgba-srgb", "cluster-actualtext"];
         if self.pages.iter().any(|p| p.items.iter().any(|i| matches!(i, Item::Rule(_)))) {
             f.insert(1, "rule");
@@ -497,6 +611,15 @@ impl DisplayList {
         if images && self.pages.iter().any(|p| p.items.iter().any(|i| matches!(i, Item::Image(_)))) {
             f.push("image");
         }
+        let device = |it: &Item| match it {
+            Item::GlyphRun(r) => r.paint.device.is_some(),
+            Item::Rule(r) => r.paint.device.is_some(),
+            Item::Path(p) => p.paint.device.is_some(),
+            Item::Image(_) => false,
+        };
+        if wire.device_color && self.pages.iter().any(|p| p.items.iter().any(device)) {
+            f.push("device-color");
+        }
         f
     }
 
@@ -514,6 +637,11 @@ impl DisplayList {
     /// [`to_json`](Self::to_json); `images` also serialises image items
     /// and lists the `image` feature (negotiated `display-list-v2-images`).
     pub fn to_json_with(&self, id: &str, images: bool) -> Value {
+        self.to_json_wire(id, Wire { images, device_color: false })
+    }
+
+    /// [`to_json_with`](Self::to_json_with) with every negotiated proposal.
+    pub fn to_json_wire(&self, id: &str, wire: Wire) -> Value {
         let mut payload = Value::obj();
         payload.set("render_format", json::str_("display-list-v2"));
         payload.set("coordinate_unit", json::str_("bp_2pow20"));
@@ -523,7 +651,7 @@ impl DisplayList {
         payload.set("revision", json::num(self.revision as f64));
         payload.set(
             "required_features",
-            Value::Arr(self.required_features_with(images).into_iter().map(json::str_).collect()),
+            Value::Arr(self.required_features_wire(wire).into_iter().map(json::str_).collect()),
         );
         payload.set(
             "documents",
@@ -561,7 +689,7 @@ impl DisplayList {
                     .collect(),
             ),
         );
-        payload.set("pages", Value::Arr(self.pages.iter().map(|p| page_json(p, images)).collect()));
+        payload.set("pages", Value::Arr(self.pages.iter().map(|p| page_json(p, wire)).collect()));
         payload.set(
             "diagnostics",
             Value::Arr(self.diagnostics.iter().map(diagnostic_json).collect()),
@@ -586,78 +714,148 @@ impl DisplayList {
     /// `json::write(&self.to_json_with(id, images))` written directly:
     /// `images` also serialises image items and lists the `image` feature.
     pub fn write_json_with(&self, id: &str, images: bool) -> String {
+        self.write_json_wire(id, Wire { images, device_color: false })
+    }
+
+    /// [`write_json_with`](Self::write_json_with) with every negotiated proposal.
+    pub fn write_json_wire(&self, id: &str, wire: Wire) -> String {
+        self.write_envelope(id, wire, |o, _, p| write_page(o, p, wire))
+    }
+
+    /// [`write_json_wire`](Self::write_json_wire), also recording the exact
+    /// byte length of every page object as written (`display-list-v2-delta`
+    /// `page_bytes`).
+    pub fn write_json_wire_measured(&self, id: &str, wire: Wire, page_bytes: &mut Vec<usize>) -> String {
+        page_bytes.clear();
+        self.write_envelope(id, wire, |o, _, p| {
+            let start = o.len();
+            write_page(o, p, wire);
+            page_bytes.push(o.len() - start);
+        })
+    }
+
+    /// The full line with each page object supplied as text (a consumer's
+    /// reconstruction from base + delta; the producer gate compares it with
+    /// [`write_json_wire`](Self::write_json_wire)). `pages` has one entry per
+    /// page of `self`.
+    pub fn write_json_wire_with_page_objects(&self, id: &str, wire: Wire, pages: &[String]) -> String {
+        self.write_envelope(id, wire, |o, i, _| o.push_str(&pages[i]))
+    }
+
+    fn write_envelope(&self, id: &str, wire: Wire, mut page: impl FnMut(&mut String, usize, &Page)) -> String {
         let mut o = String::with_capacity(self.estimated_json_bytes());
         o.push_str("{\"id\":");
         json::write_string_into(id, &mut o);
-        o.push_str(",\"payload\":{\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":[");
-        for (i, d) in self.diagnostics.iter().enumerate() {
-            sep(&mut o, i);
-            o.push_str("{\"code\":");
-            json::write_string_into(&d.code, &mut o);
-            o.push_str(",\"message\":");
-            json::write_string_into(&d.message, &mut o);
-            o.push_str(",\"severity\":");
-            o.push_str(match d.severity {
-                Severity::Warning => "\"warning\"",
-                Severity::Error => "\"error\"",
-            });
-            o.push_str(",\"sources\":");
-            write_sources(&mut o, &d.sources);
-            o.push('}');
-        }
-        o.push_str("],\"documents\":[");
-        for (i, d) in self.documents.iter().enumerate() {
-            sep(&mut o, i);
-            o.push_str("{\"byte_length\":");
-            num(&mut o, d.byte_length as f64);
-            o.push_str(",\"path\":");
-            json::write_string_into(&d.path, &mut o);
-            o.push_str(",\"revision\":");
-            num(&mut o, d.revision as f64);
-            o.push_str(",\"sha256\":");
-            json::write_string_into(&d.sha256, &mut o);
-            o.push('}');
-        }
-        o.push_str("],\"fonts\":[");
-        for (i, f) in self.fonts.iter().enumerate() {
-            sep(&mut o, i);
-            o.push_str("{\"byte_length\":");
-            num(&mut o, f.byte_length as f64);
-            o.push_str(",\"face_index\":");
-            num(&mut o, f64::from(f.face_index));
-            o.push_str(",\"font_id\":");
-            json::write_string_into(&f.font_id, &mut o);
-            o.push_str(",\"format\":");
-            json::write_string_into(&f.format, &mut o);
-            o.push_str(",\"glyph_count\":");
-            num(&mut o, f64::from(f.glyph_count));
-            o.push_str(",\"postscript_name\":");
-            json::write_string_into(&f.postscript_name, &mut o);
-            o.push_str(",\"sha256\":");
-            json::write_string_into(&f.sha256, &mut o);
-            o.push_str(",\"units_per_em\":");
-            num(&mut o, f64::from(f.units_per_em));
-            o.push('}');
-        }
-        o.push_str("],\"pages\":[");
+        o.push_str(",\"payload\":{\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":");
+        write_diagnostics(&mut o, &self.diagnostics);
+        o.push_str(",\"documents\":");
+        write_documents(&mut o, &self.documents);
+        o.push_str(",\"fonts\":");
+        write_fonts(&mut o, &self.fonts);
+        o.push_str(",\"pages\":[");
         for (i, p) in self.pages.iter().enumerate() {
             sep(&mut o, i);
-            write_page(&mut o, p, images);
+            page(&mut o, i, p);
         }
         o.push_str("],\"project_id\":");
         json::write_string_into(&self.project_id, &mut o);
-        o.push_str(",\"render_format\":\"display-list-v2\",\"required_features\":[");
-        for (i, f) in self.required_features_with(images).into_iter().enumerate() {
-            sep(&mut o, i);
-            json::write_string_into(f, &mut o);
-        }
-        o.push_str("],\"revision\":");
+        o.push_str(",\"render_format\":\"display-list-v2\",\"required_features\":");
+        write_features(&mut o, self, wire);
+        o.push_str(",\"revision\":");
         num(&mut o, self.revision as f64);
         o.push_str(",\"text_extraction\":\"cluster-actualtext\"},\"protocol_version\":");
         num(&mut o, PROTOCOL_VERSION as f64);
         o.push_str(",\"type\":\"display_list\"}");
         o
     }
+}
+
+/// Bytes of the full `display_list` line that are neither a page object, a
+/// page separator, nor one of the measured parts (`id`, `diagnostics`,
+/// `documents`, `fonts`, `project_id`, `required_features`, `revision`):
+/// the fixed framing of [`DisplayList::write_json_wire`], which the delta
+/// consumer's exact size formula (`DisplayListDelta.fullLineBytes`) assumes.
+pub const FULL_LINE_FRAME_BYTES: usize = "{\"id\":".len()
+    + ",\"payload\":{\"color_space\":\"srgb\",\"coordinate_unit\":\"bp_2pow20\",\"diagnostics\":".len()
+    + ",\"documents\":".len()
+    + ",\"fonts\":".len()
+    + ",\"pages\":[".len()
+    + "],\"project_id\":".len()
+    + ",\"render_format\":\"display-list-v2\",\"required_features\":".len()
+    + ",\"revision\":".len()
+    + ",\"text_extraction\":\"cluster-actualtext\"},\"protocol_version\":2,\"type\":\"display_list\"}".len();
+
+/// The `diagnostics` array of the full line (also carried complete by a delta).
+pub(crate) fn write_diagnostics(o: &mut String, diagnostics: &[Diagnostic]) {
+    o.push('[');
+    for (i, d) in diagnostics.iter().enumerate() {
+        sep(o, i);
+        o.push_str("{\"code\":");
+        json::write_string_into(&d.code, o);
+        o.push_str(",\"message\":");
+        json::write_string_into(&d.message, o);
+        o.push_str(",\"severity\":");
+        o.push_str(match d.severity {
+            Severity::Warning => "\"warning\"",
+            Severity::Error => "\"error\"",
+        });
+        o.push_str(",\"sources\":");
+        write_sources(o, &d.sources);
+        o.push('}');
+    }
+    o.push(']');
+}
+
+pub(crate) fn write_documents(o: &mut String, documents: &[DocumentResource]) {
+    o.push('[');
+    for (i, d) in documents.iter().enumerate() {
+        sep(o, i);
+        o.push_str("{\"byte_length\":");
+        num(o, d.byte_length as f64);
+        o.push_str(",\"path\":");
+        json::write_string_into(&d.path, o);
+        o.push_str(",\"revision\":");
+        num(o, d.revision as f64);
+        o.push_str(",\"sha256\":");
+        json::write_string_into(&d.sha256, o);
+        o.push('}');
+    }
+    o.push(']');
+}
+
+pub(crate) fn write_fonts(o: &mut String, fonts: &[FontResource]) {
+    o.push('[');
+    for (i, f) in fonts.iter().enumerate() {
+        sep(o, i);
+        o.push_str("{\"byte_length\":");
+        num(o, f.byte_length as f64);
+        o.push_str(",\"face_index\":");
+        num(o, f64::from(f.face_index));
+        o.push_str(",\"font_id\":");
+        json::write_string_into(&f.font_id, o);
+        o.push_str(",\"format\":");
+        json::write_string_into(&f.format, o);
+        o.push_str(",\"glyph_count\":");
+        num(o, f64::from(f.glyph_count));
+        o.push_str(",\"postscript_name\":");
+        json::write_string_into(&f.postscript_name, o);
+        o.push_str(",\"sha256\":");
+        json::write_string_into(&f.sha256, o);
+        o.push_str(",\"units_per_em\":");
+        num(o, f64::from(f.units_per_em));
+        o.push('}');
+    }
+    o.push(']');
+}
+
+/// The `required_features` array of `list` under `wire`.
+pub(crate) fn write_features(o: &mut String, list: &DisplayList, wire: Wire) {
+    o.push('[');
+    for (i, f) in list.required_features_wire(wire).into_iter().enumerate() {
+        sep(o, i);
+        json::write_string_into(f, o);
+    }
+    o.push(']');
 }
 
 fn sep(o: &mut String, i: usize) {
@@ -704,11 +902,21 @@ fn write_provenance(o: &mut String, p: &Provenance) {
     }
 }
 
-fn write_paint(o: &mut String, p: &Paint) {
+fn write_paint(o: &mut String, p: &Paint, device: bool) {
     o.push_str("{\"a\":");
     num(o, p.a);
     o.push_str(",\"b\":");
     num(o, p.b);
+    if let Some(d) = p.device.filter(|_| device) {
+        o.push_str(",\"device_color\":{\"space\":");
+        json::write_string_into(device_space(&d), o);
+        o.push_str(",\"values\":[");
+        for (i, v) in d.operands().split(' ').enumerate() {
+            sep(o, i);
+            json::write_string_into(v, o);
+        }
+        o.push_str("]}");
+    }
     o.push_str(",\"g\":");
     num(o, p.g);
     o.push_str(",\"r\":");
@@ -788,7 +996,18 @@ fn write_image(o: &mut String, i: &Image) {
     o.push('}');
 }
 
-fn write_page(o: &mut String, p: &Page, images: bool) {
+fn device_space(d: &flashtex_compiler::color::DeviceColor) -> &'static str {
+    match d.space {
+        flashtex_compiler::color::ColorSpace::Gray => "gray",
+        flashtex_compiler::color::ColorSpace::Rgb => "rgb",
+        flashtex_compiler::color::ColorSpace::Cmyk => "cmyk",
+    }
+}
+
+/// One page object exactly as it sits inside the full line's `pages` array
+/// (and inside a delta's `changed_pages`).
+pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
+    let images = wire.images;
     o.push_str("{\"height\":");
     write_tick(o, p.height);
     o.push_str(",\"items\":[");
@@ -856,7 +1075,7 @@ fn write_page(o: &mut String, p: &Page, images: bool) {
                     o.push('}');
                 }
                 o.push_str("],\"kind\":\"glyph_run\",\"paint\":");
-                write_paint(o, &r.paint);
+                write_paint(o, &r.paint, wire.device_color);
                 o.push_str(",\"text\":");
                 json::write_string_into(&r.text, o);
                 o.push('}');
@@ -865,7 +1084,7 @@ fn write_page(o: &mut String, p: &Page, images: bool) {
                 o.push_str("{\"height\":");
                 write_tick(o, r.height);
                 o.push_str(",\"kind\":\"rule\",\"paint\":");
-                write_paint(o, &r.paint);
+                write_paint(o, &r.paint, wire.device_color);
                 write_provenance(o, &r.provenance);
                 o.push_str(",\"top\":");
                 write_tick(o, r.top);
@@ -904,7 +1123,7 @@ fn write_page(o: &mut String, p: &Page, images: bool) {
                     }
                 };
                 o.push_str(",\"paint\":");
-                write_paint(o, &p.paint);
+                write_paint(o, &p.paint, wire.device_color);
                 o.push_str(",\"path\":");
                 write_path(o, &p.commands);
                 let synthetic = matches!(p.provenance, Provenance::Synthetic(_));
@@ -973,8 +1192,14 @@ fn provenance_into(o: &mut Value, p: &Provenance) {
     }
 }
 
-fn paint_json(p: &Paint) -> Value {
+fn paint_json(p: &Paint, device: bool) -> Value {
     let mut o = Value::obj();
+    if let Some(d) = p.device.filter(|_| device) {
+        let mut dc = Value::obj();
+        dc.set("space", json::str_(device_space(&d)));
+        dc.set("values", Value::Arr(d.operands().split(' ').map(|v| json::str_(v.to_string())).collect()));
+        o.set("device_color", dc);
+    }
     o.set("r", json::num(p.r));
     o.set("g", json::num(p.g));
     o.set("b", json::num(p.b));
@@ -1022,7 +1247,8 @@ pub fn diagnostic_json(d: &Diagnostic) -> Value {
     o
 }
 
-fn page_json(p: &Page, images: bool) -> Value {
+fn page_json(p: &Page, wire: Wire) -> Value {
+    let images = wire.images;
     let mut o = Value::obj();
     o.set("number", json::num(f64::from(p.number)));
     o.set("width", tick(p.width));
@@ -1090,7 +1316,7 @@ fn page_json(p: &Page, images: bool) -> Value {
                                     .collect(),
                             ),
                         );
-                        o.set("paint", paint_json(&r.paint));
+                        o.set("paint", paint_json(&r.paint, wire.device_color));
                         o
                     }
                     Item::Path(p) => {
@@ -1148,7 +1374,7 @@ fn page_json(p: &Page, images: bool) -> Value {
                                 ),
                             );
                         }
-                        o.set("paint", paint_json(&p.paint));
+                        o.set("paint", paint_json(&p.paint, wire.device_color));
                         provenance_into(&mut o, &p.provenance);
                         o
                     }
@@ -1159,7 +1385,7 @@ fn page_json(p: &Page, images: bool) -> Value {
                         o.set("top", tick(r.top));
                         o.set("width", tick(r.width));
                         o.set("height", tick(r.height));
-                        o.set("paint", paint_json(&r.paint));
+                        o.set("paint", paint_json(&r.paint, wire.device_color));
                         provenance_into(&mut o, &r.provenance);
                         o
                     }
@@ -1215,6 +1441,143 @@ mod tests {
     }
 
     #[test]
+    fn from_compiler_forwards_code_and_suggestion() {
+        use flashtex_compiler::diagnostics::{Diagnostic as C, DiagnosticCode, Severity as CS};
+        let unknown = C {
+            severity: CS::Error,
+            message: r"\alpah is not supported by this compiler version".into(),
+            span: None,
+            recovery: None,
+            code: Some(DiagnosticCode::UnknownCommand),
+            suggestion: Some(r"\alpha".into()),
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
+        };
+        let out = Diagnostic::from_compiler(&unknown, &[]);
+        assert_eq!(out.code, "unknown_command");
+        assert_eq!(out.suggestion.as_deref(), Some(r"\alpha"));
+
+        let no_explicit = C {
+            severity: CS::Error,
+            message: r"\tikz is not supported by this compiler version".into(),
+            span: None,
+            recovery: None,
+            code: None,
+            suggestion: None,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
+        };
+        // No code on the compiler side stays uncoded, even when the wording would
+        // match `default_code`: the compiler omitted it on purpose.
+        assert_eq!(Diagnostic::from_compiler(&no_explicit, &[]).code, "compiler");
+
+        let none = C {
+            severity: CS::Error,
+            message: "layout_capabilities must be a list".into(),
+            span: None,
+            recovery: None,
+            code: None,
+            suggestion: None,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
+        };
+        assert_eq!(Diagnostic::from_compiler(&none, &[]).code, "compiler");
+        assert_eq!(Diagnostic::from_compiler(&none, &[]).suggestion, None);
+    }
+
+    /// The compiler's structured `labels`/`notes`/`help` (#346/#389) have no
+    /// display-list-v2 wire field of their own, so `from_compiler` folds them
+    /// onto `sources`, `message` and `suggestion` rather than dropping them.
+    #[test]
+    fn from_compiler_folds_labels_notes_and_help() {
+        use flashtex_compiler::diagnostics::{
+            Diagnostic as C, DiagnosticHelp, DiagnosticLabel, DiagnosticReplacement, Severity as CS,
+        };
+        use flashtex_compiler::{DocumentId, Span};
+
+        let at = |start, end| Span { document: DocumentId(0), start, end };
+        let d = C {
+            severity: CS::Error,
+            message: r"\tilde is a math command".into(),
+            span: Some(at(10, 16)),
+            recovery: None,
+            code: None,
+            suggestion: None,
+            labels: vec![
+                // A label on the diagnostic's own span adds no new location...
+                DiagnosticLabel { span: at(10, 16), text: "this command".into(), primary: true },
+                // ...but a label elsewhere does.
+                DiagnosticLabel { span: at(40, 44), text: "opened here".into(), primary: false },
+            ],
+            notes: vec![r"\tilde is a math accent".into()],
+            help: Some(DiagnosticHelp {
+                message: r"wrap it in math: \(\tilde{c}\)".into(),
+                replacement: Some(DiagnosticReplacement {
+                    span: at(10, 16),
+                    text: r"\(\tilde{c}\)".into(),
+                }),
+            }),
+        };
+        let out = Diagnostic::from_compiler(&d, &["main.tex"]);
+
+        // The diagnostic's own span first, then the one label span it does not
+        // already cover; the duplicate is not repeated.
+        assert_eq!(out.sources.len(), 2);
+        assert_eq!((out.sources[0].start_byte, out.sources[0].end_byte), (10, 16));
+        assert_eq!((out.sources[1].start_byte, out.sources[1].end_byte), (40, 44));
+        assert_eq!(&*out.sources[0].path, "main.tex");
+
+        assert_eq!(
+            out.message,
+            concat!(
+                r"\tilde is a math command",
+                " [note: this command]",
+                " [note: opened here]",
+                r" [note: \tilde is a math accent]",
+                r" [help: wrap it in math: \(\tilde{c}\)]",
+            )
+        );
+        // One line: `flashtex-render --tex` prints `severity[code] message
+        // (line:col)` per line, so an embedded newline would strand the
+        // position suffix on a line of its own (`tests/cli_e2e.rs`).
+        assert!(!out.message.contains('\n'), "{}", out.message);
+        // `help.replacement` back-fills the legacy runtime-v1 `suggestion`.
+        assert_eq!(out.suggestion.as_deref(), Some(r"\(\tilde{c}\)"));
+    }
+
+    /// A compiler `suggestion` already set is authoritative; `help.replacement`
+    /// only fills the gap.
+    #[test]
+    fn from_compiler_prefers_an_explicit_suggestion_over_help_replacement() {
+        use flashtex_compiler::diagnostics::{
+            Diagnostic as C, DiagnosticHelp, DiagnosticReplacement, Severity as CS,
+        };
+        use flashtex_compiler::{DocumentId, Span};
+        let at = |start, end| Span { document: DocumentId(0), start, end };
+        let d = C {
+            severity: CS::Warning,
+            message: "m".into(),
+            span: None,
+            recovery: None,
+            code: None,
+            suggestion: Some("explicit".into()),
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: Some(DiagnosticHelp {
+                message: String::new(),
+                replacement: Some(DiagnosticReplacement { span: at(0, 1), text: "from-help".into() }),
+            }),
+        };
+        let out = Diagnostic::from_compiler(&d, &["main.tex"]);
+        assert_eq!(out.suggestion.as_deref(), Some("explicit"));
+        // An empty help message adds no `= help:` line.
+        assert_eq!(out.message, "m");
+    }
+
+    #[test]
     fn write_json_matches_the_value_tree() {
         let src = |a, b| SourceRange {
             path: std::rc::Rc::from("dir/ma\"in.tex"),
@@ -1267,6 +1630,7 @@ mod tests {
                 g: 0.1,
                 b: 1.0 / 3.0,
                 a: 1.0,
+                device: None,
             },
             role: RunRole::Text,
         });
@@ -1307,7 +1671,7 @@ mod tests {
                 op,
                 commands: cmds(),
                 clips,
-                paint: Paint { r: 0.5, g: 0.0, b: 1.0, a: 0.25 },
+                paint: Paint { r: 0.5, g: 0.0, b: 1.0, a: 0.25, device: None },
                 provenance,
             })
         };

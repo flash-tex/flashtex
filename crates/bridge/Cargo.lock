@@ -188,6 +188,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
 
 [[package]]
+name = "flashtex-bibliography"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-bridge"
 version = "0.1.0"
 dependencies = [
@@ -206,8 +210,16 @@ dependencies = [
 name = "flashtex-compiler"
 version = "0.1.0"
 dependencies = [
+ "flashtex-bibliography",
  "flashtex-font-engine",
+ "flashtex-tex-boxes",
+ "flashtex-tex-expansion",
+ "flashtex-tex-text-encoding",
 ]
+
+[[package]]
+name = "flashtex-document-style"
+version = "0.1.0"
 
 [[package]]
 name = "flashtex-font-engine"
@@ -223,11 +235,31 @@ name = "flashtex-math-layout"
 version = "0.1.0"
 
 [[package]]
-name = "flashtex-paragraph-layout"
+name = "flashtex-microtype"
 version = "0.1.0"
 
 [[package]]
+name = "flashtex-paragraph-layout"
+version = "0.1.0"
+dependencies = [
+ "flashtex-document-style",
+ "flashtex-microtype",
+]
+
+[[package]]
 name = "flashtex-pdf"
+version = "0.1.0"
+
+[[package]]
+name = "flashtex-tex-boxes"
+version = "0.1.0"
+
+[[package]]
+name = "flashtex-tex-expansion"
+version = "0.1.0"
+
+[[package]]
+name = "flashtex-tex-text-encoding"
 version = "0.1.0"
 
 [[package]]

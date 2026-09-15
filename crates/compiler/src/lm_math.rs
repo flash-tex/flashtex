@@ -1,12 +1,14 @@
 //! Glyphs drawn from the pinned Latin Modern Math resource, not the base-14 fonts.
 //!
-//! Blackboard bold, `\setminus`, the long `\Longrightarrow` arrow, a
+//! Blackboard bold, the cmsy circled operators, `\setminus`, the long `\Longrightarrow` arrow, a
 //! further set of common amssymb/latexsym symbols (issue #62: `\mp`, `\ll`,
 //! `\gg`, `\simeq`, `\vdots`, `\ddots`, the floor/ceiling fences, `\oint`,
 //! `\mapsto`, `\ell`, `\hbar`, `\circ`, `\parallel`, and the relations/order
 //! symbols below), and the HW2 follow-up (the remaining long double/single
 //! arrows, `\triangle`/`\bigtriangleup`/`\bigtriangledown`, and the proof QED
-//! mark) have no glyph in the base-14 Symbol face. Rather than
+//! mark), and the base LaTeX2e cmsy square relations
+//! (`\sqcup`/`\sqcap`/`\sqsubseteq`/`\sqsupseteq`), have no glyph in the
+//! base-14 Symbol face. Rather than
 //! substitute a look-alike, the compiler emits their real Unicode code points
 //! and binds them to the `lm.math` resource the font-engine manifest already
 //! pins (the same file the Mac app bundles as
@@ -75,11 +77,27 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{210F}', 576),  // \hbar
     ('\u{2218}', 412),  // \circ
     ('\u{2225}', 500),  // \parallel
+    ('\u{2016}', 398),  // \| / \Vert / \lVert / \rVert
     ('\u{2224}', 388),  // \nmid
     ('\u{2270}', 778),  // \nleq
     ('\u{2271}', 778),  // \ngeq
     ('\u{228A}', 778),  // \subsetneq
     ('\u{228B}', 778),  // \supsetneq
+    // The kernel cmsy square relations (fontmath.ltx 278-279, 301-302). The
+    // base-14 Symbol face has no square cup/cap or square subset, so they are
+    // bound to this resource like the rest above. These advances match what
+    // pdfLaTeX sets from cmsy10 at 10pt (measured: `\sqcup` 6.66669pt against
+    // 667/1000 em, `\sqsubseteq` 7.7778pt against 778/1000 em).
+    ('\u{2294}', 667),  // \sqcup
+    ('\u{2293}', 667),  // \sqcap
+    ('\u{2291}', 778),  // \sqsubseteq
+    ('\u{2292}', 778),  // \sqsupseteq
+    // Kernel cmsy10 circled operators; advances measured with hb-shape from
+    // apps/mac/Fonts/latinmodern-math.otf (font units).
+    ('\u{2296}', 778),  // \ominus, cmsy10 "09
+    ('\u{2298}', 778),  // \oslash, cmsy10 "0B
+    ('\u{2299}', 778),  // \odot, cmsy10 "0C
+    ('\u{25EF}', 1013), // \bigcirc, cmsy10 "0D
     ('\u{2272}', 776),  // \lesssim
     ('\u{2273}', 776),  // \gtrsim
     ('\u{225C}', 778),  // \triangleq
@@ -139,10 +157,9 @@ pub fn double_struck(letter: char) -> Option<char> {
 }
 
 pub fn advance(c: char) -> Option<u16> {
-    ADVANCES
-        .iter()
-        .find(|(glyph, _)| *glyph == c)
-        .map(|(_, advance)| *advance)
+    static INDEX: crate::char_table::CharTable<u16> = crate::char_table::CharTable::new(ADVANCES);
+    INDEX
+        .get(c)
         // amssymb/amsfonts symbols bound to the same resource
         // (`crate::amssymb::LM_ADVANCES`, generated from this font program).
         .or_else(|| crate::amssymb::lm_advance(c))
@@ -183,7 +200,7 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 75);
+        assert_eq!(ADVANCES.len(), 84);
     }
 
     #[test]

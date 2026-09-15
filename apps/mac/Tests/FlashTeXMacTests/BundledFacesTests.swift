@@ -35,7 +35,12 @@ final class BundledFacesTests: XCTestCase {
         let files = try FileManager.default.contentsOfDirectory(atPath: Self.fontsDir.path)
         let onDisk = Set(files.filter { $0.hasSuffix(".otf") })
         XCTAssertEqual(onDisk, Set(PreviewFonts.latinModernFaceFiles), "vendored OTFs must be exactly the requestable faces")
-        XCTAssertEqual(PreviewFonts.latinModernFaceFiles.count, 23)
+        // 21 roman text masters + bold-italic is counted among them + LM Math
+        // + NewCM Math + 10 typewriter + 11 non-upright roman + 14 sans.
+        XCTAssertEqual(PreviewFonts.latinModernFaceFiles.count, 58)
+        XCTAssertEqual(PreviewFonts.latinModernMonoFaceFiles.count, 10)
+        XCTAssertEqual(PreviewFonts.latinModernRomanShapeFaceFiles.count, 11)
+        XCTAssertEqual(PreviewFonts.latinModernSansFaceFiles.count, 14)
         XCTAssertEqual(PreviewFonts.latinModernMissingFaces(in: Self.fontsDir.path), [])
 
         for (name, pin) in Self.commanderPinned {
@@ -60,7 +65,7 @@ final class BundledFacesTests: XCTestCase {
             XCTAssertEqual(Self.sha256Hex(data), e["sha256"] as? String, path)
         }
         XCTAssertEqual(listed.union(Self.commanderPinned.keys), onDisk, "every vendored OTF is pinned by one tier")
-        XCTAssertEqual(entries.count, 20)
+        XCTAssertEqual(entries.count, 55)
     }
 
     /// `bundle-texmf.py check` with the fonts directory verifies every tier
@@ -72,7 +77,7 @@ final class BundledFacesTests: XCTestCase {
         XCTAssertEqual(verified.status, 0, verified.output)
         let report = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(verified.output.utf8)) as? [String: Any])
         let rows = try XCTUnwrap(report["entries"] as? [[String: Any]])
-        XCTAssertEqual(rows.filter { $0["tier"] as? String == "supplementary-face" }.count, 20)
+        XCTAssertEqual(rows.filter { $0["tier"] as? String == "supplementary-face" }.count, 55)
         XCTAssertEqual(rows.filter { $0["tier"] as? String == "pinned" && ($0["bundle_path"] as? String ?? "").hasPrefix("Fonts/") }.count, 3)
         XCTAssertTrue(rows.allSatisfy { $0["status"] as? String == "verified" })
 
@@ -89,9 +94,11 @@ final class BundledFacesTests: XCTestCase {
         XCTAssertEqual(drifted.status, 1)
         XCTAssertTrue(drifted.output.contains("\"path\": \"lmroman8-regular.otf\""), drifted.output)
         XCTAssertTrue(drifted.output.contains("length_mismatch"), drifted.output)
-        // An unpinned extra face: refused as `unpinned`.
+        // An unpinned extra face: refused as `unpinned`. The name must be one
+        // no tier can ever pin — `latin_modern_outline` has no arm returning a
+        // dunhill design, so `lmdunh10-regular.otf` is never vendored.
         try FileManager.default.copyItem(at: Self.fontsDir.appendingPathComponent("lmroman9-regular.otf"),
-                                         to: copy.appendingPathComponent("lmsans10-regular.otf"))
+                                         to: copy.appendingPathComponent("lmdunh10-regular.otf"))
         let stray = try Self.runPython(tool, ["check", texmf, copy.path])
         XCTAssertEqual(stray.status, 1)
         XCTAssertTrue(stray.output.contains("\"status\": \"unpinned\""), stray.output)

@@ -677,8 +677,13 @@ extension ShellModel {
 
     /// ⌘⇧J: select the full source span of the preview item under the caret
     /// (so the preview's caret highlight and page scroll follow) and say where
-    /// it landed.
+    /// it landed. It is also the manual override for automatic following
+    /// (`CaretFollow.swift`): asking for the caret scrolls to it at once —
+    /// without waiting for the debounce, and without regard to the "Preview
+    /// follows the caret" preference, on or off — and resumes following (once
+    /// the preference is on) if a manual preview scroll had stopped it.
     func revealCaretInPreview() {
+        caretFollow.note(.explicit)
         guard let result else {
             navigationNote = "No compile result loaded; the caret maps to no preview item."
             return
@@ -717,15 +722,29 @@ struct NavigationCommands: Commands {
 
     var body: some Commands {
         CommandMenu("Navigate") {
+            Button("Go to Line…") { model.presentGoToLine() }
+                .keyboardShortcut("l", modifiers: [.command])
             Button("Go to Matching \\begin/\\end or \\label/\\ref") { model.goToMatching() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
+            // Editor navigation lane (ShellModel+EditorNavigation.swift / EditorNavigation.swift).
+            Button("Go to Definition") { model.goToDefinition() }
+                .keyboardShortcut("j", modifiers: [.command, .control])
+            Button("Go to Symbol…") { model.editorNavigation.symbolPickerShown = true }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+            Divider()
+            Button("Select Environment") { model.selectEnvironment() }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+            Button("Wrap Selection in Environment…") { model.editorNavigation.wrapShown = true }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+            Button("Rename Symbol…") { model.presentRenameSymbol() }
+                .keyboardShortcut("r", modifiers: [.option, .shift])
             Divider()
             Button("Next Diagnostic") { model.goToDiagnostic(forward: true) }
                 .keyboardShortcut("]", modifiers: [.command, .shift])
-                .disabled(model.result == nil)
+                .disabled(!model.toolbarHasResult) // change-only mirror: a per-reply `result` read here re-evaluates the App scene (FlashTeXMacApp.commands)
             Button("Previous Diagnostic") { model.goToDiagnostic(forward: false) }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
-                .disabled(model.result == nil)
+                .disabled(!model.toolbarHasResult) // change-only mirror: a per-reply `result` read here re-evaluates the App scene (FlashTeXMacApp.commands)
             Button("Next Occurrence") { if let p = diagnosticsPanel { model.stepOccurrence(forward: true, panel: p) } }
                 .keyboardShortcut("]", modifiers: [.command, .option])
                 .disabled(diagnosticsPanel == nil)
@@ -735,7 +754,7 @@ struct NavigationCommands: Commands {
             Divider()
             Button("Reveal Caret in Preview") { model.revealCaretInPreview() }
                 .keyboardShortcut("j", modifiers: [.command, .shift])
-                .disabled(model.result == nil)
+                .disabled(!model.toolbarHasResult) // change-only mirror: a per-reply `result` read here re-evaluates the App scene (FlashTeXMacApp.commands)
         }
     }
 }

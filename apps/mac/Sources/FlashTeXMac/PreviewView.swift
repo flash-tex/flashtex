@@ -17,15 +17,21 @@ struct PreviewView: View {
     var zoom: CGFloat = 1
     /// Reports the fit-to-width scale so the shell can compute Actual Size / the percentage.
     var onFitScale: ((CGFloat) -> Void)? = nil
+    /// Latest caret-follow request (CaretFollow.swift); acted on once per token.
+    var follow: CaretFollowController.Request? = nil
+    /// Reported when the reader scrolls this pane by hand.
+    var onUserScroll: (() -> Void)? = nil
+    /// The page under the viewport's top edge (the header's "N / M").
+    var onVisiblePage: ((Int) -> Void)? = nil
+    /// The zoom multiplier that would fit the tallest page's height to the
+    /// pane (View > Fit Page); reported whenever geometry changes.
+    var onFitPageZoom: ((CGFloat) -> Void)? = nil
     let onSelect: (RuntimeV1.SourceRange?, String?) -> Void
-
-    /// First page holding a caret item, or nil; drives page-level auto-scroll.
-    private var caretPage: Int? { caretItems.filter { !$0.value.isEmpty }.keys.min() }
 
     var body: some View {
         let _ = TypingBench.shared.willRender(revision: result.revision, pages: result.pages.count)
         GeometryReader { geo in
-        ScrollViewReader { proxy in
+        ScrollViewReader { _ in
             let widest = result.pages.map(\.widthPt).max() ?? 612
             // Fit the widest page to the pane (never upscale past 100%), times the zoom.
             let fit = min(1, max(0.2, (geo.size.width - 48) / widest))
@@ -39,7 +45,7 @@ struct PreviewView: View {
                 // `.equatable()`: a page whose items, caret set and scale did not
                 // change keeps its display list, so a keystroke re-draws only the
                 // pages whose layout (or source offsets) actually moved.
-                VStack(spacing: 24) {
+                VStack(spacing: DS.Preview.pageSpacing) {
                     ForEach(result.pages, id: \.number) { page in
                         PageView(page: page, totalPages: result.pages.count, dark: dark, caretItems: caretItems[page.number] ?? [], scale: scale,
                                  rulesNegotiated: result.layoutCapabilities?.contains(RuntimeV1.LayoutCapabilities.rulesV1) == true,
@@ -48,18 +54,26 @@ struct PreviewView: View {
                             .id(page.number)
                     }
                 }
-                .padding(24)
-                .background(PreviewAnchorKeeper(layout: layout))
+                .padding(DS.Preview.pageSpacing)
+                .background(PreviewAnchorKeeper(layout: layout, follow: follow, onUserScroll: onUserScroll, onVisiblePage: onVisiblePage))
             }
             .onChange(of: fit, initial: true) { _, f in onFitScale?(f) }
-            .onChange(of: caretPage) { _, page in
-                // Page-level only: keeps the page under the caret in view when the
-                // editor moves across pages; no scrolling within a page.
-                if let page { ReduceMotion.animate { proxy.scrollTo(page, anchor: .top) } }
+            .onChange(of: geo.size, initial: true) { _, size in
+                // Fit Page: the tallest page's height fills the pane (within
+                // the zoom bounds); recomputed as the pane or pages change.
+                let tallest = result.pages.map(\.heightPt).max() ?? 792
+                let fitNow = PreviewPageLayout.fitScale(paneWidth: size.width, widestPt: widest)
+                guard tallest > 0, fitNow > 0 else { return }
+                onFitPageZoom?((size.height - 2 * DS.Preview.pageSpacing) / (tallest * fitNow))
             }
+            // The page-level `scrollTo(caretPage)` this pane used to do is gone:
+            // it jumped to the top of the page on every caret move, even when the
+            // item was already on screen. `CaretFollow` (CaretFollow.swift) does
+            // the same job for both panes, debounced, only when the target is off
+            // screen, and to the item rather than the page.
         }
         }
-        .background(dark ? Color(white: 0.12) : Color(nsColor: .windowBackgroundColor))
+        .background(dark ? DS.Preview.darkGround : DS.Colors.surfaceGround)
     }
 }
 
@@ -84,11 +98,11 @@ private struct PageView: View, Equatable {
         HitTestCanvas(page: page, dark: dark, scale: scale, caretItems: caretItems, rulesNegotiated: rulesNegotiated, onSelect: onSelect)
             .frame(width: size.width, height: size.height)
             .overlay(alignment: .topLeading) { AccessibilityOverlay(page: page, totalPages: totalPages, scale: scale, fontName: { PreviewFonts.postScriptName(size: $0) }, onSelect: onSelect) } // FlashTeXAccessibility
-            .background(dark ? Color(white: 0.16) : .white)
-            .shadow(radius: 4)
+            .background(dark ? DS.Preview.darkPage : .white)
+            .shadow(radius: DS.Preview.pageShadowRadius)
             .overlay(alignment: .bottomTrailing) {
                 Text("page \(page.number)")
-                    .font(.caption2).foregroundStyle(.secondary).padding(4)
+                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).padding(DS.Space.xs)
             }
     }
 }
@@ -117,14 +131,14 @@ private struct HitTestCanvas: View {
         Canvas { context, _ in
             let cache = PreviewTextCache.shared
             let ink: Color = dark ? .white : .black
-            let inkCG: CGColor = dark ? CGColor(gray: 1, alpha: 1) : CGColor(gray: 0, alpha: 1)
+            let inkCG: CGColor = dark ? DS.Preview.darkInkCG : DS.Preview.lightInkCG
             for (index, item) in page.items.enumerated() {
                 if case .rule(let rule) = item {
                     // Typed rule: top-left anchored contract geometry (dark preview only recolors).
                     let rect = RuleGeometry.previewRect(rule, scale: scale)
                     context.fill(Path(rect), with: .color(ink))
                     if hover == index {
-                        context.fill(Path(rect.insetBy(dx: -2, dy: -2)), with: .color(Color.accentColor.opacity(0.25)))
+                        context.fill(Path(rect.insetBy(dx: -DS.Space.xxs, dy: -DS.Space.xxs)), with: .color(DS.Colors.accentSelection.opacity(DS.Preview.caretHighlightOpacity)))
                     }
                     continue
                 }
@@ -145,7 +159,7 @@ private struct HitTestCanvas: View {
                 if caretItems.contains(index) {
                     // Secondary (caret) highlight: subtle fill plus an underline.
                     context.fill(Path(rect.insetBy(dx: -2, dy: -1)),
-                                 with: .color(Color.accentColor.opacity(0.15)))
+                                 with: .color(DS.Colors.accentSelection.opacity(DS.Preview.occurrenceHighlightOpacity)))
                     let y = rect.maxY + 1
                     var underline = Path()
                     underline.move(to: CGPoint(x: rect.minX, y: y))
@@ -154,7 +168,7 @@ private struct HitTestCanvas: View {
                 }
                 if hover == index {
                     context.fill(Path(rect.insetBy(dx: -2, dy: -1)),
-                                 with: .color(Color.accentColor.opacity(0.25)))
+                                 with: .color(DS.Colors.accentSelection.opacity(DS.Preview.caretHighlightOpacity)))
                 }
                 context.withCGContext { cg in
                     // The canvas context is y-down; flip the text matrix so glyphs

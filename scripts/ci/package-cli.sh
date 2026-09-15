@@ -99,8 +99,8 @@ ln -s ../share/flashtex/texmf "$ROOT/bin/texmf"
   echo
   echo "## Contents"
   echo
-  for b in "${INCLUDED[@]}"; do echo "- \`bin/$b\`"; done
-  for b in "${MISSING[@]}"; do echo "- \`bin/$b\` — not built for $PLATFORM in this release"; done
+  for b in ${INCLUDED[@]+"${INCLUDED[@]}"}; do echo "- \`bin/$b\`"; done
+  for b in ${MISSING[@]+"${MISSING[@]}"}; do echo "- \`bin/$b\` — not built for $PLATFORM in this release"; done
   echo "- \`share/flashtex/Fonts/\` — Latin Modern OpenType faces (GUST Font License, see GUST-FONT-LICENSE.TXT)"
   echo "- \`share/flashtex/texmf/\` — the pinned Latin Modern 2.004 TFM metrics the engine lays text out with"
   echo "- \`bin/Fonts\`, \`bin/texmf\` — links to the above for the helper binaries"

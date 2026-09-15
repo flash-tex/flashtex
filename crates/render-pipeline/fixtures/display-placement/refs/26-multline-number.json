@@ -1,0 +1,103 @@
+{
+ "fixture": "26-multline-number.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Before.",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "a",
+    "x": 143.731,
+    "y_top": 159.671
+   },
+   {
+    "text": "+",
+    "x": 151.2089,
+    "y_top": 159.671
+   },
+   {
+    "text": "b",
+    "x": 161.1695,
+    "y_top": 159.671
+   },
+   {
+    "text": "+",
+    "x": 167.6671,
+    "y_top": 159.671
+   },
+   {
+    "text": "c",
+    "x": 177.6278,
+    "y_top": 159.671
+   },
+   {
+    "text": "+",
+    "x": 184.1513,
+    "y_top": 159.671
+   },
+   {
+    "text": "d",
+    "x": 194.1119,
+    "y_top": 159.671
+   },
+   {
+    "text": "+",
+    "x": 201.5091,
+    "y_top": 159.671
+   },
+   {
+    "text": "e",
+    "x": 211.4797,
+    "y_top": 159.671
+   },
+   {
+    "text": "=",
+    "x": 403.118,
+    "y_top": 174.615
+   },
+   {
+    "text": "f",
+    "x": 413.6365,
+    "y_top": 174.615
+   },
+   {
+    "text": "+",
+    "x": 421.8019,
+    "y_top": 174.615
+   },
+   {
+    "text": "g",
+    "x": 431.7625,
+    "y_top": 174.615
+   },
+   {
+    "text": "+",
+    "x": 439.085,
+    "y_top": 174.615
+   },
+   {
+    "text": "h",
+    "x": 449.0456,
+    "y_top": 174.615
+   },
+   {
+    "text": "(1)",
+    "x": 464.7486,
+    "y_top": 174.615
+   },
+   {
+    "text": "After.",
+    "x": 133.768,
+    "y_top": 196.533
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

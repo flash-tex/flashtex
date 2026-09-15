@@ -37,7 +37,7 @@ fn place(fonts: &FontSet, texts: &[&str], scripts: Option<(&str, &str)>) -> Plac
     assert!(math.substituted.is_none());
     let sizes = MathSizes { text: 12.0, script: 8.0, script_script: 6.0 };
     let otf = Rc::new(MathFonts::new(math.face, sizes).expect("MATH table"));
-    let tex = TexMathMetrics::new(12, otf, fonts);
+    let tex = TexMathMetrics::new(12, false, otf, fonts);
     assert!(tex.roman_available(), "rm-lmr TFMs installed");
     let mut sink = TextSink::default();
     let mut atoms = Vec::new();
@@ -53,7 +53,7 @@ fn place(fonts: &FontSet, texts: &[&str], scripts: Option<(&str, &str)>) -> Plac
         atoms.push(a);
     }
     let list = ml::MathList::new(atoms);
-    let metrics = TextRunMetrics::new(&tex, fonts, fonts.shaper(), Family::LatinModern, &sink.texts, &sink.keys);
+    let metrics = TextRunMetrics::new(&tex, fonts, fonts.shaper(), Family::LatinModern, &sink.texts, &sink.keys, &sink.italics);
     let mut laid = ml::layout_with_report(&list, ml::Style::TEXT, &metrics);
     assert!(laid.limitations.is_empty(), "{:?}", laid.limitations);
     let (runs, _notices) = metrics.finish();

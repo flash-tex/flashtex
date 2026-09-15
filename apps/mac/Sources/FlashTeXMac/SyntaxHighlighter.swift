@@ -64,8 +64,12 @@ struct SyntaxHighlighter {
         case displayMath
         /// `\(…\)`.
         case parenMath
-        /// Inside a math environment (`equation`, `align`, …).
-        case mathEnvironment
+        /// Inside math environments (`equation`, `align`, …), `depth` of them
+        /// deep. Math environments nest in real documents — `cases` inside
+        /// `align`, `split` inside `equation`, `array` inside `equation` — so
+        /// the mode counts them; a flat flag left everything between the inner
+        /// `\end{cases}` and the outer `\end{align}` lexed as text.
+        case mathEnvironment(depth: Int)
         /// Inside a verbatim-like environment; ends at `\end{name}`.
         case verbatim(String)
         /// Inside `\begin{comment}`.
@@ -349,9 +353,18 @@ struct SyntaxHighlighter {
                 if word == "begin" {
                     if SyntaxHighlighter.verbatimEnvironments.contains(env) { mode = .verbatim(env) }
                     else if env == "comment" { mode = .commentEnvironment }
-                    else if SyntaxHighlighter.mathEnvironments.contains(env), mode == .text { mode = .mathEnvironment }
-                } else if mode == .mathEnvironment, SyntaxHighlighter.mathEnvironments.contains(env) {
-                    mode = .text
+                    else if SyntaxHighlighter.mathEnvironments.contains(env) {
+                        // Entering math, or nesting one math environment inside
+                        // another (`cases` in `align`, `split` in `equation`).
+                        switch mode {
+                        case .text: mode = .mathEnvironment(depth: 1)
+                        case .mathEnvironment(let depth): mode = .mathEnvironment(depth: depth + 1)
+                        default: break // `$…$`, verbatim and comment bodies are not entered
+                        }
+                    }
+                } else if case .mathEnvironment(let depth) = mode, SyntaxHighlighter.mathEnvironments.contains(env) {
+                    // Only the outermost `\end` leaves math.
+                    mode = depth <= 1 ? .text : .mathEnvironment(depth: depth - 1)
                 }
                 return b.next
             case "verb", "verb*":
@@ -533,6 +546,28 @@ struct SyntaxHighlighter {
         var h = SyntaxHighlighter()
         h.reset(text)
         return h.runs(in: NSRange(location: 0, length: text.length), text: text)
+    }
+
+    /// Mode **at** `utf16`, not the mode its line starts in: the caret's line
+    /// is re-lexed from its own start mode, so this costs one line rather than
+    /// a document and gives the right answer in the middle of `$x^2$`. `text`
+    /// must be the text this model was built from; anything else answers
+    /// `.text` rather than guessing from a stale line table.
+    ///
+    /// The highlighter is the app's authority on what is math and what is
+    /// verbatim, so `CaretContext` — which decides how a capture is wrapped —
+    /// is checked against this rather than being a second opinion
+    /// (`CaretContextTests.testAgreesWithTheSyntaxHighlighter`).
+    func mode(at utf16: Int, text: NSString) -> Mode {
+        guard text.length == length, length > 0 else { return .text }
+        let clamped = max(0, min(utf16, length))
+        let index = line(at: clamped)
+        let start = lineStarts[index]
+        guard clamped > start else { return modes[index] }
+        var runs: [Run] = []
+        return withUnits(of: text, range: NSRange(location: start, length: clamped - start)) { units in
+            Self.lex(units, from: 0, to: units.count, base: start, mode: modes[index], runs: &runs, collect: false)
+        }
     }
 
     /// Kind of the run at `utf16` after a full lex (hover/tests), or nil for plain text.
@@ -726,10 +761,14 @@ final class SyntaxPainter {
         runsPainted += count
     }
 
-    private static func shifted(_ r: NSRange, edit: NSRange, replacementLength: Int) -> NSRange {
+    /// `r` after replacing `edit` with `replacementLength` characters. An edit
+    /// that touches `r` (ends at its start or starts at its end) joins it, so
+    /// text typed at either edge of a painted range is repainted with it
+    /// (GH#280: typing at the end of the painted window stayed uncoloured).
+    static func shifted(_ r: NSRange, edit: NSRange, replacementLength: Int) -> NSRange {
         let delta = replacementLength - edit.length
-        if NSMaxRange(edit) <= r.location { return NSRange(location: r.location + delta, length: r.length) }
-        if edit.location >= NSMaxRange(r) { return r }
+        if NSMaxRange(edit) < r.location { return NSRange(location: r.location + delta, length: r.length) }
+        if edit.location > NSMaxRange(r) { return r }
         let start = min(r.location, edit.location)
         let end = max(NSMaxRange(r), NSMaxRange(edit)) + delta
         return NSRange(location: start, length: max(0, end - start))

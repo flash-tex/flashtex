@@ -20,12 +20,13 @@ may paint one rule over the table; so on both sides rules that continue one
 another (same x and width within 0.01 bp, touching vertically, or same top
 and height touching horizontally) are merged before comparison.
 
-A fixture passes when both sides have one page, every word aligns and lies
-within 0.5 bp of its reference origin in x and y, math extension glyphs (cmex:
-big operators and delimiters, whose painted origin legitimately differs) have
-the same sorted distinct x origins within 0.5 bp, the merged rule counts are
-equal, and every reference rule is matched by a distinct candidate rule whose
-x, top, width and height are all within 0.1 bp.
+A fixture passes when both sides have the same number of pages (a longtable
+breaks across several), every word aligns and lies within 0.5 bp of its
+reference origin in x and y, math extension glyphs (cmex: big operators and
+delimiters, whose painted origin legitimately differs) have the same sorted
+distinct x origins within 0.5 bp, the merged rule counts are equal, and every
+reference rule is matched by a distinct candidate rule whose x, top, width
+and height are all within 0.1 bp.
 """
 import argparse, json, os, subprocess, sys, tempfile
 
@@ -33,6 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "tools", "visual-oracle"))
 sys.path.insert(0, os.path.join(REPO, "tools", "real-world-corpus"))
+import fontenv  # noqa: E402
 import pdftext  # noqa: E402
 import rank  # noqa: E402
 
@@ -40,7 +42,15 @@ FIXTURES = os.path.join(HERE, "fixtures")
 REFS = os.path.join(HERE, "refs")
 TOL = 0.5
 RULE_TOL = 0.1
+# Colour components (sRGB, 0-1) of rules and colortbl fills; pdfTeX writes
+# xcolor's decimals, so they must agree to this.
+COLOR_TOL = 0.001
 Q = float(2 ** 20)
+
+
+def colour(rule):
+    """A rule's colour; pinned references from before colours are black."""
+    return tuple(rule[4:7]) if len(rule) >= 7 else (0.0, 0.0, 0.0)
 
 
 def regroup(glyphs):
@@ -97,6 +107,8 @@ def merge_rules(rules):
                 if i == j:
                     continue
                 a, b = rules[i], rules[j]
+                if any(abs(p - q) > COLOR_TOL for p, q in zip(colour(a), colour(b))):
+                    continue
                 vertical = abs(a[0] - b[0]) < 0.01 and abs(a[2] - b[2]) < 0.01 and abs(a[1] + a[3] - b[1]) < 0.01
                 horizontal = abs(a[1] - b[1]) < 0.01 and abs(a[3] - b[3]) < 0.01 and abs(a[0] + a[2] - b[0]) < 0.01
                 if vertical:
@@ -125,6 +137,8 @@ def ref_rules(doc, page):
         data = doc.stream_of(contents)
     lx = pdftext._Lexer(data)
     stack, gs, ctm, path, out = [], [], (1, 0, 0, 1, 0, 0), [], []
+    # Fill and stroke colour as sRGB (colortbl fills, coloured rules).
+    fill, stroke = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
     segment, line_width = [], 1.0
     in_text = False
     while True:
@@ -142,11 +156,20 @@ def ref_rules(doc, page):
             elif op == b"ET":
                 in_text = False
             elif op == b"q":
-                gs.append(ctm)
+                gs.append((ctm, fill, stroke))
             elif op == b"Q":
-                ctm = gs.pop() if gs else ctm
+                ctm, fill, stroke = gs.pop() if gs else (ctm, fill, stroke)
             elif op == b"cm":
                 ctm = pdftext._mul(tuple(float(v) for v in stack[-6:]), ctm)
+            elif op in (b"g", b"G", b"rg", b"RG", b"k", b"K"):
+                n = {b"g": 1, b"rg": 3, b"k": 4}[op.lower()]
+                v = [float(x) for x in stack[-n:]]
+                rgb = (tuple(v * 3) if n == 1 else tuple(v) if n == 3
+                       else tuple(1.0 - min(1.0, c + v[3]) for c in v[:3]))
+                if op.islower():
+                    fill = rgb
+                else:
+                    stroke = rgb
             elif op == b"re" and not in_text:
                 x, y, w, h = (float(v) for v in stack[-4:])
                 a, _, _, d, e, f = ctm
@@ -154,7 +177,7 @@ def ref_rules(doc, page):
                 x1, y1 = a * (x + w) + e, d * (y + h) + f
                 path.append((min(x0, x1), height - max(y0, y1), abs(x1 - x0), abs(y1 - y0)))
             elif op in (b"f", b"F", b"f*", b"B", b"B*"):
-                out.extend(path)
+                out.extend(tuple(r) + fill for r in path)
                 path = []
                 segment = []
             elif op == b"w":
@@ -170,9 +193,9 @@ def ref_rules(doc, page):
                     (x0, y0), (x1, y1) = segment
                     w = line_width * abs(ctm[0])
                     if abs(y1 - y0) < 1e-6:
-                        out.append((min(x0, x1), height - (y0 + w / 2), abs(x1 - x0), w))
+                        out.append((min(x0, x1), height - (y0 + w / 2), abs(x1 - x0), w) + stroke)
                     elif abs(x1 - x0) < 1e-6:
-                        out.append((x0 - w / 2, height - max(y0, y1), w, abs(y1 - y0)))
+                        out.append((x0 - w / 2, height - max(y0, y1), w, abs(y1 - y0)) + stroke)
                 path, segment = [], []
             elif op in (b"n", b"s"):
                 path, segment = [], []
@@ -194,7 +217,9 @@ def cand_pages(v2path):
         glyphs, ext, rules = [], [], []
         for item in page.get("items", []):
             if item.get("kind") == "rule":
-                rules.append((item["x"] / Q, item["top"] / Q, item["width"] / Q, item["height"] / Q))
+                paint = item.get("paint") or {}
+                rules.append((item["x"] / Q, item["top"] / Q, item["width"] / Q, item["height"] / Q,
+                              paint.get("r", 0.0), paint.get("g", 0.0), paint.get("b", 0.0)))
                 continue
             if item.get("kind") != "glyph_run":
                 continue
@@ -228,7 +253,7 @@ def match_rules(ref, cand):
             continue
         used.add(bj)
         worst = max(worst, best)
-        ok += best <= RULE_TOL
+        ok += best <= RULE_TOL and all(abs(p - q) <= COLOR_TOL for p, q in zip(colour(r), colour(cand[bj])))
     return ok, worst
 
 
@@ -265,6 +290,8 @@ def cmd_refs(args):
 
 def cmd_check(args):
     passed, rows = 0, []
+    env = fontenv.render_env(args.fonts, args.tfm_dirs)
+    print(fontenv.describe(env))
     with tempfile.TemporaryDirectory() as work:
         for name in fixtures(args.only):
             pinned = json.load(open(os.path.join(REFS, name + ".json"), encoding="utf-8"))
@@ -273,20 +300,21 @@ def cmd_check(args):
             ref_c = pinned.get("extension_columns") or [[] for _ in ref]
             text = open(os.path.join(FIXTURES, name + ".tex"), encoding="utf-8").read()
             req = {"protocol_version": 1, "id": name, "type": "compile",
-                   "payload": {"project_id": "tabular-corpus", "revision": 1, "entry_path": "main.tex",
+                   "payload": {"project_id": "tabular-corpus", "revision": 1, "entry_path": "main.tex", "date": "1970-01-01",
                                "documents": [{"path": "main.tex", "text": text}]}}
             v2 = os.path.join(work, name + ".v2.json")
-            env = dict(os.environ, FLASHTEX_FONT_DIRS=args.fonts, FLASHTEX_TFM_DIRS=args.fonts)
             p = subprocess.run([args.render, "--v2", v2], input=(json.dumps(req) + "\n").encode(), env=env,
                                capture_output=True, timeout=120)
-            diags = []
+            diags, font_bad = [], []
             for line in p.stdout.decode("utf-8", "replace").splitlines():
                 try:
                     m = json.loads(line)
                 except json.JSONDecodeError:
                     continue
                 if m.get("type") == "compile_result":
-                    diags = [d for d in m["payload"].get("diagnostics", [])
+                    all_diags = m["payload"].get("diagnostics", [])
+                    font_bad = fontenv.font_diagnostics(all_diags)
+                    diags = [d for d in all_diags
                              if d.get("severity") == "error" or d.get("code") in ("unsupported_block", "table_limitation")]
             cand = cand_pages(v2) if os.path.isfile(v2) else []
             n = ok = unaligned = 0
@@ -307,13 +335,18 @@ def cmd_check(args):
                 m_ok, m_worst = match_rules(rr, cr)
                 rn, rok, rworst = rn + len(rr), rok + m_ok, max(rworst, m_worst)
             ncand_rules = sum(len(r) for _, _, r in cand)
-            good = (len(ref) == len(cand) == 1 and n > 0 and ok == n and unaligned == 0 and cols_ok
-                    and rules_equal and rok == rn)
+            # `>= 1`, not `== 1`: a longtable spans pages, so a fixture may
+            # legitimately have several. The page *counts* must still agree.
+            good = (len(ref) == len(cand) >= 1 and n > 0 and ok == n and unaligned == 0 and cols_ok
+                    and rules_equal and rok == rn and not font_bad)
+            if font_bad:
+                fontenv.report_font_failure(name, font_bad, env)
             passed += good
             row = {"fixture": name, "pass": good, "pages": [len(ref), len(cand)], "aligned": n, "within_tol": ok,
                    "unaligned": unaligned, "extension_columns_match": cols_ok, "worst_bp": round(worst, 3),
                    "rules": [rn, ncand_rules], "rules_within_tol": rok, "rule_worst_bp": round(rworst, 3),
-                   "diagnostics": [(d.get("code"), (d.get("message") or "")[:120]) for d in diags]}
+                   "diagnostics": [(d.get("code"), (d.get("message") or "")[:120]) for d in diags],
+                   "font_diagnostics": [(d.get("code"), (d.get("message") or "")[:120]) for d in font_bad]}
             rows.append(row)
             print(f"{'PASS' if good else 'FAIL'} {name:30} words {n:3} ok {ok:3} unal {unaligned:3} worst {worst:7.3f}"
                   f" | rules {rn:2}/{ncand_rules:2} ok {rok:2} worst {rworst:7.3f}")
@@ -321,6 +354,7 @@ def cmd_check(args):
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
             json.dump({"passed": passed, "total": len(rows), "tolerance_bp": TOL, "rule_tolerance_bp": RULE_TOL,
+                       "font_dirs": env.get("FLASHTEX_FONT_DIRS"), "tfm_dirs": env.get("FLASHTEX_TFM_DIRS"),
                        "fixtures": rows}, f, indent=1)
             f.write("\n")
     return 0 if passed == len(rows) else 1
@@ -334,7 +368,7 @@ def main():
     r.add_argument("only", nargs="*")
     c = sub.add_parser("check")
     c.add_argument("--render", required=True)
-    c.add_argument("--fonts", default=os.path.join(REPO, "apps", "mac", "Fonts"))
+    fontenv.add_font_arguments(c, REPO)
     c.add_argument("--json")
     c.add_argument("only", nargs="*")
     args = ap.parse_args()

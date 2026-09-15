@@ -1,0 +1,412 @@
+{
+ "fixture": "21-display-math-colour.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; glyphs [text, x, y_top, fill]; rules [x, top, width, height, fill]",
+ "pages": [
+  {
+   "glyphs": [
+    [
+     "B",
+     89.559,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     97.8487,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     101.1006,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "c",
+     106.9538,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "k",
+     111.8339,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     121.9098,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     126.4623,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "x",
+     131.6652,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     137.8437,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "fi",
+     146.2936,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     152.7972,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     157.3498,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     161.9669,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     ".",
+     166.5194,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "B",
+     89.559,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     97.8487,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "f",
+     103.0516,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     106.6286,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     112.4819,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     117.0344,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     126.1347,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     130.6873,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     137.1909,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     146.3032,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     152.8068,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     156.0586,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "p",
+     160.6757,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     167.1793,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     170.4311,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "y",
+     175.9497,
+     98.401,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "?",
+     268.091,
+     103.703,
+     "0 0.5 0.5 rg",
+     "LMMathExtension10-Regular"
+    ],
+    [
+     "1",
+     278.054,
+     106.858,
+     "0 0.5 0.5 rg",
+     "LMRoman8-Regular"
+    ],
+    [
+     "0",
+     273.626,
+     126.341,
+     "0 0.5 0.5 rg",
+     "LMRoman8-Regular"
+    ],
+    [
+     "f",
+     284.779,
+     117.762,
+     "0 0.5 0.5 rg",
+     "LMMathItalic12-Regular"
+    ],
+    [
+     "(",
+     291.8278,
+     117.762,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "x",
+     296.3803,
+     117.762,
+     "0 0.5 0.5 rg",
+     "LMMathItalic12-Regular"
+    ],
+    [
+     ")",
+     303.0322,
+     117.762,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     309.5693,
+     117.762,
+     "0 0.5 0.5 rg",
+     "LMMathItalic12-Regular"
+    ],
+    [
+     "x",
+     315.6521,
+     117.762,
+     "0 0.5 0.5 rg",
+     "LMMathItalic12-Regular"
+    ],
+    [
+     "=",
+     325.6275,
+     117.762,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "1",
+     338.0562,
+     117.762,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     72.0,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "f",
+     77.8533,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     81.4303,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     85.9828,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     91.1857,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     99.6356,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     104.1882,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     110.6918,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     119.8041,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     126.3077,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     129.5595,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "p",
+     134.1766,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     140.6802,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     143.932,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "y",
+     149.4506,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     ".",
+     154.6606,
+     142.048,
+     "0 0.5 0.5 rg",
+     "LMRoman12-Regular"
+    ]
+   ],
+   "rules": []
+  }
+ ]
+}

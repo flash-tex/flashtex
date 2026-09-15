@@ -1,15 +1,16 @@
 # CI/CD: build, test, release and publish FlashTeX
 
-Two GitHub Actions workflows live in `.github/workflows/`, backed by three
-scripts in `scripts/ci/` that also run locally.
+Three GitHub Actions workflows live in `.github/workflows/`, backed by scripts
+in `scripts/ci/` that also run locally.
 
 | Piece | What it does |
 |---|---|
 | `ci.yml` | On push to `main`, pull requests and manual runs: builds and tests every helper crate on Linux and macOS, builds and tests the Mac app against freshly built helpers, builds and unit-tests the iPad companion in the simulator. |
 | `release.yml` | On a `v*` tag or a manual run with a version: builds the helpers, packages `FlashTeX.app` into `FlashTeX.dmg` (signed + notarized when the secrets exist), tars the CLI tools for macOS arm64 and Linux x86_64, publishes the GitHub release with `SHA256SUMS`, then points the website at it. |
+| `site.yml` | On every published (non-prerelease) release, on a push to `main` touching `site/**`, and on demand: re-renders the whole site from `site/` (`site/render.py`) and pushes it to `gh-pages`. This is what makes the download page and both installers reflect a release; see [How the website is updated](#how-the-website-is-updated). |
 | `scripts/ci/build-helpers.sh` | Builds the `flashtex` CLI and every helper `apps/mac/scripts/make-app.sh` bundles in release mode and prints `FLASHTEX_<NAME>=<path>` lines (the variables the app and its tests read; `FLASHTEX_CLI` is the CLI). |
 | `scripts/ci/package-cli.sh` | Stages `flashtex` (the CLI), `flashtex-render`, `flashtex-compiler`, `flashtex-pdf`, `flashtex-pdf-exact` plus the pinned Latin Modern faces and TFM metrics into `flashtex-cli-<version>-<platform>.tar.gz` with a README (layout below). |
-| `scripts/ci/update-site.sh` | Rewrites `install.sh`, `download/index.html` and `index.html` on the `gh-pages` branch for a new release and pushes. |
+| `scripts/ci/update-site.sh` | A narrower, older path: rewrites just the version/checksum/date in `install.sh`, `download/index.html` and `index.html` on `gh-pages` in place and pushes; called directly by `release.yml`'s `publish` job. `site.yml`'s full re-render (above) also runs on the same `release: published` event and fully overwrites `gh-pages` from `site/` right after, so it is what actually determines the final published page; see the note in [How the website is updated](#how-the-website-is-updated). |
 
 ## `ci.yml`
 
@@ -120,26 +121,59 @@ released one; bump `DEFAULT_APP_VERSION` there when convenient.
 
 ### How the website is updated
 
-The site is the `gh-pages` branch (`https://flash-tex.github.io/flashtex/`):
-`index.html`, `download/index.html`, `install.sh`, `site.css`, `.nojekyll`.
-`scripts/ci/update-site.sh <version> <dmg-sha256>` clones that branch into a
-temporary directory, reads the current `VERSION=`/`SHA256=` from `install.sh`
-and uses them as the anchors for every rewrite:
+The site is the `gh-pages` branch (`https://flash-tex.github.io/flashtex/`),
+built from the templates in `site/`. Two mechanisms can write to it, in this
+order on every published release:
 
-* `install.sh`: `VERSION="v…"` and `SHA256="…"`;
-* `download/index.html`: the version badge, the date next to it (today, or
-  `--date "October 1, 2026"`), the release-notes link, both `FlashTeX.dmg`
-  download links and the checksum (+ its copy button);
-* `index.html`: the version line and the download link.
+1. **`release.yml`'s `publish` job → `scripts/ci/update-site.sh <version>
+   <dmg-sha256>`.** A narrow, in-place rewrite: clones `gh-pages`, reads the
+   current `VERSION=`/`SHA256=` out of `install.sh` and uses them as the
+   anchor for every replacement (`install.sh`'s `VERSION=`/`SHA256=`; the
+   version badge, date, release-notes link, `FlashTeX.dmg` links and checksum
+   on `download/index.html`; the version line and download link on
+   `index.html`), refuses to publish if the old version/checksum don't
+   actually change, then commits and pushes. It does not know about
+   `install-cli.sh` or the CLI tarballs at all — the site's two-install-path
+   content and the `{{CLI_*}}` placeholders below come entirely from step 2.
+2. **`site.yml`, triggered independently by the same `release: published`
+   event.** Fully re-renders `site/` with `site/render.py` (below) and
+   overwrites the whole of `gh-pages` with the result, then pushes.
 
-It refuses to publish if no page mentioned the old version or if the old
-checksum survives, commits as `github-actions[bot]` (or the `GIT_AUTHOR_*`
-already in the environment) and pushes `HEAD:gh-pages`. To rehearse without
-touching the real site:
+Because both react to the same event, there is a short window where either
+could push last; `site.yml`'s full render is a superset of what
+`update-site.sh` writes (same anchors, plus the CLI-tarball/platform content),
+so whichever finishes last leaves `gh-pages` fully correct either way — but if
+`update-site.sh` ever changes independently, watch for it clobbering a
+render-only change. `site.yml` also runs standalone (a push to `main` touching
+`site/`, or `workflow_dispatch`), which `update-site.sh` never does.
+
+**`site/render.py <out-dir> [--tag vX.Y.Z]`** copies `site/` into `<out-dir>`,
+filling `{{TAG}}`, `{{VERSION}}`, `{{DATE}}`, `{{SIZE}}`, `{{SHA256}}` (the
+`FlashTeX.dmg`/app path) and `{{CLI_MACOS_ARM64_SHA256}}`,
+`{{CLI_MACOS_ARM64_SIZE}}`, `{{CLI_LINUX_X86_64_SHA256}}`,
+`{{CLI_LINUX_X86_64_SIZE}}` (the CLI-tarball path) into `index.html`,
+`download/index.html`, `install.sh` and `install-cli.sh`, reading the
+per-file checksums from the release's `SHA256SUMS` asset. A
+`{{#if HAS_LINUX_CLI}}…{{/if}}` block (and its `NO_LINUX_CLI` complement) is
+kept only when that release actually has a Linux CLI tarball, so the download
+page's Linux row and platform table degrade gracefully when the Linux build
+failed. It waits (`--wait`, default 300s) for `FlashTeX.dmg`, `SHA256SUMS` and
+the macOS CLI tarball to finish uploading — a `release: published` webhook can
+arrive before `gh release create` finishes attaching every asset — and fails
+outright if they never appear; a missing Linux tarball is not an error.
+
+To rehearse `update-site.sh` without touching the real site:
 
 ```sh
 git init --bare /tmp/site.git && git push /tmp/site.git origin/gh-pages:gh-pages
 scripts/ci/update-site.sh v0.2.0 <sha256> --remote /tmp/site.git --no-push --keep
+```
+
+To rehearse the full render:
+
+```sh
+python3 site/render.py /tmp/flashtex-site --tag v0.2.0
+open /tmp/flashtex-site/index.html
 ```
 
 ## Running the pieces locally

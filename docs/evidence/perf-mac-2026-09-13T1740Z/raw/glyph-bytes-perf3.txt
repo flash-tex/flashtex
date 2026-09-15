@@ -1,0 +1,12 @@
+hw1.tex: pages 3 line 1153873 B; runs 689 glyphs 2742 clusters 2742
+  carets                  235337 B   20.4%    85.8 B/cluster
+  hit_rects               216846 B   18.8%    79.1 B/cluster
+  sources                 177717 B   15.4%    64.8 B/cluster
+  cluster text bytes      112536 B    9.8%    41.0 B/cluster
+  glyphs                  277569 B   24.1%   101.2 B/cluster
+body60k.tex: pages 6 line 5385900 B; runs 2681 glyphs 12914 clusters 12914
+  carets                 1126164 B   20.9%    87.2 B/cluster
+  hit_rects              1021741 B   19.0%    79.1 B/cluster
+  sources                 899429 B   16.7%    69.6 B/cluster
+  cluster text bytes      529713 B    9.8%    41.0 B/cluster
+  glyphs                 1305715 B   24.2%   101.1 B/cluster

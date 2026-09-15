@@ -7,8 +7,33 @@ use std::process::{Command, Stdio};
 
 use flashtex_compiler::json;
 
+/// Whether Latin Modern resolves, for the ~110 `if !lm_available() { return }`
+/// guards across this suite.
+///
+/// Those guards used to make a fontless run *silently green*: the tests did
+/// not fail, they simply never executed, and `eprintln!` is captured by
+/// libtest, so nothing was printed either. A whole-suite run with no
+/// `FLASHTEX_*` set therefore reported success while measuring almost
+/// nothing -- the same trap as an oracle harness scoring an OpenType
+/// fallback as a pass.
+///
+/// So a missing Latin Modern is now a loud failure by default. A genuinely
+/// fontless environment can still skip, but only by asking for it:
+/// `FLASHTEX_ALLOW_FONTLESS_TESTS=1`, which restores the old `false`.
 fn lm_available() -> bool {
-    flashtex_render_pipeline::FontSet::with_default_dirs(&[]).latin_modern_available()
+    if flashtex_render_pipeline::FontSet::with_default_dirs(&[]).latin_modern_available() {
+        return true;
+    }
+    if std::env::var_os("FLASHTEX_ALLOW_FONTLESS_TESTS").is_some() {
+        return false;
+    }
+    panic!(
+        "Latin Modern is not resolvable, so this test would have skipped silently \
+         and the run would have been green without measuring anything. Point \
+         FLASHTEX_FONT_DIRS at a directory of Latin Modern .otf files (the repo \
+         bundles apps/mac/Fonts) and FLASHTEX_TFM_DIRS at its metrics, or set \
+         FLASHTEX_ALLOW_FONTLESS_TESTS=1 to skip deliberately."
+    );
 }
 
 fn run(args: &[&str], input: &str) -> (Vec<json::Value>, String) {

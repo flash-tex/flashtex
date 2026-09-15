@@ -99,6 +99,42 @@ final class SyntaxHighlighterTests: XCTestCase {
         XCTAssertFalse(got.contains { $0.0.contains("text") })
     }
 
+    /// Math environments nest — `cases` in `align`, `split` or `array` in
+    /// `equation` — so the mode counts how deep it is and only the outermost
+    /// `\end` leaves math.
+    ///
+    /// The flat flag it replaced left math at the *inner* `\end{cases}`: every
+    /// symbol between there and the outer `\end{align}` was lexed in text mode,
+    /// so `\alpha` came out `.command` (purple) instead of `.mathCommand`, and
+    /// digits and letters lost their math colouring entirely. This is the case
+    /// `testMathEnvironmentEndsOnlyAtItsEnd` above could not see: it puts no
+    /// math between the inner and the outer `\end`, so the wrong mode has
+    /// nothing to colour wrongly.
+    func testNestedMathEnvironmentsStayInMathUntilTheOutermostEnd() {
+        let s = "\\begin{align}\nf &= \\begin{cases} 1 \\end{cases} \\\\\ng &= \\alpha + 2\n\\end{align}\n\\beta 3"
+        let got = spans(s)
+        // After the inner `\end{cases}`, the line is still math.
+        XCTAssertTrue(got.contains { $0 == ("\\alpha", .mathCommand) },
+                      "\\alpha after \\end{cases} is still a math command: \(got)")
+        XCTAssertTrue(got.contains { $0 == ("2", .number) })
+        XCTAssertTrue(got.contains { $0.1 == .math && $0.0.contains("g") },
+                      "letters after the inner \\end are still math: \(got)")
+        XCTAssertFalse(got.contains { $0 == ("\\alpha", .command) }, "never the text-mode colour")
+        // The outermost `\end{align}` does leave math.
+        XCTAssertTrue(got.contains { $0 == ("\\beta", .command) }, "after \\end{align} the document is text again")
+        XCTAssertFalse(got.contains { $0 == ("3", .number) }, "a digit in text mode is not a math number")
+        // Three deep, and the depth unwinds one `\end` at a time.
+        let deep = "\\begin{equation}\\begin{split}\\begin{array}{r}1\\end{array}a\\end{split}b\\end{equation}c"
+        let deepSpans = spans(deep)
+        XCTAssertTrue(deepSpans.contains { $0.1 == .math && $0.0.contains("a") }, "inside split after \\end{array}")
+        XCTAssertTrue(deepSpans.contains { $0.1 == .math && $0.0.contains("b") }, "inside equation after \\end{split}")
+        XCTAssertFalse(deepSpans.contains { $0.1 == .math && $0.0.contains("c") }, "after \\end{equation} it is text")
+        // A math environment opened inside verbatim or a comment is still text
+        // in the lexer's eyes: the body is never entered.
+        let verb = "\\begin{verbatim}\\begin{align}\\end{verbatim}\\gamma"
+        XCTAssertTrue(spans(verb).contains { $0 == ("\\gamma", .command) })
+    }
+
     // MARK: verbatim and comments
 
     func testVerbatimEnvironmentAndInlineVerb() {
@@ -211,7 +247,10 @@ final class SyntaxHighlighterTests: XCTestCase {
         var state: UInt64 = 0x9E3779B97F4A7C15
         func next() -> UInt64 { state = state &* 6364136223846793005 &+ 1442695040888963407; return state >> 11 }
         let atoms = ["a", "\n", "\n\n", "$", "$$", "\\[", "\\]", "\\(", "\\)", "\\begin{align}", "\\end{align}", "\\begin{verbatim}",
-                     "\\end{verbatim}", "%", "\\%", "\\$", "{", "}", "\\ref{x}", "\\verb|q|", " ", "1.5", "\\alpha", "\r\n", "é", "😀", "\\😀"]
+                     "\\end{verbatim}", "%", "\\%", "\\$", "{", "}", "\\ref{x}", "\\verb|q|", " ", "1.5", "\\alpha", "\r\n", "é", "😀", "\\😀",
+                     // Nested math environments: the mode carries a depth, so the
+                     // incremental lexer has to converge on the depth too.
+                     "\\begin{cases}", "\\end{cases}"]
         var text = ""
         var h = SyntaxHighlighter()
         h.reset("" as NSString)

@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 
 // Preview scroll anchoring (gap 5). The v1 and v2 preview panes are plain
@@ -120,11 +121,28 @@ struct PreviewAnchorCorrection: Equatable {
 /// `ScrollView`: finds the backing `NSScrollView`, captures the anchor on every
 /// user scroll while `layout` is unchanged, and re-scrolls to the anchor when
 /// `layout` (page set or scale) changes. A no-op when no scroll view encloses it.
+///
+/// It is also the pane's only handle on the real scroll geometry, so caret
+/// following (`CaretFollow.swift`) rides along: `follow` is the latest request
+/// from the `CaretFollowController`, acted on once per token, and
+/// `onUserScroll` reports a live scroll (wheel, trackpad, scroller drag) so the
+/// controller can stop following until the reader edits again.
 struct PreviewAnchorKeeper: NSViewRepresentable {
     let layout: PreviewPageLayout
+    var follow: CaretFollowController.Request? = nil
+    var reveal: CaretFollowController.Request? = nil
+    var onUserScroll: (() -> Void)? = nil
+    /// Reports the page under the viewport's top edge (the header's "N / M").
+    var onVisiblePage: ((Int) -> Void)? = nil
 
     func makeNSView(context: Context) -> PreviewAnchorProbe { PreviewAnchorProbe() }
-    func updateNSView(_ view: PreviewAnchorProbe, context: Context) { view.layoutDidChange(to: layout) }
+    func updateNSView(_ view: PreviewAnchorProbe, context: Context) {
+        view.onUserScroll = onUserScroll
+        view.onVisiblePage = onVisiblePage
+        view.layoutDidChange(to: layout)
+        view.follow(follow)
+        view.reveal(reveal)
+    }
 }
 
 /// The AppKit side of `PreviewAnchorKeeper`. Test-visible: `anchor`, `layout`,
@@ -149,6 +167,15 @@ final class PreviewAnchorProbe: NSView {
     /// (evidence) and the anchor is re-captured where the content is.
     private(set) var driftsLeftUncorrected = 0
     private(set) var corrections: [PreviewAnchorCorrection] = []
+    /// Caret following (`CaretFollow.swift`): reported live scrolls, the token
+    /// of the last request acted on, and every decision made (evidence/tests).
+    var onUserScroll: (() -> Void)?
+    /// Header page indicator: called only when the anchored page changes.
+    var onVisiblePage: ((Int) -> Void)?
+    private var reportedPage: Int?
+    private(set) var followedToken: Int?
+    private(set) var revealedToken: Int?
+    private(set) var followDecisions: [(token: Int, decision: CaretFollow.Decision)] = []
     /// Event trace for the acceptance harness: (ms since first event, event, visible top, document height).
     private(set) var trace: [(ms: Double, event: String, top: CGFloat, docHeight: CGFloat)] = []
     private var traceStart = Date()
@@ -181,6 +208,10 @@ final class PreviewAnchorProbe: NSView {
         observers.append(NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: nil) { [weak self] _ in
             MainActor.assumeIsolated { self?.clipBoundsDidChange() }
         })
+        observers.append(NotificationCenter.default.addObserver(forName: NSScrollView.willStartLiveScrollNotification, object: scroll, queue: nil) { [weak self] _ in
+            // Wheel, trackpad or scroller drag: the reader took over.
+            MainActor.assumeIsolated { self?.onUserScroll?() }
+        })
         if let doc = scroll.documentView {
             doc.postsFrameChangedNotifications = true
             observers.append(NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: doc, queue: nil) { [weak self] _ in
@@ -202,6 +233,10 @@ final class PreviewAnchorProbe: NSView {
     private func capture() {
         guard pending == nil, let layout, let visible = documentVisibleRectTopDown else { return }
         anchor = PreviewAnchor.capture(visible: visible, layout: layout)
+        if let page = anchor?.page, page != reportedPage {
+            reportedPage = page
+            onVisiblePage?(page)
+        }
     }
 
     private func clipBoundsDidChange() {
@@ -240,6 +275,70 @@ final class PreviewAnchorProbe: NSView {
             }
             self.pending = nil
             self.capture()
+        }
+    }
+
+    // MARK: caret following
+
+    /// Acts on `request` once (by token): asks `CaretFollow.decide` what the
+    /// real scroll geometry says and scrolls only if it says to.
+    func follow(_ request: CaretFollowController.Request?) {
+        guard let request, request.token != followedToken else { return }
+        followedToken = request.token
+        guard let layout, let scroll = enclosingScrollView, let doc = scroll.documentView,
+              let visible = documentVisibleRectTopDown else { return }
+        let decision = CaretFollow.decide(target: request.target, layout: layout, visible: visible,
+                                          contentSize: doc.bounds.size, reduceMotion: reduceMotion())
+        followDecisions.append((request.token, decision))
+        if followDecisions.count > 200 { followDecisions.removeFirst(100) }
+        guard case .scroll(let point, let animated) = decision else { return }
+        // The follow is the newer intent: an anchor correction still pending
+        // from a layout change must not drag the content back.
+        pending = nil
+        settleGeneration += 1
+        scrollTopDown(to: point, animated: animated)
+        note(String(format: "followed r%d %.1f→%.1f%@", request.token, visible.minY, point.y, animated ? " (animated)" : ""))
+        capture()
+    }
+
+    /// Internal-destination reveal: same scroll policy as caret following,
+    /// with its own token so a click is never dropped as a stale follow.
+    func reveal(_ request: CaretFollowController.Request?) {
+        guard let request, request.token != revealedToken else { return }
+        revealedToken = request.token
+        guard let layout, let scroll = enclosingScrollView, let doc = scroll.documentView,
+              let visible = documentVisibleRectTopDown else { return }
+        let decision = CaretFollow.decide(target: request.target, layout: layout, visible: visible,
+                                          contentSize: doc.bounds.size, reduceMotion: reduceMotion())
+        guard case .scroll(let point, let animated) = decision else { return }
+        pending = nil
+        settleGeneration += 1
+        scrollTopDown(to: point, animated: animated)
+        note(String(format: "revealed r%d %.1f→%.1f%@", request.token, visible.minY, point.y, animated ? " (animated)" : ""))
+        capture()
+    }
+
+    /// Scrolls the clip view to `point` (document coordinates, y down),
+    /// flipping y for an unflipped document view, exactly like `applyPending`.
+    private func scrollTopDown(to point: CGPoint, animated: Bool) {
+        guard let scroll = enclosingScrollView, let doc = scroll.documentView else { return }
+        let clip = scroll.contentView
+        var origin = point
+        if !doc.isFlipped { origin.y = doc.bounds.height - point.y - clip.bounds.height }
+        if doc.bounds.width <= clip.bounds.width + 0.5 { origin.x = clip.bounds.origin.x }
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.25
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                context.allowsImplicitAnimation = true
+                clip.animator().setBoundsOrigin(origin)
+            } completionHandler: { [weak scroll, weak clip] in
+                guard let scroll, let clip else { return }
+                scroll.reflectScrolledClipView(clip)
+            }
+        } else {
+            clip.scroll(to: origin)
+            scroll.reflectScrolledClipView(clip)
         }
     }
 

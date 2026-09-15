@@ -14,14 +14,25 @@ Pencil sketches and photos into reviewed LaTeX/TikZ insertions.
 
 ## Requirements
 
-- macOS 14 Sonoma or later on **Apple Silicon** (arm64). No Intel build yet;
-  no Windows or Linux — FlashTeX is a native Swift app over a Rust engine.
-- No TeX installation is needed. The app bundles the engine, Latin Modern
-  fonts and the TeX font metrics it lays out with.
+FlashTeX is two things with two install paths: a LaTeX engine + CLI (macOS or
+Linux), and a native Mac app built on it (macOS only, for now — see
+[Platform support](https://flash-tex.github.io/flashtex/download/#platforms)
+on the website).
+
+- **Engine + CLI**: macOS (Apple Silicon) or Linux (x86_64, best-effort — see
+  [CI/CD](../ci-cd.md)). No TeX installation needed; the tarball bundles the
+  engine, Latin Modern fonts and the TeX font metrics it lays out with.
+- **Native GUI (this guide)**: macOS 14 Sonoma or later on **Apple Silicon**
+  (arm64). Same bundled fonts/metrics, plus the CLI at
+  `Contents/MacOS/flashtex-cli`.
 - Optional: an API key for a conversion provider (xAI today) if you want iPad
   captures converted to LaTeX/TikZ — see [capture conversion](gui.md#capture-conversion-the-only-model-backed-feature).
 
 ## Install
+
+This guide covers the Mac app. For the engine + CLI alone (no GUI, macOS or
+Linux), see [Command-line tools](compiler.md#install) or the website's
+[download page](https://flash-tex.github.io/flashtex/download/).
 
 **Command line (recommended).** Downloads the pinned release disk image,
 verifies its SHA-256, and copies `FlashTeX.app` into `/Applications` (or
@@ -123,6 +134,7 @@ to see what the engine implements today and what it reports as unsupported.
 | Captures and durable edit history | `~/Library/Application Support/FlashTeX/captures/` |
 | AI provider key | the login Keychain (never a file) |
 
-Problems or questions: <https://github.com/flash-tex/flashtex/issues>. When
+Problems or questions: the Discord <https://discord.gg/J4kHDJmTrD> for a quick answer,
+<https://github.com/flash-tex/flashtex/issues> for bugs. When
 reporting a compile problem, *Edit › Copy Diagnostics as Text* (⌘⌥C) copies
 the Problems list in `path:line: severity: message` form for pasting.

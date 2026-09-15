@@ -76,6 +76,8 @@ fn lines(text: &str, fonts: &FontSet, cache: Option<&RenderCache>) -> (String, S
         rules: true,
         font_hints: true,
         display_list: true,
+        device_color: false,
+        ..Capabilities::default()
     };
     let payload = v1::fallback(&r.v2, caps, Some(vec!["rules-v1".into(), "font-hints-v1".into(), "display-list-v2".into()]));
     (payload.write_envelope("e"), json::write(&r.v2.to_json("e")))

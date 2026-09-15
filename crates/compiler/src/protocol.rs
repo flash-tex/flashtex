@@ -4,12 +4,13 @@
 //! protocol versions and unknown types produce an `error` envelope — never a
 //! silent success, as the contract requires.
 
+use crate::date::TodayDate;
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::incremental::Session;
 use crate::json::{self, str_, Value};
 use crate::layout::Font;
 use crate::layout::{LayoutConstraints, Page};
-use crate::parser::SourceDocument;
+use crate::parser::{ParseOptions, SourceDocument};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,7 +25,11 @@ pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 /// evicts the least-recently-used mode rather than retaining every one ever seen.
 const MAX_WARM_SESSIONS: usize = 8;
 
-type WarmSessions = HashMap<(String, String, AcceptedCapabilities), (u64, Session)>;
+/// Keyed by project, entry path, negotiated capabilities **and the request's
+/// date**: the date is a compile input, so a warm session must not hand
+/// yesterday's pages back to a request made today.
+type WarmSessions =
+    HashMap<(String, String, AcceptedCapabilities, TodayDate), (u64, Session)>;
 static SESSIONS: OnceLock<Mutex<WarmSessions>> = OnceLock::new();
 static SESSION_TICK: AtomicU64 = AtomicU64::new(0);
 
@@ -207,6 +212,36 @@ struct NegotiatedCapabilities {
     request_field_present: bool,
     accepted: Vec<String>,
     enabled: AcceptedCapabilities,
+}
+
+/// `payload.date` — the civil date `\today` renders
+/// (`protocol/proposals/runtime-v1-request-date.md`).
+///
+/// This compiler never reads the clock: runtime-v1 requires byte-identical
+/// output for byte-identical input, so the caller reads the clock and sends the
+/// answer. An **absent** field is the Unix epoch, exactly what this worker has
+/// always printed, which is what keeps every existing client and every
+/// committed fixture byte-identical. A **malformed** value is an error: a
+/// caller that sent a date meant it, and quietly typesetting a different one is
+/// the failure this field exists to end.
+fn request_date(payload: &Value) -> Result<TodayDate, Diagnostic> {
+    let Some(value) = payload.get("date") else {
+        return Ok(TodayDate::EPOCH);
+    };
+    let Some(text) = value.as_str() else {
+        return Err(Diagnostic::error(
+            "compile payload 'date' must be a string in YYYY-MM-DD form",
+            None,
+            None,
+        ));
+    };
+    TodayDate::parse_iso(text).map_err(|error| {
+        Diagnostic::error(
+            format!("compile payload 'date' is invalid ({text:?}): {error}"),
+            None,
+            None,
+        )
+    })
 }
 
 fn negotiate_layout_capabilities(payload: &Value) -> Result<NegotiatedCapabilities, Diagnostic> {
@@ -483,6 +518,19 @@ fn compile(id: &str, payload: &Value) -> Value {
             return failed(id, &project_id, revision, vec![diag], &entry, None);
         }
     };
+    let parse_options = match request_date(payload) {
+        Ok(today) => ParseOptions { today },
+        Err(diag) => {
+            return failed(
+                id,
+                &project_id,
+                revision,
+                vec![diag],
+                &entry,
+                Some(&capabilities),
+            );
+        }
+    };
 
     let empty = Vec::new();
     let docs = payload
@@ -501,6 +549,9 @@ fn compile(id: &str, payload: &Value) -> Value {
                 recovery: None,
                 code: None,
                 suggestion: None,
+                labels: Vec::new(),
+                notes: Vec::new(),
+                help: None,
             };
             return failed(
                 id,
@@ -523,6 +574,9 @@ fn compile(id: &str, payload: &Value) -> Value {
             recovery: None,
             code: None,
             suggestion: None,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            help: None,
         };
         return failed(
             id,
@@ -571,6 +625,9 @@ fn compile(id: &str, payload: &Value) -> Value {
                 recovery: None,
                 code: None,
                 suggestion: None,
+                labels: Vec::new(),
+                notes: Vec::new(),
+                help: None,
             };
             return failed(
                 id,
@@ -590,7 +647,12 @@ fn compile(id: &str, payload: &Value) -> Value {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let tick = SESSION_TICK.fetch_add(1, Ordering::Relaxed);
-    let key = (project_id.clone(), path.clone(), capabilities.enabled);
+    let key = (
+        project_id.clone(),
+        path.clone(),
+        capabilities.enabled,
+        parse_options.today,
+    );
     if !sessions.contains_key(&key) && sessions.len() >= MAX_WARM_SESSIONS {
         // Evict the least recently used document. Dropping a session only costs
         // the next compile of that document its reuse; it never changes output,
@@ -614,9 +676,12 @@ fn compile(id: &str, payload: &Value) -> Value {
             text: t.as_str(),
         })
         .collect();
-    let incremental = slot
-        .1
-        .compile_project(&sources, &path, LayoutConstraints::default());
+    let incremental = slot.1.compile_project_with(
+        &sources,
+        &path,
+        LayoutConstraints::default(),
+        &parse_options,
+    );
     let pages = incremental.output.pages;
     let mut diags = incremental.output.diagnostics;
 

@@ -1,0 +1,91 @@
+{
+ "fixture": "04-bin-circled.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Circled",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 112.3177,
+    "y_top": 83.955
+   },
+   {
+    "text": "⊛",
+    "x": 121.1167,
+    "y_top": 83.955
+   },
+   {
+    "text": "b",
+    "x": 133.0815,
+    "y_top": 83.955
+   },
+   {
+    "text": "⊚",
+    "x": 140.7125,
+    "y_top": 83.955
+   },
+   {
+    "text": "c",
+    "x": 152.6653,
+    "y_top": 83.955
+   },
+   {
+    "text": "⊝",
+    "x": 160.3573,
+    "y_top": 83.955
+   },
+   {
+    "text": "d",
+    "x": 172.3221,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋇",
+    "x": 181.0589,
+    "y_top": 83.955
+   },
+   {
+    "text": "e",
+    "x": 193.0117,
+    "y_top": 83.955
+   },
+   {
+    "text": "⊺",
+    "x": 201.0911,
+    "y_top": 83.955
+   },
+   {
+    "text": "f",
+    "x": 210.3874,
+    "y_top": 83.955
+   },
+   {
+    "text": "∖",
+    "x": 220.0903,
+    "y_top": 83.955
+   },
+   {
+    "text": "g",
+    "x": 232.055,
+    "y_top": 83.955
+   },
+   {
+    "text": "end.",
+    "x": 241.9886,
+    "y_top": 83.955
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "brace_extents": [
+  []
+ ]
+}

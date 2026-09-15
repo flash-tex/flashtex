@@ -77,6 +77,61 @@ enum EditorIntelligence {
         }
     }
 
+    // MARK: inline math span (hover preview; lane mac-math-hover)
+
+    /// The full span (delimiters included) of the enclosing inline formula
+    /// (`$…$` or `\(…\)`) at `utf16`, or nil when the position is not inside
+    /// one — including display math (`$$…$$`, `\[…\]`) and math environments,
+    /// which the hover preview does not cover. `highlighter` must be in sync
+    /// with `text`; a fresh one is built when nil.
+    ///
+    /// Bounded to at most two lines each way of `utf16`'s line: inline math
+    /// never crosses a blank line (the lexer's rule), and a formula the hover
+    /// preview shows spans at most two lines, so a wider search would only
+    /// ever confirm "too many lines" — which this already reports as nil.
+    static func inlineMathSpan(in text: NSString, at utf16: Int, highlighter: SyntaxHighlighter? = nil) -> NSRange? {
+        guard utf16 >= 0, utf16 <= text.length else { return nil }
+        var h = highlighter ?? SyntaxHighlighter()
+        if highlighter == nil { h.reset(text) }
+        guard h.length == text.length, h.lineCount > 0 else { return nil }
+
+        let line0 = h.line(at: utf16)
+        switch h.modes[line0] {
+        case .text, .inlineMath, .parenMath: break
+        default: return nil // display math, a math environment, or verbatim: not inline
+        }
+
+        // A line at or before `line0`, within two lines of it, that starts in
+        // plain text — a safe restart point, since no open formula's start
+        // can cross a `.text`-mode line start.
+        let lowest = max(0, line0 - 2)
+        guard let ln1 = (lowest...line0).first(where: { h.modes[$0] == .text }) else { return nil } // already unclosed for 2+ lines
+        let lastLine = min(h.lineCount - 1, line0 + 2)
+
+        var open: (run: SyntaxHighlighter.Run, close: String)?
+        for ln in ln1...lastLine {
+            for r in h.runs(in: h.lineRange(ln), text: text) where r.kind == .mathDelimiter {
+                let token = text.substring(with: r.range)
+                if let o = open {
+                    guard token == o.close else { continue } // a display delimiter or stray close: not our pair
+                    let span = NSRange(location: o.run.range.location, length: NSMaxRange(r.range) - o.run.range.location)
+                    if NSLocationInRange(utf16, span) {
+                        let openLine = h.line(at: o.run.range.location)
+                        guard ln - openLine <= 1 else { return nil } // spans more than two lines
+                        return span
+                    }
+                    open = nil
+                } else if token == "$" {
+                    open = (r, "$")
+                } else if token == "\\(" {
+                    open = (r, "\\)")
+                }
+                // "$$", "\[", "\]", and a stray close with no opener: display math; ignored.
+            }
+        }
+        return nil // no pair encloses `utf16` within the window (unclosed, or not inline math)
+    }
+
     // MARK: quick info (hover)
 
     struct QuickInfo: Equatable {
@@ -97,8 +152,12 @@ enum EditorIntelligence {
         }
     }
 
+    /// `userDefinition` answers the user's own `\newcommand`/`\def` of a
+    /// command name (ShellModel.definitionSummary); shown as a peek under
+    /// the standard documentation.
     static func quickInfo(in text: NSString, at utf16: Int, marks: [EditorDiagnostics.Mark] = [],
-                          highlighter: SyntaxHighlighter? = nil) -> QuickInfo? {
+                          highlighter: SyntaxHighlighter? = nil, userDefinition: (String) -> String? = { _ in nil },
+                          context: HoverContext = .init()) -> QuickInfo? {
         let hits = marks.filter { NSLocationInRange(utf16, $0.nsRange) }
         let diagnostics = hits.map { m in
             QuickInfo.Diagnostic(severity: m.severity, message: m.message,
@@ -107,19 +166,47 @@ enum EditorIntelligence {
         let token = token(in: text, at: utf16, highlighter: highlighter)
         switch token {
         case .command(let name, let range)?:
-            return QuickInfo(title: "\\" + name, detail: CommandDocs.category(for: name), documentation: CommandDocs.documentation(for: name),
-                             diagnostics: diagnostics, range: range)
+            let user = userDefinition(name)
+            let doc = [CommandDocs.documentation(for: name), user.map { "Defined: " + $0 + " — ⌘-click to go there." }].compactMap { $0 }
+            return QuickInfo(title: "\\" + name, detail: user != nil ? "User command" : CommandDocs.category(for: name),
+                             documentation: doc.isEmpty ? nil : doc.joined(separator: "\n"), diagnostics: diagnostics, range: range)
         case .reference(let command, let key, let range)?:
             let isLabel = command == "label"
             let isCite = CommandDocs.citationCommands.contains(command)
             let detail = isLabel ? "Label" : isCite ? "Citation key" : "Label reference"
-            let doc = isLabel ? "Referenced with \\ref{\(key)}; ⌘-click a reference to come back here."
-                : isCite ? "⌘-click to go to the bibliography entry." : "⌘-click to go to \\label{\(key)}."
-            return QuickInfo(title: key, detail: detail, documentation: doc, diagnostics: diagnostics, range: range)
+            // What the key points at, resolved from the buffer and the other
+            // open documents (EditorHoverResolution.swift), above the
+            // navigation hint — which is the part the reader already knew.
+            var lines: [String] = []
+            if isCite {
+                if let entry = bibliographyEntry(forKey: key, in: text as String, context: context) {
+                    lines.append(entry.summary)
+                    if let path = entry.path { lines.append("in " + path) }
+                } else {
+                    lines.append("No bibliography entry found for this key.")
+                }
+                lines.append("⌘-click to go to the bibliography entry.")
+            } else if isLabel {
+                lines.append("Referenced with \\ref{\(key)}; ⌘-click a reference to come back here.")
+            } else {
+                if let target = labelTarget(forKey: key, in: text as String, context: context) {
+                    lines.append(target.summary)
+                } else {
+                    lines.append("No \\label{\(key)} in this document or the open ones.")
+                }
+                lines.append("⌘-click to go to \\label{\(key)}.")
+            }
+            return QuickInfo(title: key, detail: detail, documentation: lines.joined(separator: "\n"),
+                             diagnostics: diagnostics, range: range)
         case .file(let command, let path, let range)?:
             let detail = command == "includegraphics" ? "Graphics file" : ["usepackage", "RequirePackage"].contains(command) ? "Package"
                 : command == "documentclass" ? "Document class" : "Input file"
-            let doc = ["input", "include", "subfile", "import", "subimport"].contains(command) ? "⌘-click to open the file." : nil
+            var doc: String?
+            if command == "includegraphics" {
+                doc = resolveGraphics(path, in: text as String, context: context).summary
+            } else if ["input", "include", "subfile", "import", "subimport"].contains(command) {
+                doc = "⌘-click to open the file."
+            }
             return QuickInfo(title: path, detail: detail, documentation: doc, diagnostics: diagnostics, range: range)
         case .environment(let name, let range)?:
             return QuickInfo(title: name, detail: "Environment", documentation: CommandDocs.environmentDocumentation(for: name),
@@ -139,9 +226,11 @@ enum EditorIntelligence {
         case file(path: String, command: String)
         /// `\begin`/`\end` name: the matching partner.
         case environment(name: String)
+        /// A control sequence: its `\newcommand`/`\def`/… definition (EditorNavigation.swift).
+        case command(name: String)
     }
 
-    /// What ⌘-click at `utf16` navigates to, or nil (plain text, a command).
+    /// What ⌘-click at `utf16` navigates to, or nil (plain text).
     static func definitionTarget(in text: NSString, at utf16: Int, highlighter: SyntaxHighlighter? = nil) -> DefinitionTarget? {
         switch token(in: text, at: utf16, highlighter: highlighter) {
         case .reference(let command, let key, _)?:
@@ -150,6 +239,8 @@ enum EditorIntelligence {
             return .file(path: path, command: command)
         case .environment(let name, _)?:
             return .environment(name: name)
+        case .command(let name, _)?:
+            return name == "begin" || name == "end" ? nil : .command(name: name)
         default:
             return nil
         }
@@ -333,13 +424,13 @@ enum EditorIntelligence {
         /// `CompletionTests.testCommandDocsNameOnlyKnownCommands`), and a
         /// name listed here must leave the list once the compiler renders it.
         static let beyondCompiler: Set<String> = [
-            "chapter", "part", "paragraph", "autoref", "cref", "citep", "citet", "includegraphics",
+            "chapter", "part", "autoref",
             "def", "newline", "hline", "toprule", "midrule",
-            "bottomrule", "multicolumn", "verb", "today", "%", "$", "&", "#", "_", "{", "}",
-            "geometry", "graphicspath", "onehalfspacing", "doublespacing",
+            "bottomrule", "multicolumn", "verb", "%", "$", "&", "#", "_", "{", "}",
+            "geometry", "onehalfspacing", "doublespacing",
         ]
         static let environmentsBeyondCompiler: Set<String> = [
-            "description", "table", "abstract", "minted", "theorem", "tikzpicture", "subequations", "minipage", "frame", "comment",
+            "table", "abstract", "minted", "theorem", "tikzpicture", "minipage", "frame", "comment",
         ]
 
         static func environmentDocumentation(for name: String) -> String? {
@@ -490,11 +581,38 @@ final class LineNumberGutter: NSRulerView {
     /// Lines whose only marks are FlashTeX gaps (`EditorDiagnostics.isGap`):
     /// a faint grey tick, never a red or orange dot.
     private(set) var gapLines: Set<Int> = []
+    /// Lines with a diagnostic that carries a mechanical fix (Tab at the
+    /// caret applies it): ringed in the accent so the affordance is visible
+    /// from the gutter, not colour-alone (the ring is a second shape).
+    private(set) var fixLines: Set<Int> = []
     /// Current line (caret), highlighted in the gutter.
-    var currentLine: Int? { didSet { if currentLine != oldValue { needsDisplay = true } } }
+    var currentLine: Int? { didSet { if currentLine != oldValue { setNeedsRedraw() } } }
+    /// Hybrid relative numbering for Vim users (`EditorPreferences.relativeLineNumbers`,
+    /// off by default and independent of whether Vim keybindings are on).
+    var relativeLineNumbers = false { didSet { if relativeLineNumbers != oldValue { setNeedsRedraw() } } }
+    /// Line indices (0-based) that start a foldable region (EditorFolding.swift).
+    var foldableLines: Set<Int> = [] { didSet { if foldableLines != oldValue { setNeedsRedraw() } } }
+    /// Line indices that are currently folded.
+    var foldedLines: Set<Int> = [] { didSet { if foldedLines != oldValue { setNeedsRedraw() } } }
+    /// Toggle the fold whose header is this 0-based line.
+    var onToggleFold: ((Int) -> Void)?
+    /// Test seam, like `CaretFollow.enabledOverride`: a hosted editor reads the
+    /// shared preferences, which a test cannot inject into. Set it in `setUp`
+    /// and clear it in `tearDown`.
+    nonisolated(unsafe) static var relativeOverride: Bool?
     /// The model that answers "which line is this offset on".
     var lineTable: (() -> SyntaxHighlighter)?
     private var digits = 2
+    /// Counts the times the gutter has asked to be redrawn. `needsDisplay` is
+    /// not observable from a test — AppKit re-dirties a view that is in a
+    /// window, and ignores the flag on a view that is not — so the request
+    /// itself is counted, which is the thing the caller controls.
+    private(set) var redrawRequests = 0
+
+    private func setNeedsRedraw() {
+        redrawRequests += 1
+        needsDisplay = true
+    }
 
     init(scrollView: NSScrollView) {
         super.init(scrollView: scrollView, orientation: .verticalRuler)
@@ -511,13 +629,17 @@ final class LineNumberGutter: NSRulerView {
         guard let table = lineTable?() else { return }
         var result: [Int: RuntimeV1.Severity] = [:]
         var gaps: Set<Int> = []
+        var fixes: Set<Int> = []
         for mark in marks {
             guard mark.nsRange.location >= 0, mark.nsRange.location <= table.length else { continue }
             let line = table.line(at: mark.nsRange.location)
+            if mark.hasFix { fixes.insert(line) }
             if EditorDiagnostics.isGap(mark.message) { gaps.insert(line); continue }
             if result[line] != .error { result[line] = mark.severity }
         }
-        if result != severities || gaps != gapLines { severities = result; gapLines = gaps; needsDisplay = true }
+        if result != severities || gaps != gapLines || fixes != fixLines {
+            severities = result; gapLines = gaps; fixLines = fixes; setNeedsRedraw()
+        }
     }
 
     /// Adjusts the width to the line count and the editor font.
@@ -529,8 +651,21 @@ final class LineNumberGutter: NSRulerView {
         if wanted != digits || abs(thickness - ruleThickness) > 0.5 {
             digits = wanted
             ruleThickness = thickness
-            needsDisplay = true
+            setNeedsRedraw()
         }
+    }
+
+    /// The label for logical line `line` (0-based), given the caret's line.
+    ///
+    /// Vim's hybrid `number` + `relativenumber`: the caret's own line keeps its
+    /// absolute number, so you always know where you are, while every other
+    /// line shows its distance in *logical* lines — the count `5j` and `3k`
+    /// take. Plain `relativenumber` would print `0` on the current line, which
+    /// is the less useful of the two and not what most people mean by this.
+    /// Falls back to absolute numbering when there is no caret line.
+    static func label(line: Int, currentLine: Int?, relative: Bool) -> String {
+        guard relative, let current = currentLine, line != current else { return String(line + 1) }
+        return String(abs(line - current))
     }
 
     var numberFont: NSFont {
@@ -543,7 +678,7 @@ final class LineNumberGutter: NSRulerView {
         (tv.backgroundColor).setFill()
         bounds.fill()
         // Hairline separator.
-        NSColor.separatorColor.withAlphaComponent(0.5).setFill()
+        DS.NSColors.gutterHairline.setFill()
         NSRect(x: bounds.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()
 
         let visible = tv.visibleRect
@@ -575,22 +710,65 @@ final class LineNumberGutter: NSRulerView {
                 if inRuler.minY > rect.maxY + 20 { break }
                 line += 1; continue
             }
-            let label = String(line + 1) as NSString
+            let label = Self.label(line: line, currentLine: currentLine, relative: relativeLineNumbers) as NSString
             let attrs = line == currentLine ? currentAttrs : numberAttrs
             let size = label.size(withAttributes: attrs)
             let baselineAdjust = (fragment.height - size.height) / 2
             label.draw(at: NSPoint(x: numberRight - size.width, y: inRuler.minY + baselineAdjust), withAttributes: attrs)
+            if foldableLines.contains(line) {
+                drawFoldMark(folded: foldedLines.contains(line), midY: inRuler.midY)
+            }
             if let severity = severities[line] {
                 let d: CGFloat = 7
                 let dot = NSRect(x: 6, y: inRuler.midY - d / 2, width: d, height: d)
-                (severity == .error ? NSColor.systemRed : NSColor.systemOrange).setFill()
+                (severity == .error ? DS.NSColors.severityError : DS.NSColors.severityWarning).setFill()
                 NSBezierPath(ovalIn: dot).fill()
+                if fixLines.contains(line) {
+                    // Fix available: an accent ring around the dot (shape, not
+                    // colour alone). Tab with the caret on the line applies it.
+                    DS.NSColors.fixRing.setStroke()
+                    let ring = NSBezierPath(ovalIn: dot.insetBy(dx: -2.5, dy: -2.5))
+                    ring.lineWidth = 1.5
+                    ring.stroke()
+                }
             } else if gapLines.contains(line) {
-                NSColor.tertiaryLabelColor.setFill()
+                DS.NSColors.gapDot.setFill()
                 NSBezierPath(ovalIn: NSRect(x: 7.5, y: inRuler.midY - 2, width: 4, height: 4)).fill()
             }
             line += 1
         }
+    }
+
+    /// Disclosure triangle in the marker column: collapsed ▶ when folded, ▼ when open.
+    private func drawFoldMark(folded: Bool, midY: CGFloat) {
+        let r = NSRect(x: 3, y: midY - 4, width: 8, height: 8)
+        DS.NSColors.gutterGlyph.setFill()
+        let path = NSBezierPath()
+        if folded {
+            path.move(to: NSPoint(x: r.minX + 1, y: r.minY + 1))
+            path.line(to: NSPoint(x: r.maxX - 1, y: r.midY))
+            path.line(to: NSPoint(x: r.minX + 1, y: r.maxY - 1))
+        } else {
+            path.move(to: NSPoint(x: r.minX + 1, y: r.minY + 2))
+            path.line(to: NSPoint(x: r.maxX - 1, y: r.minY + 2))
+            path.line(to: NSPoint(x: r.midX, y: r.maxY - 1))
+        }
+        path.close()
+        path.fill()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        guard p.x <= 16, let onToggleFold, let tv = textView, let lm = tv.layoutManager,
+              let container = tv.textContainer, let table = lineTable?() else {
+            super.mouseDown(with: event); return
+        }
+        let inText = convert(p, to: tv)
+        let index = tv.characterIndexForInsertion(at: NSPoint(x: tv.visibleRect.minX + 1, y: inText.y))
+        _ = (lm, container)
+        let line = table.line(at: min(index, max(0, table.length - 1)))
+        guard foldableLines.contains(line) else { super.mouseDown(with: event); return }
+        onToggleFold(line)
     }
 }
 
@@ -603,6 +781,13 @@ final class LineNumberGutter: NSRulerView {
 final class HoverController: NSResponder {
     static let delay: TimeInterval = 0.45
     var info: (Int) -> EditorIntelligence.QuickInfo? = { _ in nil }
+    /// Inline math preview (MathHoverPreview.swift): the formula's cropped
+    /// bitmap and its range, when `index` is inside one. Tried before `info`,
+    /// so a formula's crop wins over a command's quick info inside it (e.g.
+    /// `\alpha`); the owner's closure already applies `previewIsStale` and
+    /// the "reads only the current bitmap" rule, so nil here just means "no
+    /// preview" — hover falls back to `info`.
+    var mathPreview: (Int) -> (image: CGImage, range: NSRange)? = { _ in nil }
     private weak var textView: NSTextView?
     private var trackingArea: NSTrackingArea?
     private var timer: Timer?
@@ -611,6 +796,8 @@ final class HoverController: NSResponder {
     private(set) var shownRange: NSRange?
     /// Evidence for tests: infos presented.
     private(set) var presented: [EditorIntelligence.QuickInfo] = []
+    /// Evidence for tests: math-preview ranges presented.
+    private(set) var presentedMathPreviews: [NSRange] = []
     private var lastPoint: NSPoint = .zero
 
     func install(on tv: NSTextView) {
@@ -655,26 +842,44 @@ final class HoverController: NSResponder {
     }
 
     private func fire() {
-        guard let tv = textView, tv.window != nil, !tv.hasMarkedText(), let index = characterIndex(at: lastPoint),
-              let info = info(index) else { return }
-        present(info, in: tv)
+        guard let tv = textView, tv.window != nil, !tv.hasMarkedText(), let index = characterIndex(at: lastPoint) else { return }
+        if let math = mathPreview(index) {
+            presentMathPreview(math.image, range: math.range, in: tv)
+        } else if let info = info(index) {
+            present(info, in: tv)
+        }
     }
 
     func present(_ info: EditorIntelligence.QuickInfo, in tv: NSTextView) {
+        presentContent(NSHostingController(rootView: QuickInfoView(info: info)), range: info.range, in: tv)
+        presented.append(info)
+        if presented.count > 32 { presented.removeFirst(presented.count - 32) }
+    }
+
+    /// Anchors `controller`'s view over `range`, replacing whatever popover
+    /// is open — the one hover-popover slot every hover surface shares (a
+    /// math preview and quick info never show at once).
+    func presentContent(_ controller: NSViewController, range: NSRange, in tv: NSTextView) {
         guard let lm = tv.layoutManager, let container = tv.textContainer else { return }
         dismiss()
-        let glyphs = lm.glyphRange(forCharacterRange: info.range, actualCharacterRange: nil)
+        let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
         var anchor = lm.boundingRect(forGlyphRange: glyphs, in: container)
         anchor = anchor.offsetBy(dx: tv.textContainerInset.width, dy: tv.textContainerInset.height)
         let p = NSPopover()
         p.behavior = .applicationDefined
         p.animates = false
-        p.contentViewController = NSHostingController(rootView: QuickInfoView(info: info))
+        p.contentViewController = controller
         popover = p
-        shownRange = info.range
-        presented.append(info)
-        if presented.count > 32 { presented.removeFirst(presented.count - 32) }
+        shownRange = range
         p.show(relativeTo: anchor, of: tv, preferredEdge: .maxY)
+    }
+
+    /// Records a presented math preview for `presentedMathPreviews` (evidence
+    /// for tests); `presentedMathPreviews`'s setter is file-private, so
+    /// `presentMathPreview(_:range:in:)` (MathHoverPreview.swift) goes through this.
+    func recordMathPreview(_ range: NSRange) {
+        presentedMathPreviews.append(range)
+        if presentedMathPreviews.count > 32 { presentedMathPreviews.removeFirst(presentedMathPreviews.count - 32) }
     }
 }
 
@@ -683,31 +888,31 @@ struct QuickInfoView: View {
     let info: EditorIntelligence.QuickInfo
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
                 Text(info.title).font(.system(.body, design: .monospaced).weight(.semibold)).lineLimit(2)
-                Text(info.detail).font(.caption).foregroundStyle(.secondary)
+                Text(info.detail).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
             }
             if let doc = info.documentation {
                 Text(doc).font(.callout).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
             }
             ForEach(Array(info.diagnostics.enumerated()), id: \.offset) { _, d in
                 Divider()
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: DS.Space.s) {
                     Image(systemName: d.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(d.severity == .error ? Color.red : Color.orange)
+                        .foregroundStyle(d.severity == .error ? DS.Colors.severityError : DS.Colors.severityWarning)
                         .accessibilityLabel(d.severity == .error ? "Error" : "Warning")
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: DS.Space.xxs) {
                         Text(d.message).font(.callout).fixedSize(horizontal: false, vertical: true)
                         ForEach(Array(d.lines.enumerated()), id: \.offset) { _, line in
-                            Text(line).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            Text(line).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
             }
         }
-        .padding(10)
-        .frame(minWidth: 180, maxWidth: 380, alignment: .leading)
+        .padding(DS.Space.m)
+        .frame(minWidth: DS.Layout.quickInfoMinWidth, maxWidth: DS.Layout.quickInfoMaxWidth, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Quick info: \(info.title), \(info.detail)")
     }

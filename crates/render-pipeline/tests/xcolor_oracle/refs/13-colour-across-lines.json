@@ -1,0 +1,2183 @@
+{
+ "fixture": "13-colour-across-lines.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; glyphs [text, x, y_top, fill]; rules [x, top, width, height, fill]",
+ "pages": [
+  {
+   "glyphs": [
+    [
+     "B",
+     89.559,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     97.8487,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "f",
+     103.0516,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     106.6286,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     112.4819,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     117.0344,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     126.6608,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     131.2133,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     137.7169,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "c",
+     147.3433,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     152.2234,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     158.727,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     164.5803,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "g",
+     171.0839,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     176.9372,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     186.5635,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     191.116,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     197.6197,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "w",
+     207.246,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     215.3779,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     221.2312,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     225.7837,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     232.2874,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     241.3279,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     247.1811,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     251.7337,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "b",
+     261.36,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     267.8636,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     271.1154,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "c",
+     276.9687,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "k",
+     281.8488,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     ",",
+     288.0273,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     295.834,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     301.6873,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     308.1909,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     319.118,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     323.6705,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     330.1741,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     335.377,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     346.3041,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     350.8566,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     357.3603,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "c",
+     366.9866,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     372.1895,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     378.0428,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     381.2946,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "u",
+     387.1478,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     393.6515,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     402.6274,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "w",
+     407.2445,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     415.6992,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     418.9511,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "c",
+     423.5036,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     428.3837,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     434.8873,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     440.0902,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     449.1308,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     453.6833,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "b",
+     463.96,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     470.4636,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "u",
+     473.7154,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     480.2191,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "f",
+     489.8574,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     493.4343,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     499.2876,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     508.2636,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     518.5403,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     521.7921,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     527.6453,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "g",
+     534.149,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     72.0,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     76.6171,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     81.1696,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     85.7222,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     90.9251,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "c",
+     95.4776,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     100.3577,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     111.0815,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "f",
+     116.9348,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     124.744,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     129.2965,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "x",
+     134.4994,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     140.6778,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     149.4625,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     154.0151,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     160.5187,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     166.372,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "k",
+     175.1447,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     181.0003,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     186.2032,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "p",
+     191.4061,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     197.9098,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "g",
+     206.759,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     212.6123,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     218.4655,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     221.7174,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "g",
+     228.221,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     238.2944,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "c",
+     244.1477,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     249.3506,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     253.9032,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     259.7564,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     264.3735,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     273.2228,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     277.7753,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     284.2789,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     293.702,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     298.9049,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     305.4085,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     316.1443,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "f",
+     321.9976,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     329.8067,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     334.3593,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     340.8629,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "fi",
+     350.286,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     356.7896,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     361.3421,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     365.9592,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     374.7439,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     377.9957,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     381.2475,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     387.7512,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     397.1862,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     403.0395,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     409.5431,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     420.2669,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     426.1202,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     432.301,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     436.8536,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     446.939,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     451.4915,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     457.9952,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "f",
+     467.4182,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     470.9952,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     476.8485,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     480.1003,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     483.3521,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "w",
+     488.8826,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     497.3373,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     500.5891,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "g",
+     507.0928,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     517.1782,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     520.43,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     523.6818,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     530.1854,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     535.3883,
+     98.401,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     72.0,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "f",
+     77.8533,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     86.4514,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     91.004,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     97.5076,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     107.7317,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     112.3488,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "m",
+     118.2021,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     127.9575,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "p",
+     138.1816,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     144.6852,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     150.5385,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     155.091,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "g",
+     160.9443,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     166.7976,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     171.3501,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "p",
+     177.2034,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     183.707,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     ",",
+     190.2106,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     198.7705,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     203.3876,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     214.2621,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     218.8146,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     225.3183,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "c",
+     235.5424,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     240.7453,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     246.5985,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     249.8503,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "u",
+     255.7036,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     262.2072,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "m",
+     271.781,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "u",
+     281.2136,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     287.7172,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     292.3343,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "p",
+     301.9081,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     308.7345,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     313.9374,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     318.4899,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     323.107,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     326.3588,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     330.9759,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     340.5616,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "c",
+     346.4149,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     351.6178,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     356.1584,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     362.0116,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     366.6407,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     376.279,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     379.5308,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     382.7826,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     389.2862,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "b",
+     399.5103,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     406.0139,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     410.5665,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     415.7694,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "k",
+     421.6227,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     427.8011,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     ",",
+     432.4182,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "u",
+     440.9662,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     447.4698,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     453.6506,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     458.2032,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     461.455,
+     112.847,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     469.728,
+     112.847,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     474.2805,
+     112.847,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     480.7842,
+     112.847,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     484.036,
+     112.847,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     493.6862,
+     112.847,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     498.2268,
+     112.847,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     503.4297,
+     112.847,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "w",
+     514.9665,
+     112.847,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     523.0864,
+     112.847,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     528.9397,
+     112.847,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     533.4922,
+     112.847,
+     "1 0 0 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     72.0,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "p",
+     77.8533,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "p",
+     84.3569,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     91.1833,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     96.3862,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     102.2395,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     106.792,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     115.5576,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     118.8094,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     129.4734,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     134.026,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     140.5296,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "m",
+     149.881,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     159.6364,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     162.8882,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     169.3918,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     175.8955,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     179.1473,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     188.4986,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     194.3519,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     200.8555,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     211.5076,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     216.0602,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     222.5638,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "b",
+     231.9151,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     238.4188,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "u",
+     241.6706,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     248.1742,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     257.5256,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     262.0781,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     267.281,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "u",
+     271.8981,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "m",
+     278.4017,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     288.1572,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     293.3601,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "f",
+     302.1376,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     305.7026,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     311.5559,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     320.2689,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     324.8214,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     331.325,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     340.6764,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     345.2289,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     350.4318,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     355.0489,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     363.7499,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "f",
+     369.6032,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     377.3286,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     381.8812,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     388.3848,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     397.7362,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     402.3533,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     407.5562,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     413.737,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     418.2895,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     423.4924,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "c",
+     429.9961,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     435.199,
+     127.293,
+     "0 0 1 rg",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     444.5503,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     450.4036,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     456.9072,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     467.5593,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     472.1119,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     478.6155,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "p",
+     487.9668,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     494.4705,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     500.3237,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     504.8763,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "g",
+     510.7295,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     516.5828,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     521.1353,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "p",
+     526.9886,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     533.4922,
+     127.293,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     72.0,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     77.2029,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     83.7065,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     90.2102,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     98.7247,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     101.9765,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "b",
+     112.3894,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     118.8931,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     122.1449,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "c",
+     127.9982,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "k",
+     132.8663,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     142.9541,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "g",
+     148.8074,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     154.6606,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     160.5139,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     163.7657,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     ".",
+     170.2694,
+     141.738,
+     "0 g",
+     "LMRoman12-Regular"
+    ]
+   ],
+   "rules": []
+  }
+ ]
+}
