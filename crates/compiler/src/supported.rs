@@ -146,7 +146,6 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("refstepcounter", "{counter}", "increments a counter and makes it the current \\label value"),
     ("value", "{counter}", "a counter's value in a number context"),
     ("Alph", "{counter}", "a counter as an upper-case letter"),
-    ("fnsymbol", "{counter}", "a counter as a footnote symbol"),
     ("newlength", "{\\name}", "allocates a skip register"),
     ("settowidth", "{\\name}{text}", "sets a length from text measured by the expansion pass's box measurer (an approximation)"),
     ("settoheight", "{\\name}{text}", "sets a length from text height (an approximation, as \\settowidth)"),
@@ -280,6 +279,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("footnote", "[n]{...}", "numbered mark and page-bottom footnote text"),
     ("footnotemark", "[n]", "footnote mark only"),
     ("footnotetext", "[n]{...}", "footnote text without a mark"),
+    ("fnsymbol", "{counter}", "a counter's value 1-9 as a footnote symbol"),
     ("includegraphics", "*[keys]{file}", "image box in running text (graphicx keys as written)"),
     ("scalebox", "{x}[y]{...}", "graphics.sty scaled box of the content"),
     ("resizebox", "*{width}{height}{...}", "graphics.sty box scaled to a width and/or height; ! keeps the aspect ratio"),
@@ -318,6 +318,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("negthickspace", "", "text kern -.2777em"),
     ("enspace", "", "text kern .5em"),
     ("enskip", "", "horizontal glue of .5em"),
+    ("xspace", "", "word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"),
     ("pagebreak", "[n]", "forces a page break"),
     ("nopagebreak", "[n]", "accepted no-op; the layout never breaks there on its own"),
     ("linebreak", "[n]", "line break"),
@@ -953,6 +954,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "ulem",
         "normalem",
         "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined",
+    ),
+    (
+        "xspace",
+        "",
+        "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)",
     ),
 ];
 
