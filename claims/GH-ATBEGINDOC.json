@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/atbegindoc",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/499",
   "machine": "Overpriced-Hardware",
   "note": null,
   "started_utc": "2026-09-15T03:42:40Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-ATBEGINDOC",
-  "updated_utc": "2026-09-15T03:42:40Z"
+  "updated_utc": "2026-09-15T05:55:14Z"
 }
