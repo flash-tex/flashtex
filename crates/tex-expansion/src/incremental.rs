@@ -123,6 +123,41 @@ pub struct IncrementalExpander {
     pending: Vec<Vec<Shift>>,
     limits: Limits,
     checkpoint_interval: usize,
+    /// How the last run ended (see [`RunEnd`]).
+    end: RunEnd,
+}
+
+/// How a run ended. The step limit and the output token limit count from
+/// the document start, unlike everything else in a checkpoint, so whether
+/// a reused suffix still ends the same way depends on these totals.
+#[derive(Debug, Clone, Copy, Default)]
+struct RunEnd {
+    /// `Engine::steps` when the run ended.
+    steps: u64,
+    /// The run stopped on the step limit.
+    step_limit: bool,
+    /// The run stopped on the output token limit.
+    output_limit: bool,
+    /// The run stopped on the main-memory limit (`max_output_tokens`).
+    memory_limit: bool,
+    /// At least `Engine::peak_memory` when the run ended (an upper bound
+    /// once suffixes were reused).
+    peak_memory: u64,
+    /// `Engine::input_position` when the run ended.
+    input: Option<(u32, usize)>,
+}
+
+impl RunEnd {
+    fn of(engine: &Engine, output_limit: bool) -> Self {
+        RunEnd {
+            steps: engine.steps(),
+            step_limit: engine.hit_step_limit(),
+            output_limit,
+            memory_limit: engine.hit_memory_limit(),
+            peak_memory: engine.peak_memory(),
+            input: engine.input_position(),
+        }
+    }
 }
 
 impl IncrementalExpander {
@@ -158,6 +193,7 @@ impl IncrementalExpander {
             pending: Vec::new(),
             limits,
             checkpoint_interval: checkpoint_interval.max(1),
+            end: RunEnd::default(),
         };
         me.full_run();
         me
@@ -188,6 +224,16 @@ impl IncrementalExpander {
         self.checkpoints.len()
     }
 
+    pub fn limits(&self) -> Limits {
+        self.limits
+    }
+
+    /// `Engine::input_position` where the last run ended: where a full run
+    /// of the current source stands when it stops.
+    pub fn input_position(&self) -> Option<(u32, usize)> {
+        self.end.input
+    }
+
     fn full_run(&mut self) {
         let src: Rc<str> = Rc::from(self.source.as_str());
         let mut engine = Engine::with_limits(&self.source, self.limits);
@@ -204,15 +250,17 @@ impl IncrementalExpander {
         self.checkpoints.push(engine.snapshot(0));
         self.pending.push(Vec::new());
         let mut last_cp = 0usize;
-        self.drive(&mut engine, &mut last_cp, None);
+        let output_limit = self.drive(&mut engine, &mut last_cp, None).is_err();
+        self.end = RunEnd::of(&engine, output_limit);
         self.diagnostics = engine.take_diagnostics();
         self.labels = engine.take_labels();
     }
 
     /// Run `engine` to the end (or until it converges with an old
     /// checkpoint, when `converge` is given), appending output tokens and
-    /// recording new checkpoints. Returns the convergence point if any.
-    fn drive(&mut self, engine: &mut Engine, last_cp: &mut usize, converge: Option<&mut Converge>) -> Option<usize> {
+    /// recording new checkpoints. Returns the convergence point if any, or
+    /// `Err(())` if the run stopped on the output token limit.
+    fn drive(&mut self, engine: &mut Engine, last_cp: &mut usize, converge: Option<&mut Converge>) -> Result<Option<usize>, ()> {
         // (The old checkpoints' pending shifts travel inside `Converge`.)
         let mut converge = converge;
         // The engine's diagnostics/labels vectors start empty after a
@@ -223,21 +271,25 @@ impl IncrementalExpander {
         loop {
             let (tok, origin) = match engine.next_content_token_with_origin() {
                 Some(t) => t,
-                None => return None,
+                None => return Ok(None),
             };
             self.tokens.push(tok);
             self.origins.push(origin);
             if self.tokens.len() as u64 > self.limits.max_output_tokens {
                 engine.push_diagnostic(Diagnostic::error("output token limit exceeded", Span::synthetic()));
-                return None;
+                return Err(());
             }
             if let Some(pos) = engine.safe_point() {
                 if let Some(c) = converge.as_deref_mut() {
                     if pos >= c.new_edit_end {
                         if let Some(old_idx) = c.candidate_at(pos) {
                             let old = &c.old_checkpoints[old_idx];
-                            if old.lex_state == engine.lex_state() && states_equivalent(&old.state, &c.old_pending[old_idx], engine.state(), c) {
-                                return Some(old_idx);
+                            if old.lex_state == engine.lex_state()
+                                && c.same_end(old, engine.steps(), self.tokens.len(), &self.limits)
+                                && c.map_old(old.last_origin, old_idx) == Some(engine.last_origin())
+                                && states_equivalent(&old.state, &c.old_pending[old_idx], engine.state(), c)
+                            {
+                                return Ok(Some(old_idx));
                             }
                         }
                     }
@@ -257,10 +309,40 @@ impl IncrementalExpander {
     /// Apply one edit and bring `tokens()`/`diagnostics()`/`labels()` up
     /// to date, re-expanding as little as the checkpoints allow.
     pub fn edit(&mut self, edit: &Edit) -> EditStats {
+        self.edit_with_limits(edit, self.limits)
+    }
+
+    /// [`IncrementalExpander::edit`], with the edited source expanded under
+    /// `limits` (a host whose limits grow with the document).
+    ///
+    /// Every use of the step and output token limits is a stop once a count
+    /// goes past one, so a checkpoint is reused only if its step count,
+    /// output count and peak main-memory size are within the new limits (the
+    /// run under them got there without stopping), and a suffix only if the
+    /// new run ends it as `Converge::same_end` requires. A change to the
+    /// other limits re-expands the document.
+    pub fn edit_with_limits(&mut self, edit: &Edit, limits: Limits) -> EditStats {
         let Edit { start, end, replacement } = edit;
         let (start, end) = (*start, *end);
         assert!(start <= end && end <= self.source.len(), "edit range out of bounds");
         assert!(self.source.is_char_boundary(start) && self.source.is_char_boundary(end), "edit not on char boundary");
+        let old_limits = std::mem::replace(&mut self.limits, limits);
+        let usable = |cp: &Checkpoint| {
+            (cp.pos == 0 || cp.pos < start)
+                && cp.steps <= limits.max_expansion_steps
+                && cp.out_len as u64 <= limits.max_output_tokens
+                && cp.peak_memory <= limits.max_output_tokens
+        };
+        let same_depth_limits = (limits.max_conditional_depth, limits.max_group_depth)
+            == (old_limits.max_conditional_depth, old_limits.max_group_depth);
+        let cp_idx = match self.checkpoints.iter().rposition(usable) {
+            Some(index) if same_depth_limits => index,
+            _ => {
+                self.source.replace_range(start..end, replacement);
+                self.full_run();
+                return EditStats { tokens_expanded: self.tokens.len(), steps: self.end.steps, ..EditStats::default() };
+            }
+        };
         let old_len = self.source.len();
         let delta = replacement.len() as isize - (end - start) as isize;
         // Some TeX messages embed a source line number ("... after line N");
@@ -275,11 +357,6 @@ impl IncrementalExpander {
         //    P has looked at byte P to end the previous token, so P must
         //    itself be unchanged: P < start). The initial checkpoint at
         //    0 has looked at nothing and is always usable.
-        let cp_idx = self
-            .checkpoints
-            .iter()
-            .rposition(|cp| cp.pos == 0 || cp.pos < start)
-            .expect("checkpoint 0 always exists");
         let mut cp = self.checkpoints[cp_idx].clone();
         if !self.pending[cp_idx].is_empty() {
             // Spans in a checkpoint's state all precede its position, which
@@ -288,7 +365,9 @@ impl IncrementalExpander {
             match cp.state.map_spans(&|sp| apply_all(sp, &pending), identity_bound(&pending)) {
                 Some(st) => {
                     cp.state = st;
+                    cp.last_origin = cp.last_origin.map(|o| apply_all(o, &pending).expect("an origin before the checkpoint precedes the edit"));
                     self.checkpoints[cp_idx].state = cp.state.clone();
+                    self.checkpoints[cp_idx].last_origin = cp.last_origin;
                 }
                 None => unreachable!("a checkpoint before an edit cannot overlap an earlier edit it survived"),
             }
@@ -314,13 +393,18 @@ impl IncrementalExpander {
             new_edit_end,
             delta,
             old_len,
+            old_end: self.end,
+            old_limits,
+            old_out_len: prefix_reused + old_tokens.len(),
         };
         let line_sensitive = lines_changed && old_diags.iter().any(|d| d.message.contains("line "));
-        let converged = if line_sensitive {
+        let run = if line_sensitive {
             self.drive(&mut engine, &mut last_cp, None)
         } else {
             self.drive(&mut engine, &mut last_cp, Some(&mut conv))
         };
+        let converged = run.unwrap_or(None);
+        self.end = RunEnd::of(&engine, run.is_err());
         let tokens_expanded = self.tokens.len() - prefix_reused;
         let mut stats = EditStats {
             restarted_from: cp.pos,
@@ -340,6 +424,22 @@ impl IncrementalExpander {
             let base_out = old_cp.out_len - cp.out_len;
             let base_diag = old_cp.diag_len - cp.diag_len;
             let base_label = old_cp.label_len - cp.label_len;
+            // The runs are equivalent from here on, so they take the same
+            // number of steps to the end (see `Converge::same_end`).
+            let step_offset = engine.steps() as i128 - old_cp.steps as i128;
+            // The old run's end lies past the convergence point, so after
+            // the edit.
+            let input = conv.old_end.input.map(|(source, pos)| match source {
+                0 if pos >= end => (source, (pos as isize + delta) as usize),
+                _ => (source, pos),
+            });
+            let engine_peak = engine.peak_memory();
+            self.end = RunEnd {
+                steps: (conv.old_end.steps as i128 + step_offset) as u64,
+                peak_memory: conv.old_end.peak_memory.max(engine_peak),
+                input,
+                ..conv.old_end
+            };
             stats.converged_at = Some((old_cp.pos as isize + delta) as usize);
             stats.suffix_reused = old_tokens.len() - base_out;
             let shift = conv.as_shift();
@@ -382,7 +482,9 @@ impl IncrementalExpander {
                     pos,
                     lex_state: old.lex_state,
                     state: old.state,
-                    steps: old.steps,
+                    steps: (old.steps as i128 + step_offset) as u64,
+                    last_origin: old.last_origin,
+                    peak_memory: old.peak_memory.max(engine_peak),
                     metrics: old.metrics,
                     out_len: (old.out_len as isize + out_offset) as usize,
                     diag_len: (old.diag_len as isize + diag_offset) as usize,
@@ -404,6 +506,11 @@ pub(crate) struct Converge {
     pub new_edit_end: usize,
     pub delta: isize,
     old_len: usize,
+    /// How the previous run ended, under which limits, and how many tokens
+    /// it output.
+    old_end: RunEnd,
+    old_limits: Limits,
+    old_out_len: usize,
 }
 
 impl Converge {
@@ -419,6 +526,49 @@ impl Converge {
             }
         }
         self.old_checkpoints.iter().position(|cp| cp.pos as isize == old_pos)
+    }
+
+    /// Would the new run, in a state equivalent to old checkpoint `old` at
+    /// `steps` steps and `out_len` output tokens, end as the old run did?
+    /// Both limits count from the document start, so the old suffix is
+    /// reused only if the new totals stay within them, or, if the old run
+    /// stopped on one, the new run reaches that stop at the same count.
+    ///
+    /// A limit stops the run on the first count past it (`steps` and the
+    /// output count go up one at a time), so a stop is reached at the same
+    /// place when the new total there is the new limit plus one. Main-memory
+    /// sizes are not counts: a memory stop is reused only under the same
+    /// limit, and a suffix that did not stop only if its peak size fits.
+    fn same_end(&self, old: &Checkpoint, steps: u64, out_len: usize, limits: &Limits) -> bool {
+        let step_offset = steps as i128 - old.steps as i128;
+        let out_offset = out_len as i128 - old.out_len as i128;
+        let new_steps = self.old_end.steps as i128 + step_offset;
+        let steps_ok = if self.old_end.step_limit {
+            new_steps == limits.max_expansion_steps as i128 + 1
+        } else {
+            new_steps <= limits.max_expansion_steps as i128
+        };
+        let new_out = self.old_out_len as i128 + out_offset;
+        let out_ok = if self.old_end.output_limit {
+            new_out == limits.max_output_tokens as i128 + 1
+        } else {
+            new_out <= limits.max_output_tokens as i128
+        };
+        let memory_ok = if self.old_end.memory_limit {
+            limits.max_output_tokens == self.old_limits.max_output_tokens
+        } else {
+            self.old_end.peak_memory <= limits.max_output_tokens
+        };
+        steps_ok && out_ok && memory_ok
+    }
+
+    /// An old checkpoint's span with its pending shifts and this edit's
+    /// shift applied (`None` if it touches an edit).
+    fn map_old(&self, s: Option<Span>, old_idx: usize) -> Option<Option<Span>> {
+        match s {
+            None => Some(None),
+            Some(s) => apply_all(s, &self.old_pending[old_idx]).and_then(|s| self.shift_span(s)).map(Some),
+        }
     }
 
     /// Map a span from the old buffer to the new one: unchanged before
