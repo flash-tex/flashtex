@@ -221,6 +221,9 @@ pub fn render_cached(
     let mut passes = 0;
     loop {
         passes += 1;
+        if let Some(c) = cache {
+            c.note_label_pass();
+        }
         let doc = adapter::adapt_cached(&texts, entry_index, &parsed, options, &labels, cache);
         let mut diagnostics: Vec<display::Diagnostic> = parsed
             .diagnostics
