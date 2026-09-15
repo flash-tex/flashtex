@@ -2341,8 +2341,10 @@ impl MathParser<'_> {
             // 5.40280pt. (The `\hbar` composite reproduces exactly: the
             // macron is 5.00002pt, `\mkern-9mu` is -4.99988pt and math italic
             // `h` is 5.76158pt.) `\rightleftharpoons` is the third such
-            // command; this compiler has no row for it at all, so there is
-            // nothing to gate yet.
+            // command, gated in its own arm below: its kernel `\mathpalette`
+            // stack and amsfonts' msam "0A have the same 10.00002pt advance,
+            // but the kernel stack is Rel by construction while the class
+            // must still be forced without the package's declaration.
             //
             // Only the advance is forced here: the nearest Latin Modern Math
             // character stays the glyph either way, because the kernel's
@@ -2360,6 +2362,18 @@ impl MathParser<'_> {
                         .into(),
                     span,
                 )
+            },
+            // `\rightleftharpoons` without amsfonts: `fontmath.ltx` 361 is a
+            // `\mathpalette` stack of two harpoons, `\mathrel`, and
+            // `\showthe\wd` of `\hbox{$\rightleftharpoons$}` is 10.00002pt
+            // at 10pt (TeX Live 2025) — the same advance as amsfonts' msam
+            // "0A replacement (only height/depth differ, which this layer
+            // does not track). There is no `COMMAND_GLYPHS` row for it, so
+            // the glyph and class are set here.
+            "rightleftharpoons" if !self.packages.amsfonts => MathAtom {
+                width_em: Some(KERNEL_RIGHTLEFTHARPOONS_EM),
+                class_override: Some(AtomClass::Rel),
+                ..symbol("\u{21CC}".into(), span)
             },
             // amsfonts `\dashrightarrow` = `\mathrel{\dabar@\dabar@\mathchar"0\hexnumber@
             // \symAMSa 4B}` (`\dasharrow` its alias) and `\dashleftarrow` with the
@@ -3489,7 +3503,7 @@ pub(crate) const AMSMATH_POD_MU: f64 = 8.0;
 /// builds it from an `\ialign` of rules, so it has no character and no font —
 /// `\showthe\wd` of `\hbox{$\angle$}` is 6.37344pt at every size from 10pt,
 /// and the same 6.37344pt in `\scriptstyle`, TeX Live 2025. amsfonts replaces
-/// it with msam "5A, 0.722224em.
+/// it with msam "5C, 0.722224em.
 pub(crate) const KERNEL_ANGLE_EM: f64 = 0.637344;
 
 /// The kernel `\hbar`'s advance in ems, without amsfonts: `fontmath.ltx` 241
@@ -3498,6 +3512,13 @@ pub(crate) const KERNEL_ANGLE_EM: f64 = 0.637344;
 /// `\showthe\wd` of `\hbox{$\hbar$}` reports. amsfonts replaces it with msbm
 /// "7E, 0.540280em.
 pub(crate) const KERNEL_HBAR_EM: f64 = 0.576172;
+
+/// The kernel `\rightleftharpoons`'s advance in ems, without amsfonts:
+/// `fontmath.ltx` 361 stacks `\rightharpoonup` over `\leftharpoondown`
+/// (`\mathpalette`), and `\showthe\wd` of `\hbox{$\rightleftharpoons$}` is
+/// 10.00002pt at 10pt, TeX Live 2025. amsfonts replaces the stack with msam
+/// "0A at the same 1.000003em advance; only height/depth change.
+pub(crate) const KERNEL_RIGHTLEFTHARPOONS_EM: f64 = 1.000002;
 
 /// The Unicode mathematical alphanumeric symbol that stands for `ch` in the
 /// math alphabet of `command`: `\mathsf` sans-serif (U+1D5A0, digits
@@ -7327,7 +7348,8 @@ mod package_gating_tests {
     /// available under either flag combination a real document produces.
     ///
     /// This is the divergence the lane exists for: base LaTeX2e has no
-    /// definition for any of these 212 names, so pdflatex answers "Undefined
+    /// definition for these names (bar the three kernel composites `\angle`,
+    /// `\hbar` and `\rightleftharpoons`), so pdflatex answers "Undefined
     /// control sequence" where this compiler used to render the msam/msbm
     /// glyph regardless of what the document loaded.
     #[test]
@@ -7336,29 +7358,37 @@ mod package_gating_tests {
         for name in crate::amssymb::command_names() {
             let source = format!("\\{name}");
             let (_, kernel) = parsed(&source, MathPackages::KERNEL);
-            assert_eq!(kernel.len(), 1, "\\{name} with nothing loaded: {kernel:?}");
-            let package = match crate::amssymb::by_name(name).expect("named symbol").provider {
-                Provider::Amsfonts => "amsfonts",
-                Provider::Amssymb => "amssymb",
-            };
-            assert_eq!(
-                kernel[0].message,
-                format!("\\{name} requires \\usepackage{{{package}}}"),
-                "\\{name}"
-            );
+            if matches!(name, "angle" | "hbar" | "rightleftharpoons") {
+                // The three commands base LaTeX2e does define, as composites
+                // (`fontmath.ltx` 243/241/361): no diagnostic, the gated
+                // kernel arms render them at the measured kernel advance.
+                assert!(kernel.is_empty(), "\\{name} with nothing loaded: {kernel:?}");
+            } else {
+                assert_eq!(kernel.len(), 1, "\\{name} with nothing loaded: {kernel:?}");
+                let package = match crate::amssymb::by_name(name).expect("named symbol").provider {
+                    Provider::Amsfonts => "amsfonts",
+                    Provider::Amssymb => "amssymb",
+                };
+                assert_eq!(
+                    kernel[0].message,
+                    format!("\\{name} requires \\usepackage{{{package}}}"),
+                    "\\{name}"
+                );
+            }
 
             let (_, loaded) = parsed(&source, AMSSYMB);
             assert!(loaded.is_empty(), "\\{name} under amssymb: {loaded:?}");
             checked += 1;
         }
-        // 212 declarations plus the 6 `\global\let` aliases.
-        assert_eq!(checked, 218, "table command count");
+        // 218 declarations plus the 6 `\global\let` aliases.
+        assert_eq!(checked, 224, "table command count");
     }
 
-    /// `amsfonts.sty` alone declares a 15-command subset of the same symbol
-    /// fonts (plus the pieces the dashed arrows and wide accents are built
-    /// from). `\usepackage{amsfonts}` provides exactly those, and `\nleq` and
-    /// the other 197 stay undefined — probed name by name with `\ifcsname`.
+    /// `amsfonts.sty` alone declares a 21-command subset of the same symbol
+    /// fonts (141-147, 96-101, 74-77, 64-73, plus the pieces the dashed
+    /// arrows and wide accents are built from). `\usepackage{amsfonts}`
+    /// provides exactly those, and `\nleq` and the other 197 stay undefined
+    /// — probed name by name with `\ifcsname`.
     #[test]
     fn amsfonts_alone_provides_only_its_own_subset() {
         let subset: Vec<&str> = crate::amssymb::command_names()
@@ -7380,6 +7410,12 @@ mod package_gating_tests {
                 "urcorner",
                 "llcorner",
                 "lrcorner",
+                "rightleftharpoons",
+                "angle",
+                "hbar",
+                "sqsubset",
+                "sqsupset",
+                "mho",
                 "yen",
                 "checkmark",
                 "circledR",
@@ -7572,30 +7608,37 @@ mod package_gating_tests {
         assert!(kernel.is_empty(), "{kernel:?}");
     }
 
-    /// `\angle` and `\hbar` are the two commands here that base LaTeX2e does
-    /// define, as composites amsfonts replaces with one glyph. Measured with
-    /// TeX Live 2025 pdflatex at 10pt: `\hbox{$\angle$}` 6.37344pt without the
-    /// package against 7.22223pt with it, `\hbox{$\hbar$}` 5.76172pt against
-    /// 5.40280pt. Neither changes atom class: `$a\angle b$` grows by exactly
+    /// `\angle`, `\hbar` and `\rightleftharpoons` are the commands here
+    /// that base LaTeX2e does define, as composites amsfonts replaces with
+    /// one msam/msbm glyph. Measured with TeX Live 2025 pdflatex at 10pt:
+    /// `\hbox{$\angle$}` 6.37344pt without the package against 7.22223pt
+    /// with it, `\hbox{$\hbar$}` 5.76172pt against 5.40280pt, and
+    /// `\hbox{$\rightleftharpoons$}` 10.00002pt either way (only height
+    /// and depth change). Neither changes atom class: `$a\angle b$` grows by exactly
     /// the width difference (15.95099 -> 16.79977), and `$a\hbar b$` shrinks
     /// by it (15.33926 -> 14.98035).
     #[test]
     fn angle_and_hbar_keep_the_kernel_composite_without_amsfonts() {
-        for (name, em) in [("angle", KERNEL_ANGLE_EM), ("hbar", KERNEL_HBAR_EM)] {
+        for (name, em, ams_em) in [
+            ("angle", KERNEL_ANGLE_EM, 0.722224),
+            ("hbar", KERNEL_HBAR_EM, 0.540280),
+            ("rightleftharpoons", KERNEL_RIGHTLEFTHARPOONS_EM, 1.000003),
+        ] {
             let (kernel, diagnostics) = parsed(&format!("\\{name}"), MathPackages::KERNEL);
             assert!(diagnostics.is_empty(), "\\{name}: {diagnostics:?}");
             assert_eq!(kernel.atoms[0].width_em, Some(em), "\\{name}");
 
-            // With the package the compiler's glyph row applies unchanged, so
-            // nothing forces the kernel advance any more.
+            // With the package the amsfonts declaration applies: the same
+            // character, at the msam/msbm advance (`crate::amssymb`).
             let (loaded, diagnostics) = parsed(&format!("\\{name}"), AMSSYMB);
             assert!(diagnostics.is_empty(), "\\{name}: {diagnostics:?}");
-            assert_eq!(loaded.atoms[0].width_em, None, "\\{name}");
+            assert_eq!(loaded.atoms[0].width_em, Some(ams_em), "\\{name}");
             assert_eq!(loaded.atoms[0].nucleus, kernel.atoms[0].nucleus, "\\{name}");
         }
-        // pdflatex's widths at 10pt, which the two constants reproduce.
+        // pdflatex's widths at 10pt, which the three constants reproduce.
         close(KERNEL_ANGLE_EM * 10.0, 6.37344);
         close(KERNEL_HBAR_EM * 10.0, 5.76172);
+        close(KERNEL_RIGHTLEFTHARPOONS_EM * 10.0, 10.00002);
     }
 
     /// `\bmod` cancels `\medmuskip` and puts an explicit `\mkern5mu` in its

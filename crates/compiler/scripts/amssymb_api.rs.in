@@ -33,12 +33,16 @@ pub fn command_names() -> impl Iterator<Item = &'static str> {
 
 /// Advance of a Latin Modern Math character of this table.
 pub fn lm_advance(c: char) -> Option<u16> {
-    LM_ADVANCES.iter().find(|(g, _)| *g == c).map(|(_, a)| *a)
+    static INDEX: crate::char_table::CharTable<u16> =
+        crate::char_table::CharTable::new(LM_ADVANCES);
+    INDEX.get(c)
 }
 
 /// Advance of a character only New Computer Modern Math carries.
 pub fn newcm_advance(c: char) -> Option<u16> {
-    NEWCM_ADVANCES.iter().find(|(g, _)| *g == c).map(|(_, a)| *a)
+    static INDEX: crate::char_table::CharTable<u16> =
+        crate::char_table::CharTable::new(NEWCM_ADVANCES);
+    INDEX.get(c)
 }
 
 #[cfg(test)]
