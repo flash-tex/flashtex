@@ -155,11 +155,11 @@ pub struct Stylesheet {
     /// `\hyphenation{...}` words as written (`man-u-script`): exceptions to
     /// the patterns for every paragraph (compiler `Parsed::hyphenation`).
     pub hyphenation: Vec<String>,
-    /// `\enlargethispage{<dimen>}` (and `*`): the command and its dimen in
-    /// points, in document order (compiler `Parsed::parameters`). Where the
-    /// command stands decides the page it enlarges; see
-    /// `pagebuild::Enlarge`.
-    pub enlarge_this_page: Vec<(flashtex_compiler::Span, f64)>,
+    /// `\enlargethispage{<dimen>}` (and `*`): the command, its dimen in
+    /// points and whether it is starred, in document order (compiler
+    /// `Parsed::parameters`). Where the command stands decides the page it
+    /// enlarges; see `pagebuild::Enlarge`.
+    pub enlarge_this_page: Vec<(flashtex_compiler::Span, f64, bool)>,
 }
 
 impl Stylesheet {

@@ -777,6 +777,11 @@ pub struct Doc {
     /// a two-sided document the block starts an odd page, after an empty
     /// one when needed (`\hbox{}\newpage`).
     pub double_page_starts: Vec<usize>,
+    /// Blocks other than paragraphs (headings, rules, pictures, longtables)
+    /// whose `eject_before` is a forced penalty the document wrote
+    /// (`\pagebreak`, `\penalty-10000`) rather than `\newpage`: no `\vfil`
+    /// precedes the break (see `bare_eject_blocks`).
+    pub bare_ejects: Vec<usize>,
     /// `\begin` commands the compiler reported as unimplemented that the
     /// pipeline sets itself (`abstract`): its diagnostic is dropped, the
     /// way `toc::superseded_commands` drops the contents-list ones.
@@ -1250,7 +1255,7 @@ pub fn adapt_cached(
         .parameters
         .iter()
         .filter_map(|a| match a.parameter {
-            flashtex_compiler::parser::BreakParameter::EnlargeThisPage { pt, .. } => Some((a.span, pt)),
+            flashtex_compiler::parser::BreakParameter::EnlargeThisPage { pt, shrink } => Some((a.span, pt, shrink)),
             _ => None,
         })
         .collect();
@@ -2219,6 +2224,7 @@ pub fn adapt_cached(
     superseded.extend(crate::listings::lstset_spans(texts));
     limitations.extend(listing_limitations);
     let (page_starts, double_page_starts) = clear_page_blocks(texts, &blocks);
+    let bare_ejects = bare_eject_blocks(texts, &blocks);
     Doc {
         style,
         blocks,
@@ -2230,8 +2236,47 @@ pub fn adapt_cached(
         math_colors: math_colors(&parsed.blocks),
         page_starts,
         double_page_starts,
+        bare_ejects,
         superseded,
     }
+}
+
+/// Headings, rules, pictures and longtables whose `eject_before` comes from
+/// a forced vertical penalty (`\pagebreak`, `\pagebreak[4]`,
+/// `\penalty-10000` or below) rather than `\newpage`/`\clearpage`: the
+/// page-break command nearest before the block is one of those. A
+/// paragraph carries that penalty itself (`penalty_before`).
+fn bare_eject_blocks(texts: &[&str], blocks: &[Block]) -> Vec<usize> {
+    blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| {
+            let at = match b {
+                Block::Heading { eject_before: true, span, .. } | Block::Rule { eject_before: true, span, .. } => *span,
+                Block::Picture { eject_before: true, document, picture, .. } => Span::in_document(*document, picture.start, picture.end),
+                Block::LongTable { eject_before: true, table, .. } => table.span,
+                _ => return None,
+            };
+            let text = texts.get(at.document.0)?.get(..at.start)?;
+            let last = |name: &str| {
+                let mut from = 0;
+                let mut found = None;
+                while let Some(rel) = find_command(&text[from..], name) {
+                    found = Some(from + rel);
+                    from += rel + 1;
+                }
+                found
+            };
+            let vfil = ["newpage", "clearpage", "cleardoublepage"].iter().filter_map(|c| last(c)).max();
+            let bare = |name: &str, forced: fn(&str) -> bool| last(name).filter(|&p| forced(&text[p + name.len() + 1..]));
+            let pagebreak = bare("pagebreak", |rest| match rest.trim_start().strip_prefix('[') {
+                Some(arg) => arg.split(']').next().is_some_and(|n| n.trim() == "4"),
+                None => true,
+            });
+            let penalty = bare("penalty", |rest| rest.trim_start().split(|c: char| !(c.is_ascii_digit() || c == '-')).next().and_then(|n| n.parse::<i64>().ok()).is_some_and(|n| n <= -10000));
+            pagebreak.max(penalty).filter(|&p| vfil.is_none_or(|v| p > v)).map(|_| i)
+        })
+        .collect()
 }
 
 /// `(document, start, end)` of every formula with a colour of its own
