@@ -360,6 +360,23 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("author", "{...}", "author block for \\maketitle; \\and and \\thanks inside it"),
     ("date", "{...}", "date for \\maketitle; \\today inside it"),
     ("maketitle", "", "article.cls title block"),
+    // letter.cls. Every one of these exists only under
+    // \documentclass{letter}; in any other class they are diagnosed, exactly
+    // as pdflatex's "Undefined control sequence" does.
+    ("address", "{lines}", "letter.cls return address (\\\\-separated lines), set by \\opening"),
+    ("signature", "{name}", "letter.cls name under the closing; falls back to \\name"),
+    ("name", "{name}", "letter.cls \\fromname, used when \\signature is empty"),
+    ("location", "{text}", "letter.cls \\fromlocation: recorded; only the firstpage footer would set it"),
+    ("telephone", "{number}", "letter.cls \\telephonenum: recorded; only the firstpage footer would set it"),
+    ("opening", "{salutation}", "letter.cls: return address and date flush right, the recipient, then the salutation"),
+    ("closing", "{text}", "letter.cls: closing and signature at \\longindentation, 6\\parskip apart"),
+    ("cc", "{text}", "letter.cls carbon-copy line, labelled 'cc:'"),
+    ("encl", "{text}", "letter.cls enclosure line, labelled 'encl:'"),
+    ("ps", "", "letter.cls postscript: a paragraph break and nothing else — it takes no argument"),
+    ("startbreaks", "", "letter.cls: re-allows page breaks after \\closing; no effect on this layout"),
+    ("stopbreaks", "", "letter.cls: forbids page breaks inside the closing; no effect on this layout"),
+    ("stopletter", "", "letter.cls hook run at \\end{letter}; empty in the class itself"),
+    ("makelabels", "", "letter.cls address-label page: accepted, not produced (no .aux round trip)"),
     ("today", "", "the date carried by the compile request; this compiler never reads the clock"),
     ("newtheorem", "{env}[counter]{name}", "defines a numbered theorem-like environment (amsthm)"),
     ("theoremstyle", "{style}", "selects the amsthm style for following \\newtheorem"),
@@ -764,6 +781,10 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     (
         "document",
         "the typeset body; preamble content is not typeset",
+    ),
+    (
+        "letter",
+        "letter.cls: one letter to {recipient\\\\address}, starting a new page",
     ),
     ("equation", "numbered display"),
     ("equation*", "unnumbered display"),
