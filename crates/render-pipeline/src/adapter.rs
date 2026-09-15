@@ -7684,7 +7684,11 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     // the compiler's `pt` cannot know: it converts at a fixed
                     // size. An `\hspace{<n>em}` read from the source is set
                     // as `<n>` quads of the font in force, like `\quad`.
-                    Inline::HSpace { pt, span } => match hspace_ems(text_of(span.document), *span) {
+                    // The compiler's `space_before_pt`/`space_after_pt` (the
+                    // interword glue around the command, for its own layout)
+                    // are not read: the gaps around it come from the source
+                    // bytes here, as every other interword gap does.
+                    Inline::HSpace { pt, span, .. } => match hspace_ems(text_of(span.document), *span) {
                         Some(em) => (Item::Quad { em, style: quad_style() }, "\\hspace"),
                         None => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
                     },
