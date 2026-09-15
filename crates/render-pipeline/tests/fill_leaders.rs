@@ -14,7 +14,7 @@ use flashtex_render_pipeline::display::{GlyphRun, Item, Provenance, Rule, Severi
 
 const PT_PER_BP: f64 = 72.27 / 72.0;
 const TOL: f64 = 0.01;
-const BASE_HFILL_ITEMS: &str = r#"[{"clusters":[{"carets":[{"height":7196394,"text_byte":0,"top":84721021,"x":216398394},{"height":7196394,"text_byte":1,"top":84721021,"x":224233333}],"hit_rects":[{"height":7196394,"top":84721021,"width":7834939,"x":216398394}],"sources":[{"end_byte":138,"path":"main.tex","start_byte":137}],"text_end_byte":1,"text_start_byte":0}],"font_id":"1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852","font_size":10446585,"glyphs":[{"advance_x":7834939,"advance_y":0,"baseline_y":91917415,"cluster":0,"gid":27,"origin_x":216398394}],"kind":"glyph_run","paint":{"a":1,"b":0,"g":0,"r":0},"text":"A"},{"clusters":[{"carets":[{"height":7196394,"text_byte":0,"top":84721021,"x":417930788},{"height":7196394,"text_byte":1,"top":84721021,"x":425330100}],"hit_rects":[{"height":7196394,"top":84721021,"width":7399313,"x":417930788}],"sources":[{"end_byte":146,"path":"main.tex","start_byte":145}],"text_end_byte":1,"text_start_byte":0}],"font_id":"1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852","font_size":10446585,"glyphs":[{"advance_x":7399313,"advance_y":0,"baseline_y":91917415,"cluster":0,"gid":34,"origin_x":417930788}],"kind":"glyph_run","paint":{"a":1,"b":0,"g":0,"r":0},"text":"B"},{"clusters":[{"carets":[{"height":6578471,"text_byte":0,"top":733027233,"x":318252601},{"height":6578471,"text_byte":1,"top":733027233,"x":323475893}],"hit_rects":[{"height":6578471,"top":733027233,"width":5223293,"x":318252601}],"sources":[{"end_byte":0,"path":"main.tex","start_byte":0}],"text_end_byte":1,"text_start_byte":0}],"font_id":"1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852","font_size":10446585,"glyphs":[{"advance_x":5223293,"advance_y":0,"baseline_y":739605704,"cluster":0,"gid":82,"origin_x":318252601}],"kind":"glyph_run","paint":{"a":1,"b":0,"g":0,"r":0},"text":"1"}]"#;
+const BASE_HFILL_ITEMS: &str = r#"[{"clusters":[{"carets":[{"height":7196394,"text_byte":0,"top":84721021,"x":216398394},{"height":7196394,"text_byte":1,"top":84721021,"x":224233333}],"hit_rects":[{"height":7196394,"top":84721021,"width":7834939,"x":216398394}],"sources":[{"end_byte":138,"path":"main.tex","start_byte":137}],"text_end_byte":1,"text_start_byte":0}],"font_id":"1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852","font_size":10446585,"glyphs":[{"advance_x":7834939,"advance_y":0,"baseline_y":91917415,"cluster":0,"gid":27,"origin_x":216398394}],"kind":"glyph_run","paint":{"a":1,"b":0,"g":0,"r":0},"text":"A"},{"clusters":[{"carets":[{"height":7196394,"text_byte":0,"top":84721021,"x":417930788},{"height":7196394,"text_byte":1,"top":84721021,"x":425330100}],"hit_rects":[{"height":7196394,"top":84721021,"width":7399313,"x":417930788}],"sources":[{"end_byte":146,"path":"main.tex","start_byte":145}],"text_end_byte":1,"text_start_byte":0}],"font_id":"1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852","font_size":10446585,"glyphs":[{"advance_x":7399313,"advance_y":0,"baseline_y":91917415,"cluster":0,"gid":34,"origin_x":417930788}],"kind":"glyph_run","paint":{"a":1,"b":0,"g":0,"r":0},"text":"B"},{"clusters":[{"carets":[{"height":6578471,"text_byte":0,"top":733027233,"x":318252601},{"height":6578471,"text_byte":1,"top":733027233,"x":323475893}],"hit_rects":[{"height":6578471,"top":733027233,"width":5223293,"x":318252601}],"synthetic_reason":"page chrome","text_end_byte":1,"text_start_byte":0}],"font_id":"1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852","font_size":10446585,"glyphs":[{"advance_x":5223293,"advance_y":0,"baseline_y":739605704,"cluster":0,"gid":82,"origin_x":318252601}],"kind":"glyph_run","paint":{"a":1,"b":0,"g":0,"r":0},"text":"1"}]"#;
 
 fn doc(body: &str) -> String {
     format!(
@@ -101,6 +101,71 @@ fn dot_fill_matches_pdflatex_cleaders() {
     assert!((first - 1.11891).abs() <= TOL, "first dot: {first}pt");
     assert!((last - 181.51991).abs() <= TOL, "last dot: {last}pt");
     assert!((b_start - 185.41663).abs() <= TOL, "glue width: {b_start}pt");
+}
+
+#[test]
+fn large_dot_fill_uses_large_dots() {
+    if !common::lm_available() {
+        return;
+    }
+    // pdflatex oracle for `{\Large A\dotfill B}` (same 10pt article and
+    // 200pt box as above, TeX Live 2026 `\showbox`): A/B and the dots are
+    // set in OT1/cmr/m/n/14.4. A is 10.5699pt and B 9.9849pt, so the fill
+    // glue is 179.4452pt; each of the 28 cleader boxes is 6.20395pt
+    // (`.44em` of a 14.09984pt em) holding a 3.91661pt dot. The 5.7346pt
+    // leftover splits 2.8673pt at each end, so the first dot origin is
+    // 4.01097pt and the last 171.51762pt from the glue start. (The box and
+    // dot are NOT 14.4pt-scaled cmr10 values: cmr17 is an optical size with
+    // its own quad and period width, measured here rather than derived.)
+    let rendered = rendered("{\\Large A\\dotfill B}");
+    let items = &rendered.v2.pages[0].items;
+    let dots = synthetic_run(items, "\\dotfill");
+    let a = text_run(items, "A");
+    let b = text_run(items, "B");
+    let glue_start = a.glyphs[0].origin_x.0 + a.glyphs[0].advance_x.0;
+    let first = (dots.glyphs[0].origin_x.0 - glue_start) as f64 / flashtex_render_pipeline::display::TICKS_PER_BP * PT_PER_BP;
+    let last = (dots.glyphs.last().unwrap().origin_x.0 - glue_start) as f64 / flashtex_render_pipeline::display::TICKS_PER_BP * PT_PER_BP;
+    let b_start = (b.glyphs[0].origin_x.0 - glue_start) as f64 / flashtex_render_pipeline::display::TICKS_PER_BP * PT_PER_BP;
+    assert_eq!(dots.text, ".".repeat(28));
+    assert_eq!(dots.glyphs.len(), 28);
+    assert_eq!(dots.clusters.len(), 28);
+    assert!((pt(dots.glyphs[0].advance_x) - 3.91661).abs() <= TOL, "dot width: {}pt", pt(dots.glyphs[0].advance_x));
+    assert!((first - 4.01097).abs() <= TOL, "first dot: {first}pt");
+    assert!((last - 171.51762).abs() <= TOL, "last dot: {last}pt");
+    assert!((b_start - 179.4452).abs() <= TOL, "glue width: {b_start}pt");
+}
+
+#[test]
+fn closed_group_dot_fill_uses_ambient_dots() {
+    if !common::lm_available() {
+        return;
+    }
+    // pdflatex oracle for `{\Large A}\dotfill B` (same 10pt article and
+    // 200pt box as above, TeX Live 2026 `\showbox` of the paragraph):
+    // `\hbox(9.84+0.0)x200.0, glue set 182.34674fill` with A in
+    // OT1/cmr/m/n/14.4 but the cleaders in OT1/cmr/m/n/10 -- the size group
+    // closed before the fill, so the dots are ambient, unlike
+    // `{\Large A\dotfill B}` above where the group is still open. Each of
+    // the 41 cleader boxes is 4.40002pt (`.44em` of the 10.00002pt quad)
+    // holding a 2.77779pt dot. The 1.94592pt leftover splits 0.97296pt at
+    // each end, so the first dot origin is 1.78408pt and the last
+    // 177.78488pt from the glue start.
+    let rendered = rendered("{\\Large A}\\dotfill B");
+    let items = &rendered.v2.pages[0].items;
+    let dots = synthetic_run(items, "\\dotfill");
+    let a = text_run(items, "A");
+    let b = text_run(items, "B");
+    let glue_start = a.glyphs[0].origin_x.0 + a.glyphs[0].advance_x.0;
+    let first = (dots.glyphs[0].origin_x.0 - glue_start) as f64 / flashtex_render_pipeline::display::TICKS_PER_BP * PT_PER_BP;
+    let last = (dots.glyphs.last().unwrap().origin_x.0 - glue_start) as f64 / flashtex_render_pipeline::display::TICKS_PER_BP * PT_PER_BP;
+    let b_start = (b.glyphs[0].origin_x.0 - glue_start) as f64 / flashtex_render_pipeline::display::TICKS_PER_BP * PT_PER_BP;
+    assert_eq!(dots.text, ".".repeat(41));
+    assert_eq!(dots.glyphs.len(), 41);
+    assert_eq!(dots.clusters.len(), 41);
+    assert!((pt(dots.glyphs[0].advance_x) - 2.77779).abs() <= TOL, "dot width: {}pt", pt(dots.glyphs[0].advance_x));
+    assert!((first - 1.78408).abs() <= TOL, "first dot: {first}pt");
+    assert!((last - 177.78488).abs() <= TOL, "last dot: {last}pt");
+    assert!((b_start - 182.34674).abs() <= TOL, "glue width: {b_start}pt");
 }
 
 #[test]

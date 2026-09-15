@@ -1,0 +1,8 @@
+# pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)
+# source fixtures/toc/38-article-list-only.tex (tools/toc-oracle/generate.py)
+# lists 1 133.7684 147.4198
+page 1 612.0000 792.0000
+word 1 133.7680 134.7650 LMRoman12-Bold 14.3462 List
+word 1 165.9695 134.7650 LMRoman12-Bold 14.3462 of
+word 1 184.3498 134.7650 LMRoman12-Bold 14.3462 Figures
+word 1 303.1330 702.6350 LMRoman10-Regular 9.9626 1

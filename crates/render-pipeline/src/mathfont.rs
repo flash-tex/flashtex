@@ -108,6 +108,9 @@ pub struct MathFonts {
     /// `MathVariants.minConnectorOverlap`, font units: the least a part may
     /// overlap its neighbour in an assembly (20 in Latin Modern Math).
     min_connector_overlap: u16,
+    /// The first `ssty` (script-style) alternate of each glyph the face's
+    /// `GSUB` lists one for: Latin Modern Math's `minute` -> `minute.st`.
+    script_alternates: BTreeMap<u16, u16>,
     /// Characters with no glyph in the math font, recorded for diagnostics.
     missing: RefCell<Vec<char>>,
 }
@@ -230,6 +233,11 @@ impl MathFonts {
             .and_then(|f| f.table(b"MATH"))
             .and_then(|t| parse_variants(t).ok())
             .unwrap_or_default();
+        let script_alternates = face
+            .otf()
+            .and_then(|f| f.table(b"GSUB"))
+            .and_then(|t| parse_script_alternates(t).ok())
+            .unwrap_or_default();
         Some(MathFonts {
             face,
             bb: None,
@@ -241,6 +249,7 @@ impl MathFonts {
             vert,
             horiz,
             min_connector_overlap,
+            script_alternates,
             missing: RefCell::new(Vec::new()),
         })
     }
@@ -357,6 +366,12 @@ impl MathFonts {
             .unwrap_or(&[])
     }
 
+    /// The face's first `ssty` alternate of `gid`: the design for script
+    /// style. `None` when the face lists none.
+    pub fn script_alternate(&self, gid: u16) -> Option<u16> {
+        self.script_alternates.get(&gid).copied()
+    }
+
     /// `MathVariants.minConnectorOverlap` in font units.
     pub fn min_connector_overlap(&self) -> u16 {
         self.min_connector_overlap
@@ -468,6 +483,20 @@ impl MathFonts {
                 Some(ams) => ams.text.chars().next().unwrap_or(ch),
                 None => ch,
             },
+        }
+    }
+
+    /// Semantic Unicode corrections for math glyph text. This is separate
+    /// from [`math_char`], which selects the painted OpenType glyph. The
+    /// default pdfTeX cmex/cmsy maps are font-slot artefacts (for example,
+    /// `\sum` maps to `P`), so they are not the extraction oracle here.
+    pub fn extraction_text(ch: char) -> Option<&'static str> {
+        match ch {
+            '-' => Some("\u{2212}"),
+            '*' => Some("\u{2217}"),
+            '\u{03C6}' => Some("\u{03D5}"),
+            '\u{03D5}' => Some("\u{03C6}"),
+            _ => None,
         }
     }
 
@@ -667,6 +696,65 @@ fn parse_construction(m: &[u8], cons: usize) -> Result<Construction, flashtex_fo
     Ok((variants, parts))
 }
 
+/// `GSUB` `ssty` lookups -> each covered glyph's first substitute (the
+/// `ssty=1` form). Latin Modern Math's are AlternateSubst (type 3); single
+/// substitutions (type 1) and Extension wrappers (type 7) are read too, and
+/// any other lookup type is skipped. Script and language systems are not
+/// consulted: a math face's `ssty` is the same under all of them.
+fn parse_script_alternates(g: &[u8]) -> Result<BTreeMap<u16, u16>, flashtex_font_engine::Error> {
+    let malformed = |what: &str| flashtex_font_engine::Error::Malformed(format!("GSUB {what}"));
+    let mut out = BTreeMap::new();
+    let features = usize::from(u16_at(g, 6)?);
+    let lookups = usize::from(u16_at(g, 8)?);
+    let mut indices = Vec::new();
+    for i in 0..usize::from(u16_at(g, features)?) {
+        let rec = features + 2 + 6 * i;
+        if g.get(rec..rec + 4) != Some(b"ssty") {
+            continue;
+        }
+        let feature = features + usize::from(u16_at(g, rec + 4)?);
+        for j in 0..usize::from(u16_at(g, feature + 2)?) {
+            indices.push(u16_at(g, feature + 4 + 2 * j)?);
+        }
+    }
+    let lookup_count = u16_at(g, lookups)?;
+    for index in indices {
+        if index >= lookup_count {
+            return Err(malformed("lookup index"));
+        }
+        let lookup = lookups + usize::from(u16_at(g, lookups + 2 + 2 * usize::from(index))?);
+        let kind = u16_at(g, lookup)?;
+        for k in 0..usize::from(u16_at(g, lookup + 4)?) {
+            let mut sub = lookup + usize::from(u16_at(g, lookup + 6 + 2 * k)?);
+            let mut kind = kind;
+            if kind == 7 {
+                kind = u16_at(g, sub + 2)?;
+                let hi = u32::from(u16_at(g, sub + 4)?);
+                let lo = u32::from(u16_at(g, sub + 6)?);
+                sub += usize::try_from((hi << 16) | lo).map_err(|_| malformed("extension offset"))?;
+            }
+            let format = u16_at(g, sub)?;
+            let coverage = parse_coverage(g, sub + usize::from(u16_at(g, sub + 2)?))?;
+            for (c, gid) in coverage.into_iter().enumerate() {
+                let substitute = match (kind, format) {
+                    (1, 1) => gid.wrapping_add(u16_at(g, sub + 4)?),
+                    (1, 2) => u16_at(g, sub + 6 + 2 * c)?,
+                    (3, 1) => {
+                        let set = sub + usize::from(u16_at(g, sub + 6 + 2 * c)?);
+                        if u16_at(g, set)? == 0 {
+                            continue;
+                        }
+                        u16_at(g, set + 2)?
+                    }
+                    _ => break,
+                };
+                out.entry(gid).or_insert(substitute);
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// OpenType coverage table -> glyph ids in coverage-index order.
 fn parse_coverage(b: &[u8], at: usize) -> Result<Vec<u16>, flashtex_font_engine::Error> {
     let format = u16_at(b, at)?;
@@ -796,6 +884,42 @@ mod tests {
         assert!(parens.len() >= 3, "{} paren sizes", parens.len());
         assert!(parens.windows(2).all(|w| w[0].total_height() <= w[1].total_height()));
         assert!(m.radical_sizes(SizeClass::Text).len() >= 2);
+    }
+
+    #[test]
+    fn extraction_text_uses_semantic_math_unicode() {
+        let expected = [
+            ('-', "−"),
+            ('*', "∗"),
+            ('\u{03C6}', "ϕ"),
+            ('\u{03D5}', "φ"),
+        ];
+        for (ch, text) in expected {
+            assert_eq!(MathFonts::extraction_text(ch), Some(text), "{ch:?}");
+        }
+        // pdfTeX's default cmex/cmsy mappings make copy-paste worse by
+        // exposing font-slot artefacts such as `\sum` -> `P`; semantic
+        // Unicode, not that output, is the contract.
+        for ch in [
+            '\u{2217}',
+            '\u{2218}',
+            '\u{22C5}',
+            '\u{2216}',
+            '\u{0338}',
+            '\u{21A6}',
+            '\u{27F9}',
+            '\u{27F6}',
+            '\u{21AA}',
+            '\u{03BC}',
+            '\u{0394}',
+            '\u{03A9}',
+            '\u{2211}',
+            '\u{220F}',
+            '\u{222B}',
+            '\u{222E}',
+        ] {
+            assert_eq!(MathFonts::extraction_text(ch), None, "{ch:?}");
+        }
     }
 
     #[test]

@@ -1,5 +1,5 @@
 {
- "passed": 33,
+ "passed": 35,
  "total": 36,
  "tolerance_bp": 0.5,
  "fixtures": [
@@ -213,18 +213,16 @@
   },
   {
    "fixture": "17-numberwithin-section",
-   "pass": false,
+   "pass": true,
    "pages": [
     1,
     1
    ],
    "aligned": 16,
-   "within_tol": 15,
+   "within_tol": 16,
    "unaligned": 0,
-   "worst_bp": 0.784,
-   "sample": [
-    "p1 '(2.1).' dx -0.78 dy +0.00"
-   ]
+   "worst_bp": 0.005,
+   "sample": []
   },
   {
    "fixture": "18-subequations",
@@ -254,23 +252,16 @@
   },
   {
    "fixture": "20-enumerate-nested-display",
-   "pass": false,
+   "pass": true,
    "pages": [
     1,
     1
    ],
-   "aligned": 33,
-   "within_tol": 25,
-   "unaligned": 2,
-   "worst_bp": 7.971,
-   "sample": [
-    "p1 '2.' dx -0.00 dy +7.97",
-    "p1 'Outer' dx -0.00 dy +7.97",
-    "p1 'again' dx +0.00 dy +7.97",
-    "p1 'p' dx -0.00 dy +7.97",
-    "p1 '=' dx -0.00 dy +7.97",
-    "p1 'q' dx -0.00 dy +7.97"
-   ]
+   "aligned": 34,
+   "within_tol": 34,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "sample": []
   },
   {
    "fixture": "21-after-heading",

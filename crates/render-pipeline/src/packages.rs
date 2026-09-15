@@ -7,8 +7,8 @@
 //! displays and amssymb glyph tables (`mathtex`, `style::cmex_designs`),
 //! `microtype` protrusion and expansion (`adapter::microtype_setup`), the
 //! `geometry` page frame (`flashtex_class_geometry` through
-//! `adapter::document_setup`), `graphicx` image items (`floats::ImageCache`)
-//! and `tikz` pictures (`tikz`). A consumer of this crate's display list would
+//! `adapter::document_setup`), `graphicx` image items (`floats::ImageCache`),
+//! `float`'s `[H]` placement (`floats::prepare`) and `tikz` pictures (`tikz`). A consumer of this crate's display list would
 //! otherwise be told that what it is looking at was not typeset.
 //!
 //! The rewrite keeps the compiler's exact phrasing so the Mac app's
@@ -26,7 +26,7 @@ const SUFFIX: &str = " are recognised but not implemented";
 pub fn implemented_by_pipeline(package: &str) -> bool {
     matches!(
         package,
-        "amsmath" | "amssymb" | "amsfonts" | "lmodern" | "microtype" | "geometry" | "graphicx" | "tikz"
+        "amsmath" | "amssymb" | "amsfonts" | "lmodern" | "microtype" | "geometry" | "graphicx" | "tikz" | "float"
     )
 }
 
@@ -180,7 +180,7 @@ mod tests {
         assert_eq!(supersede_message(&format!("packages amsmath, amssymb are recognised but not implemented{HELP}")), None);
         assert_eq!(supersede_message(&format!("packages microtype are recognised but not implemented{HELP}")), None);
         // Every package this crate sets, one at a time.
-        for p in ["amsmath", "amssymb", "amsfonts", "lmodern", "microtype", "geometry", "graphicx", "tikz"] {
+        for p in ["amsmath", "amssymb", "amsfonts", "lmodern", "microtype", "geometry", "graphicx", "tikz", "float"] {
             let m = format!("packages {p} are recognised but not implemented{HELP}");
             assert_eq!(supersede_message(&m), None, "{p} leaked");
         }

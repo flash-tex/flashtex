@@ -60,13 +60,14 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(dbl.first?.detail, "line break; an optional [length] is consumed")
 
         // Math commands say so and show the glyph the compiler renders.
-        // `\allowdisplaybreaks` matches `al` too and is not a symbol; it sorts
+        // `\allowdisplaybreaks` and `\allowbreak` (the \penalty0 break
+        // permission, #568) match `al` too and are not symbols; they sort
         // ahead of the two by inventory order, which is what this asserts.
         let math = Completion.suggestions(in: "$\\al", caretUTF16: 4, result: nil)
-        XCTAssertEqual(labels(math), ["\\allowdisplaybreaks[0-4]", "\\alpha", "\\aleph"],
+        XCTAssertEqual(labels(math), ["\\allowdisplaybreaks[0-4]", "\\allowbreak", "\\alpha", "\\aleph"],
                        "inventory (math_symbol) order")
         XCTAssertEqual(math.map(\.detail), ["amsmath page-break permission inside displays; no material",
-                                            "math · symbol α", "math · symbol ℵ"])
+                                            "\\penalty0", "math · symbol α", "math · symbol ℵ"])
         XCTAssertEqual(Completion.Vocabulary.symbols.count, Completion.Vocabulary.inventory.commands.filter { $0.origin == .mathSymbol && $0.renders }.count)
         XCTAssertGreaterThan(Completion.Vocabulary.entries.count, Completion.Vocabulary.symbols.count)
         // Math-only commands are marked once, by the `math ·` prefix of `Entry.detail`.
@@ -111,14 +112,16 @@ final class CompletionTests: XCTestCase {
         // Innermost closer first, then the vocabulary's `e` commands in table
         // order (text entries, then math entries). `\encl{text}` is letter.cls's
         // enclosure line; the vocabulary is the compiler's whole inventory, not
-        // the loaded classes, so it ranks here in every document.
-        XCTAssertEqual(Array(labels(s).prefix(7)), ["\\end{itemize}", "\\end{document}", "\\emph{...}", "\\end{env}", "\\eqref{key}", "\\em", "\\encl{text}"])
+        // the loaded classes, so it ranks here in every document. The
+        // line/page control parameters `\emergencystretch` and
+        // `\enlargethispage` (#568) precede it in the inventory table.
+        XCTAssertEqual(Array(labels(s).prefix(9)), ["\\end{itemize}", "\\end{document}", "\\emph{...}", "\\end{env}", "\\eqref{key}", "\\em", "\\emergencystretch=<dimen>", "\\enlargethispage*{dimension}", "\\encl{text}"])
         // `\enspace`/`\enskip` are dual-mode entries (like `\quad`/`\qquad`): text
         // entries whose detail states their math behaviour without a `math ·`
-        // prefix, so only the entries after them are math-only. `\encl{text}`
-        // is plain text, so the math-only run starts one entry later than the
-        // count of text entries alone would suggest.
-        XCTAssertTrue(s.dropFirst(9).allSatisfy { $0.detail.hasPrefix("math · ") }, "\(labels(s))")
+        // prefix, so the math-only run starts only after them: two closers
+        // plus nine text entries put it at index 11, and the 12-entry cap
+        // leaves exactly one math entry (`\eqqcolon`) to satisfy it.
+        XCTAssertTrue(s.dropFirst(11).allSatisfy { $0.detail.hasPrefix("math · ") }, "\(labels(s))")
         XCTAssertEqual(s[0].kind, .environment)
         XCTAssertEqual(s[0].detail, "closes \\begin{itemize} at byte 17")
         XCTAssertEqual(s[0].insertText, "\\end{itemize}")
@@ -127,7 +130,7 @@ final class CompletionTests: XCTestCase {
         // spelling still ranks behind the closer it would have to name.
         let closed = text + "nd{itemize}\n\\en"
         let s2 = Completion.suggestions(in: closed, caretUTF16: (closed as NSString).length, result: nil)
-        XCTAssertEqual(labels(s2), ["\\end{document}", "\\end{env}", "\\encl{text}", "\\enspace", "\\enskip"])
+        XCTAssertEqual(labels(s2), ["\\end{document}", "\\end{env}", "\\enlargethispage*{dimension}", "\\encl{text}", "\\enspace", "\\enskip"])
         let typed = closed + "d"
         XCTAssertEqual(labels(Completion.suggestions(in: typed, caretUTF16: (typed as NSString).length, result: nil)), ["\\end{document}", "\\end{env}"])
 

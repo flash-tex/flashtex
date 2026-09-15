@@ -1,31 +1,54 @@
 # Commander task board
 
-Owner: Commander `orchestrator-jaysen-claude` (mac-m1max-a). Updated: 2026-09-13T03:30:00Z.
-Full process: [orchestration master plan](../ORCHESTRATION.md).
+Owner: Commander `orchestrator-jaysen-claude` (mac-m1max-a). Updated: 2026-09-14T01:05:00Z.
+Full process: [orchestration master plan](../ORCHESTRATION.md). Claims: `python3 scripts/coord.py claims --stale`
+(branch `coordination-claims`). Live machines: mac-m1max-a (this Commander), Kabir's
+linux-primary / mac-m5pro-kabir (`kabir-claude`, integration lane + FT-060..067/070).
 
-> **Staffing rule (user, 2026-09-13):** allocate tasks ONLY to mac-m1max-a
-> (parent `mac-claude-a` staffs lanes there) until another machine posts a fresh
-> live report on GH issue #2. Nothing is dispatched to Daniel (mac-m5pro-dq222),
-> Kabir (mac-m5pro-kabir), Aarush or linux-primary before that. Rows below for
-> those machines are historical; their `assigned` states are not live evidence.
+> **Staffing rule (user, 2026-09-13/14):** tasks go only to machines with a fresh live
+> report on GH issue #2. Heavy models (Opus/Fable) are reserved for compiler/producer
+> performance (FT-070 Kabir, FT-071 Mac). Claim before starting, one-liners included.
 
-## Current queue (main ad71b648, all owned by mac-claude-a on mac-m1max-a)
+## Current queue (main eea975c3, v0.1.3 tagged at b613ff41)
 
-| ID / revision | Task | Branch | State | Notes |
-|---|---|---|---|---|
-| FT-050 / 1 | Generic AI provider abstraction in crates/assistant-context + crates/bridge (GH2#5649521523 contract) | agent/mac-ai-generic/crates | assigned | Mac side is the parent's mac-ai-generic lane; no apps/mac edits from this lane |
-| FT-051 / 1 | HW1.tex exact render: heading offset/skips, overfull lines, \setlist notice + three compiler asks | agent/mac-render-pipeline/hw1-math-10, agent/mac-compiler-hw1/compiler | assigned | compiler edits are a user-directed temporary allocation while FT-002 (Kabir) is not live |
-| FT-052 / 1 | Corpus coverage gate from PR #42/#53 and first math/package coverage increment | agent/mac-coverage/corpus-gate | assigned | PR #42/#53 integration: only two add/add coordination conflicts |
-| FT-053 / 1 | iPad companion finished: remaining durability cases, full simulator suite, device blockers listed | agent/mac-ios-app-2/finish | assigned | |
-| FT-054 / 1 | Modern editor: highlighting, intellisense, navigation, scrollable problems panel | agent/mac-editor-intellisense/editor | assigned | extends mac-syntax-highlight / mac-completion-sync |
-| FT-055 / 1 | CI/CD auto-deploy of compiler + GUI to the website; user docs | agent/mac-claude-a/cicd | assigned | parent already started; tracked to avoid duplication |
+Merges to main are review-gated on mac-m1max-a; Kabir's integration lane merges gated PRs in the order posted on GH issue #2.
 
-Integration facts at this update: `origin/agent/mac-pdf/searchable-text` b4b1513
-is already on main (94a67130/9689384e/4893f3e7), nothing to merge. PR #42 and PR #53
-are the only pending deliveries from this machine. Daniel's branches
-`daniel-parent-b/lm-math-symbols` (11 ahead, touches apps/mac Fonts.swift) and
-`daniel-math-accents/compiler` (6 ahead) are unintegrated and unowned until Daniel
-reports live; do not merge without a fresh owner report and a Mac build/test.
+| ID / revision | Task | Owner | Branch | State | Notes |
+|---|---|---|---|---|---|
+| FT-060 / 1 | HW2 math completion + \mathcal from NewCMMath | kabir-claude | agent/kabir-claude/hw2-math-final | integrated | HW2: 3 pages, 0 errors, 0 overfull on main |
+| FT-061 / 1 | amsmath environment completeness | kabir-claude | agent/kabir-claude/amsmath-envs | in progress | #198 blocked on rebase (collides with #180); tier-1 spacing landed via #230 |
+| FT-062 / 1 | TikZ minimal-but-real subset | kabir-claude | agent/kabir-claude/tikz-min | in progress | path items on main; nodes/arrows pending |
+| FT-063 / 1 | Real images and floats | kabir-claude | agent/kabir-claude/graphics-floats | in progress | image items on main; float placement pending |
+| FT-064 / 1 | Hyphenation (Liang patterns) | kabir-claude | agent/kabir-claude/hyphenation | integrated | unified in paragraph-layout |
+| FT-065 / 1 | Compiler hyperoptimization | kabir-claude | agent/kabir-claude/compiler-perf | integrated | 500 KB warm edit 4.5 s -> 111 ms; folded into FT-070 |
+| FT-066 / 1 | Conversion provider seam + on-device model design | kabir-claude | agent/kabir-claude/conversion-provider | integrated | `--conversion-provider`; Keychain `tech.jay3332.flashtex.ai.<provider>` |
+| FT-067 / 1 | Supported-LaTeX truth: generated docs + drift gate | kabir-claude | agent/kabir-claude/supported-latex | integrated | every compiler lane must re-run `apps/mac/scripts/sync-supported-latex.sh` |
+| FT-070 / 1 | Compiler hyperoptimization program (standing) | kabir-claude | agent/linux-primary/ft070-* | active | #232 memory (Cluster 160 -> 88 B); next: shared assembled items, page window API |
+| FT-071 / 1 | Producer-side performance (standing) | mac-claude-a | agent/mac-render-pipeline/perf-* | active | perf-4 `display-list-v2-compact` running (lane mac-perf-4); shares the page-window API with #232 |
+
+### Open PR dispositions (Kabir's 2026-09-14T00:10Z triage, agreed)
+
+| PR(s) | Disposition | Owner |
+|---|---|---|
+| #233 | remove web-authored docs/examples that describe another codebase — merge first (v0.1.3 is out) | integration lane |
+| #241 | render-pipeline: packages the pipeline sets are no longer reported as not implemented | integration lane |
+| #242 / #243 / #244 | letter class; `\c` `\v` accents; `\maketitle` without `\author` + `Parser::unsupported` message — the last real-world corpus errors | unclaimed compiler lanes (Kabir's machine) |
+| #230 -> #231 -> #232 | package gating (compiler, pipeline) then FT-070 memory; merge in that order, each gated | kabir-claude |
+| #142 | compiles against a removed `long_required_group`; rebase | its lane (compiler) |
+| #197 | two of its own tests fail on main (`\thm@headsep`); re-measure on main | its lane |
+| #153 -> #154 -> #192 | #153 predates the `crate::expansion` refactor; rebuild on the current compiler before the chain can land | its lane (footnotes) |
+| #181 | rebase onto #199 keeping its tests | kabir-claude |
+| #201 | rebase onto #186 | kabir-claude |
+| #173 -> #176 -> #184 | cheapest chain; rebase #173 first | kabir-claude (offered) |
+| #194 -> #195 | rebase #194 onto main, then re-base #195 on it | kabir-claude |
+| 30 others | conflict with main on `supported-latex.json` / `coverage.md` / `lm_math.rs` / `typeset.rs`; owners rebase; no integrator merges | owners |
+| #212 | held until #230 lands (its stated blocker) | its lane |
+
+### Deferred / owner-only
+
+iPad on-device run needs Xcode 26.4 (iOS 26.4.1 DDI); exact-route PDF paths (crates/pdf);
+`msbm` advances from TFM in the producer; whether to rewrite the five mis-attributed main
+commits (97a02a26..58aa1093) is the owner's call. Historical rows follow.
 
 | ID / revision | Task | Owner | State | Dependencies |
 |---|---|---|---|---|

@@ -19,7 +19,8 @@
 
 use crate::cm_tfm::*;
 use crate::metrics::{Extensible, FontId, Glyph, MathFontMetrics, MathParams, SizeClass};
-use crate::tfm::{TfmChar, TfmFont, scale};
+use crate::metrics::{MathChar, OrdLigature, OrdPair};
+use crate::tfm::{LigKern, TfmChar, TfmFont, scale};
 
 /// Family 0: roman (`cmr`), 1: math italic (`cmmi`), 2: symbols (`cmsy`),
 /// 3: extension (`cmex`).
@@ -692,8 +693,12 @@ impl MathFontMetrics for CmMathMetrics {
     }
 
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
-        let code = if ch.is_ascii() { ch as u8 } else { return None };
-        self.make_glyph(Family::Roman, code, ch, size)
+        self.make_glyph(Family::Roman, ot1_text_slot(ch)?, ch, size)
+    }
+
+    fn text_space(&self, size: SizeClass) -> f64 {
+        let (font, _, at) = self.font(Family::Roman, size);
+        font.fontdimen(2, at)
     }
 
     fn accent_sizes(&self, ch: char, size: SizeClass) -> Vec<Glyph> {
@@ -718,6 +723,88 @@ impl MathFontMetrics for CmMathMetrics {
             }
         }
         out
+    }
+
+    fn ord_pair(&self, left: MathChar, right: MathChar, size: SizeClass) -> Option<OrdPair> {
+        let slot = |c: MathChar| match c {
+            MathChar::Symbol(ch) => symbol_slot(ch),
+            MathChar::Text(ch) => Some((Family::Roman, ot1_text_slot(ch)?)),
+        };
+        let ((family, l), (right_family, r)) = (slot(left)?, slot(right)?);
+        if family != right_family {
+            return None;
+        }
+        let (font, _, at) = self.font(family, size);
+        let text_font = font.params.get(1).is_some_and(|&space| space != 0);
+        let (kern, ligature) = match font.lig_kern(l, r) {
+            Some(LigKern::Kern(fixword)) => (scale(fixword, at), None),
+            Some(LigKern::Ligature { op, rem }) => (
+                0.0,
+                ligature_char(left, family, rem).map(|ch| OrdLigature { op, ch }),
+            ),
+            None => (0.0, None),
+        };
+        Some(OrdPair {
+            kern,
+            text_font,
+            ligature,
+        })
+    }
+}
+
+/// The ligature characters of the OT1 text fonts (`cmr`, `cmti`, `cmbx`,
+/// `cmss`), as the Unicode characters that stand for them in a math list:
+/// the lig/kern programs produce these slots, and [`ot1_text_slot`] puts
+/// them back. `cmtt`'s two ligatures (`!``, `?``) go to slots 0o16/0o17 of
+/// its own layout and are not covered.
+const OT1_LIGATURES: [(u8, char); 11] = [
+    (0o13, '\u{FB00}'),  // ff
+    (0o14, '\u{FB01}'),  // fi
+    (0o15, '\u{FB02}'),  // fl
+    (0o16, '\u{FB03}'),  // ffi
+    (0o17, '\u{FB04}'),  // ffl
+    (0o42, '\u{201D}'),  // ''
+    (0o74, '\u{00A1}'),  // !`
+    (0o76, '\u{00BF}'),  // ?`
+    (0o134, '\u{201C}'), // ``
+    (0o173, '\u{2013}'), // --
+    (0o174, '\u{2014}'), // ---
+];
+
+/// The character a ligature instruction of `family`'s font produces at slot
+/// `rem`, of the same kind as the pair's `left` character: a text character
+/// ([`ot1_text_char`]), or a symbol that [`symbol_slot`] puts back at that
+/// slot. `None` when no character stands for the slot (CM's math families
+/// have no ligatures, so a symbol pair never misses in practice); the
+/// ligature is then not formed.
+pub fn ligature_char(left: MathChar, family: Family, rem: u8) -> Option<MathChar> {
+    let ch = ot1_text_char(rem)?;
+    match left {
+        MathChar::Text(_) => Some(MathChar::Text(ch)),
+        MathChar::Symbol(_) => {
+            (symbol_slot(ch) == Some((family, rem))).then_some(MathChar::Symbol(ch))
+        }
+    }
+}
+
+/// The OT1 text-font slot of a text character: its ASCII code, or the slot
+/// of a ligature character ([`OT1_LIGATURES`]).
+pub fn ot1_text_slot(ch: char) -> Option<u8> {
+    if ch.is_ascii() {
+        return Some(ch as u8);
+    }
+    OT1_LIGATURES
+        .iter()
+        .find(|(_, c)| *c == ch)
+        .map(|(slot, _)| *slot)
+}
+
+/// The text character standing for OT1 slot `slot` of a ligature result:
+/// a ligature character, or the printable ASCII character at that code.
+pub fn ot1_text_char(slot: u8) -> Option<char> {
+    match OT1_LIGATURES.iter().find(|(s, _)| *s == slot) {
+        Some((_, ch)) => Some(*ch),
+        None => (slot.is_ascii_graphic()).then_some(slot as char),
     }
 }
 

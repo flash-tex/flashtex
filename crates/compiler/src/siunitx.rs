@@ -1315,6 +1315,13 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         | Nucleus::Space { .. }
         | Nucleus::Bold(_)
         | Nucleus::Rule(_) => {}
+        Nucleus::TextRun(pieces) => {
+            for piece in pieces {
+                if let crate::math::TextPiece::Math(list) = piece {
+                    respan_list(list, span);
+                }
+            }
+        }
         Nucleus::Fraction {
             numerator,
             denominator,
@@ -1332,6 +1339,7 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         | Nucleus::Framed { body, .. }
         | Nucleus::Accent { body, .. }
         | Nucleus::Phantom { body, .. }
+        | Nucleus::Lap { body, .. }
         | Nucleus::Operator { body, .. } => respan_list(body, span),
         Nucleus::Stacked { base, over, under } => {
             respan_list(base, span);
