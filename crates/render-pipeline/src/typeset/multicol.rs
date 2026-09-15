@@ -511,7 +511,7 @@ fn body_first_start(body: &[Block]) -> Option<usize> {
 /// Splits a paragraph whose lines straddle `at` (a preface that ends in
 /// the middle of a paragraph: `[...]` is blanked, not a `\par`).
 fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Block)> {
-    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, list, sized, leading_pt } = b else { return None };
+    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, penalty_before, breaking, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, list, sized, leading_pt } = b else { return None };
     let mut before: Vec<ParaPart> = Vec::new();
     let mut after: Vec<ParaPart> = Vec::new();
     for p in parts {
@@ -554,6 +554,8 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         env_open: *env_open,
         env_close: false,
         eject_before: *eject_before,
+        penalty_before: *penalty_before,
+        breaking: *breaking,
         vspace_before: *vspace_before,
         addvspace_before: *addvspace_before,
         addvspace_flex: *addvspace_flex,
@@ -570,6 +572,8 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         env_open: None,
         env_close: *env_close,
         eject_before: false,
+        penalty_before: None,
+        breaking: *breaking,
         vspace_before: 0.0,
         addvspace_before: 0.0,
         addvspace_flex: (0.0, 0.0),
@@ -754,6 +758,8 @@ pub(super) fn outer_doc(ctx: &mut Context, doc: &Doc, floats: &[floatpage::Float
         superseded: Vec::new(),
         secnumdepth: doc.secnumdepth,
         page_starts,
+        double_page_starts: doc.double_page_starts.iter().filter_map(|i| new_index.get(i).copied()).collect(),
+        bare_ejects: doc.bare_ejects.iter().filter_map(|i| new_index.get(i).copied()).collect(),
         default_color: doc.default_color,
         math_colors: doc.math_colors.clone(),
         page_color: doc.page_color,
@@ -1974,6 +1980,8 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
             superseded: Vec::new(),
             secnumdepth: doc.secnumdepth,
             page_starts: Vec::new(),
+            double_page_starts: Vec::new(),
+            bare_ejects: Vec::new(),
             default_color: doc.default_color,
             math_colors: doc.math_colors.clone(),
             page_color: doc.page_color,

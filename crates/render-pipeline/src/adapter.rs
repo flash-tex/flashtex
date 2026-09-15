@@ -151,6 +151,26 @@ pub enum Item {
     /// after sentence-ending punctuation, 999 after an uppercase letter).
     Space { style: TextStyle, factor: u32, no_break: bool },
     Math { list: MathList, span: Span },
+    /// A penalty node in the paragraph (compiler `Inline::Penalty`:
+    /// `\penalty`, `\nobreak`, `\allowbreak`, `\linebreak[n]`,
+    /// `\nolinebreak[n]`). A forced one (-10000) ends a *justified* line:
+    /// unlike `\\` there is no `\hfil` in front of it.
+    ///
+    /// `boxed_dashes`: amsmath's `\nobreakdash`, whose `-`/`--`/`---` (the
+    /// end of the word before this item) were set in an `\hbox`, so no
+    /// discretionary follows them (TeX §1039) and the letters before them
+    /// are hyphenated as a word followed by a penalty (§899).
+    Penalty { value: i32, boxed_dashes: bool },
+    /// `\vadjust{\penalty<value>}` (compiler `Inline::PagePenalty`:
+    /// `\pagebreak[n]`/`\nopagebreak[n]` inside a paragraph): a page-break
+    /// penalty in the vertical list right after the line this item ends up
+    /// on. Nothing in the paragraph itself.
+    PagePenalty { value: i32 },
+    /// An explicit discretionary (compiler `Inline::Discretionary`): `\-`
+    /// (`pre` is the face's hyphen) or `\discretionary{pre}{}{}`. A flagged
+    /// break at `\hyphenpenalty` (non-empty `pre`) or `\exhyphenpenalty`;
+    /// `pre` is set at the end of the line only when it breaks here.
+    Discretionary { pre: Option<Segment> },
     /// `\\`; `skip_pt` is the optional `[<dimen>]` (LaTeX `\@xnewline`:
     /// `\vadjust{\vskip <dimen>}` after the line, or `\vskip` after the
     /// paragraph under `\@centercr`).
@@ -374,6 +394,12 @@ pub enum Block {
         /// block and this one (the compiler reports and drops the command;
         /// the break is recovered from the source bytes).
         eject_before: bool,
+        /// A vertical-mode penalty right before the paragraph (compiler
+        /// `Block::Penalty`), and whether it is `\filbreak`'s
+        /// (`\vfil\penalty-200\vfilneg`). The lowest of several.
+        penalty_before: Option<(i32, bool)>,
+        /// The breaking parameters in force where the paragraph ends.
+        breaking: BreakOverrides,
         /// `\vspace{<dimen>}` blocks between the previous block and this
         /// one (compiler `Block::VSpace`), summed in points; `\addvspace`
         /// glue added before the block.
@@ -609,6 +635,50 @@ pub enum ChromeEvent {
 /// size's `em` (`\fontdimen6` of the face its own words are set in, which
 /// only the typesetter can measure).
 ///
+/// Line- and page-breaking parameters the document assigned (compiler
+/// `Parsed::parameters`) in force where a paragraph ends, which is when TeX
+/// reads them. `None` keeps the stylesheet's value.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BreakOverrides {
+    pub tolerance: Option<i32>,
+    pub pretolerance: Option<i32>,
+    pub emergency_stretch_pt: Option<f64>,
+    pub hfuzz_pt: Option<f64>,
+    pub widow_penalty: Option<i32>,
+    pub club_penalty: Option<i32>,
+    pub interline_penalty: Option<i32>,
+}
+
+impl BreakOverrides {
+    /// The assignments in force at `end` (the paragraph's last byte): made
+    /// before it in the same document and not yet restored by the close of
+    /// their group. Assignments in another document of the project are not
+    /// ordered against `end` and are left out.
+    pub fn at(parameters: &[flashtex_compiler::parser::ParameterAssignment], end: Span) -> Self {
+        use flashtex_compiler::parser::BreakParameter as P;
+        let mut o = Self::default();
+        for a in parameters {
+            if a.span.document != end.document || a.span.start >= end.end {
+                continue;
+            }
+            if a.until.is_some_and(|u| u.document == end.document && u.start < end.end) {
+                continue;
+            }
+            match a.parameter {
+                P::Tolerance(v) => o.tolerance = Some(v),
+                P::Pretolerance(v) => o.pretolerance = Some(v),
+                P::EmergencyStretch(pt) => o.emergency_stretch_pt = Some(pt),
+                P::Hfuzz(pt) => o.hfuzz_pt = Some(pt),
+                P::WidowPenalty(v) => o.widow_penalty = Some(v),
+                P::ClubPenalty(v) => o.club_penalty = Some(v),
+                P::InterlinePenalty(v) => o.interline_penalty = Some(v),
+                P::Looseness(_) | P::FlushBottom(_) | P::EnlargeThisPage { .. } => {}
+            }
+        }
+        o
+    }
+}
+
 /// The one producer today is `abstract` (article.cls 377-387): the centred
 /// `\small\bfseries` head and the `\small` `quotation` body.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -694,6 +764,15 @@ pub struct Doc {
     /// Indices of the blocks after a `\clearpage`/`\cleardoublepage` (see
     /// `clear_page_blocks`).
     pub page_starts: Vec<usize>,
+    /// The subset of `page_starts` whose command is `\cleardoublepage`: in
+    /// a two-sided document the block starts an odd page, after an empty
+    /// one when needed (`\hbox{}\newpage`).
+    pub double_page_starts: Vec<usize>,
+    /// Blocks other than paragraphs (headings, rules, pictures, longtables)
+    /// whose `eject_before` is a forced penalty the document wrote
+    /// (`\pagebreak`, `\penalty-10000`) rather than `\newpage`: no `\vfil`
+    /// precedes the break (see `bare_eject_blocks`).
+    pub bare_ejects: Vec<usize>,
     /// `\begin` commands the compiler reported as unimplemented that the
     /// pipeline sets itself (`abstract`): its diagnostic is dropped, the
     /// way `toc::superseded_commands` drops the contents-list ones.
@@ -732,7 +811,7 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
         // `LetterBlock` holds `Vec<Vec<Inline>>`, not one flat slice, and
         // `lower_blocks` turns it into ordinary paragraphs before the block
         // walk reaches here.
-        CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => &[],
+        CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::VFill | CBlock::LetterBlock { .. } | CBlock::Penalty { .. } => &[],
     }
 }
 
@@ -940,13 +1019,11 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                         // no interword space is read across it (as the
                         // `verbatim` lowering above does).
                         if let (Some(prev), Some(at)) = (prev_end, first) {
-                            group.push(Inline::LineBreak {
-                                span: Span {
-                                    document: at.document,
-                                    start: prev.end.min(at.start),
-                                    end: at.start,
-                                },
-                            });
+                            group.push(line_break_inline(Span {
+                                document: at.document,
+                                start: prev.end.min(at.start),
+                                end: at.start,
+                            }));
                         }
                     }
                     group.extend(line.iter().cloned());
@@ -1161,6 +1238,24 @@ pub fn adapt_cached(
         style.columnseprule_pt = pt;
     }
     style.microtype = microtype_setup(source);
+    style.hyphenation = parsed.hyphenation.iter().map(|h| h.word.clone()).collect();
+    style.enlarge_this_page = parsed
+        .parameters
+        .iter()
+        .filter_map(|a| match a.parameter {
+            flashtex_compiler::parser::BreakParameter::EnlargeThisPage { pt, shrink } => Some((a.span, pt, shrink)),
+            _ => None,
+        })
+        .collect();
+    // `\raggedbottom`/`\flushbottom` written by the document: the last one
+    // outside any group decides every page (in the body LaTeX's own
+    // `\@textbottom` changes from the next page on, not modelled).
+    if let Some(flush) = parsed.parameters.iter().rev().find_map(|a| match a.parameter {
+        flashtex_compiler::parser::BreakParameter::FlushBottom(v) if a.until.is_none() => Some(v),
+        _ => None,
+    }) {
+        style.raggedbottom = !flush;
+    }
     if document_sloppy(source) {
         // `\sloppy`: `\tolerance 9999 \emergencystretch 3em \hfuzz .5pt
         // \vfuzz\hfuzz` (latex.ltx), as the class does for two columns.
@@ -1326,6 +1421,12 @@ pub fn adapt_cached(
             }
         }
         let mut eject_before = unit.eject_before;
+        // Only a paragraph carries the vertical penalty before it; a forced
+        // one (`\pagebreak`, `\penalty-10000`) before a heading, rule or
+        // picture still ends the page, set like `\newpage`'s.
+        if !matches!(unit.kind, UnitKind::Paragraph { .. }) && unit.penalty_before.is_some_and(|(value, _)| value <= crate::pagebuild::EJECT_PENALTY) {
+            eject_before = true;
+        }
         let vspace_before = unit.vspace_before;
         limitations.extend(unit.limitations);
         let unit_start = match &unit.kind {
@@ -1679,6 +1780,7 @@ pub fn adapt_cached(
                     apply_run_in_heading(&mut items, &run_in, h.run_in_after_em.unwrap_or(1.0), h.bold);
                 }
                 items.splice(0..0, toc_pending.drain(..).map(|key| Item::Label { key }));
+                let paragraph_end = inlines.last().map(inline_span);
                 let mut parts = Vec::new();
                 let mut current = Vec::new();
                 for item in items {
@@ -1876,6 +1978,8 @@ pub fn adapt_cached(
                     env_open,
                     env_close: false,
                     eject_before,
+                    penalty_before: unit.penalty_before,
+                    breaking: paragraph_end.map(|end| BreakOverrides::at(&parsed.parameters, end)).unwrap_or_default(),
                     vspace_before,
                     addvspace_before,
                     addvspace_flex,
@@ -1988,7 +2092,8 @@ pub fn adapt_cached(
             _ => {}
         }
     }
-    let page_starts = clear_page_blocks(texts, &blocks);
+    let (page_starts, double_page_starts) = clear_page_blocks(texts, &blocks);
+    let bare_ejects = bare_eject_blocks(texts, &blocks);
     Doc {
         style,
         blocks,
@@ -1999,8 +2104,48 @@ pub fn adapt_cached(
         default_color: parsed.default_color,
         math_colors: math_colors(&parsed.blocks),
         page_starts,
+        double_page_starts,
+        bare_ejects,
         superseded,
     }
+}
+
+/// Headings, rules, pictures and longtables whose `eject_before` comes from
+/// a forced vertical penalty (`\pagebreak`, `\pagebreak[4]`,
+/// `\penalty-10000` or below) rather than `\newpage`/`\clearpage`: the
+/// page-break command nearest before the block is one of those. A
+/// paragraph carries that penalty itself (`penalty_before`).
+fn bare_eject_blocks(texts: &[&str], blocks: &[Block]) -> Vec<usize> {
+    blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| {
+            let at = match b {
+                Block::Heading { eject_before: true, span, .. } | Block::Rule { eject_before: true, span, .. } => *span,
+                Block::Picture { eject_before: true, document, picture, .. } => Span::in_document(*document, picture.start, picture.end),
+                Block::LongTable { eject_before: true, table, .. } => table.span,
+                _ => return None,
+            };
+            let text = texts.get(at.document.0)?.get(..at.start)?;
+            let last = |name: &str| {
+                let mut from = 0;
+                let mut found = None;
+                while let Some(rel) = find_command(&text[from..], name) {
+                    found = Some(from + rel);
+                    from += rel + 1;
+                }
+                found
+            };
+            let vfil = ["newpage", "clearpage", "cleardoublepage"].iter().filter_map(|c| last(c)).max();
+            let bare = |name: &str, forced: fn(&str) -> bool| last(name).filter(|&p| forced(&text[p + name.len() + 1..]));
+            let pagebreak = bare("pagebreak", |rest| match rest.trim_start().strip_prefix('[') {
+                Some(arg) => arg.split(']').next().is_some_and(|n| n.trim() == "4"),
+                None => true,
+            });
+            let penalty = bare("penalty", |rest| rest.trim_start().split(|c: char| !(c.is_ascii_digit() || c == '-')).next().and_then(|n| n.parse::<i64>().ok()).is_some_and(|n| n <= -10000));
+            pagebreak.max(penalty).filter(|&p| vfil.is_none_or(|v| p > v)).map(|_| i)
+        })
+        .collect()
 }
 
 /// `(document, start, end)` of every formula with a colour of its own
@@ -2050,7 +2195,8 @@ fn math_colors(blocks: &[flashtex_compiler::parser::Block]) -> std::collections:
 /// those end the page, `\newpage`/`\pagebreak` only the column (latex.ltx
 /// `\clearpage` flushes with `\vbox{}\penalty-\@Mi`, `\@outputdblcol` ships
 /// the page).
-fn clear_page_blocks(texts: &[&str], blocks: &[Block]) -> Vec<usize> {
+/// Also returns those whose nearest command is `\cleardoublepage`.
+fn clear_page_blocks(texts: &[&str], blocks: &[Block]) -> (Vec<usize>, Vec<usize>) {
     let first_span = |items: &[Item]| {
         items.iter().find_map(|i| match i {
             Item::Word(w) => Some(w.span()),
@@ -2072,11 +2218,19 @@ fn clear_page_blocks(texts: &[&str], blocks: &[Block]) -> Vec<usize> {
                 _ => None,
             }?;
             let text = texts.get(at.document.0)?.get(..at.start)?;
-            let clear = text.rfind("\\clearpage").max(text.rfind("\\cleardoublepage"));
+            let single = text.rfind("\\clearpage");
+            let double = text.rfind("\\cleardoublepage");
+            let clear = single.max(double);
             let column = text.rfind("\\newpage").max(text.rfind("\\pagebreak"));
-            (clear.is_some() && clear > column).then_some(i)
+            (clear.is_some() && clear > column).then_some((i, double > single))
         })
-        .collect()
+        .fold((Vec::new(), Vec::new()), |(mut all, mut doubles), (i, double)| {
+            all.push(i);
+            if double {
+                doubles.push(i);
+            }
+            (all, doubles)
+        })
 }
 
 fn inline_span(i: &Inline) -> Span {
@@ -2095,7 +2249,10 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::TextGlue { span, .. }
         | Inline::Logo { span, .. }
         | Inline::Rule { span, .. }
-        | Inline::Kern { span, .. } => *span,
+        | Inline::Kern { span, .. }
+        | Inline::Penalty { span, .. }
+        | Inline::PagePenalty { span, .. }
+        | Inline::Discretionary { span, .. } => *span,
         Inline::Tabular(t) => t.span,
         Inline::ColorBox(b) => b.span,
         Inline::Underline(u) => u.span,
@@ -2424,6 +2581,8 @@ fn join_clever(parts: &[String], oxford: bool) -> String {
 struct Unit<'p> {
     kind: UnitKind<'p>,
     eject_before: bool,
+    /// See [`Block::Paragraph::penalty_before`] (paragraph units only).
+    penalty_before: Option<(i32, bool)>,
     /// Summed `\vspace` points from compiler `VSpace` blocks before this unit.
     vspace_before: f64,
     /// `\addvspace` glue before this unit (list skips; paragraphs only).
@@ -2480,7 +2639,10 @@ enum UnitKind<'p> {
     },
 }
 
-const PAGE_BREAKS: [&str; 3] = ["newpage", "clearpage", "pagebreak"];
+/// `\pagebreak` is not here: the compiler reports it exactly (a
+/// `Block::PageBreak` or `Block::Penalty` between paragraphs, an
+/// `Inline::PagePenalty` inside one, which does not end the paragraph).
+const PAGE_BREAKS: [&str; 2] = ["newpage", "clearpage"];
 
 /// The character the tie occupies in a compiler text run.
 ///
@@ -2506,6 +2668,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
     // Carried from the compiler's own `PageBreak`/`VSpace`/`Rule` blocks
     // to the next unit that holds material.
     let mut pending_eject = false;
+    let mut pending_penalty: Option<(i32, bool)> = None;
     let mut pending_vspace = 0.0f64;
     let mut pending_limitations: Vec<(&'static str, Span, String)> = Vec::new();
     // The previous unit left TeX in vertical mode (a heading or a rule).
@@ -2526,6 +2689,16 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                 pending_eject = true;
                 continue;
             }
+            CBlock::Penalty { value, fil, .. } => {
+                // Several in a row: TeX's page builder takes the best
+                // breakpoint, which for the lone position between two
+                // paragraphs is the lowest penalty.
+                pending_penalty = Some(match pending_penalty {
+                    Some((v, f)) if v <= *value => (v, f),
+                    _ => (*value, *fil),
+                });
+                continue;
+            }
             CBlock::VSpace { pt } => {
                 pending_vspace += pt;
                 continue;
@@ -2540,6 +2713,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                 units.push(Unit {
                     kind: UnitKind::Rule { span: *span },
                     eject_before: eject,
+                    penalty_before: pending_penalty.take(),
                     vspace_before: std::mem::take(&mut pending_vspace),
                     addvspace_before: 0.0,
                     addvspace_flex: (0.0, 0.0),
@@ -2802,6 +2976,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                         content,
                     },
                     eject_before: eject,
+                    penalty_before: pending_penalty.take(),
                     vspace_before,
                     addvspace_before,
                     addvspace_flex,
@@ -2845,6 +3020,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                                     centered,
                                 },
                                 eject_before: eject,
+                                penalty_before: pending_penalty.take(),
                                 vspace_before: std::mem::take(&mut vspace_before),
                                 addvspace_before: std::mem::take(&mut addvspace_before),
                                 addvspace_flex: std::mem::take(&mut addvspace_flex),
@@ -2874,6 +3050,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                                     par_leading,
                                 },
                                 eject_before: eject,
+                                penalty_before: pending_penalty.take(),
                                 vspace_before: std::mem::take(&mut vspace_before),
                                 addvspace_before: std::mem::take(&mut addvspace_before),
                                 addvspace_flex: std::mem::take(&mut addvspace_flex),
@@ -2899,6 +3076,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                             par_leading,
                         },
                         eject_before: eject,
+                        penalty_before: pending_penalty.take(),
                         vspace_before: std::mem::take(&mut vspace_before),
                         addvspace_before: std::mem::take(&mut addvspace_before),
                         addvspace_flex: std::mem::take(&mut addvspace_flex),
@@ -2909,7 +3087,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                     eject = false;
                 }
             }
-            CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak => unreachable!("handled above"),
+            CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::Penalty { .. } => unreachable!("handled above"),
             CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::TitleBlock { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => unreachable!("lowered by lower_blocks"),
         }
         if let Some(last) = inlines_of(block).iter().map(inline_span).last() {
@@ -6323,6 +6501,15 @@ fn items_cached(
                 key.hash(&mut h);
                 value.hash(&mut h);
             }
+            Inline::Penalty { value, unskip, .. } => {
+                (40u8, value, unskip).hash(&mut h);
+            }
+            Inline::PagePenalty { value, .. } => {
+                (41u8, value).hash(&mut h);
+            }
+            Inline::Discretionary { pre, post, nobreak, hyphen, .. } => {
+                (42u8, pre, post, nobreak, hyphen).hash(&mut h);
+            }
             Inline::Reference { key, page, equation, .. } => {
                 4u8.hash(&mut h);
                 key.hash(&mut h);
@@ -6786,6 +6973,69 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
                 factor = 1000;
+                pending_accent = None;
+                after_control_word = false;
+            }
+            Inline::Penalty { value, span, .. } | Inline::PagePenalty { value, span } => {
+                let page = matches!(&**inline, Inline::PagePenalty { .. });
+                // latex.ltx `\@no@lnbk` (`\linebreak`/`\nolinebreak`) takes the
+                // space before the command off and sets it after the
+                // penalty; `\@bsphack`/`\@esphack` around `\pagebreak`'s
+                // `\vadjust` keep it where it is. Either way the blanks after
+                // the command are eaten when a space came before it or no
+                // `[n]` followed it (`\@ifnextchar[` skips them), and kept
+                // after `]` otherwise.
+                let unskip = matches!(&**inline, Inline::Penalty { unskip: true, .. });
+                let source = text_of(span.document);
+                let name_len = source.get(span.start + 1..).map_or(0, |r| r.bytes().take_while(u8::is_ascii_alphabetic).count());
+                let word = source
+                    .get(span.start..span.start + 1 + name_len)
+                    .filter(|w| name_len > 0 && w.starts_with('\\'))
+                    .map(str::to_string);
+                let has_space = space_between(prev_end, prev_span, *span, word.as_deref(), after_control_word);
+                let style = style_at(styles_of(span.document), span.start);
+                let mut gap_style = space_style(texts, styles, prev_end, *span, style);
+                gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
+                if !unskip {
+                    push_gap(&mut items, has_space, gap_style, factor);
+                }
+                let boxed_dashes = word.as_deref() == Some("\\nobreakdash");
+                items.push(if page { Item::PagePenalty { value: *value } } else { Item::Penalty { value: *value, boxed_dashes } });
+                if unskip {
+                    push_gap(&mut items, has_space, gap_style, factor);
+                }
+                let bracket = source.get(..span.end).is_some_and(|s| s.ends_with(']'));
+                after_control_word = match &**inline {
+                    Inline::Penalty { .. } if !unskip => true,
+                    _ => has_space || !bracket,
+                };
+                prev_end = Some(span.end);
+                prev_span = Some(*span);
+                pending_accent = None;
+            }
+            Inline::Discretionary { pre, post, nobreak, hyphen, span, style: compiler_style } => {
+                // `\-` is a control symbol: no blanks are eaten after it.
+                // `\discretionary{..}{..}{..}` ends on a brace: neither.
+                let has_space = space_between(prev_end, prev_span, *span, if *hyphen { Some("\\-") } else { Some("\\discretionary") }, after_control_word);
+                let mut style = style_at(styles_of(span.document), span.start);
+                style.size_cpt = declared_size(compiler_style.size, size);
+                if has_space || pending_head_sep.get().is_some() {
+                    let mut gap_style = space_style(texts, styles, prev_end, *span, style);
+                    gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
+                    push_gap(&mut items, has_space, gap_style, factor);
+                }
+                let src = CharSrc { document: span.document, start: span.start, end: span.end };
+                if post.is_empty() && nobreak.is_empty() {
+                    let pre = (!pre.is_empty()).then(|| Segment { text: pre.clone(), chars: pre.chars().map(|_| src).collect(), style });
+                    items.push(Item::Discretionary { pre });
+                } else {
+                    // Post-break and no-break text are not set by the line
+                    // painter: the unbroken reading is kept, with no break.
+                    push_segment(&mut items, nobreak.clone(), nobreak.chars().map(|_| src).collect(), style);
+                }
+                prev_size_cpt = style.size_cpt;
+                prev_end = Some(span.end);
+                prev_span = Some(*span);
                 pending_accent = None;
                 after_control_word = false;
             }
