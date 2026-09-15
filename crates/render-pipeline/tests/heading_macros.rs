@@ -111,6 +111,35 @@ fn direct_heading_hfill_reaches_the_right_margin() {
     assert!(problem.x - (bonus.x + bonus.width) > bp(2.5));
 }
 
+/// HW1's `\subsection*{Bonus Problem \hfill \normalfont[1 bonus point]}`:
+/// the spaces after `\normalfont` are `ecrm1200`'s, not the head's
+/// `ecbx1200` ones, so `[1` sits 1.15bp further right than it did. pdfTeX
+/// (TeX Live 2026, 11pt, T1): `\hbox{\large\normalfont[1 bonus point]}` is
+/// 77.07414pt, `[1` is 9.13664pt, `bonus` 30.08568pt, and the interword
+/// space `\fontdimen2` is 3.91571pt (4.4989pt in `\bfseries`).
+#[test]
+fn direct_heading_spaces_after_normalfont_use_the_medium_font() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let src = "\\documentclass[11pt]{article}\\usepackage[T1]{fontenc}\\begin{document}\n\\subsection*{Bonus Problem \\hfill \\normalfont[1 bonus point]}\nBody.\n\\end{document}";
+    let words = layout(src);
+    let (text_x, text_w) = measure();
+    let (open, bonus, point) = (word(&words, "[1"), word(&words, "bonus"), word(&words, "point]"));
+    let right = text_x + text_w;
+    assert!((right - open.x - bp(77.07414)).abs() < 0.02, "[1 from the right margin: {} vs {}", right - open.x, bp(77.07414));
+    assert!((bonus.x - (open.x + open.width) - bp(3.91571)).abs() < 0.02, "space after [1: {}", bonus.x - (open.x + open.width));
+    assert!((point.x - (bonus.x + bonus.width) - bp(3.91571)).abs() < 0.02, "space after bonus: {}", point.x - (bonus.x + bonus.width));
+    // A space next to a bold word keeps the head font: `A {\normalfont B} C`.
+    let words = layout("\\documentclass[11pt]{article}\\usepackage[T1]{fontenc}\\begin{document}\n\\subsection*{A {\\normalfont B} C \\normalfont D E}\nBody.\n\\end{document}");
+    let gap = |l: &str, r: &str| word(&words, r).x - (word(&words, l).x + word(&words, l).width);
+    for (l, r) in [("A", "B"), ("B", "C"), ("C", "D")] {
+        assert!((gap(l, r) - bp(4.4989)).abs() < 0.02, "{l}-{r} is a bold space: {}", gap(l, r));
+    }
+    assert!((gap("D", "E") - bp(3.91571)).abs() < 0.02, "D-E is a medium space: {}", gap("D", "E"));
+}
+
 #[test]
 fn line_break_dimen_adds_vertical_space_after_the_line() {
     if !lm_available() {
