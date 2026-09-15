@@ -153,6 +153,28 @@ fn odot_is_painted_as_a_binary_math_glyph() {
 }
 
 #[test]
+fn common_math_glyph_runs_use_semantic_unicode() {
+    if !lm_available() {
+        return;
+    }
+    // Semantic Unicode is the contract. pdfTeX's default cmex/cmsy maps can
+    // expose font-slot artefacts (`\sum` -> `P`, `\mapsto` -> `7→`), so its
+    // extraction is not an oracle for copy-paste quality.
+    let r = render_one(&doc(
+        r"$- * \ast \circ \cdot \setminus \neq \notin \mapsto \Longrightarrow \longrightarrow \hookrightarrow \phi \varphi \mu \Delta \Omega \sum \prod \int \oint \cdots$",
+    ));
+    let text: String = r.v2.pages[0]
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::GlyphRun(run) if run.role == RunRole::Math => Some(run.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "−∗∗∘⋅∖̸≠∈↦⟹⟶↪ϕφμΔΩ∑∏∫∮⋅⋅⋅");
+}
+
+#[test]
 fn every_compiler_symbol_typesets_without_a_missing_glyph() {
     if !lm_available() {
         return;
@@ -557,10 +579,10 @@ fn cm_less_symbols_are_painted_from_latin_modern_math() {
     // `\Relbar\joinrel\Rightarrow` join of cmr `=` and cmsy `⇒`
     // (tests/long_arrows.rs), and both pieces are painted.
     assert!(texts.windows(2).any(|w| w == ["=", "⇒y"]), "\\Longrightarrow dropped: {texts:?}");
-    // The run text keeps the source's ASCII hyphen; the painted glyph is
-    // Latin Modern Math's U+2212 (gid 2615 in the pinned font 6075562b…),
-    // not its text hyphen (gid 14).
-    let minus = runs.iter().find(|(t, _)| t.starts_with('-')).expect("the minus run");
+    // The run text uses semantic U+2212, and the painted glyph is Latin
+    // Modern Math's U+2212 (gid 2615 in the pinned font 6075562b…), not its
+    // text hyphen (gid 14).
+    let minus = runs.iter().find(|(t, _)| t.starts_with('−')).expect("the minus run");
     assert_eq!(minus.1, 2615, "math minus should paint U+2212: {runs:?}");
 }
 
