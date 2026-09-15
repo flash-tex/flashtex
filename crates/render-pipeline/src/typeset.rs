@@ -5172,6 +5172,11 @@ impl<'a> Context<'a> {
         let (fleqn, leqno) = (self.style.fleqn, self.style.leqno);
         let margin = self.style.leftmargini_pt;
         let aligned = matches!(env, RowsEnv::Align | RowsEnv::AlignAt | RowsEnv::FlAlign);
+        // `eqnarray` is deliberately not `aligned`: its middle column is
+        // `${##}$`, so the relation takes no `\thickmuskip` at either edge
+        // and the whole gap is the column separation (the known upstream
+        // quirk). A `{}` prefix here would add 5 mu each side that pdflatex
+        // never sets.
         // Cell boxes: (run, rec) per row per cell; right-hand (even-index
         // from 1) align cells and every multline row start with `{}`.
         struct Cell {
@@ -5358,6 +5363,37 @@ impl<'a> Context<'a> {
                     }
                 }
             }
+            RowsEnv::EqnArray => {
+                // latex.ltx `\eqnarray`: `\halign to\displaywidth` with
+                // right/centred/left columns, the block centred on the line
+                // (`\@centering` tabskip) and `\hskip\tw@\arraycolsep`
+                // between the columns. pdflatex errors on a fourth cell
+                // (`Too many columns in eqnarray environment`); the extras
+                // are dropped here, short rows leave blank columns.
+                let mut colw = [0.0f64; 3];
+                for row in &cells {
+                    for (ci, c) in row.iter().enumerate().take(3) {
+                        colw[ci] = colw[ci].max(width(c));
+                    }
+                }
+                let sep = 2.0 * crate::mathgrid::ARRAYCOLSEP;
+                let totwidth: f64 = colw.iter().sum::<f64>() + sep * 2.0;
+                // Under `fleqn` the block starts at `\@mathmargin` like a
+                // `gather`; under `leqno` the kernel still centres it (only
+                // the number moves left, which the tag code below handles).
+                let x0 = if fleqn { margin } else { ((dw - totwidth) / 2.0).max(0.0) };
+                let origins = [x0, x0 + colw[0] + sep, x0 + colw[0] + sep + colw[1] + sep];
+                for (ri, row) in cells.iter().enumerate() {
+                    for (ci, c) in row.iter().enumerate().take(3) {
+                        let w = width(c);
+                        xs[ri][ci] = match ci {
+                            0 => origins[0] + colw[0] - w,
+                            1 => origins[1] + (colw[1] - w) / 2.0,
+                            _ => origins[2],
+                        };
+                    }
+                }
+            }
             RowsEnv::Gather => {
                 for (ri, row) in cells.iter().enumerate() {
                     let w: f64 = row.iter().map(width).sum();
@@ -5517,7 +5553,10 @@ impl<'a> Context<'a> {
         }
         let above = self.style.abovedisplayskip;
         let below = self.style.belowdisplayskip;
-        let first_adjust = if matches!(env, RowsEnv::Multline) { 0.0 } else { -JOT };
+        // latex.ltx `\eqnarray` is a kernel `\halign` with no `\openup\jot`:
+        // its rows sit one `\baselineskip` apart, not `\baselineskip+\jot`.
+        let openup = if matches!(env, RowsEnv::EqnArray) { 0.0 } else { JOT };
+        let first_adjust = if matches!(env, RowsEnv::Multline) { 0.0 } else { -openup };
         let (an, ast, ash) = skip_tuple(above);
         let n = lines.len();
         let lines = pl::Lines {
@@ -5549,7 +5588,7 @@ impl<'a> Context<'a> {
             space_after: Some(skip_tuple(below)),
             no_interline_first: false,
             no_interline_after: false,
-            baselineskip: Some(normal + JOT),
+            baselineskip: Some(normal + openup),
             // `\openup\jot` (amsmath `\displ@y@`) advances `\lineskip` as
             // well as `\baselineskip` — `\openup` is `\advance` on all three
             // of `\lineskip`, `\baselineskip` and `\lineskiplimit`. Leaving
@@ -5564,7 +5603,7 @@ impl<'a> Context<'a> {
             // row. pdfLaTeX's own `\showoutput` for
             // `fixtures/real-world/ps-calculus` prints `\glue(\lineskip) 4.0`
             // between the rows of both of its alignments.
-            lineskip: Some(self.style.lineskip_pt + JOT),
+            lineskip: Some(self.style.lineskip_pt + openup),
             vskip_after: vskips,
             broken_penalty: Vec::new(),
             pre_space_after: None,
