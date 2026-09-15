@@ -493,6 +493,7 @@ fn block_start(b: &Block) -> Option<(usize, usize)> {
         | Block::Part { span, .. }
         | Block::Title { span, .. }
         | Block::ClearPage { span, .. }
+        | Block::NoBreakFalse { span }
         | Block::Chrome { span, .. }
         | Block::Rule { span, .. } => Some((span.document.0, span.start)),
         Block::TocEntry(e) => Some((e.list_span.document.0, e.list_span.start)),
