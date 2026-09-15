@@ -63,7 +63,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "PassOptionsToPackage", "AtBeginDocument",
     // Cross-references and links.
     "eqref", "autoref", "nameref", "url", "href", "hyperref", "hyperlink",
-    "hypertarget", "citep", "citet", "citeauthor", "addbibresource", "printbibliography",
+    "hypertarget", "cite", "parencite", "textcite", "autocite", "citep", "citet", "citeauthor", "citeyear", "nocite", "addbibresource", "printbibliography",
     // Colour and graphics packages.
     "tikz",
     "usetikzlibrary", "draw", "node", "fill", "path", "scalebox", "resizebox", "rotatebox",
@@ -248,7 +248,8 @@ pub fn command_package(name: &str) -> Option<&'static str> {
         | "reflectbox" => Some("graphicx"),
         "lstinline" | "listoflistings" | "lstset" => Some("listings"),
         "mintinline" => Some("minted"),
-        "citep" | "citet" | "citeauthor" => Some("natbib"),
+        "citep" | "citet" | "citeauthor" | "citeyear" => Some("natbib"),
+        "cite" | "parencite" | "textcite" | "autocite" | "nocite" => Some("biblatex"),
         "addbibresource" | "printbibliography" => Some("biblatex"),
         "eqref" | "intertext" | "shortintertext" | "substack" | "DeclareMathOperator"
         | "numberwithin" | "allowdisplaybreaks" => Some("amsmath"),
