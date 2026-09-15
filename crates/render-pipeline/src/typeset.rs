@@ -2084,7 +2084,7 @@ impl<'a> Context<'a> {
                     let quad = self.text_params(base, size).quad;
                     push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(em * quad)), None);
                 }
-                AItem::HFill { fill, leader } => {
+                AItem::HFill { fill, leader, style } => {
                     // `\hfill` is second-order glue: it beats the line's
                     // `\parfillskip` (`\hfil`), as in a `\section` title
                     // set as `Problem 1 \hfill [4 points]`.
@@ -2094,7 +2094,15 @@ impl<'a> Context<'a> {
                     }
                     let (box_width, dot) = match leader {
                         FillLeader::Dots => {
-                            let face = self.face(base, size, Span::new(0, 0));
+                            // TeX sets the leader box (`.44em`) and its dot
+                            // in the font in force at the fill, not the
+                            // paragraph's: `{\Large A\dotfill B}` dots at
+                            // `\Large`. The other leaders read no style (a
+                            // rule leader is a fixed 0.4pt rule, plain
+                            // `\hfill` paints nothing).
+                            let dot_style = merge_base(*style, base);
+                            let dot_size = dot_style.size_or(size);
+                            let face = self.face(dot_style, dot_size, Span::new(0, 0));
                             let shaped = self.shaper.shape(&face, ".");
                             let glyphs = shaped
                                 .clusters
@@ -2107,14 +2115,14 @@ impl<'a> Context<'a> {
                                 .collect::<Vec<_>>();
                             let run = pl::GlyphRun::from_shaped(
                                 face.layout_id(),
-                                size,
+                                dot_size,
                                 shaped.units_per_em as f64,
                                 f64::from(shaped.height_units),
                                 -f64::from(shaped.depth_units),
                                 &glyphs,
                                 0..1,
                             );
-                            (0.44 * self.text_params(base, size).quad, Some((face, run)))
+                            (0.44 * self.text_params(dot_style, dot_size).quad, Some((face, run)))
                         }
                         _ => (0.0, None),
                     };
@@ -2909,6 +2917,19 @@ impl<'a> Context<'a> {
                         lead.push((pl::Item::Box(run), Some(rec)));
                     }
                     lead.push((pl::Item::kern(labelsep), None));
+                    // enumitem `style=nextline` (`\enit@postlabel@i`'s
+                    // `\newline`): the label takes a line of its own, so a
+                    // `\\` follows it and the body starts on the next line
+                    // at the hanging indent (`break_paragraph` indents every
+                    // line after the first by `hang_pt` on its own). Before
+                    // the protrusion kern, which belongs to the body text's
+                    // first character, not to the label's line.
+                    if geom.nextline {
+                        if !matches!(style, ParaStyle::Center | ParaStyle::FlushRight) {
+                            lead.push((pl::Item::Glue(pl::Glue::fil()), None));
+                        }
+                        lead.push((pl::Item::penalty(pl::FORCED_BREAK), None));
+                    }
                     if protrude != 0.0 {
                         lead.push((pl::Item::kern(-protrude), None));
                     }

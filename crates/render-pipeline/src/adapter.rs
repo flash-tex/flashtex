@@ -171,8 +171,11 @@ pub enum Item {
     /// glue; a legal break point that is discarded at a line break. `fill`
     /// is the `\hfill` order (it beats `\parfillskip`'s `fil`); the
     /// compiler does not distinguish the two, so the order is re-read from
-    /// the source bytes (`\hfill` when they are not `\hfil`).
-    HFill { fill: bool, leader: FillLeader },
+    /// the source bytes (`\hfill` when they are not `\hfil`). `style` is
+    /// the font in force at the fill, which `\dotfill` sets its dots in
+    /// (like `Kern`'s); a rule leader paints a fixed 0.4pt rule and plain
+    /// `\hfill` paints nothing, so neither reads it.
+    HFill { fill: bool, leader: FillLeader, style: TextStyle },
     /// Explicit horizontal glue in points: `\hspace{<dimen>}` (compiler
     /// `Inline::HSpace`, rigid) or an amsthm theorem head's own separator
     /// (`\hskip\thm@headsep`, `5pt plus 1pt minus 1pt`; `crate::amsthm`).
@@ -565,6 +568,15 @@ pub struct ListGeom {
     /// is zero, and `\descriptionlabel` sets it as `\hspace\labelsep
     /// \normalfont\bfseries <label>`.
     pub description: bool,
+    /// The innermost list's effective enumitem `style` is `nextline`
+    /// (`enumitem.sty` `\enit@style@nextline` sets `\enit@nextline` and
+    /// `\labelwidth` from the narrowest fit, so `\enit@postlabel@i` breaks
+    /// after every label in practice): the typesetter forces a break after
+    /// the label, like `\\`, so the body starts on its own line at the
+    /// hanging indent. `sameline`/`standard`/`normal` are the default and
+    /// need nothing; `multiline`/`unboxed` are a follow-up (label alignment
+    /// and `\itemindent` nuances, not a plain break).
+    pub nextline: bool,
 }
 
 /// One list level's `\leftmargin`.
@@ -2771,6 +2783,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                     margins: list_margins(src, at.start, size, natbib_bib),
                     label: label.clone(),
                     description: env == "description",
+                    nextline: list_style_nextline(src, env, begin_keys),
                     parsep: seps.parsep_skip,
                     // `\NAT@bibsetup`: `\itemindent-\leftmargin`, so the
                     // entry's first line is flush at the margin and the rest
@@ -4140,6 +4153,36 @@ fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Styl
         }
     }
     seps
+}
+
+/// Whether the innermost list's effective enumitem `style` is `nextline`:
+/// the last `style=` key among the `\setlist`s naming `env` (document
+/// order) and the list's own `\begin{<env>}[<keys>]` wins, exactly like
+/// [`list_seps_with`]; `sameline`/`standard`/`normal` (and no key at all)
+/// keep the default same-line label, so only `nextline` returns true.
+/// Read from the source rather than the compiler's `ListFrame` because this
+/// pipeline builds against a `vendor/compiler` pin that predates
+/// `ListOption::Style` (see [`ListGeom::nextline`]).
+fn list_style_nextline(source: &str, env: &str, begin_keys: &str) -> bool {
+    let calls = setlist_calls(source);
+    let all_keys = calls
+        .iter()
+        .filter(|(envs, _)| setlist_names(envs, env))
+        .map(|(_, keys)| *keys)
+        .chain(std::iter::once(begin_keys));
+    let mut style: Option<&str> = None;
+    for keys in all_keys {
+        for (key, value) in list_keys(keys) {
+            if key == "style" {
+                style = Some(value);
+            }
+        }
+    }
+    style.is_some_and(|v| {
+        let v = v.trim();
+        let v = v.strip_prefix('{').and_then(|v| v.strip_suffix('}')).map_or(v, str::trim);
+        v == "nextline"
+    })
 }
 
 /// The `\list`/`\trivlist` environments whose `\item`s the compiler reports
@@ -6840,6 +6883,21 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 // \normalfont[#2 points]`): the compiler gives the glue the
                 // invocation's span, and the next token's gap must start
                 // after the word, not before it.
+                // The font the fill's leader is set in: the family, series
+                // and shape at the fill's own bytes (like `Kern`), with the
+                // size declaration in force at the fill's own span. Like
+                // every other gap-style site here, that size goes through
+                // `space_size`, not the raw previous-text size: a size group
+                // that already closed before the fill (`{\Large A}\dotfill`)
+                // leaves the fill at the ambient size.
+                // `Inline::HFill` carries no compiler style of its own, and
+                // the source scan is family/series/shape only, so there is
+                // no per-position size to resolve with `declared_size`; the
+                // `next_cpt` is 0 (no declared size: ambient), and the size
+                // is only the previous text's when no group closed in
+                // between -- never a size established after the fill.
+                let mut fill_style = style_at(styles_of(span.document), span.start);
+                fill_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, 0);
                 let (item, word) = match &**inline {
                     Inline::HSpace { pt, .. } => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
                     Inline::TextGlue { em, .. } => (Item::Quad { em: *em }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
@@ -6863,14 +6921,14 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     // vanishes the same way; that is a separate pre-existing
                     // defect, reproducible on the previous pin, not this one.)
                     Inline::HFill { leader: FillLeader::Rule, .. } => {
-                        (Item::HFill { fill: true, leader: FillLeader::Rule }, "\\hrulefill")
+                        (Item::HFill { fill: true, leader: FillLeader::Rule, style: fill_style }, "\\hrulefill")
                     }
                     Inline::HFill { leader: FillLeader::Dots, .. } => {
-                        (Item::HFill { fill: true, leader: FillLeader::Dots }, "\\dotfill")
+                        (Item::HFill { fill: true, leader: FillLeader::Dots, style: fill_style }, "\\dotfill")
                     }
                     Inline::HFill { leader: FillLeader::None, .. } => {
                         let fill = !is_control_word(text_of(span.document), span.start, "hfil");
-                        (Item::HFill { fill, leader: FillLeader::None }, if fill { "\\hfill" } else { "\\hfil" })
+                        (Item::HFill { fill, leader: FillLeader::None, style: fill_style }, if fill { "\\hfill" } else { "\\hfil" })
                     }
                     _ => unreachable!(),
                 };

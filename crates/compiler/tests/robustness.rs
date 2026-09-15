@@ -303,3 +303,252 @@ fn a_request_is_answered_even_when_the_document_is_pathological() {
         assert_eq!(parsed.get("id").and_then(|v| v.as_str()), Some("p"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Minimised findings of the mutation fuzzer (`examples/fuzz_compile.rs`). Each
+// input panicked, overflowed the stack or hung before its fix.
+
+fn compile_messages(text: &str) -> Vec<String> {
+    flashtex_compiler::incremental::compile_full(text, LayoutConstraints::default())
+        .diagnostics
+        .into_iter()
+        .map(|d| d.message)
+        .collect()
+}
+
+#[test]
+fn lists_nested_past_255_levels_are_too_deeply_nested_not_an_overflow() {
+    // The per-kind and total list depths were `count() as u8 + 1`: 255
+    // enclosing lists overflowed. LaTeX stops at `\@toodeep` long before.
+    for env in ["itemize", "enumerate", "quote"] {
+        let text = format!(
+            "\\begin{{document}}{}\\item x\n\\end{{document}}\n",
+            format!("\\begin{{{env}}}").repeat(300)
+        );
+        let messages = compile_messages(&text);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m == "LaTeX Error: Too deeply nested."),
+            "{env}: {:?}",
+            &messages[..messages.len().min(5)]
+        );
+    }
+    // Levels past the limit are not stored per block: 30k nested lists
+    // held 25 GB (every block copies its enclosing frames).
+    let deep = format!(
+        "\\begin{{document}}{}\\end{{document}}\n",
+        "\\begin{itemize}\\item x\n".repeat(3000)
+    );
+    for block in parser::parse(&deep).blocks {
+        if let parser::Block::ListItem { lists, .. } | parser::Block::Styled { lists, .. } = block {
+            assert!(
+                lists.len() <= 6,
+                "a block stored {} list frames",
+                lists.len()
+            );
+        }
+    }
+    // Within LaTeX's limits (four itemize levels) there is no such error.
+    let ok = "\\begin{document}\\begin{itemize}\\item a\\begin{itemize}\\item b\\begin{itemize}\\item c\\begin{itemize}\\item d\\end{itemize}\\end{itemize}\\end{itemize}\\end{itemize}\\end{document}\n";
+    assert!(!compile_messages(ok)
+        .iter()
+        .any(|m| m.contains("Too deeply nested")));
+}
+
+fn compile_project_messages(documents: &[(&str, &str)]) -> Vec<String> {
+    let documents: Vec<parser::SourceDocument<'_>> = documents
+        .iter()
+        .map(|&(path, text)| parser::SourceDocument { path, text })
+        .collect();
+    let out = flashtex_compiler::incremental::compile_full_project(
+        &documents,
+        documents[0].path,
+        LayoutConstraints::default(),
+    );
+    for page in &out.pages {
+        for item in &page.items {
+            assert!(
+                item.span.start <= item.span.end,
+                "inverted span {:?}",
+                item.span
+            );
+        }
+    }
+    out.diagnostics.into_iter().map(|d| d.message).collect()
+}
+
+#[test]
+fn an_unclosed_math_span_never_inverts() {
+    // `\setlength{` re-reads its argument, so the math that `$` opens sees
+    // content tokens from before the opener: the span ended before it began
+    // ("span start must not exceed end").
+    let messages = compile_messages("\\setlength{\\begin{}$");
+    assert!(!messages.is_empty());
+}
+
+#[test]
+fn an_alignment_that_inputs_another_document_keeps_its_spans_in_one_document() {
+    // A row's span merged a token of `sub.tex` with one of `main.tex`
+    // ("cannot merge spans from different documents").
+    compile_project_messages(&[
+        ("main.tex", "\\begin{align}a\\include{sub}"),
+        ("sub.tex", "x\\input{sub}\n"),
+    ]);
+    compile_project_messages(&[
+        ("main.tex", "\\begin{align}a\\input{sub}"),
+        ("sub.tex", "b\\end{align}\n"),
+    ]);
+}
+
+#[test]
+fn nested_sub_parses_hit_tex_grouping_capacity_instead_of_the_stack() {
+    // Every nested table cell, box or footnote re-enters the parser on its
+    // own token stream: 3000 nested tabulars overflowed an 8 MiB stack, and
+    // 10k took minutes (each level copies its cell). The parser stops at
+    // `STREAM_DEPTH_LIMIT` levels, below what a 2 MiB debug test thread holds.
+    // That is a FlashTeX limit, not TeX's 255 grouping levels, and says so.
+    let capacity = format!(
+        "FlashTeX nesting limit ({}) exceeded",
+        flashtex_compiler::parser::STREAM_DEPTH_LIMIT
+    );
+    for (open, close) in [
+        ("\\begin{tabular}{c}", "\\end{tabular}"),
+        ("\\footnote{", "}"),
+        ("\\colorbox{red}{", "}"),
+        ("\\rotatebox{90}{", "}"),
+        ("\\uline{", "}"),
+    ] {
+        let depth = 3000;
+        let text = format!(
+            "\\documentclass{{article}}\\usepackage{{xcolor,graphicx,ulem}}\\begin{{document}}{}x{}\\end{{document}}\n",
+            open.repeat(depth),
+            close.repeat(depth)
+        );
+        let started = std::time::Instant::now();
+        let messages = compile_messages(&text);
+        assert_eq!(
+            messages.iter().filter(|m| **m == capacity).count(),
+            1,
+            "{open}: {:?}",
+            &messages[..messages.len().min(4)]
+        );
+        assert!(
+            started.elapsed().as_secs() < 30,
+            "{open}: {:?}",
+            started.elapsed()
+        );
+    }
+    // Well inside the limit nothing is reported.
+    let text = format!(
+        "\\begin{{document}}{}x{}\\end{{document}}\n",
+        "\\begin{tabular}{c}".repeat(20),
+        "\\end{tabular}".repeat(20)
+    );
+    assert!(!compile_messages(&text)
+        .iter()
+        .any(|m| m.contains("nesting limit")));
+}
+
+#[test]
+fn a_runaway_loop_of_unknown_commands_is_diagnosed_in_bounded_time() {
+    // Each of the ~666k `\n` the loop emits before the expansion limit got
+    // an unknown-command diagnostic that scanned the whole vocabulary
+    // (several times, with allocations): minutes to compile. Suggestions
+    // are memoised and known names are a set lookup.
+    let started = std::time::Instant::now();
+    let messages = compile_messages("\\def\\a{\\n\\a}\\a");
+    let elapsed = started.elapsed();
+    assert!(messages
+        .iter()
+        .any(|m| m.contains("expansion step limit exceeded")));
+    assert!(elapsed.as_secs() < 60, "took {elapsed:?}");
+}
+
+#[test]
+fn an_argument_replayed_from_at_begin_document_never_inverts_its_span() {
+    // Minimised from crates/page-builder/oracle/fixtures/vspace-03.tex: the
+    // replayed `\setlength` argument ended at a token offset before its `{`
+    // ("span start must not exceed end" in required_group_bounded).
+    let messages = compile_messages("\\AtBeginDocument{\\setlength\\}}\n\\begin{document");
+    assert!(!messages.is_empty());
+    let fixture = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../page-builder/oracle/fixtures/vspace-03.tex"
+    ))
+    .unwrap();
+    compile_messages(&fixture);
+}
+
+#[test]
+fn deeply_nested_left_right_pairs_hit_a_capacity_limit_in_bounded_time() {
+    // Sizing each pair lays out all it encloses: 10k nested pairs took 15 s
+    // in release (quadratic).
+    let n = 10_000;
+    let text = format!(
+        "\\begin{{document}}$${}x{}$$\\end{{document}}\n",
+        "\\left(".repeat(n),
+        "\\right)".repeat(n)
+    );
+    let started = std::time::Instant::now();
+    let messages = compile_messages(&text);
+    let elapsed = started.elapsed();
+    let capacity = "TeX capacity exceeded, sorry [grouping levels=255].";
+    assert_eq!(
+        messages.iter().filter(|m| **m == capacity).count(),
+        1,
+        "{:?}",
+        &messages[..messages.len().min(4)]
+    );
+    assert!(elapsed.as_secs() < 20, "took {elapsed:?}");
+    // pdflatex (TeX Live 2026) accepts 253 nested `\left`s in a document's
+    // display or inline math and stops at the 254th: the `document`
+    // environment and the math shift hold the other two of TeX's 255 levels.
+    assert_eq!(math::MAX_LEFT_RIGHT_DEPTH, 253);
+    for (math_open, math_close) in [("$$", "$$"), ("$", "$")] {
+        for (n, reported) in [(253, 0), (254, 1)] {
+            let text = format!(
+                "\\documentclass{{article}}\\begin{{document}}{math_open}{}x{}{math_close}\\end{{document}}\n",
+                "\\left(".repeat(n),
+                "\\right)".repeat(n)
+            );
+            let messages = compile_messages(&text);
+            assert_eq!(
+                messages.iter().filter(|m| **m == capacity).count(),
+                reported,
+                "{math_open} {n}: {:?}",
+                &messages[..messages.len().min(4)]
+            );
+        }
+    }
+}
+
+#[test]
+fn a_capacity_stop_is_recovered_like_the_step_limit() {
+    // "TeX capacity exceeded" stops the expander at a point that depends on
+    // where the run started, so the incremental cache must fall back to a
+    // full expansion (as for the step limit), and the rest of the document
+    // is typeset without expansion.
+    let text = format!(
+        "\\documentclass{{article}}\\begin{{document}}\n{}\\def\\b{{\\b x}}\\b\n\nAfter the loop.\n\\end{{document}}\n",
+        "Filler paragraph text.\n\n".repeat(400)
+    );
+    let parsed = parser::parse(&text);
+    let capacity = parsed
+        .diagnostics
+        .iter()
+        .find(|d| d.message == "TeX capacity exceeded, sorry [input stack size=10000].")
+        .expect("capacity diagnostic");
+    assert_eq!(
+        capacity.recovery.as_deref(),
+        Some("stopped expanding; the rest of the document was typeset without macro expansion")
+    );
+    let items: Vec<String> = layout::layout(&parsed.blocks)
+        .into_iter()
+        .flat_map(|page| page.items.into_iter().map(|item| item.text))
+        .collect();
+    assert!(
+        items.iter().any(|t| t.contains("After")),
+        "the text after the loop was lost"
+    );
+}

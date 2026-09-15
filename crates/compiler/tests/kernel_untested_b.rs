@@ -248,7 +248,7 @@ fn smallskip_inserts_three_points_of_vertical_space() {
         .blocks
         .iter()
         .filter_map(|block| match block {
-            Block::VSpace { pt } => Some(*pt),
+            Block::VSpace { pt, .. } => Some(*pt),
             _ => None,
         })
         .collect();
