@@ -652,6 +652,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["cancel", "bcancel", "xcancel"],
+        "{...}",
+        "diagonal rule over the body: bottom-left to top-right, its mirror, or both",
+        true,
+    ),
+    (
         &["overbrace", "underbrace"],
         "{body}",
         "cmex brace pieces with rule fills over or under a display-style body; scripts are limits",
@@ -943,6 +949,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "ulem",
         "normalem",
         "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined",
+    ),
+    (
+        "cancel",
+        "",
+        "\\cancel, \\bcancel and \\xcancel draw diagonal strikes over the body (the diagonals are set by the render pipeline); the makeroom and thicklines options change the layout and keep warning",
     ),
 ];
 
