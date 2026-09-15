@@ -1619,6 +1619,7 @@ pub fn parse_project_with(
         resume_counters: HashMap::new(),
         resume_keys: HashMap::new(),
         pending_item_label: None,
+        paragraph_started: false,
         pending_item: None,
         pending_line_break: None,
         paragraph_styles: Vec::new(),
@@ -1816,6 +1817,11 @@ struct P<'a> {
     /// later paragraphs of the same item render with the hanging indent but
     /// no repeated label.
     pending_item_label: Option<(String, Span)>,
+    /// A command that leaves vertical mode without adding material to the
+    /// paragraph (`\noindent`, `\indent`, `\textbf{`...) has started the
+    /// paragraph being collected, so the list is horizontal even while it
+    /// is still empty. Cleared when a block is pushed or the paragraph ends.
+    paragraph_started: bool,
     /// The structured form of `pending_item_label`, taken with it.
     pending_item: Option<ItemLabel>,
     /// verse's `\\` waiting for the next paragraph.
@@ -2809,7 +2815,10 @@ impl P<'_> {
                 let style = self.style;
                 para.extend(self.inlines_from_tokens(text_tokens, style));
             }
+            // latex.ltx `\DeclareTextFontCommand`: `\hmode@bgroup` is
+            // `\leavevmode\bgroup`.
             _ if style_command(name) => {
+                self.paragraph_started = true;
                 self.skip_spaces();
                 let next = apply_style(self.style, name);
                 if let Some(open) = self.closed_group_start() {
@@ -2988,18 +2997,22 @@ impl P<'_> {
             }
             // No paragraph is ever given a first-line indent in this layout
             // model, so there is nothing for \noindent to suppress: an honest
-            // no-op rather than a fabricated indent to cancel.
-            "noindent" => {}
+            // no-op rather than a fabricated indent to cancel. It still
+            // starts the paragraph (TeX §1091 `new_graf`), as `\indent` does.
+            "noindent" => self.paragraph_started = true,
             // The opposite request: unlike \noindent above, this one is not a
             // coincidental match with real LaTeX's output — \indent asks for
             // a first-line indent that this layout has no way to draw (see
             // `set_length`'s `\parindent` handling), so it is named honestly
             // via a diagnostic rather than silently accepted.
-            "indent" => self.diags.push(Diagnostic::warning(
-                "\\indent is recognised but paragraph indentation is not implemented",
-                Some(span),
-                Some("the paragraph was not given a first-line indent".into()),
-            )),
+            "indent" => {
+                self.paragraph_started = true;
+                self.diags.push(Diagnostic::warning(
+                    "\\indent is recognised but paragraph indentation is not implemented",
+                    Some(span),
+                    Some("the paragraph was not given a first-line indent".into()),
+                ))
+            }
             // Text-mode horizontal glue. `\quad`/`\qquad` are also implemented
             // in math mode (`src/math.rs`); this arm covers the same commands
             // used directly in running text, 1em/2em of the body text size.
@@ -3079,7 +3092,10 @@ impl P<'_> {
             // vertical-mode `\pagebreak` with priority 4 is a bare
             // `\penalty-10000`, not `\newpage`: there is no `\vfil` before
             // it, so a `\flushbottom` page it ends is stretched to
-            // `\textheight`.
+            // `\textheight`. The mode is TeX's, not whether text has been
+            // collected: `\noindent\pagebreak text` is horizontal (the page
+            // ends after the first line), `\label{x}\pagebreak text` is still
+            // vertical (`\label` puts only a whatsit in the current list).
             "pagebreak" | "nopagebreak" => {
                 let (priority, bracket) = self.break_priority_penalty();
                 let span = bracket.map_or(span, |bracket| span.merge(bracket));
@@ -3088,7 +3104,9 @@ impl P<'_> {
                 } else {
                     priority
                 };
-                if !para.is_empty() {
+                let horizontal = self.paragraph_started
+                    || para.iter().any(|inline| !matches!(inline, Inline::Label { .. }));
+                if horizontal {
                     para.push(Inline::PagePenalty { value, span });
                 } else {
                     blocks.push(Block::Penalty {
@@ -7122,6 +7140,7 @@ impl P<'_> {
     }
 
     fn finish_block_dependencies(&mut self) {
+        self.paragraph_started = false;
         // Exactly one entry per pushed block, like `block_dependencies`:
         // every block push is followed by this call, and only
         // `flush_list_item` leaves a non-`None` value here.
@@ -7171,6 +7190,7 @@ impl P<'_> {
         extra_gap_before_pt: f64,
         extra_gap_after_pt: f64,
     ) {
+        self.paragraph_started = false;
         let label = self.pending_item_label.take();
         if paragraph.is_empty() && label.is_none() {
             return;
@@ -9018,6 +9038,64 @@ mod tests {
             "{:?}",
             parsed.blocks
         );
+    }
+
+    /// The mode decides, not whether the paragraph holds text yet. pdflatex
+    /// (TeX Live 2026, `article`): `Before.` then `\noindent\pagebreak`,
+    /// `\indent\pagebreak` or `\textbf{\pagebreak Bold}` followed by a
+    /// two-line paragraph ends page 1 after that paragraph's *first* line;
+    /// `\label{a}\pagebreak` (vertical: `\label` is a whatsit) ends it before
+    /// the paragraph, and so does `\noindent` ended by a blank line.
+    #[test]
+    fn pagebreak_right_after_a_paragraph_starts_is_horizontal() {
+        let page_penalties = |parsed: &Parsed| -> Vec<i32> {
+            parsed
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    Block::Paragraph(inlines) => Some(inlines),
+                    _ => None,
+                })
+                .flatten()
+                .filter_map(|inline| match inline {
+                    Inline::PagePenalty { value, .. } => Some(*value),
+                    _ => None,
+                })
+                .collect()
+        };
+        let vertical = |parsed: &Parsed| -> Vec<i32> {
+            parsed
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    Block::Penalty { value, .. } => Some(*value),
+                    _ => None,
+                })
+                .collect()
+        };
+        for (source, value) in [
+            ("\\noindent\\pagebreak First.", -10000),
+            ("\\noindent \\pagebreak First.", -10000),
+            ("\\indent\\pagebreak First.", -10000),
+            ("\\textbf{\\pagebreak Bold} First.", -10000),
+            ("\\emph{\\nopagebreak[2] It} First.", 151),
+        ] {
+            let parsed = parse(&format!("Before.\n\n{source}"));
+            assert_eq!(page_penalties(&parsed), [value], "{source}: {:?}", parsed.blocks);
+            assert!(vertical(&parsed).is_empty(), "{source}: {:?}", parsed.blocks);
+        }
+        for source in ["\\label{a}\\pagebreak First.", "\\noindent\n\n\\pagebreak\nFirst."] {
+            let parsed = parse(&format!("Before.\n\n{source}"));
+            assert_eq!(vertical(&parsed), [-10000], "{source}: {:?}", parsed.blocks);
+            assert!(
+                parsed.blocks.iter().all(|block| !matches!(
+                    block,
+                    Block::Paragraph(inlines) if inlines.iter().any(|i| matches!(i, Inline::PagePenalty { .. }))
+                )),
+                "{source}: {:?}",
+                parsed.blocks
+            );
+        }
     }
 
     /// amsmath `\nobreakdash`: `\setboxz@h{--\nobreak}\unhbox\z@`. pdflatex:
