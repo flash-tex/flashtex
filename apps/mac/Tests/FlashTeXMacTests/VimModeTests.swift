@@ -721,4 +721,148 @@ final class VimModeTests: XCTestCase {
         EditorPreferences.shared.vimKeybindings = false
         XCTAssertNil(VimMode.Status.shared.indicator, "cleared on the setter, not on a later run-loop turn")
     }
+
+    // MARK: table-driven rows — buffer + caret + keys → buffer + caret
+
+    private struct VimRow {
+        var keys: String
+        var before: String
+        var caret: Int
+        var after: String
+        var caretAfter: Int
+    }
+
+    /// One row per action so coverage is visible and a regression names
+    /// itself (the failing row's keys are in the assertion message).
+    private func run(_ rows: [VimRow]) {
+        for r in rows {
+            load(r.before, caret: r.caret)
+            type(r.keys)
+            XCTAssertEqual(text, r.after, "\(r.keys): buffer")
+            XCTAssertEqual(caret, r.caretAfter, "\(r.keys): caret")
+            type("<Esc>")
+        }
+    }
+
+    // MARK: linewise first-non-blank motions (- + _ Enter |) and g_ / ge / gE / #
+
+    func testLinewiseFirstNonBlankMotions() {
+        let b = "  one\n  two\n  three" // line starts 0 / 6 / 12; first non-blanks 2 / 8 / 14
+        run([
+            VimRow(keys: "-", before: b, caret: 8, after: b, caretAfter: 2),
+            VimRow(keys: "+", before: b, caret: 8, after: b, caretAfter: 14),
+            VimRow(keys: "<CR>", before: b, caret: 2, after: b, caretAfter: 8),
+            VimRow(keys: "2+", before: b, caret: 2, after: b, caretAfter: 14),
+            VimRow(keys: "_", before: b, caret: 4, after: b, caretAfter: 2),
+            VimRow(keys: "2_", before: b, caret: 2, after: b, caretAfter: 8),
+            VimRow(keys: "-", before: b, caret: 2, after: b, caretAfter: 2), // first line: nowhere to go
+            VimRow(keys: "+", before: b, caret: 14, after: b, caretAfter: 14), // last line: nowhere to go
+        ])
+    }
+
+    func testBackspaceColumnAndLastNonBlankMotions() {
+        run([
+            VimRow(keys: "<BS>", before: "  one\n  two", caret: 3, after: "  one\n  two", caretAfter: 2),
+            VimRow(keys: "3<BS>", before: "  one\n  two", caret: 4, after: "  one\n  two", caretAfter: 1),
+            VimRow(keys: "|", before: "  one\n  two", caret: 8, after: "  one\n  two", caretAfter: 6),
+            VimRow(keys: "4|", before: "  one\n  two", caret: 6, after: "  one\n  two", caretAfter: 9),
+            VimRow(keys: "99|", before: "  one\n  two", caret: 6, after: "  one\n  two", caretAfter: 10), // clamps to the line's last character
+            VimRow(keys: "g_", before: "one  \ntwo", caret: 0, after: "one  \ntwo", caretAfter: 2), // trailing blanks skipped
+        ])
+    }
+
+    func testWordEndBackMotions() {
+        let b = "one two three"
+        run([
+            VimRow(keys: "ge", before: b, caret: 8, after: b, caretAfter: 6),
+            VimRow(keys: "ge", before: b, caret: 6, after: b, caretAfter: 2),
+            VimRow(keys: "ge", before: b, caret: 10, after: b, caretAfter: 6), // from inside a word
+            VimRow(keys: "ge", before: "foo( bar", caret: 5, after: "foo( bar", caretAfter: 3), // punctuation run has its own end
+            VimRow(keys: "gE", before: "foo( bar", caret: 5, after: "foo( bar", caretAfter: 3), // big words: ( ends "foo("
+        ])
+    }
+
+    func testNewMotionsAsOperatorTargets() {
+        run([
+            VimRow(keys: "dge", before: "one two three", caret: 8, after: "one twhree", caretAfter: 6), // inclusive, backward
+            VimRow(keys: "d<CR>", before: "  one\n  two\n  three", caret: 2, after: "  three", caretAfter: 2), // linewise: two lines
+            VimRow(keys: "d-", before: "  one\n  two\n  three", caret: 14, after: "  one", caretAfter: 2), // linewise: this line and the one above
+            VimRow(keys: "d_", before: "aa\nbb\ncc", caret: 4, after: "aa\ncc", caretAfter: 3), // one whole line, like dd
+            VimRow(keys: "2d_", before: "aa\nbb\ncc", caret: 3, after: "aa", caretAfter: 0),
+            VimRow(keys: "d|", before: "abcdef", caret: 3, after: "def", caretAfter: 0), // exclusive, back to column 1
+            VimRow(keys: "dg_", before: "one  ", caret: 0, after: "  ", caretAfter: 0), // inclusive to the last non-blank
+        ])
+    }
+
+    func testHashSearchesTheWordUnderTheCaretBackwards() {
+        let b = "foo bar foo baz foo"
+        run([
+            VimRow(keys: "#", before: b, caret: 8, after: b, caretAfter: 0),
+            VimRow(keys: "*", before: b, caret: 8, after: b, caretAfter: 16),
+            VimRow(keys: "#", before: b, caret: 0, after: b, caretAfter: 16), // wraps backwards
+        ])
+        // n continues in the # direction (backwards).
+        load(b, caret: 16)
+        type("#")
+        XCTAssertEqual(caret, 8)
+        type("n")
+        XCTAssertEqual(caret, 0)
+    }
+
+    func testScreenLineMotionsTakeCounts() {
+        load("l1\nl2\nl3\nl4\nl5\nl6", caret: 7) // 6 short lines, all visible
+        type("H")
+        XCTAssertEqual(caret, 0)
+        type("2H")
+        XCTAssertEqual(caret, 3)
+        type("L")
+        XCTAssertEqual(caret, 15)
+        type("2L")
+        XCTAssertEqual(caret, 12)
+    }
+
+    // MARK: correctness fixes pulled forward from the audit
+
+    func testNamedRegisterSelectionDoesNotLeakIntoTheNextCommand() {
+        load("one\ntwo\n")
+        type("\"ayy") // register a: "one\n"
+        type("j")
+        type("yy") // unnamed yank — must not overwrite register a
+        type("\"ap") // paste register a below "two"
+        XCTAssertEqual(text, "one\ntwo\none\n")
+        // …and the register selection is spent: a plain p pastes the unnamed register ("two\n").
+        type("p")
+        XCTAssertEqual(text, "one\ntwo\none\ntwo\n")
+    }
+
+    func testGvRestoresTheLastVisualSelection() {
+        load("alpha beta gamma")
+        type("ve")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 0, length: 5))
+        type("<Esc>w")
+        XCTAssertEqual(mode, .normal)
+        type("gv")
+        XCTAssertEqual(mode, .visual)
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 0, length: 5))
+        // Operators act on the restored selection.
+        type("d")
+        XCTAssertEqual(text, " beta gamma")
+    }
+
+    func testGvWithoutAPriorSelectionAnchorsAtTheCaret() {
+        load("alpha beta", caret: 6)
+        type("gv")
+        XCTAssertEqual(mode, .visual)
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 6, length: 1))
+        type("e") // extending moves the head, proving the anchor is the caret, not stale state
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: 6, length: 4))
+    }
+
+    func testDotRepeatsALinewiseEnterDelete() {
+        load("l1\nl2\nl3\nl4\nl5\nl6")
+        type("d<CR>")
+        XCTAssertEqual(text, "l3\nl4\nl5\nl6")
+        type(".")
+        XCTAssertEqual(text, "l5\nl6")
+    }
 }

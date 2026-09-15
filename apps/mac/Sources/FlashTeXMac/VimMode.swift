@@ -181,7 +181,15 @@ final class VimMode {
     /// Called after every handled key (mode changes, caret shape, status).
     var onStateChange: (() -> Void)?
 
-    private(set) var mode: Mode = .normal
+    private(set) var mode: Mode = .normal {
+        didSet {
+            // Leaving visual (any way: Esc, an operator, a mouse click)
+            // remembers the selection for `gv`.
+            if oldValue == .visual || oldValue == .visualLine, mode != .visual, mode != .visualLine {
+                lastVisual = (visualAnchor, visualHead, oldValue == .visualLine)
+            }
+        }
+    }
     private var count: Int?
     private var pendingOperator: Operator?
     private var operatorCount: Int?
@@ -193,6 +201,8 @@ final class VimMode {
     private var lastFind: (char: Character, forward: Bool, till: Bool)?
     private(set) var lastSearch: (pattern: String, forward: Bool)?
     private var visualAnchor = 0
+    /// The last visual selection (anchor, head, linewise), for `gv`.
+    private var lastVisual: (anchor: Int, head: Int, line: Bool)?
     private var preferredColumn: Int?
     /// Column kept across `gj`/`gk`, counted from the start of the *visual*
     /// row rather than the logical line. Independent of `preferredColumn`:
@@ -406,6 +416,7 @@ final class VimMode {
                 namedRegisters[reg] = r
             }
         }
+        selectedRegister = nil // `"a` names a register for one command only
     }
 
     private func registerForPaste() -> Register? {
@@ -485,10 +496,21 @@ final class VimMode {
     private func handleNormalKey(_ key: Key) -> Bool {
         if key.escape { resetPending(); message = nil; clampNormalCaret(); return true }
         if pending != .none { return handlePendingKey(key) }
-        // Enter/Backspace are motions in Vim, not edits; until they move
-        // (Motions below) they are consumed no-ops. Falling through would
-        // insert a newline / delete a character in normal mode.
-        guard let ch = key.char else { resetPending(); return true }
+        // Enter (first non-blank of the next line) and Backspace (left) are
+        // motions in Vim, never edits: falling through would insert a
+        // newline / delete a character in normal mode.
+        guard let ch = key.char else {
+            let n = count
+            count = nil
+            if key.return || key.backspace {
+                record(key) // e.g. `d<CR>` must replay under `.`
+                let m: Motion = key.return ? .lineDownToFirstNonBlank(count: n ?? 1) : .left(count: n ?? 1)
+                if let op = pendingOperator { finishOperator(op, motion: m) } else { move(m) }
+                return true
+            }
+            resetPending()
+            return true
+        }
 
         // Counts (a leading 0 is the motion).
         if !key.control, let d = ch.wholeNumberValue, ch.isASCII, d != 0 || count != nil {
@@ -555,7 +577,8 @@ final class VimMode {
         case "/", "?": commandLine = (ch, "", caret)
         case "n": searchAgain(reverse: false, count: n ?? 1)
         case "N": searchAgain(reverse: true, count: n ?? 1)
-        case "*": searchWordUnderCaret(count: n ?? 1)
+        case "*": searchWordUnderCaret(count: n ?? 1, forward: true)
+        case "#": searchWordUnderCaret(count: n ?? 1, forward: false)
         default:
             // Normal mode owns the keyboard: a key with no mapping (`q`, `_`,
             // `[`, …) is consumed doing nothing, exactly like Vim. Returning
@@ -606,9 +629,31 @@ final class VimMode {
                 default: .rowEnd
                 }
                 if let op = pendingOperator { finishOperator(op, motion: m) } else { move(m) }
+            case "e", "E":
+                let m = Motion.wordEndBack(count: n ?? 1, big: ch == "E")
+                if let op = pendingOperator { finishOperator(op, motion: m) } else { move(m) }
+            case "_":
+                let m = Motion.lastNonBlank(count: n ?? 1)
+                if let op = pendingOperator { finishOperator(op, motion: m) } else { move(m) }
             case "J": beginRecording(.c("g")); record(key); joinLines(count: max(2, n ?? 2), spaces: false); finishRecording()
-            case "v": mode = .visual; textView?.setSelectedRange(NSRange(location: caret, length: min(1, length - caret)))
-            case "u", "U", "~" where pendingOperator == nil: break // gu/gU need an operator target: not supported yet
+            case "v":
+                // Reselect the last visual selection; without one, visual
+                // mode from the caret (anchored there — the old code left a
+                // stale anchor behind).
+                if let lv = lastVisual {
+                    mode = lv.line ? .visualLine : .visual
+                    visualAnchor = min(lv.anchor, max(0, length - 1))
+                    setCaretKeepingVisual(min(lv.head, max(0, length - 1)))
+                } else {
+                    mode = .visual
+                    visualAnchor = caret
+                    setCaretKeepingVisual(caret)
+                }
+            // gu/gU/g~ still need an operator implementation. (Deliberately
+            // one bare case per key: Swift scopes a trailing `where` to the
+            // last pattern only, so `case "u", "U", "~" where cond:` guards
+            // nothing but the "~".)
+            case "u", "U", "~": break
             default: resetPending()
             }
         case .replaceChar:
@@ -813,6 +858,7 @@ final class VimMode {
     }
 
     private func paste(after: Bool, count: Int) {
+        defer { selectedRegister = nil } // `"ap` names a register for this paste only
         guard let reg = registerForPaste(), !reg.text.isEmpty else { return }
         let body = String(repeating: reg.text, count: count)
         if reg.linewise {
@@ -896,9 +942,16 @@ final class VimMode {
             }
             return handlePendingKey(key)
         }
-        // Enter/Backspace: consumed no-ops (as in normal mode); falling
+        // Enter/Backspace are the same motions as in normal mode; falling
         // through would replace the selection with a newline / delete it.
-        guard let ch = key.char else { resetPending(); return true }
+        guard let ch = key.char else {
+            let n = count
+            count = nil
+            if key.return { move(.lineDownToFirstNonBlank(count: n ?? 1)); return true }
+            if key.backspace { move(.left(count: n ?? 1)); return true }
+            resetPending()
+            return true
+        }
         if !key.control, let d = ch.wholeNumberValue, ch.isASCII, d != 0 || count != nil { count = (count ?? 0) * 10 + d; return true }
         let n = count
         count = nil
@@ -943,7 +996,8 @@ final class VimMode {
         case "/", "?": commandLine = (ch, "", caret)
         case "n": searchAgain(reverse: false, count: n ?? 1)
         case "N": searchAgain(reverse: true, count: n ?? 1)
-        case "*": searchWordUnderCaret(count: n ?? 1)
+        case "*": searchWordUnderCaret(count: n ?? 1, forward: true)
+        case "#": searchWordUnderCaret(count: n ?? 1, forward: false)
         default:
             // Visual mode owns the keyboard too: an unmapped key is consumed
             // doing nothing. Returning false would hand it to the editor,
@@ -996,14 +1050,24 @@ final class VimMode {
         /// `g0`/`g^`/`g$`: the ends of the visual row.
         case rowStart, rowFirstNonBlank, rowEnd
         case wordStart(count: Int, big: Bool), wordEnd(count: Int, big: Bool), wordBack(count: Int, big: Bool)
+        /// `ge`/`gE`: end of the previous word, inclusive.
+        case wordEndBack(count: Int, big: Bool)
         case lineStart, firstNonBlank, lineEnd(count: Int), toLineEnd(count: Int)
+        /// `-` / `+` (and Enter): first non-blank of the line `count` above/below. Linewise.
+        case lineUpToFirstNonBlank(count: Int), lineDownToFirstNonBlank(count: Int)
+        /// `_`: first non-blank, `count`-1 lines down. Linewise.
+        case firstNonBlankDown(count: Int)
+        /// `g_`: last non-blank of the line `count`-1 down. Inclusive.
+        case lastNonBlank(count: Int)
+        /// `|`: column `count` (1-based) of the current line.
+        case column(Int)
         case line(number: Int), lastLine
         case paragraphForward(count: Int), paragraphBack(count: Int)
         case sentenceForward(count: Int), sentenceBack(count: Int)
         case findChar(Character, forward: Bool, till: Bool, count: Int)
         case repeatFind(count: Int, reverse: Bool)
         case matchPair
-        case screenTop, screenMiddle, screenBottom
+        case screenTop(count: Int), screenMiddle, screenBottom(count: Int)
         case absolute(Int, linewise: Bool)
     }
 
@@ -1037,9 +1101,13 @@ final class VimMode {
         case ";": return .repeatFind(count: c, reverse: false)
         case ",": return .repeatFind(count: c, reverse: true)
         case "%": return .matchPair
-        case "H": return .screenTop
+        case "H": return .screenTop(count: c)
         case "M": return .screenMiddle
-        case "L": return .screenBottom
+        case "L": return .screenBottom(count: c)
+        case "-": return .lineUpToFirstNonBlank(count: c)
+        case "+": return .lineDownToFirstNonBlank(count: c)
+        case "_": return .firstNonBlankDown(count: c)
+        case "|": return .column(c)
         default: return nil
         }
     }
@@ -1131,6 +1199,10 @@ final class VimMode {
             var p = c
             for _ in 0..<n { p = previousWordStart(from: p, big: big) }
             return Target(position: p)
+        case .wordEndBack(let n, let big):
+            var p = c
+            for _ in 0..<n { p = previousWordEnd(from: p, big: big) }
+            return Target(position: p, inclusive: true)
         case .lineStart: return Target(position: lineStart(c))
         case .firstNonBlank: return Target(position: firstNonBlank(fromLineStart: lineStart(c)))
         case .lineEnd(let n):
@@ -1141,6 +1213,26 @@ final class VimMode {
             var e = lineEnd(c)
             for _ in 1..<max(1, n) where e < length { e = lineEnd(e + 1) }
             return Target(position: e)
+        case .lineUpToFirstNonBlank(let n), .lineDownToFirstNonBlank(let n):
+            let current = lineNumber(of: c)
+            var down = false
+            if case .lineDownToFirstNonBlank = m { down = true }
+            let target = down ? min(lineCount - 1, current + n) : max(0, current - n)
+            guard target != current else { return nil }
+            return Target(position: firstNonBlank(fromLineStart: lineStart(ofLine: target)), linewise: true)
+        case .firstNonBlankDown(let n):
+            let target = min(lineCount - 1, lineNumber(of: c) + n - 1)
+            return Target(position: firstNonBlank(fromLineStart: lineStart(ofLine: target)), linewise: true)
+        case .lastNonBlank(let n):
+            var e = lineEnd(c)
+            for _ in 1..<max(1, n) where e < length { e = lineEnd(e + 1) }
+            var i = max(lineStart(e), e - 1)
+            while i > lineStart(i), let d = char(at: i), d == 0x20 || d == 0x09 { i -= 1 }
+            return Target(position: i, inclusive: true)
+        case .column(let n):
+            let s = lineStart(c)
+            let limit = mode == .insert ? lineEnd(c) : max(s, lineEnd(c) - 1)
+            return Target(position: min(s + max(1, n) - 1, limit))
         case .line(let number):
             let s = lineStart(ofLine: min(max(0, number), lineCount - 1))
             return Target(position: firstNonBlank(fromLineStart: s), linewise: true)
@@ -1173,19 +1265,22 @@ final class VimMode {
         case .matchPair:
             guard let p = matchingPair(from: c) else { return nil }
             return Target(position: p, inclusive: true)
-        case .screenTop, .screenMiddle, .screenBottom:
-            guard let tv = textView else { return nil }
-            let visible = tv.enclosingScrollView?.documentVisibleRect ?? tv.visibleRect
-            let y: CGFloat = switch m {
-            case .screenTop: visible.minY + 1
-            case .screenMiddle: visible.midY
-            default: visible.maxY - 1
-            }
-            let idx = tv.characterIndexForInsertion(at: NSPoint(x: visible.minX + tv.textContainerInset.width, y: y))
-            return Target(position: firstNonBlank(fromLineStart: lineStart(min(idx, length))), linewise: true)
+        case .screenTop(let n): return screenLineTarget(y: { $0.minY + 1 }, linesInward: n - 1)
+        case .screenMiddle: return screenLineTarget(y: { $0.midY }, linesInward: 0)
+        case .screenBottom(let n): return screenLineTarget(y: { $0.maxY - 1 }, linesInward: -(n - 1))
         case .absolute(let p, let linewise):
             return Target(position: min(max(0, p), length), linewise: linewise)
         }
+    }
+
+    /// `H`/`M`/`L`: the first non-blank of a screen line; a count moves
+    /// `linesInward` logical lines into the screen (down from `H`, up from `L`).
+    private func screenLineTarget(y: (NSRect) -> CGFloat, linesInward: Int) -> Target? {
+        guard let tv = textView else { return nil }
+        let visible = tv.enclosingScrollView?.documentVisibleRect ?? tv.visibleRect
+        let idx = tv.characterIndexForInsertion(at: NSPoint(x: visible.minX + tv.textContainerInset.width, y: y(visible)))
+        let line = min(max(0, lineNumber(of: min(idx, length)) + linesInward), lineCount - 1)
+        return Target(position: firstNonBlank(fromLineStart: lineStart(ofLine: line)), linewise: true)
     }
 
     // MARK: visual rows (line fragments)
@@ -1283,6 +1378,21 @@ final class VimMode {
         let k = cls(text.character(at: i), big: big)
         while i > 0, cls(text.character(at: i - 1), big: big) == k { i -= 1 }
         return i
+    }
+
+    /// `ge`/`gE`: the last character of the word run before `p` (a position
+    /// whose following character is blank or of another class).
+    private func previousWordEnd(from p: Int, big: Bool) -> Int {
+        var i = min(p, length) - 1
+        while i > 0 {
+            let k = cls(text.character(at: i), big: big)
+            if k != 0 {
+                let next = i + 1 < length ? cls(text.character(at: i + 1), big: big) : 0
+                if next != k { return i }
+            }
+            i -= 1
+        }
+        return 0
     }
 
     private func isBlankLine(at s: Int) -> Bool { s >= length || text.character(at: s) == 0x0A }
@@ -1553,12 +1663,12 @@ final class VimMode {
         jumpToMatch(s.pattern, forward: reverse ? !s.forward : s.forward, count: count)
     }
 
-    private func searchWordUnderCaret(count: Int) {
+    private func searchWordUnderCaret(count: Int, forward: Bool) {
         guard let r = textObject("w", inner: true), r.length > 0, let c = char(at: r.location), isWordChar(c) else { return }
         let word = text.substring(with: r)
-        lastSearch = (word, true)
+        lastSearch = (word, forward)
         shareWithFindBar(word)
-        jumpToMatch(word, forward: true, count: count)
+        jumpToMatch(word, forward: forward, count: count)
     }
 
     /// The search term also becomes the find bar's (⌘G / Edit ▸ Find ▸ Find Next continue it).
