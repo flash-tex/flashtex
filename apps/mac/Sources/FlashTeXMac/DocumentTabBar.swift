@@ -18,7 +18,7 @@ struct DocumentTabBar: View {
     var body: some View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: DS.Space.xxs) {
+                HStack(spacing: 0) {
                     ForEach(model.chrome.listing) { doc in // throttled, change-only copy (ShellChrome.swift): `project.listing` reads `documents` per keystroke
                         DocumentTab(doc: doc, active: doc.path == model.activePath, kind: model.documentKinds.kind(of: doc.path))
                     }
@@ -43,14 +43,14 @@ struct DocumentTabBar: View {
             DocumentKindIndicator() // DocumentKinds.swift: helper-reported bibliography kind, read-only
             if model.documentURL == nil {
                 // No file identity yet: the one state the modified dot cannot carry.
-                Text("unsaved buffer").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                Text("unsaved buffer").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textTertiary)
                     .padding(.trailing, DS.Space.m)
             } else {
                 Spacer().frame(width: DS.Space.m)
             }
         }
         .frame(height: DS.Row.tab)
-        .background(DS.Colors.surfaceSecondary) // the recessed strip the active tab is raised against
+        .background(DS.Colors.surfacePrimary) // Islands: strip and editor share one surface
     }
 }
 
@@ -86,7 +86,7 @@ private struct DocumentTab: View {
                     Image(systemName: "xmark").font(DS.Fonts.header)
                         .foregroundStyle(DS.Colors.textSecondary)
                         .frame(width: DS.Size.inlineIconButton, height: DS.Size.inlineIconButton)
-                        .background(hovering ? DS.Colors.textPrimary.opacity(DS.State.pressedOpacity) : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.control))
+                        .background(hovering ? DS.Colors.hover : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.control))
                 }
                 .buttonStyle(.plain)
                 // Close affordance on hover and on the active tab only (§5).
@@ -95,23 +95,30 @@ private struct DocumentTab: View {
                 .accessibilityLabel("Detach \(doc.path)")
             }
         }
-        .padding(.horizontal, DS.Space.m)
-        .frame(height: DS.Row.tab - DS.Space.xs)
-        // Islands treatment (§5): the active tab is a filled, rounded card
-        // raised out of the recessed strip; inactive tabs carry no chrome.
-        // An unfocused window's card drops its shadow so the active tab
-        // reads weaker without moving (§14).
-        .background(active ? AnyShapeStyle(DS.Colors.surfaceRaised)
-                           : hovering ? AnyShapeStyle(DS.Colors.textPrimary.opacity(DS.State.hoverOpacity)) : AnyShapeStyle(.clear),
-                    in: RoundedRectangle(cornerRadius: DS.Radius.tab))
-        .overlay {
+        .padding(.horizontal, DS.Space.l)
+        .frame(maxHeight: .infinity)
+        // Islands treatment (context/PROMPT-appearance-overhaul.md §3/§4):
+        // the selected tab is a muted blue block on the shared strip surface
+        // with a 4pt rounded underline at the strip's bottom edge; inactive
+        // tabs carry no chrome beyond a hover wash. An unfocused window's
+        // selected tab fades to the chrome tone (§14).
+        .background {
             if active {
-                RoundedRectangle(cornerRadius: DS.Radius.tab)
-                    .strokeBorder(DS.Colors.separator, lineWidth: DS.Size.hairline)
+                UnevenRoundedRectangle(topLeadingRadius: DS.Radius.tab, topTrailingRadius: DS.Radius.tab)
+                    .fill(activeState == .inactive ? DS.Colors.tabSelectedInactive : DS.Colors.tabSelected)
+            } else if hovering {
+                UnevenRoundedRectangle(topLeadingRadius: DS.Radius.tab, topTrailingRadius: DS.Radius.tab)
+                    .fill(DS.Colors.hover)
             }
         }
-        .shadow(color: active && activeState != .inactive ? DS.Colors.textPrimary.opacity(DS.State.hoverOpacity) : .clear,
-                radius: DS.Space.xxs, y: DS.Size.hairline)
+        .overlay(alignment: .bottom) {
+            if active {
+                UnevenRoundedRectangle(topLeadingRadius: DS.Size.tabUnderline, topTrailingRadius: DS.Size.tabUnderline)
+                    .fill(DS.Colors.tabUnderline)
+                    .frame(height: DS.Size.tabUnderline)
+                    .padding(.horizontal, DS.Space.xs)
+            }
+        }
         .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle())
