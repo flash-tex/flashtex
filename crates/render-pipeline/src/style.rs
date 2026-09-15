@@ -146,6 +146,12 @@ pub struct Stylesheet {
     /// `microtype` (`None` otherwise; lines are then broken exactly as
     /// before).
     pub microtype: Option<MicrotypeSetup>,
+    /// Literal UTF-8 input checks (`crate::inputenc`): the text encoding
+    /// and the preamble's own declarations, or `None` to typeset every
+    /// character the fonts can draw without pdfLaTeX's input errors (a
+    /// stylesheet built without a document, or a document outside the
+    /// pdfLaTeX `utf8` world). The adapter sets it.
+    pub input: Option<crate::inputenc::InputSetup>,
 }
 
 impl Stylesheet {
@@ -249,6 +255,7 @@ impl Stylesheet {
             headings: [heading(1), heading(2), heading(3), heading(4), heading(5)],
             class_geometry: None,
             microtype: None,
+            input: None,
         }
     }
 

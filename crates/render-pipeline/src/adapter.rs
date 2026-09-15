@@ -1215,6 +1215,7 @@ pub fn adapt_cached(
         }
     });
     style.nfss = crate::nfss::Scheme::for_document(&parsed.packages, t1_encoding(source));
+    style.input = crate::inputenc::InputSetup::for_project(texts, entry);
     let styles: Vec<Styles> = texts.iter().map(|t| Styles::new(t, style_intervals(t), style.nfss)).collect();
     let labels_fp = {
         use std::hash::{Hash, Hasher};
