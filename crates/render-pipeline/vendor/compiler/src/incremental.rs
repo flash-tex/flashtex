@@ -522,6 +522,20 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             Some(())
         }
         Block::VFill => Some(()),
+        Block::LetterBlock {
+            part: _,
+            lines,
+            extra_gap_after_pt: _,
+            gap_before_pt: _,
+            gap_after_pt: _,
+            indent_pt: _,
+            span,
+        } => {
+            for line in lines.iter_mut() {
+                shift_inlines(line, changes, deltas)?;
+            }
+            map_span(span, changes, deltas)
+        }
     }
 }
 
@@ -808,6 +822,10 @@ fn block_signature(block: &Block) -> BlockSignature {
         | Block::Verbatim { .. }
         | Block::TableOfContents { .. }
         | Block::VFill => &[],
+        // Signature only (see the doc comment above): the first line is
+        // enough to narrow the candidate set, and `shift_block`'s full
+        // equality check still gates every reuse.
+        Block::LetterBlock { lines, .. } => lines.first().map_or(&[][..], |line| &line[..]),
         // Signature only, not identity (see the doc comment above): using
         // just `title` here (never `authors`/`date`) can only widen the
         // candidate set on an author/date-only edit, never produce a wrong
