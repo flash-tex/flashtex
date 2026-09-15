@@ -818,6 +818,7 @@ fn block_source(ctx: &Context, b: &BuiltBlock, items: impl Iterator<Item = usize
             BoxRec::ColorBox(c) => Some(c.span),
             BoxRec::Leader { .. } => None,
             BoxRec::Underline(u) => Some(u.span),
+            BoxRec::TextScript(t) => Some(t.span),
         })
         .collect()
 }

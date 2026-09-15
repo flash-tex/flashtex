@@ -164,6 +164,29 @@ pub fn sup2_pt(size: f64) -> f64 {
     ratio * size
 }
 
+/// cmr x-height per em, the same constant the compiler's
+/// `CMR_EX_PER_EM` carries (4.30554pt at 10pt).
+const CMR_EX_PER_EM: f64 = 0.430555;
+
+/// `\@textsuperscript` raise for text of `size` whose superscript box has
+/// depth `content_depth`: TeX §758 with an empty nucleus, exactly the
+/// shift [`Context::footnote_mark`] applies — `sup2` of the symbol font
+/// at the current size, at least the box depth plus a quarter of the
+/// x-height (Appendix G rule 18c).
+pub fn textsup_shift_pt(size: f64, content_depth: f64) -> f64 {
+    sup2_pt(size).max(content_depth + 0.25 * CMR_EX_PER_EM * size)
+}
+
+/// `\@textsubscript` drop for text of `size` set at `sf` whose subscript
+/// box has height `content_height`: Appendix G rule 18 with an empty
+/// nucleus, the same formula the `\LaTeX`e epsilon uses — `sub_drop` at
+/// the script size, `sub1` at the current size, and the box height less
+/// four-fifths of the x-height. `sub1` is lmsy10's .15em and `sub_drop`
+/// .05em (`params::math_params`, level 0).
+pub fn textsub_shift_pt(size: f64, sf: f64, content_height: f64) -> f64 {
+    (0.05 * sf).max(0.15 * size).max(content_height - 0.8 * CMR_EX_PER_EM * size)
+}
+
 /// Hook for `minipage` footnotes (`\@mpfootnotetext`): a minipage collects
 /// its notes (marks `\thempfootnote`, `{\itshape\@alph\c@mpfootnote}`) and
 /// sets them at its own foot, `\vskip\skip\@mpfootins \footnoterule
