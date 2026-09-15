@@ -741,8 +741,99 @@ fn configure(engine: &mut Engine) {
         engine.declare_host_command(name);
     }
     engine.declare_host_command("include");
-    engine.declare_host_command("flashtexsetlength");
-    engine.declare_host_command("flashtexaddtolength");
+    // `\global\setlength{\parskip}{..}` is valid LaTeX: `\setlength` is a
+    // macro, so TeX applies the prefix to the register assignment.
+    engine.declare_host_assignment("flashtexsetlength");
+    engine.declare_host_assignment("flashtexaddtolength");
+}
+
+/// The expansion engine's `em`/`ex` come from the text font its tracked font
+/// commands select ([`crate::font_units`]).
+fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts) {
+    configure(engine);
+    for (name, switch) in crate::font_units::font_switches() {
+        engine.declare_font_switch(name, switch);
+    }
+    engine.set_font_metrics(Rc::new(crate::font_units::EngineFontMetrics {
+        setup: fonts.setup,
+        preamble_latin_modern: fonts.preamble_latin_modern,
+    }));
+}
+
+/// The document-wide font inputs the engine needs before it executes any
+/// `\setlength`: the class size option, `fontenc` and `lmodern`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DocumentFonts {
+    setup: crate::font_units::FontSetup,
+    /// `lmodern` was loaded before `\usepackage[T1]{fontenc}`, whose
+    /// `\selectfont` then switches the preamble to Latin Modern already.
+    preamble_latin_modern: bool,
+}
+
+/// The words of `tokens` from `index` up to the next `{`, and the words of
+/// that brace group.
+fn option_and_group_words(tokens: &[Token], index: usize) -> (String, String) {
+    let mut options = String::new();
+    let mut group = String::new();
+    let mut in_group = false;
+    for token in &tokens[index..] {
+        match &token.kind {
+            TokenKind::LBrace if !in_group => in_group = true,
+            TokenKind::RBrace if in_group => break,
+            TokenKind::Word(word) if in_group => group.push_str(word),
+            TokenKind::Word(word) => options.push_str(word),
+            TokenKind::Space => {}
+            _ if in_group => break,
+            _ => {}
+        }
+    }
+    (options.trim_matches(|c| matches!(c, '[' | ']')).to_string(), group)
+}
+
+fn document_fonts(documents: &[SourceDocument<'_>]) -> DocumentFonts {
+    let mut class_pt = None;
+    let mut t1 = false;
+    let mut latin_modern = false;
+    let mut preamble_latin_modern = false;
+    for (document_index, document) in documents.iter().enumerate() {
+        let tokens = tokenize_document(document.text, DocumentId(document_index));
+        for (index, token) in tokens.iter().enumerate() {
+            let TokenKind::Command(name) = &token.kind else {
+                continue;
+            };
+            match name.as_str() {
+                "documentclass" if class_pt.is_none() => {
+                    let (options, _) = option_and_group_words(&tokens, index + 1);
+                    class_pt = options.split(',').find_map(|option| match option.trim() {
+                        "10pt" => Some(10.0),
+                        "11pt" => Some(11.0),
+                        "12pt" => Some(12.0),
+                        _ => None,
+                    });
+                }
+                "usepackage" => {
+                    let (options, group) = option_and_group_words(&tokens, index + 1);
+                    for package in group.split(',').map(str::trim) {
+                        match package {
+                            "lmodern" => latin_modern = true,
+                            "fontenc" => {
+                                if let Some(encoding) = crate::text_builtins::fontenc_encoding(&options) {
+                                    t1 = encoding == flashtex_tex_text_encoding::encoding::Encoding::T1;
+                                    preamble_latin_modern = latin_modern;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    DocumentFonts {
+        setup: crate::font_units::FontSetup::new(class_pt, t1, latin_modern),
+        preamble_latin_modern: preamble_latin_modern && t1,
+    }
 }
 
 fn has_includes(text: &str) -> bool {
@@ -1087,7 +1178,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     let total_bytes: usize = documents.iter().map(|d| d.text.len()).sum();
     let entry_text: &str = prepared.get(entry).map_or("", |p| p.text.as_ref());
     let mut engine = Engine::with_limits(entry_text, limits_for(total_bytes));
-    configure(&mut engine);
+    configure_with_fonts(&mut engine, document_fonts(documents));
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
@@ -1162,6 +1253,8 @@ pub struct ExpansionCache {
     last_span: Span,
     /// Engine tokens the previous run produced.
     old_engine_tokens: usize,
+    /// The class size and font packages change the engine's `em`/`ex`.
+    fonts: DocumentFonts,
     /// Tokens at the end of `out` typeset unexpanded after the engine
     /// stopped (see [`Converter::resume_unexpanded`]); no marks cover them.
     recovered: usize,
@@ -1258,11 +1351,15 @@ pub fn expand_project_with_cache(
         .map(|(index, d)| if index == entry { prepare(d.text, DocumentId(index)) } else { Prepared::plain(d.text) })
         .collect();
     let masked: &str = prepared[entry].text.as_ref();
+    let fonts = document_fonts(documents);
     // The same limits as `expand_project`, which the expander applies to
     // every edit (`IncrementalExpander::edit_with_limits`).
     let limits = limits_for(documents.iter().map(|d| d.text.len()).sum());
     let reusable = cache.as_ref().is_some_and(|c| {
-        !c.lent && c.entry_path == document.path && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
+        !c.lent
+            && c.entry_path == document.path
+            && c.fonts == fonts
+            && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
     });
     let expansion = if reusable {
         update_cache(cache.as_mut().expect("checked"), documents, entry, &prepared, limits)
@@ -1287,7 +1384,10 @@ pub fn expand_project_with_cache(
 
 fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepared<'_>], limits: Limits) -> (ExpansionCache, Expansion) {
     let masked: &str = prepared[entry].text.as_ref();
-    let init: Rc<dyn Fn(&mut Engine)> = Rc::new(configure);
+    let fonts = document_fonts(documents);
+    let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
+        configure_with_fonts(engine, fonts);
+    });
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
     let mut marks = vec![Mark { index: 0, out_len: 0, last_span: conv.last_span }];
@@ -1304,6 +1404,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         current_label_log: Vec::new(),
         last_span: conv.last_span,
         old_engine_tokens: 0,
+        fonts,
         recovered: 0,
         lent: false,
     };
