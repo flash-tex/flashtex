@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-corpus-sweep",
+  "branch": "none-measurement-only",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": "corpus sweep: check+render over fixtures/real-world, fixtures/divergence-probes, PR42 extended-tex-corpus cases; no code changes",
+  "started_utc": "2026-09-15T06:14:57Z",
+  "state": "claimed",
+  "task_id": "GH-CORPUS-SWEEP",
+  "updated_utc": "2026-09-15T06:14:57Z"
+}
