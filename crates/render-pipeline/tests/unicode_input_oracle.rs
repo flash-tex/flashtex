@@ -175,3 +175,128 @@ fn declared_or_other_input_setups_are_left_alone() {
     let lgr = render_one(&doc("\\usepackage[LGR,T1]{fontenc}", "x α y"));
     assert!(errors(&lgr).is_empty(), "{:?}", errors(&lgr));
 }
+
+/// The package, class and babel-language tables of `crate::inputenc` are
+/// exactly what `fixtures/unicode-input/packages.py` measured with
+/// pdflatex (`packages.json`): a name is listed only when it loads, declares
+/// no character outside the probe, and changes no error except to remove
+/// the listed ones under OT1 (or to give exactly T1's errors). Everything
+/// else is absent, so the check fails open for it.
+#[test]
+fn package_tables_are_pdflatex_measurements() {
+    use flashtex_render_pipeline::inputenc::*;
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/unicode-input/packages.json");
+    let reference = json::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let Some(Value::Obj(entries)) = reference.get("entries") else { panic!("no entries") };
+    let chars = |entry: &Value, enc: &str| -> String {
+        let hexes = entry.get(enc).and_then(|e| e.get("accepts")).and_then(Value::as_arr).unwrap();
+        hexes.iter().map(|h| char::from_u32(u32::from_str_radix(h.as_str().unwrap(), 16).unwrap()).unwrap()).collect()
+    };
+    let mut failures = Vec::new();
+    let mut seen = Vec::new();
+    for (key, entry) in entries {
+        let effect = entry.get("effect").and_then(Value::as_str).unwrap();
+        let (neutral, t1, accepting): (&[&str], &[&str], &[(&str, &str)]) = if let Some(_) = key.strip_prefix("class:") {
+            (NEUTRAL_CLASSES, T1_CLASSES, ACCEPTING_CLASSES)
+        } else if key.starts_with("babel:") {
+            (&[], &[], &[])
+        } else {
+            (NEUTRAL_PACKAGES, T1_PACKAGES, ACCEPTING_PACKAGES)
+        };
+        let name = key.split_once(':').map_or(key.as_str(), |(_, n)| n);
+        if matches!(name, "inputenc" | "fontenc") {
+            continue; // read by their options, not the table
+        }
+        let ours = if let Some(language) = key.strip_prefix("babel:") {
+            BABEL_LANGUAGES.contains(&language).then(|| format!("accepts {BABEL_ACCEPTS}"))
+        } else if neutral.contains(&name) {
+            Some("neutral".to_string())
+        } else if t1.contains(&name) {
+            Some("t1".to_string())
+        } else {
+            accepting.iter().find(|(n, _)| *n == name).map(|(_, c)| format!("accepts {c}"))
+        };
+        let measured = match effect {
+            "fail-open" => None,
+            "neutral" => Some("neutral".to_string()),
+            "t1" => Some("t1".to_string()),
+            "accepts" => {
+                assert_eq!(chars(entry, "t1"), "", "{key}: accepts under T1");
+                Some(format!("accepts {}", chars(entry, "ot1")))
+            }
+            other => panic!("{key}: effect {other}"),
+        };
+        if ours != measured {
+            failures.push(format!("{key}: pdflatex {measured:?}, ours {ours:?}"));
+        }
+        seen.push(key.clone());
+    }
+    let listed = NEUTRAL_PACKAGES
+        .iter()
+        .chain(T1_PACKAGES)
+        .chain(ACCEPTING_PACKAGES.iter().map(|(n, _)| n))
+        .map(|n| n.to_string())
+        .chain(NEUTRAL_CLASSES.iter().chain(T1_CLASSES).chain(ACCEPTING_CLASSES.iter().map(|(n, _)| n)).map(|n| format!("class:{n}")))
+        .chain(BABEL_LANGUAGES.iter().map(|n| format!("babel:{n}")));
+    for name in listed {
+        if !seen.contains(&name) {
+            failures.push(format!("{name}: listed but not measured"));
+        }
+    }
+    let fontenc = reference.get("fontenc").unwrap();
+    for (options, want) in [("T1,OT1", "ot1"), ("OT1,T1", "t1"), ("TS1,T1", "t1"), ("TS1,OT1", "ot1")] {
+        assert_eq!(fontenc.get(options).and_then(|o| o.get("equals")).and_then(Value::as_str), Some(want), "fontenc [{options}]");
+    }
+    assert!(failures.is_empty(), "{} mismatches:\n{}", failures.len(), failures.join("\n"));
+}
+
+/// Review #545, finding 1. pdflatex compiles each of these cleanly: the
+/// character is declared in an `\input` file, or in a local package, or in a
+/// package the project does not carry (which may declare anything).
+#[test]
+fn declarations_outside_the_entry_count() {
+    let main = |load: &str| {
+        format!("\\documentclass{{article}}\n\\usepackage[utf8]{{inputenc}}\n{load}\n\\begin{{document}}\nSnowman word: ☃ end.\n\\end{{document}}\n")
+    };
+    let input = main("\\input{macros}");
+    let r = render_docs(&[("main.tex", &input), ("macros.tex", "\\DeclareUnicodeCharacter{2603}{X}\n")], "main.tex");
+    assert!(errors(&r).is_empty(), "\\input: {:?}", errors(&r));
+    let sty = main("\\usepackage{mystyle}");
+    let r = render_docs(&[("main.tex", &sty), ("mystyle.sty", "\\ProvidesPackage{mystyle}\n\\DeclareUnicodeCharacter{2603}{X}\n")], "main.tex");
+    assert!(errors(&r).is_empty(), "local .sty: {:?}", errors(&r));
+    let r = render_one(&sty);
+    assert!(errors(&r).is_empty(), "unresolved .sty: {:?}", errors(&r));
+    // The control: an undeclared character in an `\input` file is still
+    // pdflatex's error.
+    let r = render_docs(
+        &[("main.tex", "\\documentclass{article}\n\\begin{document}\n\\input{chapter}\n\\end{document}\n"), ("chapter.tex", "Greek α here.\n")],
+        "main.tex",
+    );
+    assert_eq!(errors(&r), ["LaTeX Error: Unicode character α (U+03B1) not set up for use with LaTeX."]);
+}
+
+/// Review #545, finding 2. Under OT1, babel (`babel.def`) provides `«`,
+/// `»`: `[french]` compiles cleanly in pdflatex (with only french's
+/// "OT1 encoding should not be used" warning). It does not provide `þ`:
+/// `[english]` still errors on it, and on nothing else.
+#[test]
+fn babel_provides_guillemets_under_ot1() {
+    let french = render_one(&doc("\\usepackage[utf8]{inputenc}\n\\usepackage[french]{babel}", "Il a dit «bonjour» et c'est tout."));
+    assert!(errors(&french).is_empty(), "{:?}", errors(&french));
+    let english = render_one(&doc("\\usepackage[english]{babel}", "a «b» c þ d"));
+    assert_eq!(errors(&english), ["LaTeX Error: Command \\th unavailable in encoding OT1."]);
+}
+
+/// Review #545, finding 3. A `\verb` body's characters stay active, so
+/// pdflatex raises the same input errors there.
+#[test]
+fn verb_bodies_are_input() {
+    let r = render_one(&doc("", "a \\verb|x漢y| b \\verb|«| c"));
+    assert_eq!(
+        errors(&r),
+        [
+            "LaTeX Error: Unicode character 漢 (U+6F22) not set up for use with LaTeX.",
+            "LaTeX Error: Command \\guillemetleft unavailable in encoding OT1.",
+        ]
+    );
+}

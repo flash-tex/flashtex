@@ -1150,11 +1150,16 @@ impl<'a> Context<'a> {
         }
         // Only a character typed in the source is input: one a macro
         // generates (`\fnsymbol`'s U+2217 for `\thanks`) has its invocation's
-        // span, not its own bytes.
+        // span, not its own bytes. A `\verb` body is input too (its
+        // characters stay active), though its characters all carry the
+        // span of the whole `\verb|...|`.
         let texts = self.texts;
         let typed = |i: usize, c: char| {
             seg.chars.get(i).is_some_and(|s| {
-                texts.get(s.document.0).and_then(|t| t.get(s.start..s.end)).is_some_and(|t| t.len() == c.len_utf8() && t.starts_with(c))
+                texts.get(s.document.0).is_some_and(|t| {
+                    t.get(s.start..s.end).is_some_and(|t| t.len() == c.len_utf8() && t.starts_with(c))
+                        || verb_body(t, s.start, s.end).is_some_and(|b| b.contains(c))
+                })
             })
         };
         let rejected: Vec<(usize, char, crate::inputenc::Rejected)> = seg
@@ -9763,6 +9768,20 @@ pub fn documents_referenced(list: &DisplayList) -> BTreeSet<DocumentId> {
         }
     }
     out
+}
+
+/// The body of the `\verb<d>...<d>` (or `\verb*`) whose command name is
+/// `text[start..end]`, as the compiler spans a `\verb`'s characters.
+fn verb_body(text: &str, start: usize, end: usize) -> Option<&str> {
+    let name = text.get(start..end)?;
+    if name != "\\verb" && name != "\\verb*" {
+        return None;
+    }
+    let rest = text.get(end..)?;
+    let rest = if name == "\\verb" { rest.strip_prefix('*').unwrap_or(rest) } else { rest };
+    let delimiter = rest.chars().next().filter(|d| !d.is_ascii_alphabetic() && !d.is_whitespace())?;
+    let body = &rest[delimiter.len_utf8()..];
+    Some(&body[..body.find(delimiter)?])
 }
 
 #[cfg(all(test, feature = "math-glyph-spans"))]
