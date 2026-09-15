@@ -1,10 +1,10 @@
-//! GH-CLEVEREF pipeline coverage. The vendored compiler must be re-pinned
-//! before this can consume the compiler's named-reference inline node.
+//! GH-CLEVEREF pipeline coverage: the vendored compiler carries the
+//! named-reference inline node (#460) and `adapter::clever_reference_text`
+//! lowers it to text.
 
 mod common;
 
 #[test]
-#[ignore = "needs vendor re-pin past GH-CLEVEREF"]
 fn cleveref_names_render_as_text() {
     let source = concat!(
         r"\documentclass{article}",

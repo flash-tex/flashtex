@@ -91,6 +91,22 @@ pub enum Inline {
     },
     LineBreak {
         span: Span,
+        /// `\\[<dimen>]`'s optional argument in TeX points, when the source
+        /// carried one: latex.ltx's `\\@normalcr` ends the line and then
+        /// `\\@xnewline` issues `\\vspace{<dimen>}`, so this is a real vertical
+        /// skip after the broken line, and a negative one is as real as a
+        /// positive one (`\\\\[-6pt]` is how a heading macro pulls a rule up
+        /// under its title).
+        ///
+        /// The parser has always *consumed* this argument -- it must not
+        /// reach the page as text -- but used to discard the value, leaving
+        /// each consumer to re-read the `[...]` out of the source bytes that
+        /// follow `span`. That works only for a `\\\\` written literally in the
+        /// document: expanded from a macro body, `span` is the *invocation*
+        /// (`crate::expansion::Converter::place`), so the bytes after it are
+        /// the call's own arguments and the skip is invisible. Reporting the
+        /// parsed value is the only way a consumer can see it at all.
+        skip_pt: Option<f64>,
     },
     /// Explicit text-mode horizontal glue (`\quad` is 1em, `\qquad` is 2em),
     /// measured in ems of the surrounding body text size. Named distinctly
@@ -472,6 +488,54 @@ pub enum Block {
     /// on the current page, computed at layout time from the cursor's
     /// actual position (unlike `VSpace`'s flat, parse-time amount).
     VFill,
+    /// A `letter.cls` block whose horizontal placement no [`ParagraphStyle`]
+    /// expresses: the return address, which is a *left-aligned box pushed to
+    /// the right margin* (not a ragged-left column — `\opening` sets it in a
+    /// `tabular{l@{}}` inside `\raggedleft`, so every line shares one left
+    /// edge), and the closing/signature, which sits at `\longindentation`
+    /// inside a `\parbox{\indentedwidth}`.
+    ///
+    /// `lines` are broken exactly where the source's `\\` put them and are
+    /// not re-wrapped, matching the `tabular` and `\parbox` they come from.
+    /// `extra_gap_after_pt` is the class's own extra leading after line `i`
+    /// (`\\*[2\parskip]` between address and date, `\\[6\medskipamount]`
+    /// between closing and signature); it is parallel to `lines`.
+    LetterBlock {
+        part: LetterPart,
+        lines: Vec<Vec<Inline>>,
+        extra_gap_after_pt: Vec<f64>,
+        /// The class's own `\vspace` before the block, beyond the ordinary
+        /// `\parskip` every paragraph takes.
+        gap_before_pt: f64,
+        /// The class's own `\vspace` after the block. Carried here rather
+        /// than as a separate `Block::VSpace` so that the next block sees a
+        /// line this one already closed (`layout`'s `closed_line_skip`) and
+        /// does not open a second one.
+        gap_after_pt: f64,
+        /// Fixed left offset from the text margin, in points:
+        /// `\longindentation` for [`LetterPart::Closing`], zero otherwise.
+        /// A *class* length (see `letter_longindentation_pt`), so it is
+        /// resolved here rather than from whatever measure the layout has.
+        indent_pt: f64,
+        span: Span,
+    },
+}
+
+/// Which `letter.cls` block a [`Block::LetterBlock`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LetterPart {
+    /// `\opening`'s `{\raggedleft ... \par}`: `\fromaddress`'s lines and
+    /// then `\@date`, as one box whose *right* edge is the right margin and
+    /// whose lines all start at the box's own left edge. With no
+    /// `\address` the box holds the date alone.
+    ReturnAddress,
+    /// `\opening`'s `{\raggedright \toname \\ \toaddress \par}`: the
+    /// recipient at the left margin, `2\parskip` clear of the date above and
+    /// of the salutation below.
+    Recipient,
+    /// `\closing`'s `\hspace*{\longindentation}\parbox{\indentedwidth}{...}`:
+    /// the closing line, `6\medskipamount`, then `\fromsig` (or `\fromname`).
+    Closing,
 }
 
 /// verse's `\\` (`\@centercr`, latex.ltx `\@xcentercr`/`\@icentercr`).
@@ -949,6 +1013,21 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "author",
     "date",
     "maketitle",
+    // letter.cls.
+    "address",
+    "signature",
+    "name",
+    "location",
+    "telephone",
+    "opening",
+    "closing",
+    "cc",
+    "encl",
+    "ps",
+    "startbreaks",
+    "stopbreaks",
+    "stopletter",
+    "makelabels",
     "thanks",
     "and",
     "today",
@@ -1192,6 +1271,58 @@ pub(crate) fn path_is_safe(path: &str) -> bool {
 /// One parser input token (see `crate::expansion::ExpandedToken`).
 type InputToken = expansion::ExpandedToken;
 
+/// `letter.cls` line 91's `\setlength\parskip{0.7em}`, evaluated in the class
+/// body font, in points. The three values are what pdflatex prints for
+/// `\the\parskip` (TeX Live 2025) rather than `0.7 * size`, because TeX
+/// scales `0.7em` in fixed point against `\fontdimen6` — 10pt gives
+/// 6.99997pt, not 7pt. An unrecognised size keeps the class's own 10pt
+/// default (`\ExecuteOptions{letterpaper,10pt,...}`).
+fn letter_parskip_pt(class_size_pt: Option<f64>) -> f64 {
+    match class_size_pt {
+        Some(size) if size == 11.0 => 7.66498,
+        Some(size) if size == 12.0 => 8.22487,
+        _ => 6.99997,
+    }
+}
+
+/// `letter.cls` line 236: `\medskipamount=\parskip`, which `\closing` uses
+/// six of between the closing line and the signature.
+fn letter_signature_gap_pt(class_size_pt: Option<f64>) -> f64 {
+    6.0 * letter_parskip_pt(class_size_pt)
+}
+
+/// `\longindentation` (letter.cls 219: `.5\textwidth`), in points.
+///
+/// It is a *class* length, assigned once when letter.cls loads, from the
+/// class's own `\textwidth` — `size1x.clo`'s 345/360/390pt — and nothing
+/// updates it afterwards. Under `\usepackage[margin=1in]{geometry}` at 11pt
+/// the measure is 469.75502pt but `\longindentation` is still 180pt
+/// (pdflatex, TeX Live 2025), which is why this is keyed on the class size
+/// rather than taken from the layout's measure. The committed
+/// `fixtures/real-world/letter/reference.pdf` confirms it: "Sincerely,"
+/// starts at 251.328bp, and 251.328bp − 72bp is exactly 180pt.
+pub(crate) fn letter_longindentation_pt(class_size_pt: Option<f64>) -> f64 {
+    match class_size_pt {
+        Some(size) if size == 11.0 => 180.0,
+        Some(size) if size == 12.0 => 195.0,
+        _ => 172.5,
+    }
+}
+
+/// Splits inline content at its `Inline::LineBreak`s (the source's `\\`),
+/// dropping the breaks. An empty run between two breaks is kept, because
+/// `\address{A\\\\B}` really does leave a blank line in the box.
+fn split_at_line_breaks(content: Vec<Inline>) -> Vec<Vec<Inline>> {
+    let mut lines = vec![Vec::new()];
+    for inline in content {
+        match inline {
+            Inline::LineBreak { .. } => lines.push(Vec::new()),
+            other => lines.last_mut().expect("one line").push(other),
+        }
+    }
+    lines
+}
+
 /// Whether the token at `index` in `tokens` sits directly against real
 /// source whitespace — a preceding `TokenKind::Space`/`ParBreak` — or is the
 /// first token, in which case there is nothing before it to glue against.
@@ -1367,6 +1498,7 @@ pub fn parse_project_with(
         today: options.today,
         titlepage_option: false,
         twocolumn_option: false,
+        letter: LetterDeclarations::default(),
         column_types: HashMap::new(),
         colors: None,
         page_color: None,
@@ -1603,6 +1735,39 @@ struct P<'a> {
     /// The `twocolumn` class option: multicol.sty's `twocolumn` option
     /// handler (lines 111-113) warns when the package is loaded with it.
     twocolumn_option: bool,
+    /// `letter.cls`'s preamble declarations, each `\def`ined to empty by the
+    /// class itself (lines 154-163) and read by `\opening`/`\closing`:
+    /// `\address` (`\fromaddress`), `\signature` (`\fromsig`), `\name`
+    /// (`\fromname`), `\location` (`\fromlocation`) and `\telephone`
+    /// (`\telephonenum`). The last two feed only the `firstpage` page style's
+    /// footer, which this compiler does not render; they are still captured
+    /// so that writing them is not reported as an unknown command.
+    letter: LetterDeclarations,
+}
+
+/// `letter.cls`'s document-level declarations and the current
+/// `\begin{letter}{...}` recipient. Only meaningful under
+/// `\documentclass{letter}`; every field is empty until the document sets it,
+/// exactly as the class's own `\name{}`/`\signature{}`/`\address{}`/
+/// `\location{}`/`\telephone{}` calls leave them.
+#[derive(Debug, Clone, Default)]
+struct LetterDeclarations {
+    /// `\address{...}` -> `\fromaddress`.
+    address: Option<(Vec<InputToken>, Span)>,
+    /// `\signature{...}` -> `\fromsig`.
+    signature: Option<(Vec<InputToken>, Span)>,
+    /// `\name{...}` -> `\fromname`, the fallback when `\fromsig` is empty.
+    name: Option<(Vec<InputToken>, Span)>,
+    /// `\location{...}` and `\telephone{...}`: captured, never typeset (see
+    /// `Parser::letter`).
+    location: Option<(Vec<InputToken>, Span)>,
+    telephone: Option<(Vec<InputToken>, Span)>,
+    /// `\begin{letter}{<to name>\\<to address>}`, split at the first `\\`
+    /// exactly as `\@processto` does (`\toname`, `\toaddress`).
+    recipient: Option<(Vec<InputToken>, Span)>,
+    /// Whether `\opening` has run in the current `letter` environment, so
+    /// `\closing` outside one can say so.
+    opened: bool,
 }
 
 /// One open `itemize`/`enumerate`/`description`/`thebibliography`.
@@ -1739,11 +1904,17 @@ impl P<'_> {
                         });
                         continue;
                     }
-                    // `\\[<length>]`: the vertical space is not modelled, but the
-                    // argument must not be typeset as text.
-                    self.skip_line_break_length();
+                    // `\\[<length>]`: the length is reported on the node rather
+                    // than dropped, so a consumer sees it even when the `\\\\`
+                    // came from a macro body and the bytes after `span` are
+                    // the invocation's arguments. Consuming it here (so it is
+                    // never typeset as text) is unchanged.
+                    let skip_pt = self.skip_line_break_length();
                     if render {
-                        para.push(Inline::LineBreak { span: tok.span });
+                        para.push(Inline::LineBreak {
+                            span: tok.span,
+                            skip_pt,
+                        });
                     }
                 }
                 TokenKind::LBrace => {
@@ -1919,6 +2090,40 @@ impl P<'_> {
                 self.date = Some((tokens, span.merge(argument_span)));
             }
             "maketitle" => self.maketitle(span, blocks, para),
+            // letter.cls's preamble declarations (lines 154-163). Each is
+            // `\def`ined to empty by the class, so writing one simply
+            // records its replacement text; nothing is typeset here. They
+            // exist only under `\documentclass{letter}` — see
+            // `P::letter_declaration`, which diagnoses them in any other
+            // class exactly as pdflatex's "Undefined control sequence" does.
+            "address" | "signature" | "name" | "location" | "telephone" => {
+                self.letter_declaration(name, span)
+            }
+            "opening" => self.letter_opening(span, blocks, para),
+            "closing" => self.letter_closing(span, blocks, para),
+            "cc" | "encl" => self.letter_annotation(name, span, blocks, para),
+            // `\ps` takes NO argument: letter.cls line 245 is
+            // `\newcommand*\ps{\par\startbreaks}`. A document writing
+            // `\ps{P.S. ...}` — as the corpus fixture does — gets the
+            // paragraph break and then typesets the brace group as ordinary
+            // text, which is exactly what pdflatex produces (the committed
+            // `fixtures/real-world/letter/reference.pdf` sets "P.S. My
+            // application number is 2027-0412." as its own paragraph at the
+            // left margin). Consuming the argument here would silently
+            // delete the author's sentence.
+            "ps" | "startbreaks" | "stopbreaks" | "stopletter" => {
+                if self.letter_command_available(name, span) && name == "ps" {
+                    self.flush_paragraph(blocks, para);
+                    self.finish_block_dependencies();
+                }
+            }
+            // `\makelabels` (letter.cls 165-173) writes an address-label
+            // page from the `.aux` at the end of the document. There is no
+            // `.aux` round trip here, so it is a documented no-op rather
+            // than an unknown command.
+            "makelabels" => {
+                let _ = self.letter_command_available(name, span);
+            }
             // `\today` in ordinary body text. It had no arm here, so it fell
             // through to `unsupported`, whose `debug_assert!(!BUILT_INS
             // .contains(&name))` fires because `today` *is* a built-in: a
@@ -2405,7 +2610,7 @@ impl P<'_> {
             // bracket.
             "linebreak" => {
                 if self.mandatory_break_requested() {
-                    para.push(Inline::LineBreak { span });
+                    para.push(Inline::LineBreak { span, skip_pt: None });
                 }
             }
             "nolinebreak" => {
@@ -2744,6 +2949,23 @@ impl P<'_> {
             }
             self.document_class = Some(class);
         }
+        // letter.cls lines 91-92 replace the standard classes' paragraph
+        // shape outright: `\parskip 0.7em` (rigid, in the class body font)
+        // and `\parindent 0pt`. This engine never indents paragraphs, so
+        // only the skip has to be carried; a later `\setlength{\parskip}`
+        // still wins, exactly as it would in real LaTeX.
+        if self.is_letter_class() && self.parskip_pt.is_none() {
+            self.parskip_pt = Some(letter_parskip_pt(self.class_size_pt));
+        }
+    }
+
+    /// Whether `\documentclass{letter}` is in force. `letter.cls` is the only
+    /// class that defines `\opening`, `\closing`, `\address`, `\signature`,
+    /// `\cc`, `\encl` and the `letter` environment; in an `article` every one
+    /// of them is an undefined control sequence, and this compiler must say
+    /// so rather than quietly accepting them.
+    fn is_letter_class(&self) -> bool {
+        self.document_class.as_deref() == Some("letter")
     }
 
     /// `\setlength{\parskip}{..}` and `\setlength{\parindent}{..}` in the
@@ -3511,7 +3733,10 @@ impl P<'_> {
                 continue;
             }
             if wrote_author {
-                author_content.push(Inline::LineBreak { span: author_span });
+                author_content.push(Inline::LineBreak {
+                    span: author_span,
+                    skip_pt: None,
+                });
             }
             author_content.extend(inlines);
             wrote_author = true;
@@ -3683,6 +3908,250 @@ impl P<'_> {
         }
     }
 
+    // ---- letter.cls -----------------------------------------------------
+
+    /// Whether a `letter.cls` command may run here. Every one of them is
+    /// defined by that class alone: in an `article` pdflatex answers
+    /// "Undefined control sequence" and typesets the argument as ordinary
+    /// text, so that is what happens here too — the diagnostic names the
+    /// command and the brace group is left for the main token loop, which
+    /// keeps the author's prose on the page.
+    fn letter_command_available(&mut self, name: &str, span: Span) -> bool {
+        if self.is_letter_class() {
+            return true;
+        }
+        let class = self
+            .document_class
+            .clone()
+            .unwrap_or_else(|| "no \\documentclass".to_string());
+        self.diags.push(
+            Diagnostic::error(
+                format!(
+                    "\\{name} is defined by the letter document class; this document is {class}"
+                ),
+                Some(span),
+                Some("skipped the command; any braced argument was typeset as plain text".into()),
+            )
+            .with_code(crate::diagnostics::DiagnosticCode::UnknownCommand),
+        );
+        false
+    }
+
+    /// `\address`, `\signature`, `\name`, `\location`, `\telephone`
+    /// (letter.cls 154-158): `\newcommand*\x[1]{\def\fromx{#1}}`. Nothing is
+    /// typeset; the replacement text is stored for `\opening`/`\closing`.
+    fn letter_declaration(&mut self, name: &str, span: Span) {
+        if !self.letter_command_available(name, span) {
+            return;
+        }
+        let (tokens, argument_span) = self.required_group(name, span);
+        let value = Some((tokens, span.merge(argument_span)));
+        match name {
+            "address" => self.letter.address = value,
+            "signature" => self.letter.signature = value,
+            "name" => self.letter.name = value,
+            "location" => self.letter.location = value,
+            _ => self.letter.telephone = value,
+        }
+    }
+
+    /// The date `\opening` sets: `\@date`, which latex.ltx initialises to
+    /// `\today` and `\date{...}` overrides. `\date{}` really does leave it
+    /// empty, and the box then holds nothing for that line.
+    fn letter_date_inlines(&mut self, span: Span) -> Vec<Inline> {
+        match self.date.clone() {
+            Some((tokens, _)) => self.inlines_from_tokens(tokens, TextStyle::default()),
+            None => vec![Inline::Text {
+                text: self.today.latex_today(),
+                span,
+                style: TextStyle::default(),
+                space_before: false,
+            }],
+        }
+    }
+
+    /// `\opening{...}` (letter.cls 223-234), in source order:
+    ///
+    /// 1. `{\raggedleft <\fromaddress lines> \\*[2\parskip] \@date \par}`,
+    ///    the address lines and the date in one `tabular{l@{}}` box pushed to
+    ///    the right margin — [`LetterPart::ReturnAddress`]. With no
+    ///    `\address` the class sets only `{\raggedleft\@date\par}`, which is
+    ///    the same box with one line.
+    /// 2. `\vspace{2\parskip}`.
+    /// 3. `{\raggedright \toname \\ \toaddress \par}` at the left margin.
+    /// 4. `\vspace{2\parskip}`.
+    /// 5. the salutation, `#1\par\nobreak`.
+    fn letter_opening(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        if !self.letter_command_available("opening", span) {
+            return;
+        }
+        self.flush_paragraph(blocks, para);
+        let (tokens, argument_span) = self.required_group("opening", span);
+        let full = span.merge(argument_span);
+        if self.letter.recipient.is_none() {
+            self.diags.push(Diagnostic::warning(
+                "\\opening is outside \\begin{letter}{...}, so there is no recipient address to set",
+                Some(span),
+                Some("set the return address, the date and the salutation without a recipient block".into()),
+            ));
+        }
+        self.letter.opened = true;
+        let parskip = letter_parskip_pt(self.class_size_pt);
+
+        // 1. return address and date.
+        let mut lines: Vec<Vec<Inline>> = Vec::new();
+        let mut gaps: Vec<f64> = Vec::new();
+        if let Some((address, _)) = self.letter.address.clone() {
+            let address = self.inlines_from_tokens(address, TextStyle::default());
+            let address = split_at_line_breaks(address);
+            let last = address.len().saturating_sub(1);
+            for (index, line) in address.into_iter().enumerate() {
+                lines.push(line);
+                // `\\*[2\parskip]` sits between the address and the date.
+                gaps.push(if index == last { 2.0 * parskip } else { 0.0 });
+            }
+        }
+        lines.push(self.letter_date_inlines(span));
+        gaps.push(0.0);
+        blocks.push(Block::LetterBlock {
+            part: LetterPart::ReturnAddress,
+            lines,
+            extra_gap_after_pt: gaps,
+            gap_before_pt: 0.0,
+            gap_after_pt: 0.0,
+            indent_pt: 0.0,
+            span: full,
+        });
+        self.finish_block_dependencies();
+
+        // 2-4. the recipient, `\raggedright` at the left margin, with
+        // `\vspace{2\parskip}` on each side of it.
+        let recipient = self
+            .letter
+            .recipient
+            .clone()
+            .map(|(tokens, _)| self.inlines_from_tokens(tokens, TextStyle::default()))
+            .unwrap_or_default();
+        let recipient_span = self
+            .letter
+            .recipient
+            .as_ref()
+            .map_or(full, |(_, span)| *span);
+        let lines = split_at_line_breaks(recipient);
+        let gaps = vec![0.0; lines.len()];
+        blocks.push(Block::LetterBlock {
+            part: LetterPart::Recipient,
+            lines,
+            extra_gap_after_pt: gaps,
+            gap_before_pt: 2.0 * parskip,
+            gap_after_pt: 2.0 * parskip,
+            indent_pt: 0.0,
+            span: recipient_span,
+        });
+        self.finish_block_dependencies();
+
+        // 5. the salutation: an ordinary paragraph, so it justifies and
+        // wraps like the body that follows it.
+        let content = self.inlines_from_tokens(tokens, TextStyle::default());
+        if !content.is_empty() {
+            blocks.push(Block::Paragraph(content));
+            self.finish_block_dependencies();
+        }
+    }
+
+    /// `\closing{...}` (letter.cls 235-247):
+    /// `\par\nobreak\vspace{\parskip}\noindent\hspace*{\longindentation}`
+    /// `\parbox{\indentedwidth}{\raggedright #1 \\[6\medskipamount]`
+    /// `\fromsig-or-\fromname\strut}`. `\medskipamount` is `\parskip` here
+    /// (line 236), so the gap is exactly six paragraph skips.
+    ///
+    /// The `\hspace*{\longindentation}` is omitted when `\fromaddress` is
+    /// empty, so a letter with no `\address` closes at the left margin.
+    fn letter_closing(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        if !self.letter_command_available("closing", span) {
+            return;
+        }
+        self.flush_paragraph(blocks, para);
+        let (tokens, argument_span) = self.required_group("closing", span);
+        let full = span.merge(argument_span);
+        let parskip = letter_parskip_pt(self.class_size_pt);
+        let closing = self.inlines_from_tokens(tokens, TextStyle::default());
+        let mut lines = split_at_line_breaks(closing);
+        let mut gaps = vec![0.0; lines.len()];
+        // `\ifx\@empty\fromsig \fromname \else \fromsig \fi`.
+        let signature = self
+            .letter
+            .signature
+            .clone()
+            .or_else(|| self.letter.name.clone());
+        if let Some((signature, _)) = signature {
+            let signature = self.inlines_from_tokens(signature, TextStyle::default());
+            let signature = split_at_line_breaks(signature);
+            if let Some(last) = gaps.last_mut() {
+                *last = letter_signature_gap_pt(self.class_size_pt);
+            }
+            lines.extend(signature);
+            gaps.resize(lines.len(), 0.0);
+        }
+        blocks.push(Block::LetterBlock {
+            part: LetterPart::Closing,
+            lines,
+            extra_gap_after_pt: gaps,
+            // `\par\nobreak\vspace{\parskip}` opens `\closing` (letter.cls
+            // 235), on top of the paragraph's own `\parskip`.
+            gap_before_pt: parskip,
+            gap_after_pt: 0.0,
+            // `\hspace*{\longindentation}` — but only when there is a
+            // return address: letter.cls 239 makes the indent conditional on
+            // `\fromaddress` being non-empty, so a letter without one closes
+            // at the left margin.
+            indent_pt: if self.letter.address.is_some() {
+                letter_longindentation_pt(self.class_size_pt)
+            } else {
+                0.0
+            },
+            span: full,
+        });
+        self.finish_block_dependencies();
+    }
+
+    /// `\cc{...}` and `\encl{...}` (letter.cls 237-244):
+    /// `\par\noindent\parbox[t]{\textwidth}{\@hangfrom{\ccname: }#1\strut}\par`.
+    ///
+    /// The label is `\ccname`/`\enclname` — literally `cc` and `encl`
+    /// (letter.cls 392-393), lowercase, with a colon and a space. The
+    /// `\@hangfrom` hangs continuation lines under the text after the label;
+    /// this compiler has no hanging indent outside `\item`, so a short
+    /// annotation (the common case, and the corpus fixture's) is exact and a
+    /// wrapped one loses the hang. That is a placement difference within the
+    /// same block, not dropped content, so it is not worth a diagnostic on
+    /// every `\cc`.
+    fn letter_annotation(
+        &mut self,
+        name: &str,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        if !self.letter_command_available(name, span) {
+            return;
+        }
+        self.flush_paragraph(blocks, para);
+        let (tokens, argument_span) = self.required_group(name, span);
+        // No trailing space in the label: the annotation's own first run
+        // starts a group, so `inlines_from_tokens` already marks it
+        // `space_before`, and baking one in here would set two.
+        let mut content = vec![Inline::Text {
+            text: format!("{name}:"),
+            span: span.merge(argument_span),
+            style: TextStyle::default(),
+            space_before: false,
+        }];
+        content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
+        blocks.push(Block::Paragraph(content));
+        self.finish_block_dependencies();
+    }
+
     fn environment(
         &mut self,
         kind: &str,
@@ -3811,6 +4280,22 @@ impl P<'_> {
                 // `\mult@@cols` starts with `\par`.
                 self.flush_paragraph(blocks, para);
                 self.multicols_arguments(span.merge(argument_span), &environment);
+            } else if environment == "letter" && self.in_body && self.is_letter_class() {
+                // letter.cls 174-186: `\newenvironment{letter}[1]{\newpage
+                // ... \c@page\@ne ... \@processto{...#1}}`. The mandatory
+                // argument is the recipient; `\@processto` splits it at the
+                // first `\\` into `\toname` and `\toaddress`, which
+                // `\opening` then sets one per line — so it is stored whole
+                // and the `\\`s are kept, exactly as written.
+                self.flush_paragraph(blocks, para);
+                let (recipient, recipient_span) = self.required_group(&environment, span);
+                self.letter.recipient = Some((recipient, span.merge(recipient_span)));
+                self.letter.opened = false;
+                // Each letter starts a fresh page; the first one in a
+                // document does not, because `\newpage` with nothing queued
+                // ships no page (see `Block::PageBreak` in `layout`).
+                blocks.push(Block::PageBreak);
+                self.finish_block_dependencies();
             } else if self.in_body {
                 self.diags.push(Diagnostic::environment_warning(
                     &environment,
@@ -3860,6 +4345,16 @@ impl P<'_> {
         }
         if environment == "subequations" && self.in_body {
             self.end_subequations();
+        }
+        if environment == "letter" && self.in_body && self.is_letter_class() {
+            // letter.cls 179-186 ends with `\stopletter\@@par\pagebreak`.
+            // The `\pagebreak` is not emitted: `\end{document}`'s own
+            // `\clearpage` absorbs the last one in real LaTeX, and a
+            // `Block::PageBreak` here would ship a blank trailing page. The
+            // next `\begin{letter}` starts its own page anyway.
+            self.flush_paragraph(blocks, para);
+            self.letter.recipient = None;
+            self.letter.opened = false;
         }
         if paragraph_style(&environment).is_some() && self.in_body {
             self.flush_paragraph(blocks, para);
@@ -5544,6 +6039,7 @@ impl P<'_> {
                 }),
                 TokenKind::LineBreak => content.push(Inline::LineBreak {
                     span: input.token.span,
+                    skip_pt: None,
                 }),
                 // `\hfill`/`\hfil` take no argument, so — unlike `\hspace`,
                 // which needs a following brace group this flat,
@@ -6049,7 +6545,7 @@ impl P<'_> {
                 _ => continue,
             };
             if !content.is_empty() && !inlines.is_empty() {
-                content.push(Inline::LineBreak { span });
+                content.push(Inline::LineBreak { span, skip_pt: None });
             }
             content.extend(inlines);
         }

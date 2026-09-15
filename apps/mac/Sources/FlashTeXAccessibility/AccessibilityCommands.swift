@@ -17,7 +17,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case completion, completionList, toggleComment, duplicateLine, duplicateLineUp, moveLineUp, moveLineDown, deleteLine, joinLines, sortLinesAscending, sortLinesDescending, trimTrailingWhitespace, reindentLines, reindentDocument, signatureHelp, toggleVimKeybindings
     case fold, unfold, foldAll, unfoldAll
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
-    case goToDefinition, goToSymbol, selectEnvironment, wrapInEnvironment, changeEnvironment, renameSymbol
+    case goToDefinition, goToSymbol, goToLine, selectEnvironment, wrapInEnvironment, changeEnvironment, renameSymbol
     case selectPreviewItemSource
     case accessibilityHelp
     case durableHistory, findInProject, nextSearchMatch, renameCitation
@@ -155,11 +155,11 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          description: "Undoes the last edit, including an approved capture insertion.")
         case .commandPalette:
             return Entry(command: self, title: "Command palette", shortcuts: ["⌘⇧P"], menu: "View",
-                         description: "Opens a searchable list of every command in this table with its menu and shortcut; type to filter, ↑/↓ choose, Return runs it, Esc closes. Editor keys and the preview click are listed as hints only.",
+                         description: "Opens the palette: scope tabs for Files, Sections, Labels, Citations and every command in this table with its menu and shortcut; type to filter, Tab cycles scopes, ↑/↓ choose, Return opens or runs, Esc closes. Editor keys and the preview click are listed as hints only.",
                          menuItem: "Command Palette…")
         case .toggleProblems:
             return Entry(command: self, title: "Toggle Problems panel", shortcuts: ["⌘⇧M"], menu: "View",
-                         description: "Shows or hides the Problems panel under the editor and preview: the grouped diagnostics list with a severity filter, jump, explanation lines and Fix…; the sidebar's Problems rows and the status bar counts open it too.",
+                         description: "Shows or hides the Problems panel under the editor and preview: the grouped diagnostics list with a severity filter, jump, in-row detail and Fix…; the rail's Problems toggle and the status bar counts open it too.",
                          menuItem: "Toggle Problems")
         case .zoomIn:
             return Entry(command: self, title: "Zoom in preview", shortcuts: ["⌘="], menu: "View",
@@ -282,6 +282,10 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Go to symbol", shortcuts: ["⌘⇧T"], menu: "Navigate",
                          description: "Opens the symbol picker: fuzzy search over every heading, environment and label of the open documents; ↑/↓ choose, Return goes there, Esc closes.",
                          menuItem: "Go to Symbol…")
+        case .goToLine:
+            return Entry(command: self, title: "Go to line", shortcuts: ["⌘L"], menu: "Navigate",
+                         description: "Opens a field for a 1-based line, line:column, or +N/−N relative to the caret; out-of-range numbers clamp, invalid text shows an inline hint. Return selects the caret and centres it, Esc cancels. Typing :42 in the Commands list jumps directly.",
+                         menuItem: "Go to Line…")
         case .selectEnvironment:
             return Entry(command: self, title: "Select environment", shortcuts: ["⌘⇧A"], menu: "Navigate",
                          description: "Selects the innermost \\begin{X}…\\end{X} around the caret (nesting and unbalanced text tolerated); again selects the enclosing one. The caret on a \\begin or \\end also highlights its partner like a bracket.",
@@ -444,7 +448,7 @@ public enum FocusOrder {
              rationale: "Editing is the primary task; the caret drives caret sync, diagnostics at caret, and every Navigate command.",
              container: "EditorPane", sourceMarker: "SourceEditorView("),
         Pane(name: "Capture bar",
-             contents: "Pin insertion point, the pinned anchor, and the review button for queued proposals; one group whose value reads the anchor and proposal count.",
+             contents: "Pin insertion point, the pinned anchor, and the review button for queued proposals; one group whose value reads the anchor and proposal count. Present once the capture flow is in play (an anchor pinned, proposals queued, or the Captures inspector open); absent at rest.",
              rationale: "Directly under the editor because pinning starts from the caret; the bar's value is what a capture proposal will insert against.",
              container: "EditorPane", sourceMarker: "CaptureBar()"),
         Pane(name: "Bridge bar",

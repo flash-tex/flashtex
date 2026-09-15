@@ -60,9 +60,11 @@ private struct DocumentTab: View {
     let active: Bool
     let kind: DocumentKind?
     @State private var hovering = false
+    @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
         let style = FileTypeStyle.of(path: doc.path, entry: doc.role == .entry, bibliography: kind == .bibliography)
+        Button { model.switchOrNote(doc.path) } label: {
         HStack(spacing: DS.Space.xs) {
             // Colour-coded file identity, same vocabulary as the tree (§6).
             Image(systemName: style.systemImage)
@@ -97,6 +99,8 @@ private struct DocumentTab: View {
         .frame(height: DS.Row.tab - DS.Space.xs)
         // Islands treatment (§5): the active tab is a filled, rounded card
         // raised out of the recessed strip; inactive tabs carry no chrome.
+        // An unfocused window's card drops its shadow so the active tab
+        // reads weaker without moving (§14).
         .background(active ? AnyShapeStyle(DS.Colors.surfaceRaised)
                            : hovering ? AnyShapeStyle(DS.Colors.textPrimary.opacity(DS.State.hoverOpacity)) : AnyShapeStyle(.clear),
                     in: RoundedRectangle(cornerRadius: DS.Radius.tab))
@@ -106,10 +110,11 @@ private struct DocumentTab: View {
                     .strokeBorder(DS.Colors.separator, lineWidth: DS.Size.hairline)
             }
         }
-        .shadow(color: active ? DS.Colors.textPrimary.opacity(DS.State.hoverOpacity) : .clear,
+        .shadow(color: active && activeState != .inactive ? DS.Colors.textPrimary.opacity(DS.State.hoverOpacity) : .clear,
                 radius: DS.Space.xxs, y: DS.Size.hairline)
         .contentShape(Rectangle())
-        .onTapGesture { model.switchOrNote(doc.path) }
+        }
+        .buttonStyle(PressableStyle())
         .onHover { hovering = $0 }
         .contextMenu {
             Button("Show \(doc.path)") { model.switchOrNote(doc.path) }.disabled(active)

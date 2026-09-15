@@ -644,11 +644,34 @@ pub struct SizedPara {
 pub type ParLeading = Option<flashtex_compiler::parser::FontSizeLevel>;
 
 /// How a paragraph-shape environment began (see [`Block::Paragraph`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EnvOpen {
     /// `\begin{...}` was read in vertical mode (after a blank line, a
     /// heading, a rule or at the document start): `\partopsep` is added.
     pub vmode: bool,
+    /// The environment's own `\@topsep`/`\@topsepadd`, when the package
+    /// assigns them outright instead of letting `\@trivlist` derive them
+    /// from `\topsep`, `\partopsep` and `\parskip` (see [`EnvSkips`]).
+    /// `None` keeps the `\@trivlist` derivation, which is what `center`,
+    /// `quote` and `abstract` get.
+    pub skips: Option<EnvSkips>,
+}
+
+/// An environment that sets `\@topsep` (the opening `\addvspace` in
+/// `\@item`) and `\@topsepadd` (the closing one in `\@endparenv`) itself,
+/// so neither is the `\@trivlist` computation.
+///
+/// amsthm does this for every theorem-like environment: `\@thm` assigns
+/// `\@topsep\thm@preskip` and `\@topsepadd\thm@postskip`, and
+/// `\thm@space@setup` sets both of those to `\topsep`. That is why a
+/// theorem never picks up `\partopsep` or `\parskip`, however it was
+/// entered.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EnvSkips {
+    /// `\@topsep`: the skip before the environment's first line.
+    pub open: crate::style::Skip,
+    /// `\@topsepadd`: the skip after its last.
+    pub close: crate::style::Skip,
 }
 
 #[derive(Debug)]
@@ -690,6 +713,13 @@ pub struct Labels {
     pub floats: Vec<crate::toc::FloatEntry>,
     /// Entry titles taken from source bytes, set as body text.
     pub entry_items: crate::toc::EntryItems,
+    /// cleveref's label type per key (`section`, `equation`, `figure`, ...),
+    /// from the compiler's `Inline::Label::kind`. Only `\cref` and friends
+    /// read it; `\ref` needs the value alone.
+    pub kinds: BTreeMap<String, String>,
+    /// The document's cleveref naming options and `\crefname` overrides
+    /// (`Parsed::cleveref`), so `\cref` can name the type it refers to.
+    pub cleveref: flashtex_compiler::xref::CleverefConfig,
 }
 
 fn inlines_of(block: &CBlock) -> &[Inline] {
@@ -699,7 +729,10 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
         // `\maketitle`'s parts are lowered to `Styled` paragraphs before
         // the block walk (`lower_blocks`); only the title is visible here.
         CBlock::TitleBlock { title, .. } => title,
-        CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::VFill => &[],
+        // `LetterBlock` holds `Vec<Vec<Inline>>`, not one flat slice, and
+        // `lower_blocks` turns it into ordinary paragraphs before the block
+        // walk reaches here.
+        CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak | CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => &[],
     }
 }
 
@@ -719,11 +752,16 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
 ///   exact `\vskip`s and `\thanks` are not.
 /// - `\vfill`: dropped (the page builder has no stretchable vertical
 ///   glue), reported on the next block.
-fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: bool) -> (Vec<(CBlock, ParLeading)>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>) {
-    use flashtex_compiler::parser::{FontSizeLevel, ParagraphStyle, TextFamily, TextStyle as CStyle};
+fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: bool, parskip_pt: f64) -> (Vec<(CBlock, ParLeading)>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>, Vec<Span>) {
+    use flashtex_compiler::parser::{FontSizeLevel, LetterPart, ParagraphStyle, TextFamily, TextStyle as CStyle};
     let mut out: Vec<(CBlock, ParLeading)> = Vec::with_capacity(blocks.len());
     let mut limitations: Vec<(&'static str, Span, String)> = Vec::new();
     let mut titles: Vec<StashedTitle> = Vec::new();
+    // The source spans of the `\opening`/`\closing` blocks lowered below.
+    // Their `\raggedleft`/`\raggedright` is a *declaration*, not a
+    // `flushright`/`flushleft` environment, so the `env_close` pass must not
+    // give them `\@endparenv`'s `\@topsepadd` glue.
+    let mut letter_spans: Vec<Span> = Vec::new();
     let mut pending_vfill = 0usize;
     let sized = |inlines: &[Inline], size: FontSizeLevel| -> Vec<Inline> {
         inlines
@@ -767,13 +805,11 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                         // The break owns the bytes between the lines so no
                         // interword space is read across it.
                         let prev = lines[i - 1].span;
-                        content.push(Inline::LineBreak {
-                            span: Span {
-                                document: line.span.document,
-                                start: prev.end.min(line.span.start),
-                                end: line.span.start,
-                            },
-                        });
+                        content.push(line_break_inline(Span {
+                            document: line.span.document,
+                            start: prev.end.min(line.span.start),
+                            end: line.span.start,
+                        }));
                     }
                     content.push(Inline::Text {
                         text: line.text.clone(),
@@ -847,6 +883,136 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                     ));
                 }
             }
+            // letter.cls's three positioned blocks. The pipeline has no
+            // layout for any of them yet (`\raggedleft` boxes, a fixed
+            // `\longindentation` offset and the class's own inter-block
+            // skips), so each line is set as an ordinary paragraph in the
+            // nearest alignment the pipeline does have and the geometry that
+            // is lost is named once per block. Nothing is dropped: every
+            // line of every part reaches the page in source order.
+            // letter.cls's three positioned blocks (`\opening`'s return
+            // address + date and recipient, `\closing`'s closing +
+            // signature). The compiler resolved the class's own skips into
+            // `gap_before_pt`/`gap_after_pt`/`extra_gap_after_pt`, all of
+            // them multiples of letter.cls's `\parskip` (line 91,
+            // `0.7em` = 7.66498pt at 11pt), so the pipeline's job here is to
+            // spend them, not to recompute them.
+            //
+            // Each run of lines with no extra gap between them becomes **one**
+            // paragraph whose lines are joined by `Inline::LineBreak` -- not
+            // one paragraph per line. That distinction is the whole vertical
+            // structure: a `\\` inside a paragraph costs `\baselineskip`,
+            // while a new paragraph costs `\baselineskip` *plus* `\parskip`,
+            // and letter.cls sets the address and the recipient as single
+            // `\\`-separated paragraphs (a `tabular{l@{}}` and a
+            // `{\raggedright ...\par}` group).
+            //
+            // `extra_gap_after_pt` (the `\\*[2\parskip]` between
+            // `\fromaddress` and `\@date`) does split the paragraph, so the
+            // `\vspace` that carries it has the following paragraph's own
+            // `\parskip` taken out of it: the two together must add up to the
+            // gap the class asked for, once.
+            CBlock::LetterBlock { part, lines, extra_gap_after_pt, gap_before_pt, gap_after_pt, indent_pt, span } => {
+                let para_style = match part {
+                    // `\opening`'s `{\raggedleft ...}`. See the limitation
+                    // below: this is the *nearest* style, not the class's.
+                    LetterPart::ReturnAddress => Some(ParagraphStyle::FlushRight),
+                    // `{\raggedright ...}` and `\parbox{...}{\raggedright ...}`
+                    // are *declarations*, not `flushleft`/`flushright`
+                    // environments, so they carry none of `\trivlist`'s
+                    // `\topsep`/`\partopsep` glue. A `Styled` block here does
+                    // carry it (9pt + 3pt at 11pt), which put the recipient
+                    // and the closing 12pt too low. These blocks are short,
+                    // unwrapped lines, where `\raggedright` and justification
+                    // set identical text, so a plain paragraph is both the
+                    // right vertical answer and the same horizontal one.
+                    LetterPart::Recipient | LetterPart::Closing => None,
+                };
+                if *gap_before_pt != 0.0 {
+                    out.push((CBlock::VSpace { pt: *gap_before_pt }, None));
+                }
+                let mut group: Vec<Inline> = Vec::new();
+                let mut prev_end: Option<Span> = None;
+                for (i, line) in lines.iter().enumerate() {
+                    let first = line.iter().map(inline_span).next();
+                    if !group.is_empty() {
+                        // The break owns the bytes between the two lines, so
+                        // no interword space is read across it (as the
+                        // `verbatim` lowering above does).
+                        if let (Some(prev), Some(at)) = (prev_end, first) {
+                            group.push(Inline::LineBreak {
+                                span: Span {
+                                    document: at.document,
+                                    start: prev.end.min(at.start),
+                                    end: at.start,
+                                },
+                            });
+                        }
+                    }
+                    group.extend(line.iter().cloned());
+                    prev_end = line.iter().map(inline_span).last().or(prev_end);
+                    let extra = extra_gap_after_pt.get(i).copied().unwrap_or(0.0);
+                    if extra == 0.0 && i + 1 != lines.len() {
+                        continue;
+                    }
+                    if !group.is_empty() {
+                        let content = std::mem::take(&mut group);
+                        // Keyed by the first inline's span, not the block's:
+                        // `\address`'s text comes from the *preamble*, so it
+                        // lies outside `\opening`'s own span entirely.
+                        if let Some(at) = content.iter().map(inline_span).next() {
+                            letter_spans.push(at);
+                        }
+                        out.push((
+                            match para_style {
+                                Some(style) => CBlock::Styled { style, content, lists: Vec::new(), line_break_before: None },
+                                None => CBlock::Paragraph(content),
+                            },
+                            par_leading,
+                        ));
+                    }
+                    if extra != 0.0 {
+                        out.push((CBlock::VSpace { pt: extra - parskip_pt }, None));
+                    }
+                }
+                if *gap_after_pt != 0.0 {
+                    out.push((CBlock::VSpace { pt: *gap_after_pt }, None));
+                }
+                // What is still approximate is horizontal, and only
+                // horizontal: the pipeline has no per-paragraph left offset
+                // or measure, so neither `\longindentation` nor the
+                // `\raggedleft` *box* can be expressed yet. Reported once per
+                // block rather than silently produced.
+                let mut lost: Vec<String> = Vec::new();
+                if *indent_pt != 0.0 {
+                    lost.push(format!(
+                        "its {indent_pt} pt \\longindentation offset (it is set at the left margin instead)"
+                    ));
+                }
+                if para_style.is_some() {
+                    lost.push(
+                        "the \\raggedleft box, whose lines share a *left* edge at the right margin \
+                         (flushright aligns their right edges instead, so lines of unequal length differ)"
+                            .to_string(),
+                    );
+                }
+                if !lost.is_empty() {
+                    limitations.push((
+                        "unsupported_block",
+                        *span,
+                        format!(
+                            "{}: the class's vertical skips are applied exactly; {} {} not",
+                            match part {
+                                LetterPart::ReturnAddress => "\\opening's return address and date",
+                                LetterPart::Recipient => "\\opening's recipient",
+                                LetterPart::Closing => "\\closing and signature",
+                            },
+                            lost.join(" and "),
+                            if lost.len() == 1 { "is" } else { "are" },
+                        ),
+                    ));
+                }
+            }
             CBlock::VFill => pending_vfill += 1,
             other => out.push((other.clone(), par_leading)),
         }
@@ -864,7 +1030,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
             format!("\\vfill ({pending_vfill} at the end of the document) dropped: the page builder has no stretchable vertical glue"),
         ));
     }
-    (out, limitations, titles)
+    (out, limitations, titles, letter_spans)
 }
 
 /// A compiler `TitleBlock`'s title, authors and date, set aside for the
@@ -878,7 +1044,7 @@ type StashedTitle = (Vec<Inline>, Vec<Inline>, Option<Vec<Inline>>);
 fn author_groups(texts: &[&str], authors: &[Inline]) -> Vec<Vec<Inline>> {
     let mut groups: Vec<Vec<Inline>> = vec![Vec::new()];
     for inline in authors {
-        if let Inline::LineBreak { span } = inline {
+        if let Inline::LineBreak { span, .. } = inline {
             let at = texts.get(span.document.0).and_then(|t| t.get(span.start..)).unwrap_or("");
             if at.starts_with("\\author") {
                 groups.push(Vec::new());
@@ -921,13 +1087,17 @@ impl Labels {
     /// The `\ref` values of every `\label` in the parse (known before layout).
     pub fn from_parsed(parsed: &Parsed) -> Labels {
         let mut values = BTreeMap::new();
+        let mut kinds = BTreeMap::new();
         for inline in parsed.blocks.iter().flat_map(inlines_of) {
-            if let Inline::Label { key, value, .. } = inline {
+            if let Inline::Label { key, value, kind, .. } = inline {
                 values.insert(key.clone(), value.clone());
+                kinds.insert(key.clone(), kind.clone());
             }
         }
         Labels {
             values,
+            kinds,
+            cleveref: parsed.cleveref.clone(),
             ..Labels::default()
         }
     }
@@ -938,7 +1108,12 @@ impl Labels {
             .blocks
             .iter()
             .flat_map(inlines_of)
-            .any(|i| matches!(i, Inline::Reference { page: true, .. }))
+            .any(|i| {
+                matches!(
+                    i,
+                    Inline::Reference { page: true, .. } | Inline::CleverReference { page: true, .. }
+                )
+            })
     }
 }
 
@@ -1090,7 +1265,7 @@ pub fn adapt_cached(
         .cloned()
         .zip(leadings.into_iter().chain(std::iter::repeat(None)))
         .collect();
-    let (mut lowered, mut limitations, stashed) = lower_blocks(texts, &paired, stash_titles);
+    let (mut lowered, mut limitations, stashed, letter_spans) = lower_blocks(texts, &paired, stash_titles, style.parskip.natural);
     let mut stashed = stashed.into_iter();
     let title_of = |(title, authors, date): StashedTitle, span: Span| Block::Title {
         title: items_for(&title, false),
@@ -1125,10 +1300,31 @@ pub fn adapt_cached(
     let mut toc_pending: Vec<String> = Vec::new();
     let mut chapter_starts: Vec<(usize, String)> = Vec::new();
     let mut after_heading = false;
+    // The block that is, so far, the last one inside an open theorem-like
+    // environment. `\endtrivlist`'s `\@endparenv` puts `\@topsepadd` after
+    // the *last* paragraph of the environment, and only the next unit says
+    // whether there is one: a block still inside the same environment
+    // continues the run, anything else closes it. The flag is set on the
+    // block itself, so the `toc_lists` splice below cannot shift it.
+    let mut open_theorem: Option<usize> = None;
     // Last source span of the previous paragraph block (None after a
     // heading or rule), for rejoining a display with its paragraph.
     let mut prev_para_end: Option<Span> = None;
     for unit in split_at_page_breaks(texts, &lowered, size, &style) {
+        // Does this unit continue the theorem-like environment that the
+        // previous block left open? Only a paragraph inside it that is not
+        // itself a fresh `\item` does.
+        let continues_theorem = matches!(
+            unit.kind,
+            UnitKind::Paragraph { in_theorem: true, theorem_item: false, .. }
+        );
+        if !continues_theorem {
+            if let Some(at) = open_theorem.take() {
+                if let Some(Block::Paragraph { env_close, .. }) = blocks.get_mut(at) {
+                    *env_close = true;
+                }
+            }
+        }
         let mut eject_before = unit.eject_before;
         let vspace_before = unit.vspace_before;
         limitations.extend(unit.limitations);
@@ -1689,8 +1885,18 @@ pub fn adapt_cached(
                     sized: None,
                     leading_pt: par_leading_pt(par_leading, style.base),
                 });
+                if in_theorem {
+                    open_theorem = Some(blocks.len() - 1);
+                }
                 after_heading = false;
             }
+        }
+    }
+    // A theorem-like environment that runs to the end of the document still
+    // closes: `\end{document}` is not what ended it.
+    if let Some(at) = open_theorem.take() {
+        if let Some(Block::Paragraph { env_close, .. }) = blocks.get_mut(at) {
+            *env_close = true;
         }
     }
     // The contents lists, now that every record is known.
@@ -1713,9 +1919,39 @@ pub fn adapt_cached(
             _ => ParaStyle::Plain,
         })
         .collect();
+    let from_letter = |parts: &[ParaPart]| {
+        parts
+            .iter()
+            .find_map(|p| match p {
+                ParaPart::Lines(items) => items.iter().find_map(|i| match i {
+                    Item::Word(w) => Some(w.span()),
+                    Item::Math { span, .. } => Some(*span),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .is_some_and(|at| {
+                letter_spans
+                    .iter()
+                    .any(|s| s.document == at.document && s.start == at.start)
+            })
+    };
     for (i, block) in blocks.iter_mut().enumerate() {
-        if let Block::Paragraph { style, env_close, .. } = block {
-            if *style != ParaStyle::Plain {
+        if let Block::Paragraph { style, env_close, parts, .. } = block {
+            // `ParaStyle::Plain` includes every theorem-like environment,
+            // whose `env_close` the unit loop above has already set from the
+            // `\end{<theorem>}` that actually closed it.
+            //
+            // `letter.cls` positions `\opening`'s address with a
+            // `{\raggedleft ...\par}` *group*. That is a declaration, not a
+            // `flushright` environment, so it closes no `\trivlist` and adds
+            // no `\@topsepadd` after itself -- 9pt at 11pt, which is exactly
+            // how much too far down the recipient block used to start.
+            //
+            // Both guards are independent and both are needed: the first keeps
+            // a theorem's own closing skip, the second keeps a letter's
+            // declaration group from claiming one it never opened.
+            if *style != ParaStyle::Plain && !from_letter(parts) {
                 *env_close = styles.get(i + 1).is_none_or(|next| *next != *style);
             }
         }
@@ -1846,11 +2082,12 @@ fn clear_page_blocks(texts: &[&str], blocks: &[Block]) -> Vec<usize> {
 fn inline_span(i: &Inline) -> Span {
     match i {
         Inline::Text { span, .. }
-        | Inline::LineBreak { span }
+        | Inline::LineBreak { span, .. }
         | Inline::Math { span, .. }
         | Inline::MathRows { span, .. }
         | Inline::Label { span, .. }
         | Inline::Reference { span, .. }
+        | Inline::CleverReference { span, .. }
         | Inline::HFill { span, .. }
         | Inline::HSpace { span, .. }
         | Inline::Footnote { span, .. }
@@ -1938,6 +2175,18 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
                 space_before: true,
             }));
         }
+        Inline::CleverReference { keys, page, range, label_only, capitalise, span, .. } => {
+            let text = clever_reference_text(keys, labels, *page, *range, *label_only, *capitalise);
+            reference_spans.push(*span);
+            out.push(std::borrow::Cow::Owned(Inline::Text {
+                text,
+                span: *span,
+                style: Default::default(),
+                // As for `Reference`: the gap comes from the source bytes
+                // between spans, not the compiler's flag.
+                space_before: true,
+            }));
+        }
         Inline::Verbatim { text, span, space_before } => {
             reference_spans.push(*span);
             out.push(std::borrow::Cow::Owned(Inline::Text {
@@ -1951,6 +2200,221 @@ fn lower_inline<'a>(inline: &'a Inline, labels: &Labels, reference_spans: &mut V
             }));
         }
         other => out.push(std::borrow::Cow::Borrowed(other)),
+    }
+}
+
+/// One label a `\cref` group refers to, resolved from [`Labels`].
+struct CleverItem {
+    number: String,
+    page: u32,
+    /// The cleveref *class* (the compiler's `xref::cleveref_kind`): the kind
+    /// several raw kinds collapse onto for grouping.
+    kind: String,
+    /// The label's own kind, which names the reference.
+    raw_kind: String,
+}
+
+/// The text of a `cleveref` reference (`\cref`, `\Cref`, `\crefrange`,
+/// `\cpageref`, `\labelcref` and their starred forms).
+///
+/// This mirrors `flashtex_compiler::layout`'s private `clever_reference_text`
+/// (grouping by kind, consecutive-number ranges, `and`/`, and` joining,
+/// parenthesised equation numbers) because the compiler's own resolver is not
+/// public and the pipeline, not the compiler, lays this document out. The
+/// naming itself is *not* duplicated: `xref::cleveref_name`/`cleveref_kind`
+/// are public and are called here, so `\crefname` overrides and the
+/// `capitalise`/`noabbrev` package options stay owned by the compiler.
+///
+/// An unresolved key contributes `??`, exactly as `\ref` does.
+fn clever_reference_text(
+    keys: &[String],
+    labels: &Labels,
+    page: bool,
+    range: bool,
+    label_only: bool,
+    capitalise: bool,
+) -> String {
+    use flashtex_compiler::xref::{cleveref_kind, cleveref_name};
+    let config = &labels.cleveref;
+    let mut items: Vec<CleverItem> = Vec::with_capacity(keys.len());
+    let mut unresolved = false;
+    for key in keys.iter().filter(|k| !k.is_empty()) {
+        match labels.values.get(key) {
+            Some(number) => {
+                let raw_kind = labels.kinds.get(key).cloned().unwrap_or_default();
+                items.push(CleverItem {
+                    number: number.clone(),
+                    // A key whose page is unknown (no previous pass) sorts
+                    // first and prints `??`, as `\pageref` does.
+                    page: labels.pages.get(key).copied().unwrap_or(0),
+                    kind: cleveref_kind(&raw_kind).to_string(),
+                    raw_kind,
+                });
+            }
+            None => unresolved = true,
+        }
+    }
+    if items.is_empty() {
+        return "??".into();
+    }
+    let with_unresolved = |text: String| {
+        if unresolved {
+            format!("{text} and ??")
+        } else {
+            text
+        }
+    };
+    if range {
+        // `\crefrange` needs exactly two labels of one kind; anything else is
+        // what cleveref itself reports as an error.
+        if items.len() != 2 || items[0].kind != items[1].kind {
+            return "??".into();
+        }
+        let name = cleveref_name(config, &items[0].raw_kind, true, capitalise);
+        return with_unresolved(format!(
+            "{name} {} to {}",
+            clever_number(&items[0]),
+            clever_number(&items[1])
+        ));
+    }
+    if page {
+        items.sort_by_key(|item| item.page);
+        let name = cleveref_name(config, "page", items.len() != 1, capitalise);
+        return with_unresolved(format!("{name} {}", format_clever_pages(&items)));
+    }
+    if label_only {
+        items.sort_by(compare_clever_items);
+        return with_unresolved(format_clever_numbers(&items));
+    }
+    let mut groups: Vec<(String, Vec<CleverItem>)> = Vec::new();
+    for item in items {
+        if let Some((_, group)) = groups.iter_mut().find(|(kind, _)| kind == &item.kind) {
+            group.push(item);
+        } else {
+            groups.push((item.kind.clone(), vec![item]));
+        }
+    }
+    let parts = groups
+        .iter_mut()
+        .map(|(_, group)| {
+            group.sort_by(compare_clever_items);
+            let name = cleveref_name(config, &group[0].raw_kind, group.len() != 1, capitalise);
+            format!("{name} {}", format_clever_numbers(group))
+        })
+        .collect::<Vec<_>>();
+    // Groups take the Oxford comma (`A 1, B 2, and C 3`); the numbers inside
+    // one group do not (`Sections 1, 2 and 3`), as cleveref sets them.
+    with_unresolved(join_clever(&parts, true))
+}
+
+/// `\ref` numbers, collapsing three or more consecutive ones into a range.
+fn format_clever_numbers(items: &[CleverItem]) -> String {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while start < items.len() {
+        let mut end = start;
+        while end + 1 < items.len() && clever_consecutive(&items[end], &items[end + 1]) {
+            end += 1;
+        }
+        if end - start >= 2 {
+            parts.push(format!(
+                "{} to {}",
+                clever_number(&items[start]),
+                clever_number(&items[end])
+            ));
+        } else {
+            parts.extend(items[start..=end].iter().map(clever_number));
+        }
+        start = end + 1;
+    }
+    join_clever(&parts, false)
+}
+
+/// The same collapsing for `\cpageref`'s page numbers.
+fn format_clever_pages(items: &[CleverItem]) -> String {
+    let page_text = |item: &CleverItem| {
+        if item.page == 0 {
+            "??".to_string()
+        } else {
+            item.page.to_string()
+        }
+    };
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while start < items.len() {
+        let mut end = start;
+        while end + 1 < items.len()
+            && items[end].page != 0
+            && items[end].page + 1 == items[end + 1].page
+        {
+            end += 1;
+        }
+        if end - start >= 2 {
+            parts.push(format!(
+                "{} to {}",
+                page_text(&items[start]),
+                page_text(&items[end])
+            ));
+        } else {
+            parts.extend(items[start..=end].iter().map(page_text));
+        }
+        start = end + 1;
+    }
+    join_clever(&parts, false)
+}
+
+/// Whether `second`'s number is `first`'s plus one, comparing only the last
+/// dotted component and requiring the same prefix (`2.3` then `2.4`, never
+/// `2.9` then `3.1`).
+fn clever_consecutive(first: &CleverItem, second: &CleverItem) -> bool {
+    let next_of = |text: &str| text.parse::<u32>().ok().and_then(|v| v.checked_add(1));
+    match (first.number.rsplit_once('.'), second.number.rsplit_once('.')) {
+        (None, None) => {
+            let next = next_of(&first.number);
+            next.is_some() && next == second.number.parse::<u32>().ok()
+        }
+        (Some((prefix, value)), Some((second_prefix, second_value))) => {
+            let next = next_of(value);
+            prefix == second_prefix && next.is_some() && next == second_value.parse::<u32>().ok()
+        }
+        _ => false,
+    }
+}
+
+/// Dotted numbers sort component-wise (`1.9` before `1.10`); anything not
+/// all-numeric falls back to a plain string compare.
+fn compare_clever_items(first: &CleverItem, second: &CleverItem) -> std::cmp::Ordering {
+    let parts =
+        |text: &str| text.split('.').map(str::parse::<u32>).collect::<Result<Vec<_>, _>>();
+    match (parts(&first.number), parts(&second.number)) {
+        (Ok(a), Ok(b)) => a.cmp(&b),
+        _ => first.number.cmp(&second.number),
+    }
+}
+
+/// Equation numbers are parenthesised; every other kind is bare.
+fn clever_number(item: &CleverItem) -> String {
+    if item.kind == "equation" {
+        format!("({})", item.number)
+    } else {
+        item.number.clone()
+    }
+}
+
+fn join_clever(parts: &[String], oxford: bool) -> String {
+    match parts {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, second] => format!("{first} and {second}"),
+        _ => {
+            let last = &parts[parts.len() - 1];
+            let head = parts[..parts.len() - 1].join(", ");
+            if oxford {
+                format!("{head}, and {last}")
+            } else {
+                format!("{head} and {last}")
+            }
+        }
     }
 }
 
@@ -2269,7 +2733,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
             let begin = rfind_command(gap, "begin")?;
             let before = &gap[..begin];
             let vmode = prev_vmode || prev_end.is_none() || has_blank_line(before) || find_command(before, "par").is_some();
-            Some(EnvOpen { vmode })
+            Some(EnvOpen { vmode, skips: None })
         });
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
         // or `\par` between them) is not indented.
@@ -2288,19 +2752,31 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
         // The `\item` of an amsthm theorem-like environment: the gap before
         // this block holds its `\begin{...}` (only the environment's first
         // paragraph, so later ones keep the ambient `\parindent`).
-        let theorem_item = list.is_none()
-            && styled.is_none()
-            && first.is_some_and(|f| {
+        // `Some(is_proof)` when this block is the `\item` that opens a
+        // theorem-like environment; `proof` is told apart because its closing
+        // `\@topsepadd` is not `\topsep` (see [`theorem_skips`]).
+        let theorem_open: Option<bool> = (list.is_none() && styled.is_none())
+            .then(|| {
+                let f = first?;
                 let gap_start = match prev_end {
                     Some(p) if p.document == f.document && p.end <= f.start => Some(p.end),
                     Some(_) => None,
                     None => Some(0),
                 };
-                match (texts.get(f.document.0), gap_start) {
-                    (Some(t), Some(g)) => opens_theorem_item(t, g, f.start, &theorem_envs),
-                    _ => false,
-                }
-            });
+                let t = texts.get(f.document.0)?;
+                opens_theorem_item(t, gap_start?, f.start, &theorem_envs).map(|name| name == "proof")
+            })
+            .flatten();
+        let theorem_item = theorem_open.is_some();
+        // amsthm's `\@item` opens the `\trivlist` with `\addvspace\@topsep`
+        // exactly as `center`/`quote` do, so the theorem reuses the
+        // environment machinery rather than a second one beside it.
+        let env_open = env_open.or_else(|| {
+            theorem_open.map(|proof| EnvOpen {
+                vmode: false,
+                skips: Some(theorem_skips(style, proof)),
+            })
+        });
         let in_theorem = theorem_item
             || first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| in_theorem_environment(t, f.start, &theorem_envs)));
         // `\paragraph{...}`/`\subparagraph{...}`: the compiler set the title
@@ -2434,7 +2910,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                 }
             }
             CBlock::VSpace { .. } | CBlock::Rule { .. } | CBlock::PageBreak => unreachable!("handled above"),
-            CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::TitleBlock { .. } | CBlock::VFill => unreachable!("lowered by lower_blocks"),
+            CBlock::Verbatim { .. } | CBlock::TableOfContents { .. } | CBlock::TitleBlock { .. } | CBlock::VFill | CBlock::LetterBlock { .. } => unreachable!("lowered by lower_blocks"),
         }
         if let Some(last) = inlines_of(block).iter().map(inline_span).last() {
             prev_end = Some(last);
@@ -4036,6 +4512,39 @@ fn brace_depth(prefix: &str) -> i64 {
     depth
 }
 
+/// The `\@topsep`/`\@topsepadd` of a theorem-like environment, read off
+/// pdfTeX's own vertical list (TeX Live 2025; oracle only, never in the
+/// product path — the quoted `\showoutput` glue is in
+/// `tests/amsthm_topsep.rs`).
+///
+/// * a `\newtheorem` environment gets `\topsep` on both sides, because
+///   `\@thm` assigns `\@topsep`/`\@topsepadd` from `\thm@preskip`/
+///   `\thm@postskip` and `\thm@space@setup` sets both to `\topsep`. The
+///   trace is `\glue 8.0 plus 2.0 minus 4.0` / `9.0 plus 3.0 minus 5.0` /
+///   `10.0 plus 4.0 minus 6.0` at a 10/11/12pt base: `\topsep` exactly, with
+///   no `\partopsep` and no `\parskip`.
+/// * `proof` is not a `\@thm`. It is an ordinary `\trivlist` opened after
+///   an explicit `\par` (so in vertical mode) under amsthm's own
+///   `\topsep6\p@\@plus6\p@`, so its closing `\@topsepadd` is that 6pt
+///   plus `\partopsep`: the trace is `8.0 plus 7.0 minus 1.0`,
+///   `9.0 plus 7.0 minus 1.0`, `9.0 plus 8.0 minus 2.0` — equal to `\topsep`
+///   at a 10pt and 11pt base and 1pt short of it at 12pt.
+///
+/// Its *opening* skip is left at `\topsep`: `\addvspace` keeps the larger of
+/// the new skip and `\lastskip`, and the closing skip of whatever precedes a
+/// `proof` is at least that in every arrangement measured here.
+fn theorem_skips(style: &Stylesheet, proof: bool) -> EnvSkips {
+    let topsep = style.topsep;
+    if !proof {
+        return EnvSkips { open: topsep, close: topsep };
+    }
+    let p = style.partopsep;
+    EnvSkips {
+        open: topsep,
+        close: crate::style::Skip::new(6.0 + p.natural, 6.0 + p.stretch, p.shrink),
+    }
+}
+
 /// The environments amsthm sets as a `\trivlist` holding a single `\item`:
 /// every `\newtheorem`/`\newtheorem*` declaration in the sources plus the
 /// fixed `proof`. See [`opens_theorem_item`] for what that costs the first
@@ -4071,9 +4580,9 @@ fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
 /// the `\hskip\labelsep` the head box starts with. So the head sits flush on
 /// the left margin and the first line is *not* indented; only the following
 /// paragraphs of the same environment take the ambient `\parindent`.
-fn opens_theorem_item(text: &str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> Option<&'t str> {
     if gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
-        return false;
+        return None;
     }
     // The compiler gives the theorem head inline the `\begin` command's own
     // span, so the opener is usually *at* the paragraph's first span rather
@@ -4083,13 +4592,12 @@ fn opens_theorem_item(text: &str, gap_start: usize, at: usize, envs: &std::colle
     } else {
         rfind_command(&text[gap_start..at], "begin").map(|r| gap_start + r)
     };
-    let Some(begin) = begin else {
-        return false;
-    };
+    let begin = begin?;
     text[begin..]
         .split_once('{')
         .and_then(|(_, rest)| rest.split_once('}'))
-        .is_some_and(|(name, _)| envs.contains(name.trim()))
+        .map(|(name, _)| name.trim())
+        .filter(|name| envs.contains(*name))
 }
 
 /// Whether byte `at` lies inside a theorem-like environment: the `\begin`/
@@ -5026,6 +5534,40 @@ fn line_break_skip(source: &str, after: usize, size: u32) -> Option<f64> {
     parse_dimen(&inner[..close], size)
 }
 
+/// An `Inline::LineBreak` the pipeline makes up itself (a `verbatim` line
+/// ending), written through one constructor so the crate builds against a
+/// pinned compiler with or without the `skip_pt` field.
+fn line_break_inline(span: Span) -> Inline {
+    #[cfg(feature = "linebreak-skip")]
+    {
+        Inline::LineBreak { span, skip_pt: None }
+    }
+    #[cfg(not(feature = "linebreak-skip"))]
+    {
+        Inline::LineBreak { span }
+    }
+}
+
+/// The `\\[<dimen>]` skip the compiler itself parsed, when the pinned
+/// compiler reports one (`parser::Inline::LineBreak::skip_pt`).
+///
+/// [`line_break_skip`] below re-reads the `[...]` out of the source bytes
+/// after the node's span, which is right only for a `\\` written literally in
+/// the document. A `\\` that came out of a macro body carries the *invocation*
+/// as its span (`expansion::Converter::place`), so those bytes are the call's
+/// own arguments -- `{Education}` of `\\cvsection{Education}` -- and the skip
+/// is unreachable from the source. The compiler reads it off the expanded
+/// token stream, like TeX, so its value is preferred and the byte scan stays
+/// as the fallback for a vendor pin that predates the field.
+#[allow(unused_variables)]
+fn reported_line_break_skip(inline: &Inline) -> Option<f64> {
+    #[cfg(feature = "linebreak-skip")]
+    if let Inline::LineBreak { skip_pt, .. } = inline {
+        return *skip_pt;
+    }
+    None
+}
+
 fn matching_brace(bytes: &[u8], open: usize) -> Option<usize> {
     let mut depth = 0usize;
     let mut i = open;
@@ -5868,6 +6410,13 @@ fn items_cached(
                 17u8.hash(&mut h);
                 format!("{t:?}").hash(&mut h);
             }
+            // Lowered by `lower_inline` like `Reference`, so every field
+            // that selects its text is part of the key.
+            Inline::CleverReference { keys, page, range, label_only, capitalise, linked, .. } => {
+                19u8.hash(&mut h);
+                keys.hash(&mut h);
+                (page, range, label_only, capitalise, linked).hash(&mut h);
+            }
         }
     }
     let key = h.finish();
@@ -5965,7 +6514,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
         }
         match &**inline {
             Inline::Label { key, .. } => items.push(Item::Label { key: key.clone() }),
-            Inline::Reference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
+            Inline::Reference { .. } | Inline::CleverReference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
             Inline::Footnote { number, span, mark, text, .. } => {
                 // `\@footnotemark` keeps the space factor; the space before
                 // the command is an ordinary interword space. The command's
@@ -5979,7 +6528,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 push_gap(&mut items, gap, gap_style, factor);
                 let note = text.as_ref().map(|t| {
                     let mut note = Vec::new();
-                    for (k, part) in t.split(|i| matches!(i, Inline::LineBreak { span: at } if at == span)).enumerate() {
+                    for (k, part) in t.split(|i| matches!(i, Inline::LineBreak { span: at, .. } if at == span)).enumerate() {
                         if k > 0 {
                             note.push(Item::NoteParBreak);
                         }
@@ -6050,8 +6599,10 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 prev_span = Some(span);
                 factor = 1000;
             }
-            Inline::LineBreak { span } => {
-                let skip_pt = line_break_skip(text_of(span.document), span.end, size).unwrap_or(0.0);
+            Inline::LineBreak { span, .. } => {
+                let skip_pt = reported_line_break_skip(inline)
+                    .or_else(|| line_break_skip(text_of(span.document), span.end, size))
+                    .unwrap_or(0.0);
                 items.push(Item::LineBreak { skip_pt });
                 prev_end = Some(span.end);
                 prev_span = Some(*span);

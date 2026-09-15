@@ -442,4 +442,26 @@ final class EditorLineCommandsHostTests: XCTestCase {
         XCTAssertEqual(tv.string, "aa\nbb\n")
         XCTAssertEqual(tv.undoManager?.canUndo, false)
     }
+
+    /// Making the line commands runnable puts Duplicate Line in the palette,
+    /// and it out-ranked Go to Line for the query "go to line": its title
+    /// supplies "line", and its description supplies "go" and "to" only
+    /// because it ends "⇧⌘D remains Go to Matching". `rank` scored a row by
+    /// its BEST-placed term, so that incidental description hit cost nothing
+    /// and the row tied Go to Line -- whose title holds all three terms --
+    /// then won on declaration order. Ranking by the worst-placed term is
+    /// what makes a row that matches everything in its title win.
+    func testPaletteRanksByTheWorstPlacedTermSoFullTitleMatchesWin() {
+        XCTAssertTrue(CommandPaletteModel.isRunnable(.duplicateLine), "the line commands are runnable now")
+        let rows = CommandPaletteModel.rows(matching: "go to line")
+        XCTAssertEqual(rows.first?.id, .goToLine, "matched in full by the title: \(rows.prefix(3).map(\.id))")
+        XCTAssertTrue(rows.contains { $0.id == .duplicateLine }, "still a match, just ranked below")
+        XCTAssertLessThan(
+            rows.firstIndex(where: { $0.id == .goToLine }) ?? .max,
+            rows.firstIndex(where: { $0.id == .duplicateLine }) ?? .max
+        )
+        // A single term still ranks by where it lands, so the plain query is
+        // unaffected: Duplicate Line keeps its title match.
+        XCTAssertTrue(CommandPaletteModel.rows(matching: "duplicate").contains { $0.id == .duplicateLine })
+    }
 }

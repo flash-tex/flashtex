@@ -126,6 +126,44 @@ fn figure_caption_label_and_lists_render() {
 }
 
 #[test]
+fn enumerate_ref_uses_the_counter_value_without_the_display_period() {
+    let source = r"\begin{enumerate}\item\label{item}First\end{enumerate}See \ref{item}.";
+    let result = compile_full(source, LayoutConstraints::default());
+    let reference_start = source.find(r"\ref{item}").unwrap();
+    let reference = result
+        .pages
+        .iter()
+        .flat_map(|page| &page.items)
+        .find(|item| item.span.start == reference_start)
+        .expect("enumerate reference item");
+    assert_eq!(reference.text, "1");
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+}
+
+#[test]
+fn nested_enumerate_refs_include_article_counter_prefixes() {
+    let source = r"\begin{enumerate}\item\label{outer}Outer\begin{enumerate}\item\label{inner}Inner\begin{enumerate}\item\label{deep}Deep\end{enumerate}\end{enumerate}\end{enumerate}Refs \ref{outer}, \ref{inner}, \ref{deep}.";
+    let result = compile_full(source, LayoutConstraints::default());
+    for (key, expected) in [("outer", "1"), ("inner", "1a"), ("deep", "1(a)i")] {
+        let reference_start = source.find(&format!(r"\ref{{{key}}}")).unwrap();
+        let reference = result
+            .pages
+            .iter()
+            .flat_map(|page| &page.items)
+            .find(|item| item.span.start == reference_start)
+            .unwrap_or_else(|| panic!("missing reference item for {key}"));
+        assert_eq!(reference.text, expected, "reference {key}");
+    }
+    for expected in ["1.", "(a)", "i."] {
+        assert!(
+            result.pages.iter().flat_map(|page| &page.items).any(|item| item.text == expected),
+            "missing display label {expected}"
+        );
+    }
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+}
+
+#[test]
 fn includegraphics_is_reported_by_the_core14_layout() {
     // The parser records an image node; this layout never loads the file.
     let result = compile_full(r"\includegraphics{plot.png}", LayoutConstraints::default());

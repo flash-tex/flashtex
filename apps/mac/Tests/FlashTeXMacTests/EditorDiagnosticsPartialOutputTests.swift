@@ -87,9 +87,12 @@ final class EditorDiagnosticsPartialOutputTests: XCTestCase {
         /// Diagnostics whose recovery says the compiler skipped something:
         /// the body and macro commands (7 per section) and the preamble one.
         static var skippedRegion: Int { 7 * problems + 1 }
-        /// Every diagnostic the fixture yields: the above plus 4 `\hwbolt`
-        /// per section and two package warnings.
-        static var diagnostics: Int { checkedByName + viaMacro + 2 }
+        /// Every diagnostic the fixture yields: the two categories above --
+        /// which already account for the 4 `\hwbolt` per section, via `\Z`
+        /// and `\R` -- plus the single package warning. The preamble asks for
+        /// `microtype` and `amsmath,amssymb,amsthm`; only `microtype` is still
+        /// unimplemented, so only it warns. This was 2 until amsthm landed.
+        static var diagnostics: Int { checkedByName + viaMacro + 1 }
     }
 
     /// The fixture with the multi-byte prefix, as compiled by every test here.
@@ -450,10 +453,17 @@ final class EditorDiagnosticsPartialOutputTests: XCTestCase {
         XCTAssertNil(EditorDiagnostics.occurrence(n, of: inGroup, in: result))
         let fourth = try XCTUnwrap(starts.count > 3 ? starts[3] : nil, "a fourth \(math) occurrence")
         XCTAssertEqual(EditorDiagnostics.occurrenceLabel(3, of: inGroup, in: result), "4 of \(n): main.tex bytes \(fourth)..<\(fourth + math.utf8.count)")
-        // Groups are ordered by first occurrence; singles keep the plain message.
-        let groupStarts = try groups.map { try XCTUnwrap(result.diagnostics[$0.first].source, "group \($0.id) is sourced").startByte }
-        XCTAssertEqual(groupStarts, groupStarts.sorted())
-        XCTAssertEqual(groups.first?.message.contains("microtype"), true, "the first group is the first \\usepackage warning: \(groups.first?.message ?? "nil")")
+        // Groups list errors, then warnings, then gaps; within a bucket, first
+        // occurrence stays in document order. Singles keep the plain message.
+        func bucket(_ g: EditorDiagnostics.Group) -> Int { EditorDiagnostics.listBucket(result.diagnostics[g.first]) }
+        XCTAssertEqual(groups.map(bucket), groups.map(bucket).sorted(), "errors, then warnings, then gaps")
+        for b in 0...2 {
+            let starts = try groups.filter { bucket($0) == b }.map {
+                try XCTUnwrap(result.diagnostics[$0.first].source, "group \($0.id) is sourced").startByte
+            }
+            XCTAssertEqual(starts, starts.sorted(), "bucket \(b) stays in document order")
+        }
+        XCTAssertNotNil(groups.first { $0.message.contains("microtype") }, "the package warning is still grouped: \(groups.first?.message ?? "nil")")
         if let single = groups.first(where: { $0.count == 1 }) { XCTAssertEqual(single.title, single.message) }
         // A group's first occurrence is what the row's explanation/quick fix use.
         XCTAssertEqual(inGroup.first, inGroup.occurrences.first)
@@ -474,13 +484,14 @@ final class EditorDiagnosticsPartialOutputTests: XCTestCase {
         ]
         let result = RuntimeV1.CompileResult(projectId: "p", revision: 1, status: .recovered, pages: [], diagnostics: diags, pdfPath: nil)
         let groups = EditorDiagnostics.groups(of: result, documentOrder: ["main.tex", "chapter.tex"])
-        XCTAssertEqual(groups.map(\.id), ["warning:m", "error:z", "error:m"])
-        XCTAssertEqual(groups[0].occurrences, [4, 3, 0, 2], "main.tex by start, then chapter.tex, unsourced last")
-        XCTAssertNil(groups[0].recovery, "mixed recovery notes: none shared")
-        XCTAssertEqual(groups[0].title, "4× m")
-        XCTAssertEqual(groups[2].title, "m")
-        XCTAssertEqual(EditorDiagnostics.occurrenceLabel(3, of: groups[0], in: result), "4 of 4: no source")
-        XCTAssertEqual(EditorDiagnostics.occurrenceLabel(2, of: groups[0], in: result, texts: ["chapter.tex": "ab\ncd\nef"]), "3 of 4: chapter.tex line 2")
+        XCTAssertEqual(groups.map(\.id), ["error:z", "error:m", "warning:m"])
+        let warnings = groups[2]
+        XCTAssertEqual(warnings.occurrences, [4, 3, 0, 2], "main.tex by start, then chapter.tex, unsourced last")
+        XCTAssertNil(warnings.recovery, "mixed recovery notes: none shared")
+        XCTAssertEqual(warnings.title, "4× m")
+        XCTAssertEqual(groups[1].title, "m")
+        XCTAssertEqual(EditorDiagnostics.occurrenceLabel(3, of: warnings, in: result), "4 of 4: no source")
+        XCTAssertEqual(EditorDiagnostics.occurrenceLabel(2, of: warnings, in: result, texts: ["chapter.tex": "ab\ncd\nef"]), "3 of 4: chapter.tex line 2")
         XCTAssertEqual(EditorDiagnostics.lineNumber(ofByte: 99, in: "ab"), nil)
         XCTAssertEqual(EditorDiagnostics.lineNumber(ofByte: 2, in: "ab"), 1)
         XCTAssertEqual(EditorDiagnostics.lineNumber(ofByte: 3, in: "ab\n"), 2)
