@@ -653,9 +653,18 @@ pub const MAX_MATH_DEPTH: usize = 32;
 /// The deepest `\left`...`\right` nesting in one formula. Sizing a pair lays
 /// out everything it encloses (`left_right_stretch_scales`), so the cost is
 /// the nesting depth times the formula length: 10k nested pairs took 15 s.
-/// Past the limit the extra delimiters are dropped with TeX's capacity error
-/// (each `\left` is a TeX group).
-pub const MAX_LEFT_RIGHT_DEPTH: usize = 32;
+/// Past the limit the extra delimiters are dropped with TeX's capacity error:
+/// each `\left` is a TeX group, and TeX allows 255 grouping levels
+/// ([`TEX_GROUPING_LEVELS`]). A formula in a document body already sits in
+/// two of them (the `document` environment and the math shift), so pdflatex
+/// accepts 253 nested `\left`s there and stops at the 254th, in display and
+/// inline math alike (measured, TeX Live 2026). Other enclosing groups make
+/// TeX stop sooner; they are not counted here. The layout is not recursive
+/// per pair: 255 levels ran on a 256 KiB release and 512 KiB debug thread.
+pub const MAX_LEFT_RIGHT_DEPTH: usize = TEX_GROUPING_LEVELS - 2;
+
+/// tex.web `max_quarterword`: the most grouping levels TeX allows (§274).
+pub const TEX_GROUPING_LEVELS: usize = 255;
 
 struct MathParser<'a> {
     tokens: &'a [Token],
@@ -1347,7 +1356,7 @@ impl MathParser<'_> {
                     if self.open_lefts >= MAX_LEFT_RIGHT_DEPTH {
                         if self.dropped_lefts == 0 {
                             self.diagnostics.push(Diagnostic::error(
-                                format!("TeX capacity exceeded, sorry [grouping levels={MAX_LEFT_RIGHT_DEPTH}]."),
+                                format!("TeX capacity exceeded, sorry [grouping levels={TEX_GROUPING_LEVELS}]."),
                                 Some(span),
                                 Some("dropped the \\left/\\right delimiters nested past the limit".into()),
                             ));

@@ -407,8 +407,9 @@ fn nested_sub_parses_hit_tex_grouping_capacity_instead_of_the_stack() {
     // own token stream: 3000 nested tabulars overflowed an 8 MiB stack, and
     // 10k took minutes (each level copies its cell). The parser stops at
     // `STREAM_DEPTH_LIMIT` levels, below what a 2 MiB debug test thread holds.
+    // That is a FlashTeX limit, not TeX's 255 grouping levels, and says so.
     let capacity = format!(
-        "TeX capacity exceeded, sorry [grouping levels={}].",
+        "FlashTeX nesting limit ({}) exceeded",
         flashtex_compiler::parser::STREAM_DEPTH_LIMIT
     );
     for (open, close) in [
@@ -446,7 +447,7 @@ fn nested_sub_parses_hit_tex_grouping_capacity_instead_of_the_stack() {
     );
     assert!(!compile_messages(&text)
         .iter()
-        .any(|m| m.contains("capacity")));
+        .any(|m| m.contains("nesting limit")));
 }
 
 #[test]
@@ -492,10 +493,7 @@ fn deeply_nested_left_right_pairs_hit_a_capacity_limit_in_bounded_time() {
     let started = std::time::Instant::now();
     let messages = compile_messages(&text);
     let elapsed = started.elapsed();
-    let capacity = format!(
-        "TeX capacity exceeded, sorry [grouping levels={}].",
-        math::MAX_LEFT_RIGHT_DEPTH
-    );
+    let capacity = "TeX capacity exceeded, sorry [grouping levels=255].";
     assert_eq!(
         messages.iter().filter(|m| **m == capacity).count(),
         1,
@@ -503,6 +501,26 @@ fn deeply_nested_left_right_pairs_hit_a_capacity_limit_in_bounded_time() {
         &messages[..messages.len().min(4)]
     );
     assert!(elapsed.as_secs() < 20, "took {elapsed:?}");
+    // pdflatex (TeX Live 2026) accepts 253 nested `\left`s in a document's
+    // display or inline math and stops at the 254th: the `document`
+    // environment and the math shift hold the other two of TeX's 255 levels.
+    assert_eq!(math::MAX_LEFT_RIGHT_DEPTH, 253);
+    for (math_open, math_close) in [("$$", "$$"), ("$", "$")] {
+        for (n, reported) in [(253, 0), (254, 1)] {
+            let text = format!(
+                "\\documentclass{{article}}\\begin{{document}}{math_open}{}x{}{math_close}\\end{{document}}\n",
+                "\\left(".repeat(n),
+                "\\right)".repeat(n)
+            );
+            let messages = compile_messages(&text);
+            assert_eq!(
+                messages.iter().filter(|m| **m == capacity).count(),
+                reported,
+                "{math_open} {n}: {:?}",
+                &messages[..messages.len().min(4)]
+            );
+        }
+    }
 }
 
 #[test]
