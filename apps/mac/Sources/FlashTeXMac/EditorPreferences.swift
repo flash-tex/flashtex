@@ -517,6 +517,23 @@ final class EditorPreferences {
 /// The Settings window body: `Settings { EditorPreferencesView() }` in the
 /// app. Every control is a standard focusable SwiftUI control (Tab moves
 /// between them) with an explicit accessibility label/hint for VoiceOver.
+/// The Settings window (⌘,): macOS IA — a toolbar-tabbed window, applying
+/// live, no OK/Cancel/Apply (design-principles §13). Two panes are all this
+/// app has, so IntelliJ's search-plus-tree IA would be chrome without
+/// content: a deliberate simplification, not an omission.
+struct SettingsRootView: View {
+    var body: some View {
+        TabView {
+            EditorPreferencesView(preferences: .shared, showConversion: false)
+                .tabItem { Label("Editor", systemImage: "square.and.pencil") }
+            Form { ConversionPreferencesSection() } // provider picker, model, API key (Keychain) (ConversionPreferencesView.swift)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Conversion", systemImage: "wand.and.stars") }
+        }
+    }
+}
+
 struct EditorPreferencesView: View {
     @Bindable private var prefs: EditorPreferences
     @State private var families: [String] = []

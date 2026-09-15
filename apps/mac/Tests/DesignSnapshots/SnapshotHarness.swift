@@ -115,6 +115,38 @@ private func assertHostedSurface<V: View>(
     window.orderOut(nil)
 }
 
+/// An existing AppKit window (a popup panel, a floating chrome piece),
+/// captured as composited. The caller shows and populates it first; the
+/// appearance is applied here so semantic colours resolve for the shot.
+@MainActor
+func assertWindowCapture(
+    _ window: NSWindow,
+    named name: String,
+    appearance: Appearance,
+    settle: TimeInterval = 0.25,
+    record recording: Bool = ProcessInfo.processInfo.environment["RECORD_SNAPSHOTS"] == "1",
+    file: StaticString = #filePath,
+    testName: String = #function,
+    line: UInt = #line
+) {
+    window.appearance = appearance.nsAppearance
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: settle))
+    guard let image = windowServerImage(of: window) else {
+        XCTFail("window-server capture returned nil", file: file, line: line)
+        return
+    }
+    withSnapshotTesting(record: recording ? .all : .missing) {
+        assertSnapshot(
+            of: image,
+            as: .image(precision: 0.99, perceptualPrecision: 0.98),
+            named: "\(name)-\(appearance.rawValue)",
+            file: file,
+            testName: testName,
+            line: line
+        )
+    }
+}
+
 /// One surface, no window chrome, one appearance.
 @MainActor
 func assertSurface<V: View>(

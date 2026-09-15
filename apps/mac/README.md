@@ -965,7 +965,7 @@ explain that nothing is loaded.
 | ⌘⇧G | Convert capture (`capture_convert` for the latest received capture) |
 | ⌘⇧N | Nearby Companion… (advertise, pairing code, paired devices, received captures; Return shows or resumes a pairing code, Esc cancels it or dismisses a banner, Tab walks Advertise → pairing controls → Forget → Clear; the step indicator, status row and every transition are VoiceOver text) |
 | Edit > Rename Citation… | Rename citation window (reviewed `plan_citation_rename` across the project → one `apply_group`) |
-| ⌘⇧P | Command palette (View; also the toolbar's Commands button): every command in this table with its menu and shortcut; type to filter, ↑/↓ choose, Return runs, Esc closes |
+| ⌘⇧P | Command palette (View; also the toolbar's Commands button): scope tabs for Files, Sections, Labels, Citations and every command in this table; type to filter, Tab cycles scopes, ↑/↓ choose, Return opens or runs, Esc closes |
 | ⌘= | Zoom in preview (View; also the preview header's + button or a pinch): multiply the fit-width zoom by 1.25, up to 4x; wide pages scroll horizontally |
 | ⌘- | Zoom out preview (View; also the header's − button): divide by 1.25, down to 0.25x fit width |
 | ⌘0 | Actual size preview (View): 1 PDF point per screen point when the 0.25x…4x zoom bounds permit it |
@@ -990,6 +990,7 @@ explain that nothing is loaded.
 | ↑ / ↓ / Tab / ⇧Tab / Return | Completion list keys, while the list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Return/Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list, any other caret move closes it |
 | ⌘⇧Space | Signature help for the command whose argument the caret is in (also opens on `{`/`[` typed after a command name; `}`, Esc or leaving the argument closes it) |
 | ⌘/ | Toggle `% ` line comment on the selection's lines |
+| ⌘L | Go to line… (1-based line, line:column, or +N/−N relative to the caret; out-of-range numbers clamp; `:42` in the command palette jumps directly) |
 | ⌥⇧↓ | Duplicate Line (every full line the selection touches, copy below, caret/selection stays on the copy, one undo step; the Overleaf shortcut) |
 | ⌥⇧↑ | Duplicate Line Up (every full line the selection touches, copy above, caret/selection stays on the copy, one undo step) |
 | ⌘⌥↑ / ⌘⌥↓ | Move line up / down (full lines only, no-op at the buffer edges; ⌥⌘[ / ⌥⌘] remain Previous/Next Occurrence) |

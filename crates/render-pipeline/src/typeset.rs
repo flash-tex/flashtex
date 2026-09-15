@@ -20,7 +20,7 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-use flashtex_compiler::parser::SourceDocument;
+use flashtex_compiler::parser::{FillLeader, SourceDocument};
 use flashtex_compiler::{DocumentId, Span};
 use flashtex_font_engine::sha256;
 use flashtex_math_layout as ml;
@@ -109,6 +109,13 @@ pub enum BoxRec {
     /// `\rule` boxes set `bottom` (the painted part's bottom above the
     /// baseline); nothing is painted when `width` or `height` is not positive.
     Rule { width: f64, height: f64, bottom: f64, span: Span },
+    /// A leader attached to horizontal fill glue. It is painted after line
+    /// breaking, when the glue's final width is known.
+    Leader {
+        leader: FillLeader,
+        box_width: f64,
+        dot: Option<(Rc<LoadedFace>, pl::GlyphRun)>,
+    },
     /// A `tikzpicture`: its bounding box sits on the baseline (depth 0).
     Picture(Rc<PictureRec>),
     /// A `tabular` (`table.rs`): its cell lines and rules, set as one box
@@ -358,6 +365,11 @@ struct ParaState {
     /// The open paragraph-shape environment began in vertical mode
     /// (`\@topsepadd` keeps `\partopsep` for the closing skip too).
     env_vmode: bool,
+    /// The open environment's own `\@topsep`/`\@topsepadd`, when it set
+    /// them itself (`adapter::EnvSkips`: every amsthm theorem-like
+    /// environment does). Carried from the block that opened the
+    /// environment to the one that closes it, like `env_vmode`.
+    env_skips: Option<crate::adapter::EnvSkips>,
 }
 
 /// LaTeX/plain penalties (article defaults).
@@ -2072,7 +2084,7 @@ impl<'a> Context<'a> {
                     let quad = self.text_params(base, size).quad;
                     push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(em * quad)), None);
                 }
-                AItem::HFill { fill } => {
+                AItem::HFill { fill, leader } => {
                     // `\hfill` is second-order glue: it beats the line's
                     // `\parfillskip` (`\hfil`), as in a `\section` title
                     // set as `Problem 1 \hfill [4 points]`.
@@ -2080,7 +2092,39 @@ impl<'a> Context<'a> {
                     if *fill {
                         glue.stretch_order = pl::GlueOrder::Fill;
                     }
-                    push(&mut out, &mut recs, pl::Item::Glue(glue), None)
+                    let (box_width, dot) = match leader {
+                        FillLeader::Dots => {
+                            let face = self.face(base, size, Span::new(0, 0));
+                            let shaped = self.shaper.shape(&face, ".");
+                            let glyphs = shaped
+                                .clusters
+                                .iter()
+                                .flat_map(|c| c.glyphs.iter().map(|g| pl::ShapedGlyph {
+                                    gid: u32::from(g.gid.0),
+                                    advance_units: i64::from(g.advance),
+                                    cluster: c.text_range.clone(),
+                                }))
+                                .collect::<Vec<_>>();
+                            let run = pl::GlyphRun::from_shaped(
+                                face.layout_id(),
+                                size,
+                                shaped.units_per_em as f64,
+                                f64::from(shaped.height_units),
+                                -f64::from(shaped.depth_units),
+                                &glyphs,
+                                0..1,
+                            );
+                            (0.44 * self.text_params(base, size).quad, Some((face, run)))
+                        }
+                        _ => (0.0, None),
+                    };
+                    let rec = if *leader == FillLeader::None {
+                        None
+                    } else {
+                        self.recs.push(BoxRec::Leader { leader: *leader, box_width, dot });
+                        Some(self.recs.len() - 1)
+                    };
+                    push(&mut out, &mut recs, pl::Item::Glue(glue), rec)
                 }
                 AItem::HSpace { pt, stretch_pt, shrink_pt } => push(
                     &mut out,
@@ -3031,6 +3075,7 @@ impl<'a> Context<'a> {
             };
             if let Some(e) = env_open {
                 st.env_vmode = e.vmode;
+                st.env_skips = e.skips;
             }
             // `\@item` opens the environment with `\addvspace{\@topsep}`,
             // not `\vskip`, and only when `\if@nobreak` is false:
@@ -3051,7 +3096,10 @@ impl<'a> Context<'a> {
             // Both are read off pdfTeX's vertical list; the probes and the
             // quoted `\showoutput` glue are in `tests/abstract_env.rs`.
             let mut env_before = env_open.map(|e| {
-                let (n, stretch, shrink) = env_skip(e.vmode);
+                let (n, stretch, shrink) = match e.skips {
+                    Some(s) => (s.open.natural, s.open.stretch, s.open.shrink),
+                    None => env_skip(e.vmode),
+                };
                 let last = blocks.last().and_then(|b| b.vertical.space_after).map_or(0.0, |s| s.0);
                 if st.after_heading || last >= n {
                     (0.0, 0.0, 0.0)
@@ -3062,9 +3110,10 @@ impl<'a> Context<'a> {
             // `\endlist` of a list opened at another size takes *that*
             // size's `\@listi` (`abstract`'s `quotation` under `\small`),
             // not the class's `\normalsize` one.
-            let env_after = env_close.then(|| match sized.and_then(|s| s.close_skip) {
-                Some(s) => (s.natural, s.stretch, s.shrink),
-                None => env_skip(st.env_vmode),
+            let env_after = env_close.then(|| match (sized.and_then(|s| s.close_skip), st.env_skips) {
+                (Some(s), _) => (s.natural, s.stretch, s.shrink),
+                (None, Some(e)) => (e.close.natural, e.close.stretch, e.close.shrink),
+                (None, None) => env_skip(st.env_vmode),
             });
             let first_block = blocks.len();
             // TeX's pre_display_size: the width of the line before a
@@ -3134,7 +3183,22 @@ impl<'a> Context<'a> {
                         }
                     }
                     ParaPart::Rows { env, rows, span, bracket } => {
-                        if first {
+                        // TeX §1145, exactly as the `Display` arm below: a
+                        // display that opens a paragraph whose horizontal
+                        // list is still empty sets no line at all. After a
+                        // heading `\@afterheading`'s `\everypar` has taken
+                        // the `\parindent` box straight back off
+                        // (`\setbox\z@\lastbox`), so there is nothing left
+                        // to break into one and only `\parskip` precedes the
+                        // alignment. Without this an `align` right after a
+                        // `\section` carried a phantom empty line worth
+                        // `\baselineskip` less the heading's depth -- 13.6 pt
+                        // under a heading with no descender, 10.8007 pt under
+                        // one with (`tests/align_after_heading.rs`).
+                        let mut empty_start = None;
+                        if first && st.after_heading && geom.is_none_or(|g| g.label.is_none()) {
+                            empty_start = Some((std::mem::take(&mut eject), std::mem::take(&mut vspace), env_before.take()));
+                        } else if first {
                             let (mut opener, _) = ctx.display_opener_block(*bracket, geom);
                             if std::mem::take(&mut eject) {
                                 opener.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
@@ -3168,7 +3232,16 @@ impl<'a> Context<'a> {
                         } else {
                             (None, None)
                         };
-                        if let Some(b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span)) {
+                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span)) {
+                            if let Some((ej, vs, env_skip)) = empty_start {
+                                let parskip = geom.map_or(ctx.style.parskip, |g| g.parsep);
+                                if ej {
+                                    b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                                }
+                                add_skip_before(&mut b.vertical, Some(skip_tuple(parskip)));
+                                add_vspace(&mut b.vertical, vs);
+                                add_skip_before(&mut b.vertical, env_skip);
+                            }
                             blocks.push(b);
                         }
                         pre_display = None;
@@ -3239,7 +3312,36 @@ impl<'a> Context<'a> {
             if let Some(skip) = env_after {
                 if blocks.len() > first_block {
                     if let Some(last) = blocks.last_mut() {
+                        // `\@endparenv` is `\addvspace\@topsepadd`, and
+                        // `\addvspace` keeps whichever of the new skip and
+                        // `\lastskip` is the larger, *whole* -- it does not
+                        // add them (`\@xaddvskip`: `\vskip-\lastskip
+                        // \vskip\@tempskipb`, or nothing at all). That is
+                        // visible the moment an environment ends in a display:
+                        // a theorem whose last thing is `\[...\]` leaves
+                        // `\belowdisplayskip` (11pt at an 11pt base), which
+                        // beats `\topsep` (9pt) and absorbs it. pdfTeX's own
+                        // vertical list for `fixtures/real-world/lecture-notes`
+                        // shows `\glue(\belowdisplayskip) 11.0 plus 3.0
+                        // minus 6.0`, then `\glue -11.0 ...` and
+                        // `\glue 11.0 ...` again: net 11.0, not 20.0.
+                        //
+                        // Only an environment that declares its own skips
+                        // (`adapter::EnvSkips`, i.e. amsthm's) takes that
+                        // path. For the rest, `space_after` is not
+                        // necessarily `\lastskip` at all: the abstract head's
+                        // `\vspace{-.5em}` reaches the page through
+                        // `\vadjust`, *before* the penalty and the closing
+                        // skip, so `\addvspace` cannot see it and the two do
+                        // add up (`adapter::SizedPara::vspace_after_em`).
+                        // Telling those two apart for every environment needs
+                        // `VBlock` to carry them separately, which is a
+                        // change of its own; a theorem block never has a
+                        // `sized` vspace, so this one is exact as it stands.
+                        let absorbs = st.env_skips.is_some();
                         last.vertical.space_after = Some(match last.vertical.space_after {
+                            Some(prev) if absorbs && prev.0 >= skip.0 => prev,
+                            Some(_) if absorbs => skip,
                             Some((n, s, k)) => (n + skip.0, s + skip.1, k + skip.2),
                             None => skip,
                         });
@@ -3267,7 +3369,7 @@ impl<'a> Context<'a> {
         // `\footnote` inside a float box: `footnotes::prepare` has already
         // run, so a note raised here would set its mark and never be placed.
         let (notes, anchors) = (self.notes.len(), self.note_anchors.len());
-        let mut st = ParaState { after_heading: false, env_vmode: false };
+        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None };
         let outer = std::mem::replace(&mut self.parbox, true);
         // `\@floatboxreset` runs `\@setminipage`, and `\addvspace` does
         // nothing while `\if@minipage` holds (latex.ltx: it is cleared by
@@ -4016,6 +4118,25 @@ impl<'a> Context<'a> {
             if !tab.cells.is_empty() {
                 tabs.push(tab);
             }
+        }
+        // `\@maketitle` sets the author `tabular` unconditionally
+        // (`{\large \lineskip .5em \begin{tabular}[t]{c}\@author
+        // \end{tabular}\par}`), so `\author{}` -- and no `\author` at all,
+        // which only adds a warning -- still contributes a line to the
+        // centred paragraph: a `tabular` with no rows, `\hbox(0.0+0.0)`.
+        // It carries no ink but it does carry its own interline glue, and
+        // dropping it took `\baselineskip` less the title's depth out of the
+        // title block -- 10.63972 pt at an 11pt base, which is what
+        // `fixtures/real-world/math-sheet` (`\author{}`) was missing
+        // (`tests/maketitle_empty_author.rs`).
+        if tabs.is_empty() {
+            tabs.push(Tab {
+                cells: vec![(Vec::new(), 0.0)],
+                row_h: vec![0.0],
+                row_d: vec![0.0],
+                offsets: vec![0.0],
+                column: 0.0,
+            });
         }
         let tab_width = |t: &Tab| t.column + 2.0 * TABCOLSEP_PT;
         let tab_height = |t: &Tab| t.row_h.first().copied().unwrap_or(0.0);
@@ -5502,6 +5623,7 @@ impl<'a> Context<'a> {
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
                 })
                 .next();
@@ -7632,7 +7754,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 events.push((blocks.len(), event.clone(), *span));
             }
             Block::Paragraph { .. } => {
-                let mut st = ParaState { after_heading, env_vmode };
+                let mut st = ParaState { after_heading, env_vmode, env_skips: None };
                 ctx.build_paragraph(&mut blocks, block, &mut st, cache, style_fp, quad);
                 (after_heading, env_vmode) = (st.after_heading, st.env_vmode);
             }
@@ -7786,6 +7908,45 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         }
         (pages, images, labels)
     };
+    // `letter.cls` line 405:
+    //
+    //     \def\@texttop{\ifnum\c@page=1\vskip \z@ plus.00006fil\relax\fi}
+    //
+    // On **page 1 only** a fil glue sits at the top of the text block. Line
+    // 404's unguarded `\raggedbottom` puts `\@textbottom`'s
+    // `\vskip \z@ \@plus.0001fil` at the bottom, so the page's leftover space
+    // is shared between the two in the ratio of their stretch: the top takes
+    // .00006/(.00006+.0001) = 3/8 of it and the first baseline moves down by
+    // that much. This is page building, not a frame length, which is why
+    // `crates/class-geometry`'s `letter_oracle` checks its model on page 2
+    // and only bounds page 1 -- the shift belongs here.
+    //
+    // Without it every letter's page 1 rode 3/8 of its slack too high:
+    // 41.95 bp on `fixtures/real-world/letter`, a rigid offset that put 0%
+    // of the page's words within 0.5 bp on the vertical axis however exactly
+    // the spacing between them was set.
+    if ctx
+        .style
+        .class_geometry
+        .as_ref()
+        .is_some_and(|d| d.options.kind == flashtex_class_geometry::ClassKind::Letter)
+        && ctx.style.raggedbottom
+    {
+        if let Some(page1) = built.first_mut() {
+            let used = page1
+                .lines
+                .iter()
+                .map(|l| l.baseline + l.depth.min(params.maxdepth))
+                .fold(0.0_f64, f64::max);
+            let leftover = params.vsize - used;
+            if leftover > 0.0 {
+                let shift = leftover * (6e-5 / (6e-5 + 1e-4));
+                for l in &mut page1.lines {
+                    l.baseline += shift;
+                }
+            }
+        }
+    }
     // The `\twocolumn[...]` box sits at the top of the first page
     // (`\@combinedblfloats`), both columns `\dbltextfloatsep` below it --
     // that is, the material's natural height below the top of the text area,
@@ -7952,6 +8113,7 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
             });
         let src = span.map(|sp| vec![ctx.source(sp)]).unwrap_or_default();
@@ -8441,6 +8603,7 @@ pub fn assemble(
                     BoxRec::Picture(p) => Some(p.span),
                     BoxRec::Table(t) => Some(t.span),
                     BoxRec::ColorBox(c) => Some(c.span),
+                    BoxRec::Leader { .. } => None,
                     BoxRec::Underline(u) => Some(u.span),
                     BoxRec::Text { .. } => None,
                 });
@@ -8684,6 +8847,7 @@ fn assemble_block(
                         }));
                     }
                 }
+                BoxRec::Leader { .. } => {}
                 BoxRec::Rule { width, height, bottom, span } => {
                     // Line-local like text: the rule's bottom is `bottom`
                     // above the baseline (0 for `\hrule`); a strut paints
@@ -8702,6 +8866,7 @@ fn assemble_block(
                 }
             }
         }
+        append_leaders(block, line, recs, text_x, &mut items, &mut used);
         lines.push(items);
     }
     let (document, base) = block.cache_key.map_or((DocumentId(0), 0), |(_, d, b)| (d, b));
@@ -8713,6 +8878,153 @@ fn assemble_block(
         resources,
         unmapped,
     }
+}
+
+fn line_stretch_order(items: &[pl::Item], range: Range<usize>) -> Option<pl::GlueOrder> {
+    let mut order = None;
+    for i in range {
+        let Some(pl::Item::Glue(g)) = items.get(i) else { continue };
+        if g.stretch > 0.0 {
+            order = Some(order.map_or(g.stretch_order, |o: pl::GlueOrder| o.max(g.stretch_order)));
+        }
+    }
+    order
+}
+
+fn line_glue_width(g: &pl::Glue, line: &pl::Line, order: Option<pl::GlueOrder>) -> f64 {
+    if line.ratio >= 0.0 {
+        if order == Some(g.stretch_order) && line.ratio.is_finite() {
+            g.width + line.ratio * g.stretch
+        } else {
+            g.width
+        }
+    } else {
+        g.width + line.ratio * g.shrink
+    }
+}
+
+fn append_leaders(
+    block: &BuiltBlock,
+    line: &pl::Line,
+    recs: &[BoxRec],
+    text_x: f64,
+    items: &mut Vec<display::Item>,
+    used: &mut BTreeMap<Rc<str>, Rc<LoadedFace>>,
+) {
+    let Some(first_box) = line.items.clone().find(|i| matches!(block.items.get(*i), Some(pl::Item::Box(_)))) else { return };
+    let Some(first_run) = line.runs.iter().position(|r| !r.is_hyphen) else { return };
+    let order = line_stretch_order(&block.items, line.items.clone());
+    let prefix = line.items.start..first_box;
+    let prefix_width: f64 = prefix
+        .filter_map(|i| block.items.get(i))
+        .map(|item| match item {
+            pl::Item::Glue(g) => line_glue_width(g, line, order),
+            pl::Item::Kern(k) => k.width,
+            _ => 0.0,
+        })
+        .sum();
+    let pre_break_width: f64 = line.runs[..first_run].iter().filter(|r| r.is_hyphen).map(|r| r.width).sum();
+    let Some(run) = line.runs.get(first_run) else { return };
+    let mut x = run.x - prefix_width - pre_break_width;
+    let mut run_i = first_run;
+    for i in line.items.clone() {
+        let Some(item) = block.items.get(i) else { continue };
+        match item {
+            pl::Item::Box(_) => {
+                while line.runs.get(run_i).is_some_and(|r| r.is_hyphen) {
+                    run_i += 1;
+                }
+                if let Some(run) = line.runs.get(run_i) {
+                    x = run.x + run.width;
+                    run_i += 1;
+                }
+            }
+            pl::Item::Glue(g) => {
+                let width = line_glue_width(g, line, order);
+                if let Some(BoxRec::Leader { leader, box_width, dot }) = block
+                    .recs
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .and_then(|r| recs.get(r))
+                {
+                    match leader {
+                        FillLeader::Rule if width > 0.0 => items.push(display::Item::Rule(Rule {
+                            x: Tick::from_tex_pt(text_x + x),
+                            top: Tick::from_tex_pt(-0.4),
+                            width: Tick::from_tex_pt(width).max(Tick(1)),
+                            height: Tick::from_tex_pt(0.4).max(Tick(1)),
+                            paint: Paint::BLACK,
+                            provenance: Provenance::Synthetic("\\hrulefill".into()),
+                        })),
+                        FillLeader::Dots if width >= *box_width && *box_width > 0.0 => {
+                            if let Some((face, dot_run)) = dot {
+                                if let Some(item) = dots_item(text_x + x, width, *box_width, face, dot_run) {
+                                    used.entry(face.font_id.clone()).or_insert_with(|| face.clone());
+                                    items.push(item);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                x += width;
+            }
+            pl::Item::Kern(k) => x += k.width,
+            pl::Item::Penalty(_) => {}
+        }
+    }
+}
+
+fn dots_item(x: f64, glue_width: f64, box_width: f64, face: &Rc<LoadedFace>, dot: &pl::GlyphRun) -> Option<display::Item> {
+    let count = (glue_width / box_width).floor() as usize;
+    if count == 0 || dot.glyphs.is_empty() {
+        return None;
+    }
+    let leftover = glue_width - count as f64 * box_width;
+    let top = Tick::from_tex_pt(-dot.height);
+    let height = Tick::from_tex_pt(dot.height + dot.depth);
+    let mut glyphs = Vec::with_capacity(count * dot.glyphs.len());
+    let mut clusters = Vec::with_capacity(count);
+    let mut text = String::with_capacity(count);
+    for i in 0..count {
+        let dot_x = x + leftover / 2.0 + i as f64 * box_width + (box_width - dot.width) / 2.0;
+        let cluster = i as u32;
+        text.push('.');
+        for g in &dot.glyphs {
+            if g.gid != 0 {
+                glyphs.push(Glyph {
+                    gid: g.gid as u16,
+                    origin_x: Tick::from_tex_pt(dot_x),
+                    baseline_y: Tick(0),
+                    advance_x: Tick::from_tex_pt(g.advance),
+                    advance_y: Tick(0),
+                    cluster,
+                });
+            }
+        }
+        let x0 = Tick::from_tex_pt(dot_x);
+        let x1 = Tick::from_tex_pt(dot_x + dot.width);
+        clusters.push(Cluster {
+            text_start_byte: i,
+            text_end_byte: i + 1,
+            hit_rect: Rect { x: x0, top, width: Tick(x1.0 - x0.0), height },
+            carets: display::Carets {
+                first: Caret { text_byte: i, x: x0, top, height },
+                last: (i + 1 == count).then(|| Caret { text_byte: i + 1, x: x1, top, height }),
+            },
+            provenance: Provenance::Synthetic("\\dotfill".into()),
+        });
+    }
+    (!glyphs.is_empty()).then_some(display::Item::GlyphRun(GlyphRun {
+        font_id: face.font_id.clone(),
+        font_size: Tick::from_tex_pt(dot.size),
+        text,
+        glyphs,
+        clusters,
+        paint: Paint::BLACK,
+        role: display::RunRole::Text,
+    }))
 }
 
 /// A picture's paths and node text in line-local coordinates: the picture's

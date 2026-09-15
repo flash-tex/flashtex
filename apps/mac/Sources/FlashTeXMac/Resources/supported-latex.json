@@ -187,6 +187,20 @@
     {"name": "author", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "author block for \\maketitle; \\and and \\thanks inside it", "renders": true},
     {"name": "date", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "date for \\maketitle; \\today inside it", "renders": true},
     {"name": "maketitle", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "article.cls title block", "renders": true},
+    {"name": "address", "mode": "text", "origin": "text_dispatch", "arguments": "{lines}", "description": "letter.cls return address (\\\\-separated lines), set by \\opening", "renders": true},
+    {"name": "signature", "mode": "text", "origin": "text_dispatch", "arguments": "{name}", "description": "letter.cls name under the closing; falls back to \\name", "renders": true},
+    {"name": "name", "mode": "text", "origin": "text_dispatch", "arguments": "{name}", "description": "letter.cls \\fromname, used when \\signature is empty", "renders": true},
+    {"name": "location", "mode": "text", "origin": "text_dispatch", "arguments": "{text}", "description": "letter.cls \\fromlocation: recorded; only the firstpage footer would set it", "renders": true},
+    {"name": "telephone", "mode": "text", "origin": "text_dispatch", "arguments": "{number}", "description": "letter.cls \\telephonenum: recorded; only the firstpage footer would set it", "renders": true},
+    {"name": "opening", "mode": "text", "origin": "text_dispatch", "arguments": "{salutation}", "description": "letter.cls: return address and date flush right, the recipient, then the salutation", "renders": true},
+    {"name": "closing", "mode": "text", "origin": "text_dispatch", "arguments": "{text}", "description": "letter.cls: closing and signature at \\longindentation, 6\\parskip apart", "renders": true},
+    {"name": "cc", "mode": "text", "origin": "text_dispatch", "arguments": "{text}", "description": "letter.cls carbon-copy line, labelled 'cc:'", "renders": true},
+    {"name": "encl", "mode": "text", "origin": "text_dispatch", "arguments": "{text}", "description": "letter.cls enclosure line, labelled 'encl:'", "renders": true},
+    {"name": "ps", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "letter.cls postscript: a paragraph break and nothing else — it takes no argument", "renders": true},
+    {"name": "startbreaks", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "letter.cls: re-allows page breaks after \\closing; no effect on this layout", "renders": true},
+    {"name": "stopbreaks", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "letter.cls: forbids page breaks inside the closing; no effect on this layout", "renders": true},
+    {"name": "stopletter", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "letter.cls hook run at \\end{letter}; empty in the class itself", "renders": true},
+    {"name": "makelabels", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "letter.cls address-label page: accepted, not produced (no .aux round trip)", "renders": true},
     {"name": "today", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "the date carried by the compile request; this compiler never reads the clock", "renders": true},
     {"name": "TeX", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "latex.ltx logo: T, kern -.1667em, E lowered .5ex, kern -.125em, X", "renders": true},
     {"name": "LaTeX", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "latex.ltx logo: L, kern -.36em, script-size A raised to the T height, kern -.15em, \\TeX", "renders": true},
@@ -851,6 +865,7 @@
   ],
   "environments": [
     {"name": "document", "mode": "text", "description": "the typeset body; preamble content is not typeset"},
+    {"name": "letter", "mode": "text", "description": "letter.cls: one letter to {recipient\\\\address}, starting a new page"},
     {"name": "equation", "mode": "text", "description": "numbered display"},
     {"name": "equation*", "mode": "text", "description": "unnumbered display"},
     {"name": "displaymath", "mode": "text", "description": "unnumbered display"},
@@ -950,8 +965,8 @@
       {"set": "tikz", "kind": "command", "canonical": 43, "supported": 0, "percent": 0},
       {"set": "tikz", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
-      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 17, "percent": 7.1}
+      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 18, "percent": 7.5}
     ],
-    "total": {"canonical": 1314, "supported": 524, "percent": 39.9}
+    "total": {"canonical": 1314, "supported": 525, "percent": 40}
   }
 }
