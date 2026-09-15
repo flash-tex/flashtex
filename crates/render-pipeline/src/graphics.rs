@@ -57,7 +57,7 @@ pub struct ImageInfo {
 
 /// Probes `bytes` (any of the supported formats, sniffed by signature).
 pub fn probe(bytes: &[u8], pdf_page: u32) -> Result<ImageInfo, String> {
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+    let info = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         probe_png(bytes)
     } else if bytes.starts_with(&[0xFF, 0xD8]) {
         probe_jpeg(bytes)
@@ -65,7 +65,37 @@ pub fn probe(bytes: &[u8], pdf_page: u32) -> Result<ImageInfo, String> {
         probe_pdf(bytes, pdf_page.max(1))
     } else {
         Err("not a PNG, JPEG or PDF file (unrecognised signature)".into())
+    }?;
+    check_limits(info)
+}
+
+/// Largest raster side the exact PDF route embeds (`crates/pdf`
+/// `raster::MAX_DIMENSION`).
+pub const MAX_IMAGE_PIXELS: u32 = 1 << 16;
+/// TeX's `\maxdimen` (16383.99998pt) in big points.
+pub const MAX_DIMEN_BP: f64 = 16383.99998 * BP_PER_PT;
+
+/// An image whose header claims more pixels than the PDF writer embeds, or
+/// a natural size no TeX dimension holds (`! Dimension too large.` in
+/// pdfTeX), is refused here, where the float reports an unreadable image,
+/// instead of reaching the display list and failing the whole export.
+fn check_limits(info: ImageInfo) -> Result<ImageInfo, String> {
+    if let Some((w, h)) = info.pixels {
+        if w > MAX_IMAGE_PIXELS || h > MAX_IMAGE_PIXELS {
+            return Err(format!(
+                "{} is {w}x{h} pixels, over the {MAX_IMAGE_PIXELS}-pixel limit per side",
+                info.format.wire_name().to_uppercase()
+            ));
+        }
     }
+    let fits = |v: f64| v.is_finite() && v.abs() <= MAX_DIMEN_BP;
+    if !fits(info.width_bp) || !fits(info.height_bp) {
+        return Err(format!(
+            "Dimension too large: the natural size {}bp x {}bp is over \\maxdimen",
+            info.width_bp, info.height_bp
+        ));
+    }
+    Ok(info)
 }
 
 fn be32(b: &[u8]) -> u32 {

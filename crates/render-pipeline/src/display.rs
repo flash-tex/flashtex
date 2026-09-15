@@ -323,6 +323,24 @@ pub struct Image {
     pub provenance: Provenance,
 }
 
+/// Largest transform component (bp) a display-list-v2 consumer accepts
+/// (`crates/pdf` `v2`: an image transform past 1e7 bp is out of range).
+pub const MAX_IMAGE_TRANSFORM_BP: f64 = 1.0e7;
+
+impl Image {
+    /// Whether the image can be painted: a positive box and a finite
+    /// transform within display-list-v2's range. A zero box (`[width=0pt]`,
+    /// `[scale=0]`) paints nothing, as in pdfTeX; an image scaled past the
+    /// range (`[scale=1e9]`) cannot be a TeX box at all. Either one would
+    /// otherwise make the exact PDF route refuse the whole document.
+    pub fn is_paintable(&self) -> bool {
+        let tick_ok = |t: Tick| t.0 > 0 && (t.0 as f64) <= MAX_IMAGE_TRANSFORM_BP * TICKS_PER_BP;
+        tick_ok(self.width)
+            && tick_ok(self.height)
+            && self.transform.iter().all(|v| v.is_finite() && v.abs() <= MAX_IMAGE_TRANSFORM_BP)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
     GlyphRun(GlyphRun),
