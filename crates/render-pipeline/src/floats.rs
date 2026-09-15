@@ -460,7 +460,17 @@ pub fn mask(text: &str, floats: &[FloatEnv]) -> String {
         // float.sty's `[H]` is no float: `\float@endH` ends the paragraph
         // with `\par`, so its blank line stays.
         let here_box = !f.starred && f.placement.as_deref() == Some("H");
-        if start < end && !here_box && blank(&bytes[line_start..start]) && rest_is_empty {
+        // A float at the very tail of a file (only blanks and comments
+        // follow, so no `\end{document}`: an `\input`/`\include`d file)
+        // keeps the blank-line mask. `\include`'s closing `\clearpage`
+        // ends the paragraph in pdflatex, and a `%` here would leave it
+        // open across the file boundary, joining it with the entry
+        // document's next text (tests/include_float_lists.rs).
+        let file_tail = text[end..].lines().all(|l| {
+            let t = l.trim_start();
+            t.is_empty() || t.starts_with('%')
+        });
+        if start < end && !here_box && !file_tail && blank(&bytes[line_start..start]) && rest_is_empty {
             bytes[start] = b'%';
         }
     }

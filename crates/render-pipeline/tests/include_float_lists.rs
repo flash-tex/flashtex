@@ -95,7 +95,9 @@ fn lists_and_refs_follow_the_include_tree() {
     assert!(lines[3].contains(&"Figure 2.1: In chapter two.".to_string()));
     assert!(lines[4].contains(&"Figure 2.2: Entry after the includes.".to_string()));
     assert!(lines[4].contains(&"Table 2.1: Entry table.".to_string()));
-    // `\newlabel`s of main.aux and two.aux.
-    assert!(lines[4].contains(&"Refs 1, 1.1, 2.1, 2.2, 2.1.".to_string()));
+    // `\newlabel`s of main.aux and two.aux. The floats sit inside the
+    // paragraph (#608: a float on its own lines does not end it), so the
+    // refs share the paragraph's one line.
+    assert!(lines[4].contains(&"Text after the includes. Refs 1, 1.1, 2.1, 2.2, 2.1.".to_string()), "{:?}", lines[4]);
     assert!(!lines.iter().flatten().any(|l| l.contains("Never") || l.contains("Skipped")), "an excluded file's material was set");
 }
