@@ -240,6 +240,8 @@ enum DS {
         static let header = NSFont.systemFont(ofSize: 11, weight: .semibold)
         /// Completion candidates: the editor's vocabulary, one step smaller.
         static let monoCandidate = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        /// Dimmed trailing detail in AppKit trees (revisions, line numbers).
+        static let secondaryMono = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
     }
 
     /// AppKit paint paths (gutter marks, rulers, the editor itself) use
@@ -454,6 +456,32 @@ struct PressableStyle: ButtonStyle {
     }
 }
 
+/// A quiet text filter chip (JetBrains tool-window filters): selected =
+/// muted selection fill keeping the text's own colour, otherwise hover wash
+/// only. Replaces stock segmented controls in panel headers.
+struct FilterChip: View {
+    let title: String
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(DS.Fonts.secondary)
+                .foregroundStyle(selected ? DS.Colors.textPrimary : DS.Colors.textSecondary)
+                .padding(.horizontal, DS.Space.m)
+                .padding(.vertical, DS.Space.xxs + 1)
+                .background(selected ? DS.Colors.selectionFocused : hovering ? DS.Colors.hover : .clear,
+                            in: RoundedRectangle(cornerRadius: DS.Radius.control))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle(cornerRadius: DS.Radius.control))
+        .onHover { hovering = $0 }
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
 // MARK: - File-type identity
 
 /// Colour-coded file identity in the IntelliJ manner (`design-principles.md`
@@ -501,15 +529,18 @@ enum FileTypeStyle {
         }
     }
 
-    var color: Color {
+    var color: Color { Color(nsColor: nsColor) }
+
+    /// The same identity for AppKit paint paths (the NSOutlineView tree).
+    var nsColor: NSColor {
         switch self {
-        case .tex, .texEntry: return Color(nsColor: DS.Palette.typeBlue)
-        case .bibliography: return Color(nsColor: DS.Palette.typePurple)
-        case .classOrStyle: return Color(nsColor: DS.Palette.typeTeal)
-        case .pdf: return Color(nsColor: DS.Palette.typeRed)
-        case .image: return Color(nsColor: DS.Palette.typeGreen)
-        case .generated: return Color(nsColor: DS.Palette.typeGray)
-        case .other: return DS.Colors.textSecondary
+        case .tex, .texEntry: return DS.Palette.typeBlue
+        case .bibliography: return DS.Palette.typePurple
+        case .classOrStyle: return DS.Palette.typeTeal
+        case .pdf: return DS.Palette.typeRed
+        case .image: return DS.Palette.typeGreen
+        case .generated: return DS.Palette.typeGray
+        case .other: return DS.Palette.textSecondary
         }
     }
 }
