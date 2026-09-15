@@ -37,13 +37,15 @@ pub use lists::{
 pub const INCLUDE_DEPTH_LIMIT: usize = 64;
 /// How deeply the parser may re-enter itself on a nested token stream (a
 /// table cell, box, footnote or color argument inside another). Past it the
-/// inner content is skipped with TeX's "capacity exceeded" error instead of
-/// overflowing the stack. TeX allows 255 grouping levels, but a nested
-/// tabular costs ~7 KiB of stack a level in release and ~50 KiB in debug:
-/// 128 levels overflowed a 512 KiB thread (the default for a secondary
-/// thread on macOS) and 40 a 2 MiB debug test thread. Like
-/// [`crate::math::MAX_MATH_DEPTH`], the limit sits below both. `\include`
-/// nesting has its own limit ([`INCLUDE_DEPTH_LIMIT`]) and is not counted.
+/// inner content is skipped with a FlashTeX nesting-limit error instead of
+/// overflowing the stack. This is an implementation limit, not a TeX
+/// capacity: TeX allows 255 grouping levels, but a nested tabular costs
+/// ~7 KiB of stack a level in release and ~50 KiB in debug. Nesting 255
+/// tabulars, footnotes or rotateboxes overflowed a 512 KiB release thread
+/// (the default for a secondary thread on macOS) and a 2 MiB debug thread.
+/// Like [`crate::math::MAX_MATH_DEPTH`], the limit sits below both.
+/// `\include` nesting has its own limit ([`INCLUDE_DEPTH_LIMIT`]) and is not
+/// counted.
 pub const STREAM_DEPTH_LIMIT: usize = 32;
 
 /// Per-request inputs that are neither document text nor the entry path.
@@ -1866,7 +1868,7 @@ impl P<'_> {
                 self.stream_depth_reported = true;
                 let span = self.t.get(self.i).or_else(|| self.t.last()).map(|input| input.token.span);
                 self.diags.push(Diagnostic::error(
-                    format!("TeX capacity exceeded, sorry [grouping levels={STREAM_DEPTH_LIMIT}]."),
+                    format!("FlashTeX nesting limit ({STREAM_DEPTH_LIMIT}) exceeded"),
                     span,
                     Some("skipped the content nested past the limit".into()),
                 ));
