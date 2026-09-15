@@ -334,6 +334,22 @@ fn lists_nested_past_255_levels_are_too_deeply_nested_not_an_overflow() {
     assert!(!compile_messages(ok).iter().any(|m| m.contains("Too deeply nested")));
 }
 
+fn compile_project_messages(documents: &[(&str, &str)]) -> Vec<String> {
+    let documents: Vec<parser::SourceDocument<'_>> =
+        documents.iter().map(|&(path, text)| parser::SourceDocument { path, text }).collect();
+    let out = flashtex_compiler::incremental::compile_full_project(
+        &documents,
+        documents[0].path,
+        LayoutConstraints::default(),
+    );
+    for page in &out.pages {
+        for item in &page.items {
+            assert!(item.span.start <= item.span.end, "inverted span {:?}", item.span);
+        }
+    }
+    out.diagnostics.into_iter().map(|d| d.message).collect()
+}
+
 #[test]
 fn an_unclosed_math_span_never_inverts() {
     // `\setlength{` re-reads its argument, so the math that `$` opens sees
@@ -341,4 +357,12 @@ fn an_unclosed_math_span_never_inverts() {
     // ("span start must not exceed end").
     let messages = compile_messages("\\setlength{\\begin{}$");
     assert!(!messages.is_empty());
+}
+
+#[test]
+fn an_alignment_that_inputs_another_document_keeps_its_spans_in_one_document() {
+    // A row's span merged a token of `sub.tex` with one of `main.tex`
+    // ("cannot merge spans from different documents").
+    compile_project_messages(&[("main.tex", "\\begin{align}a\\include{sub}"), ("sub.tex", "x\\input{sub}\n")]);
+    compile_project_messages(&[("main.tex", "\\begin{align}a\\input{sub}"), ("sub.tex", "b\\end{align}\n")]);
 }

@@ -4905,7 +4905,9 @@ impl P<'_> {
             if depth == 0 {
                 if let Some((after, end_span)) = environment_end_at(&self.t, self.i, name) {
                     self.i = after;
-                    end = end_span.end;
+                    if end_span.document == open.document {
+                        end = end_span.end.max(open.end);
+                    }
                     found_end = true;
                     break;
                 }
@@ -5053,6 +5055,9 @@ impl P<'_> {
                 .iter()
                 .flatten()
                 .map(|t| t.span)
+                // An `\input` inside the display brings tokens from another
+                // document; a row's span stays in the environment's own.
+                .filter(|span| span.document == open.document)
                 .reduce(Span::merge)
                 .unwrap_or(open);
             let number = (numbered && !unnumbered).then(|| {
