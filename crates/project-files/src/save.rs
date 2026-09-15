@@ -232,9 +232,9 @@ impl ProjectRoot {
         let dir = sys::open_dir_nofollow(path).map_err(|e| {
             classify_open(
                 e,
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("<root>"),
+                &path
+                    .file_name()
+                    .map_or_else(|| "<root>".into(), |n| n.to_string_lossy()),
             )
         })?;
         Ok(ProjectRoot {
@@ -281,25 +281,49 @@ impl ProjectRoot {
         Ok(cur)
     }
 
-    /// Opens `name` in `dir` for reading without following a symlink.
-    /// `Ok(None)` when absent. The open is non-blocking (see
-    /// [`sys::open_at`]), so a FIFO here cannot hang the caller; callers that
-    /// read `fstat` the result and refuse anything but a regular file.
-    fn open_target(dir: &File, name: &str) -> Result<Option<File>, SaveError> {
-        match sys::open_at(dir, name, sys::O_RDONLY | sys::O_NOFOLLOW, 0) {
-            Ok(f) => Ok(Some(f)),
-            Err(e) if sys::errno_is(&e, sys::ENOENT) => Ok(None),
-            Err(e) => Err(classify_open(e, name)),
+    /// Classifies the entry `name` of `dir` with
+    /// `fstatat(AT_SYMLINK_NOFOLLOW)`: nothing is followed or opened.
+    /// `Ok(None)` when absent; a symlink is `SymlinkComponent` and any other
+    /// non-regular entry (directory, FIFO, socket, device) `NotARegularFile`.
+    fn stat_regular(dir: &File, name: &str) -> Result<Option<sys::EntryStat>, SaveError> {
+        let st = match sys::stat_at_nofollow(dir, name.as_bytes()) {
+            Ok(st) => st,
+            Err(e) if sys::errno_is(&e, sys::ENOENT) => return Ok(None),
+            Err(e) => return Err(classify_open(e, name)),
+        };
+        if st.is_symlink() {
+            return Err(refused(Refused::SymlinkComponent {
+                component: name.to_string(),
+            }));
         }
+        if !st.is_file() {
+            return Err(refused(Refused::NotARegularFile {
+                component: name.to_string(),
+            }));
+        }
+        Ok(Some(st))
     }
 
-    fn observe(
-        dir: &File,
-        name: &str,
-        limit: u64,
-    ) -> Result<Option<(Observation, Vec<u8>)>, SaveError> {
-        let Some(mut file) = Self::open_target(dir, name)? else {
+    /// Opens the regular file `name` in `dir` for reading without following
+    /// a symlink. `Ok(None)` when absent.
+    ///
+    /// The entry is classified with [`Self::stat_regular`] on the directory
+    /// descriptor *before* it is opened, so a symlink, FIFO, socket or device
+    /// is refused without ever being opened. The name can still be swapped
+    /// between that `fstatat` and the `openat`; the open therefore keeps
+    /// `O_NOFOLLOW` (a symlink is still refused), is non-blocking (a FIFO or
+    /// most devices cannot hang it, see [`sys::open_at`]), and the descriptor
+    /// is `fstat`ed and refused unless it is a regular file. What remains in
+    /// that narrow window is a device-specific side effect of the open
+    /// itself, before the `fstat` rejects it; nothing is read from it.
+    fn open_target(dir: &File, name: &str) -> Result<Option<(File, std::fs::Metadata)>, SaveError> {
+        if Self::stat_regular(dir, name)?.is_none() {
             return Ok(None);
+        }
+        let file = match sys::open_at(dir, name, sys::O_RDONLY | sys::O_NOFOLLOW, 0) {
+            Ok(f) => f,
+            Err(e) if sys::errno_is(&e, sys::ENOENT) => return Ok(None),
+            Err(e) => return Err(classify_open(e, name)),
         };
         let meta = file.metadata()?;
         if !meta.is_file() {
@@ -307,6 +331,17 @@ impl ProjectRoot {
                 component: name.to_string(),
             }));
         }
+        Ok(Some((file, meta)))
+    }
+
+    fn observe(
+        dir: &File,
+        name: &str,
+        limit: u64,
+    ) -> Result<Option<(Observation, Vec<u8>)>, SaveError> {
+        let Some((mut file, meta)) = Self::open_target(dir, name)? else {
+            return Ok(None);
+        };
         if meta.len() > limit {
             return Err(refused(Refused::TooLarge {
                 limit,
@@ -414,6 +449,17 @@ impl ProjectRoot {
         None
     }
 
+    /// Opens the regular file `path` through the rooted walk (no symlink
+    /// component, nothing but a regular file opened); `Ok(None)` when absent.
+    /// The watcher uses this to stat and hash tracked files.
+    pub(crate) fn open_regular(
+        &self,
+        path: &ProjectPath,
+    ) -> Result<Option<(File, std::fs::Metadata)>, SaveError> {
+        let dir = self.walk(path, false)?;
+        Self::open_target(&dir, path.file_name())
+    }
+
     /// Reads `path` (at most `limit` bytes) without following any symlink.
     /// `Ok(None)` when the file does not exist.
     pub fn read(&self, path: &ProjectPath, limit: u64) -> Result<Option<RootedRead>, SaveError> {
@@ -456,12 +502,30 @@ impl ProjectRoot {
     pub fn lock(&self) -> Result<ProjectLock<'_>, SaveError> {
         let lock_path = ProjectPath::normalize(LOCK_FILE).expect("constant lock path");
         let dir = self.walk(&lock_path, true)?;
-        let flags = sys::O_RDWR | sys::O_CREAT | sys::O_NOFOLLOW;
-        let file = sys::open_at(&dir, lock_path.file_name(), flags, 0o644)
-            .map_err(|e| classify_open(e, lock_path.file_name()))?;
+        let name = lock_path.file_name();
+        // `O_CREAT | O_EXCL` never opens an existing entry, so a new lock file
+        // is created as a regular file. An existing one is classified on the
+        // directory descriptor before it is opened (see `open_target` for the
+        // residual swap window the post-open `fstat` backstops).
+        let create = sys::O_RDWR | sys::O_CREAT | sys::O_EXCL | sys::O_NOFOLLOW;
+        let file = match sys::open_at(&dir, name, create, 0o644) {
+            Ok(f) => f,
+            Err(e) if sys::errno_is(&e, sys::EEXIST) => {
+                if Self::stat_regular(&dir, name)?.is_none() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "project lock file disappeared while it was being opened",
+                    )
+                    .into());
+                }
+                sys::open_at(&dir, name, sys::O_RDWR | sys::O_NOFOLLOW, 0)
+                    .map_err(|e| classify_open(e, name))?
+            }
+            Err(e) => return Err(classify_open(e, name)),
+        };
         if !file.metadata()?.is_file() {
             return Err(refused(Refused::NotARegularFile {
-                component: lock_path.file_name().to_string(),
+                component: name.to_string(),
             }));
         }
         if !sys::try_lock_exclusive(&file)? {

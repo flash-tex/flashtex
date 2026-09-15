@@ -4,17 +4,17 @@
 mod common;
 
 use std::fs;
-use std::os::unix::fs::{MetadataExt, symlink};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, symlink};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use common::{TempDir, pp};
 use flashtex_project_files::{
-    DiagnosticKind, DiscoverError, Expected, ProjectGraph, ProjectRoot, Refused, SaveConflictKind,
-    SaveError, save_atomic, sha256,
+    ChangeKind, DiagnosticKind, DiscoverError, Expected, ProjectGraph, ProjectRoot, Refused,
+    SaveConflictKind, SaveError, Snapshot, save_atomic, sha256,
 };
 
 fn is_refused_symlink(err: &SaveError, component: &str) -> bool {
@@ -323,6 +323,11 @@ fn make_fifo(path: &std::path::Path) {
     );
 }
 
+/// Upper bound for one call that must not block. A blocked FIFO open never
+/// returns, so this only needs to exceed a saturated runner's scheduling
+/// delay, not the call's normal duration.
+const HANG_LIMIT: Duration = Duration::from_secs(20);
+
 /// Runs `f` on a worker thread and fails the test if it has not returned
 /// within `limit`. A hung worker is leaked; the test binary still exits.
 fn within<T: Send + 'static>(
@@ -347,7 +352,7 @@ fn fifo_is_refused_without_blocking() {
     let t = TempDir::new("fifo");
     make_fifo(&t.root().join("pipe.tex"));
     let root_path = t.root().to_path_buf();
-    let limit = Duration::from_secs(2);
+    let limit = HANG_LIMIT;
 
     let r = root_path.clone();
     let err = within(limit, "ProjectRoot::read", move || {
@@ -393,9 +398,11 @@ fn fifo_is_refused_without_blocking() {
 }
 
 /// `\input{pipe}` whose target is swapped between a regular file and a FIFO
-/// behind discovery's existence probe. Every discovery returns promptly; once
-/// the swap lands between the probe and the rooted open, the reference gets
-/// a not-a-regular-file read diagnostic instead of a hang.
+/// while discovery runs. The property under test is only that no discovery
+/// hangs, whichever interleaving occurs: a fixed number of runs, each bounded
+/// by a generous per-call limit (a blocked open never returns, so the limit
+/// only has to exceed a slow runner's scheduling delay). Which diagnostic a
+/// run produces depends on the interleaving and is not asserted.
 #[test]
 fn input_swapped_to_fifo_after_probe_does_not_hang_discovery() {
     let t = TempDir::new("fifo-swap");
@@ -422,15 +429,12 @@ fn input_swapped_to_fifo_after_probe_does_not_hang_discovery() {
         })
     };
 
-    let deadline = Instant::now() + Duration::from_secs(30);
     let (mut runs, mut refused) = (0u32, 0u32);
-    while refused == 0 && Instant::now() < deadline {
+    while runs < 200 {
         let root = t.root().to_path_buf();
-        let graph = match within(
-            Duration::from_secs(2),
-            "ProjectGraph::discover",
-            move || ProjectGraph::discover(&root, &pp("main.tex")),
-        ) {
+        let graph = match within(HANG_LIMIT, "ProjectGraph::discover", move || {
+            ProjectGraph::discover(&root, &pp("main.tex"))
+        }) {
             Ok(g) => g,
             Err(e) => {
                 stop.store(true, Ordering::Relaxed);
@@ -450,8 +454,167 @@ fn input_swapped_to_fifo_after_probe_does_not_hang_discovery() {
     stop.store(true, Ordering::Relaxed);
     let flips = racer.join().unwrap();
     eprintln!("fifo swap: {runs} discoveries, {refused} refused, racer flips = {flips}");
+    assert!(flips > 0);
+}
+
+/// Review finding 1: the watcher stats and hashes tracked files through the
+/// rooted reader. A tracked file that is (or becomes) a symlink, or lies
+/// under a symlinked directory, is reported as absent and its target's
+/// contents are never hashed.
+#[test]
+fn watcher_never_hashes_through_a_symlinked_tracked_file() {
+    let outside = TempDir::new("watch-outside");
+    let victim = outside.write("victim.tex", "external secret");
+    let t = TempDir::new("watch-symlink");
+    t.write("a.tex", "inside");
+    symlink(&victim, t.root().join("alias.tex")).unwrap();
+    symlink(outside.root(), t.root().join("linked")).unwrap();
+    let paths = [
+        pp("a.tex"),
+        pp("alias.tex"),
+        pp("linked/victim.tex"),
+        pp("not-yet/created.tex"),
+    ];
+
+    let snap = Snapshot::take(t.root(), &paths).unwrap();
+    assert!(snap.state(&pp("not-yet/created.tex")).is_none());
+    assert_eq!(snap.state(&pp("a.tex")).unwrap().sha256, sha256(b"inside"));
+    assert!(snap.state(&pp("alias.tex")).is_none(), "symlinked file");
     assert!(
-        refused > 0,
-        "the swap never landed between probe and open in {runs} discoveries"
+        snap.state(&pp("linked/victim.tex")).is_none(),
+        "file under a symlinked directory"
     );
+
+    // A tracked regular file swapped for a symlink is reported deleted.
+    fs::remove_file(t.root().join("a.tex")).unwrap();
+    symlink(&victim, t.root().join("a.tex")).unwrap();
+    let diff = snap.diff().unwrap();
+    let kinds: Vec<_> = diff
+        .changes
+        .iter()
+        .map(|c| (c.path.as_str(), c.kind, c.after))
+        .collect();
+    assert_eq!(kinds, [("a.tex", ChangeKind::Deleted, None)]);
+
+    // Changing the external file is invisible through every tracked path,
+    // while a real file created under a new directory is still reported.
+    fs::write(&victim, "external secret, edited").unwrap();
+    assert!(diff.snapshot.diff().unwrap().is_empty());
+    t.write("not-yet/created.tex", "new");
+    let created: Vec<_> = diff
+        .snapshot
+        .diff()
+        .unwrap()
+        .changes
+        .into_iter()
+        .map(|c| (c.path.as_str().to_string(), c.kind))
+        .collect();
+    assert_eq!(
+        created,
+        [("not-yet/created.tex".to_string(), ChangeKind::Created)]
+    );
+    let mut tracked = diff.snapshot.clone();
+    tracked.track(&pp("alias.tex")).unwrap();
+    assert!(tracked.state(&pp("alias.tex")).is_none());
+}
+
+/// Review findings 1 and 6: a tracked path that is a FIFO is classified
+/// before it is opened, so the watcher neither blocks nor reads it.
+#[test]
+fn watcher_does_not_open_a_tracked_fifo() {
+    let t = TempDir::new("watch-fifo");
+    make_fifo(&t.root().join("pipe.tex"));
+    let root = t.root().to_path_buf();
+    let snap = within(HANG_LIMIT, "Snapshot::take", move || {
+        Snapshot::take(&root, &[pp("pipe.tex")]).unwrap()
+    });
+    assert!(snap.state(&pp("pipe.tex")).is_none());
+    let diff = within(HANG_LIMIT, "Snapshot::diff", move || snap.diff().unwrap());
+    assert!(diff.is_empty());
+}
+
+/// Review finding 2: a project root whose final component is a symlink with
+/// a non-UTF-8 name is refused like any other symlinked root. Filesystems
+/// that only store UTF-8 names (APFS, HFS+) cannot hold such a name; there
+/// the test has nothing to exercise and says so.
+#[test]
+fn non_utf8_named_root_symlink_is_refused() {
+    use std::os::unix::ffi::OsStrExt;
+    let real = TempDir::new("nonutf8-real");
+    real.write("main.tex", "Real.");
+    let holder = TempDir::new("nonutf8-holder");
+    let link = holder
+        .root()
+        .join(std::ffi::OsStr::from_bytes(b"project-\xff"));
+    if let Err(e) = symlink(real.root(), &link) {
+        eprintln!("skipping: this filesystem rejects non-UTF-8 names ({e})");
+        return;
+    }
+    let err = ProjectRoot::open(&link).unwrap_err();
+    assert!(
+        matches!(&err, SaveError::Refused(Refused::SymlinkComponent { .. })),
+        "{err:?}"
+    );
+    assert!(Snapshot::take(&link, &[pp("main.tex")]).is_err());
+    assert!(ProjectGraph::discover(&link, &pp("main.tex")).is_err());
+}
+
+/// Review finding 6: an existing entry is classified with `fstatat` on the
+/// directory descriptor before any open. A socket cannot be opened at all
+/// (`openat` fails with `ENXIO`/`EOPNOTSUPP`), so reaching the
+/// not-a-regular-file refusal proves no open was attempted; the same holds
+/// for a socket or FIFO where the project lock file belongs, and for a socket
+/// used as a directory component.
+/// Binds a unix socket and moves it to `dest`. Socket paths are limited to
+/// about 100 bytes, which a `TempDir` path can exceed, so the socket is
+/// bound under a short name in the same temp directory and renamed.
+fn make_socket(dest: &std::path::Path) -> std::os::unix::net::UnixListener {
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let short = std::env::temp_dir().join(format!(
+        "ftx{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let listener = std::os::unix::net::UnixListener::bind(&short).unwrap();
+    fs::rename(&short, dest).unwrap();
+    listener
+}
+
+#[test]
+fn special_files_are_refused_before_they_are_opened() {
+    let t = TempDir::new("sock");
+    let _sock = make_socket(&t.root().join("s.tex"));
+    let root = ProjectRoot::open(t.root()).unwrap();
+    let err = root.read(&pp("s.tex"), 1024).unwrap_err();
+    assert!(
+        matches!(&err, SaveError::Refused(Refused::NotARegularFile { component }) if component == "s.tex"),
+        "{err:?}"
+    );
+    let err = root.read(&pp("s.tex/x.tex"), 1024).unwrap_err();
+    assert!(
+        matches!(&err, SaveError::Refused(Refused::NotADirectory { component }) if component == "s.tex"),
+        "{err:?}"
+    );
+
+    fs::create_dir(t.root().join(".flashtex")).unwrap();
+    let lock = t.root().join(".flashtex/project.lock");
+    let listener = make_socket(&lock);
+    let err = root.lock().unwrap_err();
+    assert!(
+        matches!(&err, SaveError::Refused(Refused::NotARegularFile { component }) if component == "project.lock"),
+        "{err:?}"
+    );
+    drop(listener);
+    fs::remove_file(&lock).unwrap();
+    make_fifo(&lock);
+    let r = t.root().to_path_buf();
+    let err = within(HANG_LIMIT, "ProjectRoot::lock on a FIFO", move || {
+        ProjectRoot::open(&r).unwrap().lock().map(|_| ())
+    })
+    .unwrap_err();
+    assert!(
+        matches!(&err, SaveError::Refused(Refused::NotARegularFile { component }) if component == "project.lock"),
+        "{err:?}"
+    );
+    assert!(fs::symlink_metadata(&lock).unwrap().file_type().is_fifo());
 }

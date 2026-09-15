@@ -39,6 +39,13 @@ mod imp {
         fn unlinkat(dirfd: c_int, path: *const c_char, flags: c_int) -> c_int;
         fn mkdirat(dirfd: c_int, path: *const c_char, mode: c_uint) -> c_int;
         fn flock(fd: c_int, operation: c_int) -> c_int;
+        // `buf` is a `struct stat`; only the fields decoded in `flags::decode_stat`
+        // are read, from a zeroed buffer larger than any supported layout.
+        #[cfg_attr(
+            all(target_os = "macos", target_arch = "x86_64"),
+            link_name = "fstatat$INODE64"
+        )]
+        fn fstatat(dirfd: c_int, path: *const c_char, buf: *mut u8, flags: c_int) -> c_int;
     }
 
     pub const SUPPORTED: bool = true;
@@ -55,8 +62,19 @@ mod imp {
         pub const O_DIRECTORY: c_int = 0x0010_0000;
         pub const O_CLOEXEC: c_int = 0x0100_0000;
         pub const O_NONBLOCK: c_int = 0x0004;
+        pub const AT_SYMLINK_NOFOLLOW: c_int = 0x0020;
         pub const ELOOP: i32 = 62;
         pub const EWOULDBLOCK: i32 = 35;
+
+        /// `struct stat` (64-bit inode): `st_dev: i32` at 0, `st_mode: u16`
+        /// at 4, `st_ino: u64` at 8.
+        pub(super) fn decode_stat(b: &[u8]) -> super::super::EntryStat {
+            super::super::EntryStat {
+                dev: i32::from_ne_bytes(b[0..4].try_into().unwrap()) as u64,
+                mode: u16::from_ne_bytes(b[4..6].try_into().unwrap()) as u32,
+                ino: u64::from_ne_bytes(b[8..16].try_into().unwrap()),
+            }
+        }
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     mod flags {
@@ -67,8 +85,19 @@ mod imp {
         pub const O_DIRECTORY: c_int = 0o200000;
         pub const O_CLOEXEC: c_int = 0o2000000;
         pub const O_NONBLOCK: c_int = 0o4000;
+        pub const AT_SYMLINK_NOFOLLOW: c_int = 0x100;
         pub const ELOOP: i32 = 40;
         pub const EWOULDBLOCK: i32 = 11;
+
+        /// `struct stat`: `st_dev: u64` at 0, `st_ino: u64` at 8,
+        /// `st_nlink: u64` at 16, `st_mode: u32` at 24.
+        pub(super) fn decode_stat(b: &[u8]) -> super::super::EntryStat {
+            super::super::EntryStat {
+                dev: u64::from_ne_bytes(b[0..8].try_into().unwrap()),
+                ino: u64::from_ne_bytes(b[8..16].try_into().unwrap()),
+                mode: u32::from_ne_bytes(b[24..28].try_into().unwrap()),
+            }
+        }
     }
     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
     mod flags {
@@ -79,8 +108,19 @@ mod imp {
         pub const O_DIRECTORY: c_int = 0o40000;
         pub const O_CLOEXEC: c_int = 0o2000000;
         pub const O_NONBLOCK: c_int = 0o4000;
+        pub const AT_SYMLINK_NOFOLLOW: c_int = 0x100;
         pub const ELOOP: i32 = 40;
         pub const EWOULDBLOCK: i32 = 11;
+
+        /// Generic `struct stat`: `st_dev: u64` at 0, `st_ino: u64` at 8,
+        /// `st_mode: u32` at 16.
+        pub(super) fn decode_stat(b: &[u8]) -> super::super::EntryStat {
+            super::super::EntryStat {
+                dev: u64::from_ne_bytes(b[0..8].try_into().unwrap()),
+                ino: u64::from_ne_bytes(b[8..16].try_into().unwrap()),
+                mode: u32::from_ne_bytes(b[16..20].try_into().unwrap()),
+            }
+        }
     }
     pub use flags::*;
 
@@ -91,8 +131,8 @@ mod imp {
     const LOCK_NB: c_int = 4;
     const LOCK_UN: c_int = 8;
 
-    fn cstr(name: &str) -> io::Result<CString> {
-        CString::new(name)
+    fn cstr(name: impl AsRef<[u8]>) -> io::Result<CString> {
+        CString::new(name.as_ref())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in path component"))
     }
 
@@ -101,9 +141,16 @@ mod imp {
     /// `O_NONBLOCK` is always added so that opening a name which is (or was
     /// swapped to) a FIFO or a device returns at once instead of blocking
     /// until a writer or carrier appears. It has no effect on reads or writes
-    /// of regular files or on directories; callers that go on to read
-    /// `fstat` the descriptor and refuse anything but a regular file.
+    /// of regular files or on directories. It is a backstop, not the check:
+    /// callers first classify an existing name with [`stat_at_nofollow`] and
+    /// open only a regular file, then `fstat` the descriptor and refuse
+    /// anything but a regular file (the name can change between the two).
     pub fn open_at(dir: &File, name: &str, flags: c_int, mode: u32) -> io::Result<File> {
+        open_at_bytes(dir, name.as_bytes(), flags, mode)
+    }
+
+    /// [`open_at`] for a name that need not be UTF-8.
+    pub fn open_at_bytes(dir: &File, name: &[u8], flags: c_int, mode: u32) -> io::Result<File> {
         let c = cstr(name)?;
         // SAFETY: `c` is a valid NUL-terminated string that outlives the call
         // and `dir` is an open descriptor; the returned fd is owned by exactly
@@ -153,6 +200,32 @@ mod imp {
         } else {
             Ok(())
         }
+    }
+
+    /// `fstatat(dirfd, name, AT_SYMLINK_NOFOLLOW)`: classifies the entry
+    /// `name` of the open directory `dir` without following a symlink and
+    /// without opening it (so a device's open side effects never run).
+    pub fn stat_at_nofollow(dir: &File, name: &[u8]) -> io::Result<super::EntryStat> {
+        let c = cstr(name)?;
+        // Zeroed and larger than `struct stat` on every supported target
+        // (144 bytes on macOS and Linux x86_64, 128 on Linux aarch64), and
+        // 8-byte aligned like the struct.
+        let mut buf = [0u64; 32];
+        // SAFETY: valid C string, an open directory descriptor, and a
+        // writable buffer at least as large as `struct stat`.
+        let rc = unsafe {
+            fstatat(
+                dir.as_raw_fd(),
+                c.as_ptr(),
+                buf.as_mut_ptr().cast::<u8>(),
+                AT_SYMLINK_NOFOLLOW,
+            )
+        };
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let bytes: Vec<u8> = buf.iter().flat_map(|w| w.to_ne_bytes()).collect();
+        Ok(flags::decode_stat(&bytes))
     }
 
     /// Advisory exclusive lock; `Ok(false)` when another open file
@@ -214,6 +287,12 @@ mod imp {
     pub fn open_at(_: &File, _: &str, _: c_int, _: u32) -> io::Result<File> {
         Err(unsupported())
     }
+    pub fn open_at_bytes(_: &File, _: &[u8], _: c_int, _: u32) -> io::Result<File> {
+        Err(unsupported())
+    }
+    pub fn stat_at_nofollow(_: &File, _: &[u8]) -> io::Result<super::EntryStat> {
+        Err(unsupported())
+    }
     pub fn rename_at(_: &File, _: &str, _: &str) -> io::Result<()> {
         Err(unsupported())
     }
@@ -240,8 +319,11 @@ pub fn open_dir_nofollow(path: &std::path::Path) -> io::Result<File> {
     // Walk from the filesystem root is unnecessary here: the caller chooses
     // the root; only its final component must not be a symlink. `std` has no
     // O_NOFOLLOW knob, so open the parent with std and the last component
-    // with `openat`.
-    let (parent, name) = match (path.parent(), path.file_name().and_then(|n| n.to_str())) {
+    // with `openat`. The name is passed as raw bytes: a root whose final
+    // component is not valid UTF-8 gets the same `O_NOFOLLOW` open, never a
+    // symlink-following fallback.
+    use std::os::unix::ffi::OsStrExt;
+    let (parent, name) = match (path.parent(), path.file_name()) {
         (Some(p), Some(n)) if !n.is_empty() => (p, n),
         _ => return open_dir_std(path), // "/" or similar: nothing to refuse
     };
@@ -250,7 +332,7 @@ pub fn open_dir_nofollow(path: &std::path::Path) -> io::Result<File> {
     } else {
         parent
     })?;
-    open_dir_at_nofollow(&parent, name)
+    open_dir_at_nofollow_bytes(&parent, name.as_bytes())
 }
 
 /// `std` open of a caller-chosen directory path. On unix it carries
@@ -275,14 +357,91 @@ fn open_dir_std(path: &std::path::Path) -> io::Result<File> {
 ///
 /// Linux reports a symlink as `ELOOP`; macOS reports `ENOTDIR` for a
 /// symlink-to-directory in this mode. Both refuse to follow; to classify the
-/// refusal consistently, an `ENOTDIR` result is probed once more without
-/// `O_DIRECTORY` and mapped to `ELOOP` when that probe reports a symlink.
+/// refusal consistently, an `ENOTDIR` result is classified with
+/// [`stat_at_nofollow`] (never a second open, which could run a device's
+/// open side effects) and mapped to `ELOOP` when the entry is a symlink.
 pub fn open_dir_at_nofollow(dir: &File, name: &str) -> io::Result<File> {
-    match open_at(dir, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0) {
-        Err(e) if errno_is(&e, ENOTDIR) => match open_at(dir, name, O_RDONLY | O_NOFOLLOW, 0) {
-            Err(probe) if errno_is(&probe, ELOOP) => Err(probe),
+    open_dir_at_nofollow_bytes(dir, name.as_bytes())
+}
+
+fn open_dir_at_nofollow_bytes(dir: &File, name: &[u8]) -> io::Result<File> {
+    match open_at_bytes(dir, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0) {
+        Err(e) if errno_is(&e, ENOTDIR) => match stat_at_nofollow(dir, name) {
+            Ok(st) if st.is_symlink() => Err(io::Error::from_raw_os_error(ELOOP)),
             _ => Err(e),
         },
         other => other,
+    }
+}
+
+/// File type bits of `st_mode` (identical on every supported target).
+pub const S_IFMT: u32 = 0o170000;
+pub const S_IFREG: u32 = 0o100000;
+pub const S_IFDIR: u32 = 0o040000;
+pub const S_IFLNK: u32 = 0o120000;
+
+/// What [`stat_at_nofollow`] reports about one directory entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntryStat {
+    /// `st_dev`, widened the same way `std::os::unix::fs::MetadataExt::dev` does.
+    pub dev: u64,
+    pub ino: u64,
+    /// `st_mode`: file type and permission bits.
+    pub mode: u32,
+}
+
+impl EntryStat {
+    pub fn is_file(&self) -> bool {
+        self.mode & S_IFMT == S_IFREG
+    }
+    pub fn is_dir(&self) -> bool {
+        self.mode & S_IFMT == S_IFDIR
+    }
+    pub fn is_symlink(&self) -> bool {
+        self.mode & S_IFMT == S_IFLNK
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    /// The hand-decoded `struct stat` fields must agree with `std`'s own
+    /// `lstat` for every file type this crate distinguishes.
+    #[test]
+    fn stat_at_nofollow_matches_std_symlink_metadata() {
+        if !SUPPORTED {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "flashtex-sys-stat-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("file"), "x").unwrap();
+        std::os::unix::fs::symlink(dir.join("file"), dir.join("link")).unwrap();
+        std::os::unix::fs::symlink(dir.join("absent"), dir.join("broken")).unwrap();
+        let handle = open_dir_nofollow(&dir).unwrap();
+        for name in ["file", "sub", "link", "broken"] {
+            let st = stat_at_nofollow(&handle, name.as_bytes()).unwrap();
+            let meta = std::fs::symlink_metadata(dir.join(name)).unwrap();
+            assert_eq!(st.mode, meta.mode(), "{name}");
+            assert_eq!(st.ino, meta.ino(), "{name}");
+            assert_eq!(st.dev, meta.dev(), "{name}");
+            let ft = meta.file_type();
+            assert_eq!(
+                (st.is_file(), st.is_dir(), st.is_symlink()),
+                (ft.is_file(), ft.is_dir(), ft.is_symlink()),
+                "{name}"
+            );
+        }
+        let err = stat_at_nofollow(&handle, b"absent").unwrap_err();
+        assert!(errno_is(&err, ENOENT), "{err:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

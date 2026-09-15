@@ -7,12 +7,12 @@
 //! the comparison logic is the same.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::path::ProjectPath;
+use crate::save::{ProjectRoot, Refused, SaveError};
 use crate::sha256::{Digest, sha256};
 
 /// On-disk identity of one file at snapshot time.
@@ -84,9 +84,10 @@ impl Snapshot {
         root: &Path,
         paths: impl IntoIterator<Item = &'a ProjectPath>,
     ) -> io::Result<Snapshot> {
+        let rooted = RootHandle::open(root)?;
         let mut entries = BTreeMap::new();
         for p in paths {
-            entries.insert(p.clone(), read_state(&p.to_os_path(root), None)?);
+            entries.insert(p.clone(), rooted.read_state(p, None)?);
         }
         Ok(Snapshot {
             root: root.to_path_buf(),
@@ -108,7 +109,7 @@ impl Snapshot {
 
     /// Adds a path to track (hashes it now).
     pub fn track(&mut self, path: &ProjectPath) -> io::Result<()> {
-        let state = read_state(&path.to_os_path(&self.root), None)?;
+        let state = RootHandle::open(&self.root)?.read_state(path, None)?;
         self.entries.insert(path.clone(), state);
         Ok(())
     }
@@ -143,8 +144,9 @@ impl Snapshot {
     pub fn diff(&self) -> io::Result<Diff> {
         let mut changes = Vec::new();
         let mut entries = BTreeMap::new();
+        let rooted = RootHandle::open(&self.root)?;
         for (path, before) in &self.entries {
-            let after = read_state(&path.to_os_path(&self.root), *before)?;
+            let after = rooted.read_state(path, *before)?;
             let kind = match (before, &after) {
                 (None, None) => None,
                 (None, Some(_)) => Some(ChangeKind::Created),
@@ -201,55 +203,86 @@ impl Diff {
     }
 }
 
-fn open_nonblocking(os_path: &Path) -> io::Result<fs::File> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(crate::sys::O_NONBLOCK)
-            .open(os_path)
+/// The project root, pinned once per [`Snapshot::take`], [`Snapshot::track`]
+/// or [`Snapshot::diff`]. Every tracked file is stat'ed and hashed through
+/// the same rooted, symlink-refusing walk that reads and saves use
+/// ([`ProjectRoot`]), never through a path string: a tracked path that is,
+/// or lies under, a symlink is never followed, stat'ed or hashed, and
+/// nothing but a regular file is opened. On a target without rooted file
+/// operations this fails closed with an `Unsupported` error.
+enum RootHandle {
+    Open(ProjectRoot),
+    /// The root directory itself does not exist: every path is absent.
+    Missing,
+}
+
+impl RootHandle {
+    fn open(root: &Path) -> io::Result<RootHandle> {
+        match ProjectRoot::open(root) {
+            Ok(r) => Ok(RootHandle::Open(r)),
+            Err(SaveError::Io(e)) if e.kind() == io::ErrorKind::NotFound => Ok(RootHandle::Missing),
+            Err(e) => Err(save_error_to_io(e)),
+        }
     }
-    #[cfg(not(unix))]
-    {
-        fs::File::open(os_path)
+
+    /// Reads the state of `path`, reusing `previous`'s hash when size and
+    /// mtime are unchanged. `Ok(None)` if the path does not exist *or* is not
+    /// something the rooted reader will open: a symlink (the file itself or
+    /// an ancestor directory, wherever it points), a non-directory ancestor,
+    /// a directory whose `..` no longer leads back, or a non-regular file.
+    /// Such a path is reported like a deleted file, and its contents are
+    /// never read.
+    fn read_state(
+        &self,
+        path: &ProjectPath,
+        previous: Option<FileState>,
+    ) -> io::Result<Option<FileState>> {
+        let RootHandle::Open(root) = self else {
+            return Ok(None);
+        };
+        let (mut file, meta) = match root.open_regular(path) {
+            Ok(Some(opened)) => opened,
+            Ok(None) => return Ok(None),
+            Err(SaveError::Refused(
+                Refused::SymlinkComponent { .. }
+                | Refused::NotADirectory { .. }
+                | Refused::NotARegularFile { .. }
+                | Refused::EscapesRoot { .. },
+            )) => return Ok(None),
+            // A missing intermediate directory: the path does not exist.
+            Err(SaveError::Io(e)) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(save_error_to_io(e)),
+        };
+        let size = meta.len();
+        let mtime = meta.modified()?;
+        if let Some(prev) = previous
+            && prev.size == size
+            && prev.mtime == mtime
+        {
+            return Ok(Some(prev));
+        }
+        let mut bytes = Vec::with_capacity(size as usize);
+        io::Read::read_to_end(&mut file, &mut bytes)?;
+        // Re-read metadata (of the same descriptor) so a write racing with
+        // our read is caught next time.
+        let meta2 = file.metadata()?;
+        Ok(Some(FileState {
+            size: meta2.len(),
+            mtime: meta2.modified()?,
+            sha256: sha256(&bytes),
+        }))
     }
 }
 
-/// Reads the state of `os_path`, reusing `previous`'s hash when size and
-/// mtime are unchanged. Returns `Ok(None)` if the path does not exist.
-fn read_state(os_path: &Path, previous: Option<FileState>) -> io::Result<Option<FileState>> {
-    let meta = match fs::metadata(os_path) {
-        Ok(m) => m,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e),
-    };
-    if !meta.is_file() {
-        return Ok(None);
+fn save_error_to_io(e: SaveError) -> io::Error {
+    match e {
+        SaveError::Io(e) | SaveError::DirectorySync(e) => e,
+        SaveError::Refused(Refused::Unsupported) => io::Error::new(
+            io::ErrorKind::Unsupported,
+            "rooted file operations are not available on this target",
+        ),
+        other => io::Error::other(other.to_string()),
     }
-    let size = meta.len();
-    let mtime = meta.modified()?;
-    if let Some(prev) = previous
-        && prev.size == size
-        && prev.mtime == mtime
-    {
-        return Ok(Some(prev));
-    }
-    // Open non-blocking and re-check the opened descriptor: a path swapped
-    // to a FIFO after the `metadata` probe must not block the open.
-    let mut file = open_nonblocking(os_path)?;
-    if !file.metadata()?.is_file() {
-        return Ok(None);
-    }
-    let mut bytes = Vec::with_capacity(size as usize);
-    io::Read::read_to_end(&mut file, &mut bytes)?;
-    // Re-read metadata so a write racing with our read is caught next time.
-    let meta2 = fs::metadata(os_path)?;
-    Ok(Some(FileState {
-        size: meta2.len(),
-        mtime: meta2.modified()?,
-        sha256: sha256(&bytes),
-    }))
 }
 
 /// Polling helper: holds the latest snapshot and reports changes on demand

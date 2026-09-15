@@ -295,10 +295,18 @@ with its `check()` result.
 - **mtime granularity.** A same-size rewrite within the filesystem's mtime
   resolution (nanoseconds on APFS, coarser elsewhere) is not rehashed by
   `Snapshot::diff`. Callers can force a rehash with a fresh `Snapshot::take`.
-- **Graph discovery and `Snapshot` read through OS paths.** They are
-  read-only and diagnose symlink escapes via canonicalization, but they are
-  not the rooted reader; use `ProjectRoot::read` when the bytes will be
-  trusted for a save decision.
+- **Graph discovery probes existence through OS paths.** File contents are
+  read through the rooted reader, but the candidate existence check and the
+  Unicode-normalization directory-listing fallback still resolve path
+  strings. `Snapshot` stats and hashes every tracked file through the rooted
+  reader: a symlinked or non-regular tracked path is reported as absent and
+  never opened.
+- **Special files are classified before they are opened, not atomically.**
+  An entry is `fstatat(AT_SYMLINK_NOFOLLOW)`-classified on the pinned
+  directory descriptor and opened only if it is a regular file. A swap in
+  the window between the two is still refused (`O_NOFOLLOW`, `O_NONBLOCK`,
+  and an `fstat` of the opened descriptor), but a device's own open side
+  effect in that window is not prevented.
 - **Not the compiler.** The scanner does no macro expansion, no catcode
   changes, no `\import`/`\subfile`/`\InputIfFileExists`, and does not follow
   references inside `\newcommand` bodies or conditionals. Arguments containing
