@@ -517,47 +517,42 @@ pub const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 /// `\refstepcounter{chapter}`. `\chapter*`, and book's `\chapter` outside
 /// `\mainmatter`, step nothing; `\appendix` sets the chapter counter to zero
 /// and `\thechapter` to `\@Alph`. The chapter commands are read from `texts`
-/// (the masked sources), in the same document order as the floats.
-pub fn number(envs: &[Vec<FloatEnv>], texts: &[&str], chapters: Option<bool>) -> (Vec<Vec<String>>, Vec<(String, String)>) {
-    use crate::adapter::{BodyKind, Matter};
-    let (mut figures, mut tables) = (0u32, 0u32);
-    let (mut chapter, mut appendix, mut mainmatter) = (0u32, false, true);
-    let mut numbers = Vec::new();
+/// (the masked sources). Floats and commands are taken in `order`
+/// ([`adapter::reading_order`]), so a float in the entry file after an
+/// `\include` whose file has its own `\chapter` is in that chapter. A
+/// float of a document never read (an `\includeonly`-excluded file) has no
+/// number and no label value.
+pub fn number(envs: &[Vec<FloatEnv>], texts: &[&str], order: &[Span], chapters: Option<bool>) -> (Vec<Vec<Option<String>>>, Vec<(String, String)>) {
+    let mut counters = Counters { figures: 0, tables: 0, chapter: 0, appendix: false, mainmatter: true };
+    let mut numbers: Vec<Vec<Option<String>>> = envs.iter().map(|doc| vec![None; doc.len()]).collect();
     let mut labels = Vec::new();
-    for (d, doc) in envs.iter().enumerate() {
-        let commands = match (chapters, texts.get(d)) {
-            (Some(book), Some(text)) => crate::adapter::body_commands(text, true, book),
+    let commands: Vec<Vec<adapter::BodyCommand>> = texts
+        .iter()
+        .enumerate()
+        .map(|(d, text)| match chapters {
+            Some(book) if order.iter().any(|s| s.document.0 == d) => adapter::body_commands(text, true, book),
             _ => Vec::new(),
-        };
-        let mut next = 0;
-        let mut nums = Vec::new();
-        for f in doc {
-            while let Some(cmd) = commands.get(next).filter(|c| c.start < f.span.start) {
-                next += 1;
-                match cmd.kind {
-                    BodyKind::Chapter { starred: false, .. } if mainmatter => {
-                        chapter += 1;
-                        figures = 0;
-                        tables = 0;
-                    }
-                    BodyKind::Appendix => {
-                        chapter = 0;
-                        appendix = true;
-                    }
-                    BodyKind::Matter(m) => mainmatter = m == Matter::Main,
-                    _ => {}
-                }
+        })
+        .collect();
+    for segment in order {
+        let d = segment.document.0;
+        let inside = |at: usize| (segment.start..segment.end).contains(&at);
+        let mut cmds = commands.get(d).into_iter().flatten().filter(|c| inside(c.start)).peekable();
+        for (fi, f) in envs.get(d).into_iter().flatten().enumerate().filter(|(_, f)| inside(f.span.start)) {
+            while let Some(cmd) = cmds.next_if(|c| c.start < f.span.start) {
+                counters.step(cmd);
             }
             let has_caption = f.pieces.iter().any(|p| matches!(p, Piece::Caption { .. }));
             let counter = match f.kind {
-                FloatKind::Figure => &mut figures,
-                FloatKind::Table => &mut tables,
+                FloatKind::Figure => &mut counters.figures,
+                FloatKind::Table => &mut counters.tables,
             };
             if has_caption {
                 *counter += 1;
             }
-            let value = if chapter > 0 {
-                let the_chapter = if appendix { flashtex_class_geometry::Numbering::UpperAlph.format(i64::from(chapter)) } else { chapter.to_string() };
+            let counter = *counter;
+            let value = if counters.chapter > 0 {
+                let the_chapter = if counters.appendix { flashtex_class_geometry::Numbering::UpperAlph.format(i64::from(counters.chapter)) } else { counters.chapter.to_string() };
                 format!("{the_chapter}.{counter}")
             } else {
                 counter.to_string()
@@ -571,11 +566,40 @@ pub fn number(envs: &[Vec<FloatEnv>], texts: &[&str], chapters: Option<bool>) ->
                     _ => {}
                 }
             }
-            nums.push(value);
+            numbers[d][fi] = Some(value);
         }
-        numbers.push(nums);
+        // The commands after the segment's last float reach the next one.
+        cmds.for_each(|cmd| counters.step(cmd));
     }
     (numbers, labels)
+}
+
+/// report/book's float counters as [`number`] steps them.
+struct Counters {
+    figures: u32,
+    tables: u32,
+    chapter: u32,
+    appendix: bool,
+    mainmatter: bool,
+}
+
+impl Counters {
+    fn step(&mut self, cmd: &adapter::BodyCommand) {
+        use crate::adapter::{BodyKind, Matter};
+        match cmd.kind {
+            BodyKind::Chapter { starred: false, .. } if self.mainmatter => {
+                self.chapter += 1;
+                self.figures = 0;
+                self.tables = 0;
+            }
+            BodyKind::Appendix => {
+                self.chapter = 0;
+                self.appendix = true;
+            }
+            BodyKind::Matter(m) => self.mainmatter = m == Matter::Main,
+            _ => {}
+        }
+    }
 }
 
 type Loaded = Result<(Rc<ImageResource>, ImageInfo), String>;
@@ -661,7 +685,7 @@ fn em_ex(body: f64) -> (f64, f64) {
 #[allow(clippy::too_many_arguments)]
 pub fn prepare(
     envs: &[Vec<FloatEnv>],
-    numbers: &[Vec<String>],
+    numbers: &[Vec<Option<String>>],
     documents: &[SourceDocument<'_>],
     entry_index: usize,
     texts: &[&str],
@@ -690,7 +714,8 @@ pub fn prepare(
         let path: Rc<str> = Rc::from(documents[d].path);
         let src = |span: Span| SourceRange { path: path.clone(), start_byte: span.start, end_byte: span.end };
         for (fi, f) in doc_envs.iter().enumerate() {
-            let number = numbers[d][fi].as_str();
+            // A float of a document never read is not set (`number`).
+            let Some(number) = numbers[d][fi].as_deref() else { continue };
             // `\figure*` is `\@dbflt` only `\if@twocolumn` (latex.ltx
             // 17419); in a one-column document the star does nothing.
             let wide = f.starred && twocolumn;

@@ -732,6 +732,9 @@ pub struct Labels {
     pub toc_pages: BTreeMap<String, String>,
     /// Captioned floats: the `\listoffigures`/`\listoftables` entries.
     pub floats: Vec<crate::toc::FloatEntry>,
+    /// The body in reading order ([`reading_order`]), which the lists
+    /// merge their float and `\addcontentsline` entries in.
+    pub reading_order: Vec<Span>,
     /// Entry titles taken from source bytes, set as body text.
     pub entry_items: crate::toc::EntryItems,
     /// cleveref's label type per key (`section`, `equation`, `figure`, ...),
@@ -1324,6 +1327,9 @@ pub fn adapt_cached(
     let mut noindent_at: Option<usize> = None;
     // The `\input`/`\include`d document whose units are being laid out.
     let mut input_doc: Option<DocumentId> = None;
+    // The `\include` whose file is being read: its closing `\clearpage`
+    // comes when the entry document resumes.
+    let mut open_include: Option<&BodyCommand> = None;
     // report/book: `\thesection` is `\thechapter.\arabic{section}`.
     let (mut chapter_no, mut section_nos) = (0u32, [0u32; 3]);
     // `\appendix`: `\thesection` (article) or `\thechapter` (report/book)
@@ -1355,14 +1361,31 @@ pub fn adapt_cached(
     // Last source span of the previous paragraph block (None after a
     // heading or rule), for rejoining a display with its paragraph.
     let mut prev_para_end: Option<Span> = None;
-    for unit in split_at_page_breaks(texts, &lowered, size, &style) {
+    // The documents an entry `\input`/`\include` command reads (nested reads
+    // included), from the reading order: a file whose body is only floats
+    // has no unit to lay its `\chapter` out before.
+    let read_by = |cmd: &BodyCommand| -> Vec<usize> {
+        let order = &labels.reading_order;
+        let Some(i) = order.iter().position(|s| s.document == entry_doc && s.end == cmd.start) else {
+            return Vec::new();
+        };
+        let mut docs: Vec<usize> = Vec::new();
+        for s in order[i + 1..].iter().take_while(|s| s.document != entry_doc) {
+            if !docs.contains(&s.document.0) {
+                docs.push(s.document.0);
+            }
+        }
+        docs
+    };
+    // One pass per unit, then one (`None`) for the commands after the last.
+    for mut next in split_at_page_breaks(texts, &lowered, size, &style).into_iter().map(Some).chain([None]) {
         // Does this unit continue the theorem-like environment that the
         // previous block left open? Only a paragraph inside it that is not
         // itself a fresh `\item` does.
-        let continues_theorem = matches!(
+        let continues_theorem = next.as_ref().is_some_and(|unit| matches!(
             unit.kind,
             UnitKind::Paragraph { in_theorem: true, theorem_item: false, .. }
-        );
+        ));
         if !continues_theorem {
             if let Some(at) = open_theorem.take() {
                 if let Some(Block::Paragraph { env_close, .. }) = blocks.get_mut(at) {
@@ -1370,15 +1393,18 @@ pub fn adapt_cached(
                 }
             }
         }
-        let mut eject_before = unit.eject_before;
-        let vspace_before = unit.vspace_before;
-        limitations.extend(unit.limitations);
-        let unit_start = match &unit.kind {
+        let mut eject_before = next.as_ref().is_some_and(|unit| unit.eject_before);
+        let vspace_before = next.as_ref().map_or(0.0, |unit| unit.vspace_before);
+        if let Some(unit) = &mut next {
+            limitations.append(&mut unit.limitations);
+        }
+        let unit_start = next.as_ref().and_then(|unit| match &unit.kind {
             UnitKind::Heading { number_span, .. } => Some(*number_span),
             UnitKind::Paragraph { inlines, .. } => inlines.iter().map(inline_span).next(),
             UnitKind::Rule { span } => Some(*span),
             UnitKind::Picture { document, picture, .. } => Some(Span::in_document(*document, picture.start, picture.end)),
-        };
+        });
+        let at_end = next.is_none();
         // Entry-document commands are laid out before the first unit that
         // follows them in the entry source. A unit of an `\input`/`\include`d
         // document follows the `\input` command that read it, so everything
@@ -1392,30 +1418,60 @@ pub fn adapt_cached(
             }
             Some(at) if input_doc != Some(at.document) => {
                 input_doc = Some(at.document);
-                commands[next_command..].iter().find(|c| matches!(c.kind, BodyKind::Input)).map(|c| c.start)
+                // The command that reads this document, not merely the next
+                // one: an earlier `\include` may read a file with no units. A
+                // file read by a command already spent (nested) flushes none.
+                let mut inputs = commands[next_command..].iter().filter(|c| matches!(c.kind, BodyKind::Input));
+                if labels.reading_order.iter().any(|s| s.document == at.document) {
+                    inputs.find(|c| read_by(c).contains(&at.document.0)).map(|c| c.start)
+                } else {
+                    inputs.next().map(|c| c.start)
+                }
             }
+            None if at_end => Some(usize::MAX),
             _ => None,
         };
         // `(document, command)` to lay out before this unit, in order.
         let mut pending: Vec<(DocumentId, &BodyCommand)> = Vec::new();
-        // The entry document resumes: the included documents read so far are
-        // finished, so their commands after their last unit come first.
-        if unit_start.is_some_and(|at| at.document == entry_doc) {
+        // The entry document resumes, or the next file is read: the included
+        // documents read so far are finished, so their commands after their
+        // last unit come first.
+        if let Some(at) = flush_before {
             for (d, cmds) in included_commands.iter().enumerate() {
                 if seen_included[d] {
                     pending.extend(cmds[next_included[d]..].iter().map(|c| (DocumentId(d), c)));
                     next_included[d] = cmds.len();
                 }
             }
-        }
-        if let Some(at) = flush_before {
+            pending.extend(open_include.take().map(|cmd| (entry_doc, cmd)));
             while let Some(cmd) = commands.get(next_command).filter(|c| c.start < at) {
                 next_command += 1;
                 pending.push((entry_doc, cmd));
+                if !matches!(cmd.kind, BodyKind::Input) {
+                    continue;
+                }
+                // A file read here without a unit of its own (its body is
+                // floats only): its commands, then `\include`'s closing
+                // `\clearpage`, in place.
+                for d in read_by(cmd) {
+                    if let Some(cmds) = included_commands.get(d).filter(|_| !seen_included[d]) {
+                        seen_included[d] = true;
+                        pending.extend(cmds[next_included[d]..].iter().map(|c| (DocumentId(d), c)));
+                        next_included[d] = cmds.len();
+                    }
+                }
+                if is_include(source, cmd) {
+                    pending.push((entry_doc, cmd));
+                }
             }
             // The `\input` command that read this unit's document is spent.
-            if input_doc.is_some() && commands.get(next_command).is_some_and(|c| c.start == at && matches!(c.kind, BodyKind::Input)) {
+            if let Some(cmd) = commands.get(next_command).filter(|c| input_doc.is_some() && c.start == at && matches!(c.kind, BodyKind::Input)) {
                 next_command += 1;
+                // `\include`'s opening `\clearpage`; the closing one waits.
+                if is_include(texts.get(entry).copied().unwrap_or(""), cmd) {
+                    pending.push((entry_doc, cmd));
+                    open_include = Some(cmd);
+                }
             }
         }
         // An included document's own commands precede its next unit.
@@ -1432,7 +1488,14 @@ pub fn adapt_cached(
             for (cmd_doc, cmd) in pending {
                 let source = texts.get(cmd_doc.0).copied().unwrap_or("");
                 match &cmd.kind {
-                    BodyKind::Input => {}
+                    // latex.ltx `\@include`: `\clearpage` before the file is
+                    // read (or skipped by `\includeonly`) and after it.
+                    BodyKind::Input => {
+                        if cmd_doc == entry_doc && is_include(source, cmd) {
+                            blocks.push(Block::ClearPage { double: false, span: Span::in_document(cmd_doc, cmd.start, cmd.end) });
+                            prev_para_end = None;
+                        }
+                    }
                     BodyKind::Event(event) => blocks.push(Block::Chrome {
                         event: event.clone(),
                         span: Span::in_document(cmd_doc, cmd.start, cmd.end),
@@ -1440,7 +1503,10 @@ pub fn adapt_cached(
                     BodyKind::NoIndent => noindent_at = Some(cmd.end),
                     BodyKind::Chapter { starred, title } => {
                         if !*starred {
-                            chapter_gaps.push(cmd.start);
+                            // In the reading-order space `list_blocks` sorts
+                            // entries by, so an `\include`d chapter's gap
+                            // lands between the right floats.
+                            chapter_gaps.push(reading_position(&labels.reading_order, cmd_doc, cmd.start).unwrap_or(cmd.start));
                         }
                         // `\@chapter`: `\refstepcounter{chapter}` only
                         // `\if@mainmatter` (book.cls line 356).
@@ -1452,9 +1518,6 @@ pub fn adapt_cached(
                             } else {
                                 chapter_no.to_string()
                             };
-                            if cmd_doc == entry_doc {
-                                chapter_starts.push((cmd.start, chapter_label.clone()));
-                            }
                             chapter_label.clone()
                         });
                         let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
@@ -1603,6 +1666,7 @@ pub fn adapt_cached(
                 }
             }
         }
+        let Some(unit) = next else { break };
         match unit.kind {
             UnitKind::Heading {
                 level,
@@ -2063,26 +2127,6 @@ pub fn adapt_cached(
     superseded.extend(listing_superseded);
     superseded.extend(crate::listings::lstset_spans(texts));
     limitations.extend(listing_limitations);
-    // Page-style and mark commands (and a `\maketitle`) after the last
-    // material.
-    for cmd in &commands[next_command..] {
-        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
-        match &cmd.kind {
-            BodyKind::Event(event) => blocks.push(Block::Chrome { event: event.clone(), span }),
-            BodyKind::MakeTitle => {
-                if maketitle_plain {
-                    blocks.push(Block::Chrome {
-                        event: ChromeEvent::ThisPageStyle(PageStyle::Plain),
-                        span,
-                    });
-                }
-                if let Some(t) = stashed.next() {
-                    blocks.push(title_of(t, span));
-                }
-            }
-            _ => {}
-        }
-    }
     let page_starts = clear_page_blocks(texts, &blocks);
     Doc {
         style,
@@ -6741,6 +6785,91 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
     out
 }
 
+/// Whether an [`BodyKind::Input`] command is `\include` (not `\input`).
+fn is_include(source: &str, cmd: &BodyCommand) -> bool {
+    source.get(cmd.start..cmd.end).is_some_and(|c| c.starts_with("\\include"))
+}
+
+/// `\include`/`\input` nesting the reading order follows (the compiler's
+/// own limit is far above anything a real project needs).
+const READING_DEPTH_LIMIT: usize = 32;
+
+/// The document body in the order pdfLaTeX reads it: byte ranges of the
+/// documents (`paths`, parallel to `texts`), the entry one split at every
+/// `\input{..}`/`\include{..}` of [`body_commands`] with the read file's
+/// own ranges in between, recursively. A file is found as the compiler's
+/// `include` finds it (the path as written, then with `.tex`); an unknown
+/// file, a cycle, and an `\include` the preamble's last `\includeonly`
+/// does not name read nothing. A document never read has no range: a
+/// fresh run has no `.aux` of an excluded file to restore its counters
+/// from, so it steps none.
+pub fn reading_order(texts: &[&str], paths: &[&str], entry: usize) -> Vec<Span> {
+    let only = texts.get(entry).and_then(|t| includeonly(t));
+    let mut out = Vec::new();
+    let mut stack = Vec::new();
+    read_document(entry, texts, paths, only.as_deref(), &mut stack, &mut out);
+    out
+}
+
+fn read_document(d: usize, texts: &[&str], paths: &[&str], only: Option<&[String]>, stack: &mut Vec<usize>, out: &mut Vec<Span>) {
+    let Some(text) = texts.get(d).copied() else { return };
+    stack.push(d);
+    let mut from = 0;
+    for cmd in body_commands(text, false, false).iter().filter(|c| matches!(c.kind, BodyKind::Input)) {
+        let written = &text[cmd.start..cmd.end];
+        let include = is_include(text, cmd);
+        let requested = written.find('{').map_or("", |open| written[open + 1..written.len() - 1].trim());
+        let listed = |name: &str| name == requested || name.strip_suffix(".tex") == Some(requested) || requested.strip_suffix(".tex") == Some(name);
+        if include && only.is_some_and(|names| !names.iter().any(|n| listed(n))) {
+            continue;
+        }
+        let with_tex = format!("{requested}.tex");
+        let Some(target) = paths.iter().position(|p| *p == requested).or_else(|| paths.iter().position(|p| *p == with_tex)) else {
+            continue;
+        };
+        if stack.contains(&target) || stack.len() > READING_DEPTH_LIMIT {
+            continue;
+        }
+        out.push(Span::in_document(DocumentId(d), from, cmd.start));
+        read_document(target, texts, paths, only, stack, out);
+        from = cmd.end;
+    }
+    out.push(Span::in_document(DocumentId(d), from, text.len()));
+    stack.pop();
+}
+
+/// The names of the last preamble `\includeonly{a,b}` (`None` without
+/// one; an empty list reads no `\include` at all).
+fn includeonly(entry: &str) -> Option<Vec<String>> {
+    let preamble = &entry[..entry.find("\\begin{document}").unwrap_or(entry.len())];
+    let mut found = None;
+    for line in preamble.lines() {
+        let code = line.char_indices().find(|&(i, c)| c == '%' && !line[..i].ends_with('\\')).map_or(line, |(i, _)| &line[..i]);
+        let mut rest = code;
+        while let Some(at) = rest.find("\\includeonly") {
+            rest = &rest[at + "\\includeonly".len()..];
+            let arg = rest.trim_start();
+            if let Some(close) = arg.strip_prefix('{').and_then(|a| a.find('}')) {
+                found = Some(arg[1..close + 1].split(',').map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).collect());
+            }
+        }
+    }
+    found
+}
+
+/// Where `(document, offset)` falls in `order` ([`reading_order`]): the
+/// bytes read before it. `None` for bytes never read.
+pub fn reading_position(order: &[Span], document: DocumentId, offset: usize) -> Option<usize> {
+    let mut before = 0;
+    for s in order {
+        if s.document == document && (s.start..s.end).contains(&offset) {
+            return Some(before + offset - s.start);
+        }
+        before += s.end - s.start;
+    }
+    None
+}
+
 /// Drops the compiler's text for the arguments of `\markboth`,
 /// `\markright` and `\chapter` (it sets them as body text), and the
 /// paragraphs left empty.
@@ -9353,5 +9482,36 @@ mod tests {
         let lead = it.iter().position(|i| matches!(i, Item::LeaveVmode));
         let brk = it.iter().position(|i| matches!(i, Item::LineBreak { .. }));
         assert!(lead.is_some() && brk.is_some() && lead > brk, "{it:?}");
+    }
+
+    /// `reading_order`: nested reads, `.tex` lookup, `\includeonly` (as
+    /// written or with `.tex`), cycles and unknown files.
+    #[test]
+    fn reading_order_follows_the_include_tree() {
+        let main = "\\documentclass{report}\n% \\includeonly{nothing}\n\\includeonly{a.tex, c}\n\\begin{document}\nX\\include{a}Y\\include{b}Z\\input{missing}\\include{c}W\\end{document}";
+        let a = "A1\\input{sub/n}A2";
+        let n = "N\\input{a}";
+        let b = "B";
+        let c = "C";
+        let texts = [c, n, main, b, a];
+        let paths = ["c.tex", "sub/n.tex", "main.tex", "b.tex", "a.tex"];
+        let got: Vec<(usize, &str)> = reading_order(&texts, &paths, 2).iter().map(|s| (s.document.0, &texts[s.document.0][s.start..s.end])).collect();
+        let at = main.find("\\begin").unwrap();
+        let entry_head = &main[..main.find("\\include{a}").unwrap()];
+        assert!(entry_head.len() > at);
+        assert_eq!(
+            got,
+            [
+                (2, entry_head),
+                (4, "A1"),
+                (1, "N\\input{a}"),
+                (4, "A2"),
+                (2, "Y\\include{b}Z\\input{missing}"),
+                (0, "C"),
+                (2, "W\\end{document}"),
+            ]
+        );
+        assert_eq!(reading_position(&reading_order(&texts, &paths, 2), DocumentId(0), 0), Some(got[..5].iter().map(|(_, t)| t.len()).sum()));
+        assert_eq!(reading_position(&reading_order(&texts, &paths, 2), DocumentId(3), 0), None);
     }
 }
