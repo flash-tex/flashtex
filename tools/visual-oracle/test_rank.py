@@ -158,6 +158,12 @@ class RankTests(unittest.TestCase):
         order = [fid for fid, _ in sorted(pages, key=lambda fp: rank.rank_key(fp[1]))]
         self.assertEqual(order, ["c", "d", "e", "b", "a"])
 
+    def test_minus_sign_aligns_with_hyphen_minus(self):
+        ref = [{"text": t} for t in ["ad", "-", "bc"]]
+        cand = [{"text": t} for t in ["ad", "−", "bc"]]
+        self.assertEqual(rank.align_words(ref, cand), ([(0, 0), (1, 1), (2, 2)], 0, 0))
+        self.assertNotEqual(rank.norm("−"), rank.norm("="))
+
 
 class ThumbTests(unittest.TestCase):
     def test_sheet_writes_png_with_diff_colours(self):

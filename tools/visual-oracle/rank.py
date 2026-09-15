@@ -162,9 +162,13 @@ def v2_words(display_list):
 
 
 def norm(text):
-    t = text.lower().replace("?", "")
-    t = re.sub(r"[^\w]", "", t)
-    return t or text.lower()
+    # U+2212 MINUS SIGN and U+002D HYPHEN-MINUS are one word for alignment.
+    # pdfTeX's own PDFs extract a math minus as U+2212 (PyMuPDF), and so does
+    # the candidate; pdftext's glyph-name table maps `minus` to "-", and the
+    # pinned references were made with it.
+    folded = text.lower().replace("−", "-")
+    t = re.sub(r"[^\w]", "", folded.replace("?", ""))
+    return t or folded
 
 
 def align_words(ref_words, cand_words):
