@@ -7381,7 +7381,12 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 }
                 prev_end = Some(span.end);
                 prev_span = Some(*span);
-                factor = 1000;
+                // The space factor survives: glue (`\hskip`, `\hfill`, the
+                // leaders), `\kern` and the `\leavevmode`'s `\unhbox` of a
+                // void box leave it alone (tex.web §1041 sets it only for
+                // characters, boxes appended in horizontal mode, rules and
+                // math). So `Name: \hrulefill{} Date:` keeps the colon's 2000
+                // and the blank after `{}` gets `\fontdimen7` too.
                 pending_accent = None;
                 // `\hspace{..}` ends with its argument's `}`: the blank after
                 // it is an ordinary space token (`a\hspace{1em} b`), not one
