@@ -235,6 +235,7 @@
     {"name": "negthickspace", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text kern -.2777em", "renders": true},
     {"name": "enspace", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text kern .5em", "renders": true},
     {"name": "enskip", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "horizontal glue of .5em", "renders": true},
+    {"name": "xspace", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)", "renders": true},
     {"name": "AA", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\AA: OT1 Å, T1 Å (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "aa", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\aa: OT1 å, T1 å (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
     {"name": "AE", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "text symbol \\AE: OT1 Æ, T1 Æ (tex-text-encoding; unavailable is a LaTeX error)", "renders": true},
@@ -959,7 +960,8 @@
     {"name": "siunitx", "silent_options": "any \\sisetup keys", "description": "v3 \\num, \\unit, \\qty, lists, ranges, \\ang, \\sisetup and \\DeclareSIUnit; unmodelled keys are diagnosed"},
     {"name": "multicol", "silent_options": "", "description": "multicols and multicols* with preface, \\columnbreak, \\raggedcolumns (columns set by the render pipeline)"},
     {"name": "natbib", "silent_options": "numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak", "description": "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; sort, compress, super and openbib are diagnosed"},
-    {"name": "ulem", "silent_options": "normalem", "description": "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined"}
+    {"name": "ulem", "silent_options": "normalem", "description": "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined"},
+    {"name": "xspace", "silent_options": "", "description": "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"}
   ],
   "coverage": {
     "sources": [
