@@ -106,16 +106,23 @@ pub struct FloatEntry {
     /// Their text in the unmasked document (the parse sees the float
     /// blanked).
     pub text: String,
+    /// `\thefigure`/`\thetable` ([`crate::floats::number`]), which `\ref`
+    /// gives the float's `\label` too.
+    pub number: String,
     pub key: String,
 }
 
 /// Every captioned float in source order; `texts` are the documents before
 /// `floats::mask`.
-pub fn float_entries(envs: &[Vec<FloatEnv>], texts: &[&str]) -> Vec<FloatEntry> {
+pub fn float_entries(envs: &[Vec<FloatEnv>], texts: &[&str], numbers: &[Vec<Option<String>>]) -> Vec<FloatEntry> {
     let mut out = Vec::new();
     for (d, doc) in envs.iter().enumerate() {
         let source = texts.get(d).copied().unwrap_or("");
         for (i, f) in doc.iter().enumerate() {
+            // A float of a document never read writes no `.lof` line.
+            let Some(number) = numbers.get(d).and_then(|n| n.get(i)).cloned().flatten() else {
+                continue;
+            };
             let Some(caption) = f.pieces.iter().find_map(|p| match p {
                 // `\@caption#1[#2]#3`: the list shows `#2` (`\@dblarg`
                 // makes it `#3` when absent).
@@ -132,6 +139,7 @@ pub fn float_entries(envs: &[Vec<FloatEnv>], texts: &[&str]) -> Vec<FloatEntry> 
                 at: f.span.start,
                 caption,
                 text: source.get(caption.start..caption.end).unwrap_or("").to_string(),
+                number,
                 key: float_key(d, i),
             });
         }
@@ -558,7 +566,6 @@ pub fn entry_items(documents: &[SourceDocument<'_>], entry_index: usize, texts: 
 /// `\chapter*` in report/book, `\@mkboth` under `headings`) and every entry
 /// within `tocdepth`, figures and tables numbered `\thefigure` /
 /// `\thetable` (`<chapter>.<n>` with chapters).
-#[allow(clippy::too_many_arguments)]
 pub fn list_blocks(
     kind: ListKind,
     span: Span,
@@ -566,7 +573,6 @@ pub fn list_blocks(
     settings: &Settings,
     records: &[Record],
     labels: &Labels,
-    chapter_starts: &[(usize, String)],
 ) -> Vec<Block> {
     let name = settings.name_of(kind).to_string();
     let mut out = Vec::new();
@@ -615,13 +621,15 @@ pub fn list_blocks(
         })));
     };
     // Float captions and `\addcontentsline{lof}` records are merged in
-    // source order: captions by their float's position, records by the
-    // position of their first title byte.
+    // reading order (`Labels::reading_order`, so an `\include`d file's
+    // floats sit where it is read): captions by their float's position,
+    // records by the position of their first title byte.
+    let position = |span: Span| adapter::reading_position(&labels.reading_order, span.document, span.start).unwrap_or(span.start);
     let record_at = |r: &Record| -> usize {
-        r.number.as_ref().map(|(_, s)| s.start).or_else(|| r.title.iter().find_map(|i| match i {
-            Item::Word(w) => Some(w.span().start),
+        r.number.as_ref().map(|(_, s)| *s).or_else(|| r.title.iter().find_map(|i| match i {
+            Item::Word(w) => Some(w.span()),
             _ => None,
-        })).unwrap_or(0)
+        })).map_or(0, position)
     };
     let mut floats: Vec<(usize, Option<&FloatEntry>, Option<&Record>)> = Vec::new();
     for r in records.iter().filter(|r| r.list == kind) {
@@ -629,36 +637,19 @@ pub fn list_blocks(
     }
     if kind != ListKind::Toc {
         for f in labels.floats.iter().filter(|f| f.list == kind) {
-            floats.push((f.at, Some(f), None));
+            floats.push((position(Span::in_document(f.caption.document, f.at, f.at)), Some(f), None));
         }
         floats.sort_by_key(|(at, ..)| *at);
     }
-    let mut per_chapter: Vec<(usize, u32)> = Vec::new();
-    for (at, float, record) in floats {
+    for (_, float, record) in floats {
         match (float, record) {
             (_, Some(r)) => push(r.level, r.number.clone(), r.title.clone(), &r.key),
             (Some(f), None) => {
                 let doc = f.caption.document;
-                // `\thefigure`: `\@arabic\c@figure`, `\thechapter.` first
-                // with chapters (`\@addtoreset{figure}{chapter}`).
-                let chapter = chapter_starts.iter().rposition(|(start, _)| *start < at);
-                let n = match per_chapter.iter_mut().find(|(c, _)| *c == chapter.unwrap_or(usize::MAX)) {
-                    Some((_, n)) => {
-                        *n += 1;
-                        *n
-                    }
-                    None => {
-                        per_chapter.push((chapter.unwrap_or(usize::MAX), 1));
-                        1
-                    }
-                };
-                let number = if settings.chapters {
-                    format!("{}.{n}", chapter.map_or("0", |c| chapter_starts[c].1.as_str()))
-                } else {
-                    n.to_string()
-                };
+                // `\addcontentsline{lof}{figure}{\protect\numberline{\thefigure}..}`:
+                // the number the caption and `\ref` show.
                 let title = labels.entry_items.get(doc, f.caption.start, f.caption.end).unwrap_or_else(|| adapter::words_at(&f.text, doc, f.caption.start));
-                push(1, Some((number, f.caption)), title, &f.key);
+                push(1, Some((f.number.clone(), f.caption)), title, &f.key);
             }
             (None, None) => {}
         }
