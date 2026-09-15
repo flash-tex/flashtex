@@ -429,6 +429,7 @@
     {"name": "boxed", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body", "renders": true},
     {"name": "overline", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body", "renders": true},
     {"name": "underline", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body", "renders": true},
+    {"name": "Aboxed", "mode": "math", "origin": "math_structure", "arguments": "{lhs rel rhs}", "description": "mathtools: real \\boxed rule around the whole row, keeping the relation as the shared alignment point", "renders": true},
     {"name": "overbrace", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cmex brace pieces with rule fills over or under a display-style body; scripts are limits", "renders": true},
     {"name": "underbrace", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cmex brace pieces with rule fills over or under a display-style body; scripts are limits", "renders": true},
     {"name": "overrightarrow", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "amsmath \\arrowfill@ as wide as the body, over or under it", "renders": true},

@@ -683,6 +683,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["Aboxed"],
+        "{lhs rel rhs}",
+        "mathtools: real \\boxed rule around the whole row, keeping the relation as the shared alignment point",
+        true,
+    ),
+    (
         &["overbrace", "underbrace"],
         "{body}",
         "cmex brace pieces with rule fills over or under a display-style body; scripts are limits",
