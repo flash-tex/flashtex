@@ -123,6 +123,15 @@ linebreak-skip = []
 # as before. Turning it on is then a one-line default-feature edit, like
 # `amsmath-inline` was.
 math-font-kerns = []
+# The compiler's `Nucleus::TextRun` (#441, PR #470): `\text`/`\tag`
+# arguments holding inline math (`\tag{hi $x^2$}`, `\text{for all $x$}`) and
+# `\textbf`/`\emph` pieces, set through math-layout's matching `TextRun`
+# nucleus; a rich `\tag` is placed as an equation number like a plain one.
+# Builds only against a vendor/compiler and vendor/math-layout carrying
+# `TextRun`/`TextPiece`; off until vendor/ is re-pinned past #470, and with it
+# off the pipeline is unchanged. Turning it on is then a one-line
+# default-feature edit, like `amsmath-inline` was.
+compiler-text-run = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }

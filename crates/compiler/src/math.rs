@@ -23,8 +23,10 @@ pub const RADICALEX_THICKNESS_EM: f64 = 0.036;
 pub const MATRIX_COLUMN_GAP_EM: f64 = 1.0;
 pub const MATRIX_ROW_GAP_EM: f64 = 0.3;
 pub const QUAD_EM: f64 = 1.0;
-/// Temporary compiler-route gap after a display tag. PR2 can replace this
-/// single hook with line-width-aware right-margin placement.
+/// Gap after a display tag on the compiler's own layout route. The render
+/// pipeline drops it with the tag atoms (`adapter::strip_tag`) and places the
+/// tag as amsmath does, flush to the margin (#441); this route has no line
+/// width to place it against.
 pub const INTERIM_TAG_GAP_EM: f64 = 2.0 * QUAD_EM;
 
 #[derive(Debug, Clone, PartialEq)]

@@ -461,6 +461,27 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                     }
                 }
             }
+            // `\text{for all $x$}`, `\tag{hi $x^2$}` (#441): the pieces, in
+            // order, with the face of each text piece.
+            #[cfg(feature = "compiler-text-run")]
+            Nucleus::TextRun(pieces) => {
+                // 18, not 17: #582's `SideSet` arm takes 17.
+                18u8.hash(h);
+                pieces.len().hash(h);
+                for piece in pieces {
+                    match piece {
+                        flashtex_compiler::math::TextPiece::Text { text, style } => {
+                            0u8.hash(h);
+                            text.hash(h);
+                            style.hash(h);
+                        }
+                        flashtex_compiler::math::TextPiece::Math(list) => {
+                            1u8.hash(h);
+                            hash_math(list, h);
+                        }
+                    }
+                }
+            }
         }
         match &a.superscript {
             Some(s) => {
@@ -673,6 +694,14 @@ fn shift_math(list: &mut MathList, delta: isize) {
                 shift_math(operator, delta);
                 for part in [left_superscript, left_subscript].into_iter().flatten() {
                     shift_math(part, delta);
+                }
+            }
+            #[cfg(feature = "compiler-text-run")]
+            Nucleus::TextRun(pieces) => {
+                for piece in pieces {
+                    if let flashtex_compiler::math::TextPiece::Math(list) = piece {
+                        shift_math(list, delta);
+                    }
                 }
             }
         }

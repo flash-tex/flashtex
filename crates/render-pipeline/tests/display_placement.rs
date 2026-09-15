@@ -14,6 +14,13 @@
 //! `\check@icl` italic correction before its space). Display 20 sits in a
 //! nested list, whose closing `\topsep` is its own level's. The fixture not
 //! listed here does not pass yet: `\tag{$..$}` math (15).
+//!
+//! With feature `compiler-text-run` (#441; vendor/ re-pinned past #470)
+//! rich tags join the list: `\tag{hi $x^2$}`, `\tag*{...}` and `leqno`
+//! (37-39), tags in `align`/`gather`/`multline` (40-43; `multline` sets its
+//! tag on the last line, or the first under `leqno`), a rich tag too wide
+//! for its line (44), `\text{for all $x$}` (45), and `align`/`gather` tags
+//! amsmath's `\calc@shift@*` moves to a line of their own (46-48).
 
 mod common;
 
@@ -62,6 +69,26 @@ const PASSING: &[&str] = &[
     "36-cm-default-fonts",
 ];
 
+/// Fixtures that need the compiler's `TextRun` (#441, PR #470) and its
+/// tagged-row numbering.
+#[cfg(feature = "compiler-text-run")]
+const TEXT_RUN_PASSING: &[&str] = &[
+    "37-rich-tag-equation",
+    "38-rich-tag-star",
+    "39-rich-tag-leqno",
+    "40-align-rich-tags",
+    "41-gather-rich-tags",
+    "42-multline-tag",
+    "43-multline-tag-leqno",
+    "44-wide-rich-tag-own-line",
+    "45-text-math-display",
+    "46-align-wide-tag-own-line",
+    "47-gather-wide-tag-own-line",
+    "48-gather-wide-tag-leqno",
+];
+#[cfg(not(feature = "compiler-text-run"))]
+const TEXT_RUN_PASSING: &[&str] = &[];
+
 fn num(v: &Value, k: &str) -> f64 {
     match v.get(k) {
         Some(Value::Num(n)) => *n,
@@ -79,7 +106,7 @@ fn display_placement_matches_pdflatex() {
     let fonts = FontSet::with_default_dirs(&[]);
     let options = RenderOptions::default();
     let mut failures = Vec::new();
-    for name in PASSING {
+    for name in PASSING.iter().chain(TEXT_RUN_PASSING) {
         let tex = std::fs::read_to_string(format!("{dir}/fixtures/{name}.tex")).unwrap();
         let reference = json::parse(&std::fs::read_to_string(format!("{dir}/refs/{name}.json")).unwrap()).unwrap();
         let docs = [SourceDocument { path: "main.tex", text: &tex }];

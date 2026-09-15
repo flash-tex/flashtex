@@ -100,6 +100,36 @@ F["34-parindent-medium-line"] = doc(
 F["35-12pt-fleqn-leqno-align"] = doc("Before.\n\\begin{align} a &= b \\\\ c &= d \\end{align}\nAfter.",
                                      size="12pt", opts="fleqn,leqno")
 F["36-cm-default-fonts"] = doc(f"{SHORT}\n\\[ a + b = c \\]\n{LONG}\n{eq('d = e')}\nafter.", fontenc=False)
+# #441: `\tag`s whose label holds math or text-font switches, set by
+# `\tagform@`/`\maketag@@@` flush to the margin in every amsmath display.
+F["37-rich-tag-equation"] = doc(
+    "Before.\n" + eq("a = b \\tag{hi $x^2$}") + "\nmiddle\n" + eq("c = d \\tag{$\\ast$}")
+    + "\nand\n" + eq("e = f \\tag{\\textbf{B} $y_1$}") + "\nend.")
+F["38-rich-tag-star"] = doc("Before.\n" + eq("a + b = c \\tag*{$\\pm$ note}") + "\nmiddle\n"
+                            + eq("d = e \\tag*{[$n+1$]}") + "\nend.")
+F["39-rich-tag-leqno"] = doc("Before.\n" + eq("a + b = c \\tag{hi $x^2$}") + "\nmiddle\n"
+                             + eq("d = e \\tag*{$\\ast$}") + "\nend.", opts="leqno")
+F["40-align-rich-tags"] = doc(
+    "Before.\n\\begin{align}\n a &= b \\tag{$a_1$}\\\\\n c + d &= e \\\\\n f &= g \\tag{step $k^2$}\n\\end{align}\nAfter.")
+F["41-gather-rich-tags"] = doc(
+    "Before.\n\\begin{gather}\n a = b \\tag{$\\ast$}\\\\\n c + d = e \\\\\n f = g \\tag*{(ii $n$)}\n\\end{gather}\nAfter.")
+F["42-multline-tag"] = doc(
+    "Before.\n\\begin{multline} a + b + c + d + e \\tag{M $x$} \\\\ = f + g \\\\ = h + i \\end{multline}\nAfter.")
+F["43-multline-tag-leqno"] = doc(
+    "Before.\n\\begin{multline} a + b + c + d + e \\\\ = f + g \\\\ = h + i \\tag{$\\ast$} \\end{multline}\nAfter.",
+    opts="leqno")
+F["44-wide-rich-tag-own-line"] = doc(
+    SHORT + "\n" + eq(WIDE + " + c_1 + c_2 \\tag{a long tag with $x^2$ in it}") + "\nafter.")
+F["45-text-math-display"] = doc(
+    "Before.\n\\[ x = 1 \\quad \\text{for all $x$ in $S$} \\]\nand\n"
+    + eq("y = 2 \\text{ if $y \\in T$} \\tag{\\emph{i}}") + "\nend.")
+F["46-align-wide-tag-own-line"] = doc(
+    "Before.\n\\begin{align}\n " + WIDE + " &= c_1 + c_2 + c_3 + c_4 \\tag{a long tag $x$}\\\\\n d &= e\n\\end{align}\nAfter.")
+F["47-gather-wide-tag-own-line"] = doc(
+    "Before.\n\\begin{gather}\n " + WIDE + " + c_1 + c_2 \\tag{tag $\\ast$ here}\\\\\n d = e\n\\end{gather}\nAfter.")
+F["48-gather-wide-tag-leqno"] = doc(
+    "Before.\n\\begin{gather}\n d = e\\\\\n " + WIDE + " + c_1 + c_2 \\tag{tag $\\ast$ here}\n\\end{gather}\nAfter.",
+    opts="leqno")
 
 
 def main():
