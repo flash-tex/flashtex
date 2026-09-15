@@ -20,18 +20,32 @@ use std::io;
     all(target_os = "linux", any(target_env = "gnu", target_env = "musl"))
 ))]
 mod imp {
-    use std::ffi::CString;
+    use std::ffi::{CStr, CString};
     use std::fs::File;
     use std::io;
     use std::mem::MaybeUninit;
-    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
     use std::os::raw::c_int;
 
     pub const SUPPORTED: bool = true;
     pub use libc::{
-        EEXIST, ELOOP, ENOENT, ENOTDIR, O_CREAT, O_DIRECTORY, O_EXCL, O_NOFOLLOW, O_NONBLOCK,
-        O_RDONLY, O_RDWR, O_WRONLY,
+        EEXIST, EINVAL, ELOOP, ENOENT, ENOSYS, ENOTDIR, ENOTSUP, EOPNOTSUPP, EPERM, O_CREAT,
+        O_DIRECTORY, O_EXCL, O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_RDWR, O_WRONLY,
     };
+
+    /// The calling thread's `errno` lvalue.
+    fn errno_ptr() -> *mut c_int {
+        // SAFETY: both functions only return the calling thread's errno
+        // location.
+        #[cfg(target_os = "macos")]
+        unsafe {
+            libc::__error()
+        }
+        #[cfg(target_os = "linux")]
+        unsafe {
+            libc::__errno_location()
+        }
+    }
 
     fn cstr(name: impl AsRef<[u8]>) -> io::Result<CString> {
         CString::new(name.as_ref())
@@ -86,6 +100,155 @@ mod imp {
         let (o, n) = (cstr(old)?, cstr(new)?);
         // SAFETY: valid C strings and an open directory descriptor.
         check(unsafe { libc::renameat(dir.as_raw_fd(), o.as_ptr(), dir.as_raw_fd(), n.as_ptr()) })
+    }
+
+    /// Renames `old` to `new` inside `dir` only if `new` does not exist
+    /// (`renameatx_np(RENAME_EXCL)` on macOS, `renameat2(RENAME_NOREPLACE)`
+    /// on Linux): an entry created at `new` after the caller checked is never
+    /// replaced, and the call fails with `EEXIST`. Filesystems or kernels
+    /// without the primitive fail with an error for which
+    /// [`noreplace_unsupported`] is true; nothing was renamed then.
+    pub fn rename_at_noreplace(dir: &File, old: &str, new: &str) -> io::Result<()> {
+        let (o, n) = (cstr(old)?, cstr(new)?);
+        let fd = dir.as_raw_fd();
+        // SAFETY: valid C strings and an open directory descriptor.
+        #[cfg(target_os = "macos")]
+        let rc = unsafe { libc::renameatx_np(fd, o.as_ptr(), fd, n.as_ptr(), libc::RENAME_EXCL) };
+        // SAFETY: as above.
+        #[cfg(target_os = "linux")]
+        let rc = unsafe { libc::renameat2(fd, o.as_ptr(), fd, n.as_ptr(), libc::RENAME_NOREPLACE) };
+        check(rc)
+    }
+
+    /// Whether a [`rename_at_noreplace`] failure means the primitive is not
+    /// available here (rather than a real rename failure). Callers must not
+    /// fall back to a plain rename on it; see `save::install_new`.
+    pub fn noreplace_unsupported(err: &io::Error) -> bool {
+        [EINVAL, ENOSYS, ENOTSUP, EOPNOTSUPP]
+            .iter()
+            .any(|&c| err.raw_os_error() == Some(c))
+    }
+
+    /// `linkat(dir, old, dir, new, 0)`: a second name `new` for the entry
+    /// `old` in `dir`. Fails with `EEXIST`, atomically, if `new` exists (of
+    /// any type, including a dangling symlink), so it never replaces an
+    /// entry. Flags are 0, so a symlink at `old` is linked, never followed.
+    pub fn link_at(dir: &File, old: &str, new: &str) -> io::Result<()> {
+        let (o, n) = (cstr(old)?, cstr(new)?);
+        let fd = dir.as_raw_fd();
+        // SAFETY: valid C strings and an open directory descriptor.
+        check(unsafe { libc::linkat(fd, o.as_ptr(), fd, n.as_ptr(), 0) })
+    }
+
+    /// A new name `new` in `dir` for the open file `file` itself, not for
+    /// whatever a name currently points to, so no rename or swap of the
+    /// file's old name can redirect it. Fails with `EEXIST`, atomically, if
+    /// `new` exists.
+    ///
+    /// Linux only: `linkat(fd, "", dirfd, new, AT_EMPTY_PATH)`, which older
+    /// kernels allow only with `CAP_DAC_READ_SEARCH`, then
+    /// `linkat(AT_FDCWD, "/proc/self/fd/N", dirfd, new, AT_SYMLINK_FOLLOW)`.
+    /// Any other failure (and every call on macOS, which has neither) means
+    /// "not available here"; callers fall back to a checked name-based link.
+    pub fn link_fd_at(file: &File, dir: &File, new: &str) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            let n = cstr(new)?;
+            // SAFETY: an open file descriptor, an empty C string, an open
+            // directory descriptor and a valid C string.
+            let rc = unsafe {
+                libc::linkat(
+                    file.as_raw_fd(),
+                    c"".as_ptr(),
+                    dir.as_raw_fd(),
+                    n.as_ptr(),
+                    libc::AT_EMPTY_PATH,
+                )
+            };
+            let first = match check(rc) {
+                Ok(()) => return Ok(()),
+                Err(e) if e.raw_os_error() == Some(EEXIST) => return Err(e),
+                Err(e) => e,
+            };
+            let proc_path = cstr(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
+            // SAFETY: valid C strings and an open directory descriptor.
+            let rc = unsafe {
+                libc::linkat(
+                    libc::AT_FDCWD,
+                    proc_path.as_ptr(),
+                    dir.as_raw_fd(),
+                    n.as_ptr(),
+                    libc::AT_SYMLINK_FOLLOW,
+                )
+            };
+            match check(rc) {
+                Ok(()) => Ok(()),
+                Err(e) if e.raw_os_error() == Some(EEXIST) => Err(e),
+                Err(_) => Err(first),
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = (file, dir, new);
+            Err(io::Error::from_raw_os_error(ENOTSUP))
+        }
+    }
+
+    /// Whether a [`link_at`] failure means the filesystem has no hard links
+    /// (Linux reports `EPERM`, others `ENOTSUP`/`EOPNOTSUPP`/`ENOSYS`).
+    pub fn link_unsupported(err: &io::Error) -> bool {
+        [EPERM, ENOSYS, ENOTSUP, EOPNOTSUPP]
+            .iter()
+            .any(|&c| err.raw_os_error() == Some(c))
+    }
+
+    /// Names of the entries of the open directory `dir`, excluding `.` and
+    /// `..`, as raw bytes.
+    ///
+    /// The directory is read with `fdopendir` on a fresh descriptor opened as
+    /// `openat(dir, ".")`: the same directory object `dir` refers to, with
+    /// its own read offset, never re-resolved from a path string. Entries
+    /// are only named, not followed or stat'ed.
+    pub fn list_dir(dir: &File) -> io::Result<Vec<Vec<u8>>> {
+        let fresh = open_at_bytes(dir, b".", O_RDONLY | O_DIRECTORY, 0)?;
+        let fd = fresh.into_raw_fd();
+        // SAFETY: `fd` is an open directory descriptor; on success the DIR
+        // stream owns it and `closedir` closes it.
+        let dirp = unsafe { libc::fdopendir(fd) };
+        if dirp.is_null() {
+            let err = io::Error::last_os_error();
+            // SAFETY: fdopendir failed, so `fd` is still ours to close.
+            drop(unsafe { File::from_raw_fd(fd) });
+            return Err(err);
+        }
+        let mut names = Vec::new();
+        let result = loop {
+            // SAFETY: clearing the thread's errno lets a NULL return be told
+            // apart as end-of-directory or error.
+            unsafe { *errno_ptr() = 0 };
+            // SAFETY: `dirp` is a live DIR stream.
+            let ent = unsafe { libc::readdir(dirp) };
+            if ent.is_null() {
+                // SAFETY: as above.
+                let errno = unsafe { *errno_ptr() };
+                break if errno == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::from_raw_os_error(errno))
+                };
+            }
+            // SAFETY: `ent` points at a `libc::dirent` whose `d_name` is
+            // NUL-terminated; it stays valid until the next `readdir` on this
+            // stream, and is copied before that.
+            let name = unsafe { CStr::from_ptr((*ent).d_name.as_ptr()) };
+            let name = name.to_bytes();
+            if name != b"." && name != b".." {
+                names.push(name.to_vec());
+            }
+        };
+        // SAFETY: `dirp` is a live DIR stream, closed exactly once.
+        unsafe { libc::closedir(dirp) };
+        result.map(|()| names)
     }
 
     pub fn unlink_at(dir: &File, name: &str) -> io::Result<()> {
@@ -239,6 +402,24 @@ mod imp {
     pub fn rename_at(_: &File, _: &str, _: &str) -> io::Result<()> {
         Err(unsupported())
     }
+    pub fn rename_at_noreplace(_: &File, _: &str, _: &str) -> io::Result<()> {
+        Err(unsupported())
+    }
+    pub fn noreplace_unsupported(_: &io::Error) -> bool {
+        false
+    }
+    pub fn link_at(_: &File, _: &str, _: &str) -> io::Result<()> {
+        Err(unsupported())
+    }
+    pub fn link_unsupported(_: &io::Error) -> bool {
+        false
+    }
+    pub fn link_fd_at(_: &File, _: &File, _: &str) -> io::Result<()> {
+        Err(unsupported())
+    }
+    pub fn list_dir(_: &File) -> io::Result<Vec<Vec<u8>>> {
+        Err(unsupported())
+    }
     pub fn unlink_at(_: &File, _: &str) -> io::Result<()> {
         Err(unsupported())
     }
@@ -371,7 +552,7 @@ mod tests {
     /// The `fstatat` fields must agree with `std`'s own `lstat` for every
     /// file type this crate distinguishes.
     #[test]
-    fn stat_at_nofollow_matches_std_symlink_metadata() {
+    fn stat_list_and_noreplace_match_std() {
         if !SUPPORTED {
             return;
         }
@@ -403,6 +584,51 @@ mod tests {
         }
         let err = stat_at_nofollow(&handle, b"absent").unwrap_err();
         assert!(errno_is(&err, ENOENT), "{err:?}");
+
+        // `list_dir` agrees with `std::fs::read_dir`, and a second listing
+        // of the same handle is complete (its own read offset each time).
+        let mut expected: Vec<Vec<u8>> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| {
+                use std::os::unix::ffi::OsStrExt;
+                e.unwrap().file_name().as_bytes().to_vec()
+            })
+            .collect();
+        expected.sort();
+        for _ in 0..2 {
+            let mut names = list_dir(&handle).unwrap();
+            names.sort();
+            assert_eq!(names, expected);
+        }
+
+        // `rename_at_noreplace` never replaces an existing entry.
+        std::fs::write(dir.join("other"), "y").unwrap();
+        match rename_at_noreplace(&handle, "other", "file") {
+            Err(e) if noreplace_unsupported(&e) => {}
+            Err(e) => assert!(errno_is(&e, EEXIST), "{e:?}"),
+            Ok(()) => panic!("replaced an existing entry"),
+        }
+        assert_eq!(std::fs::read_to_string(dir.join("file")).unwrap(), "x");
+        rename_at_noreplace(&handle, "other", "fresh")
+            .or_else(|e| {
+                if noreplace_unsupported(&e) {
+                    rename_at(&handle, "other", "fresh")
+                } else {
+                    Err(e)
+                }
+            })
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("fresh")).unwrap(), "y");
+
+        // `link_at` never replaces an existing entry, dangling symlinks
+        // included, and links a regular file under a new name.
+        for existing in ["file", "broken"] {
+            let err = link_at(&handle, "fresh", existing).unwrap_err();
+            assert!(errno_is(&err, EEXIST), "{existing}: {err:?}");
+        }
+        assert_eq!(std::fs::read_to_string(dir.join("file")).unwrap(), "x");
+        link_at(&handle, "fresh", "linked").unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("linked")).unwrap(), "y");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

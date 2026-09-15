@@ -175,16 +175,39 @@ mtime, identity and mode from the same open descriptor.
    `Conflict{ModifiedDuringSave, ours: hash we wrote, theirs: observed}`,
    temp removed, target untouched. This is where `Expected::NewFile` refuses
    to clobber a target created meanwhile.
-5. `fstatat(AT_SYMLINK_NOFOLLOW)` the temp name: it must still name the
-   file written in step 3 (same device/inode), otherwise the save is refused
-   and nothing is installed. `renameat` temp over target. `fstatat` the
-   target: it must now name that file, otherwise `ModifiedDuringSave` (never
-   success). Residual: `renameat` binds a name, so a process that can write
-   the directory, has listed the random temp name, and swaps it between the
-   check and the rename gets its entry moved to the target — as a directory
-   entry, never followed — and the save reports a conflict; that process
-   could have replaced the target entry directly anyway. Then `fsync` the
-   directory. A directory
+5. Classify the target once more with `fstatat(AT_SYMLINK_NOFOLLOW)`: a
+   symlink or special file is refused (with `force` or without), and unless
+   `force` a different file than step 4 saw is `ModifiedDuringSave`.
+   Immediately before every name-based install call, `fstatat` the temp name:
+   it must still name the file from step 3 (same device/inode), otherwise the
+   save is refused and nothing is installed. Immediately after the install,
+   the target must name that file, otherwise `ModifiedDuringSave` (never
+   success).
+   - **Absent target (fail-closed no-clobber):** install the temp file with
+     `renameat2(RENAME_NOREPLACE)` (Linux) / `renameatx_np(RENAME_EXCL)`
+     (macOS). Where the filesystem does not support that, hard-link it —
+     `linkat` also fails with `EEXIST` atomically. On Linux the link is bound
+     to the open descriptor (`linkat(fd, "", AT_EMPTY_PATH)`, else
+     `/proc/self/fd/N` with `AT_SYMLINK_FOLLOW`), so a swap of the temp name
+     cannot redirect it; otherwise, and on macOS, `linkat` of the re-checked
+     temp name. Then `unlinkat(temp)`, only while the temp name still names
+     the saved file, retried once; if it still fails the save returns an
+     error naming the leftover link (the file is installed and verified, but
+     success is not reported). An entry that appeared after the check is never
+     replaced: it is refused if it is a symlink or special file, otherwise
+     `ModifiedDuringSave` unless `force`. If neither primitive is supported,
+     a non-forced save fails with an `Unsupported` I/O error and writes
+     nothing; only `force` falls back to a plain `renameat`.
+   - **Existing target:** `renameat` temp over target.
+
+   Residual of the temp check: `renameat` (and the name-based `linkat`) binds
+   a name, so a process that can write the directory, has listed the random
+   temp name, and swaps it between the check and the call gets its entry
+   moved or linked to the target — as a directory entry, never followed —
+   and the save reports a conflict; that process could have replaced the
+   target entry directly anyway.
+
+   Then `fsync` the directory. A directory
    fsync failure is `SaveError::DirectorySync` — a hard error; the rename has
    already happened and durability is unknown, so re-read before trusting.
 6. Re-open the target with `O_NOFOLLOW`; its device/inode must equal the temp
@@ -330,12 +353,26 @@ with its `check()` result.
 - **mtime granularity.** A same-size rewrite within the filesystem's mtime
   resolution (nanoseconds on APFS, coarser elsewhere) is not rehashed by
   `Snapshot::diff`. Callers can force a rehash with a fresh `Snapshot::take`.
-- **Graph discovery probes existence through OS paths.** File contents are
-  read through the rooted reader, but the candidate existence check and the
-  Unicode-normalization directory-listing fallback still resolve path
-  strings. `Snapshot` stats and hashes every tracked file through the rooted
-  reader: a symlinked or non-regular tracked path is reported as absent and
-  never opened.
+- **Rename over, and unlink of, an existing entry are checked, not
+  compare-and-swap.** Graph discovery, `Snapshot`, the save-path
+  normalization fallback and the recovery journal listing all stat and list
+  through the pinned root descriptor, never a path string. A save classifies
+  an existing target with `fstatat(AT_SYMLINK_NOFOLLOW)` immediately before
+  `renameat`, and `remove` does the same before `unlinkat`. POSIX has no
+  "rename over / unlink only if this is still that inode", so an entry
+  swapped in between the check and the call, by a process that can write the
+  project directory, is still replaced or removed. That is the whole
+  residual: the effect is limited to replacing or removing that one
+  directory entry inside the pinned directory. Neither call follows a
+  symlink (the link itself is replaced or removed; its target is never
+  opened, written or deleted), neither can replace or remove a directory,
+  and nothing outside the pinned directory is affected. A save's
+  post-rename verification still confirms the saved file is what sits at
+  the name. Creating an absent target has no such window (see step 5). An
+  exchange-then-verify rename (`RENAME_EXCHANGE`/`RENAME_SWAP` plus a swap
+  back) was considered and not adopted: removing the displaced entry has the
+  same check-then-unlink window, so it moves the residual instead of closing
+  it.
 - **Symlinks above the root are followed.** Only the root's own final
   component and everything inside it are refused as symlinks (see *Path
   binding*). Choosing a path through a symlinked ancestor chooses the

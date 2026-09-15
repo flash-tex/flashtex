@@ -9,6 +9,8 @@ writer are all original Rust code, linked into one binary.
 flashtex build main.tex                 # main.pdf next to it; \input/\include resolved from its folder
 flashtex build main.tex -o out.pdf --timing
 flashtex check main.tex --json          # diagnostics only, machine-readable
+flashtex check main.tex --fix           # apply did-you-mean suggestions, then re-check
+flashtex check main.tex --fix --dry-run # print a unified diff; write nothing
 flashtex watch main.tex                 # rebuild on every change; Ctrl-C stops
 flashtex supported                      # what LaTeX is implemented, with coverage
 flashtex fonts                          # which fonts/metrics this binary resolves
@@ -54,8 +56,8 @@ Any editor or CI can drive that same JSON Lines protocol directly — see
 ```
 flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
                [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
-flashtex check <main.tex> [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
-flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS] [--timing]
+flashtex check <main.tex> [--json] [--strict] [--fix] [--dry-run] [--project-root DIR] [--font-dir DIR]...
+flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
 flashtex supported [--json|--md|--coverage]
 flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json] [--pdf out.pdf] [--timing]
 flashtex fonts [--font-dir DIR]... [--json]
@@ -100,6 +102,22 @@ output as *File › Export PDF* in the app. The file is written atomically
 count and every diagnostic depend on layout), diagnostics on stderr and,
 with `--json`, the report on stdout. `-o`/`--v2` are rejected.
 
+`--fix` applies every diagnostic that carries a `suggestion` and a source
+span: the span's bytes are replaced with the suggestion. Edits in one file
+are applied back-to-front so later offsets stay valid; overlapping spans are
+skipped (and reported); a file whose bytes changed between compile and apply
+is refused; files outside the project root and symlinks are never written.
+Writes are atomic (sibling temp file + rename) and keep the original mode.
+After applying, `check` is re-run and the new summary (and exit status)
+reflect that second pass. `--dry-run` (only with `--fix`) prints a unified
+diff per file and writes nothing. Either way a line
+
+```
+fixed N issue(s) in M file(s); K skipped
+```
+
+is printed.
+
 ### `watch`
 
 Builds once, then polls the whole project closure (every `.tex`, `.bib` and
@@ -114,7 +132,7 @@ because outputs are written atomically nothing is left half-written.
 The implemented-LaTeX inventory of the compiler linked into this binary
 (`flashtex_compiler::supported`), so it cannot drift from what `build`
 accepts. Plain `flashtex supported` prints command/environment counts, the
-coverage of the canonical inventory (40% at the time of writing) and one
+coverage of the canonical inventory (46% at the time of writing) and one
 line per package set; `--json` is the `flashtex-supported-latex/1` document
 (the same as `crates/compiler/supported/supported-latex.json`), `--md` the
 reference page reproduced [below](#supported-latex), `--coverage` the
@@ -149,13 +167,23 @@ replace an unrelated file and explains when the directory needs `sudo`.
 
 ## Diagnostics and exit status
 
-Every diagnostic is one stderr line:
+On a terminal, each diagnostic is rustc-style: a header, the source line with
+a caret underline, optional `= recovery:` and, when the compiler offered a
+replacement, a help block:
 
 ```
-file:line:col: severity[code] message (recovery: what was rendered instead)
+= help: did you mean `\alpha`?
 ```
 
-`file` is project-relative (`sections/intro.tex`); `line:col` are 1-based
+followed by the suggested line with a `+` gutter. Piped stderr (and
+`--diagnostics=short`) stays one line:
+
+```
+file:line:col: severity[code] message (recovery: what was rendered instead) (did you mean \alpha?)
+```
+
+The parenthetical suggestion is omitted when there is none. `file` is
+project-relative (`sections/intro.tex`); `line:col` are 1-based
 (column in characters) and are omitted when a diagnostic has no source
 position (font resource notes, unstable labels). A summary line follows:
 
@@ -202,7 +230,9 @@ The codes (`compiler`, `overfull_hbox`, `math_limitation`, `missing_file`,
 ```
 
 `line`, `column`, `start_byte`, `end_byte` and `recovery` are `null` when
-absent; `severity` is `error` or `warning`; `outputs` is empty for `check`.
+absent; `suggestion` is the replacement text and is omitted (not `null`) when
+there is none; `severity` is `error` or `warning`; `outputs` is empty for
+`check`. With `--fix`, the report is the re-check after edits are applied.
 
 ## Multi-file projects
 
@@ -300,7 +330,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 308 text-mode and 551 math-mode command entries, 50 environments and 22 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 330 text-mode and 554 math-mode command entries, 53 environments and 22 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -308,8 +338,8 @@ Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test
 
 | Canonical set | Commands supported | Environments supported |
 | --- | ---: | ---: |
-| kernel | 183/410 (44.6%) | 18/30 (60.0%) |
-| amsmath | 41/102 (40.2%) | 17/21 (81.0%) |
+| kernel | 190/410 (46.3%) | 19/30 (63.3%) |
+| amsmath | 42/102 (41.2%) | 17/21 (81.0%) |
 | amssymb | 225/229 (98.3%) | none defined |
 | enumitem | 1/17 (5.9%) | none defined |
 | geometry | 0/7 (0.0%) | none defined |
@@ -318,7 +348,7 @@ Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test
 | tikz | 0/43 (0.0%) | 0/2 (0.0%) |
 | xcolor | 14/71 (19.7%) | none defined |
 | siunitx | 18/240 (7.5%) | none defined |
-| **total** | **526/1314 (40.0%)** | |
+| **total** | **535/1314 (40.7%)** | |
 
 Generated by `flashtex-compiler --supported coverage` against `crates/compiler/supported/canonical-latex.tsv` (LaTeX2e reference-manual index and package sources, each name confirmed by pdfLaTeX; TeX Live 2026). The total row counts commands and environments together. Supported means handled without an unsupported diagnostic, not typographic parity.
 
@@ -471,10 +501,31 @@ Canonical sources:
 | `\newpage` |  | forces a page break |
 | `\clearpage` |  | forces a page break |
 | `\cleardoublepage` |  | forces a page break (one-sided article) |
-| `\pagebreak` | `[n]` | forces a page break |
-| `\nopagebreak` | `[n]` | accepted no-op; the layout never breaks there on its own |
-| `\linebreak` | `[n]` | line break |
-| `\nolinebreak` | `[n]` | accepted no-op |
+| `\pagebreak` | `[n]` | page-break penalty -\@getpen{n} (4: a forced break); in a paragraph, after the line it is set on |
+| `\nopagebreak` | `[n]` | page-break penalty \@getpen{n}; in a paragraph, after the line it is set on |
+| `\linebreak` | `[n]` | line-break penalty -\@getpen{n} (4: a forced break, the line stays justified) |
+| `\nolinebreak` | `[n]` | line-break penalty \@getpen{n}, the space before it moved after it |
+| `\penalty` | `<number>` | penalty node: in a paragraph a line-break penalty, between paragraphs a page-break penalty |
+| `\nobreak` |  | \penalty10000 |
+| `\allowbreak` |  | \penalty0 |
+| `\goodbreak` |  | ends the paragraph, then \penalty-500 |
+| `\filbreak` |  | ends the paragraph, then \vfil\penalty-200\vfilneg |
+| `\discretionary` | `{pre}{post}{nobreak}` | discretionary break (plain text of each argument) |
+| `\nobreakdash` | `- -- ---` | amsmath: the dashes that follow, with no line break after them (\nobreak) |
+| `\tolerance` | `=<number>` | line-breaking parameter, restored at the end of its group |
+| `\pretolerance` | `=<number>` | line-breaking parameter, restored at the end of its group |
+| `\looseness` | `=<number>` | line-breaking parameter for the next paragraph end |
+| `\widowpenalty` | `=<number>` | page-breaking parameter, restored at the end of its group |
+| `\clubpenalty` | `=<number>` | page-breaking parameter, restored at the end of its group |
+| `\interlinepenalty` | `=<number>` | page-breaking parameter, restored at the end of its group |
+| `\emergencystretch` | `=<dimen>` | line-breaking parameter, restored at the end of its group |
+| `\sloppy` |  | \tolerance 9999, \emergencystretch 3em, \hfuzz .5pt |
+| `\fussy` |  | \tolerance 200, \emergencystretch 0pt, \hfuzz .1pt |
+| `\samepage` |  | \interlinepenalty 10000 for the rest of the group |
+| `\raggedbottom` |  | pages keep their natural height |
+| `\flushbottom` |  | pages are stretched to the text height |
+| `\enlargethispage` | `*{dimension}` | the current page's text height grows by the dimension (* also shrinks its glue); pt/cm/.../\baselineskip multiples |
+| `\hyphenation` | `{words}` | hyphenation exceptions: the hyphens mark each word's only break points |
 | `\vfill` |  | vertical glue filling the rest of the page |
 | `\columnbreak` | `[n]` | multicol: ends the current column of multicols (priority n, default 4) |
 | `\newcolumn` |  | multicol: ends the current column of multicols, filling it |
@@ -622,6 +673,7 @@ Canonical sources:
 | `\newtheorem` | `{env}[counter]{name}` | defines a numbered theorem-like environment (amsthm) |
 | `\theoremstyle` | `{style}` | selects the amsthm style for following \newtheorem |
 | `\\` |  | line break; an optional [length] is consumed |
+| `\-` |  | discretionary hyphen: a break point, invisible unless the line breaks there |
 | `\,` |  | text kern .16667em (\thinspace) |
 | `\!` |  | text kern -.16667em (\negthinspace) |
 | `\:` |  | text kern .2222em (\medspace) |
@@ -691,6 +743,9 @@ Canonical sources:
 | `\phantom` | `{x}` | empty box with the width and/or height and depth of the argument |
 | `\hphantom` | `{x}` | empty box with the width and/or height and depth of the argument |
 | `\vphantom` | `{x}` | empty box with the width and/or height and depth of the argument |
+| `\mathllap` | `{x}` | mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\llap/\rlap/\clap); needs mathtools |
+| `\mathrlap` | `{x}` | mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\llap/\rlap/\clap); needs mathtools |
+| `\mathclap` | `{x}` | mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\llap/\rlap/\clap); needs mathtools |
 | `\xrightarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
 | `\xleftarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
 | `\xleftrightarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
@@ -852,6 +907,8 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `flushright` | text | right-aligned paragraphs |
 | `quote` | text | indented paragraphs |
 | `quotation` | text | indented paragraphs |
+| `sloppypar` | text | a paragraph set with \sloppy |
+| `samepage` | text | \samepage for the body |
 | `verse` | text | indented lines; each \\ ends a line |
 | `tabbing` | text | tab stops: \= sets a stop, \> jumps right, \\ ends a row, \kill ends a row silently (\<, \+ and \- warn and are ignored) |
 | `itemize` | text | bulleted list; article labels per depth, \item[label] |
@@ -876,6 +933,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `Vmatrix` | math | math grid, centred cells in ‖ ‖ |
 | `cases` | math | math grid, left-aligned cells with a left { |
 | `dcases` | math | math grid, left-aligned cells with a left { |
+| `rcases` | math | math grid, left-aligned cells with a right } |
 | `aligned` | math | math grid, centred cells |
 | `alignedat` | math | math grid, centred cells |
 | `split` | math | math grid, centred cells |
@@ -925,7 +983,7 @@ in `diagnostics[]`. The common codes and what to do about them:
 
 | Code | Severity | Meaning | What you can do |
 |---|---|---|---|
-| `missing_file`, `include_cycle`, `path_escapes_root`, `invalid_path`, `not_utf8`, `read_error`, `include_depth`, `unresolved_reference` | error (warning for `unresolved_reference`) | From `flashtex`'s project discovery: an `\input`/`\include`/`\includegraphics` target that does not exist, includes itself, points outside the project root (`..`) or is a symbolic link (refused wherever the link points), is not a valid project path, is not UTF-8, cannot be read, nests deeper than the limit, or has an argument needing macro expansion (`\input{\jobname}`) | Fix the path; the build continues without that file (`--strict` turns the errors into exit 1) |
+| `missing_file`, `include_cycle`, `path_escapes_root`, `invalid_path`, `not_utf8`, `read_error`, `include_depth`, `unresolved_reference` | error (warning for `unresolved_reference`) | From `flashtex`'s project discovery: an `\input`/`\include`/`\includegraphics` target that does not exist, includes itself, points outside the project root (`..` or a symlink), is not a valid project path, is not UTF-8, cannot be read, nests deeper than the limit, or has an argument needing macro expansion (`\input{\jobname}`) | Fix the path; the build continues without that file (`--strict` turns the errors into exit 1) |
 | `compiler` | warning or error | A message from the parser, re-wrapped by `flashtex-render`: `\foo is not supported by this compiler version`, `packages X are recognised but not implemented`, `\setlist keys leftmargin … are recognised but not implemented`, `environment 'X' is not implemented; its body is typeset as plain text`, `undefined reference`, unmatched braces, an `\input` file not found. (`flashtex-compiler` itself emits these without a `code` field.) | Remove or replace the construct; the `recovery` text says what was rendered instead |
 | `overfull_hbox` | warning | `overfull line: N pt too wide (no hyphenation available)` — a line could not be broken within the text width, so it sticks into the margin like TeX's *Overfull \hbox* | Rephrase or add a break point; hyphenation is not implemented |
 | `overfull_vbox` | warning | A line extends past the page's text area | Shorten the page or force a break with `\newpage` |

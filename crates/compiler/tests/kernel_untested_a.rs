@@ -81,17 +81,15 @@ fn page_texts(source: &str) -> Vec<String> {
         .collect()
 }
 
-/// Bug (GH issue not yet filed): `\AtBeginDocument` hook text is spliced
-/// before the `\begin{document}` marker and dropped as preamble instead of
-/// being typeset ahead of the body. The expansion layer is fine — its
-/// oracle `atbegindocument_in_body` (setup `\AtBeginDocument{BODY}`,
-/// `latex-render`) expects `BODY` in the render stream — so the loss
-/// happens in the compiler pipeline.
+/// GH-ATBEGINDOC (issue #458): `\AtBeginDocument` hook text used to be
+/// spliced before the `\begin{document}` marker and dropped as preamble
+/// instead of being typeset ahead of the body. The engine emits the hook
+/// ahead of the real `\begin{document}` re-emission (kernel-faithful); the
+/// compiler holds hook output (marked by the host prelude) back and
+/// re-emits it right after `\begin{document}` closes.
 /// Minimal repro: `\AtBeginDocument{HOOKA}\begin{document}Body\end{document}`
-/// Expected: `["HOOKABody"]`, mirroring `\AtEndDocument`, whose test below
+/// typesets `["HOOKABody"]`, mirroring `\AtEndDocument`, whose test below
 /// asserts the hook is appended (`["BodyTAILZ"]`).
-/// Actual: `["Body"]` — the hook text is lost with no diagnostic.
-#[ignore = "bug: AtBeginDocument hook text dropped as preamble; see GH issue (not yet filed): `\\AtBeginDocument{HOOKA}\\begin{document}Body\\end{document}` should typeset [\"HOOKABody\"] but yields [\"Body\"]"]
 #[test]
 fn at_begin_document_hook_content_is_typeset_before_the_body() {
     let source = "\\AtBeginDocument{HOOKA}\\begin{document}Body\\end{document}";
@@ -105,6 +103,64 @@ fn at_end_document_hook_content_is_typeset_after_the_body() {
     let source = "\\begin{document}Body\\AtEndDocument{TAILZ}\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));
     assert_eq!(paragraphs(source), ["BodyTAILZ"]);
+}
+
+#[test]
+fn at_begin_document_multiple_hooks_run_in_registration_order() {
+    let source = "\\AtBeginDocument{A}\\AtBeginDocument{B}\\begin{document}C\\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    assert_eq!(paragraphs(source), ["ABC"]);
+}
+
+#[test]
+fn atbegindoc_hook_uses_the_definition_current_at_begin_document() {
+    let out = paragraphs(
+        r"\newcommand{\deferred}{FIRST}\AtBeginDocument{\deferred}\renewcommand{\deferred}{SECOND}\begin{document}Body\end{document}",
+    );
+    assert_eq!(out, vec!["SECONDBody".to_string()]);
+}
+
+#[test]
+fn atbegindoc_hook_can_use_a_macro_defined_after_registration() {
+    let source = r"\AtBeginDocument{\late}\newcommand{\late}{LATE}\begin{document}Body\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    assert_eq!(paragraphs(source), vec!["LATEBody".to_string()]);
+}
+
+#[test]
+fn atbegindoc_multiple_hooks_defer_and_keep_registration_order() {
+    let source = r"\newcommand{\myv}{1}\AtBeginDocument{A\myv}\AtBeginDocument{B\myv}\renewcommand{\myv}{2}\begin{document}C\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    assert_eq!(paragraphs(source), vec!["A2B2C".to_string()]);
+}
+
+#[test]
+fn at_begin_document_hook_with_a_space_keeps_word_separation() {
+    let source = "\\AtBeginDocument{HOOK A}\\begin{document}Body\\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    assert_eq!(paragraphs(source), ["HOOK ABody"]);
+}
+
+#[test]
+fn at_begin_and_end_document_hooks_combine() {
+    let source =
+        "\\AtBeginDocument{HOOKA}\\begin{document}Body\\AtEndDocument{TAILZ}\\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    assert_eq!(paragraphs(source), ["HOOKABodyTAILZ"]);
+}
+
+#[test]
+fn at_begin_document_after_begin_runs_immediately() {
+    let source = "\\begin{document}Body\\AtBeginDocument{LATE}\\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    assert_eq!(paragraphs(source), ["BodyLATE"]);
+}
+
+#[test]
+fn ordinary_preamble_text_is_still_dropped_silently() {
+    let source = "Preamble junk \\begin{document}Body\\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    assert_eq!(paragraphs(source), ["Body"]);
 }
 
 #[test]
@@ -147,7 +203,11 @@ fn bibliographystyle_warns_it_has_no_effect_and_keeps_the_body() {
 fn bigskip_ends_the_paragraph_with_twelve_points_of_space() {
     let source = "\\begin{document}One\\bigskip Two\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));
-    assert!(blocks_debug(source).contains("VSpace { pt: 12.0 }"), "{}", blocks_debug(source));
+    assert!(
+        blocks_debug(source).contains("VSpace { pt: 12.0, stretch_pt: 4.0, shrink_pt: 4.0 }"),
+        "{}",
+        blocks_debug(source)
+    );
     // The space is real in layout: bigskip gaps the baselines 6pt more than medskip.
     let gap = |command: &str| {
         let out = compile(&format!("\\begin{{document}}One{command} Two\\end{{document}}"));
@@ -286,7 +346,11 @@ fn mdseries_switches_back_to_medium_weight() {
 fn medskip_ends_the_paragraph_with_six_points_of_space() {
     let source = "\\begin{document}One\\medskip Two\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));
-    assert!(blocks_debug(source).contains("VSpace { pt: 6.0 }"), "{}", blocks_debug(source));
+    assert!(
+        blocks_debug(source).contains("VSpace { pt: 6.0, stretch_pt: 2.0, shrink_pt: 2.0 }"),
+        "{}",
+        blocks_debug(source)
+    );
 }
 
 #[test]

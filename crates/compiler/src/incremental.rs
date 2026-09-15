@@ -12,7 +12,7 @@
 //! layout rebuild. Any future construct is unsafe until its complete state and
 //! side effects are represented in these cache checks. When in doubt, rebuild.
 
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{limit_repeats, Diagnostic};
 use crate::layout::{self, FlowState, LayoutCursor, Page, PlacedItem, TextItem};
 use crate::math::{MathAtom, MathList, Nucleus};
 use crate::parser::{self, Block, Inline, MacroDependency, MathRow, SourceDocument, VerbatimLine};
@@ -217,13 +217,13 @@ impl Session {
         };
 
         if parsed.document_global_state {
-            let (pages, mut layout_diagnostics) = layout::layout_converged_with_options(
+            let (pages, layout_diagnostics) = layout::layout_converged_with_options(
                 &parsed.blocks,
                 constraints,
                 &parsed.cleveref,
             );
             let mut diagnostics = parsed.diagnostics;
-            diagnostics.append(&mut layout_diagnostics);
+            diagnostics.append(&mut limit_repeats(layout_diagnostics));
             stats.full_recompile = true;
             stats.blocks_recomputed = parsed.blocks.len();
             let output = CompileOutput {
@@ -350,9 +350,9 @@ impl Session {
         }
         drop(previous);
 
-        let (pages, mut layout_diagnostics) = cursor.into_pages_and_diagnostics();
+        let (pages, layout_diagnostics) = cursor.into_pages_and_diagnostics();
         let mut diagnostics = parsed.diagnostics;
-        diagnostics.append(&mut layout_diagnostics);
+        diagnostics.append(&mut limit_repeats(layout_diagnostics));
         let output = CompileOutput {
             blocks: parsed.blocks,
             diagnostics,
@@ -401,13 +401,15 @@ pub fn compile_full_project_with(
 ) -> CompileOutput {
     let parsed = parser::parse_project_with(documents, entry_path, options);
     let constraints = parsed.preamble_constraints(constraints);
-    let (pages, mut layout_diagnostics) = layout::layout_converged_with_options(
+    let (pages, layout_diagnostics) = layout::layout_converged_with_options(
         &parsed.blocks,
         constraints,
         &parsed.cleveref,
     );
+    // Parser diagnostics are already bounded (`parse_project_with`); the
+    // layout's are bounded on their own, so a summary is never re-counted.
     let mut diagnostics = parsed.diagnostics;
-    diagnostics.append(&mut layout_diagnostics);
+    diagnostics.append(&mut limit_repeats(layout_diagnostics));
     CompileOutput {
         blocks: parsed.blocks,
         diagnostics,
@@ -499,7 +501,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             }
             shift_inlines(content, changes, deltas)
         }
-        Block::VSpace { pt: _ } => Some(()),
+        Block::VSpace { .. } => Some(()),
         Block::Rule { span } => map_span(span, changes, deltas),
         Block::PageBreak => Some(()),
         Block::Verbatim { lines, span } => {
@@ -522,6 +524,11 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             Some(())
         }
         Block::VFill => Some(()),
+        Block::Penalty {
+            value: _,
+            fil: _,
+            span,
+        } => map_span(span, changes, deltas),
         Block::LetterBlock {
             part: _,
             lines,
@@ -614,7 +621,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             } => map_span(span, changes, deltas)?,
             Inline::CleverReference { span, .. } => map_span(span, changes, deltas)?,
             Inline::HFill { span, .. } => map_span(span, changes, deltas)?,
-            Inline::HSpace { pt: _, span } => map_span(span, changes, deltas)?,
+            Inline::HSpace { span, .. } => map_span(span, changes, deltas)?,
             Inline::Footnote {
                 number: _,
                 span,
@@ -630,6 +637,20 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => {
                 map_span(span, changes, deltas)?
             }
+            Inline::Penalty {
+                value: _,
+                span,
+                unskip: _,
+            } => map_span(span, changes, deltas)?,
+            Inline::PagePenalty { value: _, span } => map_span(span, changes, deltas)?,
+            Inline::Discretionary {
+                pre: _,
+                post: _,
+                nobreak: _,
+                hyphen: _,
+                span,
+                style: _,
+            } => map_span(span, changes, deltas)?,
             Inline::TabStop { span } | Inline::TabJump { span } => {
                 map_span(span, changes, deltas)?
             }
@@ -737,9 +758,9 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
                 shift_math_list(numerator, changes, deltas)?;
                 shift_math_list(denominator, changes, deltas)?;
             }
-            Nucleus::Phantom { body, .. } | Nucleus::Operator { body, .. } => {
-                shift_math_list(body, changes, deltas)?
-            }
+            Nucleus::Phantom { body, .. }
+            | Nucleus::Operator { body, .. }
+            | Nucleus::Lap { body, .. } => shift_math_list(body, changes, deltas)?,
             Nucleus::ExtArrow { above, below, .. } => {
                 shift_math_list(above, changes, deltas)?;
                 shift_math_list(below, changes, deltas)?;
@@ -838,7 +859,8 @@ fn block_signature(block: &Block) -> BlockSignature {
         | Block::PageBreak
         | Block::Verbatim { .. }
         | Block::TableOfContents { .. }
-        | Block::VFill => &[],
+        | Block::VFill
+        | Block::Penalty { .. } => &[],
         // Signature only (see the doc comment above): the first line is
         // enough to narrow the candidate set, and `shift_block`'s full
         // equality check still gates every reuse.
@@ -874,6 +896,9 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::Graphic(graphic) => graphic.span,
         Inline::Transform(transform) => transform.span,
         Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => *span,
+        Inline::Penalty { span, .. }
+        | Inline::PagePenalty { span, .. }
+        | Inline::Discretionary { span, .. } => *span,
         Inline::TabStop { span } | Inline::TabJump { span } => *span,
     };
     let first = inlines.first().map(span_of);

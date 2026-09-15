@@ -62,8 +62,8 @@ fn real_unimplemented_latex_is_an_unsupported_feature() {
             r"\tikz is not supported in the document preamble",
         ),
         (
-            r"Visible \begin{samepage}body\end{samepage} Tail.",
-            "environment 'samepage'",
+            r"Visible \begin{picture}body\end{picture} Tail.",
+            "environment 'picture'",
         ),
     ] {
         assert_eq!(
@@ -243,16 +243,16 @@ fn math_mode_help_is_real_or_absent() {
         bogus[0].help
     );
 
-    let samepage = compile_full(
-        r"Visible \begin{samepage}body\end{samepage} Tail.",
+    let picture = compile_full(
+        r"Visible \begin{picture}body\end{picture} Tail.",
         LayoutConstraints::default(),
     );
-    let env: Vec<_> = samepage
+    let env: Vec<_> = picture
         .diagnostics
         .iter()
-        .filter(|d| d.message.contains("environment 'samepage'"))
+        .filter(|d| d.message.contains("environment 'picture'"))
         .collect();
-    assert_eq!(env.len(), 1, "{:?}", samepage.diagnostics);
+    assert_eq!(env.len(), 1, "{:?}", picture.diagnostics);
     assert!(env[0].help.is_none(), "restating help: {:?}", env[0].help);
 }
 

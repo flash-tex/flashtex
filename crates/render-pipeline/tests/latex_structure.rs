@@ -26,7 +26,12 @@ fn items(text: &str, options: &RenderOptions) -> Vec<(u32, String, f64, f64, usi
                     baseline_y_pt,
                     source,
                     ..
-                } => Some((p.number, text.clone(), *x_pt, *baseline_y_pt, source.start_byte, source.end_byte)),
+                } => {
+                    // Chrome (the page number) has no source; these
+                    // structure tests are about sourced text.
+                    let source = source.as_ref()?;
+                    Some((p.number, text.clone(), *x_pt, *baseline_y_pt, source.start_byte, source.end_byte))
+                }
                 V1Item::Rule { .. } => None,
             })
         })

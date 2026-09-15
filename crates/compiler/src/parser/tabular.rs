@@ -192,7 +192,8 @@ fn block_inlines(block: Block) -> Vec<Inline> {
         | Block::Verbatim { .. }
         | Block::TableOfContents { .. }
         | Block::TitleBlock { .. }
-        | Block::VFill => Vec::new(),
+        | Block::VFill
+        | Block::Penalty { .. } => Vec::new(),
         // A `\opening`/`\closing` block inside a tabular cell cannot
         // happen: both flush the paragraph and push a block of their own,
         // and a cell only ever collects inline content.
@@ -722,7 +723,7 @@ impl P<'_> {
             arraystretch,
             style,
             array_package,
-            span: Span::in_document(open.document, open.start, end),
+            span: self.span_through(open, end),
             space_before,
             rule_color,
             double_rule_sep_color,

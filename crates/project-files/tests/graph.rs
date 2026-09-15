@@ -612,3 +612,56 @@ fn project_path_display_and_ordering() {
     );
     assert_eq!(format!("{}", pp("./x/../y.tex")), "y.tex");
 }
+
+/// Review finding 3: existence is probed through the pinned root without
+/// following anything, so a broken symlink, a symlink to a directory, and a
+/// reference under a symlinked directory that has no such file are all
+/// refused as symlinks rather than reported as missing files.
+#[cfg(unix)]
+#[test]
+fn broken_and_directory_symlinks_are_refused_not_missing() {
+    let outside = TempDir::new("probe-outside");
+    outside.write("sub/keep.txt", "x");
+    let t = TempDir::new("probe-symlinks");
+    t.write(
+        "main.tex",
+        "\\input{broken}\n\\input{dirlink}\n\\input{linked/absent}\n\\input{really-missing}",
+    );
+    let link = std::os::unix::fs::symlink;
+    link(t.root().join("nowhere.tex"), t.root().join("broken.tex")).unwrap();
+    link(outside.root().join("sub"), t.root().join("dirlink.tex")).unwrap();
+    link(outside.root().to_path_buf(), t.root().join("linked")).unwrap();
+    let g = ProjectGraph::discover(t.root(), &pp("main.tex")).unwrap();
+    assert_eq!(paths(&g), ["main.tex"]);
+    let got: Vec<(&str, bool)> = g
+        .diagnostics()
+        .iter()
+        .map(|d| {
+            (
+                d.message.as_str(),
+                matches!(d.kind, DiagnosticKind::EscapesRootViaSymlink { .. }),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (
+                "\\input{broken}: broken.tex is a symbolic link; project files are read without following symlinks",
+                true
+            ),
+            (
+                "\\input{dirlink}: dirlink.tex is a symbolic link; project files are read without following symlinks",
+                true
+            ),
+            (
+                "\\input{linked/absent}: linked/absent.tex: `linked` is a symbolic link; project files are read without following symlinks",
+                true
+            ),
+            (
+                "\\input{really-missing}: no file found (tried really-missing.tex, really-missing)",
+                false
+            ),
+        ]
+    );
+}

@@ -57,6 +57,9 @@ pub enum IntParam {
     Newlinechar,
     /// e-TeX `\eTeXversion` (read-only in TeX; 2).
     ETeXVersion,
+    /// Internal: the host's font selector (`FontSwitch`), scoped like
+    /// TeX's current font. Not reachable from TeX source.
+    Font,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +67,10 @@ pub enum Primitive {
     /// A host-typeset command (`Engine::declare_host_command`): defined, but
     /// emitted unchanged.
     Host,
+    /// A host command that performs an assignment
+    /// (`Engine::declare_host_assignment`): like `Host`, but `\global`
+    /// is passed through ahead of it instead of being an error.
+    HostAssignment,
     Relax,
     Par,
     Def,
@@ -524,7 +531,7 @@ impl Frames {
     }
 }
 
-const INT_PARAMS: usize = 4;
+const INT_PARAMS: usize = 5;
 
 fn int_param_index(p: IntParam) -> usize {
     match p {
@@ -532,6 +539,7 @@ fn int_param_index(p: IntParam) -> usize {
         IntParam::Endlinechar => 1,
         IntParam::Newlinechar => 2,
         IntParam::ETeXVersion => 3,
+        IntParam::Font => 4,
     }
 }
 

@@ -65,8 +65,8 @@ const SOURCE_CASES: &[SourceCase] = &[
     },
     SourceCase {
         name: "unimplemented environment",
-        input: r"Visible \begin{samepage}body\end{samepage} Tail.",
-        message: "environment 'samepage' is not implemented",
+        input: r"Visible \begin{picture}body\end{picture} Tail.",
+        message: "environment 'picture' is not implemented",
     },
     SourceCase {
         name: "missing required command argument",

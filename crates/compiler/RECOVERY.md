@@ -1,4 +1,4 @@
-Generated from commit `36fe7ec32986846490432a5aa95556ff51526a79` by `cargo test --test recovery generate_recovery_evidence -- --ignored --exact`.
+Generated from commit `82a9861604eb6b5628ec1876dd0692b784d1d93b` by `cargo test --test recovery generate_recovery_evidence -- --ignored --exact`.
 
 # FlashTeX recovery evidence
 
@@ -183,20 +183,20 @@ Positioned text items:
 Input:
 
 ```text
-Visible \begin{samepage}body\end{samepage} Tail.
+Visible \begin{picture}body\end{picture} Tail.
 ```
 
 Status: `recovered`
 
 Diagnostics:
 
-- `environment 'samepage' is not implemented; its body is typeset as plain text` — recovery: `typeset the body without the environment's formatting`; byte range: `8..14`
+- `environment 'picture' is not implemented; its body is typeset as plain text` — recovery: `typeset the body without the environment's formatting`; byte range: `8..14`
 
 Positioned text items:
 
 - `Visible` — byte range `0..7`
-- `body` — byte range `24..28`
-- `Tail.` — byte range `43..48`
+- `body` — byte range `23..27`
+- `Tail.` — byte range `41..46`
 
 ## missing required command argument
 
