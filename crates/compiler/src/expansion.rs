@@ -890,22 +890,11 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
-    // `\include`d files still being read: engine input id and the command.
-    let mut included_open: Vec<(u32, Placement)> = Vec::new();
     loop {
         let next = match lookahead.pop_front() {
             Some(t) => Some(t),
             None => engine.next_content_token_with_origin(),
         };
-        // An `\include`d file is finished once the engine has left it: its
-        // closing `\clearpage` precedes the first token read after it.
-        while let Some(&(id, at)) = included_open.last() {
-            if next.is_some() && engine.open_input_ids().contains(&id) {
-                break;
-            }
-            included_open.pop();
-            conv.push(TokenKind::Command("clearpage".to_string()), at);
-        }
         let Some((token, origin)) = next else { break };
         match conv.convert_token(&prepared, &token, origin) {
             Flow::Next => continue,
@@ -917,35 +906,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
                     lookahead.extend(taken);
                     continue;
                 }
-                let read = include(
-                    &mut conv,
-                    &mut engine,
-                    &prepared,
-                    &name,
-                    path.trim(),
-                    at.span,
-                );
-                // latex.ltx `\@include`: `\clearpage`, the file (only when
-                // `\includeonly` selects it), `\clearpage`. A missing file
-                // is `\@input@`'s warning between the two. In the preamble
-                // (`\@nodocument`) nothing is cleared.
-                if name == "include" && conv.document_begun {
-                    let clearpage = |conv: &mut Converter<'_>| {
-                        conv.push(TokenKind::Command("clearpage".to_string()), at)
-                    };
-                    match read {
-                        IncludeRead::Skipped => {}
-                        IncludeRead::Excluded => clearpage(&mut conv),
-                        IncludeRead::Missing => {
-                            clearpage(&mut conv);
-                            clearpage(&mut conv);
-                        }
-                        IncludeRead::Read(id) => {
-                            clearpage(&mut conv);
-                            included_open.push((id, at));
-                        }
-                    }
-                }
+                include(&mut conv, &mut engine, &prepared, &name, path.trim(), at.span);
             }
             Flow::IncludeOnly(at) => {
                 let (taken, path, ok) = read_braced_argument(&mut engine);
@@ -1476,19 +1437,6 @@ fn include_allowed(allowed: &HashSet<String>, requested: &str) -> bool {
     }
 }
 
-/// What [`include`] did with one `\input`/`\include`.
-enum IncludeRead {
-    /// Rejected with an error (empty or unsafe path, cycle, depth).
-    Skipped,
-    /// Not selected by `\includeonly`.
-    Excluded,
-    /// No such project document (an error here, `\@input@`'s warning in
-    /// LaTeX).
-    Missing,
-    /// Pushed as the engine input with this id.
-    Read(u32),
-}
-
 fn include(
     conv: &mut Converter<'_>,
     engine: &mut Engine,
@@ -1496,10 +1444,9 @@ fn include(
     command: &str,
     requested: &str,
     span: Span,
-) -> IncludeRead {
+) {
     let skip = |conv: &mut Converter<'_>, message: String, recovery: &str| {
         conv.diagnostics.push(Diagnostic::error(message, Some(span), Some(recovery.into())));
-        IncludeRead::Skipped
     };
     if requested.is_empty() {
         return skip(
@@ -1516,8 +1463,9 @@ fn include(
         );
     }
     // A recorded, non-empty `\includeonly` list selects which `\include`d
-    // files are read: any other file is not read, and only the caller's
-    // leading `\clearpage` remains of it. `\input` never consults the
+    // files are read: any other file is a pure no-op. (`\include` has no
+    // page-break or paragraph-flush side effect of its own, so there is
+    // nothing to replay for the skipped file.) `\input` never consults the
     // list — real LaTeX tests `\@partlist` only in `\@include`. With no
     // `\includeonly` at all (`None`), every `\include` behaves exactly as
     // before; a recorded list — even an empty one from `\includeonly{}`,
@@ -1525,7 +1473,7 @@ fn include(
     if command == "include" {
         if let Some(allowed) = conv.includeonly.as_ref() {
             if !include_allowed(allowed, requested) {
-                return IncludeRead::Excluded;
+                return;
             }
         }
     }
@@ -1545,7 +1493,6 @@ fn include(
             .with_help(format!(
                 "add '{requested}' or '{appended}' to the project documents, or fix the \\input path"
             )));
-            IncludeRead::Missing
         };
     };
     let open: Vec<usize> = engine
@@ -1574,5 +1521,4 @@ fn include(
     }
     let id = engine.push_input(prepared[index].text.as_ref());
     conv.source_documents.insert(id, Some(index));
-    IncludeRead::Read(id)
 }
