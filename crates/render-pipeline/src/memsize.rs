@@ -191,8 +191,10 @@ pub fn walk_item(item: &Item, r: &mut Report) {
 }
 
 fn walk_page(p: &Page, r: &mut Report) {
-    r.add("Page.items vec (Item slots)", vec_cap_bytes(&p.items), p.items.len() as u64);
-    for it in &p.items {
+    // An elided page holds no items to charge — that is the point of it.
+    let Some(page_items) = p.items() else { return };
+    r.add("Page.items vec (Item slots)", vec_cap_bytes(page_items), page_items.len() as u64);
+    for it in page_items {
         walk_item(it, r);
     }
 }
@@ -359,7 +361,7 @@ pub struct CaretAudit {
 
 pub fn audit_carets(dl: &DisplayList, a: &mut CaretAudit) {
     for p in &dl.pages {
-        for it in &p.items {
+        for it in p.items().into_iter().flatten() {
             let Item::GlyphRun(run) = it else { continue };
             a.runs += 1;
             a.clusters += run.clusters.len() as u64;

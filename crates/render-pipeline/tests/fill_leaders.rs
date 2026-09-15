@@ -71,7 +71,7 @@ fn rule_fill_matches_pdflatex_geometry() {
         return;
     }
     let rendered = rendered("A\\hrulefill B");
-    let items = &rendered.v2.pages[0].items;
+    let items = rendered.v2.pages[0].resident_items();
     let rule = synthetic_rule(items, "\\hrulefill");
     let a = text_run(items, "A");
     let baseline = pt(a.glyphs[0].baseline_y);
@@ -86,7 +86,7 @@ fn dot_fill_matches_pdflatex_cleaders() {
         return;
     }
     let rendered = rendered("A\\dotfill B");
-    let items = &rendered.v2.pages[0].items;
+    let items = rendered.v2.pages[0].resident_items();
     let dots = synthetic_run(items, "\\dotfill");
     let a = text_run(items, "A");
     let b = text_run(items, "B");
@@ -118,7 +118,7 @@ fn large_dot_fill_uses_large_dots() {
     // dot are NOT 14.4pt-scaled cmr10 values: cmr17 is an optical size with
     // its own quad and period width, measured here rather than derived.)
     let rendered = rendered("{\\Large A\\dotfill B}");
-    let items = &rendered.v2.pages[0].items;
+    let items = rendered.v2.pages[0].resident_items();
     let dots = synthetic_run(items, "\\dotfill");
     let a = text_run(items, "A");
     let b = text_run(items, "B");
@@ -151,7 +151,7 @@ fn closed_group_dot_fill_uses_ambient_dots() {
     // each end, so the first dot origin is 1.78408pt and the last
     // 177.78488pt from the glue start.
     let rendered = rendered("{\\Large A}\\dotfill B");
-    let items = &rendered.v2.pages[0].items;
+    let items = rendered.v2.pages[0].resident_items();
     let dots = synthetic_run(items, "\\dotfill");
     let a = text_run(items, "A");
     let b = text_run(items, "B");
@@ -174,7 +174,7 @@ fn leader_inside_text_keeps_both_sides() {
         return;
     }
     let rendered = rendered("left\\hrulefill right");
-    let items = &rendered.v2.pages[0].items;
+    let items = rendered.v2.pages[0].resident_items();
     assert!(items.iter().any(|item| matches!(item, Item::GlyphRun(run) if run.text == "left")));
     assert!(items.iter().any(|item| matches!(item, Item::GlyphRun(run) if run.text == "right")));
     synthetic_rule(items, "\\hrulefill");

@@ -134,6 +134,11 @@ pub const ADVANCES: &[(char, u16)] = &[
     // export if it reaches an item's text (e.g. typed literally by an
     // amsthm-style proof ending).
     ('\u{220E}', 666), // ∎ QED
+    // `\not` (`fontmath.ltx` 432: `\mathchardef\not="3236`, cmsy `"36`): the
+    // zero-width negation slash TeX overprints on the relation that follows
+    // it, so `\neq` is exactly as wide as `=`. Latin Modern Math draws it at
+    // U+0338 and gives it the same zero advance cmsy10 does.
+    ('\u{0338}', 0), // ◌̸ \not
 ];
 
 /// The double-struck code point for `\mathbb{letter}`: the Mathematical
@@ -200,7 +205,7 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 84);
+        assert_eq!(ADVANCES.len(), 85);
     }
 
     #[test]

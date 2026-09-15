@@ -11,14 +11,22 @@
 //!   the expander's thread-local caches, the compiler's own arenas);
 //!   `RSS - live` is allocator retention and fragmentation.
 //!
-//! Usage: `memprofile <case-id> [--no-warm]`.
+//! Usage: `memprofile <case-id> [--no-warm] [--window FIRST:COUNT] [--render-only]`.
+//!
+//! `--window` materialises only that page range
+//! (`protocol/proposals/display-list-v2-window.md`). The capability is
+//! negotiated, so a windowed run drives the protocol path like any other;
+//! `--render-only` skips the protocol on both sides. Compare like with like:
+//! the protocol path also builds the v1 payload and the JSON line, and those
+//! bytes are not the window's to remove, so a windowed `--render-only` run is
+//! compared against an unwindowed `--render-only` run.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use flashtex_perf_bench::{corpus, fontgate, sys};
 use flashtex_render_pipeline::memsize;
-use flashtex_render_pipeline::{protocol, RenderCache, RenderOptions};
+use flashtex_render_pipeline::{protocol, PageWindow, RenderCache, RenderOptions};
 
 struct Counting;
 
@@ -65,6 +73,27 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let want = args.first().cloned().unwrap_or_else(|| "synthetic-2mb".into());
     let warm = !args.iter().any(|a| a == "--no-warm");
+    let window = args.iter().position(|a| a == "--window").and_then(|i| args.get(i + 1)).map(|spec| {
+        let (f, c) = spec.split_once(':').expect("--window FIRST:COUNT");
+        PageWindow { first_page: f.parse().expect("FIRST"), page_count: c.parse().expect("COUNT") }
+    });
+    // `--window` used to imply `--render-only` because the capability was not
+    // negotiated; it is now, so a windowed protocol run is a real measurement
+    // of the product path. Comparing a window against an unwindowed control
+    // still has to be done on the SAME path: the protocol path also builds the
+    // v1 payload and the JSON line, and those bytes are not the window's to
+    // remove.
+    let render_only = args.iter().any(|a| a == "--render-only");
+    // `--scroll N`: after the warm keystrokes, move the window across the
+    // document in N steps through the SAME cache -- a viewer scrolling. This
+    // is what proves the window is bounded over a session rather than only at
+    // the first render.
+    let scroll: u32 = args
+        .iter()
+        .position(|a| a == "--scroll")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
 
     // crates/perf-bench -> crates -> repo root, as `main.rs` resolves it.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -91,7 +120,7 @@ fn main() {
     let before = live();
     let cache = RenderCache::new();
     let rendered =
-        flashtex_render_pipeline::render_cached(&docs, &case.entry, 1, "memprofile", &fonts, &options, Some(&cache));
+        flashtex_render_pipeline::render_windowed(&docs, &case.entry, 1, "memprofile", &fonts, &options, Some(&cache), window);
     fontgate::check_diagnostics(&rendered.v2.diagnostics).expect("zero font diagnostics");
     let after_render = live();
 
@@ -103,9 +132,40 @@ fn main() {
         let base = docs_now[entry_index].1.clone();
         for step in 0..4 {
             docs_now[entry_index].1 = format!("{base}\n% keystroke {step}\n");
-            let line = request(step + 2, &docs_now, &case.entry);
-            let _ = protocol::handle_line(&line, &fonts, &options, Some(&cache));
+            if render_only {
+                let srcs: Vec<flashtex_compiler::parser::SourceDocument<'_>> =
+                    docs_now.iter().map(|(p, t)| flashtex_compiler::parser::SourceDocument { path: p, text: t }).collect();
+                let r = flashtex_render_pipeline::render_windowed(
+                    &srcs, &case.entry, step + 2, "memprofile", &fonts, &options, Some(&cache), window,
+                );
+                std::hint::black_box(&r.v2.pages.len());
+            } else {
+                let line = request(step + 2, &docs_now, &case.entry, window);
+                let _ = protocol::handle_line(&line, &fonts, &options, Some(&cache));
+            }
         }
+    }
+
+    if scroll > 0 {
+        let pages = rendered.v2.pages.len() as u32;
+        let w = window.expect("--scroll needs --window");
+        let srcs: Vec<flashtex_compiler::parser::SourceDocument<'_>> =
+            owned.iter().map(|(p, t)| flashtex_compiler::parser::SourceDocument { path: p, text: t }).collect();
+        for step in 1..=scroll {
+            let first = 1 + (pages.saturating_sub(w.page_count) * step) / scroll.max(1);
+            let r = flashtex_render_pipeline::render_windowed(
+                &srcs,
+                &case.entry,
+                1,
+                "memprofile",
+                &fonts,
+                &options,
+                Some(&cache),
+                Some(PageWindow { first_page: first, page_count: w.page_count }),
+            );
+            std::hint::black_box(&r.v2.pages.len());
+        }
+        println!("(scrolled the window across the document in {scroll} steps through one cache)");
     }
 
     let mut audit = memsize::CaretAudit::default();
@@ -122,6 +182,17 @@ fn main() {
     let walked = r.total();
 
     println!("case            {} ({} bytes, {} pages)", case.id, case.bytes(), rendered.v2.pages.len());
+    match rendered.v2.window {
+        Some(w) => println!(
+            "window          pages {}-{} of {} resident ({} elided); warm path: {}",
+            w.first_page,
+            w.first_page + w.page_count - 1,
+            rendered.v2.pages.len(),
+            rendered.v2.pages.len() as u32 - w.page_count,
+            if render_only { "render-only" } else { "protocol" }
+        ),
+        None => println!("window          none (complete compile); warm path: {}", if render_only { "render-only" } else { "protocol" }),
+    }
     println!("VmRSS           {:>10.1} MiB", mib(rss));
     println!("VmHWM (peak)    {:>10.1} MiB", mib(peak));
     println!("live (alloc)    {:>10.1} MiB", mib(live_now));
@@ -166,10 +237,18 @@ fn main() {
     println!("live after trim  {:>9.1} MiB", mib(live()));
 }
 
-fn request(rev: u64, docs: &[(String, String)], entry: &str) -> String {
-    let mut o = String::from("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"compile\",\"params\":{\"project_id\":\"memprofile\",\"revision\":");
+/// A runtime-v1 `compile` line.
+///
+/// This used to build a JSON-RPC 2.0 envelope (`jsonrpc`/`method`/`params`),
+/// which `protocol::handle_line` answers with `missing_protocol_version` —
+/// so every warm keystroke on the protocol path was an error envelope and
+/// rendered nothing. The `--render-only` runs the window was measured with
+/// were unaffected (they never build a request), but a default run's warm
+/// phase was measuring an empty cache.
+fn request(rev: u64, docs: &[(String, String)], entry: &str, window: Option<PageWindow>) -> String {
+    let mut o = String::from("{\"protocol_version\":1,\"id\":\"memprofile\",\"type\":\"compile\",\"payload\":{\"project_id\":\"memprofile\",\"revision\":");
     o.push_str(&rev.to_string());
-    o.push_str(",\"entry\":");
+    o.push_str(",\"entry_path\":");
     push_json_str(&mut o, entry);
     o.push_str(",\"documents\":[");
     for (i, (p, t)) in docs.iter().enumerate() {
@@ -182,7 +261,20 @@ fn request(rev: u64, docs: &[(String, String)], entry: &str) -> String {
         push_json_str(&mut o, t);
         o.push('}');
     }
-    o.push_str("],\"layout_capabilities\":[\"display-list-v2\"]}}");
+    o.push_str("],\"layout_capabilities\":[\"display-list-v2\"");
+    if let Some(w) = window {
+        // The window is on the wire now (`display-list-v2-window`), so the
+        // protocol path can be measured windowed — which is what the product
+        // actually does for a long document. `-only` goes with it: at scale
+        // neither lever is sufficient alone (proposal §7).
+        o.push_str(",\"display-list-v2-only\",\"display-list-v2-window\"],\"display_list_window\":{\"first_page\":");
+        o.push_str(&w.first_page.to_string());
+        o.push_str(",\"page_count\":");
+        o.push_str(&w.page_count.to_string());
+        o.push_str("}}}");
+    } else {
+        o.push_str("]}}");
+    }
     o
 }
 

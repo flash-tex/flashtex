@@ -38,7 +38,7 @@ fn border_and_content(src: &str) {
         .v2
         .pages
         .iter()
-        .flat_map(|p| p.items.iter())
+        .flat_map(|p| p.resident_items().iter())
         .filter_map(|item| match item {
             Item::Rule(rule) => Some(rule),
             _ => None,
@@ -87,7 +87,7 @@ fn border_and_content(src: &str) {
     };
     let mut inside_text = String::new();
     for page in &r.v2.pages {
-        for item in &page.items {
+        for item in page.resident_items() {
             if let Item::GlyphRun(run) = item {
                 let rects: Vec<_> = run
                     .clusters

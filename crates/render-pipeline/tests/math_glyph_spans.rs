@@ -16,7 +16,7 @@ fn math_map(doc: &str) -> (Vec<(String, String)>, Vec<String>) {
     let mut glyphs = Vec::new();
     let mut rules = Vec::new();
     for page in &r.v2.pages {
-        for item in &page.items {
+        for item in page.resident_items() {
             match item {
                 Item::GlyphRun(run) if run.role == RunRole::Math => {
                     for c in &run.clusters {

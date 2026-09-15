@@ -55,6 +55,17 @@ pub struct ExactPdfOut {
 /// `font_dirs` are probed first for the font bytes; `project_root` is the
 /// directory `image` items resolve under (`None` refuses images).
 pub fn write_pdf_exact(v2: &DisplayList, font_dirs: &[std::path::PathBuf], project_root: Option<&Path>) -> Result<ExactPdfOut, String> {
+    // A PDF is a complete document: it never silently omits a page. A
+    // windowed render is an incomplete view, so it is refused rather than
+    // exported short (`protocol/proposals/display-list-v2-window.md` §5.6).
+    if let Some(w) = v2.window {
+        return Err(format!(
+            "cannot export a windowed render: pages {}-{} of {} were materialised; re-render without a page window",
+            w.first_page,
+            w.first_page + w.page_count - 1,
+            v2.pages.len()
+        ));
+    }
     let envelope = v2.write_json_with("export", true);
     let options = flashtex_pdf::v2::V2Options { font_dirs: font_dirs.to_vec() };
     let (doc, report) = flashtex_pdf::v2::from_v2_rooted(&envelope, &options, project_root)?;
@@ -92,6 +103,17 @@ fn hint(h: &v1::FontHint) -> FontHint {
 }
 
 pub fn write_pdf(v2: &DisplayList) -> Result<PdfOut, String> {
+    // A PDF is a complete document: it never silently omits a page. A
+    // windowed render is an incomplete view, so it is refused rather than
+    // exported short (`protocol/proposals/display-list-v2-window.md` §5.6).
+    if let Some(w) = v2.window {
+        return Err(format!(
+            "cannot export a windowed render: pages {}-{} of {} were materialised; re-render without a page window",
+            w.first_page,
+            w.first_page + w.page_count - 1,
+            v2.pages.len()
+        ));
+    }
     let caps = Capabilities {
         images: false,
         rules: true,

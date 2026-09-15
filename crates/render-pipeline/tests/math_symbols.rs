@@ -31,7 +31,7 @@ fn ams_doc(body: &str) -> String {
 fn math_words(body: &str) -> (Vec<(String, f64)>, Vec<String>) {
     let r = render_one(&doc(body));
     let mut out = Vec::new();
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         if let Item::GlyphRun(run) = item {
             out.push((run.text.clone(), run.glyphs[0].origin_x.to_bp()));
         }
@@ -49,7 +49,7 @@ fn active_primes_use_one_script_style_with_explicit_prime() {
     assert!(!r.v2.diagnostics.iter().any(|d| d.severity == flashtex_render_pipeline::display::Severity::Error), "{:?}", r.v2.diagnostics);
     let mut primes = Vec::new();
     let mut body_size = None;
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         let Item::GlyphRun(run) = item else { continue };
         if run.role != RunRole::Math {
             continue;
@@ -157,7 +157,7 @@ fn math_run_text(body: &str) -> (String, usize) {
     let r = render_one(&doc(body));
     let mut text = String::new();
     let mut glyphs = 0;
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         if let Item::GlyphRun(run) = item {
             if run.role == RunRole::Math {
                 text.push_str(&run.text);
@@ -253,7 +253,7 @@ fn left_right_grows_the_delimiter_to_the_body() {
     let fenced = render_one(&doc("$\\left( \\frac{a}{b} \\right)$"));
     let width = |r: &flashtex_render_pipeline::Rendered| -> f64 {
         let mut xs: Vec<f64> = Vec::new();
-        for item in &r.v2.pages[0].items {
+        for item in r.v2.pages[0].resident_items() {
             if let Item::GlyphRun(run) = item {
                 for g in &run.glyphs {
                     xs.push(g.origin_x.to_bp());
@@ -280,7 +280,7 @@ fn math_face_glyphs(body: &str, text: &str) -> Vec<(u16, f64, f64, f64)> {
     let text_doc = doc(body);
     let r = render(&[SourceDocument { path: "main.tex", text: &text_doc }], "main.tex", 7, "test-project", &fonts, &RenderOptions::default());
     let text_baseline = r.v2.pages[0]
-        .items
+        .resident_items()
         .iter()
         .find_map(|item| match item {
             Item::GlyphRun(run) if run.role == RunRole::Text => Some(run.glyphs[0].baseline_y.to_bp()),
@@ -288,7 +288,7 @@ fn math_face_glyphs(body: &str, text: &str) -> Vec<(u16, f64, f64, f64)> {
         })
         .expect("a text word");
     let mut out = Vec::new();
-    for item in &r.v2.pages[0].items {
+    for item in r.v2.pages[0].resident_items() {
         if let Item::GlyphRun(run) = item {
             if run.role != RunRole::Math {
                 continue;
@@ -324,7 +324,7 @@ struct PositionedMathGlyph {
 fn positioned_math_glyphs(r: &flashtex_render_pipeline::Rendered) -> Vec<PositionedMathGlyph> {
     let mut out = Vec::new();
     for page in &r.v2.pages {
-        for item in &page.items {
+        for item in page.resident_items() {
             let Item::GlyphRun(run) = item else { continue };
             if run.role != RunRole::Math {
                 continue;
@@ -537,6 +537,91 @@ fn mathtools_colons_match_pdflatex_vertical_oracle_without_spacing_changes() {
     }
 }
 
+/// `(cluster text, advance bp, ink left bp, ink right bp)` of every glyph on
+/// page 1, each measured against its own face — a negated relation is drawn
+/// from two faces at once (the relation from `lmr10`, the slash from Latin
+/// Modern Math), so the ink boxes only line up in absolute page coordinates.
+fn glyph_ink_x(body: &str) -> Vec<(String, f64, f64, f64)> {
+    use flashtex_render_pipeline::ids::GlyphId;
+    use flashtex_render_pipeline::FontSet;
+    let fonts = FontSet::with_default_dirs(&[]);
+    let r = render_one_with(&doc(body), &fonts);
+    let mut out = Vec::new();
+    for item in &r.v2.pages[0].items {
+        let Item::GlyphRun(run) = item else { continue };
+        // A face this set cannot name (a Core14 fallback) has no outline to
+        // measure here; the negated relations below are never drawn from one.
+        let Some(face) = fonts.by_font_id(&run.font_id) else { continue };
+        let size = run.font_size.to_bp();
+        for g in &run.glyphs {
+            let c = &run.clusters[g.cluster as usize];
+            let text = run.text[c.text_start_byte as usize..c.text_end_byte as usize].to_string();
+            let b = face.bounds(GlyphId(g.gid), None);
+            if b.empty {
+                continue;
+            }
+            let x = g.origin_x.to_bp();
+            out.push((
+                text,
+                g.advance_x.to_bp(),
+                x + face.pt(i64::from(b.x_min), size),
+                x + face.pt(i64::from(b.x_max), size),
+            ));
+        }
+    }
+    out
+}
+
+/// `\not` (`fontmath.ltx` 432: `\mathchardef\not="3236`) is a zero-width
+/// overprint: TeX sets the cmsy slash in an empty box and the relation that
+/// *follows* it draws on top, which is why `\hbox{$\neq$}`, `\hbox{$\not=$}`
+/// and `\hbox{$=$}` are all 7.77780 pt at 10 pt (pdflatex TL2025) and
+/// `\hbox{$a\ne b$}` is `\hbox{$a=b$}`'s 22.91077 pt.
+///
+/// The painting face draws that slash at U+0338, and U+0338 is a Unicode
+/// *combining* mark: it composes with the character *before* it, so its ink
+/// lies entirely to the LEFT of its own origin (Latin Modern Math puts it at
+/// x in [-4.58, -0.69] pt at 10 pt). Painted at TeX's box origin the slash
+/// therefore landed in the thick space in front of the relation — its ink
+/// ended 1.25 pt short of where the equals sign's ink began — so `\ne` and
+/// `\neq` drew a stroke floating in the gap instead of a struck-through `=`.
+/// That is the whole of "`\ne` and `\neq` don't work": the advances were
+/// already pdflatex's to the scaled point.
+///
+/// The slash is kerned onto the relation's ink centre instead, which is what
+/// the amssymb negated sentinels already do and what this face's own
+/// precomposed negations look like (its U+2260/U+2209 ink boxes are exactly
+/// their base relation's). No box moves: the slash still advances zero.
+#[test]
+fn the_negation_slash_is_painted_across_the_relation_it_negates() {
+    if !lm_available() {
+        return;
+    }
+    for (body, relation) in [("$a \\neq b$", '='), ("$a \\ne b$", '='), ("$a \\notin b$", '\u{2208}')] {
+        let glyphs = glyph_ink_x(body);
+        let slash = glyphs
+            .iter()
+            .find(|(t, adv, _, _)| t.contains('\u{0338}') && *adv == 0.0)
+            .unwrap_or_else(|| panic!("{body}: no zero-width U+0338 glyph in {glyphs:?}"));
+        let rel = glyphs
+            .iter()
+            .find(|(t, adv, _, _)| t.contains(relation) && *adv > 0.0)
+            .unwrap_or_else(|| panic!("{body}: no {relation:?} glyph in {glyphs:?}"));
+        let (_, _, sl, sr) = *slash;
+        let (_, _, rl, rr) = *rel;
+        assert!(
+            sl >= rl - 0.01 && sr <= rr + 0.01,
+            "{body}: the slash's ink ({sl:.3}, {sr:.3}) bp is not inside the {relation:?} it negates ({rl:.3}, {rr:.3})"
+        );
+        assert!(
+            ((sl + sr) - (rl + rr)).abs() < 0.02,
+            "{body}: the slash's ink centre {:.3} bp is not the {relation:?}'s {:.3}",
+            (sl + sr) / 2.0,
+            (rl + rr) / 2.0
+        );
+    }
+}
+
 /// The cmex chain step math-layout selects (`\Big(` = cmex 0x10, 18 pt, for
 /// a `\left(` around a text-style fraction; `\bigg(` = 0x12, 24 pt, in
 /// display — pdflatex sets `lmex10` codes 0x10/0x12 there in the oracle
@@ -601,7 +686,7 @@ fn cm_less_symbols_are_painted_from_latin_modern_math() {
     let fonts = staged.font_set(&[], ambient_tfm_dirs());
     let r = render_one_with(&ams_doc("A $\\mathbb{Z}\\aleph$ $\\mathbb{R}\\setminus\\mathbb{Q}$ $x\\Longrightarrow y$ $10 - x$ B"), &fonts);
     let runs: Vec<(String, u16)> = r.v2.pages[0]
-        .items
+        .resident_items()
         .iter()
         .filter_map(|it| match it {
             Item::GlyphRun(run) => Some((run.text.clone(), run.glyphs[0].gid)),
@@ -664,7 +749,7 @@ fn mathbb_paints_from_new_computer_modern_when_bundled() {
     // The face each double-struck run paints from, by its `fonts` entry.
     let bb_faces = |r: &flashtex_render_pipeline::Rendered| -> Vec<(String, String, String)> {
         r.v2.pages[0]
-            .items
+            .resident_items()
             .iter()
             .filter_map(|it| match it {
                 Item::GlyphRun(run) if run.text.chars().any(|c| matches!(c, 'ℤ' | 'ℝ' | 'ℚ' | 'ℕ')) => {
@@ -717,7 +802,7 @@ fn mathbb_paints_from_new_computer_modern_when_bundled() {
     // advances, which is the point).
     let others = |r: &flashtex_render_pipeline::Rendered| -> Vec<(String, String, u16)> {
         let mut out = Vec::new();
-        for it in &r.v2.pages[0].items {
+        for it in r.v2.pages[0].resident_items() {
             let Item::GlyphRun(run) = it else { continue };
             let ps = r.v2.fonts.iter().find(|f| f.font_id == run.font_id).map(|f| f.postscript_name.clone()).unwrap_or_default();
             for g in &run.glyphs {
@@ -782,7 +867,7 @@ fn mathcal_sets_at_cmsy_metrics_and_paints_from_new_computer_modern_when_bundled
     // size (runs split differently once the faces alternate).
     let cal_runs = |r: &flashtex_render_pipeline::Rendered| -> Vec<(String, String, String, Tick, Tick)> {
         let mut out = Vec::new();
-        for it in &r.v2.pages[0].items {
+        for it in r.v2.pages[0].resident_items() {
             let Item::GlyphRun(run) = it else { continue };
             let f = r.v2.fonts.iter().find(|f| f.font_id == run.font_id).expect("run font is a fonts entry");
             for g in &run.glyphs {
@@ -798,7 +883,7 @@ fn mathcal_sets_at_cmsy_metrics_and_paints_from_new_computer_modern_when_bundled
     // The `(` right after `\mathcal{P}`.
     let paren_x = |r: &flashtex_render_pipeline::Rendered| -> Tick {
         r.v2.pages[0]
-            .items
+            .resident_items()
             .iter()
             .find_map(|it| match it {
                 Item::GlyphRun(run) if run.text == "(" => Some(run.glyphs[0].origin_x),
@@ -896,7 +981,7 @@ fn varnothing_sets_at_msbm_width_and_paints_from_new_computer_modern_when_bundle
     // Every glyph of page 1 as `(text, painting face, sha256, origin x, size)`.
     let glyphs = |r: &flashtex_render_pipeline::Rendered| -> Vec<(String, String, String, Tick, Tick)> {
         let mut out = Vec::new();
-        for it in &r.v2.pages[0].items {
+        for it in r.v2.pages[0].resident_items() {
             let Item::GlyphRun(run) = it else { continue };
             let f = r.v2.fonts.iter().find(|f| f.font_id == run.font_id).expect("run font is a fonts entry");
             for g in &run.glyphs {

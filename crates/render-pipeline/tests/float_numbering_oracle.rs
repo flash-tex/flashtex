@@ -35,7 +35,7 @@ fn num(v: &Value, k: &str) -> f64 {
 fn runs(r: &flashtex_render_pipeline::Rendered) -> Vec<(u32, f64, f64, String)> {
     let mut out = Vec::new();
     for p in &r.v2.pages {
-        for it in &p.items {
+        for it in p.resident_items() {
             if let Item::GlyphRun(run) = it {
                 if run.role == RunRole::Text && !run.glyphs.is_empty() {
                     let g = run.glyphs[0];

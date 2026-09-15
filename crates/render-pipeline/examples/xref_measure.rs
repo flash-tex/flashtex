@@ -144,7 +144,7 @@ fn heading_pages(text: &str, v2: &flashtex_render_pipeline::DisplayList, section
         .collect();
     let mut out = BTreeMap::new();
     for page in &v2.pages {
-        for item in &page.items {
+        for item in page.resident_items() {
             if let flashtex_render_pipeline::display::Item::GlyphRun(run) = item {
                 for c in &run.clusters {
                     for src in c.provenance.sources() {

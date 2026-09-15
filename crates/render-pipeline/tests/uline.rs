@@ -43,7 +43,7 @@ fn assert_ulem_rule(class_opt: &str, size_pt: f64) {
     let rendered = render_one(&uline_doc(class_opt));
     let page = &rendered.v2.pages[0];
     let words: Vec<_> = page
-        .items
+        .resident_items()
         .iter()
         .filter_map(|item| match item {
             Item::GlyphRun(run)
@@ -55,7 +55,7 @@ fn assert_ulem_rule(class_opt: &str, size_pt: f64) {
         })
         .collect();
     let summary: Vec<String> = page
-        .items
+        .resident_items()
         .iter()
         .map(|item| match item {
             Item::GlyphRun(run) => format!("text:{:?}", run.text),
@@ -82,7 +82,7 @@ fn assert_ulem_rule(class_opt: &str, size_pt: f64) {
     // pdflatex `\hrule height -0.25em`: rule top 0.25em below the baseline.
     let want_top = Tick::from_tex_pt(0.25 * size_pt).to_bp();
     let rules: Vec<_> = page
-        .items
+        .resident_items()
         .iter()
         .filter_map(|item| match item {
             Item::Rule(rule) => Some(rule),
