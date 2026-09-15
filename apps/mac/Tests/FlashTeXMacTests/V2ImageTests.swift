@@ -291,9 +291,11 @@ final class V2ImageTests: XCTestCase {
     func testPaneRequestsImagesAlongsideV2AndTheCompileRequestCarriesProjectRoot() throws {
         let model = ShellModel()
         model.setLiveV2(true)
-        XCTAssertEqual(model.requestedLayoutCapabilities.suffix(3), [V2Live.capability, RenderingV2.imagesCapability, RenderingV2.linksCapability])
+        XCTAssertEqual(model.requestedLayoutCapabilities.suffix(4), [V2Live.capability, RenderingV2.imagesCapability, RenderingV2.linksCapability, RenderingV2.diagnosticsCapability])
         model.setLiveV2(false)
         XCTAssertFalse(model.requestedLayoutCapabilities.contains(RenderingV2.imagesCapability))
+        XCTAssertFalse(model.requestedLayoutCapabilities.contains(RenderingV2.linksCapability))
+        XCTAssertFalse(model.requestedLayoutCapabilities.contains(RenderingV2.diagnosticsCapability))
         let req = RuntimeV1.CompileRequest(projectId: "p", revision: 1, entryPath: "main.tex", documents: [.init(path: "main.tex", text: "x")],
                                            layoutCapabilities: ["display-list-v2", RenderingV2.imagesCapability], projectRoot: "/tmp/proj")
         let json = try JSONSerialization.jsonObject(with: try JSONEncoder().encode(req)) as! [String: Any]

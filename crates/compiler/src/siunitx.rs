@@ -1315,6 +1315,13 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         | Nucleus::Space { .. }
         | Nucleus::Bold(_)
         | Nucleus::Rule(_) => {}
+        Nucleus::TextRun(pieces) => {
+            for piece in pieces {
+                if let crate::math::TextPiece::Math(list) = piece {
+                    respan_list(list, span);
+                }
+            }
+        }
         Nucleus::Fraction {
             numerator,
             denominator,
@@ -1351,6 +1358,16 @@ fn respan_atom(atom: &mut MathAtom, span: Span) {
         Nucleus::SubArray { rows, .. } => {
             for row in rows {
                 respan_list(row, span);
+            }
+        }
+        Nucleus::SideSet {
+            operator,
+            left_superscript,
+            left_subscript,
+        } => {
+            respan_list(operator, span);
+            for list in [left_superscript, left_subscript].into_iter().flatten() {
+                respan_list(list, span);
             }
         }
     }

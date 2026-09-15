@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Text before the table.
+
+\begin{tabular*}{0.8\textwidth}{@{\extracolsep{\fill}}lcr}\hline Left & Middle & Right\\\hline one & two & three\\\hline\end{tabular*}
+
+Text after the table.
+\end{document}

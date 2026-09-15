@@ -7,11 +7,11 @@
 //! tokens plus any control sequences we don't recognize (left untouched
 //! for the typesetting layer, e.g. `\section`, `\hskip`, font commands).
 //!
-//! All mutable engine state that influences future expansion lives in
-//! [`State`], which is `Clone` so the incremental expander
-//! (`incremental.rs`) can snapshot it at safe points.
+//! Assignment and control state lives in [`State`], which is `Clone` so the
+//! incremental expander (`incremental.rs`) can snapshot it at safe points.
+//! Font-relative metrics are checkpointed alongside that state.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::catcode::CatCode;
@@ -49,10 +49,11 @@ pub(crate) enum Input {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ScannerStatus {
     Normal,
-    /// Skipping conditional text; carries the line of the `\if` and its
+    /// Skipping conditional text; carries the span of the `\if` and its
     /// name for the "Incomplete \if...; all text was ignored after line
-    /// N" message.
-    Skipping { if_name: String, line: usize },
+    /// N" message. The line is computed only when that error is reported:
+    /// counting newlines up to every `\if` made a runaway `\loop` quadratic.
+    Skipping { if_name: String, at: Span },
     /// Scanning a `\def` body ("definition of \foo").
     Defining(String),
     /// Scanning macro arguments ("use of \foo").
@@ -156,6 +157,12 @@ pub(crate) struct State {
     pub in_csname: u32,
     /// Host option, see `Engine::set_emit_unbalanced_close`.
     pub emit_unbalanced_close: bool,
+    /// "group nesting limit exceeded" was reported and no `{` has opened a
+    /// group since: one report per excursion past the limit, not one per
+    /// refused `{`.
+    pub group_limit_reported: bool,
+    /// The same for "conditional nesting limit exceeded".
+    pub conditional_limit_reported: bool,
 }
 
 impl State {
@@ -193,6 +200,8 @@ impl State {
             edef_depth,
             in_csname,
             emit_unbalanced_close,
+            group_limit_reported,
+            conditional_limit_reported,
         } = self;
         conditionals == &new.conditionals
             && *pending_global == new.pending_global
@@ -210,6 +219,8 @@ impl State {
             && *edef_depth == new.edef_depth
             && *in_csname == new.in_csname
             && *emit_unbalanced_close == new.emit_unbalanced_close
+            && *group_limit_reported == new.group_limit_reported
+            && *conditional_limit_reported == new.conditional_limit_reported
             && match (after_assignment, &new.after_assignment) {
                 (None, None) => true,
                 (Some(a), Some(b)) => crate::scopes::token_eq_mapped(a, b, f),
@@ -348,6 +359,26 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
 /// Name of the private sentinel control sequence used to bound nested
 /// full expansions (`\settowidth`, `\label`).
 const SENTINEL: &str = "flashtex@sentinel";
+/// TeX Live's `stack_size`: the deepest input stack (macro bodies being read).
+const TEX_INPUT_STACK_SIZE: usize = 10_000;
+/// tex.web `infinity`: the largest integer TeX's scanner accepts (§445).
+const TEX_INFINITY: i64 = 0x7FFF_FFFF;
+/// tex.web `max_dimen` (§421): 16383.99998pt.
+const TEX_MAX_DIMEN: i64 = 0x3FFF_FFFF;
+
+/// A digit string as TeX's `scan_int` reads it: past `infinity` it is
+/// `infinity` (the caller reports "Number too big.").
+fn parse_clamped(digits: &str, radix: u32) -> (i64, bool) {
+    let mut value: i64 = 0;
+    for c in digits.chars() {
+        let d = c.to_digit(radix).unwrap_or(0) as i64;
+        value = value * radix as i64 + d;
+        if value > TEX_INFINITY {
+            return (TEX_INFINITY, true);
+        }
+    }
+    (value, false)
+}
 
 /// What one dispatch step produced.
 pub(crate) enum Step {
@@ -366,10 +397,31 @@ pub struct Checkpoint {
     pub(crate) lex_state: LexState,
     pub(crate) state: State,
     pub(crate) steps: u64,
+    /// `Engine::last_origin` at the snapshot. The step limit's diagnostic is
+    /// reported there when the very next step is over the limit.
+    pub(crate) last_origin: Option<Span>,
+    /// Font-relative units in force when this checkpoint was taken.
+    pub(crate) quad_sp: i64,
+    pub(crate) x_height_sp: i64,
     /// Number of output tokens / diagnostics / labels produced so far.
     pub out_len: usize,
     pub diag_len: usize,
     pub label_len: usize,
+}
+
+struct FixedFontMetrics {
+    quad_sp: i64,
+    x_height_sp: i64,
+}
+
+impl FontMetrics for FixedFontMetrics {
+    fn quad_sp(&self) -> i64 {
+        self.quad_sp
+    }
+
+    fn x_height_sp(&self) -> i64 {
+        self.x_height_sp
+    }
 }
 
 pub struct Engine {
@@ -379,6 +431,9 @@ pub struct Engine {
     steps: u64,
     pub(crate) st: State,
     diagnostics: Vec<Diagnostic>,
+    /// Diagnostics reported since the engine was last at a safe point (see
+    /// [`Engine::report`]).
+    reported: HashSet<Diagnostic>,
     labels: Vec<LabelRecord>,
     metrics: Rc<dyn FontMetrics>,
     measurer: Rc<dyn BoxMeasurer>,
@@ -429,6 +484,7 @@ impl Engine {
             steps: 0,
             st,
             diagnostics: Vec::new(),
+            reported: HashSet::new(),
             labels: Vec::new(),
             metrics: Rc::new(DefaultFontMetrics),
             measurer: Rc::new(DefaultBoxMeasurer),
@@ -565,12 +621,51 @@ impl Engine {
 
     fn err(&mut self, msg: impl Into<String>, span: Span) {
         let span = self.reported_span(span);
-        self.diagnostics.push(Diagnostic::error(msg, span));
+        self.report(Diagnostic::error(msg, span));
     }
 
     fn warn(&mut self, msg: impl Into<String>, span: Span) {
         let span = self.reported_span(span);
-        self.diagnostics.push(Diagnostic::warning(msg, span));
+        self.report(Diagnostic::warning(msg, span));
+    }
+
+    /// Record `d` unless the identical diagnostic (severity, message, span)
+    /// was already recorded since the engine was last at a safe point. A
+    /// runaway loop never reaches one, so it reports each of its messages
+    /// once instead of once per iteration (a `\loop` of `\ifnum` with a
+    /// missing number reported "Missing number" 2.2 million times).
+    ///
+    /// The set is emptied whenever [`Engine::next_content_token`] returns
+    /// at a safe point, and safe points are where incremental checkpoints
+    /// are taken and where a re-run converges, so a restored engine (whose
+    /// set starts empty) makes exactly the decisions a from-scratch run
+    /// makes.
+    fn report(&mut self, d: Diagnostic) {
+        if self.reported.contains(&d) {
+            return;
+        }
+        self.reported.insert(d.clone());
+        self.diagnostics.push(d);
+    }
+
+    /// [`Engine::safe_point`] without pruning exhausted inputs.
+    fn at_safe_point(&self) -> bool {
+        let live = self.sources.iter().skip(1).any(|input| match input {
+            Input::Toks(toks, pos) => *pos < toks.len(),
+            Input::Text(l) => !l.at_end(),
+        });
+        if live || self.stopped || !self.emit_queue.is_empty() || self.base_lexer().state() != LexState::NewLine {
+            return false;
+        }
+        let st = &self.st;
+        !(st.pending_global
+            || st.pending_long
+            || st.pending_outer
+            || st.pending_protected
+            || st.after_assignment.is_some()
+            || st.scanner_status != ScannerStatus::Normal
+            || st.edef_depth != 0
+            || st.in_csname != 0)
     }
 
     /// Where a diagnostic at `span` is reported: a token of a prelude macro
@@ -654,6 +749,9 @@ impl Engine {
             return;
         }
         self.prune_exhausted();
+        if self.input_capacity_exceeded() {
+            return;
+        }
         let pend = toks.into_iter().map(|tok| Pending { tok, frozen: false, origin }).collect();
         self.sources.push(Input::Toks(pend, 0));
     }
@@ -668,6 +766,9 @@ impl Engine {
             }
         }
         self.prune_exhausted();
+        if self.input_capacity_exceeded() {
+            return;
+        }
         self.sources.push(Input::Toks(toks, 0));
     }
 
@@ -675,6 +776,37 @@ impl Engine {
         self.prune_exhausted();
         let origin = self.last_origin;
         self.sources.push(Input::Toks(vec![Pending { tok, frozen: true, origin }], 0));
+    }
+
+    /// TeX's input stack and main memory limits for pending token lists. A
+    /// macro that re-invokes itself before the end of its own body (so it
+    /// is not a tail call) adds an input level per call: with a long body,
+    /// `\def\a{\csname a\endcsname [[[...]]]}\a` grew past 30 GB before the
+    /// step limit. TeX stops with "TeX capacity exceeded"; so does this.
+    fn input_capacity_exceeded(&mut self) -> bool {
+        let levels = self.sources.len();
+        let message = if levels >= TEX_INPUT_STACK_SIZE {
+            "TeX capacity exceeded, sorry [input stack size=10000]."
+        } else if levels % 64 == 0 && self.pending_token_count() > self.limits.max_output_tokens {
+            "TeX capacity exceeded, sorry [main memory size=5000000]."
+        } else {
+            return false;
+        };
+        let at = self.last_origin.unwrap_or(Span::synthetic());
+        self.err(message, at);
+        self.stopped = true;
+        true
+    }
+
+    /// Tokens still to be read from every token-list input level.
+    fn pending_token_count(&self) -> u64 {
+        self.sources
+            .iter()
+            .map(|input| match input {
+                Input::Toks(toks, pos) => toks.len().saturating_sub(*pos) as u64,
+                Input::Text(_) => 0,
+            })
+            .sum()
     }
 
     /// Pop exhausted token-list inputs off the top of the stack (they are
@@ -778,8 +910,8 @@ impl Engine {
                 format!("Runaway text?\n! Forbidden control sequence found while scanning text of {name}."),
                 Token::synthetic(TokenKind::Char('}', CatCode::EndGroup)),
             ),
-            ScannerStatus::Skipping { if_name, line } => (
-                format!("Incomplete {if_name}; all text was ignored after line {line}."),
+            ScannerStatus::Skipping { if_name, at } => (
+                format!("Incomplete {if_name}; all text was ignored after line {}.", self.line_of_span(at)),
                 Token::synthetic(TokenKind::ControlSequence("fi".into())),
             ),
             ScannerStatus::Normal => unreachable!(),
@@ -807,11 +939,18 @@ impl Engine {
             }
             ScannerStatus::Matching(name) => {
                 self.err(format!("Runaway argument?\n! File ended while scanning use of {name}."), span);
+                // §339: long_state := outer_call, so the inserted \par aborts
+                // the macro call (silently) instead of expanding the body with
+                // a partial argument. Expanding it made `\loop{x}` (no
+                // \repeat) iterate to the step limit.
+                self.st.runaway_par = true;
+                self.st.runaway_par_silent = true;
             }
             ScannerStatus::Absorbing(name) => {
                 self.err(format!("Runaway text?\n! File ended while scanning text of {name}."), span);
             }
-            ScannerStatus::Skipping { if_name, line } => {
+            ScannerStatus::Skipping { if_name, at } => {
+                let line = self.line_of_span(at);
                 self.err(format!("Incomplete {if_name}; all text was ignored after line {line}."), span);
             }
             ScannerStatus::Normal => {}
@@ -830,6 +969,14 @@ impl Engine {
     /// and returns the next token meant for the typesetting layer (or
     /// `None` at end of input).
     pub fn next_content_token(&mut self) -> Option<Token> {
+        let token = self.next_content_token_unchecked();
+        if !self.reported.is_empty() && self.at_safe_point() {
+            self.reported.clear();
+        }
+        token
+    }
+
+    fn next_content_token_unchecked(&mut self) -> Option<Token> {
         loop {
             if !self.tick() {
                 return None;
@@ -1010,6 +1157,9 @@ impl Engine {
             lex_state: self.base_lexer().state(),
             state: self.st.clone(),
             steps: self.steps,
+            last_origin: self.last_origin,
+            quad_sp: self.metrics.quad_sp(),
+            x_height_sp: self.metrics.x_height_sp(),
             out_len,
             diag_len: self.diagnostics.len(),
             label_len: self.labels.len(),
@@ -1020,7 +1170,21 @@ impl Engine {
     pub fn restore(src: Rc<str>, cp: &Checkpoint, limits: Limits) -> Self {
         let mut e = Self::from_parts(src, cp.pos, cp.lex_state, cp.state.clone(), limits);
         e.steps = cp.steps;
+        e.last_origin = cp.last_origin;
+        e.metrics = Rc::new(FixedFontMetrics {
+            quad_sp: cp.quad_sp,
+            x_height_sp: cp.x_height_sp,
+        });
         e
+    }
+
+    pub(crate) fn last_origin(&self) -> Option<Span> {
+        self.last_origin
+    }
+
+    /// The engine stopped because it ran past `max_expansion_steps`.
+    pub(crate) fn hit_step_limit(&self) -> bool {
+        self.steps > self.limits.max_expansion_steps
     }
 
     pub(crate) fn state(&self) -> &State {
@@ -1120,9 +1284,13 @@ impl Engine {
             match cat {
                 CatCode::BeginGroup => {
                     if self.st.scopes.depth() as u32 > self.limits.max_group_depth {
-                        self.err("group nesting limit exceeded", tok.span);
+                        if !self.st.group_limit_reported {
+                            self.st.group_limit_reported = true;
+                            self.err("group nesting limit exceeded", tok.span);
+                        }
                         return Some(Step::Continue);
                     }
+                    self.st.group_limit_reported = false;
                     self.st.scopes.push_group();
                     return Some(Step::Emit(tok.clone()));
                 }
@@ -1440,6 +1608,22 @@ impl Engine {
         self.st.scanner_status = saved_status;
         self.st.matching_long = saved_long;
         if aborted {
+            return;
+        }
+        // `\def\a#1{\a{#1#1}}\a x` doubles its argument on every call: the
+        // step limit is far away when the token lists exhaust memory. TeX
+        // runs out of main memory; so does this, at the output-token budget.
+        let size: u64 = def
+            .body
+            .iter()
+            .map(|part| match part {
+                BodyPart::Literal(_) => 1,
+                BodyPart::Param(n) => args.get(n).map_or(0, |a| a.len() as u64),
+            })
+            .sum();
+        if size > self.limits.max_output_tokens {
+            self.err("TeX capacity exceeded, sorry [main memory size=5000000].", call_tok.span);
+            self.stopped = true;
             return;
         }
         let expansion = substitute_body(&def.body, &args);
@@ -2854,7 +3038,7 @@ impl Engine {
             // LaTeX: "Environment name undefined." -- we still open the
             // group and pass `\name` through, since many environments are
             // handled by the typesetting layer rather than by macros.
-            self.warn(format!("Environment {name} undefined (passed through to the typesetter)."), tok.span);
+            self.warn(format!("Environment {} undefined (passed through to the typesetter).", shown_name(&name)), tok.span);
         }
         self.st.scopes.push_group();
         let cur = Meaning::Macro(Rc::new(MacroDef::simple(chars_as_other(&name, Span::synthetic()))));
@@ -2872,25 +3056,23 @@ impl Engine {
             ]);
             return;
         }
-        // \@checkend: the current environment must be this one.
+        // \@checkend: the current environment must be this one. Compared
+        // part by part, so a runaway loop over a 100k-character name does
+        // not rebuild the name for every `\end`.
         let current = match self.st.scopes.meaning_ref("@currenvir") {
-            Some(Meaning::Macro(def)) => def
-                .body
-                .iter()
-                .map(|p| match p {
-                    BodyPart::Literal(t) => t.display_name(),
-                    BodyPart::Param(n) => format!("#{n}"),
-                })
-                .collect::<String>(),
-            _ => String::new(),
+            Some(Meaning::Macro(def)) => Some(def.clone()),
+            _ => None,
         };
-        if current != name {
-            let line = self.line_of_span(tok.span);
-            let _ = line;
-            self.err(format!("LaTeX Error: \\begin{{{current}}} ended by \\end{{{name}}}."), tok.span);
+        let body: &[BodyPart] = current.as_deref().map_or(&[], |def| &def.body);
+        if !body_spells(body, &name) {
+            let current = body_display(body, SHOWN_NAME_CHARS + 1);
+            self.err(
+                format!("LaTeX Error: \\begin{{{}}} ended by \\end{{{}}}.", shown_name(&current), shown_name(&name)),
+                tok.span,
+            );
         }
         if self.st.scopes.depth() <= 1 {
-            self.err(format!("LaTeX Error: \\end{{{name}}} without matching \\begin."), tok.span);
+            self.err(format!("LaTeX Error: \\end{{{}}} without matching \\begin.", shown_name(&name)), tok.span);
             self.push_tokens(vec![Token::new(TokenKind::ControlSequence(format!("end{name}")), tok.span)]);
             return;
         }
@@ -3263,24 +3445,24 @@ impl Engine {
             Primitive::Advance => match kind {
                 RegisterKind::Count => {
                     let d = self.scan_number();
-                    self.st.scopes.set_count(idx, self.st.scopes.count(idx) + d, global);
+                    self.st.scopes.set_count(idx, tex_wrapping_add(self.st.scopes.count(idx), d), global);
                 }
                 RegisterKind::Dimen => {
                     let d = self.scan_dimen();
-                    self.st.scopes.set_dimen(idx, self.st.scopes.dimen(idx) + d, global);
+                    self.st.scopes.set_dimen(idx, tex_wrapping_add(self.st.scopes.dimen(idx), d), global);
                 }
                 RegisterKind::Skip => {
                     let d = self.scan_glue();
                     let mut g = self.st.scopes.skip(idx);
-                    g.value += d.value;
+                    g.value = tex_wrapping_add(g.value, d.value);
                     if d.stretch_fil == g.stretch_fil {
-                        g.stretch += d.stretch;
+                        g.stretch = tex_wrapping_add(g.stretch, d.stretch);
                     } else if d.stretch_fil > g.stretch_fil {
                         g.stretch = d.stretch;
                         g.stretch_fil = d.stretch_fil;
                     }
                     if d.shrink_fil == g.shrink_fil {
-                        g.shrink += d.shrink;
+                        g.shrink = tex_wrapping_add(g.shrink, d.shrink);
                     } else if d.shrink_fil > g.shrink_fil {
                         g.shrink = d.shrink;
                         g.shrink_fil = d.shrink_fil;
@@ -3291,15 +3473,33 @@ impl Engine {
             },
             Primitive::Multiply => {
                 let d = self.scan_number();
+                // tex.web §1240: `mult_integers` / `nx_plus_y` against
+                // `infinity` / `max_dimen`; on overflow nothing is assigned.
                 match kind {
-                    RegisterKind::Count => self.st.scopes.set_count(idx, self.st.scopes.count(idx) * d, global),
-                    RegisterKind::Dimen => self.st.scopes.set_dimen(idx, self.st.scopes.dimen(idx) * d, global),
+                    RegisterKind::Count => match in_range(self.st.scopes.count(idx).checked_mul(d), TEX_INFINITY) {
+                        Some(v) => self.st.scopes.set_count(idx, v, global),
+                        None => self.err("Arithmetic overflow.", tok.span),
+                    },
+                    RegisterKind::Dimen => match in_range(self.st.scopes.dimen(idx).checked_mul(d), TEX_MAX_DIMEN) {
+                        Some(v) => self.st.scopes.set_dimen(idx, v, global),
+                        None => self.err("Arithmetic overflow.", tok.span),
+                    },
                     RegisterKind::Skip => {
                         let mut g = self.st.scopes.skip(idx);
-                        g.value *= d;
-                        g.stretch *= d;
-                        g.shrink *= d;
-                        self.st.scopes.set_skip(idx, g, global);
+                        let scaled = (
+                            in_range(g.value.checked_mul(d), TEX_MAX_DIMEN),
+                            in_range(g.stretch.checked_mul(d), TEX_MAX_DIMEN),
+                            in_range(g.shrink.checked_mul(d), TEX_MAX_DIMEN),
+                        );
+                        match scaled {
+                            (Some(value), Some(stretch), Some(shrink)) => {
+                                g.value = value;
+                                g.stretch = stretch;
+                                g.shrink = shrink;
+                                self.st.scopes.set_skip(idx, g, global);
+                            }
+                            _ => self.err("Arithmetic overflow.", tok.span),
+                        }
                     }
                     RegisterKind::Toks => {}
                 }
@@ -3485,10 +3685,14 @@ impl Engine {
 
     fn scan_decimal_digits(&mut self) -> i64 {
         let mut s = String::new();
+        let mut first = Span::synthetic();
         loop {
             match self.peek_one_expanding() {
                 Some(t) => match t.kind {
                     TokenKind::Char(c, CatCode::Other) if c.is_ascii_digit() => {
+                        if s.is_empty() {
+                            first = t.span;
+                        }
                         s.push(c);
                         self.next_raw_token();
                     }
@@ -3497,15 +3701,29 @@ impl Engine {
                 None => break,
             }
         }
-        s.parse().unwrap_or(i64::MAX)
+        self.clamped_number(&s, 10, first)
+    }
+
+    /// tex.web §445: a constant past `infinity` is "Number too big." and
+    /// becomes `infinity`.
+    fn clamped_number(&mut self, digits: &str, radix: u32, span: Span) -> i64 {
+        let (value, too_big) = parse_clamped(digits, radix);
+        if too_big {
+            self.err("Number too big.", span);
+        }
+        value
     }
 
     fn scan_radix_digits(&mut self, radix: u32) -> i64 {
         let mut s = String::new();
+        let mut first = Span::synthetic();
         loop {
             match self.peek_one_expanding() {
                 Some(t) => match t.kind {
                     TokenKind::Char(c, CatCode::Other) if c.is_digit(radix) => {
+                        if s.is_empty() {
+                            first = t.span;
+                        }
                         s.push(c);
                         self.next_raw_token();
                     }
@@ -3518,7 +3736,7 @@ impl Engine {
                 None => break,
             }
         }
-        i64::from_str_radix(&s, radix).unwrap_or(0)
+        self.clamped_number(&s, radix, first)
     }
 
     fn skip_one_optional_space(&mut self) {
@@ -3532,7 +3750,18 @@ impl Engine {
     /// Scan a `<dimen>` value in scaled points: `<number>` (possibly with a
     /// decimal point) followed by a unit. Font-relative `em`/`ex` use the
     /// engine's `FontMetrics`.
+    /// `<dimen>`, clamped like tex.web §448: a magnitude of 2^30sp or more is
+    /// "Dimension too large." and becomes `max_dimen`.
     pub fn scan_dimen(&mut self) -> i64 {
+        let v = self.scan_dimen_unclamped();
+        if v.abs() > TEX_MAX_DIMEN {
+            self.err("Dimension too large.", Span::synthetic());
+            return TEX_MAX_DIMEN * v.signum();
+        }
+        v
+    }
+
+    fn scan_dimen_unclamped(&mut self) -> i64 {
         self.skip_spaces();
         let mut neg = false;
         loop {
@@ -3659,7 +3888,7 @@ impl Engine {
                     _ => None,
                 };
                 if let Some(v) = v {
-                    let n: i64 = int_part.parse().unwrap_or(0);
+                    let n = self.clamped_number(&int_part, 10, t.span);
                     let f = round_decimals(&frac);
                     let r = n * v + xn_over_d(v, f, 65536);
                     return if neg { -r } else { r };
@@ -3667,7 +3896,7 @@ impl Engine {
             }
         }
         let unit = self.read_unit_name();
-        let int_val: i64 = int_part.parse().unwrap_or(0);
+        let int_val = self.clamped_number(&int_part, 10, Span::synthetic());
         let per = self.unit_sp(&unit);
         let sp = scale_decimal(int_val, &frac, per);
         self.skip_one_optional_space();
@@ -3793,16 +4022,21 @@ impl Engine {
         if self.maybe_consume_keyword("fil") {
             let mut fil = 1u8;
             while self.maybe_consume_keyword("l") {
-                fil += 1;
+                // tex.web §454: an order past filll is an error, not a new order.
+                if fil == 3 {
+                    self.err("Illegal unit of measure (replaced by filll).", Span::synthetic());
+                } else {
+                    fil += 1;
+                }
             }
-            let int_val: i64 = int_part.parse().unwrap_or(0);
+            let int_val = self.clamped_number(&int_part, 10, Span::synthetic());
             let v = scale_decimal(int_val, &frac, 65536.0);
             self.skip_one_optional_space();
             return (if neg { -v } else { v }, fil);
         }
         let unit = self.read_unit_name();
         let per = self.unit_sp(&unit);
-        let int_val: i64 = int_part.parse().unwrap_or(0);
+        let int_val = self.clamped_number(&int_part, 10, Span::synthetic());
         let v = scale_decimal(int_val, &frac, per);
         self.skip_one_optional_space();
         (if neg { -v } else { v }, 0)
@@ -3819,6 +4053,15 @@ impl Engine {
                 self.next_raw_token();
             }
         }
+        // e-TeX: an intermediate or final value past `infinity` (`max_dimen`
+        // for `\dimexpr`) is "Arithmetic overflow" and the expression is 0.
+        // The steps saturate, so any overflow surfaces as a final value
+        // out of range.
+        let limit = if is_dimen { TEX_MAX_DIMEN } else { TEX_INFINITY };
+        if v.abs() > limit {
+            self.err("Arithmetic overflow.", Span::synthetic());
+            return 0;
+        }
         v
     }
 
@@ -3829,11 +4072,11 @@ impl Engine {
             match self.peek_one_expanding() {
                 Some(t) if matches!(t.kind, TokenKind::Char('+', _)) => {
                     self.next_raw_token();
-                    acc += self.expr_prod(is_dimen);
+                    acc = acc.saturating_add(self.expr_prod(is_dimen));
                 }
                 Some(t) if matches!(t.kind, TokenKind::Char('-', _)) => {
                     self.next_raw_token();
-                    acc -= self.expr_prod(is_dimen);
+                    acc = acc.saturating_sub(self.expr_prod(is_dimen));
                 }
                 _ => break,
             }
@@ -3902,11 +4145,15 @@ impl Engine {
     fn do_conditional(&mut self, prim: Primitive, unless: bool, if_tok: &Token) {
         use Primitive::*;
         if self.st.conditionals.depth() as u32 > self.limits.max_conditional_depth {
-            self.err("conditional nesting limit exceeded", if_tok.span);
+            if !self.st.conditional_limit_reported {
+                self.st.conditional_limit_reported = true;
+                self.err("conditional nesting limit exceeded", if_tok.span);
+            }
             return;
         }
+        self.st.conditional_limit_reported = false;
         let if_name = format!("{}{}", self.esc(), primitive_name(prim));
-        let if_line = self.line_of_span(if_tok.span);
+        let if_at = if_tok.span;
         let shape = if matches!(prim, Ifcase) { IfShape::Case } else { IfShape::TwoWay };
         self.st.conditionals.push(shape, IfBranch::Testing, primitive_name(prim));
         if matches!(prim, Ifcase) {
@@ -3917,7 +4164,7 @@ impl Engine {
                 if remaining == 0 {
                     break;
                 }
-                match self.skip_to_or_else_fi(&if_name, if_line) {
+                match self.skip_to_or_else_fi(&if_name, if_at) {
                     BranchEnd::Or => {
                         remaining -= 1;
                     }
@@ -3987,7 +4234,7 @@ impl Engine {
             self.set_top_branch(IfBranch::Taken);
         } else {
             self.set_top_branch(IfBranch::Skipping);
-            match self.skip_to_or_else_fi(&if_name, if_line) {
+            match self.skip_to_or_else_fi(&if_name, if_at) {
                 BranchEnd::Else => {
                     if let Some(f) = self.st.conditionals.top_mut() {
                         f.branch = IfBranch::Taken;
@@ -4087,10 +4334,10 @@ impl Engine {
 
     /// Skip tokens (respecting nested `\if...\fi`) until an
     /// `\else`/`\or`/`\fi` belonging to *this* conditional level.
-    fn skip_to_or_else_fi(&mut self, if_name: &str, line: usize) -> BranchEnd {
+    fn skip_to_or_else_fi(&mut self, if_name: &str, at: Span) -> BranchEnd {
         let saved = std::mem::replace(
             &mut self.st.scanner_status,
-            ScannerStatus::Skipping { if_name: if_name.to_string(), line },
+            ScannerStatus::Skipping { if_name: if_name.to_string(), at },
         );
         let mut depth = 0i32;
         let result = loop {
@@ -4143,8 +4390,7 @@ impl Engine {
                     }
                     if matches!(frame.branch, IfBranch::Taken) {
                         let name = format!("{}{}", self.esc(), frame.name);
-                        let line = self.line_of_span(tok.span);
-                        self.skip_balanced_to_fi(&name, line);
+                        self.skip_balanced_to_fi(&name, tok.span);
                     }
                 }
                 _ => unreachable!("handle_stray_or_else_fi is only called with Fi/Else/Or"),
@@ -4155,10 +4401,10 @@ impl Engine {
         }
     }
 
-    fn skip_balanced_to_fi(&mut self, if_name: &str, line: usize) {
+    fn skip_balanced_to_fi(&mut self, if_name: &str, at: Span) {
         let saved = std::mem::replace(
             &mut self.st.scanner_status,
-            ScannerStatus::Skipping { if_name: if_name.to_string(), line },
+            ScannerStatus::Skipping { if_name: if_name.to_string(), at },
         );
         let mut depth = 0i32;
         loop {
@@ -4669,16 +4915,31 @@ fn xn_over_d(x: i64, n: i64, d: i64) -> i64 {
     }
 }
 
+/// `value` when it exists and its magnitude is at most `limit`.
+fn in_range(value: Option<i64>, limit: i64) -> Option<i64> {
+    value.filter(|v| v.abs() <= limit)
+}
+
+/// tex.web §1238-1239: `\advance` adds with the host's 32-bit integer
+/// arithmetic and no range check, so it wraps silently (pdfTeX:
+/// `\count0=2147483647 \advance\count0 by 1` gives -2147483648; dimens and
+/// glue components wrap the same way in scaled points).
+fn tex_wrapping_add(a: i64, b: i64) -> i64 {
+    i64::from((a as i32).wrapping_add(b as i32))
+}
+
 /// e-TeX's `\numexpr`/`\dimexpr` division rounds to the nearest integer,
 /// ties away from zero (not truncating like `\divide`).
+
 fn rounded_div(a: i64, d: i64) -> i64 {
     if d == 0 {
         return 0;
     }
-    let sign: i64 = if (a < 0) != (d < 0) { -1 } else { 1 };
-    let a_abs = a.unsigned_abs() as i64;
-    let d_abs = d.unsigned_abs() as i64;
-    sign * ((2 * a_abs + d_abs) / (2 * d_abs))
+    let sign: i128 = if (a < 0) != (d < 0) { -1 } else { 1 };
+    let a_abs = a.unsigned_abs() as i128;
+    let d_abs = d.unsigned_abs() as i128;
+    let q = sign * ((2 * a_abs + d_abs) / (2 * d_abs));
+    q.clamp(i64::MIN as i128, i64::MAX as i128) as i64
 }
 
 fn is_if_primitive(p: Primitive) -> bool {
@@ -4794,6 +5055,59 @@ fn substitute_body(body: &[BodyPart], args: &HashMap<u8, Vec<Token>>) -> Vec<Tok
         }
     }
     expansion
+}
+
+/// Characters of an environment name shown in a diagnostic. TeX has no
+/// limit on names; only the message is shortened.
+const SHOWN_NAME_CHARS: usize = 100;
+
+/// `name`, cut to [`SHOWN_NAME_CHARS`] characters plus "..." when longer.
+fn shown_name(name: &str) -> std::borrow::Cow<'_, str> {
+    match name.char_indices().nth(SHOWN_NAME_CHARS) {
+        Some((cut, _)) => std::borrow::Cow::Owned(format!("{}...", &name[..cut])),
+        None => std::borrow::Cow::Borrowed(name),
+    }
+}
+
+/// Does `body`, printed token by token (`Token::display_name`, `#n` for a
+/// parameter), spell exactly `name`?
+fn body_spells(body: &[BodyPart], name: &str) -> bool {
+    let mut rest = name;
+    for part in body {
+        let next = match part {
+            BodyPart::Literal(t) => match &t.kind {
+                TokenKind::ControlSequence(cs) => rest.strip_prefix('\\').and_then(|r| r.strip_prefix(cs.as_str())),
+                TokenKind::ActiveChar(c) | TokenKind::Char(c, _) => rest.strip_prefix(*c),
+                TokenKind::Param(n) => rest.strip_prefix('#').and_then(|r| r.strip_prefix(n.to_string().as_str())),
+                TokenKind::Eof => Some(rest),
+            },
+            BodyPart::Param(n) => rest.strip_prefix('#').and_then(|r| r.strip_prefix(n.to_string().as_str())),
+        };
+        match next {
+            Some(r) => rest = r,
+            None => return false,
+        }
+    }
+    rest.is_empty()
+}
+
+/// `body` printed token by token, stopping once it has `max_chars`
+/// characters.
+fn body_display(body: &[BodyPart], max_chars: usize) -> String {
+    let mut out = String::new();
+    let mut chars = 0;
+    for part in body {
+        if chars >= max_chars {
+            break;
+        }
+        let piece = match part {
+            BodyPart::Literal(t) => t.display_name(),
+            BodyPart::Param(n) => format!("#{n}"),
+        };
+        chars += piece.chars().count();
+        out.push_str(&piece);
+    }
+    out
 }
 
 pub(crate) fn chars_as_other(s: &str, span: Span) -> Vec<Token> {
@@ -5074,6 +5388,8 @@ fn base_state(tex_only: bool) -> State {
         edef_depth: 0,
         in_csname: 0,
         emit_unbalanced_close: false,
+        group_limit_reported: false,
+        conditional_limit_reported: false,
     }
 }
 

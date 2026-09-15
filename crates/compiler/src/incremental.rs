@@ -12,7 +12,7 @@
 //! layout rebuild. Any future construct is unsafe until its complete state and
 //! side effects are represented in these cache checks. When in doubt, rebuild.
 
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{limit_repeats, Diagnostic};
 use crate::layout::{self, FlowState, LayoutCursor, Page, PlacedItem, TextItem};
 use crate::math::{MathAtom, MathList, Nucleus};
 use crate::parser::{self, Block, Inline, MacroDependency, MathRow, SourceDocument, VerbatimLine};
@@ -147,28 +147,50 @@ impl Session {
         constraints: LayoutConstraints,
         options: &parser::ParseOptions,
     ) -> IncrementalResult {
+        let (output, stats) =
+            self.compile_project_borrowed(documents, entry_path, constraints, options);
+        IncrementalResult {
+            output: output.clone(),
+            stats,
+        }
+    }
+
+    /// [`Session::compile_project_with`], lending the output the session
+    /// retains for the next revision instead of returning a copy of it.
+    ///
+    /// Issue #65: the owned result is a deep clone of every block, placed item
+    /// and diagnostic. A caller that only reads the output (the runtime-v1
+    /// transport serialises it) avoids that copy; the output is identical.
+    pub fn compile_project_borrowed(
+        &mut self,
+        documents: &[SourceDocument<'_>],
+        entry_path: &str,
+        constraints: LayoutConstraints,
+        options: &parser::ParseOptions,
+    ) -> (&CompileOutput, ReuseStats) {
         let snapshot: Vec<(String, String)> = documents
             .iter()
             .map(|document| (document.path.to_string(), document.text.to_string()))
             .collect();
-        if let Some(previous) = &self.previous {
-            if previous.documents == snapshot
+        let unchanged = self.previous.as_ref().is_some_and(|previous| {
+            previous.documents == snapshot
                 && previous.entry_path == entry_path
                 && previous.constraints == constraints
                 && previous.options == *options
-            {
-                let total = previous.output.blocks.len();
-                return IncrementalResult {
-                    output: previous.output.clone(),
-                    stats: ReuseStats {
-                        blocks_total: total,
-                        blocks_reused: total,
-                        blocks_recomputed: 0,
-                        candidate_comparisons: 0,
-                        full_recompile: false,
-                    },
-                };
-            }
+        });
+        if unchanged {
+            let previous = self.previous.as_ref().expect("unchanged revision exists");
+            let total = previous.output.blocks.len();
+            return (
+                &previous.output,
+                ReuseStats {
+                    blocks_total: total,
+                    blocks_reused: total,
+                    blocks_recomputed: 0,
+                    candidate_comparisons: 0,
+                    full_recompile: false,
+                },
+            );
         }
 
         let mut parsed = parser::parse_project_with(documents, entry_path, options);
@@ -217,13 +239,13 @@ impl Session {
         };
 
         if parsed.document_global_state {
-            let (pages, mut layout_diagnostics) = layout::layout_converged_with_options(
+            let (pages, layout_diagnostics) = layout::layout_converged_with_options(
                 &parsed.blocks,
                 constraints,
                 &parsed.cleveref,
             );
             let mut diagnostics = parsed.diagnostics;
-            diagnostics.append(&mut layout_diagnostics);
+            diagnostics.append(&mut limit_repeats(layout_diagnostics));
             stats.full_recompile = true;
             stats.blocks_recomputed = parsed.blocks.len();
             let output = CompileOutput {
@@ -231,7 +253,7 @@ impl Session {
                 diagnostics,
                 pages,
             };
-            self.previous = Some(Revision {
+            let revision = self.previous.insert(Revision {
                 options: *options,
                 documents: snapshot,
                 entry_path: entry_path.to_string(),
@@ -239,10 +261,10 @@ impl Session {
                 preamble_source: parsed.preamble_source,
                 incremental_safe: parsed.incremental_safe,
                 document_global_state: true,
-                output: output.clone(),
+                output,
                 blocks: Vec::new(),
             });
-            return IncrementalResult { output, stats };
+            return (&revision.output, stats);
         }
 
         // Shift each cached block ONCE, not once per comparison.
@@ -350,15 +372,15 @@ impl Session {
         }
         drop(previous);
 
-        let (pages, mut layout_diagnostics) = cursor.into_pages_and_diagnostics();
+        let (pages, layout_diagnostics) = cursor.into_pages_and_diagnostics();
         let mut diagnostics = parsed.diagnostics;
-        diagnostics.append(&mut layout_diagnostics);
+        diagnostics.append(&mut limit_repeats(layout_diagnostics));
         let output = CompileOutput {
             blocks: parsed.blocks,
             diagnostics,
             pages,
         };
-        self.previous = Some(Revision {
+        let revision = self.previous.insert(Revision {
             options: *options,
             documents: snapshot,
             entry_path: entry_path.to_string(),
@@ -366,10 +388,10 @@ impl Session {
             preamble_source: parsed.preamble_source,
             incremental_safe: parsed.incremental_safe,
             document_global_state: false,
-            output: output.clone(),
+            output,
             blocks: cache,
         });
-        IncrementalResult { output, stats }
+        (&revision.output, stats)
     }
 }
 
@@ -401,13 +423,15 @@ pub fn compile_full_project_with(
 ) -> CompileOutput {
     let parsed = parser::parse_project_with(documents, entry_path, options);
     let constraints = parsed.preamble_constraints(constraints);
-    let (pages, mut layout_diagnostics) = layout::layout_converged_with_options(
+    let (pages, layout_diagnostics) = layout::layout_converged_with_options(
         &parsed.blocks,
         constraints,
         &parsed.cleveref,
     );
+    // Parser diagnostics are already bounded (`parse_project_with`); the
+    // layout's are bounded on their own, so a summary is never re-counted.
     let mut diagnostics = parsed.diagnostics;
-    diagnostics.append(&mut layout_diagnostics);
+    diagnostics.append(&mut limit_repeats(layout_diagnostics));
     CompileOutput {
         blocks: parsed.blocks,
         diagnostics,
@@ -522,6 +546,11 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             Some(())
         }
         Block::VFill => Some(()),
+        Block::Penalty {
+            value: _,
+            fil: _,
+            span,
+        } => map_span(span, changes, deltas),
         Block::LetterBlock {
             part: _,
             lines,
@@ -607,7 +636,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             } => map_span(span, changes, deltas)?,
             Inline::CleverReference { span, .. } => map_span(span, changes, deltas)?,
             Inline::HFill { span, .. } => map_span(span, changes, deltas)?,
-            Inline::HSpace { pt: _, span } => map_span(span, changes, deltas)?,
+            Inline::HSpace { span, .. } => map_span(span, changes, deltas)?,
             Inline::Footnote {
                 number: _,
                 span,
@@ -623,6 +652,20 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => {
                 map_span(span, changes, deltas)?
             }
+            Inline::Penalty {
+                value: _,
+                span,
+                unskip: _,
+            } => map_span(span, changes, deltas)?,
+            Inline::PagePenalty { value: _, span } => map_span(span, changes, deltas)?,
+            Inline::Discretionary {
+                pre: _,
+                post: _,
+                nobreak: _,
+                hyphen: _,
+                span,
+                style: _,
+            } => map_span(span, changes, deltas)?,
             Inline::Tabular(table) => {
                 // `Tabular` only offers a mapping copy; its nested inlines are
                 // shifted through the same in-place walk.
@@ -679,6 +722,13 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
     {
         match nucleus {
             Nucleus::Symbol(_) | Nucleus::Text(_) | Nucleus::Bold(_) => {}
+            Nucleus::TextRun(pieces) => {
+                for piece in pieces {
+                    if let crate::math::TextPiece::Math(list) = piece {
+                        shift_math_list(list, changes, deltas)?;
+                    }
+                }
+            }
             Nucleus::SizedDelimiter { .. } => {}
             Nucleus::Space { .. } => {}
             Nucleus::Rule(_) => {}
@@ -730,6 +780,16 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
             Nucleus::SubArray { rows, align: _ } => {
                 for row in rows.iter_mut() {
                     shift_math_list(row, changes, deltas)?;
+                }
+            }
+            Nucleus::SideSet {
+                operator,
+                left_superscript,
+                left_subscript,
+            } => {
+                shift_math_list(operator, changes, deltas)?;
+                for list in [left_superscript, left_subscript].into_iter().flatten() {
+                    shift_math_list(list, changes, deltas)?;
                 }
             }
         }
@@ -821,7 +881,8 @@ fn block_signature(block: &Block) -> BlockSignature {
         | Block::PageBreak
         | Block::Verbatim { .. }
         | Block::TableOfContents { .. }
-        | Block::VFill => &[],
+        | Block::VFill
+        | Block::Penalty { .. } => &[],
         // Signature only (see the doc comment above): the first line is
         // enough to narrow the candidate set, and `shift_block`'s full
         // equality check still gates every reuse.
@@ -851,6 +912,9 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::Graphic(graphic) => graphic.span,
         Inline::Transform(transform) => transform.span,
         Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => *span,
+        Inline::Penalty { span, .. }
+        | Inline::PagePenalty { span, .. }
+        | Inline::Discretionary { span, .. } => *span,
     };
     let first = inlines.first().map(span_of);
     let last = inlines.last().map(span_of);

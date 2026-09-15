@@ -18,9 +18,9 @@ use crate::parser::{
 };
 use crate::Span;
 use flashtex_font_engine::core14::Core14;
-use flashtex_font_engine::shape::{shape, ShapeOptions, Shaped};
+use flashtex_font_engine::shape::{shape, MissingGlyph, ShapeOptions, Shaped};
 use flashtex_font_engine::Core14Face;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
 
 pub use flashtex_font_engine::core14::Core14 as Font;
@@ -119,7 +119,9 @@ impl Default for LayoutConstraints {
 /// Retained only so math's script-size boxes can be measured consistently with
 /// body text while math moves onto real metrics too.
 pub fn text_width(text: &str, size: f64, font: Font) -> f64 {
-    shape_text(font, text).map_or(0.0, |shaped| shaped.width_pt(size))
+    with_shaped(font, text, |shaped| {
+        shaped.as_ref().map_or(0.0, |shaped| shaped.width_pt(size))
+    })
 }
 
 pub fn word_space(size: f64, font: Font) -> f64 {
@@ -145,8 +147,82 @@ fn face(font: Font) -> &'static Core14Face {
     }
 }
 
-fn shape_text(font: Font, text: &str) -> Result<Shaped, flashtex_font_engine::Error> {
-    shape(face(font), text, &ShapeOptions::default())
+/// What layout reads from a shaping result: the total advance, the first and
+/// last cluster boundaries (for source spans) and the missing glyphs. Kept
+/// instead of the full [`Shaped`], whose per-cluster `String`s and glyph
+/// vectors dominated layout time and allocation.
+#[derive(Debug, Clone)]
+struct ShapedSummary {
+    advance_units: i64,
+    units_per_em: u16,
+    /// `clusters.first().source_range.start` and `clusters.last().source_range.end`.
+    source_bounds: Option<(usize, usize)>,
+    missing: Box<[MissingGlyph]>,
+}
+
+impl ShapedSummary {
+    fn new(text: &str, shaped: &Shaped) -> Self {
+        for cluster in &shaped.clusters {
+            debug_assert_eq!(
+                text.get(cluster.source_range.clone()),
+                Some(cluster.text.as_str())
+            );
+        }
+        Self {
+            advance_units: shaped.advance_units(),
+            units_per_em: shaped.units_per_em,
+            source_bounds: shaped
+                .clusters
+                .first()
+                .zip(shaped.clusters.last())
+                .map(|(first, last)| (first.source_range.start, last.source_range.end)),
+            missing: shaped.missing.clone().into_boxed_slice(),
+        }
+    }
+
+    /// Same arithmetic as [`Shaped::width_pt`], so the result is bit-identical.
+    fn width_pt(&self, size_pt: f64) -> f64 {
+        self.advance_units as f64 * size_pt / f64::from(self.units_per_em)
+    }
+}
+
+type ShapeResult = Result<ShapedSummary, flashtex_font_engine::Error>;
+
+/// Distinct (face, text) pairs kept per thread before the memo is reset. Words
+/// repeat heavily and every cross-reference pass reshapes the whole document,
+/// so a document's vocabulary is far below this; the cap only bounds a
+/// long-lived process that sees many unrelated documents.
+const SHAPE_MEMO_LIMIT: usize = 1 << 17;
+
+thread_local! {
+    static SHAPE_MEMO: std::cell::RefCell<[HashMap<Box<str>, ShapeResult>; 7]> =
+        std::cell::RefCell::new(Default::default());
+}
+
+/// Shape `text` in `font` and hand the summary to `read`.
+///
+/// Shaping a Core 14 face is a pure function of the face and the text (fixed
+/// static faces, default options), so results are memoised per thread. The
+/// first call for a pair shapes exactly as before; later calls return the
+/// same summary, error included.
+fn with_shaped<R>(font: Font, text: &str, read: impl FnOnce(&ShapeResult) -> R) -> R {
+    let slot = font as usize;
+    SHAPE_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        // A hit hashes `text` once (this used to be `contains_key` plus an
+        // index, two hashes per word).
+        if let Some(result) = memo[slot].get(text) {
+            return read(result);
+        }
+        if memo.iter().map(HashMap::len).sum::<usize>() >= SHAPE_MEMO_LIMIT {
+            memo.iter_mut().for_each(HashMap::clear);
+        }
+        let result = shape(face(font), text, &ShapeOptions::default())
+            .map(|shaped| ShapedSummary::new(text, &shaped));
+        let output = read(&result);
+        memo[slot].insert(text.into(), result);
+        output
+    })
 }
 
 /// Select the same Core 14 face that the export mapping assigns to a math glyph.
@@ -217,22 +293,15 @@ pub(crate) fn italic_skew_pt(font: Font, height_pt: f64) -> f64 {
     height_pt * angle_deg.to_radians().tan().abs()
 }
 
-fn source_span(text: &str, span: Span, shaped: &Shaped) -> Span {
-    let Some(first) = shaped.clusters.first() else {
+fn source_span(text: &str, span: Span, shaped: &ShapedSummary) -> Span {
+    let Some((first_start, last_end)) = shaped.source_bounds else {
         return span;
     };
-    let last = shaped.clusters.last().expect("first cluster exists");
-    for cluster in &shaped.clusters {
-        debug_assert_eq!(
-            text.get(cluster.source_range.clone()),
-            Some(cluster.text.as_str())
-        );
-    }
     if span.end - span.start == text.len() {
         Span::in_document(
             span.document,
-            span.start + first.source_range.start,
-            span.start + last.source_range.end,
+            span.start + first_start,
+            span.start + last_end,
         )
     } else {
         // Macro replacement bytes do not exist in the document. Preserve the
@@ -269,9 +338,9 @@ pub(crate) fn shaped_width(
     } else {
         text
     };
-    match shape_text(font, text) {
+    with_shaped(font, text, |shaped| match shaped {
         Ok(shaped) => {
-            for missing in &shaped.missing {
+            for missing in shaped.missing.iter() {
                 let missing_span = relative_span(
                     text,
                     span,
@@ -289,10 +358,10 @@ pub(crate) fn shaped_width(
                     Some("emitted the face's explicit .notdef glyph and continued".into()),
                 ));
             }
-            (shaped.width_pt(size), source_span(text, span, &shaped))
+            (shaped.width_pt(size), source_span(text, span, shaped))
         }
         Err(error) => {
-            let error_span = match error {
+            let error_span = match *error {
                 flashtex_font_engine::Error::UnsupportedScript {
                     ch, byte_offset, ..
                 } => relative_span(text, span, byte_offset, byte_offset + ch.len_utf8()),
@@ -308,7 +377,7 @@ pub(crate) fn shaped_width(
             ));
             (0.0, span)
         }
-    }
+    })
 }
 
 /// A pending `\hfill` on the current line (see `LayoutCursor::resolve_hfill`).
@@ -475,6 +544,8 @@ pub struct FlowState {
     content_end: f64,
     /// See `LayoutCursor::closed_line_skip`.
     closed_line_skip: Option<f64>,
+    /// See `LayoutCursor::eject_after_line`.
+    eject_after_line: bool,
 }
 
 impl FlowState {
@@ -487,6 +558,7 @@ impl FlowState {
             && self.trailing_line_items == other.trailing_line_items
             && self.content_end.to_bits() == other.content_end.to_bits()
             && self.closed_line_skip.map(f64::to_bits) == other.closed_line_skip.map(f64::to_bits)
+            && self.eject_after_line == other.eject_after_line
     }
 }
 
@@ -551,6 +623,10 @@ pub struct LayoutCursor {
     /// and its own `\addvspace`-style gap only adds what exceeds this skip.
     /// Cleared by `newline`.
     closed_line_skip: Option<f64>,
+    /// A forced `Inline::PagePenalty` (`\pagebreak` inside a paragraph,
+    /// `\vadjust{\penalty-\@M}`) was set on the current line: the page ends
+    /// after that line, when the next one starts.
+    eject_after_line: bool,
 }
 
 impl LayoutCursor {
@@ -562,6 +638,24 @@ impl LayoutCursor {
         constraints: LayoutConstraints,
         resolved_labels: BTreeMap<String, ReferenceValue>,
         emit_heading_numbers: bool,
+    ) -> Self {
+        Self::with_labels_and_cleveref(
+            constraints,
+            resolved_labels,
+            emit_heading_numbers,
+            crate::xref::CleverefConfig::default(),
+        )
+    }
+
+    /// `with_labels` with the `cleveref` configuration supplied, so a caller
+    /// that installs its own configuration does not first build (and drop)
+    /// the default name table: that cost ~24 `String` allocations per
+    /// `tabular` entry (issue #65).
+    fn with_labels_and_cleveref(
+        constraints: LayoutConstraints,
+        resolved_labels: BTreeMap<String, ReferenceValue>,
+        emit_heading_numbers: bool,
+        cleveref: crate::xref::CleverefConfig,
     ) -> Self {
         LayoutCursor {
             pages: vec![Page {
@@ -583,7 +677,7 @@ impl LayoutCursor {
             constraints,
             resolved_labels,
             collected_labels: BTreeMap::new(),
-            cleveref: crate::xref::CleverefConfig::default(),
+            cleveref,
             resolved_toc: Vec::new(),
             collected_toc: Vec::new(),
             collect_toc: false,
@@ -593,6 +687,7 @@ impl LayoutCursor {
             list_margin_pt: 0.0,
             footnotes: footnotes::FootnoteState::default(),
             closed_line_skip: None,
+            eject_after_line: false,
         }
     }
 
@@ -698,7 +793,7 @@ impl LayoutCursor {
         self.y += self.line_descent + size;
         self.line_ascent = size;
         self.line_descent = size * (LINE_SPACING - 1.0);
-        if self.y > self.body_bottom() {
+        if self.y > self.body_bottom() || std::mem::take(&mut self.eject_after_line) {
             self.open_next_page(size);
             self.y = MARGIN_PT + size;
         }
@@ -724,8 +819,8 @@ impl LayoutCursor {
     /// for a break before placing the next word (see `place`). Start at the
     /// preceding item's true end so the layout engine's eagerly reserved
     /// inter-word space is not accidentally added to the requested dimension.
-    fn hspace(&mut self, pt: f64) {
-        self.x = self.content_end + pt;
+    fn hspace(&mut self, pt: f64, space_before_pt: f64, space_after_pt: f64) {
+        self.x = self.content_end + space_before_pt + pt + space_after_pt;
         self.content_end = self.x;
     }
 
@@ -1308,6 +1403,16 @@ impl LayoutCursor {
         {
             return self.state();
         }
+        // A vertical-list penalty. This layout has no page builder to weigh
+        // a finite one, so only a forced break acts, like `Block::PageBreak`;
+        // like any penalty at the top of a page, one before the first block
+        // is discarded (TeX §1000) and leaves the document's start unchanged.
+        if let Block::Penalty { value, .. } = block {
+            if *value <= crate::parser::EJECT_PENALTY && !self.first_block {
+                self.force_page_break();
+            }
+            return self.state();
+        }
         // A display or heading already closed its line (see
         // `closed_line_skip`): start this block on that fresh baseline.
         let closed = self
@@ -1459,6 +1564,8 @@ impl LayoutCursor {
             // footer to the bottom) exactly, and degrades to a hard bottom
             // clamp — rather than an overlap or a fabricated split — for the
             // rarer multi-`\vfill` case.
+            // Returned before the inter-block spacing, above.
+            Block::Penalty { .. } => {}
             Block::VFill => {
                 if !self.first_block && self.state().trailing_line_items > 0 {
                     self.newline(body_size);
@@ -1474,6 +1581,27 @@ impl LayoutCursor {
     /// Lay out a block after `prepare_block`, returning its reusable fragment.
     pub fn render_prepared_block(&mut self, block: &Block) -> Vec<PlacedItem> {
         let starts: Vec<usize> = self.pages.iter().map(|page| page.items.len()).collect();
+        self.render_block(block);
+        let mut placed = Vec::new();
+        for (page_index, page) in self.pages.iter().enumerate() {
+            let start = starts.get(page_index).copied().unwrap_or(0);
+            placed.extend(
+                page.items[start..]
+                    .iter()
+                    .cloned()
+                    .map(|item| PlacedItem { page_index, item }),
+            );
+        }
+        placed
+    }
+
+    /// Lay out a block after `prepare_block` without collecting its fragment.
+    ///
+    /// Issue #65: a clean layout pass (and every cross-reference convergence
+    /// pass) never reuses fragments, and copying every placed item's text
+    /// only to drop it was ~9% of a large compile. The pages are the same as
+    /// after `render_prepared_block`.
+    fn render_block(&mut self, block: &Block) {
         let body_size = self.constraints.font_size_pt;
         match block {
             Block::Paragraph(inlines) => {
@@ -1657,9 +1785,9 @@ impl LayoutCursor {
                 emit(self, content, body_size, Font::TimesRoman);
                 self.newline(body_size);
             }
-            Block::VSpace { .. } | Block::PageBreak | Block::VFill => {}
+            Block::VSpace { .. } | Block::PageBreak | Block::VFill | Block::Penalty { .. } => {}
             Block::TableOfContents { span } => {
-                self.render_prepared_block(&Block::Heading {
+                self.render_block(&Block::Heading {
                     level: 1,
                     number: String::new(),
                     number_span: *span,
@@ -1775,17 +1903,6 @@ impl LayoutCursor {
         self.resolve_hfill();
         self.line_spaces.clear();
         self.justify = false;
-        let mut placed = Vec::new();
-        for (page_index, page) in self.pages.iter().enumerate() {
-            let start = starts.get(page_index).copied().unwrap_or(0);
-            placed.extend(
-                page.items[start..]
-                    .iter()
-                    .cloned()
-                    .map(|item| PlacedItem { page_index, item }),
-            );
-        }
-        placed
     }
 
     pub(crate) fn measure_pt(&self) -> f64 {
@@ -1811,12 +1928,14 @@ impl LayoutCursor {
             measure_pt: measure.unwrap_or(crate::tabular::MAX_DIMEN_PT),
             ..self.constraints
         };
-        let mut inner = LayoutCursor::with_labels(
+        // The labels and the (read-only) `cleveref` configuration are lent to
+        // the detached cursor and taken back below, never copied.
+        let mut inner = LayoutCursor::with_labels_and_cleveref(
             constraints,
             std::mem::take(&mut self.resolved_labels),
             self.emit_heading_numbers,
+            std::mem::replace(&mut self.cleveref, crate::xref::CleverefConfig::empty()),
         );
-        inner.cleveref = self.cleveref.clone();
         let left = inner.left_edge();
         let mut first_y = inner.y;
         let mut natural: f64 = 0.0;
@@ -1839,6 +1958,8 @@ impl LayoutCursor {
             inner.line_fills.clear();
         }
         self.resolved_labels = std::mem::take(&mut inner.resolved_labels);
+        self.cleveref =
+            std::mem::replace(&mut inner.cleveref, crate::xref::CleverefConfig::empty());
         self.diagnostics.append(&mut inner.diagnostics);
         let page = self.pages.len() as u32;
         for (key, mut value) in std::mem::take(&mut inner.collected_labels) {
@@ -1910,6 +2031,7 @@ impl LayoutCursor {
             trailing_line_items: self.pages[page_index].items.len() - self.line_start,
             content_end: self.content_end,
             closed_line_skip: self.closed_line_skip,
+            eject_after_line: self.eject_after_line,
         }
     }
 
@@ -1937,6 +2059,7 @@ impl LayoutCursor {
         self.x = end.x;
         self.content_end = end.content_end;
         self.closed_line_skip = end.closed_line_skip;
+        self.eject_after_line = end.eject_after_line;
         self.y = end.y;
         self.line_ascent = end.line_ascent;
         self.line_descent = end.line_descent;
@@ -2032,7 +2155,7 @@ fn heading_size(level: u8, body_size: f64) -> f64 {
 /// identically to before this existed, even for the 11pt class, where this
 /// compiler's own body size is a literal 11pt rather than real LaTeX's
 /// 10.95pt normalsize (`class_size_pt`'s documented approximation).
-fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f64 {
+pub(crate) fn size_declaration_pt(level: FontSizeLevel, body_size_pt: f64) -> f64 {
     // tiny, scriptsize, footnotesize, small, large, Large, LARGE, huge, Huge
     // (normalsize is handled by the caller before reaching here).
     const SIZE_10PT: [f64; 9] = [5.0, 7.0, 8.0, 9.0, 12.0, 14.4, 17.28, 20.74, 24.88];
@@ -2116,7 +2239,7 @@ pub fn layout(blocks: &[Block]) -> Vec<Page> {
     let mut c = LayoutCursor::with_labels(LayoutConstraints::default(), BTreeMap::new(), false);
     for block in blocks {
         c.prepare_block(block);
-        c.render_prepared_block(block);
+        c.render_block(block);
     }
     c.into_pages()
 }
@@ -2125,7 +2248,7 @@ pub fn layout_with_constraints(blocks: &[Block], constraints: LayoutConstraints)
     let mut c = LayoutCursor::new(constraints);
     for block in blocks {
         c.prepare_block(block);
-        c.render_prepared_block(block);
+        c.render_block(block);
     }
     c.into_pages()
 }
@@ -2165,13 +2288,17 @@ pub fn layout_converged_with_options(
     let mut converged = false;
     let mut oscillating = false;
     for _ in 0..REFERENCE_ITERATION_LIMIT {
-        let mut cursor = LayoutCursor::with_labels(constraints, state.0.clone(), true);
-        cursor.cleveref = cleveref.clone();
+        let mut cursor = LayoutCursor::with_labels_and_cleveref(
+            constraints,
+            state.0.clone(),
+            true,
+            cleveref.clone(),
+        );
         cursor.resolved_toc = state.1.clone();
         cursor.collect_toc = collect_toc;
         for block in blocks {
             cursor.prepare_block(block);
-            cursor.render_prepared_block(block);
+            cursor.render_block(block);
         }
         let (pages, next, shape_diagnostics) = cursor.into_result();
         last_pages = pages;
@@ -2257,7 +2384,8 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
             | Block::PageBreak
             | Block::Verbatim { .. }
             | Block::TableOfContents { .. }
-            | Block::VFill => {}
+            | Block::VFill
+            | Block::Penalty { .. } => {}
         }
     }
 }
@@ -2539,6 +2667,30 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 )
             }
             Inline::LineBreak { .. } => c.newline(size),
+            // A forced break at a penalty ends a justified line (`\linebreak`
+            // has no `\hfil`); a finite penalty only weighs a break this
+            // greedy layout never considers.
+            Inline::Penalty { value, .. } => {
+                if *value <= crate::parser::EJECT_PENALTY {
+                    c.wrap_line(size);
+                }
+            }
+            Inline::PagePenalty { value, .. } => {
+                if *value <= crate::parser::EJECT_PENALTY {
+                    c.eject_after_line = true;
+                }
+            }
+            // No hyphenation here: the unbroken text.
+            Inline::Discretionary {
+                nobreak,
+                span,
+                style,
+                ..
+            } => {
+                if !nobreak.is_empty() {
+                    c.place(nobreak.clone(), size, *span, style_font(*style), false);
+                }
+            }
             Inline::TextGlue { em, .. } => c.text_glue(*em, size),
             Inline::Math {
                 list,
@@ -2636,7 +2788,12 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 );
             }
             Inline::HFill { leader, span } => c.mark_hfill(*leader, size, font, *span),
-            Inline::HSpace { pt, .. } => c.hspace(*pt),
+            Inline::HSpace {
+                pt,
+                space_before_pt,
+                space_after_pt,
+                ..
+            } => c.hspace(*pt, *space_before_pt, *space_after_pt),
             Inline::Footnote {
                 number,
                 span,
@@ -2698,7 +2855,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     quad: crate::text_builtins::pt_to_sp(text_size),
                     ..Default::default()
                 };
-                c.hspace(crate::text_builtins::sp_to_pt(amount.resolve(&cx)))
+                c.hspace(crate::text_builtins::sp_to_pt(amount.resolve(&cx)), 0.0, 0.0)
             }
             Inline::Rule {
                 rule,
