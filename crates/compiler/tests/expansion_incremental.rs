@@ -181,8 +181,11 @@ fn session_label_texts(path: &str, text: &str) -> Vec<String> {
 fn edited_labelitem_override_updates_the_itemize_label_in_the_same_session() {
     // Live-typing repro: editing the captured `\labelitemi` body must change
     // the itemize label on re-parse, not keep showing the stale text. The
-    // document is over the incremental threshold so the re-parse reuses the
-    // cached suffix, exactly like the editor does.
+    // document is over the incremental threshold so the re-parse goes
+    // through the incremental machinery exactly like the editor does (a
+    // definition-body edit declines the suffix join, so this pins the
+    // end-to-end behavior rather than the splice path itself — see the
+    // healed-redefinition test below for splice coverage).
     const PATH: &str = "labelitem-incremental-edit.tex";
     let mut filler = String::new();
     for i in 0..200 {
