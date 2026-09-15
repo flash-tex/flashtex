@@ -55,7 +55,7 @@ Any editor or CI can drive that same JSON Lines protocol directly — see
 flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
                [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
 flashtex check <main.tex> [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
-flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
+flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS] [--timing]
 flashtex supported [--json|--md|--coverage]
 flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json] [--pdf out.pdf] [--timing]
 flashtex fonts [--font-dir DIR]... [--json]
@@ -114,7 +114,7 @@ because outputs are written atomically nothing is left half-written.
 The implemented-LaTeX inventory of the compiler linked into this binary
 (`flashtex_compiler::supported`), so it cannot drift from what `build`
 accepts. Plain `flashtex supported` prints command/environment counts, the
-coverage of the canonical inventory (46% at the time of writing) and one
+coverage of the canonical inventory (40% at the time of writing) and one
 line per package set; `--json` is the `flashtex-supported-latex/1` document
 (the same as `crates/compiler/supported/supported-latex.json`), `--md` the
 reference page reproduced [below](#supported-latex), `--coverage` the
@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 307 text-mode and 554 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 308 text-mode and 554 math-mode command entries, 49 environments and 22 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -552,6 +552,7 @@ Canonical sources:
 | `\negthickspace` |  | text kern -.2777em |
 | `\enspace` |  | text kern .5em |
 | `\enskip` |  | horizontal glue of .5em |
+| `\xspace` |  | word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 | `\AA` |  | text symbol \AA: OT1 Å, T1 Å (tex-text-encoding; unavailable is a LaTeX error) |
 | `\aa` |  | text symbol \aa: OT1 å, T1 å (tex-text-encoding; unavailable is a LaTeX error) |
 | `\AE` |  | text symbol \AE: OT1 Æ, T1 Æ (tex-text-encoding; unavailable is a LaTeX error) |
@@ -907,6 +908,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `multicol` | `` | multicols and multicols* with preface, \columnbreak, \raggedcolumns (columns set by the render pipeline) |
 | `natbib` | `numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak` | \citet/\citep/\citealt/\citealp/\citeauthor/\citeyear/\citeyearpar/\citenum/\citetext and the \cite it redefines, with [Author(Year)] \bibitem labels; sort, compress, super and openbib are diagnosed |
 | `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
+| `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
 
 Any other package, or these packages with other options, is recorded and reported as recognised but not implemented.
 <!-- END GENERATED supported-latex -->
@@ -925,7 +927,7 @@ in `diagnostics[]`. The common codes and what to do about them:
 
 | Code | Severity | Meaning | What you can do |
 |---|---|---|---|
-| `missing_file`, `include_cycle`, `path_escapes_root`, `invalid_path`, `not_utf8`, `read_error`, `include_depth`, `unresolved_reference` | error (warning for `unresolved_reference`) | From `flashtex`'s project discovery: an `\input`/`\include`/`\includegraphics` target that does not exist, includes itself, points outside the project root (`..` or a symlink), is not a valid project path, is not UTF-8, cannot be read, nests deeper than the limit, or has an argument needing macro expansion (`\input{\jobname}`) | Fix the path; the build continues without that file (`--strict` turns the errors into exit 1) |
+| `missing_file`, `include_cycle`, `path_escapes_root`, `invalid_path`, `not_utf8`, `read_error`, `include_depth`, `unresolved_reference` | error (warning for `unresolved_reference`) | From `flashtex`'s project discovery: an `\input`/`\include`/`\includegraphics` target that does not exist, includes itself, points outside the project root (`..`) or is a symbolic link (refused wherever the link points), is not a valid project path, is not UTF-8, cannot be read, nests deeper than the limit, or has an argument needing macro expansion (`\input{\jobname}`) | Fix the path; the build continues without that file (`--strict` turns the errors into exit 1) |
 | `compiler` | warning or error | A message from the parser, re-wrapped by `flashtex-render`: `\foo is not supported by this compiler version`, `packages X are recognised but not implemented`, `\setlist keys leftmargin … are recognised but not implemented`, `environment 'X' is not implemented; its body is typeset as plain text`, `undefined reference`, unmatched braces, an `\input` file not found. (`flashtex-compiler` itself emits these without a `code` field.) | Remove or replace the construct; the `recovery` text says what was rendered instead |
 | `overfull_hbox` | warning | `overfull line: N pt too wide (no hyphenation available)` — a line could not be broken within the text width, so it sticks into the margin like TeX's *Overfull \hbox* | Rephrase or add a break point; hyphenation is not implemented |
 | `overfull_vbox` | warning | A line extends past the page's text area | Shorten the page or force a break with `\newpage` |

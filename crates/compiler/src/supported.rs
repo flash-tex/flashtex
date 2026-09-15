@@ -318,6 +318,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("negthickspace", "", "text kern -.2777em"),
     ("enspace", "", "text kern .5em"),
     ("enskip", "", "horizontal glue of .5em"),
+    ("xspace", "", "word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"),
     ("pagebreak", "[n]", "forces a page break"),
     ("nopagebreak", "[n]", "accepted no-op; the layout never breaks there on its own"),
     ("linebreak", "[n]", "line break"),
@@ -949,6 +950,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "ulem",
         "normalem",
         "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined",
+    ),
+    (
+        "xspace",
+        "",
+        "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)",
     ),
 ];
 
