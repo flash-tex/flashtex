@@ -1276,6 +1276,29 @@ pub fn adapt_cached(
     // book.cls `\if@mainmatter` (true until `\frontmatter`).
     let mut mainmatter = true;
     strip_command_text(&mut lowered, entry_doc, &commands);
+    // The same structural commands in `\input`/`\include`d documents (one
+    // list per document, empty for the entry): a `\chapter` in
+    // `chapters/one.tex` is as much a chapter as one in the entry file.
+    // `\maketitle`, `\noindent`, contents lists and nested `\input`s stay
+    // entry-only, as before.
+    let included_commands: Vec<Vec<BodyCommand>> = texts
+        .iter()
+        .enumerate()
+        .map(|(d, text)| {
+            if d == entry {
+                return Vec::new();
+            }
+            body_commands(text, has_chapters, book)
+                .into_iter()
+                .filter(|c| matches!(c.kind, BodyKind::Event(_) | BodyKind::Chapter { .. } | BodyKind::Part { .. } | BodyKind::Appendix | BodyKind::Matter(_) | BodyKind::AddContentsLine { .. }))
+                .collect()
+        })
+        .collect();
+    for (d, cmds) in included_commands.iter().enumerate() {
+        strip_command_text(&mut lowered, DocumentId(d), cmds);
+    }
+    let mut next_included = vec![0usize; texts.len()];
+    let mut seen_included = vec![false; texts.len()];
     let mut next_command = 0usize;
     let mut noindent_at: Option<usize> = None;
     // The `\input`/`\include`d document whose units are being laid out.
@@ -1352,14 +1375,46 @@ pub fn adapt_cached(
             }
             _ => None,
         };
+        // `(document, command)` to lay out before this unit, in order.
+        let mut pending: Vec<(DocumentId, &BodyCommand)> = Vec::new();
+        // The entry document resumes: the included documents read so far are
+        // finished, so their commands after their last unit come first.
+        if unit_start.is_some_and(|at| at.document == entry_doc) {
+            for (d, cmds) in included_commands.iter().enumerate() {
+                if seen_included[d] {
+                    pending.extend(cmds[next_included[d]..].iter().map(|c| (DocumentId(d), c)));
+                    next_included[d] = cmds.len();
+                }
+            }
+        }
         if let Some(at) = flush_before {
             while let Some(cmd) = commands.get(next_command).filter(|c| c.start < at) {
                 next_command += 1;
+                pending.push((entry_doc, cmd));
+            }
+            // The `\input` command that read this unit's document is spent.
+            if input_doc.is_some() && commands.get(next_command).is_some_and(|c| c.start == at && matches!(c.kind, BodyKind::Input)) {
+                next_command += 1;
+            }
+        }
+        // An included document's own commands precede its next unit.
+        if let Some(at) = unit_start.filter(|at| at.document != entry_doc) {
+            if let Some(cmds) = included_commands.get(at.document.0) {
+                seen_included[at.document.0] = true;
+                while let Some(cmd) = cmds.get(next_included[at.document.0]).filter(|c| c.start < at.start) {
+                    next_included[at.document.0] += 1;
+                    pending.push((at.document, cmd));
+                }
+            }
+        }
+        if !pending.is_empty() {
+            for (cmd_doc, cmd) in pending {
+                let source = texts.get(cmd_doc.0).copied().unwrap_or("");
                 match &cmd.kind {
                     BodyKind::Input => {}
                     BodyKind::Event(event) => blocks.push(Block::Chrome {
                         event: event.clone(),
-                        span: Span::in_document(entry_doc, cmd.start, cmd.end),
+                        span: Span::in_document(cmd_doc, cmd.start, cmd.end),
                     }),
                     BodyKind::NoIndent => noindent_at = Some(cmd.end),
                     BodyKind::Chapter { starred, title } => {
@@ -1376,11 +1431,13 @@ pub fn adapt_cached(
                             } else {
                                 chapter_no.to_string()
                             };
-                            chapter_starts.push((cmd.start, chapter_label.clone()));
+                            if cmd_doc == entry_doc {
+                                chapter_starts.push((cmd.start, chapter_label.clone()));
+                            }
                             chapter_label.clone()
                         });
-                        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
-                        let mut items = words_from_source(source, entry_doc, title.0, title.1);
+                        let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
+                        let mut items = words_from_source(source, cmd_doc, title.0, title.1);
                         if toc_active {
                             if let Some(n) = &number {
                                 // report.cls `\@chapter`: `\addcontentsline{toc}{chapter}{\protect\numberline{\thechapter}#1}`.
@@ -1389,7 +1446,7 @@ pub fn adapt_cached(
                                     list: crate::toc::ListKind::Toc,
                                     level: 0,
                                     number: Some((n.clone(), span)),
-                                    title: labels.entry_items.get(entry_doc, title.0, title.1).unwrap_or_else(|| items.clone()),
+                                    title: labels.entry_items.get(cmd_doc, title.0, title.1).unwrap_or_else(|| items.clone()),
                                     key: key.clone(),
                                 });
                                 toc_pending.push(key);
@@ -1409,7 +1466,7 @@ pub fn adapt_cached(
                     }
                     BodyKind::MakeTitle => {
                         if let Some(t) = stashed.next() {
-                            let span = Span::in_document(entry_doc, cmd.start, cmd.end);
+                            let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
                             // `\@maketitle` is followed by `\thispagestyle{plain}`;
                             // the `titlepage` form sets `empty` on its own page.
                             if maketitle_plain {
@@ -1424,12 +1481,12 @@ pub fn adapt_cached(
                         } else if maketitle_plain {
                             blocks.push(Block::Chrome {
                                 event: ChromeEvent::ThisPageStyle(PageStyle::Plain),
-                                span: Span::in_document(entry_doc, cmd.start, cmd.end),
+                                span: Span::in_document(cmd_doc, cmd.start, cmd.end),
                             });
                         }
                     }
                     BodyKind::Matter(matter) => {
-                        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
+                        let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
                         let openright = style.class_geometry.as_ref().is_some_and(|d| d.options.openright);
                         let (double, numbering, main) = match matter {
                             Matter::Front => (true, Some(flashtex_class_geometry::Numbering::Roman), false),
@@ -1451,11 +1508,11 @@ pub fn adapt_cached(
                         // before the list's heading.
                         let before = source[..cmd.start].trim_end();
                         let eject = ["\\newpage", "\\clearpage", "\\cleardoublepage", "\\pagebreak"].iter().any(|c| before.ends_with(c));
-                        toc_lists.push((blocks.len(), *kind, Span::in_document(entry_doc, cmd.start, cmd.end), eject));
+                        toc_lists.push((blocks.len(), *kind, Span::in_document(cmd_doc, cmd.start, cmd.end), eject));
                     }
                     BodyKind::AddContentsLine { list, level, text } => {
                         if let (true, Some(level)) = (toc_active, crate::toc::level_of(level)) {
-                            let (number, title) = crate::toc::contentsline_text(source, entry_doc, text.0, text.1, &labels.entry_items);
+                            let (number, title) = crate::toc::contentsline_text(source, cmd_doc, text.0, text.1, &labels.entry_items);
                             let key = crate::toc::key(toc_records.len());
                             toc_records.push(crate::toc::Record {
                                 list: *list,
@@ -1487,8 +1544,8 @@ pub fn adapt_cached(
                             part_no += 1;
                             flashtex_class_geometry::Numbering::UpperRoman.format(i64::from(part_no))
                         });
-                        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
-                        let mut items = words_from_source(source, entry_doc, title.0, title.1);
+                        let span = Span::in_document(cmd_doc, cmd.start, cmd.end);
+                        let mut items = words_from_source(source, cmd_doc, title.0, title.1);
                         if toc_active {
                             if let Some(n) = &number {
                                 let (s, e) = short.unwrap_or(*title);
@@ -1497,7 +1554,7 @@ pub fn adapt_cached(
                                     list: crate::toc::ListKind::Toc,
                                     level: -1,
                                     number: Some((n.clone(), span)),
-                                    title: labels.entry_items.get(entry_doc, s, e).unwrap_or_else(|| words_from_source(source, entry_doc, s, e)),
+                                    title: labels.entry_items.get(cmd_doc, s, e).unwrap_or_else(|| words_from_source(source, cmd_doc, s, e)),
                                     key: key.clone(),
                                 });
                                 toc_pending.push(key);
@@ -1523,10 +1580,6 @@ pub fn adapt_cached(
                         prev_para_end = None;
                     }
                 }
-            }
-            // The `\input` command that read this unit's document is spent.
-            if input_doc.is_some() && commands.get(next_command).is_some_and(|c| c.start == at && matches!(c.kind, BodyKind::Input)) {
-                next_command += 1;
             }
         }
         match unit.kind {
@@ -5070,7 +5123,127 @@ fn environment_name(source: &str, at: usize) -> Option<(&str, usize)> {
     Some((&source[i + 1..close], close + 1))
 }
 
+/// The font intervals of `source`: its own brace groups and font commands
+/// ([`source_style_intervals`]) plus the declarations user macros wrap
+/// around their arguments ([`macro_argument_intervals`]).
 fn style_intervals(source: &str) -> Vec<StyleInterval> {
+    let mut out = source_style_intervals(source);
+    out.extend(macro_argument_intervals(source));
+    // Stable: at one start byte the invocation site's intervals stay before
+    // the ones the definition adds, and those before an argument's own.
+    out.sort_by_key(|(start, _, _, _)| *start);
+    out
+}
+
+/// The font declarations a user macro's definition wraps around each of its
+/// parameters, laid over that argument's bytes at every invocation.
+///
+/// The compiler gives an argument's tokens their own source span, so the
+/// style lookup (`Styles::at`) reads the argument's bytes — which sit outside
+/// every group the *definition* opened. For
+/// `\newcommand{\note}[1]{{\small\bfseries #1}}`, `\note{words}` set `words`
+/// medium where pdfLaTeX sets them in `SFBX0900`: the size came through (the
+/// compiler scopes sizes) and the series did not. Here the definition body's
+/// own intervals that contain `#k` are re-applied to argument `k`, in body
+/// order, between the invocation site's style and the argument's own
+/// commands — the order TeX applies them in.
+///
+/// Definitions with a default optional argument (`[n][default]`) are skipped,
+/// because their `#1` is the bracketed argument and not a brace group; so is
+/// an undelimited (unbraced) argument.
+fn macro_argument_intervals(source: &str) -> Vec<StyleInterval> {
+    let bytes = source.as_bytes();
+    let defs = macro_definitions(source);
+    let mut out = Vec::new();
+    for (index, def) in defs.iter().enumerate() {
+        let name = &source[def.name.clone()];
+        // A later definition of the same name takes over from its position.
+        let until = defs[index + 1..].iter().find(|d| source[d.name.clone()] == *name).map_or(bytes.len(), |d| d.at);
+        let header = &source[def.name.end..def.body.start - 1];
+        if header.matches('[').count() > 1 {
+            continue;
+        }
+        let body = &source[def.body.clone()];
+        let body_intervals = source_style_intervals(body);
+        // For each parameter the body uses, the body intervals around it:
+        // the command, whether its group closes right after `#k` (italic
+        // correction), and whether it is outside every group of the body,
+        // so that it stays in force after the invocation too.
+        let mut params: Vec<(usize, Vec<(crate::nfss::Command, bool, bool)>)> = Vec::new();
+        for k in 1..=9usize {
+            let Some(p) = body.find(&format!("#{k}")) else { continue };
+            let chain: Vec<_> = body_intervals.iter().filter(|(s, e, _, _)| *s <= p && p < *e).map(|(_, e, c, _)| (*c, *e == p + 2, *e >= body.len())).collect();
+            if !chain.is_empty() {
+                params.push((k, chain));
+            }
+        }
+        let Some(arity) = params.iter().map(|(k, _)| *k).max() else { continue };
+        let mut from = def.body.end;
+        // (A redefinition nested inside this body ends the range before it
+        // starts.)
+        while from < until {
+            let Some(at) = find_command(&source[from..until], name) else { break };
+            let inv = from + at;
+            from = inv + 1 + name.len();
+            // The argument bytes of this invocation, brace groups only.
+            let mut i = from;
+            let mut args = Vec::new();
+            while args.len() < arity {
+                while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+                    i += 1;
+                }
+                if bytes.get(i) != Some(&b'{') {
+                    break;
+                }
+                let Some(close) = matching_brace(bytes, i) else { break };
+                args.push((i + 1, close));
+                i = close + 1;
+            }
+            for (k, chain) in &params {
+                if let Some(&(start, end)) = args.get(k - 1) {
+                    for &(c, correction, leaks) in chain {
+                        if leaks {
+                            // As an ungrouped declaration written at the call
+                            // site: to the end of the enclosing group, or to
+                            // the next `\end` outside any.
+                            let to = enclosing_group_end(source, inv).unwrap_or_else(|| find_command(&source[i..], "end").map_or(bytes.len(), |e| i + e));
+                            out.push((start, to, c, false));
+                        } else {
+                            out.push((start, end, c, correction));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The closing brace of the innermost brace group containing byte `at`
+/// (escaped `\{`/`\}` are not groups), or `None` at the top level.
+fn enclosing_group_end(source: &str, at: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let escaped = |j: usize| j > 0 && bytes[j - 1] == b'\\';
+    let mut depth = 0usize;
+    let mut j = at;
+    while j > 0 {
+        j -= 1;
+        match bytes[j] {
+            b'}' if !escaped(j) => depth += 1,
+            b'{' if !escaped(j) => {
+                if depth == 0 {
+                    return matching_brace(bytes, j);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The font intervals spelled in `source` itself (see [`style_intervals`]).
+fn source_style_intervals(source: &str) -> Vec<StyleInterval> {
     let mut out = Vec::new();
     let bytes = source.as_bytes();
     let literal = literal_spans(source);
@@ -6326,6 +6499,10 @@ fn items_cached(
                 0u8.hash(&mut h);
                 text.hash(&mut h);
                 style.color.hash(&mut h);
+                // A macro argument's font comes from the definition, which
+                // may sit outside the hashed slice (`macro_argument_intervals`).
+                let here = st.at(s.start);
+                (here.bold, here.italic, here.slanted, here.caps, here.family, here.undefined).hash(&mut h);
             }
             Inline::LineBreak { .. } => 1u8.hash(&mut h),
             Inline::Math { list, display, number, color, .. } => {
@@ -7151,6 +7328,15 @@ fn space_style(
     let no_styles = Styles::default();
     let intervals = styles.get(span.document.0).unwrap_or(&no_styles);
     let Some(gap) = src.get(pe..span.start) else { return fallback };
+    // After a replacement token of a user macro (whose span is the `\name`
+    // of the invocation) the bytes up to an argument are the call's earlier
+    // arguments, not what TeX read: `\pair{\textit{a b}}{c}`'s body space
+    // before `#2` is not in `a b`'s italic. Read the call site's font.
+    if let Some(bs) = src[..pe].rfind('\\') {
+        if is_invocation_span(src, Span { document: span.document, start: bs, end: pe }) {
+            return style_at(intervals, bs);
+        }
+    }
     match gap.find(|c: char| c.is_whitespace()) {
         Some(off) => style_at(intervals, pe + off),
         None => style_at(intervals, pe),
@@ -7784,6 +7970,20 @@ mod tests {
         // The text after the URL is outside it.
         assert_eq!(Styles::new(src, intervals, crate::nfss::Scheme::LmT1).at(src.find('y').unwrap()).family,
                    crate::nfss::FamilyKind::Rm);
+    }
+
+    /// A macro body's declarations around `#k` cover argument `k` at each
+    /// call (`macro_argument_intervals`), and a redefinition nested inside
+    /// the body (whose position is before the body's end) does not panic.
+    #[test]
+    fn a_macro_body_declaration_covers_its_argument() {
+        let src = "\\newcommand{\\note}[1]{{\\bfseries #1}}\nA \\note{bold} C";
+        let st = Styles::new(src, style_intervals(src), crate::nfss::Scheme::LmT1);
+        assert!(st.at(src.find("bold").unwrap()).bold);
+        assert!(!st.at(src.find('C').unwrap()).bold);
+        assert!(!st.at(src.find('A').unwrap()).bold);
+        let nested = "\\newcommand{\\a}[1]{\\def\\a{x}{\\bfseries #1}}\n\\a{y} z";
+        let _ = style_intervals(nested);
     }
 
     /// `\verb`, the `verbatim` environment and `lstlisting` are set in the

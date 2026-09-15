@@ -35,6 +35,7 @@ pub use mathlist::{
     Atom, AtomClass, BigSizing, Limits, MathFlex, MathList, Nucleus, TextPiece, TextStyle,
 };
 pub use metrics::{FontId, Glyph, MathFontMetrics, MathParams, OpenTypeMathConstants, SizeClass};
+pub use metrics::{MathChar, OrdPair};
 pub use source::{SourceSpan, SourceTag};
 pub use spacing::{Space, between};
 pub use style::{Style, StyleLevel};

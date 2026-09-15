@@ -442,6 +442,7 @@ Canonical sources:
 | `\footnote` | `[n]{...}` | numbered mark and page-bottom footnote text |
 | `\footnotemark` | `[n]` | footnote mark only |
 | `\footnotetext` | `[n]{...}` | footnote text without a mark |
+| `\fnsymbol` | `{counter}` | a counter's value 1-9 as a footnote symbol |
 | `\normalfont` |  | resets the text face |
 | `\bfseries` |  | switches to bold |
 | `\mdseries` |  | switches to medium weight |
@@ -665,7 +666,6 @@ Canonical sources:
 | `\refstepcounter` | `{counter}` | increments a counter and makes it the current \label value |
 | `\value` | `{counter}` | a counter's value in a number context |
 | `\Alph` | `{counter}` | a counter as an upper-case letter |
-| `\fnsymbol` | `{counter}` | a counter as a footnote symbol |
 | `\newlength` | `{\name}` | allocates a skip register |
 | `\settowidth` | `{\name}{text}` | sets a length from text measured by the expansion pass's box measurer (an approximation) |
 | `\settoheight` | `{\name}{text}` | sets a length from text height (an approximation, as \settowidth) |
