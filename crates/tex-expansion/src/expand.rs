@@ -20,7 +20,7 @@ use crate::error::{Diagnostic, Limits};
 use crate::lexer::{Lexer, State as LexState};
 use crate::macro_def::{BodyPart, MacroDef, MacroFlags, ParamPart};
 use crate::prelude::PRELUDE;
-use crate::registers::{absolute_unit_sp_per_unit, scale_decimal, DefaultFontMetrics, FontMetrics, Glue};
+use crate::registers::{absolute_unit_sp_per_unit, scale_decimal, scale_internal_dimen, DefaultFontMetrics, FontMetrics, FontSwitch, Glue};
 use crate::scopes::{IntParam, Meaning, Primitive, RegisterKind, Scopes};
 use crate::span::Span;
 use crate::token::{Token, TokenKind};
@@ -156,6 +156,10 @@ pub(crate) struct State {
     pub in_csname: u32,
     /// Host option, see `Engine::set_emit_unbalanced_close`.
     pub emit_unbalanced_close: bool,
+    /// Host font commands, see `Engine::declare_font_switch`.
+    pub font_switches: Rc<HashMap<String, FontSwitch>>,
+    /// An argument font switch (`\textbf`) waiting for its brace group.
+    pub pending_font_switch: Option<FontSwitch>,
 }
 
 impl State {
@@ -193,6 +197,8 @@ impl State {
             edef_depth,
             in_csname,
             emit_unbalanced_close,
+            font_switches,
+            pending_font_switch,
         } = self;
         conditionals == &new.conditionals
             && *pending_global == new.pending_global
@@ -210,6 +216,8 @@ impl State {
             && *edef_depth == new.edef_depth
             && *in_csname == new.in_csname
             && *emit_unbalanced_close == new.emit_unbalanced_close
+            && *pending_font_switch == new.pending_font_switch
+            && (Rc::ptr_eq(font_switches, &new.font_switches) || font_switches == &new.font_switches)
             && match (after_assignment, &new.after_assignment) {
                 (None, None) => true,
                 (Some(a), Some(b)) => crate::scopes::token_eq_mapped(a, b, f),
@@ -366,27 +374,21 @@ pub struct Checkpoint {
     pub(crate) lex_state: LexState,
     pub(crate) state: State,
     pub(crate) steps: u64,
-    /// Font-relative units in force when this checkpoint was taken.
-    pub(crate) quad_sp: i64,
-    pub(crate) x_height_sp: i64,
+    /// The host's `em`/`ex` provider: a restored engine resolves font
+    /// units exactly as the engine that took the checkpoint did.
+    pub(crate) metrics: MetricsHandle,
     /// Number of output tokens / diagnostics / labels produced so far.
     pub out_len: usize,
     pub diag_len: usize,
     pub label_len: usize,
 }
 
-struct FixedFontMetrics {
-    quad_sp: i64,
-    x_height_sp: i64,
-}
+#[derive(Clone)]
+pub(crate) struct MetricsHandle(pub(crate) Rc<dyn FontMetrics>);
 
-impl FontMetrics for FixedFontMetrics {
-    fn quad_sp(&self) -> i64 {
-        self.quad_sp
-    }
-
-    fn x_height_sp(&self) -> i64 {
-        self.x_height_sp
+impl std::fmt::Debug for MetricsHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FontMetrics")
     }
 }
 
@@ -499,6 +501,43 @@ impl Engine {
         if !self.st.scopes.is_defined(name) {
             self.st.scopes.assign_cs(name, Meaning::Primitive(Primitive::Host), true);
         }
+    }
+
+    /// Declare a host command that stands for a register assignment (a
+    /// host-side `\setlength`). Like [`Engine::declare_host_command`], but
+    /// a pending `\global` is passed through ahead of it, as TeX applies
+    /// the prefix to the register the command assigns.
+    pub fn declare_host_assignment(&mut self, name: &str) {
+        self.st.scopes.assign_cs(name, Meaning::Primitive(Primitive::HostAssignment), true);
+    }
+
+    /// Declare a host font command (see [`FontSwitch`]). The command is
+    /// still emitted for the host; the engine only tracks its effect on the
+    /// font selector [`FontMetrics::quad_sp_in`] receives. A name the
+    /// engine does not define becomes a host command.
+    pub fn declare_font_switch(&mut self, name: &str, switch: FontSwitch) {
+        self.declare_host_command(name);
+        Rc::make_mut(&mut self.st.font_switches).insert(name.to_string(), switch);
+    }
+
+    /// A host font command reached main control.
+    fn font_switch(&mut self, tok: &Token) {
+        let TokenKind::ControlSequence(name) = &tok.kind else {
+            return;
+        };
+        let Some(&switch) = self.st.font_switches.get(name) else {
+            return;
+        };
+        if switch.argument {
+            self.st.pending_font_switch = Some(switch);
+        } else {
+            self.apply_font_switch(switch);
+        }
+    }
+
+    fn apply_font_switch(&mut self, switch: FontSwitch) {
+        let font = self.st.scopes.int_param(IntParam::Font) as u32;
+        self.st.scopes.set_int_param(IntParam::Font, i64::from(switch.apply(font)), false);
     }
 
     /// Execute host-supplied TeX definitions (no output is kept) before the
@@ -863,6 +902,9 @@ impl Engine {
             }
             match self.step(pending.tok) {
                 Step::Emit(t) => {
+                    if self.st.pending_font_switch.is_some() && !self.keeps_font_switch_pending(&t) {
+                        self.st.pending_font_switch = None;
+                    }
                     if self.prefix_pending() {
                         if let Some(t) = self.prefix_before_content(t) {
                             return Some(t);
@@ -896,6 +938,16 @@ impl Engine {
         true
     }
 
+    /// `\textbf{..}`'s switch waits for its group across the command itself
+    /// and spaces; any other content means there was no brace group.
+    fn keeps_font_switch_pending(&self, t: &Token) -> bool {
+        match &t.kind {
+            TokenKind::Char(_, CatCode::Space) => true,
+            TokenKind::ControlSequence(name) => self.st.font_switches.get(name).is_some_and(|s| s.argument),
+            _ => false,
+        }
+    }
+
     fn prefix_pending(&self) -> bool {
         self.st.pending_global || self.st.pending_long || self.st.pending_outer || self.st.pending_protected
     }
@@ -917,7 +969,7 @@ impl Engine {
         }
         let passthrough = match &t.kind {
             TokenKind::ControlSequence(_) | TokenKind::ActiveChar(_) => {
-                matches!(self.meaning_of_token(&t), Meaning::Undefined)
+                matches!(self.meaning_of_token(&t), Meaning::Undefined | Meaning::Primitive(Primitive::HostAssignment))
             }
             _ => false,
         };
@@ -1028,8 +1080,7 @@ impl Engine {
             lex_state: self.base_lexer().state(),
             state: self.st.clone(),
             steps: self.steps,
-            quad_sp: self.metrics.quad_sp(),
-            x_height_sp: self.metrics.x_height_sp(),
+            metrics: MetricsHandle(self.metrics.clone()),
             out_len,
             diag_len: self.diagnostics.len(),
             label_len: self.labels.len(),
@@ -1040,10 +1091,7 @@ impl Engine {
     pub fn restore(src: Rc<str>, cp: &Checkpoint, limits: Limits) -> Self {
         let mut e = Self::from_parts(src, cp.pos, cp.lex_state, cp.state.clone(), limits);
         e.steps = cp.steps;
-        e.metrics = Rc::new(FixedFontMetrics {
-            quad_sp: cp.quad_sp,
-            x_height_sp: cp.x_height_sp,
-        });
+        e.metrics = cp.metrics.0.clone();
         e
     }
 
@@ -1148,6 +1196,9 @@ impl Engine {
                         return Some(Step::Continue);
                     }
                     self.st.scopes.push_group();
+                    if let Some(switch) = self.st.pending_font_switch.take() {
+                        self.apply_font_switch(switch);
+                    }
                     return Some(Step::Emit(tok.clone()));
                 }
                 CatCode::EndGroup => {
@@ -2280,7 +2331,12 @@ impl Engine {
                 self.do_end(&tok);
                 Step::Continue
             }
-            Host => Step::Emit(tok),
+            Host | HostAssignment => {
+                if !self.st.font_switches.is_empty() {
+                    self.font_switch(&tok);
+                }
+                Step::Emit(tok)
+            }
             StopInput => {
                 self.stopped = true;
                 Step::Eof
@@ -3608,8 +3664,7 @@ impl Engine {
                         // <internal integer><unit>: e.g. `\count0 pt`.
                         let n = self.scan_number();
                         let unit = self.read_unit_name();
-                        let per = self.unit_sp(&unit);
-                        let v = scale_decimal(n, "", per);
+                        let v = self.scale_unit(n, "", &unit);
                         self.skip_one_optional_space();
                         return if neg { -v } else { v };
                     }
@@ -3684,16 +3739,14 @@ impl Engine {
                 };
                 if let Some(v) = v {
                     let n: i64 = int_part.parse().unwrap_or(0);
-                    let f = round_decimals(&frac);
-                    let r = n * v + xn_over_d(v, f, 65536);
+                    let r = scale_internal_dimen(n, &frac, v);
                     return if neg { -r } else { r };
                 }
             }
         }
         let unit = self.read_unit_name();
         let int_val: i64 = int_part.parse().unwrap_or(0);
-        let per = self.unit_sp(&unit);
-        let sp = scale_decimal(int_val, &frac, per);
+        let sp = self.scale_unit(int_val, &frac, &unit);
         self.skip_one_optional_space();
         if neg {
             -sp
@@ -3702,17 +3755,25 @@ impl Engine {
         }
     }
 
-    fn unit_sp(&mut self, unit: &str) -> f64 {
+    /// `<decimal><unit>` in scaled points. The font units `em`/`ex` are the
+    /// current font's quad/x-height and scale like an internal dimension
+    /// (§455); physical units truncate their exact ratio.
+    fn scale_unit(&mut self, int_val: i64, frac: &str, unit: &str) -> i64 {
+        let font = self.st.scopes.int_param(IntParam::Font) as u32;
         match unit {
-            "em" => self.metrics.quad_sp() as f64,
-            "ex" => self.metrics.x_height_sp() as f64,
-            other => match absolute_unit_sp_per_unit(other) {
-                Some(v) => v,
-                None => {
-                    self.err("Illegal unit of measure (pt inserted).", Span::synthetic());
-                    65536.0
-                }
-            },
+            "em" => scale_internal_dimen(int_val, frac, self.metrics.quad_sp_in(font)),
+            "ex" => scale_internal_dimen(int_val, frac, self.metrics.x_height_sp_in(font)),
+            _ => scale_decimal(int_val, frac, self.unit_sp(unit)),
+        }
+    }
+
+    fn unit_sp(&mut self, unit: &str) -> f64 {
+        match absolute_unit_sp_per_unit(unit) {
+            Some(v) => v,
+            None => {
+                self.err("Illegal unit of measure (pt inserted).", Span::synthetic());
+                65536.0
+            }
         }
     }
 
@@ -3825,9 +3886,8 @@ impl Engine {
             return (if neg { -v } else { v }, fil);
         }
         let unit = self.read_unit_name();
-        let per = self.unit_sp(&unit);
         let int_val: i64 = int_part.parse().unwrap_or(0);
-        let v = scale_decimal(int_val, &frac, per);
+        let v = self.scale_unit(int_val, &frac, &unit);
         self.skip_one_optional_space();
         (if neg { -v } else { v }, 0)
     }
@@ -4648,7 +4708,8 @@ fn primitive_name(p: Primitive) -> &'static str {
         SetKeys => "setkeys",
         Verb => "verb",
         StopInput => "flashtex@stop",
-        Host => "flashtex@host",
+        Host | HostAssignment => "flashtex@host",
+        IntPar(IntParam::Font) => "flashtex@font",
     }
 }
 
@@ -4673,25 +4734,6 @@ enum BranchEnd {
     Fi,
 }
 
-/// tex.web §102 `round_decimals`: the digits after a decimal point as a
-/// fraction of 2^16, rounded.
-fn round_decimals(digits: &str) -> i64 {
-    let mut a: i64 = 0;
-    for d in digits.bytes().take(17).rev() {
-        a = (a + (d - b'0') as i64 * 131072) / 10;
-    }
-    (a + 1) / 2
-}
-
-/// tex.web §107 `xn_over_d`: x*n/d truncated toward zero.
-fn xn_over_d(x: i64, n: i64, d: i64) -> i64 {
-    let r = (x.abs() as i128 * n as i128) / d as i128;
-    if x < 0 {
-        -(r as i64)
-    } else {
-        r as i64
-    }
-}
 
 /// e-TeX's `\numexpr`/`\dimexpr` division rounds to the nearest integer,
 /// ties away from zero (not truncating like `\divide`).
@@ -5098,6 +5140,8 @@ fn base_state(tex_only: bool) -> State {
         edef_depth: 0,
         in_csname: 0,
         emit_unbalanced_close: false,
+        font_switches: Rc::new(HashMap::new()),
+        pending_font_switch: None,
     }
 }
 

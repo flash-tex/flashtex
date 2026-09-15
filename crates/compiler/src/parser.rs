@@ -24,6 +24,7 @@ use crate::theorems::{self, TheoremDef, TheoremStyle};
 use crate::vocabulary;
 use crate::{DocumentId, Span};
 use flashtex_tex_text_encoding::encoding::Encoding;
+use crate::font_units::FontSetup;
 
 mod colors;
 mod lists;
@@ -1117,12 +1118,12 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "sout",
 ];
 
-/// Parses a LaTeX dimension using the legacy body-size context. The command
-/// paths that know the active text style use `parse_dimen_pt_current` instead.
-/// Physical units follow TeX `scan_dimen` §458 (`1bp` = 72.27/72 pt, not
-/// 1pt). The legacy `ex` value uses [`CMR_EX_PER_EM`] (cmr x-height/em, the
-/// same constant as ulem `\sout`); this crate has no TFM, unlike the pipeline's
-/// `ec_em_ex`.
+/// Parses a LaTeX dimension using the legacy body-size context (`em` is the
+/// compiler's body size, `ex` [`CMR_EX_PER_EM`] of it, the same constant as
+/// ulem `\sout`). The command paths that know the active text style use
+/// `parse_dimen_pt_current`, whose `em`/`ex` are the selected TFM's
+/// (`crate::font_units`). Physical units follow TeX `scan_dimen` §458
+/// (`1bp` = 72.27/72 pt, not 1pt).
 pub(crate) fn parse_dimen_pt(text: &str) -> Option<f64> {
     parse_dimen_pt_at(text, crate::layout::BODY_SIZE_PT)
 }
@@ -1147,8 +1148,12 @@ const PREAMBLE_LENGTHS: &[&str] = &[
     "parskip",
 ];
 
-/// Table lengths are read by the table layout, but their assignments still
-/// belong to the compiler's accepted input grammar.
+/// Table lengths: their assignments (`\tabcolsep=1pt`, with or without
+/// `\global`) are accepted, but the compiler keeps no value for them (its
+/// table layout uses the kernel defaults), so there is nothing for a group to
+/// restore. Storing one needs a field in [`LengthScope`] and arms in
+/// `length_state`, `restore_length_scope` and `globalize_length`, or a local
+/// assignment would leak out of its group.
 const TABLE_LENGTHS: &[&str] = &[
     "tabcolsep",
     "arrayrulewidth",
@@ -1205,13 +1210,30 @@ pub(crate) fn parse_dimen_pt_at(text: &str, body_pt: f64) -> Option<f64> {
     parse_dimen_pt_with_units(text, body_pt, body_pt * CMR_EX_PER_EM)
 }
 
-/// Parse a dimension using the active text font's quad and x-height.
-fn parse_dimen_pt_current(text: &str, style: TextStyle, body_pt: f64) -> Option<f64> {
-    let size = style
-        .size
-        .map_or(body_pt, |level| crate::layout::size_declaration_pt(level, body_pt));
-    let font = crate::layout::style_font(style);
-    parse_dimen_pt_with_units(text, size, crate::layout::x_height_pt(font, size))
+/// Parse a dimension with `em`/`ex` of the active text font (`(em, ex)` in
+/// scaled points, from [`FontSetup::em_ex_sp`]). A font unit scales exactly as
+/// TeX's `scan_dimen` does (§455), so `0.65em` in ecrm1095 is pdflatex's
+/// 7.07704pt rather than a floating-point product.
+fn parse_dimen_pt_current(text: &str, (em_sp, ex_sp): (i64, i64)) -> Option<f64> {
+    let pt = parse_dimen_pt_with_units(text, em_sp as f64 / 65536.0, ex_sp as f64 / 65536.0)?;
+    let text = text.trim().trim_start_matches('=').trim();
+    let unit_sp = if text.ends_with("em") {
+        em_sp
+    } else if text.ends_with("ex") {
+        ex_sp
+    } else {
+        return Some(pt);
+    };
+    let number = text[..text.len() - 2].trim();
+    let digits = number.trim_start_matches(['+', '-']);
+    let negative = number[..number.len() - digits.len()].matches('-').count() % 2 == 1;
+    let (int, frac) = digits.split_once(['.', ',']).unwrap_or((digits, ""));
+    if !int.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit()) {
+        return Some(pt);
+    }
+    let int = if int.is_empty() { 0 } else { int.parse().ok()? };
+    let sp = flashtex_tex_expansion::scale_internal_dimen(int, frac, unit_sp);
+    Some((if negative { -sp } else { sp }) as f64 / 65536.0)
 }
 
 fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> {
@@ -1537,6 +1559,8 @@ pub fn parse_project_with(
         fboxrule_pt: 0.4,
         length_scopes: Vec::new(),
         pending_global: false,
+        latin_modern: false,
+        preamble_latin_modern: false,
     };
     p.diags.extend(bibliography_diags);
     p.diags.extend(expanded.diagnostics);
@@ -1642,6 +1666,11 @@ struct P<'a> {
     length_scopes: Vec<LengthScope>,
     /// A pass-through `\global` waiting for a parser-owned length assignment.
     pending_global: bool,
+    /// `\usepackage{lmodern}` selects Latin Modern from `\begin{document}`;
+    /// a later `\usepackage[T1]{fontenc}` (`\selectfont`) already in the
+    /// preamble.
+    latin_modern: bool,
+    preamble_latin_modern: bool,
     /// The current text font encoding: OT1 unless `fontenc` selected another
     /// (`text_builtins::fontenc_encoding`).
     font_encoding: Encoding,
@@ -2308,7 +2337,12 @@ impl P<'_> {
                 let global = std::mem::take(&mut self.pending_global);
                 self.length_assignment(name, span, global);
             }
-            _ if is_table_length(name) => {
+            // The TeX assignment form of the lengths this parser keeps
+            // (`\fboxsep=2pt`) anywhere, and of `\parskip` in the body, where
+            // it reports the same "not implemented" warning as `\setlength`.
+            _ if (is_table_length(name) || matches!(name, "fboxsep" | "fboxrule" | "parskip"))
+                && self.dimension_follows() =>
+            {
                 let global = std::mem::take(&mut self.pending_global);
                 self.length_assignment(name, span, global);
             }
@@ -2688,7 +2722,7 @@ impl P<'_> {
                 let (tokens, argument_span) = self.required_group(name, span);
                 let raw = token_text(&tokens);
                 let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-                match parse_dimen_pt_current(&raw, self.style, body) {
+                match parse_dimen_pt_current(&raw, self.font_setup().em_ex_sp(self.style)) {
                     Some(pt) => {
                         let space_after = matches!(
                             self.t.get(self.i).map(|input| &input.token.kind),
@@ -2765,8 +2799,7 @@ impl P<'_> {
                 let _starred = self.take_optional_star();
                 let (tokens, argument_span) = self.required_group(name, span);
                 let raw = token_text(&tokens);
-                let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-                match parse_dimen_pt_current(&raw, self.style, body) {
+                match parse_dimen_pt_current(&raw, self.font_setup().em_ex_sp(self.style)) {
                     Some(pt) => {
                         self.flush_paragraph(blocks, para);
                         blocks.push(Block::VSpace { pt });
@@ -3064,6 +3097,9 @@ impl P<'_> {
     }
 
     fn length_command(&mut self, command: &str, span: Span, add: bool) {
+        // `\global\setlength{\x}{..}`: `\setlength` is a macro, so TeX
+        // applies the prefix to the register assignment it expands to.
+        let global = std::mem::take(&mut self.pending_global);
         let (target_tokens, _) = self.required_group(command, span);
         let (value_tokens, value_span) = self.required_group(command, span);
         let span = span.merge(value_span);
@@ -3072,12 +3108,12 @@ impl P<'_> {
             .trim_start_matches('\\')
             .to_string();
         let raw = dimen_source(&value_tokens);
-        self.apply_length_value(command, &target, &raw, span, add, false);
+        self.apply_length_value(command, &target, &raw, span, add, global);
     }
 
     /// A TeX assignment `\textwidth=6in` / `\textwidth 6in` in the preamble.
     fn length_assignment(&mut self, name: &str, span: Span, global: bool) {
-        let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+        let units = self.font_setup().em_ex_sp(self.style);
         let mut raw = String::new();
         let mut end = span;
         loop {
@@ -3091,7 +3127,7 @@ impl P<'_> {
                     raw.push_str(word);
                     end = end.merge(tok.span);
                     self.i += 1;
-                    if parse_dimen_pt_current(&raw, self.style, body).is_some() {
+                    if parse_dimen_pt_current(&raw, units).is_some() {
                         break;
                     }
                 }
@@ -3103,7 +3139,7 @@ impl P<'_> {
                     raw.push_str(cmd);
                     end = end.merge(tok.span);
                     self.i += 1;
-                    if parse_dimen_pt_current(&raw, self.style, body).is_some() {
+                    if parse_dimen_pt_current(&raw, units).is_some() {
                         break;
                     }
                 }
@@ -3136,8 +3172,7 @@ impl P<'_> {
         add: bool,
         global: bool,
     ) {
-        let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-        let Some(pt) = parse_dimen_pt_current(raw, self.style, body) else {
+        let Some(pt) = parse_dimen_pt_current(raw, self.font_setup().em_ex_sp(self.style)) else {
             let who = if command.is_empty() {
                 format!("\\{target}")
             } else {
@@ -3170,7 +3205,7 @@ impl P<'_> {
             pt
         };
         match target {
-            // Read by `\colorbox`/`\fcolorbox` (not group-scoped here).
+            // Read by `\colorbox`/`\fcolorbox`; scoped by `length_scopes`.
             "fboxsep" => {
                 self.fboxsep_pt = if add { self.fboxsep_pt + pt } else { pt };
             }
@@ -3200,9 +3235,11 @@ impl P<'_> {
             name if in_preamble && is_preamble_length(name) => {}
             name if is_table_length(name) => {}
             _ => self.diags.push(Diagnostic::warning(
-                format!(
-                    "\\{command}{{\\{target}}} is recognised but not implemented here"
-                ),
+                if command.is_empty() {
+                    format!("\\{target} assignment is recognised but not implemented here")
+                } else {
+                    format!("\\{command}{{\\{target}}} is recognised but not implemented here")
+                },
                 Some(span),
                 Some("ignored the length assignment".into()),
             )),
@@ -3561,9 +3598,13 @@ impl P<'_> {
                 Some("multicols is set inside the page column".into()),
             ));
         }
+        if packages.iter().any(|package| package == "lmodern") {
+            self.latin_modern = true;
+        }
         if packages.iter().any(|package| package == "fontenc") {
             if let Some(encoding) = text_builtins::fontenc_encoding(&options) {
                 self.font_encoding = encoding;
+                self.preamble_latin_modern = self.latin_modern;
             }
         }
         if let Some(raw) = raw_options.filter(|_| packages.iter().any(|p| p == "siunitx")) {
@@ -5990,6 +6031,20 @@ impl P<'_> {
         self.length_scopes.push(self.length_state());
     }
 
+    /// The NFSS inputs `em`/`ex` depend on (see [`crate::font_units`]).
+    fn font_setup(&self) -> FontSetup {
+        let in_preamble = self.has_document && !self.in_body;
+        FontSetup::new(
+            self.class_size_pt,
+            self.font_encoding == Encoding::T1,
+            if in_preamble {
+                self.preamble_latin_modern
+            } else {
+                self.latin_modern
+            },
+        )
+    }
+
     fn length_state(&self) -> LengthScope {
         LengthScope {
             parskip_pt: self.parskip_pt,
@@ -6176,7 +6231,7 @@ impl P<'_> {
                     if let Some((raw, argument_span, after)) = siunitx_group_at(&expanded, next) {
                         skip_until = after;
                         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-                        if let Some(pt) = parse_dimen_pt_current(&raw, style, body) {
+                        if let Some(pt) = parse_dimen_pt_current(&raw, self.font_setup().em_ex_sp(style)) {
                             let space_after = matches!(
                                 expanded.get(after).map(|input| &input.token.kind),
                                 Some(TokenKind::Space)
@@ -7213,6 +7268,18 @@ impl P<'_> {
             begin_options,
         });
         self.push_list_frame(kind, effective, begin_span);
+    }
+
+    /// The next non-space token starts a `<dimen>` (`=2pt`, `2pt`, `-.5em`):
+    /// a length command is being assigned rather than read.
+    fn dimension_follows(&self) -> bool {
+        self.t[self.i..]
+            .iter()
+            .find(|input| !matches!(input.token.kind, TokenKind::Space | TokenKind::Comment))
+            .is_some_and(|input| {
+                matches!(&input.token.kind, TokenKind::Word(word)
+                    if word.starts_with(|c: char| c == '=' || c == '.' || c == '-' || c == '+' || c.is_ascii_digit()))
+            })
     }
 
     fn skip_spaces(&mut self) {
