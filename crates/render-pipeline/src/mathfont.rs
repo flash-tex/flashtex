@@ -152,12 +152,6 @@ pub fn is_script_capital(ch: char) -> bool {
 /// `typeset::symbol_atoms` introduces it; nothing else compares against it.
 pub const VARNOTHING_SENTINEL: char = '\u{F8FF}';
 
-/// The zero-width slash in `\notin` is the same cmsy glyph as `\not` in
-/// `\neq`, but pdfTeX's ToUnicode map extracts the former as `/` and the
-/// latter as U+0338. A private-use atom keeps those spellings distinct
-/// without changing either glyph selection or its metrics.
-pub const NOT_IN_SLASH: char = '\u{F8FE}';
-
 /// Whether `ch` is drawn from the secondary face ([`BB_FONT`]) when it is
 /// loaded: `\mathbb` and `\mathcal` letters, and [`VARNOTHING_SENTINEL`].
 pub fn is_secondary_face(ch: char) -> bool {
@@ -469,7 +463,6 @@ impl MathFonts {
             '\u{3D5}' => '\u{1D719}',  // phi variant
             '\u{3F1}' => '\u{1D71A}',  // rho variant
             '\u{3D6}' => '\u{1D71B}',  // pi variant
-            NOT_IN_SLASH => '\u{0338}',
             VARNOTHING_SENTINEL => '\u{2205}',
             _ => match ams_of(ch) {
                 Some(ams) => ams.text.chars().next().unwrap_or(ch),
@@ -478,32 +471,16 @@ impl MathFonts {
         }
     }
 
-    /// The text that pdfTeX's glyph-to-Unicode maps expose for a math glyph.
-    /// This is separate from [`math_char`], which selects the painted
-    /// OpenType glyph. Some Computer Modern maps use legacy ASCII or
-    /// compatibility characters, and a few symbols expand to more than one
-    /// extracted character.
+    /// Semantic Unicode corrections for math glyph text. This is separate
+    /// from [`math_char`], which selects the painted OpenType glyph. The
+    /// default pdfTeX cmex/cmsy maps are font-slot artefacts (for example,
+    /// `\sum` maps to `P`), so they are not the extraction oracle here.
     pub fn extraction_text(ch: char) -> Option<&'static str> {
         match ch {
             '-' => Some("\u{2212}"),
             '*' => Some("\u{2217}"),
-            '\u{2218}' => Some("\u{25E6}"),
-            '\u{22C5}' => Some("\u{00B7}"),
-            '\u{2216}' => Some("\\"),
-            NOT_IN_SLASH => Some("/"),
-            '\u{21A6}' => Some("7\u{2192}"),
-            '\u{27F9}' => Some("=\u{21D2}"),
-            '\u{27F6}' => Some("\u{2212}\u{2192}"),
-            '\u{21AA}' => Some(",\u{2192}"),
             '\u{03C6}' => Some("\u{03D5}"),
             '\u{03D5}' => Some("\u{03C6}"),
-            '\u{03BC}' => Some("\u{00B5}"),
-            '\u{0394}' => Some("\u{2206}"),
-            '\u{03A9}' => Some("\u{2126}"),
-            '\u{2211}' => Some("P"),
-            '\u{220F}' => Some("Q"),
-            '\u{222B}' => Some("R"),
-            '\u{222E}' => Some("H"),
             _ => None,
         }
     }
@@ -836,32 +813,39 @@ mod tests {
     }
 
     #[test]
-    fn extraction_text_matches_the_pdflatex_math_map() {
+    fn extraction_text_uses_semantic_math_unicode() {
         let expected = [
             ('-', "−"),
             ('*', "∗"),
-            ('\u{2218}', "◦"),
-            ('\u{22C5}', "·"),
-            ('\u{2216}', "\\"),
-            (NOT_IN_SLASH, "/"),
-            ('\u{21A6}', "7→"),
-            ('\u{27F9}', "=⇒"),
-            ('\u{27F6}', "−→"),
-            ('\u{21AA}', ",→"),
             ('\u{03C6}', "ϕ"),
             ('\u{03D5}', "φ"),
-            ('\u{03BC}', "µ"),
-            ('\u{0394}', "∆"),
-            ('\u{03A9}', "Ω"),
-            ('\u{2211}', "P"),
-            ('\u{220F}', "Q"),
-            ('\u{222B}', "R"),
-            ('\u{222E}', "H"),
         ];
         for (ch, text) in expected {
             assert_eq!(MathFonts::extraction_text(ch), Some(text), "{ch:?}");
         }
-        assert_eq!(MathFonts::extraction_text('a'), None);
+        // pdfTeX's default cmex/cmsy mappings make copy-paste worse by
+        // exposing font-slot artefacts such as `\sum` -> `P`; semantic
+        // Unicode, not that output, is the contract.
+        for ch in [
+            '\u{2217}',
+            '\u{2218}',
+            '\u{22C5}',
+            '\u{2216}',
+            '\u{0338}',
+            '\u{21A6}',
+            '\u{27F9}',
+            '\u{27F6}',
+            '\u{21AA}',
+            '\u{03BC}',
+            '\u{0394}',
+            '\u{03A9}',
+            '\u{2211}',
+            '\u{220F}',
+            '\u{222B}',
+            '\u{222E}',
+        ] {
+            assert_eq!(MathFonts::extraction_text(ch), None, "{ch:?}");
+        }
     }
 
     #[test]

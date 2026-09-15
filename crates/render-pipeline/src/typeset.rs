@@ -7300,7 +7300,7 @@ fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
         // are those of U+22C5.
         '\u{00B7}' => vec![ml::Atom::symbol('\u{22C5}')],
         '\u{2260}' => vec![ml::Atom::rel(crate::mathtex::NOT_SLASH), ml::Atom::symbol('=')],
-        '\u{2209}' => vec![ml::Atom::rel(crate::mathfont::NOT_IN_SLASH), ml::Atom::symbol('\u{2208}')],
+        '\u{2209}' => vec![ml::Atom::rel(crate::mathtex::NOT_SLASH), ml::Atom::symbol('\u{2208}')],
         // `\varnothing`: same U+2205 as `\emptyset`, but forced to msbm10's
         // width. A sentinel keeps the two apart for the metrics providers
         // (`TexMathMetrics`/`MathFonts`), which paint both from cmsy10's

@@ -128,7 +128,7 @@ fn composite_and_extra_symbols_convert_with_texbook_classes() {
             (Ord, Some('c')),
             (Rel, Some('\u{22A5}')),
             (Ord, Some('d')),
-            (Rel, Some(flashtex_render_pipeline::mathfont::NOT_IN_SLASH)),
+            (Rel, Some('\u{0338}')),
             (Rel, Some('\u{2208}')),
             (Ord, Some('e')),
         ]
@@ -153,12 +153,15 @@ fn odot_is_painted_as_a_binary_math_glyph() {
 }
 
 #[test]
-fn common_math_glyph_runs_use_pdflatex_extraction_text() {
+fn common_math_glyph_runs_use_semantic_unicode() {
     if !lm_available() {
         return;
     }
+    // Semantic Unicode is the contract. pdfTeX's default cmex/cmsy maps can
+    // expose font-slot artefacts (`\sum` -> `P`, `\mapsto` -> `7→`), so its
+    // extraction is not an oracle for copy-paste quality.
     let r = render_one(&doc(
-        r"$- * \circ \cdot \setminus \neq \notin \mapsto \Longrightarrow \longrightarrow \hookrightarrow \phi \varphi \mu \Delta \Omega \sum \prod \int \oint \cdots$",
+        r"$- * \ast \circ \cdot \setminus \neq \notin \mapsto \Longrightarrow \longrightarrow \hookrightarrow \phi \varphi \mu \Delta \Omega \sum \prod \int \oint \cdots$",
     ));
     let text: String = r.v2.pages[0]
         .items
@@ -168,7 +171,7 @@ fn common_math_glyph_runs_use_pdflatex_extraction_text() {
             _ => None,
         })
         .collect();
-    assert_eq!(text, "−∗◦·\\̸=/∈7→=⇒−→,→ϕφµ∆ΩPQRH···");
+    assert_eq!(text, "−∗∗∘⋅∖̸≠∈↦⟹⟶↪ϕφμΔΩ∑∏∫∮⋅⋅⋅");
 }
 
 #[test]
@@ -311,7 +314,7 @@ fn left_right_paints_the_variant_of_the_selected_cmex_size() {
     // Text-size \sum is a cmex glyph too (0x50, hanging 10 pt below its
     // origin); centred on the axis (3 pt at 12 pt) its ink spans 8 pt above
     // to 2 pt below the baseline, as pdflatex draws lmex10.
-    let sum = math_face_glyphs("Inline $\\sum_{i=1}^{n} i$ text.", "P");
+    let sum = math_face_glyphs("Inline $\\sum_{i=1}^{n} i$ text.", "\u{2211}");
     assert_eq!(sum.len(), 1, "{sum:?}");
     let (_, _, top_s, bottom_s) = sum[0];
     assert!((top_s + 8.0).abs() < 0.4 && (bottom_s - 2.0).abs() < 0.4, "text \\sum ink {top_s:.2}..{bottom_s:.2} pt from the baseline; TeX: -8.0..+2.0");
@@ -347,10 +350,11 @@ fn cm_less_symbols_are_painted_from_latin_modern_math() {
         .collect();
     let texts: Vec<&str> = runs.iter().map(|(t, _)| t.as_str()).collect();
     assert!(texts.contains(&"ℤℵ"), "\\mathbb{{Z}}\\aleph dropped: {texts:?}");
-    assert!(texts.contains(&"ℝ\\ℚ"), "\\mathbb{{R}}\\setminus\\mathbb{{Q}} dropped: {texts:?}");
-    assert!(texts.contains(&"x=⇒y"), "\\Longrightarrow dropped: {texts:?}");
-    // The run text and the painted glyph both use the math minus: U+2212 is
-    // gid 2615 in the pinned font 6075562b…, not the text hyphen (gid 14).
+    assert!(texts.contains(&"ℝ∖ℚ"), "\\mathbb{{R}}\\setminus\\mathbb{{Q}} dropped: {texts:?}");
+    assert!(texts.contains(&"x⟹y"), "\\Longrightarrow dropped: {texts:?}");
+    // The run text uses semantic U+2212, and the painted glyph is Latin
+    // Modern Math's U+2212 (gid 2615 in the pinned font 6075562b…), not its
+    // text hyphen (gid 14).
     let minus = runs.iter().find(|(t, _)| t.starts_with('−')).expect("the minus run");
     assert_eq!(minus.1, 2615, "math minus should paint U+2212: {runs:?}");
 }
@@ -445,7 +449,7 @@ fn mathbb_paints_from_new_computer_modern_when_bundled() {
     assert!(with.v2.fonts.iter().any(|f| f.postscript_name == "LatinModernMath-Regular"), "LM Math still draws the rest");
     assert!(bb_notes(&with).is_empty(), "no msbm10 note with NewCM: {:?}", bb_notes(&with));
     // The rest of the formula is unchanged: every non-double-struck glyph
-    // keeps its face and glyph id (runs split differently because `ℝ\ℚ`
+    // keeps its face and glyph id (runs split differently because `ℝ∖ℚ`
     // now alternates faces, and x positions move with NewCM's msbm-like
     // advances, which is the point).
     let others = |r: &flashtex_render_pipeline::Rendered| -> Vec<(String, String, u16)> {
