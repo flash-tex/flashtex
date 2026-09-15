@@ -27,3 +27,9 @@ __pycache__/
 # Generated design canvas bundle (large single-file build output)
 docs/design/canvas/*.html
 !docs/design/canvas/*.dc.html
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
