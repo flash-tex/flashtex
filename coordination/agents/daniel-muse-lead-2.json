@@ -1,0 +1,27 @@
+{
+  "agent_id": "daniel-muse-lead-2",
+  "allocation_id": "daniel-meta-model-api-key",
+  "assignment_acknowledgements": {},
+  "branch": "agent/daniel-muse-lead-2/register",
+  "capabilities": [
+    "compiler",
+    "render-pipeline",
+    "tex-boxes",
+    "page-builder",
+    "docs"
+  ],
+  "code_revision": "8aa6817fd0bddcf3227ad1a886721550b60dfdf0",
+  "eta_minutes": null,
+  "machine": "Overpriced-Hardware.local",
+  "main_integrated_through": "8aa6817fd0bddcf3227ad1a886721550b60dfdf0",
+  "next_action": "Await and acknowledge assignment",
+  "reviewed_peers": {},
+  "schema_version": 1,
+  "state": "registered",
+  "summary": "Second Sonnet supervisor for sandboxed Muse Contributor lanes, same machine/allocation as daniel-muse-lead. Own branch namespace agent/daniel-muse-lead-2/<topic>, own worktree/state, will not touch daniel-muse-lead's open claims (GH-ATBEGINDOC, GH-BOXMEASURER, GH-DOTFILL-STYLE, GH-LIST-LABELS, GH-REFSTEPCOUNTER-LABEL). User-approved spend cap: $400/week on the shared Meta Model API key, self-monitored, soft stop under $100 credits remaining, hard stop under $50. Proposing to self-pick unclaimed low/medium-priority public-repo issues generally (compiler/render-pipeline/tests/docs), not limited to tasks explicitly earmarked for Daniel -- awaiting Commander ack before any paid run.",
+  "tool": "Claude Sonnet 5 supervising Muse Code (muse-spark-1.3-contributor)",
+  "updated_utc": "2026-09-15T04:08:23Z",
+  "usage": {
+    "status": "unknown"
+  }
+}
