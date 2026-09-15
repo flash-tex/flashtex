@@ -163,6 +163,11 @@ pub enum ListOption {
     LabelWidth(ListLength),
     LabelIndent(ListLength),
     ItemIndent(ListLength),
+    /// `left=<len>` / `left=<len>..<len>` (`enumitem.sty` `\enit@setleft`):
+    /// `labelindent=<len>` with an auto (`*`) `leftmargin`, or
+    /// `labelindent=<len>` with an explicit `leftmargin` and an auto (`*`)
+    /// `labelsep`. Kept raw; the render pipeline expands it.
+    Left(String),
     ListParIndent(ListLength),
     TopSep(ListSkip),
     PartopSep(ListSkip),
@@ -599,9 +604,14 @@ pub(crate) fn parse_options(text: &str, body_pt: f64, allow_short_label: bool) -
             "leftmargin" => with_length(ListOption::LeftMargin),
             "rightmargin" => with_length(ListOption::RightMargin),
             "labelsep" => with_length(ListOption::LabelSep),
+            "labelsep*" => with_length(ListOption::LabelSep),
             "labelwidth" => with_length(ListOption::LabelWidth),
             "labelindent" => with_length(ListOption::LabelIndent),
+            "labelindent*" => with_length(ListOption::LabelIndent),
             "itemindent" => with_length(ListOption::ItemIndent),
+            "left" => value.map_or_else(other, |v| {
+                ListOption::Left(strip_outer_braces(v).to_string())
+            }),
             "listparindent" => with_length(ListOption::ListParIndent),
             "topsep" => with_skip(ListOption::TopSep),
             "partopsep" => with_skip(ListOption::PartopSep),
@@ -613,6 +623,7 @@ pub(crate) fn parse_options(text: &str, body_pt: f64, allow_short_label: bool) -
                 ListOption::Align(strip_outer_braces(v).to_string())
             }),
             "widest" => ListOption::Widest(name()),
+            "widest*" => ListOption::Widest(name()),
             _ => other(),
         });
     }
@@ -700,6 +711,25 @@ mod tests {
         assert_eq!(
             parse_options("resume", 10.0, true),
             vec![ListOption::Resume(None)]
+        );
+    }
+
+    #[test]
+    fn starred_and_left_keys_parse_as_lengths() {
+        assert_eq!(
+            parse_options("labelsep*=1em, labelindent*=2pt", 10.0, true),
+            vec![
+                ListOption::LabelSep(ListLength::Pt(10.0)),
+                ListOption::LabelIndent(ListLength::Pt(2.0))
+            ]
+        );
+        assert_eq!(
+            parse_options("widest*=22", 10.0, true),
+            vec![ListOption::Widest(Some("22".into()))]
+        );
+        assert_eq!(
+            parse_options("left=1cm..2cm", 10.0, true),
+            vec![ListOption::Left("1cm..2cm".into())]
         );
     }
 

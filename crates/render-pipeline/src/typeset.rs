@@ -2886,15 +2886,38 @@ impl<'a> Context<'a> {
         let mut hang_pt = 0.0;
         let mut inner_margin_pt = 0.0;
         if let Some(geom) = list_geom {
-            let (hang, labelwidth, inner) = self.list_geometry(geom, size);
+            let (hang, labelwidth, inner, labelsep) = self.list_geometry(geom, size);
             hang_pt = hang;
             inner_margin_pt = inner;
             if let Some((text, span)) = geom.label.as_ref().filter(|_| starts_paragraph) {
                 if let Some(nb) = self.label_box(text, *span, size, geom.description || geom.label_bold, geom.label_symbol) {
-                    let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
                     let protrude = self.item_left_protrusion(&list, &recs);
-                    let box_width = if geom.llap { nb.width } else { nb.width.min(labelwidth) };
-                    let mut lead = vec![(pl::Item::kern(-(labelsep + box_width)), None)];
+                    // `align=left` (`\enit@align@left`: `\nobreak##1\hfil`):
+                    // the label opens the `\labelwidth` box, filled after,
+                    // so its left edge sits `\labelsep + \labelwidth`
+                    // before the item text. Otherwise the label is
+                    // right-aligned (`\hss\llap{##1}`): its right edge ends
+                    // `\labelsep` before the text, a wide label extending
+                    // left past the box (`llap`) or clamped to it.
+                    //
+                    // `\@item` (`\hskip\itemindent \hskip-\labelwidth
+                    // \hskip-\labelsep <box> \hskip\labelsep`, latex.ltx
+                    // 16030-16038) pushes the item text right whenever the
+                    // label box is wider than `\labelwidth`: a negative
+                    // `\labelwidth` (`labelsep*=` under a nested
+                    // `leftmargin=`), or an `align=left` label wider than
+                    // its box (no `\llap` to absorb it).
+                    let (open, close) = if geom.align_left && !geom.description {
+                        (-(labelsep + labelwidth), labelsep + (labelwidth - nb.width).max(0.0))
+                    } else {
+                        let box_width = if geom.llap { nb.width } else { nb.width.min(labelwidth) };
+                        // `\@tempboxa` is zero-width under `\llap`
+                        // (`\hss\llap{##1}` in a zero-glued `\hbox`), so a
+                        // negative `\labelwidth` still pushes the text.
+                        let push = if geom.llap { (-labelwidth).max(0.0) } else { 0.0 };
+                        (-(labelsep + box_width) + push, labelsep)
+                    };
+                    let mut lead = vec![(pl::Item::kern(open), None)];
                     // `\descriptionlabel`: `\hspace\labelsep \normalfont
                     // \bfseries #1` — the label box itself opens with
                     // `\labelsep`, so the bold text starts at the margin the
@@ -2910,7 +2933,7 @@ impl<'a> Context<'a> {
                         at = x + run.width;
                         lead.push((pl::Item::Box(run), Some(rec)));
                     }
-                    lead.push((pl::Item::kern(labelsep), None));
+                    lead.push((pl::Item::kern(close), None));
                     if protrude != 0.0 {
                         lead.push((pl::Item::kern(-protrude), None));
                     }
@@ -3130,9 +3153,16 @@ impl<'a> Context<'a> {
                         ListMargin::Fixed(pt) => pt.to_bits().hash(&mut h),
                         ListMargin::Widest(text) => text.hash(&mut h),
                         ListMargin::Em(em) => em.to_bits().hash(&mut h),
-                        ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                        ListMargin::WidestSep { label, labelsep_pt, itemindent_pt, labelindent_pt } => {
                             label.hash(&mut h);
                             labelsep_pt.map(f64::to_bits).hash(&mut h);
+                            itemindent_pt.to_bits().hash(&mut h);
+                            labelindent_pt.to_bits().hash(&mut h);
+                        }
+                        ListMargin::LeftSepAuto { label, leftmargin_pt, labelindent_pt, itemindent_pt } => {
+                            label.hash(&mut h);
+                            leftmargin_pt.to_bits().hash(&mut h);
+                            labelindent_pt.to_bits().hash(&mut h);
                             itemindent_pt.to_bits().hash(&mut h);
                         }
                         ListMargin::TextWidth(text) => text.hash(&mut h),
@@ -3145,6 +3175,8 @@ impl<'a> Context<'a> {
                 g.parsep.natural.to_bits().hash(&mut h);
                 g.labelsep_pt.map(f64::to_bits).hash(&mut h);
                 g.itemindent_pt.to_bits().hash(&mut h);
+                g.labelwidth_pt.map(f64::to_bits).hash(&mut h);
+                g.align_left.hash(&mut h);
                 h.finish()
             });
             for part in parts {
@@ -3487,7 +3519,13 @@ impl<'a> Context<'a> {
     /// `leftmargin=*`; zero for a `description`, whose `\list` sets
     /// `\labelwidth\z@`), and the innermost `\leftmargin` on its own, which
     /// is what `description`'s `\itemindent-\leftmargin` cancels.
-    fn list_geometry(&mut self, geom: &ListGeom, size: f64) -> (f64, f64, f64) {
+    /// `(hang, labelwidth, inner, sep)`: the hanging indent (the
+    /// `\leftmargin` sum), the innermost level's `\labelwidth`, that level's
+    /// own `\leftmargin`, and the effective `\labelsep` before the item
+    /// text — the class's unless the innermost itemize/enumerate set
+    /// `labelsep=`/`labelsep*=` (or `left=<a>..<b>` solved it from the
+    /// widest label).
+    fn list_geometry(&mut self, geom: &ListGeom, size: f64) -> (f64, f64, f64, f64) {
         let labelsep = self.style.labelsep_pt;
         let mut hang = 0.0;
         let mut labelwidth = 0.0;
@@ -3503,9 +3541,13 @@ impl<'a> Context<'a> {
                     let w = self.text_width(text, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
                     (w + labelsep, w)
                 }
-                ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                ListMargin::WidestSep { label, labelsep_pt, itemindent_pt, labelindent_pt } => {
                     let w = self.text_width(label, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
-                    (w + labelsep_pt.unwrap_or(labelsep) - itemindent_pt, w)
+                    (w + labelsep_pt.unwrap_or(labelsep) + labelindent_pt - itemindent_pt, w)
+                }
+                ListMargin::LeftSepAuto { label, leftmargin_pt, .. } => {
+                    let w = self.text_width(label, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
+                    (*leftmargin_pt, w)
                 }
                 ListMargin::TextWidth(text) => {
                     let w = self.text_width(text, size, Span::new(0, 0));
@@ -3519,7 +3561,25 @@ impl<'a> Context<'a> {
         if geom.description {
             labelwidth = 0.0;
         }
-        (hang, labelwidth, inner)
+        // The adapter resolved the innermost level's `\labelwidth` (an
+        // explicit `labelwidth=` or the class width); it only yields to the
+        // widest-label measurement above (`leftmargin=*`, `left=<..>`) and
+        // never to a `description` (whose `\labelwidth` is zero).
+        if let Some(w) = geom.labelwidth_pt.filter(|_| {
+            !geom.description
+                && matches!(geom.margins.last(), Some(ListMargin::Fixed(_)) | Some(ListMargin::TextWidth(_)))
+        }) {
+            labelwidth = w;
+        }
+        // `\enit@calcleft` case 2 (`left=<a>..<b>`): `\labelsep =
+        // \leftmargin + \itemindent - \labelindent - \labelwidth`.
+        let sep = match geom.margins.last() {
+            Some(ListMargin::LeftSepAuto { leftmargin_pt, labelindent_pt, itemindent_pt, .. }) => {
+                leftmargin_pt + itemindent_pt - labelindent_pt - labelwidth
+            }
+            _ => geom.labelsep_pt.unwrap_or(labelsep),
+        };
+        (hang, labelwidth, inner, sep)
     }
 
     /// Width of `text` shaped in the body font at `size`, in points.
@@ -3639,7 +3699,7 @@ impl<'a> Context<'a> {
     fn display_opener_block(&mut self, bracket: bool, list_geom: Option<&ListGeom>) -> (BuiltBlock, f64) {
         let s = self.style;
         let size = s.body_size_pt;
-        let (hang, labelwidth, inner) = list_geom.map_or((0.0, 0.0, 0.0), |g| self.list_geometry(g, size));
+        let (hang, labelwidth, inner, labelsep) = list_geom.map_or((0.0, 0.0, 0.0, s.labelsep_pt), |g| self.list_geometry(g, size));
         let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
         let label = list_geom
@@ -3664,9 +3724,19 @@ impl<'a> Context<'a> {
                     // `\itemindent-\leftmargin`: `inner` is the innermost
                     // list's `\leftmargin`, so this is `hang + \itemindent`.
                     hang - inner
+                } else if list_geom.is_some_and(|g| g.align_left) {
+                    // `\enit@align@left`: the label opens the `\labelwidth`
+                    // box, so its left edge sits `\labelsep + \labelwidth`
+                    // before the item text (`hang + \itemindent`).
+                    hang + list_geom.map_or(0.0, |g| g.itemindent_pt) - labelsep - labelwidth
                 } else {
+                    // A negative `\labelwidth` pushes the label left past
+                    // the box the same distance it pushes the text right
+                    // (see the `push` above): the right edge stays glued.
+                    let push = if list_geom.is_some_and(|g| g.llap) { (-labelwidth).max(0.0) } else { 0.0 };
                     hang + list_geom.map_or(0.0, |g| g.itemindent_pt)
-                        - list_geom.and_then(|g| g.labelsep_pt).unwrap_or(s.labelsep_pt)
+                        - labelsep
+                        + push
                         - if list_geom.is_some_and(|g| g.llap) {
                             nb.width
                         } else {
