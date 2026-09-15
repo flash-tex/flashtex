@@ -801,6 +801,11 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "end",
     "par",
     "documentclass",
+    "NeedsTeXFormat",
+    "ProvidesClass",
+    "ProvidesPackage",
+    "ProvidesFile",
+    "DocumentMetadata",
     "setlength",
     "addtolength",
     "usepackage",
@@ -1307,6 +1312,7 @@ pub fn parse_project_with(
         in_body: !has_document,
         document_ended: false,
         document_class: None,
+        seen_documentclass: false,
         class_size_pt: None,
         parskip_pt: None,
         packages: Vec::new(),
@@ -1449,6 +1455,11 @@ struct P<'a> {
     in_body: bool,
     document_ended: bool,
     document_class: Option<String>,
+    /// Whether `\documentclass` has been seen at all — even with an empty
+    /// argument that records no class name. `\DocumentMetadata` must come
+    /// before `\documentclass` regardless, so that position check reads
+    /// this flag, not whether a class name is known.
+    seen_documentclass: bool,
     class_size_pt: Option<f64>,
     parskip_pt: Option<f64>,
     packages: Vec<String>,
@@ -2030,6 +2041,20 @@ impl P<'_> {
             // real documents put it, and in the body, where LaTeX also
             // allows it.
             "hypersetup" => self.hypersetup(span),
+            // `\NeedsTeXFormat{format}[date]`, `\ProvidesClass{name}[info]`,
+            // `\ProvidesPackage{name}[info]` and `\ProvidesFile{name}[info]`
+            // are `.cls`/`.sty` declarations (or inert metadata) with no
+            // visible output, so they are accepted silently. Real LaTeX
+            // carries the optional `[date]`/`[info]` after the required
+            // group, so the group is consumed first and the bracket (when
+            // present) with it; nothing is typeset either way.
+            "NeedsTeXFormat" | "ProvidesClass" | "ProvidesPackage" | "ProvidesFile" => {
+                let _ = self.required_group(name, span);
+                let _ = self.optional_bracket_argument();
+            }
+            // `\DocumentMetadata{key=value,...}` (LaTeX2e 2022+) must precede
+            // `\documentclass`; see `document_metadata` below.
+            "DocumentMetadata" => self.document_metadata(span),
             // `\lstset{key=value,...}` (listings): the package's own
             // defaults, settable anywhere and global from that point on.
             // The command typesets nothing itself -- `\lst@Init` reads the
@@ -2707,6 +2732,10 @@ impl P<'_> {
     }
 
     fn document_class(&mut self, span: Span) {
+        // Any invocation counts as "seen" for `\DocumentMetadata` ordering —
+        // even `\documentclass{}` with an empty argument, which warns below
+        // and records no class name.
+        self.seen_documentclass = true;
         let options = self.optional_bracket_argument();
         let option_list: Vec<&str> = options
             .as_ref()
@@ -2744,6 +2773,122 @@ impl P<'_> {
             }
             self.document_class = Some(class);
         }
+    }
+
+    /// `\DocumentMetadata{key=value,...}` (LaTeX2e 2022+): real LaTeX
+    /// requires it before `\documentclass` and raises an error after it.
+    /// Its keys (PDF tagging, PDF/A conformance, the document language)
+    /// feed PDF-generation machinery this compiler does not implement, so
+    /// before `\documentclass` they are accepted with a warning naming
+    /// them. `seen_documentclass` records whether `\documentclass` has
+    /// already been invoked (even with an empty argument), which is what
+    /// the position check reads.
+    fn document_metadata(&mut self, span: Span) {
+        let (tokens, argument_span) = self.required_group("DocumentMetadata", span);
+        let full_span = span.merge(argument_span);
+        if self.seen_documentclass {
+            self.diags.push(Diagnostic::error(
+                "\\DocumentMetadata must come before \\documentclass",
+                Some(full_span),
+                Some("ignored the metadata and continued".into()),
+            ));
+            return;
+        }
+        // `token_text` drops braces, so rebuild a brace-faithful rendering
+        // first: `testphase={phase-III,math,table}` is ONE key whose braced
+        // value happens to contain commas, not three keys. (Command names
+        // cannot contain `{`, `}` or `,`, so rendering a command as its bare
+        // name cannot disturb the depth tracking.)
+        //
+        // A control symbol such as `\,` lexes as a standalone one-character
+        // `Word` (see the lexer) — exactly like a real separator comma that
+        // happens to stand alone (`foo=bar , lang=en`). The two are told
+        // apart the same way [`P::optional_bracket_argument`] does: an
+        // escaped symbol's source span covers the backslash too, so it is
+        // longer than its one-character text, while an ordinary word token
+        // is accumulated character-by-character and its span length always
+        // equals its text length. Only the genuinely escaped literals hide
+        // behind placeholders while splitting (a literal `\{` must not open
+        // a brace group either) and are restored in each split-out part
+        // afterwards; every plain top-level comma splits, whatever
+        // whitespace surrounds it.
+        const ESCAPED_COMMA: char = '\u{E000}';
+        const ESCAPED_OPEN: char = '\u{E001}';
+        const ESCAPED_CLOSE: char = '\u{E002}';
+        let mut rich = String::new();
+        for input in &tokens {
+            match &input.token.kind {
+                TokenKind::Word(text) if text == "," || text == "{" || text == "}" => {
+                    // Accepted limitation: a comma/brace produced by expanding
+                    // a user macro (e.g. `\newcommand{\comma}{,}`) carries the
+                    // macro invocation's span, not a literal source span, so
+                    // this span-length check cannot tell it apart from a real
+                    // separator — it splits like one. Vanishingly rare in real
+                    // `\DocumentMetadata`, so documented, not fixed.
+                    let literal = input.token.span.end - input.token.span.start == text.len();
+                    if literal {
+                        rich.push_str(text);
+                    } else {
+                        rich.push(match text.as_str() {
+                            "," => ESCAPED_COMMA,
+                            "{" => ESCAPED_OPEN,
+                            _ => ESCAPED_CLOSE,
+                        });
+                    }
+                }
+                TokenKind::Word(text) | TokenKind::Command(text) => rich.push_str(text),
+                TokenKind::Space | TokenKind::ParBreak => rich.push(' '),
+                TokenKind::LBrace => rich.push('{'),
+                TokenKind::RBrace => rich.push('}'),
+                _ => {}
+            }
+        }
+        // Split on top-level commas only: track brace depth character by
+        // character and only split when no `{...}` value is open.
+        let mut parts: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0usize;
+        for ch in rich.chars() {
+            match ch {
+                '{' => {
+                    depth += 1;
+                    current.push(ch);
+                }
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    current.push(ch);
+                }
+                ',' if depth == 0 => {
+                    parts.push(std::mem::take(&mut current));
+                }
+                _ => current.push(ch),
+            }
+        }
+        parts.push(current);
+        let mut keys: Vec<String> = parts
+            .iter()
+            .map(|part| {
+                let part = part.trim();
+                let part = part
+                    .replace(ESCAPED_COMMA, ",")
+                    .replace(ESCAPED_OPEN, "{")
+                    .replace(ESCAPED_CLOSE, "}");
+                part.split_once('=')
+                    .map_or(part.clone(), |(key, _)| key.trim().to_string())
+            })
+            .filter(|key| !key.is_empty())
+            .collect();
+        if keys.is_empty() {
+            keys.push("(none)".to_string());
+        }
+        self.diags.push(Diagnostic::warning(
+            format!(
+                "\\DocumentMetadata keys have no effect in this compiler: {}",
+                keys.join(", ")
+            ),
+            Some(full_span),
+            Some("ignored the keys and continued".into()),
+        ));
     }
 
     /// `\setlength{\parskip}{..}` and `\setlength{\parindent}{..}` in the
@@ -5136,33 +5281,68 @@ impl P<'_> {
         let start = first.span.start;
         let document = first.span.document;
         let mut end = first.span.end;
-        let mut found = first_word.contains(']');
-        let mut raw = first_word.clone();
-        self.i += 1;
-        while !found && self.i < self.t.len() {
-            let token = &self.t[self.i].token;
+        // `{`/`}` lex as their own tokens (`is_special`), so a `]` inside a
+        // `{...}` group only closes the bracket at depth 0. `index` walks
+        // ahead of `self.i` so the word holding the closing `]` can keep
+        // its tail: `[2024]VISIBLE` lexes as one `Word`, and consuming the
+        // whole token would silently drop `VISIBLE` — instead the tail is
+        // rewritten back into the stream (as `trim_word_prefix` does).
+        let mut raw = String::new();
+        let mut depth = 0usize;
+        let mut found = false;
+        let mut index = self.i;
+        while index < self.t.len() {
+            let token = self.t[index].token.clone();
             end = token.span.end;
             match &token.kind {
                 TokenKind::Word(word) => {
-                    raw.push_str(word);
-                    found = word.contains(']');
+                    // The `[` opens the argument, so the first word's first
+                    // byte is skipped; every later word starts at byte 0.
+                    let from = usize::from(index == self.i).min(word.len());
+                    let body = &word[from..];
+                    if depth == 0 {
+                        if let Some(close) = body.find(']') {
+                            raw.push_str(&body[..close]);
+                            let tail = body[close + 1..].to_string();
+                            let span = token.span;
+                            let literal = span.end - span.start == word.len();
+                            if literal && !tail.is_empty() {
+                                end = span.start + from + close + 1;
+                            }
+                            if tail.is_empty() {
+                                self.i = index + 1;
+                            } else {
+                                if let Some(slot) = self.token_mut(index) {
+                                    if literal {
+                                        slot.token.span =
+                                            Span::in_document(span.document, end, span.end);
+                                    }
+                                    slot.token.kind = TokenKind::Word(tail);
+                                }
+                                self.i = index;
+                            }
+                            found = true;
+                            break;
+                        }
+                    }
+                    raw.push_str(body);
                 }
                 TokenKind::Space | TokenKind::ParBreak => raw.push(' '),
                 TokenKind::Command(name) => {
                     raw.push('\\');
                     raw.push_str(name);
                 }
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => depth = depth.saturating_sub(1),
                 _ => {}
             }
-            self.i += 1;
+            index += 1;
+        }
+        if !found {
+            self.i = index;
         }
         let span = Span::in_document(document, start, end);
-        let content = raw
-            .strip_prefix('[')
-            .unwrap_or(&raw)
-            .split_once(']')
-            .map_or(raw.as_str(), |(inside, _)| inside)
-            .to_string();
+        let content = raw;
         if !found {
             self.diags.push(Diagnostic::error(
                 "optional argument is missing its closing ']'",
