@@ -714,7 +714,7 @@ impl P<'_> {
             arraystretch,
             style,
             array_package,
-            span: Span::in_document(open.document, open.start, end),
+            span: self.span_through(open, end),
             space_before,
             rule_color,
             double_rule_sep_color,

@@ -4896,7 +4896,7 @@ impl P<'_> {
             display: true,
             number: numbered.then_some(number),
             number_span: numbered.then_some(open),
-            span: Span::in_document(open.document, open.start, end),
+            span: self.span_through(open, end),
             // Always its own line (see `layout::LayoutCursor::display_math`),
             // so whether real source whitespace preceded it is moot.
             space_before: true,
@@ -5127,7 +5127,7 @@ impl P<'_> {
         para.push(Inline::MathRows {
             rows: math_rows,
             aligned,
-            span: Span::in_document(open.document, open.start, end),
+            span: self.span_through(open, end),
         });
         para.extend(labels);
         self.flush_paragraph(blocks, para);
@@ -5354,9 +5354,21 @@ impl P<'_> {
             display,
             number: None,
             number_span: None,
-            span: Span::in_document(open.document, open.start, end),
+            span: self.span_through(open, end),
             space_before,
         });
+    }
+
+    /// `open` through byte `end`. Expanded tokens (a macro body,
+    /// `\AtBeginDocument` content replayed after `\begin{document}`, an
+    /// `\input` file) carry offsets from elsewhere: before the opener, or in
+    /// another document. The span never inverts or runs past its document.
+    fn span_through(&self, open: Span, end: usize) -> Span {
+        let len = self
+            .documents
+            .get(open.document.0)
+            .map_or(usize::MAX, |document| document.text.len());
+        Span::in_document(open.document, open.start, end.min(len).max(open.end))
     }
 
     /// A non-`\long` argument: like TeX, it cannot run past the end of the
@@ -5409,7 +5421,7 @@ impl P<'_> {
                         end = token.span.end;
                         let content = self.t[start..self.i].to_vec();
                         self.i += 1;
-                        return (content, Span::in_document(open.document, open.start, end));
+                        return (content, self.span_through(open, end));
                     }
                 }
                 _ => {}
@@ -5433,7 +5445,7 @@ impl P<'_> {
         .with_help("add a closing '}'"));
         (
             self.t[start..stop].to_vec(),
-            Span::in_document(open.document, open.start, end),
+            self.span_through(open, end),
         )
     }
 
@@ -6843,7 +6855,7 @@ impl P<'_> {
                         }
                         self.i = index;
                     }
-                    return Some((tokens, Span::in_document(open.document, open.start, end)));
+                    return Some((tokens, self.span_through(open, end)));
                 }
                 _ => {}
             }

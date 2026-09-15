@@ -420,3 +420,18 @@ fn a_runaway_loop_of_unknown_commands_is_diagnosed_in_bounded_time() {
     assert!(messages.iter().any(|m| m.contains("expansion step limit exceeded")));
     assert!(elapsed.as_secs() < 60, "took {elapsed:?}");
 }
+
+#[test]
+fn an_argument_replayed_from_at_begin_document_never_inverts_its_span() {
+    // Minimised from crates/page-builder/oracle/fixtures/vspace-03.tex: the
+    // replayed `\setlength` argument ended at a token offset before its `{`
+    // ("span start must not exceed end" in required_group_bounded).
+    let messages = compile_messages("\\AtBeginDocument{\\setlength\\}}\n\\begin{document");
+    assert!(!messages.is_empty());
+    let fixture = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../page-builder/oracle/fixtures/vspace-03.tex"
+    ))
+    .unwrap();
+    compile_messages(&fixture);
+}
