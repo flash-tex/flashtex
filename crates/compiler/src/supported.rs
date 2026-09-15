@@ -680,7 +680,7 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
     (&["bold"], "{text}", "obsolete amsfonts alias of \\mathbf", true),
     (
         &[
-            "hat", "bar", "vec", "tilde", "dot", "ddot", "acute", "grave",
+            "hat", "bar", "vec", "tilde", "dot", "ddot", "acute", "grave", "mathring",
         ],
         "{body}",
         "base-14 accent glyph centred over the body",
@@ -693,7 +693,7 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
-        &["check", "breve"],
+        &["check", "breve", "dddot", "ddddot"],
         "{body}",
         "parsed, but no base-14 glyph exists: diagnosed and typeset without a mark",
         false,

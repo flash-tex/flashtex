@@ -219,16 +219,18 @@ pub enum DelimiterRole {
     Right,
 }
 
-/// `\hat`..`\grave`, plus `\widehat`/`\widetilde`.
+/// `\hat`..`\grave`, plus `\widehat`/`\widetilde`, `\dddot`/`\ddddot` and
+/// `\mathring`.
 ///
 /// The compiler renders math with Adobe's Core 14 Symbol/Times-Roman faces,
 /// not Computer Modern, so TeX's exact accent geometry is not reproducible.
 /// Where a real base-14 glyph exists for the
-/// mark, it is used, scaled and centered over `body`; `\check` and `\breve`
-/// have no such glyph (no caron or breve character in WinAnsi or the Symbol
-/// encoding — see `crate::export`) and are reported rather than faked, the
-/// same policy `crate::export::map_char` already applies to every other
-/// unrepresentable character.
+/// mark, it is used, scaled and centered over `body`; `\check`, `\breve`,
+/// `\dddot` and `\ddddot` have no such glyph (no caron, breve or
+/// triple/quadruple-dot character in WinAnsi or the Symbol encoding — see
+/// `crate::export`) and are reported rather than faked, the same policy
+/// `crate::export::map_char` already applies to every other unrepresentable
+/// character.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Accent {
     Hat,
@@ -243,6 +245,9 @@ pub enum Accent {
     Grave,
     WideHat,
     WideTilde,
+    Dddot,
+    Ddddot,
+    Mathring,
 }
 
 impl Accent {
@@ -260,6 +265,9 @@ impl Accent {
             Accent::Grave => "grave",
             Accent::WideHat => "widehat",
             Accent::WideTilde => "widetilde",
+            Accent::Dddot => "dddot",
+            Accent::Ddddot => "ddddot",
+            Accent::Mathring => "mathring",
         }
     }
 
@@ -288,7 +296,15 @@ impl Accent {
             Accent::Ddot => Some('\u{A8}'),  // diaeresis
             Accent::Acute => Some('\u{B4}'), // acute accent
             Accent::Grave => Some('\u{60}'), // grave accent
-            Accent::Check | Accent::Breve => None,
+            // TeX's \mathring is a small ring above; no ring-above
+            // character exists in WinAnsi or the Symbol encoding, so the
+            // degree sign — a real ring-shaped base-14 glyph — is the
+            // closest stand-in.
+            Accent::Mathring => Some('\u{B0}'), // degree sign
+            // TeX's \dddot/\ddddot stack three/four dots; no such
+            // character exists in WinAnsi or the Symbol encoding, so like
+            // \check/\breve they are reported rather than faked.
+            Accent::Check | Accent::Breve | Accent::Dddot | Accent::Ddddot => None,
         }
     }
 }
@@ -1699,6 +1715,9 @@ impl MathParser<'_> {
             "grave" => self.accent_atom(Accent::Grave, span),
             "widehat" => self.accent_atom(Accent::WideHat, span),
             "widetilde" => self.accent_atom(Accent::WideTilde, span),
+            "dddot" => self.accent_atom(Accent::Dddot, span),
+            "ddddot" => self.accent_atom(Accent::Ddddot, span),
+            "mathring" => self.accent_atom(Accent::Mathring, span),
             // The dashed arrows are drawn from msam pieces `amsfonts.sty`
             // declares, so without the package there is nothing to draw with
             // and pdflatex answers "Undefined control sequence".
@@ -5082,6 +5101,9 @@ mod unbraced_argument_tests {
             "grave",
             "widehat",
             "widetilde",
+            "dddot",
+            "ddddot",
+            "mathring",
         ] {
             let mut diagnostics = Vec::new();
             let source = format!(r"\{command} x");
@@ -5546,6 +5568,54 @@ mod accent_tests {
             assert_eq!(b.items.len(), 1);
             assert_eq!(b.items[0].text, "x");
         }
+    }
+
+    #[test]
+    fn dddot_ddddot_and_mathring_parse_to_their_accent_variants() {
+        for (source, accent) in [
+            (r"\dddot{x}", Accent::Dddot),
+            (r"\ddddot{x}", Accent::Ddddot),
+            (r"\mathring{x}", Accent::Mathring),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
+            match &list.atoms[0].nucleus {
+                Nucleus::Accent { accent: a, body } => {
+                    assert_eq!(*a, accent, "{source}");
+                    assert_eq!(body.atoms.len(), 1, "{source}: {:?}", body.atoms);
+                    assert_eq!(body.atoms[0].nucleus, Nucleus::Symbol("x".into()));
+                }
+                other => panic!("{source}: expected an accent, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn dddot_and_ddddot_are_diagnosed_and_typeset_without_a_mark() {
+        for source in [r"\dddot{x}", r"\ddddot{x}"] {
+            let (b, diagnostics) = laid_out(source, 10.0);
+            assert_eq!(diagnostics.len(), 1, "{source}: {diagnostics:?}");
+            assert!(diagnostics[0]
+                .message
+                .contains("no representable accent glyph"));
+            // Only the base "x", no extra accent glyph item.
+            assert_eq!(b.items.len(), 1);
+            assert_eq!(b.items[0].text, "x");
+        }
+    }
+
+    #[test]
+    fn mathring_centres_the_degree_sign_over_the_body() {
+        let (b, diagnostics) = laid_out(r"\mathring{x}", 10.0);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(
+            b.items.iter().any(|i| i.text == "\u{B0}"),
+            "expected degree-sign accent in {:?}",
+            b.items.iter().map(|i| &i.text).collect::<Vec<_>>()
+        );
+        assert!(b.items.iter().any(|i| i.text == "x"));
     }
 
     #[test]

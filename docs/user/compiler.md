@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 307 text-mode and 551 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 307 text-mode and 554 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -769,10 +769,13 @@ Canonical sources:
 | `\ddot` | `{body}` | base-14 accent glyph centred over the body |
 | `\acute` | `{body}` | base-14 accent glyph centred over the body |
 | `\grave` | `{body}` | base-14 accent glyph centred over the body |
+| `\mathring` | `{body}` | base-14 accent glyph centred over the body |
 | `\widehat` | `{body}` | cmex successor-chain accent grown to the body (msbm extra-wide form past 2em with amsfonts) |
 | `\widetilde` | `{body}` | cmex successor-chain accent grown to the body (msbm extra-wide form past 2em with amsfonts) |
 | `\check` | `{body}` | parsed, but no base-14 glyph exists: diagnosed and typeset without a mark |
 | `\breve` | `{body}` | parsed, but no base-14 glyph exists: diagnosed and typeset without a mark |
+| `\dddot` | `{body}` | parsed, but no base-14 glyph exists: diagnosed and typeset without a mark |
+| `\ddddot` | `{body}` | parsed, but no base-14 glyph exists: diagnosed and typeset without a mark |
 | `\left` |  | consumes the following delimiter, kept at ordinary size |
 | `\right` |  | consumes the following delimiter, kept at ordinary size |
 | `\big` |  | consumes the following delimiter, kept at ordinary size |
