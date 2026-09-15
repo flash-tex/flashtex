@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": null,
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/629",
   "machine": "Overpriced-Hardware",
   "note": null,
   "started_utc": "2026-09-15T12:06:43Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-ENUMITEM-COMPILER-DIMS",
-  "updated_utc": "2026-09-15T12:06:43Z"
+  "updated_utc": "2026-09-15T12:53:24Z"
 }
