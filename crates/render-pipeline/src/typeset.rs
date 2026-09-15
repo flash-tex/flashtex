@@ -6317,6 +6317,32 @@ pub fn convert_math_classed(
                 };
                 vec![ml::Atom::ext_arrow(pieces, kerns, sub(above, sink), sub(below, sink))]
             }
+            // amsmath `\sideset{#1}{#2}{#3}` (`amsmath.sty` 921-929). The
+            // compiler emits amsmath's two atoms: the empty ordinary
+            // `\hbox to\dimen@{}` (a `Group`, converted above) and this
+            // `\mathop`. `#3`'s last atom carries `#2`; math-layout's
+            // `Atom::left_scripts` sets `#1` and `#3\nolimits#2` in
+            // `\displaystyle` exactly. Scripts written after `#3` are the
+            // `\mathop`'s own, so they go on an `Op` atom around it (whose
+            // default `\displaylimits` makes them limits in display style).
+            #[cfg(feature = "amsmath-sideset")]
+            N::SideSet { operator, left_superscript, left_subscript } => {
+                let mut parts = sub(operator, sink).atoms;
+                let mut side = if parts.len() == 1 {
+                    parts.pop().expect("one atom")
+                } else {
+                    // `\sideset{..}{..}{\sum\sum}`: the whole of `#3` is
+                    // the operator, and `#2` stays on its last atom.
+                    ml::Atom::new(ml::AtomClass::Op, ml::Nucleus::List(ml::MathList::new(parts)))
+                };
+                side.class = ml::AtomClass::Op;
+                let side = side.with_left_scripts(left_superscript.as_ref().map(|l| sub(l, sink)), left_subscript.as_ref().map(|l| sub(l, sink)));
+                if a.superscript.is_some() || a.subscript.is_some() {
+                    vec![ml::Atom::new(ml::AtomClass::Op, ml::Nucleus::List(ml::MathList::new(vec![side])))]
+                } else {
+                    vec![side]
+                }
+            }
             // `\quad`/`\qquad` (compiler `Space { em }`): TeX glue in the
             // math list. math-layout has no kern/glue atom, so the glue is
             // dropped (inter-atom spacing across it is what TeX's mlist_to_hlist
@@ -7039,6 +7065,13 @@ fn math_grids(list: &flashtex_compiler::math::MathList, out: &mut Vec<(usize, us
                 math_grids(above, out);
                 math_grids(below, out);
             }
+            #[cfg(feature = "amsmath-sideset")]
+            N::SideSet { operator, left_superscript, left_subscript } => {
+                math_grids(operator, out);
+                for part in [left_superscript, left_subscript].into_iter().flatten() {
+                    math_grids(part, out);
+                }
+            }
         }
         if let Some(s) = &a.superscript {
             math_grids(s, out);
@@ -7084,6 +7117,10 @@ fn math_glue_em(list: &flashtex_compiler::math::MathList) -> f64 {
                 N::SubArray { rows, .. } => rows.iter().map(math_glue_em).sum(),
                 #[cfg(feature = "amsmath-inline")]
                 N::ExtArrow { above, below, .. } => math_glue_em(above) + math_glue_em(below),
+                #[cfg(feature = "amsmath-sideset")]
+                N::SideSet { operator, left_superscript, left_subscript } => {
+                    math_glue_em(operator) + [left_superscript, left_subscript].into_iter().flatten().map(math_glue_em).sum::<f64>()
+                }
             };
             own + a.superscript.as_ref().map_or(0.0, math_glue_em) + a.subscript.as_ref().map_or(0.0, math_glue_em)
         })
@@ -7194,6 +7231,13 @@ fn math_approximations(list: &flashtex_compiler::math::MathList, out: &mut Vec<S
             N::ExtArrow { above, below, .. } => {
                 math_approximations(above, out);
                 math_approximations(below, out);
+            }
+            #[cfg(feature = "amsmath-sideset")]
+            N::SideSet { operator, left_superscript, left_subscript } => {
+                math_approximations(operator, out);
+                for part in [left_superscript, left_subscript].into_iter().flatten() {
+                    math_approximations(part, out);
+                }
             }
         }
         for part in [&a.superscript, &a.subscript].into_iter().flatten() {

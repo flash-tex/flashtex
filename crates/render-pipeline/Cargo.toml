@@ -78,6 +78,12 @@ math-glyph-spans = []
 # all; the re-derivation stays as the fallback. Builds only against a
 # vendor/compiler that carries the public field; off until vendor/ is re-pinned.
 math-class-override = []
+# amsmath `\sideset` (compiler `Nucleus::SideSet`, math-layout
+# `Atom::left_scripts`): the `\mathop` of display-style left and right
+# script pairs. Builds only against a vendor/compiler and vendor/math-layout
+# that carry both; off until vendor/ is re-pinned past them, then a one-line
+# default-feature edit like `amsmath-inline` was.
+amsmath-sideset = []
 # A paragraph's `\baselineskip` follows the size declaration in force when its
 # `\par` ran (`\begin{quote}\small ...\end{quote}`, `{\small ...\par}`),
 # which is what TeX reads in `append_to_vlist` (§679). Needs the compiler's
