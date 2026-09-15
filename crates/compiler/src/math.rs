@@ -3113,6 +3113,7 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("top", "⊤"),
     ("measuredangle", "∡"),
     ("square", "□"),
+    ("Box", "□"),
     ("blacksquare", "■"),
     ("lozenge", "◊"),
     ("checkmark", "✓"),
@@ -6028,6 +6029,32 @@ mod spacing_tests {
         close(x(&perp, "b"), x(&perp, "⊥") + width("⊥", SIZE) + 5.0);
 
         assert!(bot.width < perp.width);
+    }
+
+    /// Issue #516: `\Box` is `\square`'s exact amssymb synonym (both U+25A1),
+    /// so it sets the same Ord atom with no diagnostics — not the old
+    /// "not supported in math mode" error with its misleading text-command
+    /// hint. The advances agree to 0.03%: `\square` takes the msam slot
+    /// (0.777781em) under `amssymb` while `\Box` takes the pinned Latin
+    /// Modern Math advance (0.778em), a sub-pixel difference.
+    #[test]
+    fn box_is_squares_synonym_with_the_same_glyph_and_metrics() {
+        assert_eq!(command_glyph("Box"), command_glyph("square"));
+        assert_eq!(command_glyph("Box"), Some("□"));
+        assert!(crate::vocabulary::math_mode_help("Box").is_none());
+
+        let square = laid_out_with(r"\square", SIZE, AMSSYMB);
+        let box_ = laid_out(r"\Box", SIZE);
+        let items = &box_.items;
+        assert_eq!(items.len(), 1, "{items:?}");
+        assert_eq!(box_.items[0].text, square.items[0].text);
+        assert_eq!(box_.items[0].text, "□");
+        assert!(
+            (box_.width - square.width).abs() < 0.01,
+            "{} != {}",
+            box_.width,
+            square.width
+        );
     }
 
     /// TeXbook Chapter 17's `\mathbin`/`\mathrel`/`\mathord`/`\mathop`/
