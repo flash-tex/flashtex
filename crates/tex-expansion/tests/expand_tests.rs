@@ -464,3 +464,23 @@ fn a_non_tail_self_call_exceeds_capacity_instead_of_memory() {
         &r.diagnostics[..r.diagnostics.len().min(3)]
     );
 }
+
+/// Fuzz finding (22 s for a mutated oracle fixture): every `\if` counted the
+/// newlines before it for a message only an unterminated conditional
+/// prints, so a runaway loop of conditionals late in a long file was
+/// quadratic.
+#[test]
+fn conditionals_in_a_runaway_loop_do_not_rescan_the_source() {
+    let src = format!("{}\\def\\a{{\\ifnum1<2 \\fi\\a}}\\a", "% filler line\n".repeat(20_000));
+    let started = std::time::Instant::now();
+    let r = expand_str(&src);
+    assert!(r.diagnostics.iter().any(|d| d.message.contains("step limit")), "{:?}", r.diagnostics);
+    assert!(started.elapsed().as_secs() < 30, "{:?}", started.elapsed());
+    // The line still appears where TeX prints it.
+    let r = expand_str("\n\n\\iffalse never closed");
+    assert!(
+        r.diagnostics.iter().any(|d| d.message == "Incomplete \\iffalse; all text was ignored after line 3."),
+        "{:?}",
+        r.diagnostics
+    );
+}

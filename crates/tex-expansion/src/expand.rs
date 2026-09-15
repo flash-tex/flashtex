@@ -49,10 +49,11 @@ pub(crate) enum Input {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ScannerStatus {
     Normal,
-    /// Skipping conditional text; carries the line of the `\if` and its
+    /// Skipping conditional text; carries the span of the `\if` and its
     /// name for the "Incomplete \if...; all text was ignored after line
-    /// N" message.
-    Skipping { if_name: String, line: usize },
+    /// N" message. The line is computed only when that error is reported:
+    /// counting newlines up to every `\if` made a runaway `\loop` quadratic.
+    Skipping { if_name: String, at: Span },
     /// Scanning a `\def` body ("definition of \foo").
     Defining(String),
     /// Scanning macro arguments ("use of \foo").
@@ -835,8 +836,8 @@ impl Engine {
                 format!("Runaway text?\n! Forbidden control sequence found while scanning text of {name}."),
                 Token::synthetic(TokenKind::Char('}', CatCode::EndGroup)),
             ),
-            ScannerStatus::Skipping { if_name, line } => (
-                format!("Incomplete {if_name}; all text was ignored after line {line}."),
+            ScannerStatus::Skipping { if_name, at } => (
+                format!("Incomplete {if_name}; all text was ignored after line {}.", self.line_of_span(at)),
                 Token::synthetic(TokenKind::ControlSequence("fi".into())),
             ),
             ScannerStatus::Normal => unreachable!(),
@@ -874,7 +875,8 @@ impl Engine {
             ScannerStatus::Absorbing(name) => {
                 self.err(format!("Runaway text?\n! File ended while scanning text of {name}."), span);
             }
-            ScannerStatus::Skipping { if_name, line } => {
+            ScannerStatus::Skipping { if_name, at } => {
+                let line = self.line_of_span(at);
                 self.err(format!("Incomplete {if_name}; all text was ignored after line {line}."), span);
             }
             ScannerStatus::Normal => {}
@@ -2964,8 +2966,6 @@ impl Engine {
             _ => String::new(),
         };
         if current != name {
-            let line = self.line_of_span(tok.span);
-            let _ = line;
             self.err(format!("LaTeX Error: \\begin{{{current}}} ended by \\end{{{name}}}."), tok.span);
         }
         if self.st.scopes.depth() <= 1 {
@@ -4057,7 +4057,7 @@ impl Engine {
             return;
         }
         let if_name = format!("{}{}", self.esc(), primitive_name(prim));
-        let if_line = self.line_of_span(if_tok.span);
+        let if_at = if_tok.span;
         let shape = if matches!(prim, Ifcase) { IfShape::Case } else { IfShape::TwoWay };
         self.st.conditionals.push(shape, IfBranch::Testing, primitive_name(prim));
         if matches!(prim, Ifcase) {
@@ -4068,7 +4068,7 @@ impl Engine {
                 if remaining == 0 {
                     break;
                 }
-                match self.skip_to_or_else_fi(&if_name, if_line) {
+                match self.skip_to_or_else_fi(&if_name, if_at) {
                     BranchEnd::Or => {
                         remaining -= 1;
                     }
@@ -4138,7 +4138,7 @@ impl Engine {
             self.set_top_branch(IfBranch::Taken);
         } else {
             self.set_top_branch(IfBranch::Skipping);
-            match self.skip_to_or_else_fi(&if_name, if_line) {
+            match self.skip_to_or_else_fi(&if_name, if_at) {
                 BranchEnd::Else => {
                     if let Some(f) = self.st.conditionals.top_mut() {
                         f.branch = IfBranch::Taken;
@@ -4238,10 +4238,10 @@ impl Engine {
 
     /// Skip tokens (respecting nested `\if...\fi`) until an
     /// `\else`/`\or`/`\fi` belonging to *this* conditional level.
-    fn skip_to_or_else_fi(&mut self, if_name: &str, line: usize) -> BranchEnd {
+    fn skip_to_or_else_fi(&mut self, if_name: &str, at: Span) -> BranchEnd {
         let saved = std::mem::replace(
             &mut self.st.scanner_status,
-            ScannerStatus::Skipping { if_name: if_name.to_string(), line },
+            ScannerStatus::Skipping { if_name: if_name.to_string(), at },
         );
         let mut depth = 0i32;
         let result = loop {
@@ -4294,8 +4294,7 @@ impl Engine {
                     }
                     if matches!(frame.branch, IfBranch::Taken) {
                         let name = format!("{}{}", self.esc(), frame.name);
-                        let line = self.line_of_span(tok.span);
-                        self.skip_balanced_to_fi(&name, line);
+                        self.skip_balanced_to_fi(&name, tok.span);
                     }
                 }
                 _ => unreachable!("handle_stray_or_else_fi is only called with Fi/Else/Or"),
@@ -4306,10 +4305,10 @@ impl Engine {
         }
     }
 
-    fn skip_balanced_to_fi(&mut self, if_name: &str, line: usize) {
+    fn skip_balanced_to_fi(&mut self, if_name: &str, at: Span) {
         let saved = std::mem::replace(
             &mut self.st.scanner_status,
-            ScannerStatus::Skipping { if_name: if_name.to_string(), line },
+            ScannerStatus::Skipping { if_name: if_name.to_string(), at },
         );
         let mut depth = 0i32;
         loop {
