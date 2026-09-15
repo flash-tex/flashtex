@@ -77,7 +77,7 @@ struct ContentView: View {
         }
         .toolbar { WorkspaceToolbar(openWindow: openWindow) }
         .sheet(isPresented: $model.commandPaletteShown) { CommandPalette().environment(model) }
-        .modifier(EditorNavigationSheets()) // Rename / Wrap / Go to Symbol / Go to Line (ShellModel+EditorNavigation.swift)
+        .modifier(EditorNavigationSheets()) // Rename / Wrap / Change Environment… / Go to Symbol… / Go to Line (ShellModel+EditorNavigation.swift)
     }
 }
 

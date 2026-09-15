@@ -919,12 +919,9 @@ enum Completion {
     /// Names of environments appearing in `\begin{…}` anywhere in the document.
     static func documentEnvironments(in text: String) -> [String] {
         var out: [String] = []
-        withBytes(text) { b in
-            forEachCommand(in: b, upTo: b.count) { name, _, arg in
-                guard let arg, bytes(name, equal: "begin") else { return }
-                let env = String(decoding: arg, as: UTF8.self)
-                if !out.contains(env) { out.append(env) }
-            }
+        for u in EditorNavigation.uses(in: text as NSString) {
+            guard u.name == "begin", let arg = u.arg, !arg.isEmpty else { continue }
+            if !out.contains(arg) { out.append(arg) }
         }
         return out
     }

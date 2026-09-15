@@ -81,7 +81,7 @@ final class CommandTableTests: XCTestCase {
     }
 
     /// Files whose `Commands` bodies wire menu items: the app, `Navigation.swift`
-    /// (`CommandMenu("Navigate")`) and `ProjectSearchPanel.swift`
+    /// (`CommandMenu("Navigate")`), `EditorMenu.swift` (`CommandMenu("Editor")`) and `ProjectSearchPanel.swift`
     /// (`ProjectSearchCommands`, Edit = `after: .textEditing`). In the panel
     /// file only the text from its `Commands` type on is read, so the
     /// window's own buttons (Search, Next Match ⌘G) are not menu items.

@@ -17,7 +17,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case completion, completionList, toggleComment, duplicateLine, duplicateLineUp, moveLineUp, moveLineDown, deleteLine, joinLines, sortLinesAscending, sortLinesDescending, trimTrailingWhitespace, reindentLines, reindentDocument, signatureHelp, toggleVimKeybindings
     case fold, unfold, foldAll, unfoldAll
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
-    case goToDefinition, goToSymbol, goToLine, selectEnvironment, wrapInEnvironment, renameSymbol
+    case goToDefinition, goToSymbol, goToLine, selectEnvironment, wrapInEnvironment, changeEnvironment, renameSymbol
     case selectPreviewItemSource
     case accessibilityHelp
     case durableHistory, findInProject, nextSearchMatch, renameCitation
@@ -294,6 +294,10 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Wrap selection in environment", shortcuts: ["⌘⇧W"], menu: "Navigate",
                          description: "Asks for an environment name (suggestions: common ones, then those the document uses) and wraps the selection in \\begin{X}…\\end{X} — whole lines as an indented block, otherwise inline — as one undoable edit with the caret at the body.",
                          menuItem: "Wrap Selection in Environment…")
+        case .changeEnvironment:
+            return Entry(command: self, title: "Change environment", shortcuts: ["⌃⌘E"], menu: "Editor",
+                         description: "Opens a field prefilled with the innermost environment name around the caret; Return rewrites both the \\begin{name} and matching \\end{name} as one undoable edit, preserving a trailing star, optional arguments and any following arguments. Typing inside either name updates the partner live. Refused (beep and VoiceOver) in a verbatim body or when the pair is unbalanced.",
+                         menuItem: "Change Environment…")
         case .renameSymbol:
             return Entry(command: self, title: "Rename symbol", shortcuts: ["⌥⇧R"], menu: "Navigate",
                          description: "Renames the \\label key (every \\ref/\\eqref/\\pageref/\\autoref/\\cref use) or the user command (every \\foo, word-boundary aware, comments and verbatim skipped) under the caret across the open documents: Plan shows the per-file counts, Apply is one undoable edit per document (one guarded apply_group per file when the durable helper is attached).",

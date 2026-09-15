@@ -102,6 +102,10 @@ final class ShellModel {
         var revision: Int? = nil
         /// What to give back when a capture insertion is refused.
         var captureRefund: CaptureRefund? = nil
+        /// When non-empty, these replacements (original-text coordinates) are
+        /// applied last-first as one undo group instead of `nsRange`/`text`.
+        /// Change Environment uses the two name spans so the body is not rewritten.
+        var groupedEdits: [EditorKeyHandling.LineEdit] = []
     }
     struct CaptureRefund: Equatable { var proposal: RuntimeV1.CaptureProposal; var anchorBefore: InsertionAnchor }
     var caretUTF16: Int = 0 {
