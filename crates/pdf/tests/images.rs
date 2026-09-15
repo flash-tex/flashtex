@@ -343,6 +343,7 @@ fn do_needs_a_declared_xobject_outside_text() {
         }],
         fonts: BTreeMap::new(),
         images: BTreeMap::new(),
+        patterns: BTreeMap::new(),
     };
     let e = exact::render_exact(&doc).unwrap_err().to_string();
     assert!(e.contains("XObject resource /Im1 is not declared"), "{e}");

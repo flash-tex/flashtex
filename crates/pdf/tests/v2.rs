@@ -8,7 +8,7 @@
 //! loudly when the font is not installed.
 
 use flashtex_pdf::exact::{self, Op, SubsetOutcome};
-use flashtex_pdf::reader::PdfFile;
+use flashtex_pdf::reader::{Obj, PdfFile};
 use flashtex_pdf::sha256;
 use flashtex_pdf::truetype::TrueTypeFont;
 use flashtex_pdf::v2::{self, HashForm, V2Options};
@@ -653,6 +653,94 @@ fn tikz_path_items_are_stroked_and_filled_with_pdftex_operators() {
     verify::check_structure(&out.bytes).unwrap();
     assert_eq!(exact::parse(text.as_bytes()).unwrap(), page_ops(&doc));
     assert_eq!(exact::render_exact(&doc).unwrap().bytes, out.bytes, "deterministic");
+}
+
+#[test]
+fn tikz_patterns_write_tiling_resources_and_pattern_color() {
+    let t = |bp: i64| bp << 20;
+    let path = format!(
+        r#"[["m",{x0},{y0}],["l",{x1},{y0}],["l",{x1},{y1}],["l",{x0},{y1}],["z"]]"#,
+        x0 = t(10),
+        y0 = t(10),
+        x1 = t(35),
+        y1 = t(35)
+    );
+    let names = [
+        "north east lines",
+        "north west lines",
+        "horizontal lines",
+        "vertical lines",
+        "grid",
+        "crosshatch",
+        "dots",
+        "crosshatch dots",
+    ];
+    let mut items = names
+        .iter()
+        .map(|name| {
+            format!(
+                r#"{{"fill_rule":"nonzero","kind":"path_fill","paint":{{"a":1,"b":0,"g":0,"r":1}},"pattern":{{"color":{{"b":0,"g":0,"r":1}},"name":"{name}"}},"path":{path}}}"#
+            )
+        })
+        .collect::<Vec<_>>();
+    items.push(format!(
+        r#"{{"fill_rule":"evenodd","kind":"path_fill","paint":{{"a":1,"b":1,"g":0,"r":0}},"pattern":{{"color":{{"b":1,"g":0,"r":0}},"name":"dots","paint_type":2}},"path":{path}}}"#
+    ));
+    let envelope = format!(
+        r#"{{"protocol_version":2,"id":"patterns","type":"display_list","payload":{{"render_format":"display-list-v2","coordinate_unit":"bp_2pow20","color_space":"srgb","fonts":[],"pages":[{{"number":1,"width":{w},"height":{h},"items":[{items}]}}],"diagnostics":[]}}}}"#,
+        w = t(100),
+        h = t(100),
+        items = items.join(",")
+    );
+    let (doc, report) = v2::from_v2(&envelope, &V2Options::default()).unwrap();
+    assert_eq!(report.paths, 9);
+    let content = exact::serialize(page_ops(&doc));
+    let text = String::from_utf8(content.clone()).unwrap();
+    assert_eq!(text.matches("/Pattern cs\n").count(), 8, "{text}");
+    assert_eq!(
+        text.matches("[/Pattern /DeviceRGB] cs\n").count(),
+        1,
+        "{text}"
+    );
+    assert!(text.contains("/Pattern cs\n/P0 scn\n"), "{text}");
+    assert!(text.contains("[/Pattern /DeviceRGB] cs\n0 0 1 /P8 scn\n"), "{text}");
+    assert_eq!(exact::parse(&content).unwrap(), page_ops(&doc));
+
+    let out = exact::render_exact(&doc).unwrap();
+    verify::check_structure(&out.bytes).unwrap();
+    assert_eq!(exact::render_exact(&doc).unwrap().bytes, out.bytes, "deterministic");
+    let file = PdfFile::parse(&out.bytes).unwrap();
+    let page = file.pages().unwrap().remove(0);
+    let resources = file
+        .resolve(file.page_attr(page, "Resources").unwrap())
+        .as_dict()
+        .unwrap();
+    let patterns = file.resolve(&resources["Pattern"]).as_dict().unwrap();
+    assert_eq!(patterns.len(), 9);
+    let expected_names = (0..9).map(|i| format!("P{i}")).collect::<Vec<_>>();
+    assert_eq!(patterns.keys().cloned().collect::<Vec<_>>(), expected_names);
+    for (i, (name, reference)) in patterns.iter().enumerate() {
+        assert_eq!(name, &format!("P{i}"));
+        let object = file.resolve(reference);
+        let Obj::Stream { dict, .. } = object else {
+            panic!("/{name} is not a pattern stream: {object:?}");
+        };
+        assert_eq!(dict["Type"].as_name(), Some("Pattern"));
+        assert_eq!(dict["PatternType"].as_number(), Some("1"));
+        assert_eq!(dict["PaintType"].as_number(), Some(if i == 8 { "2" } else { "1" }));
+        assert_eq!(dict["TilingType"].as_number(), Some("1"));
+        assert!(dict["BBox"].as_array().is_some(), "/{name}: {dict:?}");
+        assert!(dict["XStep"].as_number().unwrap().parse::<f64>().unwrap() > 0.0);
+        assert!(dict["YStep"].as_number().unwrap().parse::<f64>().unwrap() > 0.0);
+        assert_eq!(dict["Matrix"].as_array().unwrap().len(), 6);
+        assert!(dict["Resources"].as_dict().is_some());
+        let cell = String::from_utf8(file.decode_stream(object).unwrap()).unwrap();
+        if i == 8 {
+            assert!(!cell.contains(" rg"), "{name}: {cell}");
+        } else {
+            assert!(cell.contains("1 0 0"), "{name}: {cell}");
+        }
+    }
 }
 
 fn alpha_envelope(items: &str, pw: i64, ph: i64) -> String {

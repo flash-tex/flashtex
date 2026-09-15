@@ -30,8 +30,10 @@
 //! [`Op::FillAlpha`]: `/pgf@CA<a> gs` / `/pgf@ca<a> gs`, the ExtGState
 //! names and one-key dictionaries pgf's pdfTeX driver writes; a page
 //! declares exactly the states it selects, once each, inline in its
-//! `/Resources`. Any other ExtGState, shading and inline images are outside
-//! the bounded operator set and are reported as errors, never dropped.
+//! `/Resources`. Tiling patterns are [`PatternResource`] entries selected by
+//! [`Op::PatternColorSpace`] and [`Op::Pattern`], or by the typed uncolored
+//! [`Op::PatternRgb`] form. Any other ExtGState, shading and inline images
+//! outside the bounded operator set are reported as errors, never dropped.
 //!
 //! Output is deterministic: the same [`ExactDocument`] serialises to the
 //! same bytes (no timestamps, no `/ID`), which the tests check.
@@ -246,6 +248,15 @@ pub enum Op {
     ShowTextArray(Vec<TjElement>),
     /// `/Name Do`: paint an image or form XObject of the document.
     Do(String),
+    /// `/Pattern cs`: select a colored tiling pattern color space.
+    PatternColorSpace,
+    /// `[/Pattern /DeviceRGB] cs`: select an uncolored RGB tiling pattern
+    /// color space.
+    PatternRgbColorSpace,
+    /// `/Name scn`: select a colored tiling pattern.
+    Pattern(String),
+    /// `r g b /Name scn`: select an uncolored RGB tiling pattern.
+    PatternRgb([Decimal; 3], String),
     /// `/pgf@CA<alpha> gs`: constant stroking alpha in `[0, 1]`, through the
     /// ExtGState `<< /CA <alpha> >>` (pgf's pdfTeX driver's name and
     /// dictionary, measured with pdflatex 1.40 for `draw opacity`).
@@ -307,6 +318,8 @@ impl Op {
             Op::ShowText(_) => "Tj",
             Op::ShowTextArray(_) => "TJ",
             Op::Do(_) => "Do",
+            Op::PatternColorSpace | Op::PatternRgbColorSpace => "cs",
+            Op::Pattern(_) | Op::PatternRgb(..) => "scn",
             Op::StrokeAlpha(_) | Op::FillAlpha(_) => "gs",
         }
     }
@@ -365,6 +378,19 @@ impl Op {
                 nums(out, std::slice::from_ref(size));
             }
             Op::Do(name) => {
+                out.push(b'/');
+                out.extend_from_slice(name.as_bytes());
+                out.push(b' ');
+            }
+            Op::PatternColorSpace => out.extend_from_slice(b"/Pattern "),
+            Op::PatternRgbColorSpace => out.extend_from_slice(b"[/Pattern /DeviceRGB] "),
+            Op::Pattern(name) => {
+                out.push(b'/');
+                out.extend_from_slice(name.as_bytes());
+                out.push(b' ');
+            }
+            Op::PatternRgb(color, name) => {
+                nums(out, color);
                 out.push(b'/');
                 out.extend_from_slice(name.as_bytes());
                 out.push(b' ');
@@ -811,6 +837,23 @@ fn build_op(name: &str, operands: &[Operand]) -> Result<Op, String> {
         "Do" => match operands {
             [Operand::Name(n)] => Op::Do(n.clone()),
             _ => return Err("Do takes one name".into()),
+        },
+        "cs" => match operands {
+            [Operand::Name(n)] if n == "Pattern" => Op::PatternColorSpace,
+            [Operand::Array(names)]
+                if names.as_slice()
+                    == [Operand::Name("Pattern".into()), Operand::Name("DeviceRGB".into())] =>
+            {
+                Op::PatternRgbColorSpace
+            }
+            _ => return Err("cs takes /Pattern or [/Pattern /DeviceRGB]".into()),
+        },
+        "scn" => match operands {
+            [Operand::Name(n)] => Op::Pattern(n.clone()),
+            [_, _, _, Operand::Name(n)] => {
+                Op::PatternRgb(decimals::<3>(&operands[..3], name)?, n.clone())
+            }
+            _ => return Err("scn takes /Name or three components and /Name".into()),
         },
         "gs" => match operands {
             [Operand::Name(n)] => {
@@ -1324,6 +1367,22 @@ pub struct ExactPage {
     pub fonts: Option<Vec<String>>,
 }
 
+/// A PDF PatternType 1 tiling-pattern stream.
+///
+/// `paint_type` is 1 for a colored pattern whose cell paints its own color,
+/// or 2 for an uncolored pattern selected with a color from its underlying
+/// color space. The exact writer supplies the fixed PatternType/TilingType
+/// entries and writes these fields deterministically.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatternResource {
+    pub paint_type: u8,
+    pub bbox: [Decimal; 4],
+    pub x_step: Decimal,
+    pub y_step: Decimal,
+    pub matrix: [Decimal; 6],
+    pub content: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExactDocument {
     pub pages: Vec<ExactPage>,
@@ -1332,6 +1391,9 @@ pub struct ExactDocument {
     /// Image and form XObjects by name (the `Do` operand without the
     /// slash). A page declares exactly the ones its content paints.
     pub images: BTreeMap<String, crate::images::ImageXObject>,
+    /// Tiling patterns by resource name (the `scn` operand without the
+    /// slash). A page declares exactly the patterns its content selects.
+    pub patterns: BTreeMap<String, PatternResource>,
 }
 
 /// One glyph in a [`GlyphRun`].
@@ -1431,6 +1493,7 @@ fn validate(
     fonts: &BTreeMap<String, ExactFont>,
     page_fonts: Option<&[String]>,
     images: &BTreeMap<String, crate::images::ImageXObject>,
+    patterns: &BTreeMap<String, PatternResource>,
 ) -> Result<(), ExactError> {
     let err = |op: usize, m: String| ExactError::Content {
         page: page_index + 1,
@@ -1442,6 +1505,7 @@ fn validate(
     let mut font: Option<&ExactFont> = None;
     let mut has_path = false;
     let mut has_point = false;
+    let mut pattern_space = None;
     let check_string =
         |i: usize, bytes: &[u8], font: Option<&ExactFont>| -> Result<(), ExactError> {
             let f = font.ok_or_else(|| err(i, "text shown before Tf".into()))?;
@@ -1552,6 +1616,45 @@ fn validate(
                     return Err(err(i, format!("XObject resource /{name} is not declared")));
                 }
             }
+            Op::PatternColorSpace => pattern_space = Some(1),
+            Op::PatternRgbColorSpace => pattern_space = Some(2),
+            Op::Pattern(name) => {
+                if pattern_space != Some(1) {
+                    return Err(err(i, "colored pattern selected outside /Pattern cs".into()));
+                }
+                let resource = patterns
+                    .get(name)
+                    .ok_or_else(|| err(i, format!("pattern resource /{name} is not declared")))?;
+                if resource.paint_type != 1 {
+                    return Err(err(
+                        i,
+                        format!("pattern /{name} has PaintType {}, needs 1", resource.paint_type),
+                    ));
+                }
+            }
+            Op::PatternRgb(color, name) => {
+                if pattern_space != Some(2) {
+                    return Err(err(
+                        i,
+                        "uncolored pattern selected outside [/Pattern /DeviceRGB] cs".into(),
+                    ));
+                }
+                for component in color {
+                    let value = component.approx();
+                    if !(0.0..=1.0).contains(&value) {
+                        return Err(err(i, format!("pattern color {component} is not in [0, 1]")));
+                    }
+                }
+                let resource = patterns
+                    .get(name)
+                    .ok_or_else(|| err(i, format!("pattern resource /{name} is not declared")))?;
+                if resource.paint_type != 2 {
+                    return Err(err(
+                        i,
+                        format!("pattern /{name} has PaintType {}, needs 2", resource.paint_type),
+                    ));
+                }
+            }
             Op::Move(..) => {
                 has_path = true;
                 has_point = true;
@@ -1602,7 +1705,9 @@ fn validate(
             | Op::FillRgb(_)
             | Op::FillCmyk(_)
             | Op::StrokeCmyk(_)
-            | Op::StrokeRgb(_) => {}
+            | Op::StrokeRgb(_) => {
+                pattern_space = None;
+            }
         }
         if in_text
             && matches!(
@@ -1693,8 +1798,51 @@ pub fn render_exact_with(
         }
     }
 
+    let valid_resource_name = |name: &str| {
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.')
+    };
+    for (name, pattern) in &doc.patterns {
+        if !valid_resource_name(name) {
+            return Err(ExactError::Invalid(format!(
+                "pattern /{name}: resource names must be non-empty ASCII alphanumerics, '_', '-' or '.'"
+            )));
+        }
+        if !matches!(pattern.paint_type, 1 | 2) {
+            return Err(ExactError::Invalid(format!(
+                "pattern /{name}: PaintType {} is not 1 or 2",
+                pattern.paint_type
+            )));
+        }
+        for (label, value) in pattern
+            .bbox
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (format!("BBox[{i}]"), v))
+            .chain(std::iter::once(("XStep".into(), &pattern.x_step)))
+            .chain(std::iter::once(("YStep".into(), &pattern.y_step)))
+            .chain(pattern.matrix.iter().enumerate().map(|(i, v)| (format!("Matrix[{i}]"), v)))
+        {
+            if !value.approx().is_finite() {
+                return Err(ExactError::Invalid(format!(
+                    "pattern /{name}: {label} {value} is not finite"
+                )));
+            }
+        }
+        if pattern.x_step.approx() <= 0.0 || pattern.y_step.approx() <= 0.0 {
+            return Err(ExactError::Invalid(format!(
+                "pattern /{name}: XStep and YStep must be positive"
+            )));
+        }
+        if pattern.content.len() > MAX_CONTENT_BYTES {
+            return Err(ExactError::Limit("pattern content bytes"));
+        }
+    }
+
     // Object numbering: 1 catalog, 2 pages, 3 info, then page/content pairs,
-    // then fonts in resource-name order.
+    // fonts, images and patterns, each in resource-name order.
     let page_count = doc.pages.len();
     let first_page = 4;
     let mut next = first_page + 2 * page_count;
@@ -1706,10 +1854,7 @@ pub fn render_exact_with(
     // Image XObjects follow the fonts, in resource-name order.
     let mut image_objects: BTreeMap<&str, usize> = BTreeMap::new();
     for (name, img) in &doc.images {
-        let valid = !name.is_empty()
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.');
+        let valid = valid_resource_name(name);
         if !valid || img.objects.is_empty() {
             return Err(ExactError::Invalid(format!(
                 "XObject /{name}: resource names must be non-empty ASCII alphanumerics, '_', '-' or '.', and the resource needs at least one object"
@@ -1718,7 +1863,12 @@ pub fn render_exact_with(
         image_objects.insert(name, next);
         next += img.objects.len();
     }
-    // Annotations, destinations, name tree and outlines follow the images.
+    let mut pattern_objects: BTreeMap<&str, usize> = BTreeMap::new();
+    for name in doc.patterns.keys() {
+        pattern_objects.insert(name, next);
+        next += 1;
+    }
+    // Annotations, destinations, name tree and outlines follow the patterns.
     let nav = crate::navigation::plan(navigation, page_count, |i| first_page + 2 * i, &mut next)?;
     let mut page_resources: Vec<String> = Vec::with_capacity(page_count);
     for (i, page) in doc.pages.iter().enumerate() {
@@ -1764,14 +1914,34 @@ pub fn render_exact_with(
     let used_ext_gstates = |ops: &[Op]| -> BTreeMap<String, String> {
         ops.iter().filter_map(ext_gstate).collect()
     };
+    let used_patterns = |ops: &[Op]| -> BTreeSet<String> {
+        ops.iter()
+            .filter_map(|op| match op {
+                Op::Pattern(name) | Op::PatternRgb(_, name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    };
     for (i, page) in doc.pages.iter().enumerate() {
-        let (bytes, xobjects, ext_gstates) = match &page.content {
+        let (bytes, xobjects, ext_gstates, patterns) = match &page.content {
             Content::Ops(ops) => {
                 if ops.len() > MAX_OPERATORS {
                     return Err(ExactError::Limit("operators per page"));
                 }
-                validate(i, ops, &doc.fonts, page.fonts.as_deref(), &doc.images)?;
-                (serialize(ops), used_xobjects(ops), used_ext_gstates(ops))
+                validate(
+                    i,
+                    ops,
+                    &doc.fonts,
+                    page.fonts.as_deref(),
+                    &doc.images,
+                    &doc.patterns,
+                )?;
+                (
+                    serialize(ops),
+                    used_xobjects(ops),
+                    used_ext_gstates(ops),
+                    used_patterns(ops),
+                )
             }
             Content::Verbatim(bytes) => {
                 let ops = parse(bytes).map_err(|e| match e {
@@ -1782,14 +1952,34 @@ pub fn render_exact_with(
                     },
                     other => other,
                 })?;
-                validate(i, &ops, &doc.fonts, page.fonts.as_deref(), &doc.images)?;
-                (bytes.clone(), used_xobjects(&ops), used_ext_gstates(&ops))
+                validate(
+                    i,
+                    &ops,
+                    &doc.fonts,
+                    page.fonts.as_deref(),
+                    &doc.images,
+                    &doc.patterns,
+                )?;
+                (
+                    bytes.clone(),
+                    used_xobjects(&ops),
+                    used_ext_gstates(&ops),
+                    used_patterns(&ops),
+                )
             }
         };
         if !ext_gstates.is_empty() {
             let mut s = String::from(" /ExtGState <<");
             for (name, dict) in &ext_gstates {
                 let _ = write!(s, " /{name} {dict}");
+            }
+            s.push_str(" >>");
+            page_resources[i].push_str(&s);
+        }
+        if !patterns.is_empty() {
+            let mut s = String::from(" /Pattern <<");
+            for name in &patterns {
+                let _ = write!(s, " /{name} {} 0 R", pattern_objects[name.as_str()]);
             }
             s.push_str(" >>");
             page_resources[i].push_str(&s);
@@ -1858,6 +2048,15 @@ pub fn render_exact_with(
                 None => d.object(base + k, dict.as_bytes()),
             }
         }
+    }
+    for (name, pattern) in &doc.patterns {
+        let [b0, b1, b2, b3] = &pattern.bbox;
+        let [m0, m1, m2, m3, m4, m5] = &pattern.matrix;
+        let dict = format!(
+            "/Type /Pattern /PatternType 1 /PaintType {} /TilingType 1 /BBox [ {b0} {b1} {b2} {b3} ] /XStep {} /YStep {} /Matrix [ {m0} {m1} {m2} {m3} {m4} {m5} ] /Resources <</Pattern<<>>>>",
+            pattern.paint_type, pattern.x_step, pattern.y_step
+        );
+        d.stream_with(pattern_objects[name.as_str()], &dict, &pattern.content);
     }
     for (number, body) in &nav.objects {
         d.object(*number, body.as_bytes());
