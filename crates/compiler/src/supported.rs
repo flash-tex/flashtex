@@ -274,6 +274,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("counterwithout", "{counter}{parent}", "undoes \\counterwithin; starred form keeps the printed form"),
     ("hypersetup", "{key=value,...}", "hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them"),
     ("lstset", "{key=value,...}", "listings defaults, global from that point on; the key names are checked and nothing is typeset here"),
+    ("lstinputlisting", "[options]{file}", "listings file as literal monospaced lines, like lstlisting; options are diagnosed, not applied"),
     ("url", "{url}", "monospaced URL text, breaking as url.sty does; links are not clickable"),
     ("href", "{url}{text}", "link text; links are not clickable"),
     ("nolinkurl", "{url}", "monospaced URL text without a link, breaking as url.sty does"),

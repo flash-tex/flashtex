@@ -918,6 +918,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "graphicspath",
     "hypersetup",
     "lstset",
+    "lstinputlisting",
     "allowdisplaybreaks",
     "url",
     "href",
@@ -2057,6 +2058,10 @@ impl P<'_> {
             "theoremstyle" => self.set_theorem_style(span),
             "begin" | "end" => self.environment(name, span, blocks, para),
             "input" | "include" => self.include(name, span, blocks, para),
+            // `\lstinputlisting[caption=..]{file}` (listings): the file's
+            // bytes as a literal listing; see `lstinputlisting` for the
+            // resolution, option and counting contract.
+            "lstinputlisting" => self.lstinputlisting(span, blocks, para),
             // MacTeX writes package-version banners to the log for `\listfiles`;
             // this compiler has no log stream to write them to, so the honest
             // behaviour is a documented no-op rather than an "unsupported"
@@ -2909,6 +2914,99 @@ impl P<'_> {
         self.include_stack.pop();
         self.t = saved_tokens;
         self.i = saved_index;
+    }
+
+    /// `\lstinputlisting[options]{file}` (listings): the named file's bytes
+    /// set as a literal listing, the same rendering an `lstlisting`
+    /// environment body gets from `verbatim_environment`.
+    ///
+    /// The `{file}` argument resolves with exactly the rules
+    /// `\input`/`\include` use (see `include`): the same `path_is_safe`
+    /// gate, the same `document_by_path` lookup with `.tex` appended as the
+    /// fallback, and the same missing-file diagnostic shape when neither
+    /// resolves. Unlike `include`, the file is never parsed: its bytes are
+    /// listing lines, so no macro in the file runs and no `\end` inside it
+    /// can escape. The optional argument runs through the same
+    /// `optional_bracket_argument` parser an `lstlisting` reads, with the
+    /// same warn-and-typeset-literally fallback — no key is applied.
+    ///
+    /// Counting: an inline `lstlisting` registers for `\lstlistoflistings`
+    /// purposes by pushing exactly one `Block::Verbatim`; this pushes the
+    /// same single block, so a listing from a file is indistinguishable
+    /// from an inline one for counting purposes.
+    fn lstinputlisting(
+        &mut self,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        self.flush_paragraph(blocks, para);
+        if let Some((options, options_span)) = self.optional_bracket_argument() {
+            if !options.trim().is_empty() {
+                self.diags.push(Diagnostic::warning(
+                    "\\lstinputlisting options are not implemented; typeset as plain verbatim",
+                    Some(options_span),
+                    Some("ignored the options and typeset the file literally".into()),
+                ));
+            }
+        }
+        let (tokens, argument_span) = self.required_group("lstinputlisting", span);
+        let requested = token_text(&tokens).trim().to_string();
+        if requested.is_empty() {
+            self.diags.push(Diagnostic::error(
+                "\\lstinputlisting requires a non-empty project-relative path",
+                Some(span.merge(argument_span)),
+                Some("skipped the empty listing and continued".into()),
+            ));
+            return;
+        }
+        if !path_is_safe(&requested) {
+            self.diags.push(Diagnostic::error(
+                format!(
+                    "rejected lstinputlisting path '{requested}': paths must be project-relative with no parent traversal"
+                ),
+                Some(span.merge(argument_span)),
+                Some("skipped the unsafe listing and continued".into()),
+            ));
+            return;
+        }
+        let appended = format!("{requested}.tex");
+        let resolved = self
+            .document_by_path
+            .get(requested.as_str())
+            .copied()
+            .or_else(|| self.document_by_path.get(appended.as_str()).copied());
+        let Some(document_index) = resolved else {
+            self.diags.push(Diagnostic::error(
+                format!("listed file not found: looked for '{requested}' and '{appended}'"),
+                Some(span.merge(argument_span)),
+                Some("skipped the missing listing and continued".into()),
+            )
+            .with_help(format!(
+                "add '{requested}' or '{appended}' to the project documents, or fix the \\lstinputlisting path"
+            )));
+            return;
+        };
+        let document = DocumentId(document_index);
+        let text = self.documents[document_index].text;
+        // The file's single trailing newline is not a listing line, mirroring
+        // the newline before `\end{lstlisting}` that `verbatim_environment`
+        // trims from an inline body.
+        let body = text.strip_suffix('\n').unwrap_or(text);
+        let mut lines = Vec::new();
+        let mut line_start = 0;
+        for raw_line in body.split('\n') {
+            lines.push(VerbatimLine {
+                text: verbatim_display(raw_line, false),
+                span: Span::in_document(document, line_start, line_start + raw_line.len()),
+            });
+            line_start += raw_line.len() + 1;
+        }
+        blocks.push(Block::Verbatim {
+            lines,
+            span: span.merge(argument_span),
+        });
+        self.finish_block_dependencies();
     }
 
     fn document_class(&mut self, span: Span) {
