@@ -1,0 +1,4049 @@
+{
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "entries": {
+  "a4wide": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "abstract": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "academicons": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "afterpage": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "algorithm": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "algorithmic": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "algpseudocode": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "amsbsy": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "amsfonts": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "amsmath": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "amssymb": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "amsthm": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "appendix": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "array": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "arydshln": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "authblk": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:UKenglish": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:USenglish": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:acadian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:afrikaans": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:albanian": {
+   "effect": "fail-open",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [
+     "00FE",
+     "1F600"
+    ],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [
+     "00FE",
+     "1F600"
+    ],
+    "declaring_files": []
+   },
+   "why": [
+    "ot1: 2 characters' errors change",
+    "t1: 2 characters' errors change"
+   ]
+  },
+  "babel:american": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:australian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:austrian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:bahasa": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:basque": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:brazil": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:brazilian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:breton": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:british": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:bulgarian": {
+   "effect": "fail-open",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0104",
+     "0105",
+     "0110",
+     "0111",
+     "0118",
+     "0119",
+     "012E",
+     "012F",
+     "0172",
+     "0173",
+     "01EA",
+     "01EB",
+     "02DB",
+     "0416",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "014A",
+     "014B"
+    ],
+    "declaring_files": [
+     "t2aenc.dfu"
+    ]
+   },
+   "t1": {
+    "accepts": [
+     "0416"
+    ],
+    "changed": [
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "014A",
+     "014B"
+    ],
+    "declaring_files": [
+     "t2aenc.dfu"
+    ]
+   },
+   "why": [
+    "ot1: 6 characters' errors change",
+    "ot1: loads t2aenc.dfu",
+    "ot1: accepts an undeclared character",
+    "t1: 6 characters' errors change",
+    "t1: loads t2aenc.dfu",
+    "t1: accepts an undeclared character"
+   ]
+  },
+  "babel:canadian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:canadien": {
+   "effect": "fail-open",
+   "why": [
+    "ot1: does not load",
+    "t1: does not load"
+   ]
+  },
+  "babel:catalan": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:croatian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:czech": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:danish": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:dutch": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:english": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:esperanto": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:estonian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:finnish": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:francais": {
+   "effect": "fail-open",
+   "why": [
+    "ot1: does not load",
+    "t1: does not load"
+   ]
+  },
+  "babel:french": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:frenchb": {
+   "effect": "fail-open",
+   "why": [
+    "ot1: does not load",
+    "t1: does not load"
+   ]
+  },
+  "babel:friulan": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:galician": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:german": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:greek": {
+   "effect": "fail-open",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "03B1",
+     "03C0",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "0104",
+     "0105",
+     "0118",
+     "0119",
+     "012E",
+     "012F",
+     "014A",
+     "014B",
+     "0172",
+     "0173",
+     "01EA",
+     "01EB",
+     "02DB"
+    ],
+    "declaring_files": [
+     "lgrenc.dfu"
+    ]
+   },
+   "t1": {
+    "accepts": [
+     "03B1",
+     "03C0"
+    ],
+    "changed": [
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "0104",
+     "0105",
+     "0118",
+     "0119",
+     "012E",
+     "012F",
+     "014A",
+     "014B",
+     "0172",
+     "0173",
+     "01EA",
+     "01EB",
+     "02DB"
+    ],
+    "declaring_files": [
+     "lgrenc.dfu"
+    ]
+   },
+   "why": [
+    "ot1: 17 characters' errors change",
+    "ot1: loads lgrenc.dfu",
+    "ot1: accepts an undeclared character",
+    "t1: 17 characters' errors change",
+    "t1: loads lgrenc.dfu",
+    "t1: accepts an undeclared character"
+   ]
+  },
+  "babel:hebrew": {
+   "effect": "fail-open",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "0104",
+     "0105",
+     "0118",
+     "0119",
+     "012E",
+     "012F",
+     "0141",
+     "1F600"
+    ],
+    "declaring_files": [
+     "nhe8enc.dfu"
+    ]
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "0104",
+     "0105",
+     "0118",
+     "0119",
+     "012E",
+     "012F",
+     "0141",
+     "1F600"
+    ],
+    "declaring_files": [
+     "nhe8enc.dfu"
+    ]
+   },
+   "why": [
+    "ot1: 12 characters' errors change",
+    "ot1: loads nhe8enc.dfu",
+    "t1: 12 characters' errors change",
+    "t1: loads nhe8enc.dfu"
+   ]
+  },
+  "babel:hungarian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:icelandic": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:indonesian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:interlingua": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:irish": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:italian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:latin": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:latvian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:lithuanian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:magyar": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:malay": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:naustrian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:newzealand": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:ngerman": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:norsk": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:nswissgerman": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:nynorsk": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:occitan": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:polish": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:portuges": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:portuguese": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:romanian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:romansh": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:russian": {
+   "effect": "fail-open",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0104",
+     "0105",
+     "0110",
+     "0111",
+     "0118",
+     "0119",
+     "012E",
+     "012F",
+     "0172",
+     "0173",
+     "01EA",
+     "01EB",
+     "02DB",
+     "0416",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "014A",
+     "014B"
+    ],
+    "declaring_files": [
+     "t2aenc.dfu"
+    ]
+   },
+   "t1": {
+    "accepts": [
+     "0416"
+    ],
+    "changed": [
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "014A",
+     "014B"
+    ],
+    "declaring_files": [
+     "t2aenc.dfu"
+    ]
+   },
+   "why": [
+    "ot1: 6 characters' errors change",
+    "ot1: loads t2aenc.dfu",
+    "ot1: accepts an undeclared character",
+    "t1: 6 characters' errors change",
+    "t1: loads t2aenc.dfu",
+    "t1: accepts an undeclared character"
+   ]
+  },
+  "babel:samin": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:scottish": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:serbian": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:slovak": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:slovene": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:sorbian": {
+   "effect": "fail-open",
+   "why": [
+    "ot1: does not load",
+    "t1: does not load"
+   ]
+  },
+  "babel:spanish": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:swedish": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:swissgerman": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "babel:turkish": {
+   "effect": "fail-open",
+   "why": [
+    "ot1: does not load",
+    "t1: does not load"
+   ]
+  },
+  "babel:ukrainian": {
+   "effect": "fail-open",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0104",
+     "0105",
+     "0110",
+     "0111",
+     "0118",
+     "0119",
+     "012E",
+     "012F",
+     "0172",
+     "0173",
+     "01EA",
+     "01EB",
+     "02DB",
+     "0416",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "014A",
+     "014B"
+    ],
+    "declaring_files": [
+     "t2aenc.dfu"
+    ]
+   },
+   "t1": {
+    "accepts": [
+     "0416"
+    ],
+    "changed": [
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "014A",
+     "014B"
+    ],
+    "declaring_files": [
+     "t2aenc.dfu"
+    ]
+   },
+   "why": [
+    "ot1: 6 characters' errors change",
+    "ot1: loads t2aenc.dfu",
+    "ot1: accepts an undeclared character",
+    "t1: 6 characters' errors change",
+    "t1: loads t2aenc.dfu",
+    "t1: accepts an undeclared character"
+   ]
+  },
+  "babel:vietnamese": {
+   "effect": "fail-open",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "0104",
+     "0105",
+     "0118",
+     "0119",
+     "012E",
+     "012F",
+     "014A",
+     "014B",
+     "0172",
+     "0173",
+     "01EA",
+     "01EB",
+     "02DB"
+    ],
+    "declaring_files": [
+     "t5enc.dfu"
+    ]
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "0104",
+     "0105",
+     "0118",
+     "0119",
+     "012E",
+     "012F",
+     "014A",
+     "014B",
+     "0172",
+     "0173",
+     "01EA",
+     "01EB",
+     "02DB"
+    ],
+    "declaring_files": [
+     "t5enc.dfu"
+    ]
+   },
+   "why": [
+    "ot1: 17 characters' errors change",
+    "ot1: loads t5enc.dfu",
+    "t1: 17 characters' errors change",
+    "t1: loads t5enc.dfu"
+   ]
+  },
+  "babel:welsh": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "0110",
+     "0111",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "bbm": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "beramono": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "bigstrut": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "bm": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "bookmark": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "booktabs": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "braket": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "calc": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "cancel": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "caption": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "cfr-lm": {
+   "effect": "t1",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "0104",
+     "0105",
+     "0110",
+     "0111",
+     "0118",
+     "0119",
+     "012E",
+     "012F",
+     "014A",
+     "014B",
+     "0172",
+     "0173",
+     "01EA",
+     "01EB",
+     "02DB",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "charter": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "chemfig": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "chngcntr": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "cite": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:IEEEtran": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:amsart": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00D0",
+     "00F0",
+     "0110",
+     "0111"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:amsbook": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00D0",
+     "00F0",
+     "0110",
+     "0111"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:amsproc": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00D0",
+     "00F0",
+     "0110",
+     "0111"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:article": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:beamer": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:book": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:elsarticle": {
+   "effect": "t1",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "0104",
+     "0105",
+     "0110",
+     "0111",
+     "0118",
+     "0119",
+     "012E",
+     "012F",
+     "014A",
+     "014B",
+     "0172",
+     "0173",
+     "01EA",
+     "01EB",
+     "02DB",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:exam": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:extarticle": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:letter": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:llncs": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:memoir": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:moderncv": {
+   "effect": "fail-open",
+   "why": [
+    "ot1: does not load",
+    "t1: does not load"
+   ]
+  },
+  "class:report": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:revtex4-2": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:scrartcl": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:scrbook": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:scrreprt": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "class:standalone": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "cleveref": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "cmap": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "color": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "colortbl": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "comment": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "courier": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "csquotes": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "dcolumn": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "diagbox": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "dsfont": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "enumerate": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "enumitem": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "epstopdf": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "etoolbox": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "eucal": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "eurosym": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "exscale": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "fancyhdr": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "fancyvrb": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "float": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "fontawesome5": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "fontenc": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "footmisc": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "fourier": {
+   "effect": "t1",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "0104",
+     "0105",
+     "0110",
+     "0111",
+     "0118",
+     "0119",
+     "012E",
+     "012F",
+     "014A",
+     "014B",
+     "0172",
+     "0173",
+     "01EA",
+     "01EB",
+     "02DB",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "framed": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "fullpage": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "gensymb": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "geometry": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "graphics": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "graphicx": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "helvet": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "hhline": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "hyperref": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "ifthen": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "inconsolata": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "indentfirst": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "inputenc": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "kpfonts": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "lastpage": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "latexsym": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "libertine": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "lipsum": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "listings": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "lmodern": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "longtable": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "lscape": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "ltablex": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "makecell": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "marvosym": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "mathpazo": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "mathptmx": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "mathrsfs": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "mathtools": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "mdframed": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "mhchem": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "microtype": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "mlmodern": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "multicol": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "multirow": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "natbib": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "needspace": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "newtxmath": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "newtxtext": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "newunicodechar": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "nicefrac": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "orcidlink": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "palatino": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "parskip": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "pdflscape": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "pdfpages": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "pgfplots": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "physics": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "pifont": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "placeins": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "qrcode": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "ragged2e": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "relsize": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "rotating": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "setspace": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "siunitx": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "soul": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "sourcecodepro": {
+   "effect": "fail-open",
+   "ot1": {
+    "accepts": [
+     "00AB",
+     "00BB",
+     "00D0",
+     "00DE",
+     "00F0",
+     "00FE",
+     "0104",
+     "0105",
+     "0110",
+     "0111",
+     "0118",
+     "0119",
+     "012E",
+     "012F",
+     "014A",
+     "014B",
+     "0172",
+     "0173",
+     "01EA",
+     "01EB",
+     "02DB",
+     "201A",
+     "201E",
+     "2039",
+     "203A"
+    ],
+    "changed": [],
+    "declaring_files": [
+     "ly1enc.dfu"
+    ]
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": [
+     "ly1enc.dfu"
+    ]
+   },
+   "why": [
+    "ot1: loads ly1enc.dfu",
+    "t1: loads ly1enc.dfu"
+   ]
+  },
+  "stmaryrd": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "subcaption": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "subfig": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "tabu": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "tabularx": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "tcolorbox": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "textcomp": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "textgreek": {
+   "effect": "fail-open",
+   "ot1": {
+    "accepts": [
+     "03B1",
+     "03C0"
+    ],
+    "changed": [
+     "00AB",
+     "00BB"
+    ],
+    "declaring_files": [
+     "lgrenc.dfu"
+    ]
+   },
+   "t1": {
+    "accepts": [
+     "03B1",
+     "03C0"
+    ],
+    "changed": [],
+    "declaring_files": [
+     "lgrenc.dfu"
+    ]
+   },
+   "why": [
+    "ot1: 2 characters' errors change",
+    "ot1: loads lgrenc.dfu",
+    "ot1: accepts an undeclared character",
+    "t1: loads lgrenc.dfu",
+    "t1: accepts an undeclared character"
+   ]
+  },
+  "tgheros": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "tgpagella": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "tgtermes": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "threeparttable": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "tikz": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "times": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "titlesec": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "titling": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "tocloft": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "ulem": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "units": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "upgreek": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "url": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "verbatim": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "wasysym": {
+   "effect": "accepts",
+   "ot1": {
+    "accepts": [
+     "00D0",
+     "00F0"
+    ],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "wrapfig": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "xcolor": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "xfrac": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "xparse": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "xspace": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  },
+  "xurl": {
+   "effect": "neutral",
+   "ot1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   },
+   "t1": {
+    "accepts": [],
+    "changed": [],
+    "declaring_files": []
+   }
+  }
+ },
+ "fontenc": {
+  "OT1": {
+   "equals": "ot1"
+  },
+  "OT1,T1": {
+   "equals": "t1"
+  },
+  "T1": {
+   "equals": "t1"
+  },
+  "T1,OT1": {
+   "equals": "ot1"
+  },
+  "TS1,OT1": {
+   "equals": "ot1"
+  },
+  "TS1,T1": {
+   "equals": "t1"
+  }
+ }
+}
