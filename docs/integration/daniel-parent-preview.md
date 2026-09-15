@@ -74,10 +74,15 @@ render-pipeline used `cargo test --release --locked --no-fail-fast`.
    - #601 alone (with #577/#592) passes. Bisecting the preview's first-parent merges in debug, the test passes after #583 (`59311b2b`) and overflows after **#558** (`a1ce8b4c`).
    - #558 (basic biblatex) makes the parser's recursive dispatch larger (the `\printbibliography`, `\addbibresource` and biblatex citation arms). #577 set `STREAM_DEPTH_LIMIT = 32` to stay "below what a 2 MiB debug test thread holds", and the larger frames now exceed that.
    - Fix options, for the #558 or #577 owner: move the new biblatex arms into `#[inline(never)]` helpers; lower `STREAM_DEPTH_LIMIT`; or run the test on a thread with an explicit stack size.
+   - **Fixed on #558** (`16dd331f`, merged here): the limit stays 32. `\addbibresource` and `\printbibliography` moved out of `P::command` into `#[inline(never)]` helpers, and the biblatex `\citeauthor`/`\citeyear` check moved into `natbib_cite`. Debug stack per nesting level (tabular / footnote): #601 57232 / 31424 bytes; #601+#558 before 58672 / 32864; after 57360 / 31552. The test passes in debug on #558, on #601+#558 and here.
+   - Margin warning: this preview's debug frame is 65136 / 39104 bytes per level (other merged PRs add about 7.8 KB per level), so 32 nested tabulars use about 2.0 MiB. The test passes, but a small further growth of `P::command` will overflow the 2 MiB debug test thread again.
 2. **render-pipeline, `tests/math_symbols.rs::common_math_glyph_runs_use_semantic_unicode`.**
    - `left: "…↦=⇒−→↪…"`, `right: "…↦⟹⟶↪…"`.
    - #536 sets `\Longrightarrow`/`\longrightarrow` as pdfTeX joins (`=`+`⇒`, `−`+`→`), so the math runs' text is the pieces. #597 added this test expecting the semantic single characters `⟹` and `⟶`. Each PR is self-consistent; together their intents conflict.
-   - Not resolved here, because it needs a decision: either give the join cluster the semantic text (glyphs stay pdfTeX's, extraction gives `⟹`), or change #597's expectation to the join pieces.
+   - Not resolved here. The decision was to keep #536's two-piece drawing and give the join the semantic text. That is blocked as specified; see the comment on #536:
+     - A cluster with empty text is invalid display-list-v2: `crates/rendering-core` and the Mac decoder require non-empty clusters that partition the run text.
+     - `\Longrightarrow`'s `=` is an LM Roman glyph and its `⇒` an LM Math glyph, so they are in different runs and cannot share one cluster.
+     - The exact PDF route writes one ToUnicode entry per glyph id, first use wins. A prototype that put `⟹`/`⟶` on the join extracted `x ⟹⇒y ⟶⟶z and a ⟹b ⇒c ⟶d ⟶e` from `$x\Longrightarrow y \longrightarrow z$ and $a=b\Rightarrow c - d \to e$`, so every later real `=`, `−` and `→` extracted as the arrow.
 
 No other failures.
 
