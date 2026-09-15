@@ -6902,7 +6902,7 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         //
         // Like `siunitx` and `enumitem` above, the gaps that remain report
         // themselves where they are used rather than at \usepackage:
-        // \sideset, \shoveleft, \smash, \mspace, \hdotsfor and the
+        // \shoveleft, \smash, \mspace, \hdotsfor and the
         // \varinjlim family each raise "\X is not supported in math mode" at
         // their own span. A blanket package warning on top of that is false
         // for every document that stays inside the implemented set --

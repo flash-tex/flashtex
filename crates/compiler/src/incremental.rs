@@ -725,6 +725,16 @@ fn shift_math_list(list: &mut MathList, changes: &[ChangedBytes], deltas: &[isiz
                     shift_math_list(row, changes, deltas)?;
                 }
             }
+            Nucleus::SideSet {
+                operator,
+                left_superscript,
+                left_subscript,
+            } => {
+                shift_math_list(operator, changes, deltas)?;
+                for list in [left_superscript, left_subscript].into_iter().flatten() {
+                    shift_math_list(list, changes, deltas)?;
+                }
+            }
         }
         map_span(span, changes, deltas)?;
         // A present script that cannot be shifted fails the whole mapping, so
