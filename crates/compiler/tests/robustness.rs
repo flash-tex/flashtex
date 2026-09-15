@@ -366,3 +366,44 @@ fn an_alignment_that_inputs_another_document_keeps_its_spans_in_one_document() {
     compile_project_messages(&[("main.tex", "\\begin{align}a\\include{sub}"), ("sub.tex", "x\\input{sub}\n")]);
     compile_project_messages(&[("main.tex", "\\begin{align}a\\input{sub}"), ("sub.tex", "b\\end{align}\n")]);
 }
+
+#[test]
+fn nested_sub_parses_hit_tex_grouping_capacity_instead_of_the_stack() {
+    // Every nested table cell, box or footnote re-enters the parser on its
+    // own token stream: 3000 nested tabulars overflowed an 8 MiB stack, and
+    // 10k took minutes (each level copies its cell). TeX stops at 255
+    // grouping levels. The limit is sized for release stacks (~3 KiB a
+    // level); an unoptimised tabular level takes ~50 KiB, so the debug test
+    // runs on a large stack.
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(nested_sub_parses_body)
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+fn nested_sub_parses_body() {
+    let capacity = "TeX capacity exceeded, sorry [grouping levels=255].";
+    for (open, close) in [
+        ("\\begin{tabular}{c}", "\\end{tabular}"),
+        ("\\footnote{", "}"),
+        ("\\colorbox{red}{", "}"),
+        ("\\rotatebox{90}{", "}"),
+        ("\\uline{", "}"),
+    ] {
+        let depth = 3000;
+        let text = format!(
+            "\\documentclass{{article}}\\usepackage{{xcolor,graphicx,ulem}}\\begin{{document}}{}x{}\\end{{document}}\n",
+            open.repeat(depth),
+            close.repeat(depth)
+        );
+        let started = std::time::Instant::now();
+        let messages = compile_messages(&text);
+        assert_eq!(messages.iter().filter(|m| *m == capacity).count(), 1, "{open}: {:?}", &messages[..messages.len().min(4)]);
+        assert!(started.elapsed().as_secs() < 30, "{open}: {:?}", started.elapsed());
+    }
+    // Well inside the limit nothing is reported.
+    let text = format!("\\begin{{document}}{}x{}\\end{{document}}\n", "\\begin{tabular}{c}".repeat(20), "\\end{tabular}".repeat(20));
+    assert!(!compile_messages(&text).iter().any(|m| m.contains("capacity")));
+}

@@ -35,6 +35,11 @@ pub use lists::{
 
 /// Maximum number of active nested `\input`/`\include` calls.
 pub const INCLUDE_DEPTH_LIMIT: usize = 64;
+/// How deeply the parser may re-enter itself on a nested token stream (a
+/// table cell, box, footnote or color argument inside another): TeX's
+/// `max_quarterword` grouping levels. Past it the inner content is skipped
+/// with TeX's "capacity exceeded" error instead of overflowing the stack.
+pub const STREAM_DEPTH_LIMIT: usize = 255;
 
 /// Per-request inputs that are neither document text nor the entry path.
 ///
@@ -1454,6 +1459,8 @@ pub fn parse_project_with(
             .map(|(index, document)| (document.path, index))
             .collect(),
         include_stack: vec![entry],
+        stream_depth: 0,
+        stream_depth_reported: false,
         counters: crate::xref::Counters::article(),
         subequations: Vec::new(),
         table_rule_color: None,
@@ -1562,6 +1569,9 @@ fn gap_is_blank(documents: &[SourceDocument<'_>], a: Span, b: Span) -> bool {
 }
 
 struct P<'a> {
+    /// Nesting of [`P::parse_stream`] (see [`STREAM_DEPTH_LIMIT`]).
+    stream_depth: usize,
+    stream_depth_reported: bool,
     /// The expanded stream. Edits go through [`P::token_mut`]: when the
     /// expansion cache holds the stream, it is lent to the parser (no copy)
     /// and every edit is undone before it goes back.
@@ -1840,6 +1850,25 @@ impl P<'_> {
     }
 
     fn parse_stream(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        if self.stream_depth >= STREAM_DEPTH_LIMIT {
+            if !self.stream_depth_reported {
+                self.stream_depth_reported = true;
+                let span = self.t.get(self.i).or_else(|| self.t.last()).map(|input| input.token.span);
+                self.diags.push(Diagnostic::error(
+                    format!("TeX capacity exceeded, sorry [grouping levels={STREAM_DEPTH_LIMIT}]."),
+                    span,
+                    Some("skipped the content nested past the limit".into()),
+                ));
+            }
+            self.i = self.t.len();
+            return;
+        }
+        self.stream_depth += 1;
+        self.parse_stream_body(blocks, para);
+        self.stream_depth -= 1;
+    }
+
+    fn parse_stream_body(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         while self.i < self.t.len() {
             let input = self.t[self.i].clone();
             let tok = input.token;

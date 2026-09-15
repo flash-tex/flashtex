@@ -28,7 +28,7 @@ use flashtex_compiler::parser::SourceDocument;
 /// The entry document's path in every case; `\input{main}` names itself.
 pub const ENTRY: &str = "main.tex";
 /// Stack for a case thread: the size of a macOS/Linux main thread, where the
-/// CLI (`flashtex check`) runs the compile.
+/// CLI (`flashtex check`) runs the compile. `FLASHTEX_FUZZ_STACK_KB` overrides.
 pub const CASE_STACK: usize = 8 * 1024 * 1024;
 
 // ---------------------------------------------------------------- RNG
@@ -448,7 +448,11 @@ pub fn run_case(case: Case, timeout: Duration) -> Outcome {
     let slot = PANIC_SLOT.get_or_init(|| Mutex::new(None));
     *slot.lock().unwrap() = None;
     let (tx, rx) = mpsc::channel();
-    let spawned = std::thread::Builder::new().stack_size(CASE_STACK).spawn(move || {
+    let stack = std::env::var("FLASHTEX_FUZZ_STACK_KB")
+        .ok()
+        .and_then(|kb| kb.parse::<usize>().ok())
+        .map_or(CASE_STACK, |kb| kb * 1024);
+    let spawned = std::thread::Builder::new().stack_size(stack).spawn(move || {
         let result = panic::catch_unwind(AssertUnwindSafe(|| compile_case(&case)));
         let _ = tx.send(result.is_ok());
     });
