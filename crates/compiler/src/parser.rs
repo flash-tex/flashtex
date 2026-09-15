@@ -2722,9 +2722,15 @@ impl P<'_> {
                 // unconditionally inserts `len` of vertical space, exactly
                 // like `\vspace{len}`: a single call matches real TeX, while
                 // two consecutive calls add up where real TeX would keep the
-                // larger. The star is tolerated like `\vspace`'s (this layout
-                // never discards glue at a page break, so both forms agree).
-                let _starred = self.take_optional_star();
+                // larger.
+                //
+                // Unlike `\vspace`, real `\addvspace` has NO star form at
+                // all (`ltspace.dtx`'s kernel `\addvspace` takes one plain
+                // argument, no `\@ifstar`): `\addvspace*{10pt}` is a hard
+                // TeX error, since the `*` itself gets consumed as the
+                // (invalid) mandatory argument. So the star is deliberately
+                // NOT consumed here, matching real TeX's error rather than
+                // silently tolerating it like `\vspace*` correctly does.
                 let (tokens, argument_span) = self.required_group(name, span);
                 let raw = token_text(&tokens);
                 let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
@@ -8399,6 +8405,32 @@ mod tests {
         assert!(
             gap_double <= gap_single + 10.0 + 1e-6,
             "a second \\addvspace{{10pt}} must add at most 10pt more, not blow up: {gap_double} vs {gap_single}"
+        );
+    }
+
+    #[test]
+    fn addvspace_star_is_diagnosed_not_silently_tolerated() {
+        // Real `\addvspace` has no star form (`ltspace.dtx`'s kernel
+        // definition takes one plain argument); `\addvspace*{10pt}` is a
+        // hard TeX error, since the `*` is consumed as the (invalid)
+        // mandatory argument. This compiler must not silently accept the
+        // star and insert a real 10pt space as if nothing were wrong.
+        let (parsed, _) = items(r"One\addvspace*{10pt}Two");
+        assert!(
+            !parsed.diagnostics.is_empty(),
+            "\\addvspace*{{10pt}} should be diagnosed, not silently accepted"
+        );
+        let vspace: Vec<f64> = parsed
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::VSpace { pt } => Some(*pt),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            vspace.is_empty(),
+            "\\addvspace*{{10pt}} must not silently insert a real vertical-glue block, got {vspace:?}"
         );
     }
 
