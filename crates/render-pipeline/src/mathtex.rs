@@ -609,7 +609,18 @@ impl TexMathMetrics {
             } else {
                 c
             };
-            face.face().glyph_id(MathFonts::math_char(c)).or_else(|| face.face().glyph_id(c)).map(|g| g.0)
+            let gid = face.face().glyph_id(MathFonts::math_char(c)).or_else(|| face.face().glyph_id(c)).map(|g| g.0)?;
+            if name.starts_with("cmsy") && code == 0x30 {
+                // cmsy "30 `\prime` is the large *unraised* prime that `'`
+                // sets as a superscript (GH-278). Latin Modern Math's cmap
+                // glyph for U+2032 (`minute`, ink 430..748 per mille) is
+                // the pre-raised prime Unicode math sets without a script,
+                // so drawn at the superscript position it sits a second
+                // shift too high; the face's `ssty` form `minute.st` (ink
+                // 96..549) is cmsy's design (lmsy7: 41..559).
+                return Some(self.otf.script_alternate(gid).unwrap_or(gid));
+            }
+            Some(gid)
         };
         // `\widehat`/`\widetilde` (cmex "62-"64, "65-"67): the Latin Modern
         // Math horizontal variant nearest the TFM width. `\overbrace`/
