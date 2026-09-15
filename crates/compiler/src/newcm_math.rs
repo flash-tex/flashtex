@@ -78,10 +78,8 @@ pub fn script(letter: char) -> Option<char> {
 }
 
 pub fn advance(c: char) -> Option<u16> {
-    ADVANCES
-        .iter()
-        .find(|(glyph, _)| *glyph == c)
-        .map(|(_, advance)| *advance)
+    static INDEX: crate::char_table::CharTable<u16> = crate::char_table::CharTable::new(ADVANCES);
+    INDEX.get(c)
 }
 
 /// True when `text` is non-empty and every character comes from this resource.

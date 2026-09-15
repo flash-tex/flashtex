@@ -148,6 +148,38 @@ impl BigSizing {
     }
 }
 
+/// The text-face state carried by a piece of a mixed text/math run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextStyle {
+    Normal,
+    Bold,
+    Italic,
+    BoldItalic,
+}
+
+impl TextStyle {
+    pub const NORMAL: Self = Self::Normal;
+    pub const BOLD: Self = Self::Bold;
+    pub const ITALIC: Self = Self::Italic;
+}
+
+/// One part of a text-mode hbox. Math pieces are laid out recursively in the
+/// surrounding style, so a script-sized text run keeps its inline math small.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TextPiece {
+    Text { text: String, style: TextStyle },
+    Math(MathList),
+}
+
+impl TextPiece {
+    pub fn text(text: impl Into<String>, style: TextStyle) -> Self {
+        Self::Text {
+            text: text.into(),
+            style,
+        }
+    }
+}
+
 /// What sits in the nucleus of an atom.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Nucleus {
@@ -210,6 +242,8 @@ pub enum Nucleus {
     /// its scripts follow Rule 18a (`shift_up` starts at 0) and an operator is
     /// centred on the axis. A [`Nucleus::Text`] of several characters is a box.
     TextChar(char),
+    /// A text-mode hbox containing literal text and inline math pieces.
+    TextRun(Vec<TextPiece>),
     /// `\overline{body}`: body under a rule (Rule 9).
     Overline(MathList),
     /// `\underline{body}`: body over a rule (Rule 10).
