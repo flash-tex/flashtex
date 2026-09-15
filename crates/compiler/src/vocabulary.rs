@@ -103,7 +103,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
 const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "document", "figure", "center", "flushright", "flushleft", "quote", "quotation", "itemize",
     "enumerate", "equation", "equation*", "displaymath", "gather", "gather*", "align", "align*",
-    "alignat", "alignat*", "flalign", "flalign*", "multline", "multline*",
+    "alignat", "alignat*", "flalign", "flalign*", "eqnarray", "eqnarray*", "multline", "multline*",
     "tiny", "scriptsize", "footnotesize", "small", "normalsize",
     "large", "Large", "LARGE", "huge", "Huge",
 ];
@@ -113,7 +113,7 @@ const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
 const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "description", "table", "table*", "figure*", "tabular", "tabular*", "tabularx", "longtable",
     "verbatim", "verbatim*", "verse", "abstract", "minipage", "titlepage", "thebibliography",
-    "list", "trivlist", "picture", "math", "eqnarray", "eqnarray*", "gathered", "multlined",
+    "list", "trivlist", "picture", "math", "gathered", "multlined",
     "subequations", "proof", "tikzpicture", "lstlisting", "minted",
     "wrapfigure", "subfigure", "comment", "landscape", "filecontents",
     "frame", "tabbing",

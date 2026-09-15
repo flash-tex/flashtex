@@ -857,6 +857,14 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("flalign", "rows aligned at &, each numbered"),
     ("flalign*", "rows aligned at &"),
     (
+        "eqnarray",
+        "three columns (right, centred, left) with 2\\arraycolsep gaps, each row numbered",
+    ),
+    (
+        "eqnarray*",
+        "three columns (right, centred, left) with 2\\arraycolsep gaps",
+    ),
+    (
         "multline",
         "multi-line display; only the last line is numbered",
     ),
