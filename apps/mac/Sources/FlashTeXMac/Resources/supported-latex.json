@@ -85,6 +85,7 @@
     {"name": "counterwithin", "mode": "text", "origin": "text_dispatch", "arguments": "{counter}{parent}", "description": "counter reset by parent and printed \\theparent.\\arabic{counter}; starred form keeps the printed form", "renders": true},
     {"name": "counterwithout", "mode": "text", "origin": "text_dispatch", "arguments": "{counter}{parent}", "description": "undoes \\counterwithin; starred form keeps the printed form", "renders": true},
     {"name": "caption", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "numbered \"Figure N:\" caption inside figure", "renders": true},
+    {"name": "captionof", "mode": "text", "origin": "text_dispatch", "arguments": "{type}[short]{...}", "description": "numbered caption outside a float: \"Figure N:\" for figure, \"Table N:\" for table", "renders": true},
     {"name": "item", "mode": "text", "origin": "text_dispatch", "arguments": "[label]", "description": "entry of an itemize, enumerate or description list", "renders": true},
     {"name": "includegraphics", "mode": "text", "origin": "text_dispatch", "arguments": "*[keys]{file}", "description": "image box in running text (graphicx keys as written)", "renders": true},
     {"name": "scalebox", "mode": "text", "origin": "text_dispatch", "arguments": "{x}[y]{...}", "description": "graphics.sty scaled box of the content", "renders": true},

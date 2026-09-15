@@ -68,7 +68,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // Colour and graphics packages.
     "tikz",
     "usetikzlibrary", "draw", "node", "fill", "path", "scalebox", "resizebox", "rotatebox",
-    "subcaption", "captionof", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
+    "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
     "intertext", "shortintertext", "substack", "sideset", "xrightarrow", "xleftarrow", "overbrace",
     "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",

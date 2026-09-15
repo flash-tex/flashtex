@@ -208,6 +208,11 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("crefname", "{type}{singular}{plural}", "cleveref lower-case singular and plural name override"),
     ("Crefname", "{type}{singular}{plural}", "cleveref capitalised singular and plural name override"),
     ("caption", "{...}", "numbered \"Figure N:\" caption inside figure"),
+    (
+        "captionof",
+        "{type}[short]{...}",
+        "numbered caption outside a float: \"Figure N:\" for figure, \"Table N:\" for table",
+    ),
     ("item", "[label]", "entry of an itemize, enumerate or description list"),
     ("textbf", "{...}", "bold text"),
     ("textmd", "{...}", "medium-weight text"),

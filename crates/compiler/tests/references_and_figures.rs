@@ -126,6 +126,101 @@ fn figure_caption_label_and_lists_render() {
 }
 
 #[test]
+fn captionof_figure_matches_caption_inside_figure() {
+    // GH-CAPTIONOF: caption.sty's standalone `\captionof{figure}{X}` shares
+    // `\caption`'s counter, "Figure N:" prefix and caption block — compare
+    // the laid-out output directly, with no float around the standalone form.
+    let standalone = compile_full(r"\captionof{figure}{X}", LayoutConstraints::default());
+    assert!(
+        standalone.diagnostics.is_empty(),
+        "{:?}",
+        standalone.diagnostics
+    );
+    let via_captionof: Vec<String> = standalone
+        .pages
+        .iter()
+        .flat_map(|page| page.items.iter().map(|item| item.text.clone()))
+        .collect();
+    let via_environment = texts(r"\begin{figure}\caption{X}\end{figure}");
+    assert_eq!(via_captionof, via_environment);
+    assert!(via_captionof.contains(&"Figure 1:".to_string()));
+    assert!(via_captionof.contains(&"X".to_string()));
+}
+
+#[test]
+fn captionof_shares_the_float_counters_outside_floats() {
+    let result = compile_full(
+        "\\begin{figure}\\caption{A}\\end{figure}\\captionof{figure}{B}\\captionof{table}{T}",
+        LayoutConstraints::default(),
+    );
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    let output: Vec<String> = result
+        .pages
+        .iter()
+        .flat_map(|page| page.items.iter().map(|item| item.text.clone()))
+        .collect();
+    // The standalone form keeps the figure counter running across both forms.
+    let first = output
+        .iter()
+        .position(|text| text == "Figure 1:")
+        .expect("Figure 1: in {output:?}");
+    let second = output
+        .iter()
+        .position(|text| text == "Figure 2:")
+        .expect("Figure 2: in {output:?}");
+    assert!(first < second, "{output:?}");
+    // Tables count on their own counter, with the "Table N:" style.
+    assert!(output.contains(&"Table 1:".to_string()));
+    assert!(output.contains(&"T".to_string()));
+}
+
+#[test]
+fn captionof_short_form_is_accepted_and_ignored() {
+    // `\caption` here takes only `{text}`, but real caption.sty spells the
+    // list-of-figures text as `\captionof{<type>}[<short>]{<text>}`; with no
+    // list of figures to feed, the short form is consumed and ignored —
+    // never diagnosed, never typeset.
+    let result = compile_full(r"\captionof{figure}[Short]{X}", LayoutConstraints::default());
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    let with_short: Vec<String> = result
+        .pages
+        .iter()
+        .flat_map(|page| page.items.iter().map(|item| item.text.clone()))
+        .collect();
+    assert_eq!(with_short, texts(r"\captionof{figure}{X}"));
+    assert!(!with_short.iter().any(|text| text == "Short"));
+}
+
+#[test]
+fn captionof_unknown_float_type_is_diagnosed_and_typeset_as_text() {
+    let result = compile_full(r"\captionof{listing}{L}", LayoutConstraints::default());
+    assert!(
+        result.diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("\\captionof")
+            && diagnostic.message.contains("figure and table")),
+        "{:?}",
+        result.diagnostics
+    );
+    // Recovery matches `\caption` outside a figure: the text stays on the page.
+    let output = texts(r"\captionof{listing}{L}");
+    assert!(output.contains(&"L".to_string()));
+    assert!(!output.iter().any(|text| text.contains(':')));
+}
+
+#[test]
+fn captionof_label_resolves_through_the_float_counter() {
+    let result = compile_full(
+        r"\captionof{figure}{X}\label{f}See \ref{f}.",
+        LayoutConstraints::default(),
+    );
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    let output = texts(r"\captionof{figure}{X}\label{f}See \ref{f}.");
+    assert!(output.iter().any(|text| text == "1"), "{output:?}");
+    assert!(!output.iter().any(|text| text == "??"));
+}
+
+#[test]
 fn enumerate_ref_uses_the_counter_value_without_the_display_period() {
     let source = r"\begin{enumerate}\item\label{item}First\end{enumerate}See \ref{item}.";
     let result = compile_full(source, LayoutConstraints::default());
