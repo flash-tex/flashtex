@@ -250,15 +250,14 @@ struct CommandPalette: View {
                 ContentUnavailableView.search(text: query)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(entries, selection: $selected) { entry in
-                    PaletteRow(entry: entry)
-                        .tag(entry.id)
-                        .contentShape(Rectangle())
-                        .onTapGesture { run(entry) }
-                }
-                .listStyle(.plain)
-                .environment(\.defaultMinListRowHeight, DS.Row.paletteResult)
-                .accessibilityIdentifier(Self.identifier)
+                // A real NSTableView (PaletteResults.swift): dense Search
+                // Everywhere rows, full-width band, click to run; the arrow
+                // keys stay in the query field above.
+                PaletteResultsView(rows: entries.map(\.resultRow),
+                                   selectedID: selected,
+                                   onRun: { id in run(entries.first { $0.id == id }) },
+                                   onSelect: { selected = $0 })
+                    .accessibilityIdentifier(Self.identifier)
             }
             Divider()
             HStack(spacing: DS.Space.l) {
@@ -270,6 +269,7 @@ struct CommandPalette: View {
             .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.s)
         }
         .frame(width: DS.Layout.paletteSize.width, height: DS.Layout.paletteSize.height)
+        .background(DS.Colors.surfaceRaised)
         .onAppear {
             fieldFocused = true
             outline = model.outline
@@ -414,59 +414,40 @@ struct CommandPalette: View {
     }
 }
 
-private struct PaletteRow: View {
-    let entry: PaletteEntry
-
-    var body: some View {
-        HStack(spacing: DS.Space.m) {
-            icon
-                .font(DS.Fonts.secondary)
-                .frame(width: DS.Size.fileIcon)
-            Text(entry.title).font(DS.Fonts.base).lineLimit(1)
-            Text(entry.context).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).lineLimit(1)
-            Spacer(minLength: DS.Space.m)
-            trailing
-        }
-        .padding(.vertical, DS.Space.xxs)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(spoken)
-    }
-
-    @ViewBuilder private var icon: some View {
-        switch entry.payload {
-        case .command:
-            Image(systemName: "command").foregroundStyle(DS.Colors.textSecondary)
+private extension PaletteEntry {
+    /// The Search Everywhere row anatomy for the AppKit results table.
+    var resultRow: PaletteResultsView.Row {
+        let icon: (name: String, color: NSColor)
+        var shortcut: String?
+        var hint = false
+        switch payload {
+        case .command(let command):
+            icon = ("command", DS.Palette.textSecondary)
+            shortcut = command.entry.shortcuts.first
+            hint = !CommandPaletteModel.isRunnable(command)
         case .file(let path, _, _):
             let style = FileTypeStyle.of(path: path)
-            Image(systemName: style.systemImage).foregroundStyle(style.color)
+            icon = (style.systemImage, style.nsColor)
         case .outline(let item):
-            Image(systemName: OutlineItemStyle.icon(item)).foregroundStyle(OutlineItemStyle.color(item))
+            icon = (OutlineItemStyle.icon(item), OutlineItemStyle.nsColor(item))
         case .citation:
-            Image(systemName: "quote.opening").foregroundStyle(DS.Colors.typeLabel)
+            icon = ("quote.opening", DS.Palette.typeOrange)
         case .lineJump:
-            Image(systemName: "number").foregroundStyle(DS.Colors.textSecondary)
+            icon = ("number", DS.Palette.textSecondary)
         }
+        return PaletteResultsView.Row(id: id, icon: icon.name, iconColor: icon.color,
+                                      title: title, context: context,
+                                      shortcut: shortcut, hint: hint,
+                                      accessibilityLabel: spoken)
     }
 
-    @ViewBuilder private var trailing: some View {
-        if case .command(let command) = entry.payload {
-            HStack(spacing: DS.Space.xs) {
-                ForEach(command.entry.shortcuts, id: \.self) { s in KeyCap(s) }
-            }
-            if !CommandPaletteModel.isRunnable(command) {
-                Image(systemName: "keyboard").foregroundStyle(DS.Colors.textTertiary)
-                    .help("A key inside the editor or a window; not runnable from the palette")
-            }
-        }
-    }
-
-    private var spoken: String {
-        switch entry.payload {
+    var spoken: String {
+        switch payload {
         case .command(let command): return command.entry.helpLine + (CommandPaletteModel.isRunnable(command) ? "" : " Not runnable from the palette.")
         case .file(let path, let open, _): return "\(path), \(open ? "open" : "not open"); activate to show it"
         case .outline(let item): return "\(item.command) \(item.title), line \(item.line); activate to select it"
         case .citation(let name, _, _): return "citation \(name); activate to open its bibliography source"
-        case .lineJump: return "\(entry.title); activate to jump"
+        case .lineJump: return "\(title); activate to jump"
         }
     }
 }

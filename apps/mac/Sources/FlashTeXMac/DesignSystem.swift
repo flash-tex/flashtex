@@ -79,6 +79,9 @@ enum DS {
         /// The palette / search field: one size up from base so the type-here
         /// surface reads as the primary element of its panel.
         static let field = Font.system(size: 15)
+        /// Icon-rail glyphs: between VS Code's 24px-in-48 and SF's UI sizes —
+        /// 16 with the 48pt rail reads as an activity bar, 13 as a toolbar.
+        static let railIcon = Font.system(size: 16)
         /// The pairing code: read across the room, typed on another device.
         static let pairingCode = Font.system(size: 34, weight: .semibold, design: .monospaced)
     }
@@ -236,10 +239,16 @@ enum DS {
     /// completion popup is an NSPanel + NSTableView on purpose).
     enum NSFonts {
         static let base = NSFont.systemFont(ofSize: 13)
+        static let baseSemibold = NSFont.systemFont(ofSize: 13, weight: .semibold)
         static let secondary = NSFont.systemFont(ofSize: 11)
         static let header = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        /// Completion candidates: the editor's vocabulary, one step smaller.
-        static let monoCandidate = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        /// Completion candidates: the editor's own face (JetBrains Mono when
+        /// bundled), one step smaller.
+        static var monoCandidate: NSFont {
+            if EditorFontRegistration.registerIfNeeded(),
+               let font = NSFont(name: EditorFontRegistration.regularPostScriptName, size: 12) { return font }
+            return .monospacedSystemFont(ofSize: 12, weight: .medium)
+        }
         /// Dimmed trailing detail in AppKit trees (revisions, line numbers).
         static let secondaryMono = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
     }
