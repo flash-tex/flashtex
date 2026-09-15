@@ -1491,10 +1491,14 @@ impl P<'_> {
         let style_depth = self.style_stack.len();
         let brace_depth = self.brace_stack.len();
         let dependency_count = self.block_dependencies.len();
+        let par_leading_count = self.block_par_leading.len();
 
         let mut blocks = Vec::new();
         let mut para = Vec::new();
         self.parse_stream(&mut blocks, &mut para);
+        // The entry's blocks are folded into the enclosing paragraph, so they
+        // must not leave leadings of their own behind.
+        self.block_par_leading.truncate(par_leading_count);
 
         while self.brace_stack.len() > brace_depth {
             let open = self.brace_stack.pop().expect("length checked");

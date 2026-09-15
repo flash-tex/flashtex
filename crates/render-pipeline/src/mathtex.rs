@@ -24,6 +24,8 @@ use flashtex_math_layout::cm_tfm;
 use flashtex_math_layout::metrics::Extensible;
 use flashtex_math_layout::tfm as mtfm;
 use flashtex_math_layout::{FontId as MathFontId, Glyph, MathFontMetrics, MathParams, SizeClass};
+#[cfg(feature = "math-font-kerns")]
+use flashtex_math_layout::{MathChar, OrdPair};
 
 use crate::fonts::{FontSet, LoadedFace, Role, TfmStatus};
 use crate::mathfont::{MathFonts, MathSizes};
@@ -607,7 +609,18 @@ impl TexMathMetrics {
             } else {
                 c
             };
-            face.face().glyph_id(MathFonts::math_char(c)).or_else(|| face.face().glyph_id(c)).map(|g| g.0)
+            let gid = face.face().glyph_id(MathFonts::math_char(c)).or_else(|| face.face().glyph_id(c)).map(|g| g.0)?;
+            if name.starts_with("cmsy") && code == 0x30 {
+                // cmsy "30 `\prime` is the large *unraised* prime that `'`
+                // sets as a superscript (GH-278). Latin Modern Math's cmap
+                // glyph for U+2032 (`minute`, ink 430..748 per mille) is
+                // the pre-raised prime Unicode math sets without a script,
+                // so drawn at the superscript position it sits a second
+                // shift too high; the face's `ssty` form `minute.st` (ink
+                // 96..549) is cmsy's design (lmsy7: 41..559).
+                return Some(self.otf.script_alternate(gid).unwrap_or(gid));
+            }
+            Some(gid)
         };
         // `\widehat`/`\widetilde` (cmex "62-"64, "65-"67): the Latin Modern
         // Math horizontal variant nearest the TFM width. `\overbrace`/
@@ -821,6 +834,33 @@ impl MathFontMetrics for TexMathMetrics {
 
     fn extension_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
         self.cm.extension_glyph(code, ch, size)
+    }
+
+    /// Families 1–3 answer from math-layout's embedded CM programs (the
+    /// `lmmi`/`lmsy`/`lmex` TFMs are metric-identical, see the module docs);
+    /// family 0 from the installed `rm-lmr` TFM [`Self::roman_glyph`] boxes
+    /// with. Characters no CM slot covers (AMS fonts, math alphabets,
+    /// OpenType fallbacks) are in no family here and never kern.
+    #[cfg(feature = "math-font-kerns")]
+    fn ord_pair(&self, left: MathChar, right: MathChar, size: SizeClass) -> Option<OrdPair> {
+        // `self.cm` settles the family (and kerns families 1–3); a family-0
+        // pair then takes the roman TFM's program instead of cmr's.
+        let pair = self.cm.ord_pair(left, right, size)?;
+        let roman_code = |c: MathChar| match c {
+            MathChar::Text(ch) => Some(ch as u8),
+            MathChar::Symbol(ch) => cm::symbol_slot(ch).filter(|&(f, _)| f == Family::Roman).map(|(_, code)| code),
+        };
+        let i = Self::size_index(size);
+        let (Some(l), Some(r), Some(tfm)) = (roman_code(left), roman_code(right), &self.roman[i]) else {
+            return Some(pair);
+        };
+        let codes = [l, r];
+        let run = tfm.ligkern(&codes).ok()?;
+        let kern = match run.glyphs.as_slice() {
+            [a, b] if a.code == codes[0] && b.code == codes[1] => mtfm::scale(a.kern_after, self.cm.sizes[i]),
+            _ => 0.0,
+        };
+        Some(OrdPair { kern, text_font: tfm.param(2).is_some_and(|space| space != 0) })
     }
 
     fn delimiter_extensible(&self, ch: char, size: SizeClass) -> Option<Extensible> {

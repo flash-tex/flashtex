@@ -38,6 +38,18 @@ pub struct CleverefName {
     pub capital_plural: Option<String>,
 }
 
+impl CleverefConfig {
+    /// A configuration with no name table; allocates nothing. Only a
+    /// placeholder while the real configuration is lent out.
+    pub(crate) const fn empty() -> Self {
+        Self {
+            capitalise: false,
+            noabbrev: false,
+            names: BTreeMap::new(),
+        }
+    }
+}
+
 impl Default for CleverefConfig {
     fn default() -> Self {
         let mut names = BTreeMap::new();
