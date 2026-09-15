@@ -24,6 +24,8 @@ use flashtex_math_layout::cm_tfm;
 use flashtex_math_layout::metrics::Extensible;
 use flashtex_math_layout::tfm as mtfm;
 use flashtex_math_layout::{FontId as MathFontId, Glyph, MathFontMetrics, MathParams, SizeClass};
+#[cfg(feature = "math-font-kerns")]
+use flashtex_math_layout::{MathChar, OrdPair};
 
 use crate::fonts::{FontSet, LoadedFace, Role, TfmStatus};
 use crate::mathfont::{MathFonts, MathSizes};
@@ -832,6 +834,33 @@ impl MathFontMetrics for TexMathMetrics {
 
     fn extension_glyph(&self, code: u8, ch: char, size: SizeClass) -> Option<Glyph> {
         self.cm.extension_glyph(code, ch, size)
+    }
+
+    /// Families 1–3 answer from math-layout's embedded CM programs (the
+    /// `lmmi`/`lmsy`/`lmex` TFMs are metric-identical, see the module docs);
+    /// family 0 from the installed `rm-lmr` TFM [`Self::roman_glyph`] boxes
+    /// with. Characters no CM slot covers (AMS fonts, math alphabets,
+    /// OpenType fallbacks) are in no family here and never kern.
+    #[cfg(feature = "math-font-kerns")]
+    fn ord_pair(&self, left: MathChar, right: MathChar, size: SizeClass) -> Option<OrdPair> {
+        // `self.cm` settles the family (and kerns families 1–3); a family-0
+        // pair then takes the roman TFM's program instead of cmr's.
+        let pair = self.cm.ord_pair(left, right, size)?;
+        let roman_code = |c: MathChar| match c {
+            MathChar::Text(ch) => Some(ch as u8),
+            MathChar::Symbol(ch) => cm::symbol_slot(ch).filter(|&(f, _)| f == Family::Roman).map(|(_, code)| code),
+        };
+        let i = Self::size_index(size);
+        let (Some(l), Some(r), Some(tfm)) = (roman_code(left), roman_code(right), &self.roman[i]) else {
+            return Some(pair);
+        };
+        let codes = [l, r];
+        let run = tfm.ligkern(&codes).ok()?;
+        let kern = match run.glyphs.as_slice() {
+            [a, b] if a.code == codes[0] && b.code == codes[1] => mtfm::scale(a.kern_after, self.cm.sizes[i]),
+            _ => 0.0,
+        };
+        Some(OrdPair { kern, text_font: tfm.param(2).is_some_and(|space| space != 0) })
     }
 
     fn delimiter_extensible(&self, ch: char, size: SizeClass) -> Option<Extensible> {

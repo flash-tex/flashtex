@@ -105,8 +105,10 @@ pub struct Expansion {
 ///
 /// Kernel definitions that would intercept a command the parser typesets
 /// itself (`\\label`, `\\verb`, whose argument the pass has already hidden,
-/// and `\\:`, which latex.ltx only uses while building `\\@ifnextchar`
-/// before redefining it as a math space) are removed, so they pass through.
+/// `\\:`, which latex.ltx only uses while building `\\@ifnextchar`
+/// before redefining it as a math space, and `\\fnsymbol`, whose counter
+/// the parser resolves against its own `footnote`/`mpfootnote` counters
+/// that the engine never defines) are removed, so they pass through.
 ///
 /// `\\setlength`/`\\addtolength` keep the kernel meaning when `#1` is already
 /// defined (a `\\newlength` skip, so `\\the` can read it back). An undefined
@@ -119,6 +121,7 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\:\\flashtexundefined
 \\let\\counterwithin\\flashtexundefined
 \\let\\counterwithout\\flashtexundefined
+\\let\\fnsymbol\\flashtexundefined
 \\def\\setlength#1#2{\\ifdefined#1#1 #2\\relax\\else\\flashtexsetlength{#1}{#2}\\fi}%
 \\def\\addtolength#1#2{\\ifdefined#1\\advance#1 #2\\relax\\else\\flashtexaddtolength{#1}{#2}\\fi}%
 \\long\\def\\flashtexdeclaremathop#1#2#3{\\newcommand#2{\\operatorname#1{#3}}}%
@@ -390,10 +393,23 @@ fn after_bracket_option(text: &str, from: usize) -> usize {
     if newlines >= 2 || bytes.get(j) != Some(&b'[') {
         return from;
     }
-    match text[j..].find(']') {
-        Some(offset) => j + offset + 1,
-        None => from,
+    // A `]` inside braces does not close the option
+    // (`[caption={[short]long}]`). A backslash takes the next byte with it,
+    // as TeX reads a control symbol: `\]` is display-math close, not a
+    // bracket, and `\{`/`\}` do not change the brace depth.
+    let mut depth = 0usize;
+    let mut k = j + 1;
+    while k < bytes.len() {
+        match bytes[k] {
+            b'\\' => k += 1,
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            b']' if depth == 0 => return k + 1,
+            _ => {}
+        }
+        k += 1;
     }
+    from
 }
 
 struct Converter<'d> {
@@ -1620,4 +1636,37 @@ fn include(
     }
     let id = engine.push_input(prepared[index].text.as_ref());
     conv.source_documents.insert(id, Some(index));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::after_bracket_option;
+
+    /// The byte index just past the options that `after_bracket_option`
+    /// finds in `text` (whose `[` follows `\begin{lstlisting}` at index 0).
+    fn options_of(text: &str) -> &str {
+        &text[..after_bracket_option(text, 0)]
+    }
+
+    #[test]
+    fn bracket_option_ends_at_the_first_unbraced_bracket() {
+        assert_eq!(options_of("[language=C]\nx]"), "[language=C]");
+        assert_eq!(options_of("[caption={[Short]Long}]\nx]"), "[caption={[Short]Long}]");
+    }
+
+    /// A backslash takes the next byte with it: `\]` does not close the
+    /// options, and `\{` / `\}` do not change the brace depth.
+    #[test]
+    fn bracket_option_skips_escaped_bytes() {
+        assert_eq!(options_of("[caption=Has a \\] mark]\nx]"), "[caption=Has a \\] mark]");
+        assert_eq!(options_of("[caption={Open \\{ only}]\nx]"), "[caption={Open \\{ only}]");
+        assert_eq!(options_of("[caption=Close \\} only]\nx]"), "[caption=Close \\} only]");
+        assert_eq!(options_of("[caption=Two \\\\]\nx]"), "[caption=Two \\\\]");
+    }
+
+    #[test]
+    fn bracket_option_without_a_close_leaves_the_body_start() {
+        assert_eq!(after_bracket_option("[caption={open]", 0), 0);
+        assert_eq!(after_bracket_option("\n\n[language=C]", 0), 0);
+    }
 }
