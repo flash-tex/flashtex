@@ -95,10 +95,7 @@ fn citet_and_citep_are_the_two_basic_shapes() {
 /// reader has to split it rather than consume the token.
 #[test]
 fn one_optional_argument_is_the_post_note() {
-    assert_eq!(
-        set(r"\citep[p.~7]{kp}"),
-        "(Knuth and Plass, 1981, p. 7)"
-    );
+    assert_eq!(set(r"\citep[p.~7]{kp}"), "(Knuth and Plass, 1981, p. 7)");
     assert_eq!(
         set(r"\citep[see][p.~7]{kp}"),
         "(see Knuth and Plass, 1981, p. 7)"
@@ -132,18 +129,9 @@ fn the_unparenthesised_and_partial_forms() {
 fn starred_forms_take_the_long_author_list() {
     assert_eq!(set(r"\citet{jones}"), "Jones et al. (1990)");
     assert_eq!(set(r"\citep{jones}"), "(Jones et al., 1990)");
-    assert_eq!(
-        set(r"\citet*{jones}"),
-        "Jones, Baker, and Williams (1990)"
-    );
-    assert_eq!(
-        set(r"\citeauthor*{jones}"),
-        "Jones, Baker, and Williams"
-    );
-    assert_eq!(
-        set(r"\citefullauthor{jones}"),
-        "Jones, Baker, and Williams"
-    );
+    assert_eq!(set(r"\citet*{jones}"), "Jones, Baker, and Williams (1990)");
+    assert_eq!(set(r"\citeauthor*{jones}"), "Jones, Baker, and Williams");
+    assert_eq!(set(r"\citefullauthor{jones}"), "Jones, Baker, and Williams");
     // `\citet*[p.~7]{...}` is one lexer word too.
     assert_eq!(
         set(r"\citet*[p.~7]{jones}"),
@@ -163,10 +151,7 @@ fn several_keys_keep_their_order_and_use_the_separator() {
         set(r"\citep{plass81,hobby,frank}"),
         "(Plass, 1981; Hobby, 1986; Frank, 1990)"
     );
-    assert_eq!(
-        set(r"\citep{plass81, hobby}"),
-        "(Plass, 1981; Hobby, 1986)"
-    );
+    assert_eq!(set(r"\citep{plass81, hobby}"), "(Plass, 1981; Hobby, 1986)");
     assert_eq!(set(r"\citet{plass81,hobby}"), "Plass (1981); Hobby (1986)");
     assert_eq!(
         set(r"\citep[see][p.~7]{plass81,hobby}"),
@@ -204,10 +189,7 @@ fn the_uppercasing_forms() {
 fn the_numbers_option_and_its_implied_square_comma() {
     assert_eq!(set_with("numbers", r"\citep{plass81,hobby}"), "[2, 4]");
     assert_eq!(set_with("numbers", r"\citet{plass81}"), "Plass [2]");
-    assert_eq!(
-        set_with("numbers", r"\citep[p.~7]{plass81}"),
-        "[2, p. 7]"
-    );
+    assert_eq!(set_with("numbers", r"\citep[p.~7]{plass81}"), "[2, p. 7]");
     assert_eq!(set_with("numbers", r"\cite{plass81}"), "[2]");
     assert_eq!(set_with("numbers,round", r"\citep{plass81}"), "(2)");
     assert_eq!(set_with("round,numbers", r"\citep{plass81}"), "(2)");
@@ -305,10 +287,9 @@ fn a_non_compliant_bibitem_forces_numeric_citations() {
     }
     assert_eq!(out, "(1)");
     assert!(
-        parsed
-            .diagnostics
-            .iter()
-            .any(|d| d.message.contains("Bibliography not compatible with author-year")),
+        parsed.diagnostics.iter().any(|d| d
+            .message
+            .contains("Bibliography not compatible with author-year")),
         "{:?}",
         parsed.diagnostics
     );

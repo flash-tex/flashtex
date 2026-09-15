@@ -156,7 +156,11 @@ fn nested_enumerate_refs_include_article_counter_prefixes() {
     }
     for expected in ["1.", "(a)", "i."] {
         assert!(
-            result.pages.iter().flat_map(|page| &page.items).any(|item| item.text == expected),
+            result
+                .pages
+                .iter()
+                .flat_map(|page| &page.items)
+                .any(|item| item.text == expected),
             "missing display label {expected}"
         );
     }
@@ -168,7 +172,8 @@ fn includegraphics_is_reported_by_the_core14_layout() {
     // The parser records an image node; this layout never loads the file.
     let result = compile_full(r"\includegraphics{plot.png}", LayoutConstraints::default());
     assert!(result.diagnostics.iter().any(|diagnostic| {
-        diagnostic.message.contains("includegraphics") && diagnostic.message.contains("does not load or draw images")
+        diagnostic.message.contains("includegraphics")
+            && diagnostic.message.contains("does not load or draw images")
     }));
 }
 

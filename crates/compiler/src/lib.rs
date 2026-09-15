@@ -11,12 +11,13 @@
 
 pub mod amssymb;
 pub mod bib;
+mod char_table;
 pub mod color;
 mod color_names;
 pub mod date;
 pub mod diagnostics;
-pub mod export;
 pub mod expansion;
+pub mod export;
 pub mod graphics;
 pub mod incremental;
 pub mod json;
@@ -28,9 +29,9 @@ pub mod natbib;
 pub mod newcm_math;
 pub mod parser;
 pub mod protocol;
+pub mod siunitx;
 pub mod supported;
 pub mod tabular;
-pub mod siunitx;
 pub mod text_builtins;
 pub mod theorems;
 pub mod vocabulary;

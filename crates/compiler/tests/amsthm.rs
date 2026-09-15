@@ -111,7 +111,11 @@ Statement.
         "note must be upright, not italic"
     );
     assert_eq!(runs[3].0, ".");
-    assert_eq!(runs[3].1, TextStyle::BOLD, "the head punctuation follows the note, in the head font");
+    assert_eq!(
+        runs[3].1,
+        TextStyle::BOLD,
+        "the head punctuation follows the note, in the head font"
+    );
 }
 
 #[test]
@@ -154,11 +158,21 @@ This generalizes to any ring.
     assert_eq!(runs[0].0, "Remark");
     assert_eq!(runs[0].1, ITALIC, "remark style italicises the head");
     assert_eq!(runs[1].0, " ");
-    assert_eq!(runs[1].1, ITALIC, "the space before the number is italic too");
+    assert_eq!(
+        runs[1].1, ITALIC,
+        "the space before the number is italic too"
+    );
     assert_eq!(runs[2].0, "1");
-    assert_eq!(runs[2].1, TextStyle::default(), "\\@upn sets the number upright");
+    assert_eq!(
+        runs[2].1,
+        TextStyle::default(),
+        "\\@upn sets the number upright"
+    );
     assert_eq!(runs[3].0, ".");
-    assert_eq!(runs[3].1, ITALIC, "the head punctuation is in the italic head font");
+    assert_eq!(
+        runs[3].1, ITALIC,
+        "the head punctuation is in the italic head font"
+    );
     for (_, style) in &runs[4..] {
         assert_eq!(
             *style,

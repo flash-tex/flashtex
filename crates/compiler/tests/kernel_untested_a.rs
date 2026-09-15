@@ -112,7 +112,8 @@ fn declare_robust_command_defines_a_macro_that_expands() {
     let source = "\\DeclareRobustCommand{\\foo}{BAR}\\begin{document}\\foo\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));
     assert_eq!(paragraphs(source), ["BAR"]);
-    let args = "\\DeclareRobustCommand{\\greet}[1]{Hi #1}\\begin{document}\\greet{you}\\end{document}";
+    let args =
+        "\\DeclareRobustCommand{\\greet}[1]{Hi #1}\\begin{document}\\greet{you}\\end{document}";
     assert_eq!(paragraphs(args), ["Hi you"]);
 }
 
@@ -140,17 +141,26 @@ fn bibliographystyle_warns_it_has_no_effect_and_keeps_the_body() {
     );
     let blocks = blocks_debug(source);
     assert!(blocks.contains("\"Body\""), "{blocks}");
-    assert!(!blocks.contains("plain"), "style argument leaked as text: {blocks}");
+    assert!(
+        !blocks.contains("plain"),
+        "style argument leaked as text: {blocks}"
+    );
 }
 
 #[test]
 fn bigskip_ends_the_paragraph_with_twelve_points_of_space() {
     let source = "\\begin{document}One\\bigskip Two\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));
-    assert!(blocks_debug(source).contains("VSpace { pt: 12.0 }"), "{}", blocks_debug(source));
+    assert!(
+        blocks_debug(source).contains("VSpace { pt: 12.0 }"),
+        "{}",
+        blocks_debug(source)
+    );
     // The space is real in layout: bigskip gaps the baselines 6pt more than medskip.
     let gap = |command: &str| {
-        let out = compile(&format!("\\begin{{document}}One{command} Two\\end{{document}}"));
+        let out = compile(&format!(
+            "\\begin{{document}}One{command} Two\\end{{document}}"
+        ));
         let y = |word: &str| {
             out.pages[0]
                 .items
@@ -168,7 +178,11 @@ fn bigskip_ends_the_paragraph_with_twelve_points_of_space() {
 fn columnwidth_names_the_measure_as_a_rule_width() {
     let source = "\\begin{document}\\rule{\\columnwidth}{4pt}\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));
-    assert!(blocks_debug(source).contains("unit: ColumnWidth"), "{}", blocks_debug(source));
+    assert!(
+        blocks_debug(source).contains("unit: ColumnWidth"),
+        "{}",
+        blocks_debug(source)
+    );
     let out = compile(source);
     let rule = out.pages[0]
         .items
@@ -176,7 +190,10 @@ fn columnwidth_names_the_measure_as_a_rule_width() {
         .find(|item| item.rule.is_some())
         .expect("rule item");
     // Resolved against the real measure, like an explicit width would be.
-    assert_eq!(rule.rule.unwrap().width_pt, LayoutConstraints::default().measure_pt);
+    assert_eq!(
+        rule.rule.unwrap().width_pt,
+        LayoutConstraints::default().measure_pt
+    );
     assert_eq!(rule.rule.unwrap().height_pt, 4.0);
 }
 
@@ -185,17 +202,31 @@ fn displaystyle_is_accepted_and_leaves_its_neighbours_alone() {
     let source = "\\begin{document}$a\\displaystyle b$\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));
     let blocks = blocks_debug(source);
-    assert!(blocks.contains("Symbol(\"a\")") && blocks.contains("Symbol(\"b\")"), "{blocks}");
-    assert!(blocks.contains("Space { em: 0.0"), "displaystyle must add no visible atom: {blocks}");
+    assert!(
+        blocks.contains("Symbol(\"a\")") && blocks.contains("Symbol(\"b\")"),
+        "{blocks}"
+    );
+    assert!(
+        blocks.contains("Space { em: 0.0"),
+        "displaystyle must add no visible atom: {blocks}"
+    );
 }
 
 #[test]
 fn fboxrule_sets_the_fcolorbox_frame_thickness() {
     let with = "\\usepackage{xcolor}\\setlength{\\fboxrule}{2pt}\\begin{document}\\fcolorbox{red}{yellow}{x}\\end{document}";
     assert!(messages(with).is_empty(), "{:?}", messages(with));
-    assert!(blocks_debug(with).contains("fboxrule_pt: 2.0"), "{}", blocks_debug(with));
+    assert!(
+        blocks_debug(with).contains("fboxrule_pt: 2.0"),
+        "{}",
+        blocks_debug(with)
+    );
     let default = "\\usepackage{xcolor}\\begin{document}\\fcolorbox{red}{yellow}{x}\\end{document}";
-    assert!(blocks_debug(default).contains("fboxrule_pt: 0.4"), "{}", blocks_debug(default));
+    assert!(
+        blocks_debug(default).contains("fboxrule_pt: 0.4"),
+        "{}",
+        blocks_debug(default)
+    );
 }
 
 #[test]
@@ -251,8 +282,13 @@ fn jobname_expands_to_texput() {
 
 #[test]
 fn makeatother_restores_other_catcode_for_at() {
-    let back_to_other = "\\makeatletter\\makeatother\\begin{document}\\the\\catcode64\\end{document}";
-    assert!(messages(back_to_other).is_empty(), "{:?}", messages(back_to_other));
+    let back_to_other =
+        "\\makeatletter\\makeatother\\begin{document}\\the\\catcode64\\end{document}";
+    assert!(
+        messages(back_to_other).is_empty(),
+        "{:?}",
+        messages(back_to_other)
+    );
     assert_eq!(paragraphs(back_to_other), ["12"]);
     let still_letter = "\\makeatletter\\begin{document}\\the\\catcode64\\end{document}";
     assert_eq!(paragraphs(still_letter), ["11"]);
@@ -263,7 +299,10 @@ fn mathnormal_keeps_its_content_as_math() {
     let source = "\\begin{document}$\\mathnormal{AB}$\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));
     let blocks = blocks_debug(source);
-    assert!(blocks.contains("Symbol(\"A\")") && blocks.contains("Symbol(\"B\")"), "{blocks}");
+    assert!(
+        blocks.contains("Symbol(\"A\")") && blocks.contains("Symbol(\"B\")"),
+        "{blocks}"
+    );
 }
 
 #[test]
@@ -286,7 +325,11 @@ fn mdseries_switches_back_to_medium_weight() {
 fn medskip_ends_the_paragraph_with_six_points_of_space() {
     let source = "\\begin{document}One\\medskip Two\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));
-    assert!(blocks_debug(source).contains("VSpace { pt: 6.0 }"), "{}", blocks_debug(source));
+    assert!(
+        blocks_debug(source).contains("VSpace { pt: 6.0 }"),
+        "{}",
+        blocks_debug(source)
+    );
 }
 
 #[test]
@@ -296,12 +339,15 @@ fn newcounter_allocates_a_zero_counter_printed_as_arabic() {
     assert_eq!(paragraphs(source), ["0"]);
     let dup = "\\newcounter{foo}\\newcounter{foo}\\begin{document}A\\end{document}";
     assert!(
-        messages(dup).iter().any(|m| m.contains("Command \\c@foo already defined")),
+        messages(dup)
+            .iter()
+            .any(|m| m.contains("Command \\c@foo already defined")),
         "{:?}",
         messages(dup)
     );
     // `[within]` allocation works and starts at zero too.
-    let within = "\\newcounter{parent}\\newcounter{child}[parent]\\begin{document}\\thechild\\end{document}";
+    let within =
+        "\\newcounter{parent}\\newcounter{child}[parent]\\begin{document}\\thechild\\end{document}";
     assert!(messages(within).is_empty(), "{:?}", messages(within));
     assert_eq!(paragraphs(within), ["0"]);
 }
@@ -313,7 +359,9 @@ fn newlength_allocates_a_skip_register_set_and_read_in_pt() {
     assert_eq!(paragraphs(source), ["7.0pt"]);
     let dup = "\\newlength{\\mylen}\\newlength{\\mylen}\\begin{document}A\\end{document}";
     assert!(
-        messages(dup).iter().any(|m| m.contains("Command \\mylen already defined")),
+        messages(dup)
+            .iter()
+            .any(|m| m.contains("Command \\mylen already defined")),
         "{:?}",
         messages(dup)
     );
@@ -324,7 +372,10 @@ fn noindent_is_a_silent_no_op() {
     let source = "\\begin{document}\\noindent hello\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));
     assert_eq!(paragraphs(source), ["hello"]);
-    assert_eq!(page_texts(source), page_texts("\\begin{document}hello\\end{document}"));
+    assert_eq!(
+        page_texts(source),
+        page_texts("\\begin{document}hello\\end{document}")
+    );
 }
 
 #[test]

@@ -250,10 +250,15 @@ pub fn command_package(name: &str) -> Option<&'static str> {
         "mintinline" => Some("minted"),
         "citep" | "citet" | "citeauthor" => Some("natbib"),
         "addbibresource" | "printbibliography" => Some("biblatex"),
-        "eqref" | "intertext" | "shortintertext" | "substack" | "DeclareMathOperator"
-        | "numberwithin" | "allowdisplaybreaks" => Some("amsmath"),
-        "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
-        | "labelcref" | "crefname" | "Crefname" => Some("cleveref"),
+        "eqref"
+        | "intertext"
+        | "shortintertext"
+        | "substack"
+        | "DeclareMathOperator"
+        | "numberwithin"
+        | "allowdisplaybreaks" => Some("amsmath"),
+        "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref" | "labelcref"
+        | "crefname" | "Crefname" => Some("cleveref"),
         "autoref" | "nameref" | "url" | "href" | "hyperref" | "hyperlink" | "hypertarget"
         | "hypersetup" => Some("hyperref"),
         "geometry" => Some("geometry"),
@@ -310,7 +315,9 @@ pub fn environment_help(name: &str) -> Option<String> {
         _ => None,
     };
     package.map(|p| {
-        format!("environment '{name}' needs the {p} package, which this compiler does not implement")
+        format!(
+            "environment '{name}' needs the {p} package, which this compiler does not implement"
+        )
     })
 }
 
@@ -384,9 +391,15 @@ mod tests {
     fn an_ambiguous_typo_offers_no_automatic_fix() {
         for typo in ["igl", "lph", "igm"] {
             let candidates = closest_commands(typo);
-            assert!(candidates.len() > 1, "{typo} expected a tie, got {candidates:?}");
+            assert!(
+                candidates.len() > 1,
+                "{typo} expected a tie, got {candidates:?}"
+            );
             assert_eq!(unambiguous_command_fix(typo), None, "{typo} {candidates:?}");
-            assert!(suggest_command(typo).is_some(), "{typo} still hints in prose");
+            assert!(
+                suggest_command(typo).is_some(),
+                "{typo} still hints in prose"
+            );
         }
     }
 
@@ -447,7 +460,11 @@ mod tests {
             command_help("alpha").as_deref(),
             Some("wrap this in math mode: \\(\\alpha\\)")
         );
-        assert!(command_help("maketitle").is_none(), "{:?}", command_help("maketitle"));
+        assert!(
+            command_help("maketitle").is_none(),
+            "{:?}",
+            command_help("maketitle")
+        );
         assert_eq!(
             command_help("alpah").as_deref(),
             Some("did you mean \\alpha?")

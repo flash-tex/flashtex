@@ -5,9 +5,9 @@
 //! `article.cls` provenance these numbers transcribe, and
 //! `layout::LayoutCursor`'s `Block::TitleBlock` arms for how this compiler
 //! reproduces them without a dependency on that crate.
+use flashtex_compiler::date::TodayDate;
 use flashtex_compiler::incremental::compile_full_project;
 use flashtex_compiler::layout::{LayoutConstraints, LINE_SPACING, MARGIN_PT};
-use flashtex_compiler::date::TodayDate;
 use flashtex_compiler::parser::{parse, Block, Inline, SourceDocument};
 
 fn doc(preamble: &str, body: &str) -> String {

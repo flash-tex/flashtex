@@ -46,7 +46,10 @@ fn document() -> String {
 /// Compare cached and full expansion; returns whether the full expansion ran
 /// into the step limit.
 fn check(text: &str, cache: &mut Option<ExpansionCache>, step: usize, what: &str) -> bool {
-    let docs = [SourceDocument { path: "main.tex", text }];
+    let docs = [SourceDocument {
+        path: "main.tex",
+        text,
+    }];
     let full = expand_project(&docs, 0);
     let cached = expand_project_with_cache(&docs, 0, cache);
     if *cached.tokens != *full.tokens {
@@ -80,13 +83,23 @@ fn check(text: &str, cache: &mut Option<ExpansionCache>, step: usize, what: &str
         );
     }
     if cached.arraystretch != full.arraystretch {
-        let mut only_cached: Vec<_> = cached.arraystretch.iter().filter(|(k, v)| full.arraystretch.get(*k) != Some(*v)).collect();
-        let mut only_full: Vec<_> = full.arraystretch.iter().filter(|(k, v)| cached.arraystretch.get(*k) != Some(*v)).collect();
+        let mut only_cached: Vec<_> = cached
+            .arraystretch
+            .iter()
+            .filter(|(k, v)| full.arraystretch.get(*k) != Some(*v))
+            .collect();
+        let mut only_full: Vec<_> = full
+            .arraystretch
+            .iter()
+            .filter(|(k, v)| cached.arraystretch.get(*k) != Some(*v))
+            .collect();
         only_cached.sort();
         only_full.sort();
         panic!("step {step} ({what}): arraystretch differs\n  cached only: {only_cached:?}\n  full only:   {only_full:?}");
     }
-    full.diagnostics.iter().any(|d| d.message.contains("expansion step limit exceeded"))
+    full.diagnostics
+        .iter()
+        .any(|d| d.message.contains("expansion step limit exceeded"))
 }
 
 fn boundary(text: &str, rng: &mut Rng) -> usize {
@@ -100,9 +113,31 @@ fn boundary(text: &str, rng: &mut Rng) -> usize {
 #[test]
 fn cached_expansion_matches_full_expansion_under_random_edits() {
     const PIECES: &[&str] = &[
-        "a", "Z", " ", "\n", "\n\n", "\\", "{", "}", "%", "$", "#", "~", "é", "\\foo", "\\proj", "\\section{X}",
-        "\\verb|q%|", "\\def\\y{Y}", "\\renewcommand{\\arraystretch}{2}", "\\begin{tabular}{l}a\\\\b\\end{tabular}",
-        "\\url{a%b}", "\\begin{verbatim}\nv\n\\end{verbatim}\n", "\\newcommand{\\proj}{P}", "\\iffalse", "\\fi",
+        "a",
+        "Z",
+        " ",
+        "\n",
+        "\n\n",
+        "\\",
+        "{",
+        "}",
+        "%",
+        "$",
+        "#",
+        "~",
+        "é",
+        "\\foo",
+        "\\proj",
+        "\\section{X}",
+        "\\verb|q%|",
+        "\\def\\y{Y}",
+        "\\renewcommand{\\arraystretch}{2}",
+        "\\begin{tabular}{l}a\\\\b\\end{tabular}",
+        "\\url{a%b}",
+        "\\begin{verbatim}\nv\n\\end{verbatim}\n",
+        "\\newcommand{\\proj}{P}",
+        "\\iffalse",
+        "\\fi",
     ];
     let mut text = document();
     let mut cache = None;

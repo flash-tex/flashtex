@@ -583,12 +583,14 @@ pub fn parse_tokens(
 ) -> MathList {
     let (list, unclosed) = parse_tokens_reporting_unclosed(tokens, packages, diagnostics, false);
     if let Some(open) = unclosed {
-        diagnostics.push(Diagnostic::error(
-            "math group is missing its closing brace",
-            Some(open),
-            Some("closed the group at the math delimiter".into()),
-        )
-        .with_help("add a closing '}'"));
+        diagnostics.push(
+            Diagnostic::error(
+                "math group is missing its closing brace",
+                Some(open),
+                Some("closed the group at the math delimiter".into()),
+            )
+            .with_help("add a closing '}'"),
+        );
     }
     list
 }
@@ -799,7 +801,10 @@ impl MathParser<'_> {
                         script.atoms.push(symbol("\u{2032}".into(), t.span));
                         self.i += 1;
                     }
-                    if matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Superscript)) {
+                    if matches!(
+                        self.tokens.get(self.i).map(|t| &t.kind),
+                        Some(TokenKind::Superscript)
+                    ) {
                         let marker = self.tokens[self.i].span;
                         self.i += 1;
                         script.atoms.extend(self.script_argument(marker).atoms);
@@ -970,13 +975,15 @@ impl MathParser<'_> {
     /// every unsupported math command already uses, so the divergence is
     /// visible in the output as well as in the diagnostics.
     fn missing_package(&mut self, name: &str, package: &str, span: Span) -> MathAtom {
-        self.diagnostics.push(Diagnostic::command_error(
-            name,
-            format!("\\{name} requires \\usepackage{{{package}}}"),
-            Some(span),
-            Some("typeset the command literally and continued".into()),
-        )
-        .with_help(format!("add \\usepackage{{{package}}} in the preamble")));
+        self.diagnostics.push(
+            Diagnostic::command_error(
+                name,
+                format!("\\{name} requires \\usepackage{{{package}}}"),
+                Some(span),
+                Some("typeset the command literally and continued".into()),
+            )
+            .with_help(format!("add \\usepackage{{{package}}} in the preamble")),
+        );
         symbol(format!("\\{name}"), span)
     }
 
@@ -1073,7 +1080,11 @@ impl MathParser<'_> {
             //
             // `\eqqcolon` ("=:") = `= \mathrel{\mkern-1.2mu} \vcentcolon`.
             "eqqcolon" => {
-                let atoms = vec![symbol("=".into(), span), mkern(-1.2, span), vcentcolon_atom(span)];
+                let atoms = vec![
+                    symbol("=".into(), span),
+                    mkern(-1.2, span),
+                    vcentcolon_atom(span),
+                ];
                 MathAtom {
                     nucleus: Nucleus::Group(MathList { atoms }),
                     class_override: Some(AtomClass::Rel),
@@ -1120,7 +1131,11 @@ impl MathParser<'_> {
             // `\dblcolon` ("::") = `\vcentcolon \mathrel{\mkern-.9mu} \vcentcolon`.
             "dblcolon" => MathAtom {
                 nucleus: Nucleus::Group(MathList {
-                    atoms: vec![vcentcolon_atom(span), mkern(-0.9, span), vcentcolon_atom(span)],
+                    atoms: vec![
+                        vcentcolon_atom(span),
+                        mkern(-0.9, span),
+                        vcentcolon_atom(span),
+                    ],
                 }),
                 class_override: Some(AtomClass::Rel),
                 ..symbol(String::new(), span)
@@ -1305,7 +1320,9 @@ impl MathParser<'_> {
                     } else {
                         text_atom(letters, span)
                     }
-                } else if matches!(&*name, "mathit" | "mathsf" | "mathtt") && self.plain_text_argument() {
+                } else if matches!(&*name, "mathit" | "mathsf" | "mathtt")
+                    && self.plain_text_argument()
+                {
                     let (text, argument_span) = self.required_text_group(&name, span);
                     let span = span.merge(argument_span);
                     let glyphs: String = text
@@ -1525,8 +1542,16 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
-            "boxed" | "overline" | "underline" | "overbrace" | "underbrace" | "overrightarrow"
-            | "overleftarrow" | "overleftrightarrow" | "underrightarrow" | "underleftarrow"
+            "boxed"
+            | "overline"
+            | "underline"
+            | "overbrace"
+            | "underbrace"
+            | "overrightarrow"
+            | "overleftarrow"
+            | "overleftrightarrow"
+            | "underrightarrow"
+            | "underleftarrow"
             | "underleftrightarrow" => {
                 let body = self.required_group(&name, span);
                 let frame = match name.as_str() {
@@ -1596,7 +1621,8 @@ impl MathParser<'_> {
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(&name, span),
             "sisetup" => {
-                let (keys, argument_span) = self.siunitx_raw_group().unwrap_or((String::new(), span));
+                let (keys, argument_span) =
+                    self.siunitx_raw_group().unwrap_or((String::new(), span));
                 crate::siunitx::sisetup(&keys, span.merge(argument_span), self.diagnostics);
                 space(0.0, span)
             }
@@ -1680,9 +1706,7 @@ impl MathParser<'_> {
             // amssymb: msbm10 char "3F, 0.777781em (cmsy10's \emptyset is 0.5em).
             // Its own arm rather than a table row, so it needs its own gate;
             // `\emptyset`, the kernel's cmsy10 "3B, is not affected.
-            "varnothing" if !self.packages.amssymb => {
-                self.missing_package(&name, "amssymb", span)
-            }
+            "varnothing" if !self.packages.amssymb => self.missing_package(&name, "amssymb", span),
             "varnothing" => MathAtom {
                 width_em: Some(VARNOTHING_MSBM_EM),
                 ..symbol("∅".into(), span)
@@ -1778,14 +1802,16 @@ impl MathParser<'_> {
                 }
                 (None, Some(glyph)) => symbol(glyph.into(), span),
                 (None, None) => {
-                    self.diagnostics.push(Diagnostic::command_error(
-                        &name,
-                        format!("\\{} is not supported in math mode", name),
-                        Some(span),
-                        Some("typeset the command literally and continued".into()),
-                    )
-                    .with_optional_help(crate::vocabulary::math_mode_help(&name))
-                    .with_label(span, "this command", true));
+                    self.diagnostics.push(
+                        Diagnostic::command_error(
+                            &name,
+                            format!("\\{} is not supported in math mode", name),
+                            Some(span),
+                            Some("typeset the command literally and continued".into()),
+                        )
+                        .with_optional_help(crate::vocabulary::math_mode_help(&name))
+                        .with_label(span, "this command", true),
+                    );
                     symbol(format!("\\{}", name), span)
                 }
             },
@@ -1899,7 +1925,10 @@ impl MathParser<'_> {
                     if depth == 0 {
                         let inner = &tokens[self.i + 1..self.i + offset];
                         self.i += offset + 1;
-                        return Some((crate::siunitx::raw_text(inner), open.span.merge(token.span)));
+                        return Some((
+                            crate::siunitx::raw_text(inner),
+                            open.span.merge(token.span),
+                        ));
                     }
                 }
                 _ => {}
@@ -1996,12 +2025,14 @@ impl MathParser<'_> {
                 _ => {}
             }
         }
-        self.diagnostics.push(Diagnostic::error(
-            format!("\\{command} argument is missing its closing brace"),
-            Some(open.merge(end)),
-            Some("used the text up to the end of the formula".into()),
-        )
-        .with_help("add a closing '}'"));
+        self.diagnostics.push(
+            Diagnostic::error(
+                format!("\\{command} argument is missing its closing brace"),
+                Some(open.merge(end)),
+                Some("used the text up to the end of the formula".into()),
+            )
+            .with_help("add a closing '}'"),
+        );
         (text, open.merge(end))
     }
 
@@ -2052,12 +2083,14 @@ impl MathParser<'_> {
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {
-            self.diagnostics.push(Diagnostic::error(
-                "math group is missing its closing brace",
-                Some(open),
-                Some("closed the group at the math delimiter".into()),
-            )
-            .with_help("add a closing '}'"));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "math group is missing its closing brace",
+                    Some(open),
+                    Some("closed the group at the math delimiter".into()),
+                )
+                .with_help("add a closing '}'"),
+            );
         }
         list
     }
@@ -2314,12 +2347,14 @@ impl MathParser<'_> {
             }
             after_comment = false;
         }
-        self.diagnostics.push(Diagnostic::error(
-            format!("argument to \\{command} is missing its closing brace"),
-            Some(open.span),
-            Some("closed the text argument at the math delimiter".into()),
-        )
-        .with_help("add a closing '}'"));
+        self.diagnostics.push(
+            Diagnostic::error(
+                format!("argument to \\{command} is missing its closing brace"),
+                Some(open.span),
+                Some("closed the text argument at the math delimiter".into()),
+            )
+            .with_help("add a closing '}'"),
+        );
         (text, open.span.merge(end))
     }
 
@@ -2378,12 +2413,19 @@ impl MathParser<'_> {
         // box-position argument (latex.ltx `\@array`, amsmath
         // `\ams@start@box`) comes before the preamble. It is not a cell; the
         // render pipeline reads the letter from the source at `\begin`.
-        if matches!(name.as_str(), "array" | "aligned" | "alignedat" | "gathered") {
+        if matches!(
+            name.as_str(),
+            "array" | "aligned" | "alignedat" | "gathered"
+        ) {
             let mut cursor = self.i;
-            while matches!(self.tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Space)) {
+            while matches!(
+                self.tokens.get(cursor).map(|t| &t.kind),
+                Some(TokenKind::Space)
+            ) {
                 cursor += 1;
             }
-            if matches!(self.tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Word(w)) if w == "[") {
+            if matches!(self.tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Word(w)) if w == "[")
+            {
                 while let Some(t) = self.tokens.get(cursor) {
                     cursor += 1;
                     if matches!(&t.kind, TokenKind::Word(w) if w == "]") {
@@ -2517,9 +2559,11 @@ impl MathParser<'_> {
         while space(self) {
             self.i += 1;
         }
-        if matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Word(w)) if w.starts_with('[')) {
+        if matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::Word(w)) if w.starts_with('['))
+        {
             while self.i < self.tokens.len() {
-                let closes = matches!(&self.tokens[self.i].kind, TokenKind::Word(w) if w.contains(']'));
+                let closes =
+                    matches!(&self.tokens[self.i].kind, TokenKind::Word(w) if w.contains(']'));
                 self.i += 1;
                 if closes {
                     break;
@@ -2529,7 +2573,10 @@ impl MathParser<'_> {
                 self.i += 1;
             }
         }
-        if matches!(self.tokens.get(self.i).map(|t| &t.kind), Some(TokenKind::LBrace)) {
+        if matches!(
+            self.tokens.get(self.i).map(|t| &t.kind),
+            Some(TokenKind::LBrace)
+        ) {
             let mut depth = 0usize;
             while self.i < self.tokens.len() {
                 let kind = self.tokens[self.i].kind.clone();
@@ -2610,12 +2657,14 @@ impl MathParser<'_> {
             end += 1;
         }
         if end >= self.tokens.len() {
-            self.diagnostics.push(Diagnostic::error(
-                format!("\\{command} argument is missing its closing brace"),
-                Some(span),
-                Some("closed the argument at the end of the formula".into()),
-            )
-            .with_help("add a closing '}'"));
+            self.diagnostics.push(
+                Diagnostic::error(
+                    format!("\\{command} argument is missing its closing brace"),
+                    Some(span),
+                    Some("closed the argument at the end of the formula".into()),
+                )
+                .with_help("add a closing '}'"),
+            );
         }
         self.i = (end + 1).min(self.tokens.len());
         let mut rows = Vec::new();
@@ -4478,14 +4527,23 @@ mod parse_tests {
         // following `^` joins the same superscript.
         let list = parse(r"f''(x) g'^2");
         assert_eq!(symbols(&list), ["f", "(", "x", ")", "g"]);
-        assert_eq!(symbols(list.atoms[0].superscript.as_ref().unwrap()), ["\u{2032}", "\u{2032}"]);
-        assert_eq!(symbols(list.atoms[4].superscript.as_ref().unwrap()), ["\u{2032}", "2"]);
+        assert_eq!(
+            symbols(list.atoms[0].superscript.as_ref().unwrap()),
+            ["\u{2032}", "\u{2032}"]
+        );
+        assert_eq!(
+            symbols(list.atoms[4].superscript.as_ref().unwrap()),
+            ["\u{2032}", "2"]
+        );
         // `\mathrm` sets its letters upright (fontmath.ltx `operators`).
         let list = parse(r"\mathrm{K}^{-1} \mathrm{k g}");
         assert_eq!(symbols(&list), ["text:K", "text:kg"]);
         assert!(list.atoms[0].superscript.is_some());
         // cmmi "0F is `\epsilon` (lunate), "22 `\varepsilon`.
-        assert_eq!(symbols(&parse(r"\epsilon\varepsilon")), ["\u{03F5}", "\u{03B5}"]);
+        assert_eq!(
+            symbols(&parse(r"\epsilon\varepsilon")),
+            ["\u{03F5}", "\u{03B5}"]
+        );
         // fontmath.ltx `\langle`/`\rangle` are `\mathopen`/`\mathclose` cmsy
         // "68/"69: the mathematical angle brackets U+27E8/U+27E9, as `\left`
         // uses, never the CJK U+3008 or the deprecated U+2329.
@@ -5221,14 +5279,14 @@ mod unbraced_argument_tests {
             (r"\mathfrak{g1}", "\u{1D524}1"),
         ] {
             let mut diagnostics = Vec::new();
-            let list = parse_tokens(
-                &crate::lexer::tokenize(source),
-                AMSFONTS,
-                &mut diagnostics,
-            );
+            let list = parse_tokens(&crate::lexer::tokenize(source), AMSFONTS, &mut diagnostics);
             assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
             assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
-            assert_eq!(list.atoms[0].nucleus, Nucleus::Symbol(expected.into()), "{source}");
+            assert_eq!(
+                list.atoms[0].nucleus,
+                Nucleus::Symbol(expected.into()),
+                "{source}"
+            );
         }
         // Any other argument keeps the surrounding math letters.
         let mut diagnostics = Vec::new();
@@ -5285,11 +5343,8 @@ mod unbraced_argument_tests {
 
             let mut unbraced_diagnostics = Vec::new();
             let unbraced = crate::lexer::tokenize(&format!(r"\{command} dx"));
-            let unbraced_list = parse_tokens(
-                &unbraced,
-                MathPackages::KERNEL,
-                &mut unbraced_diagnostics,
-            );
+            let unbraced_list =
+                parse_tokens(&unbraced, MathPackages::KERNEL, &mut unbraced_diagnostics);
 
             assert!(
                 braced_diagnostics.is_empty() && unbraced_diagnostics.is_empty(),
@@ -5659,7 +5714,12 @@ mod spacing_tests {
 
     #[test]
     fn odot_is_a_binary_operator() {
-        for (command, glyph) in [("ominus", "⊖"), ("oslash", "⊘"), ("odot", "⊙"), ("bigcirc", "◯")] {
+        for (command, glyph) in [
+            ("ominus", "⊖"),
+            ("oslash", "⊘"),
+            ("odot", "⊙"),
+            ("bigcirc", "◯"),
+        ] {
             let b = laid_out(&format!("a\\{command} b"), SIZE);
             close(x(&b, glyph), width("a", SIZE) + 4.0);
             close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE) + 4.0);
@@ -5768,14 +5828,25 @@ mod spacing_tests {
     fn mathtools_colon_relations_get_thick_space_like_coloneqq() {
         let colon = width(":", SIZE);
         let equals = width("=", SIZE);
-        for (command, glyph, own) in [("vcentcolon", ":", colon), ("eqqcolon", "=", equals - 1.2 + colon)] {
+        for (command, glyph, own) in [
+            ("vcentcolon", ":", colon),
+            ("eqqcolon", "=", equals - 1.2 + colon),
+        ] {
             let b = laid_out_with(&format!(r"a\{command} b"), SIZE, MATHTOOLS);
             close(x(&b, glyph), width("a", SIZE) + 5.0);
             close(x(&b, "b"), x(&b, glyph) + own + 5.0);
         }
         for (command, glyphs, own) in [
-            ("Coloneqq", vec![":", ":", "="], 2.0 * colon + equals - 0.9 - 1.2),
-            ("Eqqcolon", vec!["=", ":", ":"], equals + 2.0 * colon - 1.2 - 0.9),
+            (
+                "Coloneqq",
+                vec![":", ":", "="],
+                2.0 * colon + equals - 0.9 - 1.2,
+            ),
+            (
+                "Eqqcolon",
+                vec!["=", ":", ":"],
+                equals + 2.0 * colon - 1.2 - 0.9,
+            ),
             ("dblcolon", vec![":", ":"], 2.0 * colon - 0.9),
         ] {
             let b = laid_out_with(&format!(r"a\{command} b"), SIZE, MATHTOOLS);
@@ -6335,7 +6406,10 @@ mod package_gating_tests {
             let source = format!("\\{name}");
             let (_, kernel) = parsed(&source, MathPackages::KERNEL);
             assert_eq!(kernel.len(), 1, "\\{name} with nothing loaded: {kernel:?}");
-            let package = match crate::amssymb::by_name(name).expect("named symbol").provider {
+            let package = match crate::amssymb::by_name(name)
+                .expect("named symbol")
+                .provider
+            {
                 Provider::Amsfonts => "amsfonts",
                 Provider::Amssymb => "amssymb",
             };
@@ -6449,8 +6523,14 @@ mod package_gating_tests {
         let Nucleus::Group(eqqcolon_inner) = &list.atoms[0].nucleus else {
             panic!("\\eqqcolon is not a group: {:?}", list.atoms[0].nucleus);
         };
-        assert_eq!(eqqcolon_inner.atoms.len(), 3, "= <kern> : -- {eqqcolon_inner:?}");
-        assert!(matches!(&eqqcolon_inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 1.2 / 18.0).abs() < 1e-9));
+        assert_eq!(
+            eqqcolon_inner.atoms.len(),
+            3,
+            "= <kern> : -- {eqqcolon_inner:?}"
+        );
+        assert!(
+            matches!(&eqqcolon_inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 1.2 / 18.0).abs() < 1e-9)
+        );
 
         let (list, _) = parsed(r"\vcentcolon", MATHTOOLS);
         assert_eq!(list.atoms.len(), 1, "\\vcentcolon");
@@ -6514,7 +6594,9 @@ mod package_gating_tests {
             panic!("\\dblcolon is not a group: {:?}", list.atoms[0].nucleus);
         };
         assert_eq!(inner.atoms.len(), 3, ": <kern> : -- {inner:?}");
-        assert!(matches!(&inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 0.9 / 18.0).abs() < 1e-9));
+        assert!(
+            matches!(&inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 0.9 / 18.0).abs() < 1e-9)
+        );
     }
 
     /// The two math alphabets and the dashed arrows are `amsfonts.sty`'s too,
@@ -6643,7 +6725,14 @@ mod package_gating_tests {
         // Defines part of the inventory itself without either AMS package, so
         // neither flag describes it.
         assert_eq!(package("libertinust1math"), MathPackages::KERNEL);
-        for neither in ["amsthm", "bm", "stmaryrd", "siunitx", "fourier", "unicode-math"] {
+        for neither in [
+            "amsthm",
+            "bm",
+            "stmaryrd",
+            "siunitx",
+            "fourier",
+            "unicode-math",
+        ] {
             let p = package(neither);
             assert!(!p.amssymb && !p.amsfonts, "{neither}");
         }

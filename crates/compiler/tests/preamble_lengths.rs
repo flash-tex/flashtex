@@ -21,11 +21,7 @@ fn compile(text: &str) -> (Vec<Page>, Vec<String>) {
 /// Supported preamble-length input must not hide behind an "unsupported" diagnostic.
 fn assert_no_diagnostics(text: &str) {
     let parsed = parse(text);
-    assert!(
-        parsed.diagnostics.is_empty(),
-        "{:?}",
-        parsed.diagnostics
-    );
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     let (_, messages) = compile(text);
     assert!(messages.is_empty(), "{messages:?}");
 }
@@ -159,7 +155,9 @@ fn preamble_parskip_length_reference_is_not_silently_ignored() {
     );
     let (_, messages) = compile(src);
     assert!(
-        messages.iter().any(|m| m.contains("unsupported length expression")),
+        messages
+            .iter()
+            .any(|m| m.contains("unsupported length expression")),
         "missing unsupported length expression in {messages:?}"
     );
 }
@@ -181,7 +179,8 @@ fn preamble_page_length_reference_is_not_silently_ignored() {
 
 #[test]
 fn preamble_parskip_one_bp_is_tex_big_point_not_pt() {
-    let src = "\\documentclass{article}\n\\setlength{\\parskip}{1bp}\n\\begin{document}x\\end{document}";
+    let src =
+        "\\documentclass{article}\n\\setlength{\\parskip}{1bp}\n\\begin{document}x\\end{document}";
     let parsed = parse(src);
     assert_eq!(parsed.parskip_pt, Some(72.27 / 72.0));
     assert_no_diagnostics(src);

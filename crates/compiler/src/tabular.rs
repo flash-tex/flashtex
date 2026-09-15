@@ -414,7 +414,10 @@ impl Tabular {
                 },
             })
         }
-        fn color_spec(c: &ColorSpec, span: &mut dyn FnMut(Span) -> Option<Span>) -> Option<ColorSpec> {
+        fn color_spec(
+            c: &ColorSpec,
+            span: &mut dyn FnMut(Span) -> Option<Span>,
+        ) -> Option<ColorSpec> {
             Some(ColorSpec {
                 span: span(c.span)?,
                 ..c.clone()
@@ -955,9 +958,17 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
                 let (first, last) = (*first.min(&(n - 1)), *last.min(&(n - 1)));
                 let kern = CMID_RULE_KERN_EM * em;
                 let left = column_x[first]
-                    + if *trim_left { kern_left.map_or(kern, |d| d.resolve(em, ex)) } else { 0.0 };
+                    + if *trim_left {
+                        kern_left.map_or(kern, |d| d.resolve(em, ex))
+                    } else {
+                        0.0
+                    };
                 let right = column_right(last)
-                    - if *trim_right { kern_right.map_or(kern, |d| d.resolve(em, ex)) } else { 0.0 };
+                    - if *trim_right {
+                        kern_right.map_or(kern, |d| d.resolve(em, ex))
+                    } else {
+                        0.0
+                    };
                 push_rule(&mut items, left, y, right - left, width, size, *span);
                 y += width;
                 if matches!(next, Some(Entry::CMidRule { .. })) {
@@ -1020,15 +1031,7 @@ pub(crate) fn layout(c: &mut LayoutCursor, table: &Tabular, size: f64) -> MathBo
         }
     }
     for (x, width, top, bottom, span) in merged {
-        push_rule(
-            &mut items,
-            x,
-            top,
-            width,
-            bottom - top,
-            size,
-            span,
-        );
+        push_rule(&mut items, x, top, width, bottom - top, size, span);
     }
 
     let total = y;
@@ -1313,10 +1316,12 @@ mod tests {
             .blocks
             .iter()
             .find_map(|block| match block {
-                crate::parser::Block::Paragraph(content) => content.iter().find_map(|inline| match inline {
-                    crate::parser::Inline::Tabular(t) => Some((**t).clone()),
-                    _ => None,
-                }),
+                crate::parser::Block::Paragraph(content) => {
+                    content.iter().find_map(|inline| match inline {
+                        crate::parser::Inline::Tabular(t) => Some((**t).clone()),
+                        _ => None,
+                    })
+                }
                 _ => None,
             })
             .expect("a table");
@@ -1346,23 +1351,40 @@ mod tests {
             "\\begin{tabular}{||>{\\bfseries}l<{:}!{\\vrule width 1pt}m{2cm}|w{r}{1cm}}A & B & C\\end{tabular}",
         );
         assert!(t.array_package);
-        assert!(diagnostics.iter().all(|d| !d.message.contains("tabular") && !d.message.contains("column")), "{diagnostics:?}");
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| !d.message.contains("tabular") && !d.message.contains("column")),
+            "{diagnostics:?}"
+        );
         assert_eq!(t.columns.len(), 3);
-        assert_eq!(spaces(&t.columns[0].before), ["vlineNone", "2", "vlineNone", "6"]);
+        assert_eq!(
+            spaces(&t.columns[0].before),
+            ["vlineNone", "2", "vlineNone", "6"]
+        );
         assert_eq!(spaces(&t.columns[0].after), ["6", "vlineSome(1.0)"]);
         assert_eq!(spaces(&t.columns[1].before), ["6"]);
         assert_eq!(spaces(&t.columns[1].after), ["6", "vlineNone"]);
         assert_eq!(spaces(&t.columns[2].before), ["6"]);
         assert_eq!(spaces(&t.columns[2].after), ["6"]);
-        assert!(matches!(t.columns[1].align, Align::Middle(Length::Pt(w)) if (w - 56.905).abs() < 0.01));
-        assert!(matches!(t.columns[2].align, Align::Fixed(Length::Pt(_), BoxAlign::Right)));
-        let super::Entry::Row(row) = &t.entries[0] else { panic!("a row") };
+        assert!(
+            matches!(t.columns[1].align, Align::Middle(Length::Pt(w)) if (w - 56.905).abs() < 0.01)
+        );
+        assert!(matches!(
+            t.columns[2].align,
+            Align::Fixed(Length::Pt(_), BoxAlign::Right)
+        ));
+        let super::Entry::Row(row) = &t.entries[0] else {
+            panic!("a row")
+        };
         assert!(row.cells[0].declarations);
         let text: Vec<_> = row.cells[0]
             .content
             .iter()
             .filter_map(|inline| match inline {
-                crate::parser::Inline::Text { text, style, .. } => Some((text.as_str(), style.bold)),
+                crate::parser::Inline::Text { text, style, .. } => {
+                    Some((text.as_str(), style.bold))
+                }
                 _ => None,
             })
             .collect();
@@ -1377,18 +1399,30 @@ mod tests {
             "\\newcolumntype{C}[1]{>{\\centering\\arraybackslash}p{#1}}",
             "\\begin{tabular}{C{2cm}l}Some words & x\\end{tabular}",
         );
-        assert!(diagnostics.iter().all(|d| !d.message.contains("column") && !d.message.contains("arraybackslash")), "{diagnostics:?}");
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| !d.message.contains("column") && !d.message.contains("arraybackslash")),
+            "{diagnostics:?}"
+        );
         assert_eq!(t.columns.len(), 2);
         assert!(matches!(t.columns[0].align, Align::Paragraph(_)));
-        let super::Entry::Row(row) = &t.entries[0] else { panic!("a row") };
-        assert_eq!(row.cells[0].alignment, Some(crate::parser::ParagraphStyle::Center));
+        let super::Entry::Row(row) = &t.entries[0] else {
+            panic!("a row")
+        };
+        assert_eq!(
+            row.cells[0].alignment,
+            Some(crate::parser::ParagraphStyle::Center)
+        );
         assert_eq!(row.cells[1].alignment, None);
     }
 
     #[test]
     fn array_misplaced_less_than_becomes_a_bang_expression() {
         let (t, diagnostics) = array_table("", "\\begin{tabular}{<{x}l}A\\end{tabular}");
-        assert!(diagnostics.iter().any(|d| d.message.contains("changed to !{..}")));
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.message.contains("changed to !{..}")));
         assert_eq!(spaces(&t.columns[0].before), ["text", "6"]);
     }
 
@@ -1450,12 +1484,27 @@ mod tests {
         );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let e = &t[0].entries;
-        assert!(matches!(e[1], Entry::CMidRule { first: 0, last: 1, trim_left: true, trim_right: true, kern_left: Some(l), kern_right: None, .. } if (l.pt - 2.0).abs() < 1e-9));
+        assert!(
+            matches!(e[1], Entry::CMidRule { first: 0, last: 1, trim_left: true, trim_right: true, kern_left: Some(l), kern_right: None, .. } if (l.pt - 2.0).abs() < 1e-9)
+        );
         assert!(matches!(e[2], Entry::MoreCmidRules { .. }));
-        assert!(matches!(e[3], Entry::CMidRule { kern_left: None, kern_right: None, trim_left: true, trim_right: true, .. }));
+        assert!(matches!(
+            e[3],
+            Entry::CMidRule {
+                kern_left: None,
+                kern_right: None,
+                trim_left: true,
+                trim_right: true,
+                ..
+            }
+        ));
         assert!(matches!(e[4], Entry::AddLineSpace { space: None, .. }));
-        assert!(matches!(e[5], Entry::AddLineSpace { space: Some(p), .. } if (p.pt - 3.0).abs() < 1e-9));
-        assert!(matches!(e[6], Entry::SpecialRule { width_pt, above_pt, below_pt, .. } if width_pt == 1.0 && above_pt == 2.0 && below_pt == 3.0));
+        assert!(
+            matches!(e[5], Entry::AddLineSpace { space: Some(p), .. } if (p.pt - 3.0).abs() < 1e-9)
+        );
+        assert!(
+            matches!(e[6], Entry::SpecialRule { width_pt, above_pt, below_pt, .. } if width_pt == 1.0 && above_pt == 2.0 && below_pt == 3.0)
+        );
         assert!(matches!(e[7], Entry::Row(_)));
     }
 
@@ -1470,15 +1519,32 @@ mod tests {
         let rows = rows(&t[0]);
         let a = &rows[0].cells[0];
         let m = a.multirow.as_ref().expect("multirow");
-        assert_eq!((m.rows, m.vpos, m.width), (2.0, MultirowPos::Center, MultirowWidth::Natural));
+        assert_eq!(
+            (m.rows, m.vpos, m.width),
+            (2.0, MultirowPos::Center, MultirowWidth::Natural)
+        );
         assert_eq!(texts(&a.content), "Alpha");
         let b = rows[2].cells[0].multirow.as_ref().expect("multirow");
-        assert_eq!((b.rows, b.vpos, b.bigstrut_top, b.bigstrut_bottom, b.bigstrut_count), (-2.0, MultirowPos::Top, true, true, 3));
-        assert!(matches!(b.width, MultirowWidth::Fixed(Length::Pt(w)) if (w - 56.905).abs() < 0.01));
+        assert_eq!(
+            (
+                b.rows,
+                b.vpos,
+                b.bigstrut_top,
+                b.bigstrut_bottom,
+                b.bigstrut_count
+            ),
+            (-2.0, MultirowPos::Top, true, true, 3)
+        );
+        assert!(
+            matches!(b.width, MultirowWidth::Fixed(Length::Pt(w)) if (w - 56.905).abs() < 0.01)
+        );
         assert_eq!(b.vmove_pt, 1.0);
         let g = &rows[3].cells[0];
         assert_eq!(g.columns, 2);
-        assert_eq!(g.multirow.as_ref().map(|m| m.width), Some(MultirowWidth::Column));
+        assert_eq!(
+            g.multirow.as_ref().map(|m| m.width),
+            Some(MultirowWidth::Column)
+        );
         assert_eq!(texts(&g.content), "Gamma");
     }
 
@@ -1493,21 +1559,39 @@ mod tests {
         let t = &t[0];
         assert_eq!(t.rule_color.as_ref().map(|c| c.spec.as_str()), Some("blue"));
         let fill = t.columns[0].color.as_ref().expect("column colour");
-        assert_eq!((fill.color.model.as_deref(), fill.color.spec.as_str()), (Some("gray"), ".9"));
+        assert_eq!(
+            (fill.color.model.as_deref(), fill.color.spec.as_str()),
+            (Some("gray"), ".9")
+        );
         assert_eq!((fill.left_pt, fill.right_pt), (Some(2.0), Some(2.0)));
         assert!(t.columns[1].color.is_none());
         let rows = rows(t);
         let row = rows[0].color.as_ref().expect("row colour");
-        assert_eq!((row.color.spec.as_str(), row.left_pt, row.right_pt), ("red!20", Some(1.0), Some(3.0)));
+        assert_eq!(
+            (row.color.spec.as_str(), row.left_pt, row.right_pt),
+            ("red!20", Some(1.0), Some(3.0))
+        );
         assert!(rows[1].color.is_none());
         assert_eq!(texts(&rows[0].cells[0].content), "a");
         let cell = rows[0].cells[1].color.as_ref().expect("cell colour");
-        assert_eq!((cell.model.as_deref(), cell.spec.as_str()), (Some("HTML"), "00FF00"));
+        assert_eq!(
+            (cell.model.as_deref(), cell.spec.as_str()),
+            (Some("HTML"), "00FF00")
+        );
         assert_eq!(texts(&rows[0].cells[1].content), "b");
-        assert!(t.entries.iter().any(|e| matches!(e, Entry::RuleColor { color } if color.spec == "green")));
+        assert!(t
+            .entries
+            .iter()
+            .any(|e| matches!(e, Entry::RuleColor { color } if color.spec == "green")));
 
-        let (t, diagnostics) = tables("[table]{xcolor}", "\\begin{tabular}{l}\\rowcolor{gray}a\\end{tabular}");
-        assert!(diagnostics.iter().all(|d| !d.message.contains("rowcolor")), "{diagnostics:?}");
+        let (t, diagnostics) = tables(
+            "[table]{xcolor}",
+            "\\begin{tabular}{l}\\rowcolor{gray}a\\end{tabular}",
+        );
+        assert!(
+            diagnostics.iter().all(|d| !d.message.contains("rowcolor")),
+            "{diagnostics:?}"
+        );
         assert!(self::rows(&t[0])[0].color.is_some());
     }
 
@@ -1527,12 +1611,26 @@ mod tests {
             .entries
             .iter()
             .map(|e| match e {
-                Entry::Caption { number: Some(_), .. } => "caption",
+                Entry::Caption {
+                    number: Some(_), ..
+                } => "caption",
                 Entry::Caption { number: None, .. } => "caption*",
-                Entry::Section { kind: LongtableSection::FirstHead, .. } => "firsthead",
-                Entry::Section { kind: LongtableSection::Head, .. } => "head",
-                Entry::Section { kind: LongtableSection::Foot, .. } => "foot",
-                Entry::Section { kind: LongtableSection::LastFoot, .. } => "lastfoot",
+                Entry::Section {
+                    kind: LongtableSection::FirstHead,
+                    ..
+                } => "firsthead",
+                Entry::Section {
+                    kind: LongtableSection::Head,
+                    ..
+                } => "head",
+                Entry::Section {
+                    kind: LongtableSection::Foot,
+                    ..
+                } => "foot",
+                Entry::Section {
+                    kind: LongtableSection::LastFoot,
+                    ..
+                } => "lastfoot",
                 Entry::Row(r) if r.kill => "kill",
                 Entry::Row(r) if r.nobreak => "row*",
                 Entry::Row(_) => "row",
@@ -1540,8 +1638,28 @@ mod tests {
                 _ => "other",
             })
             .collect();
-        assert_eq!(kinds, ["caption", "row", "firsthead", "caption*", "head", "row", "foot", "lastfoot", "kill", "row*", "break", "row"]);
-        let Entry::Caption { content, .. } = &t[0].entries[0] else { panic!() };
-        assert!(content.iter().any(|i| matches!(i, crate::parser::Inline::Label { .. })));
+        assert_eq!(
+            kinds,
+            [
+                "caption",
+                "row",
+                "firsthead",
+                "caption*",
+                "head",
+                "row",
+                "foot",
+                "lastfoot",
+                "kill",
+                "row*",
+                "break",
+                "row"
+            ]
+        );
+        let Entry::Caption { content, .. } = &t[0].entries[0] else {
+            panic!()
+        };
+        assert!(content
+            .iter()
+            .any(|i| matches!(i, crate::parser::Inline::Label { .. })));
     }
 }

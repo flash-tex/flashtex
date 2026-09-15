@@ -176,17 +176,32 @@ fn codes_and_suggestions_are_serialized_in_runtime_v1_json() {
 #[test]
 fn high_frequency_messages_carry_help() {
     let cases = [
-        (r"Visible \frobnicate{argument} Tail.", r"\frobnicate is not supported"),
+        (
+            r"Visible \frobnicate{argument} Tail.",
+            r"\frobnicate is not supported",
+        ),
         (r"Visible \tikz Tail.", r"\tikz is not supported"),
-        (r"\usepackage{tikz} Visible.", "recognised but not implemented"),
+        (
+            r"\usepackage{tikz} Visible.",
+            "recognised but not implemented",
+        ),
         ("Visible $x+1", "missing its closing '$'"),
         ("Visible {tail.", "unmatched '{'"),
         (r"Visible \usepackage[broken", "missing its closing ']'"),
-        ("Visible ^ Tail.", "math script marker used outside math mode"),
+        (
+            "Visible ^ Tail.",
+            "math script marker used outside math mode",
+        ),
         (r"Visible \frac{a}{b} Tail.", r"\frac requires math mode"),
         (r"See \ref{missing}.", "undefined"),
-        (r"Visible \input{chapter.tex} Tail.", "included file not found"),
-        (r"Visible \begin{tikzpicture}body\end{tikzpicture} Tail.", "environment 'tikzpicture'"),
+        (
+            r"Visible \input{chapter.tex} Tail.",
+            "included file not found",
+        ),
+        (
+            r"Visible \begin{tikzpicture}body\end{tikzpicture} Tail.",
+            "environment 'tikzpicture'",
+        ),
         (
             "\\documentclass{article}\\title{T}\\begin{document}\\maketitle\\end{document}",
             r"No \author given",
@@ -222,7 +237,10 @@ fn math_mode_help_is_real_or_absent() {
     let centering: Vec<_> = text_cmd
         .diagnostics
         .iter()
-        .filter(|d| d.message.contains(r"\centering is not supported in math mode"))
+        .filter(|d| {
+            d.message
+                .contains(r"\centering is not supported in math mode")
+        })
         .collect();
     assert_eq!(centering.len(), 1, "{:?}", text_cmd.diagnostics);
     assert_eq!(
@@ -234,7 +252,10 @@ fn math_mode_help_is_real_or_absent() {
     let bogus: Vec<_> = unknown
         .diagnostics
         .iter()
-        .filter(|d| d.message.contains(r"\bogusxyz is not supported in math mode"))
+        .filter(|d| {
+            d.message
+                .contains(r"\bogusxyz is not supported in math mode")
+        })
         .collect();
     assert_eq!(bogus.len(), 1, "{:?}", unknown.diagnostics);
     assert!(

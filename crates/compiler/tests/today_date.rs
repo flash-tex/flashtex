@@ -354,7 +354,6 @@ fn today_renders_the_same_in_prose_and_in_a_title() {
     assert!(rendered_text(&in_prose).contains("January 5, 2026"));
 }
 
-
 // ---------------------------------------------------------------------------
 // The same latent panic, in the neighbouring title-only built-ins.
 // ---------------------------------------------------------------------------

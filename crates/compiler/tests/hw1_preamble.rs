@@ -142,7 +142,10 @@ fn unimplemented_amsmath_constructs_still_report_themselves() {
         ("$a\\mspace{3mu}b$", "\\mspace"),
         ("$\\varinjlim x$", "\\varinjlim"),
         ("$\\sideset{_a^b}{_c^d}\\sum$", "\\sideset"),
-        ("$\\begin{pmatrix}\\hdotsfor{2}\\end{pmatrix}$", "\\hdotsfor"),
+        (
+            "$\\begin{pmatrix}\\hdotsfor{2}\\end{pmatrix}$",
+            "\\hdotsfor",
+        ),
         (
             "\\begin{multline} \\shoveleft{a} \\\\ b \\end{multline}",
             "\\shoveleft",
@@ -178,9 +181,9 @@ fn homework_is_not_told_its_math_is_unimplemented() {
             .filter(|m| m.contains("recognised but not implemented"))
             .collect();
         assert!(
-            !package_warnings.iter().any(|m| m.contains("amsmath")
-                || m.contains("amssymb")
-                || m.contains("amsfonts")),
+            !package_warnings
+                .iter()
+                .any(|m| m.contains("amsmath") || m.contains("amssymb") || m.contains("amsfonts")),
             "{name} is told its AMS math is unimplemented: {package_warnings:?}"
         );
         assert_eq!(

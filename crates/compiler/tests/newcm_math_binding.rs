@@ -36,7 +36,10 @@ fn advances_are_read_from_the_pinned_font_program() {
     assert_eq!(sha256::hex(&sha256::digest(&bytes)), newcm_math::SHA256);
     let face = TrueTypeFace::parse(bytes).expect("parse New Computer Modern Math");
     // amssymb symbols only New Computer Modern Math carries (`amssymb::NEWCM_ADVANCES`).
-    for (c, advance) in newcm_math::ADVANCES.iter().chain(flashtex_compiler::amssymb::NEWCM_ADVANCES) {
+    for (c, advance) in newcm_math::ADVANCES
+        .iter()
+        .chain(flashtex_compiler::amssymb::NEWCM_ADVANCES)
+    {
         let gid = face
             .char_map()
             .get(&(*c as u32))

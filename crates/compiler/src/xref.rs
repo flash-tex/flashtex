@@ -38,6 +38,18 @@ pub struct CleverefName {
     pub capital_plural: Option<String>,
 }
 
+impl CleverefConfig {
+    /// A configuration with no name table; allocates nothing. Only a
+    /// placeholder while the real configuration is lent out.
+    pub(crate) const fn empty() -> Self {
+        Self {
+            capitalise: false,
+            noabbrev: false,
+            names: BTreeMap::new(),
+        }
+    }
+}
+
 impl Default for CleverefConfig {
     fn default() -> Self {
         let mut names = BTreeMap::new();
@@ -573,7 +585,10 @@ fn within_chapter_pieces(name: &str) -> Vec<Piece> {
     vec![
         Piece::IfPositive(
             "chapter".to_string(),
-            vec![Piece::The("chapter".to_string()), Piece::Text(".".to_string())],
+            vec![
+                Piece::The("chapter".to_string()),
+                Piece::Text(".".to_string()),
+            ],
         ),
         Piece::Value(name.to_string(), NumberStyle::Arabic),
     ]

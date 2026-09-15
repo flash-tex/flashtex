@@ -353,9 +353,7 @@ fn text_probe(name: &str, arguments: &str) -> String {
 
 /// The natbib citation commands, which `\usepackage{natbib}` defines.
 fn natbib_command(name: &str) -> bool {
-    name != "cite"
-        && (name.starts_with("cite") || name.starts_with("Cite"))
-        && name != "citation"
+    name != "cite" && (name.starts_with("cite") || name.starts_with("Cite")) && name != "citation"
 }
 
 fn with_arguments(name: &str, arguments: &str, dimension: &str) -> String {

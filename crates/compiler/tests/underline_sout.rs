@@ -58,7 +58,9 @@ fn text_of(inlines: &[Inline]) -> String {
 }
 
 fn has_underline(inlines: &[Inline]) -> bool {
-    inlines.iter().any(|inline| matches!(inline, Inline::Underline(_)))
+    inlines
+        .iter()
+        .any(|inline| matches!(inline, Inline::Underline(_)))
 }
 
 fn underline_doc(class_opt: &str) -> String {
@@ -111,7 +113,9 @@ fn sout_with_ulem_does_not_drop_its_argument() {
     let source = sout_doc("[10pt]");
     let messages = messages(&source);
     assert!(
-        !messages.iter().any(|m| m.contains("\\sout is not supported")),
+        !messages
+            .iter()
+            .any(|m| m.contains("\\sout is not supported")),
         "\\sout should be implemented when ulem is loaded: {messages:?}"
     );
     let inlines = paragraph_inlines(&source);
@@ -126,24 +130,19 @@ fn sout_with_ulem_does_not_drop_its_argument() {
     );
 }
 
-fn assert_rule(
-    source: &str,
-    needle: &str,
-    want_height: f64,
-    want_top_from_baseline: f64,
-) {
+fn assert_rule(source: &str, needle: &str, want_height: f64, want_top_from_baseline: f64) {
     let out = compiled(source);
     let items = &out.pages[0].items;
     let words: Vec<_> = items
         .iter()
         .filter(|item| item.text.contains(needle))
         .collect();
-    assert!(!words.is_empty(), "argument glyphs missing ({needle}): {items:?}");
-    let rules: Vec<_> = items.iter().filter(|item| item.rule.is_some()).collect();
     assert!(
-        !rules.is_empty(),
-        "expected a rule on {needle}: {items:?}"
+        !words.is_empty(),
+        "argument glyphs missing ({needle}): {items:?}"
     );
+    let rules: Vec<_> = items.iter().filter(|item| item.rule.is_some()).collect();
+    assert!(!rules.is_empty(), "expected a rule on {needle}: {items:?}");
     let rule = rules[0].rule.expect("filtered");
     let baseline = words[0].baseline_y_pt;
     assert!(

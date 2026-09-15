@@ -28,8 +28,7 @@ const MAX_WARM_SESSIONS: usize = 8;
 /// Keyed by project, entry path, negotiated capabilities **and the request's
 /// date**: the date is a compile input, so a warm session must not hand
 /// yesterday's pages back to a request made today.
-type WarmSessions =
-    HashMap<(String, String, AcceptedCapabilities, TodayDate), (u64, Session)>;
+type WarmSessions = HashMap<(String, String, AcceptedCapabilities, TodayDate), (u64, Session)>;
 static SESSIONS: OnceLock<Mutex<WarmSessions>> = OnceLock::new();
 static SESSION_TICK: AtomicU64 = AtomicU64::new(0);
 

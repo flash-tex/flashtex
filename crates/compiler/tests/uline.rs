@@ -71,7 +71,9 @@ fn text_of(inlines: &[Inline]) -> String {
 fn uline_with_ulem_is_not_an_unsupported_error() {
     let messages = messages(&uline_doc("[10pt]"));
     assert!(
-        !messages.iter().any(|m| m.contains("\\uline is not supported")),
+        !messages
+            .iter()
+            .any(|m| m.contains("\\uline is not supported")),
         "\\uline should be implemented when ulem is loaded: {messages:?}"
     );
 }

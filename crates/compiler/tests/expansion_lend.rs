@@ -21,19 +21,33 @@ fn document(extra: &str) -> String {
 }
 
 fn snapshot(text: &str) -> String {
-    let parsed = parse_project(&[SourceDocument { path: "main.tex", text }], "main.tex");
-    format!("{:#?}\n{:#?}\n{:?}", parsed.blocks, parsed.diagnostics, parsed.preamble_source)
+    let parsed = parse_project(
+        &[SourceDocument {
+            path: "main.tex",
+            text,
+        }],
+        "main.tex",
+    );
+    format!(
+        "{:#?}\n{:#?}\n{:?}",
+        parsed.blocks, parsed.diagnostics, parsed.preamble_source
+    )
 }
 
 fn fresh(text: &str) -> String {
     let text = text.to_string();
-    std::thread::spawn(move || snapshot(&text)).join().expect("fresh parse")
+    std::thread::spawn(move || snapshot(&text))
+        .join()
+        .expect("fresh parse")
 }
 
 #[test]
 fn lent_stream_edits_never_leak_into_the_cache() {
     let base = document("");
-    assert!(base.len() >= 4 * 1024, "document must use the incremental cache");
+    assert!(
+        base.len() >= 4 * 1024,
+        "document must use the incremental cache"
+    );
     let anchor = base.find("Paragraph 20").expect("anchor");
     let mut text = base.clone();
     // Warm the cache, then type, delete and retype around glued words.

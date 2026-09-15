@@ -401,11 +401,8 @@ pub fn compile_full_project_with(
 ) -> CompileOutput {
     let parsed = parser::parse_project_with(documents, entry_path, options);
     let constraints = parsed.preamble_constraints(constraints);
-    let (pages, mut layout_diagnostics) = layout::layout_converged_with_options(
-        &parsed.blocks,
-        constraints,
-        &parsed.cleveref,
-    );
+    let (pages, mut layout_diagnostics) =
+        layout::layout_converged_with_options(&parsed.blocks, constraints, &parsed.cleveref);
     let mut diagnostics = parsed.diagnostics;
     diagnostics.append(&mut layout_diagnostics);
     CompileOutput {
@@ -1098,11 +1095,16 @@ mod tests {
     fn shift_diagnostics_maps_label_and_replacement_spans() {
         use crate::diagnostics::Diagnostic;
         let span = Span::new(20, 26);
-        let mut diagnostics = vec![Diagnostic::error("\\alpah is not supported", Some(span), None)
-            .with_label(span, "this command", true)
-            .with_help("did you mean \\alpha?")
-            .with_replacement(span, "\\alpha")];
-        let before = [ChangedBytes { old: 0..5, new: 0..10 }];
+        let mut diagnostics = vec![
+            Diagnostic::error("\\alpah is not supported", Some(span), None)
+                .with_label(span, "this command", true)
+                .with_help("did you mean \\alpha?")
+                .with_replacement(span, "\\alpha"),
+        ];
+        let before = [ChangedBytes {
+            old: 0..5,
+            new: 0..10,
+        }];
         assert!(shift_diagnostics(&mut diagnostics, &before, &[5]).is_some());
         let shifted = Span::new(25, 31);
         assert_eq!(diagnostics[0].span, Some(shifted));
@@ -1119,7 +1121,10 @@ mod tests {
             shifted
         );
 
-        let inside = [ChangedBytes { old: 25..31, new: 25..32 }];
+        let inside = [ChangedBytes {
+            old: 25..31,
+            new: 25..32,
+        }];
         assert!(shift_diagnostics(&mut diagnostics, &inside, &[1]).is_none());
     }
 

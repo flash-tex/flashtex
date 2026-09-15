@@ -19,10 +19,21 @@ fn paren_math_is_inline_math() {
         o.pages
             .iter()
             .flat_map(|p| p.items.iter())
-            .map(|i| (i.text.clone(), (i.x_pt * 100.0).round(), (i.baseline_y_pt * 100.0).round(), (i.font_size_pt * 100.0).round()))
+            .map(|i| {
+                (
+                    i.text.clone(),
+                    (i.x_pt * 100.0).round(),
+                    (i.baseline_y_pt * 100.0).round(),
+                    (i.font_size_pt * 100.0).round(),
+                )
+            })
             .collect::<Vec<_>>()
     };
-    assert_eq!(words(&dollar), words(&paren), "\\(..\\) and $..$ lay out identically");
+    assert_eq!(
+        words(&dollar),
+        words(&paren),
+        "\\(..\\) and $..$ lay out identically"
+    );
 }
 
 #[test]
@@ -37,7 +48,11 @@ fn paren_math_inside_a_list_and_a_macro() {
 fn unterminated_paren_math_ends_with_its_paragraph() {
     let out = compile("Visible \\(x+1\n\nTail \\(y\\).\n");
     let messages: Vec<&str> = out.diagnostics.iter().map(|d| d.message.as_str()).collect();
-    assert_eq!(messages, ["inline math is missing its closing '$'"], "{messages:?}");
+    assert_eq!(
+        messages,
+        ["inline math is missing its closing '$'"],
+        "{messages:?}"
+    );
 }
 
 #[test]

@@ -14,6 +14,7 @@
 //! base-14 glyph is reported as [`Glyph::Unrepresentable`] with a reason, and
 //! the compiler raises a diagnostic so the author learns before exporting.
 
+use crate::char_table::CharTable;
 use crate::math::FRACTION_RULE_CHAR;
 
 /// One of the 14 standard PDF fonts, or none.
@@ -40,7 +41,7 @@ pub enum Glyph {
 /// Adobe Symbol encoding, for the symbols this compiler emits.
 ///
 /// Values are the code points in the Symbol font's own encoding, not Unicode.
-const SYMBOL_ENCODING: &[(char, u8)] = &[
+pub(crate) const SYMBOL_ENCODING: &[(char, u8)] = &[
     ('\u{3B1}', 0x61),  // alpha
     ('\u{3B2}', 0x62),  // beta
     ('\u{3B3}', 0x67),  // gamma
@@ -150,7 +151,7 @@ const SYMBOL_ENCODING: &[(char, u8)] = &[
 /// wrongly reports all of them as unexportable, and they are among the most
 /// common non-ASCII characters in ordinary prose — an em dash in a sentence
 /// would have warned the author that their PDF was lossy when it was not.
-const WINANSI_HIGH: &[(char, u8)] = &[
+pub(crate) const WINANSI_HIGH: &[(char, u8)] = &[
     ('\u{20AC}', 0x80), // Euro
     ('\u{201A}', 0x82), // single low quote
     ('\u{192}', 0x83),  // florin
@@ -203,16 +204,18 @@ pub fn map_char(c: char) -> Glyph {
                      which the Mac producer bundles but the base-14 PDF writer does not embed",
         };
     }
-    if let Some((_, code)) = SYMBOL_ENCODING.iter().find(|(ch, _)| *ch == c) {
+    static SYMBOL_INDEX: CharTable<u8> = CharTable::new(SYMBOL_ENCODING);
+    static WINANSI_HIGH_INDEX: CharTable<u8> = CharTable::new(WINANSI_HIGH);
+    if let Some(code) = SYMBOL_INDEX.get(c) {
         return Glyph::Encodable {
             font: ExportFont::Symbol,
-            code: *code,
+            code,
         };
     }
-    if let Some((_, code)) = WINANSI_HIGH.iter().find(|(ch, _)| *ch == c) {
+    if let Some(code) = WINANSI_HIGH_INDEX.get(c) {
         return Glyph::Encodable {
             font: ExportFont::Text,
-            code: *code,
+            code,
         };
     }
     // Below U+0100 WinAnsi agrees with Latin-1, EXCEPT the 0x80..0x9F block
@@ -293,8 +296,8 @@ mod tests {
             for c in symbol.text.chars() {
                 match map_char(c) {
                     Glyph::LatinModernMath => {}
-                    Glyph::Unrepresentable { .. }
-                        if crate::amssymb::newcm_advance(c).is_some() => {}
+                    Glyph::Unrepresentable { .. } if crate::amssymb::newcm_advance(c).is_some() => {
+                    }
                     other => panic!("\\{} renders {c:?}: {other:?}", symbol.name),
                 }
             }
