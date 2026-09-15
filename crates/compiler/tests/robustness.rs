@@ -407,3 +407,16 @@ fn nested_sub_parses_body() {
     let text = format!("\\begin{{document}}{}x{}\\end{{document}}\n", "\\begin{tabular}{c}".repeat(20), "\\end{tabular}".repeat(20));
     assert!(!compile_messages(&text).iter().any(|m| m.contains("capacity")));
 }
+
+#[test]
+fn a_runaway_loop_of_unknown_commands_is_diagnosed_in_bounded_time() {
+    // Each of the ~666k `\n` the loop emits before the expansion limit got
+    // an unknown-command diagnostic that scanned the whole vocabulary
+    // (several times, with allocations): minutes to compile. Suggestions
+    // are memoised and known names are a set lookup.
+    let started = std::time::Instant::now();
+    let messages = compile_messages("\\def\\a{\\n\\a}\\a");
+    let elapsed = started.elapsed();
+    assert!(messages.iter().any(|m| m.contains("expansion step limit exceeded")));
+    assert!(elapsed.as_secs() < 60, "took {elapsed:?}");
+}
