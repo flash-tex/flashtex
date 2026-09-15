@@ -145,6 +145,18 @@ impl FootnoteState {
             log.push((page_index, line_start, y));
         }
     }
+
+    /// Queue lengths for a `tabbing` `\kill` rewind: footnote text queued
+    /// while the killed row lays out (its mark is an ordinary item and
+    /// rewinds with the rest) must not reach the page bottom.
+    pub(super) fn undo_point(&self) -> (usize, usize) {
+        (self.page.len(), self.held.len())
+    }
+
+    pub(super) fn rollback(&mut self, point: (usize, usize)) {
+        self.page.truncate(point.0);
+        self.held.truncate(point.1);
+    }
 }
 
 impl LayoutCursor {

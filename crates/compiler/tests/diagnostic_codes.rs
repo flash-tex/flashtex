@@ -62,8 +62,8 @@ fn real_unimplemented_latex_is_an_unsupported_feature() {
             r"\tikz is not supported in the document preamble",
         ),
         (
-            r"Visible \begin{tabbing}body\end{tabbing} Tail.",
-            "environment 'tabbing'",
+            r"Visible \begin{samepage}body\end{samepage} Tail.",
+            "environment 'samepage'",
         ),
     ] {
         assert_eq!(
@@ -243,16 +243,16 @@ fn math_mode_help_is_real_or_absent() {
         bogus[0].help
     );
 
-    let tabbing = compile_full(
-        r"Visible \begin{tabbing}body\end{tabbing} Tail.",
+    let samepage = compile_full(
+        r"Visible \begin{samepage}body\end{samepage} Tail.",
         LayoutConstraints::default(),
     );
-    let env: Vec<_> = tabbing
+    let env: Vec<_> = samepage
         .diagnostics
         .iter()
-        .filter(|d| d.message.contains("environment 'tabbing'"))
+        .filter(|d| d.message.contains("environment 'samepage'"))
         .collect();
-    assert_eq!(env.len(), 1, "{:?}", tabbing.diagnostics);
+    assert_eq!(env.len(), 1, "{:?}", samepage.diagnostics);
     assert!(env[0].help.is_none(), "restating help: {:?}", env[0].help);
 }
 
