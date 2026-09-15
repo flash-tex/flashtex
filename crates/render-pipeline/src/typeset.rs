@@ -205,8 +205,11 @@ pub struct MathRec {
     /// face's glyph ids.
     pub metrics: MathProvider,
     /// `\text{...}` runs of this formula (`mathtext`), addressed by the
-    /// placed glyphs' `font_id` above `RUN_FONT_BASE`.
-    pub text_runs: Vec<crate::mathtext::TextRun>,
+    /// placed glyphs' `font_id` above `RUN_FONT_BASE`. Shared by the
+    /// pieces `math_pieces` cuts: each piece used to clone every run, so a
+    /// formula with `b` break points and `n` runs held `b x n` of them
+    /// (1 000 `x+` around 1 000 nested `\textbf` passed 3 GB).
+    pub text_runs: Rc<[crate::mathtext::TextRun]>,
     /// The formula's colour (`adapter::Doc::math_colors`).
     pub color: Option<flashtex_compiler::color::DeviceColor>,
     /// Baseline shift upward in points (`\LaTeXe`'s subscript `ε`).
@@ -1352,7 +1355,7 @@ impl<'a> Context<'a> {
             span,
             face: fonts.otf().face().clone(),
             metrics: fonts.clone(),
-            text_runs,
+            text_runs: text_runs.into(),
             color: self.math_colors.get(&(span.document.0, span.start, span.end)).copied(),
             raise: 0.0,
             inline_breaks,
