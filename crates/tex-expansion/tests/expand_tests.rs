@@ -391,15 +391,13 @@ fn numeric_ranges_follow_tex_instead_of_overflowing() {
     let cases: &[(&str, &str, &str)] = &[
         (r"\count1=99999999999999999999 \the\count1", "2147483647", "Number too big."),
         (r#"\count1="FFFFFFFFFFFFFFFFFF \the\count1"#, "2147483647", "Number too big."),
-        (r"\count1=99999999999999999999 \advance\count1 by 1 \the\count1", "2147483647", "Arithmetic overflow."),
-        (r"\count1=2147483647 \advance\count1 by 1 \the\count1", "2147483647", "Arithmetic overflow."),
+        (r"\count1=99999999999999999999 \advance\count1 by 1 \the\count1", "-2147483648", "Number too big."),
         (
             r"\count1=2147483647 \multiply\count1 by 2147483647 \multiply\count1 by 2147483647 \the\count1",
             "2147483647",
             "Arithmetic overflow.",
         ),
         (r"\dimen0=20000pt \the\dimen0", "16383.99998pt", "Dimension too large."),
-        (r"\dimen0=16383pt \advance\dimen0 by 16383pt \the\dimen0", "16383.0pt", "Arithmetic overflow."),
         (r"\dimen0=99999999999999999999\dimen1 \the\dimen0", "0.0pt", "Number too big."),
         (r"\the\numexpr 2147483647+1\relax", "0", "Arithmetic overflow."),
         (r"\the\numexpr 2147483647*2147483647*2147483647*2147483647\relax", "0", "Arithmetic overflow."),
@@ -408,6 +406,35 @@ fn numeric_ranges_follow_tex_instead_of_overflowing() {
         let r = expand_str(src);
         assert_eq!(text(&r.tokens).trim(), *value, "{src}");
         assert!(r.diagnostics.iter().any(|d| d.message == *message), "{src}: {:?}", r.diagnostics);
+    }
+    // `\advance` has no range check: it wraps in 32-bit arithmetic without a
+    // diagnostic. Values measured with pdfTeX 3.141592653-2.6-1.40.29 (TeX
+    // Live 2026), plain and -etex alike, via \message{\the...}.
+    // `\dimen9` is `\maxdimen` (2^30-1 sp), written in sp to avoid decimal rounding.
+    let maxdimen = r"\dimen9=1073741823sp ";
+    let wrapping: &[(&str, &str)] = &[
+        (r"\count1=2147483647 \advance\count1 by 1 \the\count1", "-2147483648"),
+        (r"\count1=-2147483647 \advance\count1 by -2 \the\count1", "2147483647"),
+        (r"\dimen0=\dimen9 \advance\dimen0 by 1sp \the\dimen0", "16384.0pt"),
+        (r"\dimen0=16383pt \advance\dimen0 by 16383pt \the\dimen0", "32766.0pt"),
+        (r"\dimen0=\dimen9 \advance\dimen0 by \dimen9 \advance\dimen0 by \dimen9 \the\dimen0", "-16384.00005pt"),
+        (
+            r"\dimen0=\dimen9 \advance\dimen0 by \dimen9 \advance\dimen0 by \dimen9 \advance\dimen0 by \dimen9 \advance\dimen0 by 1sp \the\dimen0",
+            "-0.00005pt",
+        ),
+        (
+            r"\skip0=1073741823sp plus 1073741823sp minus 1pt \advance\skip0 by 1073741823sp plus 1073741823sp minus 2pt{}\the\skip0",
+            "32767.99997pt plus 32767.99997pt minus 3.0pt",
+        ),
+        (
+            r"\skip0=1073741823sp plus 1073741823sp \advance\skip0 by 1073741823sp plus 1073741823sp \advance\skip0 by 1073741823sp plus 1073741823sp \advance\skip0 by 1073741823sp plus 1073741823sp \advance\skip0 by 1sp plus 1sp{}\the\skip0",
+            "-0.00005pt plus -0.00005pt",
+        ),
+    ];
+    for (src, value) in wrapping {
+        let r = expand_str(&format!("{maxdimen}{src}"));
+        assert_eq!(text(&r.tokens).trim(), *value, "{src}");
+        assert!(r.diagnostics.is_empty(), "{src}: {:?}", r.diagnostics);
     }
     let fil = format!(r"\skip0=0pt plus 1fi{} \the\skip0", "l".repeat(300));
     // 300 `l`s overflowed the u8 order counter.

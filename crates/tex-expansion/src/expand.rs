@@ -3342,35 +3342,24 @@ impl Engine {
             Primitive::Advance => match kind {
                 RegisterKind::Count => {
                     let d = self.scan_number();
-                    match in_range(self.st.scopes.count(idx).checked_add(d), TEX_INFINITY) {
-                        Some(v) => self.st.scopes.set_count(idx, v, global),
-                        None => self.err("Arithmetic overflow.", tok.span),
-                    }
+                    self.st.scopes.set_count(idx, tex_wrapping_add(self.st.scopes.count(idx), d), global);
                 }
                 RegisterKind::Dimen => {
                     let d = self.scan_dimen();
-                    match in_range(self.st.scopes.dimen(idx).checked_add(d), TEX_MAX_DIMEN) {
-                        Some(v) => self.st.scopes.set_dimen(idx, v, global),
-                        None => self.err("Arithmetic overflow.", tok.span),
-                    }
+                    self.st.scopes.set_dimen(idx, tex_wrapping_add(self.st.scopes.dimen(idx), d), global);
                 }
                 RegisterKind::Skip => {
                     let d = self.scan_glue();
                     let mut g = self.st.scopes.skip(idx);
-                    let Some(value) = in_range(g.value.checked_add(d.value), TEX_MAX_DIMEN) else {
-                        self.err("Arithmetic overflow.", tok.span);
-                        self.finish_assignment();
-                        return;
-                    };
-                    g.value = value;
+                    g.value = tex_wrapping_add(g.value, d.value);
                     if d.stretch_fil == g.stretch_fil {
-                        g.stretch = g.stretch.saturating_add(d.stretch);
+                        g.stretch = tex_wrapping_add(g.stretch, d.stretch);
                     } else if d.stretch_fil > g.stretch_fil {
                         g.stretch = d.stretch;
                         g.stretch_fil = d.stretch_fil;
                     }
                     if d.shrink_fil == g.shrink_fil {
-                        g.shrink = g.shrink.saturating_add(d.shrink);
+                        g.shrink = tex_wrapping_add(g.shrink, d.shrink);
                     } else if d.shrink_fil > g.shrink_fil {
                         g.shrink = d.shrink;
                         g.shrink_fil = d.shrink_fil;
@@ -4819,12 +4808,21 @@ fn xn_over_d(x: i64, n: i64, d: i64) -> i64 {
     }
 }
 
-/// e-TeX's `\numexpr`/`\dimexpr` division rounds to the nearest integer,
-/// ties away from zero (not truncating like `\divide`).
 /// `value` when it exists and its magnitude is at most `limit`.
 fn in_range(value: Option<i64>, limit: i64) -> Option<i64> {
     value.filter(|v| v.abs() <= limit)
 }
+
+/// tex.web §1238-1239: `\advance` adds with the host's 32-bit integer
+/// arithmetic and no range check, so it wraps silently (pdfTeX:
+/// `\count0=2147483647 \advance\count0 by 1` gives -2147483648; dimens and
+/// glue components wrap the same way in scaled points).
+fn tex_wrapping_add(a: i64, b: i64) -> i64 {
+    i64::from((a as i32).wrapping_add(b as i32))
+}
+
+/// e-TeX's `\numexpr`/`\dimexpr` division rounds to the nearest integer,
+/// ties away from zero (not truncating like `\divide`).
 
 fn rounded_div(a: i64, d: i64) -> i64 {
     if d == 0 {
