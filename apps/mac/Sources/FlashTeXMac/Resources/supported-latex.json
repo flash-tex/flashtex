@@ -610,6 +610,7 @@
     {"name": "longleftarrow", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⟵", "renders": true, "glyph": "⟵"},
     {"name": "Longleftarrow", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⟸", "renders": true, "glyph": "⟸"},
     {"name": "longleftrightarrow", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⟷", "renders": true, "glyph": "⟷"},
+    {"name": "longmapsto", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⟼", "renders": true, "glyph": "⟼"},
     {"name": "triangle", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol △", "renders": true, "glyph": "△"},
     {"name": "bigtriangledown", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ▽", "renders": true, "glyph": "▽"},
     {"name": "boxdot", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol ⊡ (\\mathbin, msam \"00; needs amssymb)", "renders": true, "glyph": "⊡"},
