@@ -767,12 +767,14 @@ pub enum ListLeftMargin {
 }
 
 /// Font selection for one text item, as set by `\textbf`, `\itshape`, etc.
-/// Slanted shapes (`\textsl`, `\slshape`) are recorded as italic: the Core 14
-/// faces have no slanted Times.
+/// Slanted shapes remain italic for Core 14 layout, while `slanted` and
+/// `small_caps` preserve the NFSS shape used for `em`/`ex`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct TextStyle {
     pub bold: bool,
     pub italic: bool,
+    pub slanted: bool,
+    pub small_caps: bool,
     pub family: TextFamily,
     /// The active `\tiny`..`\Huge` declaration, if any (`None` is
     /// `\normalsize`, the body size). Resolved to an actual point size in
@@ -818,6 +820,8 @@ impl TextStyle {
     pub const BOLD: TextStyle = TextStyle {
         bold: true,
         italic: false,
+        slanted: false,
+        small_caps: false,
         family: TextFamily::Roman,
         size: None,
         color: None,
@@ -887,13 +891,31 @@ fn apply_style(style: TextStyle, name: &str) -> TextStyle {
     match name {
         "textbf" | "bfseries" => next.bold = true,
         "textmd" | "mdseries" => next.bold = false,
-        "textit" | "textsl" | "itshape" | "slshape" => next.italic = true,
-        // Small capitals (latex.ltx `\textsc`/`\scshape`): the Core 14
-        // layout has no small-caps faces and keeps the current style; the
-        // render pipeline selects the NFSS `sc` shape from the source.
-        "textsc" | "scshape" => {}
-        "textup" | "upshape" => next.italic = false,
-        "emph" | "em" => next.italic = !style.italic,
+        "textit" | "itshape" => {
+            next.italic = true;
+            next.slanted = false;
+            next.small_caps = false;
+        }
+        "textsl" | "slshape" => {
+            next.italic = true;
+            next.slanted = true;
+            next.small_caps = false;
+        }
+        "textsc" | "scshape" => {
+            next.italic = false;
+            next.slanted = false;
+            next.small_caps = true;
+        }
+        "textup" | "upshape" => {
+            next.italic = false;
+            next.slanted = false;
+            next.small_caps = false;
+        }
+        "emph" | "em" => {
+            next.italic = !style.italic;
+            next.slanted = false;
+            next.small_caps = false;
+        }
         "texttt" | "ttfamily" => next.family = TextFamily::Mono,
         "textrm" | "rmfamily" => next.family = TextFamily::Roman,
         "textsf" | "sffamily" => next.family = TextFamily::Sans,
@@ -901,14 +923,25 @@ fn apply_style(style: TextStyle, name: &str) -> TextStyle {
         // LaTeX 2.09 forms reset the other attributes: `\bf` is
         // `\normalfont\bfseries`.
         "bf" => next = TextStyle::BOLD,
-        "it" | "sl" => {
+        "it" => {
             next = TextStyle {
                 italic: true,
                 ..TextStyle::default()
             }
         }
-        // `\sc` is `\normalfont\scshape`: upright roman here.
-        "sc" => next = TextStyle::default(),
+        "sl" => {
+            next = TextStyle {
+                italic: true,
+                slanted: true,
+                ..TextStyle::default()
+            }
+        }
+        "sc" => {
+            next = TextStyle {
+                small_caps: true,
+                ..TextStyle::default()
+            }
+        }
         "tt" | "rm" | "sf" => next = apply_style(TextStyle::default(), &format!("{name}family")),
         "tiny" => next.size = Some(FontSizeLevel::Tiny),
         "scriptsize" => next.size = Some(FontSizeLevel::ScriptSize),
@@ -1885,6 +1918,7 @@ pub fn parse_project_with(
         resume_counters: HashMap::new(),
         resume_keys: HashMap::new(),
         pending_item_label: None,
+        paragraph_started: false,
         pending_item: None,
         pending_line_break: None,
         paragraph_styles: Vec::new(),
@@ -2113,6 +2147,11 @@ struct P<'a> {
     /// later paragraphs of the same item render with the hanging indent but
     /// no repeated label.
     pending_item_label: Option<(String, Span)>,
+    /// A command that leaves vertical mode without adding material to the
+    /// paragraph (`\noindent`, `\indent`, `\textbf{`...) has started the
+    /// paragraph being collected, so the list is horizontal even while it
+    /// is still empty. Cleared when a block is pushed or the paragraph ends.
+    paragraph_started: bool,
     /// The structured form of `pending_item_label`, taken with it.
     pending_item: Option<ItemLabel>,
     /// verse's `\\` waiting for the next paragraph.
@@ -3181,7 +3220,10 @@ impl P<'_> {
                 let style = self.style;
                 para.extend(self.inlines_from_tokens(text_tokens, style));
             }
+            // latex.ltx `\DeclareTextFontCommand`: `\hmode@bgroup` is
+            // `\leavevmode\bgroup`.
             _ if style_command(name) => {
+                self.paragraph_started = true;
                 self.skip_spaces();
                 let next = apply_style(self.style, name);
                 if let Some(open) = self.closed_group_start() {
@@ -3382,18 +3424,22 @@ impl P<'_> {
             }
             // No paragraph is ever given a first-line indent in this layout
             // model, so there is nothing for \noindent to suppress: an honest
-            // no-op rather than a fabricated indent to cancel.
-            "noindent" => {}
+            // no-op rather than a fabricated indent to cancel. It still
+            // starts the paragraph (TeX §1091 `new_graf`), as `\indent` does.
+            "noindent" => self.paragraph_started = true,
             // The opposite request: unlike \noindent above, this one is not a
             // coincidental match with real LaTeX's output — \indent asks for
             // a first-line indent that this layout has no way to draw (see
             // `set_length`'s `\parindent` handling), so it is named honestly
             // via a diagnostic rather than silently accepted.
-            "indent" => self.diags.push(Diagnostic::warning(
-                "\\indent is recognised but paragraph indentation is not implemented",
-                Some(span),
-                Some("the paragraph was not given a first-line indent".into()),
-            )),
+            "indent" => {
+                self.paragraph_started = true;
+                self.diags.push(Diagnostic::warning(
+                    "\\indent is recognised but paragraph indentation is not implemented",
+                    Some(span),
+                    Some("the paragraph was not given a first-line indent".into()),
+                ))
+            }
             // Text-mode horizontal glue. `\quad`/`\qquad` are also implemented
             // in math mode (`src/math.rs`); this arm covers the same commands
             // used directly in running text, 1em/2em of the body text size.
@@ -3489,7 +3535,10 @@ impl P<'_> {
             // vertical-mode `\pagebreak` with priority 4 is a bare
             // `\penalty-10000`, not `\newpage`: there is no `\vfil` before
             // it, so a `\flushbottom` page it ends is stretched to
-            // `\textheight`.
+            // `\textheight`. The mode is TeX's, not whether text has been
+            // collected: `\noindent\pagebreak text` is horizontal (the page
+            // ends after the first line), `\label{x}\pagebreak text` is still
+            // vertical (`\label` puts only a whatsit in the current list).
             "pagebreak" | "nopagebreak" => {
                 let (priority, bracket) = self.break_priority_penalty();
                 let span = bracket.map_or(span, |bracket| span.merge(bracket));
@@ -3498,7 +3547,9 @@ impl P<'_> {
                 } else {
                     priority
                 };
-                if !para.is_empty() {
+                let horizontal = self.paragraph_started
+                    || para.iter().any(|inline| !matches!(inline, Inline::Label { .. }));
+                if horizontal {
                     para.push(Inline::PagePenalty { value, span });
                 } else {
                     blocks.push(Block::Penalty {
@@ -7173,6 +7224,38 @@ impl P<'_> {
                         });
                     }
                 }
+                // `\ref`/`\pageref`/`\eqref` reach here whenever they sit in a
+                // heading, a caption or a style argument, because those are
+                // flattened into a token list instead of being re-parsed. Without
+                // this arm the command was dropped and its braced key survived as
+                // ordinary text, so `\section{Back to \ref{sec:a}}` typeset the
+                // literal "sec:a" instead of the number. Emit the same
+                // `Inline::Reference` the main token loop builds, so resolution and
+                // the undefined-reference `??` behave identically in both places.
+                TokenKind::Command(name) if matches!(name.as_str(), "ref" | "pageref" | "eqref") => {
+                    match siunitx_group_at(&expanded, index + 1) {
+                        Some((raw, argument_span, after)) => {
+                            skip_until = after;
+                            let span = if argument_span.document == input.token.span.document {
+                                input.token.span.merge(argument_span)
+                            } else {
+                                input.token.span
+                            };
+                            content.push(Inline::Reference {
+                                key: raw.trim().to_string(),
+                                page: name == "pageref",
+                                equation: name == "eqref",
+                                span,
+                                space_before,
+                            });
+                        }
+                        None => self.diags.push(Diagnostic::error(
+                            format!("\\{name} requires an argument"),
+                            Some(input.token.span),
+                            Some("rendered nothing for the reference".into()),
+                        )),
+                    }
+                }
                 TokenKind::Command(name) if style_command(name) => {
                     pending = Some(apply_style(style, name));
                 }
@@ -7840,6 +7923,7 @@ impl P<'_> {
     }
 
     fn finish_block_dependencies(&mut self) {
+        self.paragraph_started = false;
         // Exactly one entry per pushed block, like `block_dependencies`:
         // every block push is followed by this call, and only
         // `flush_list_item` leaves a non-`None` value here.
@@ -7889,6 +7973,7 @@ impl P<'_> {
         extra_gap_before_pt: f64,
         extra_gap_after_pt: f64,
     ) {
+        self.paragraph_started = false;
         let label = self.pending_item_label.take();
         if paragraph.is_empty() && label.is_none() {
             return;
@@ -9811,6 +9896,64 @@ mod tests {
         );
     }
 
+    /// The mode decides, not whether the paragraph holds text yet. pdflatex
+    /// (TeX Live 2026, `article`): `Before.` then `\noindent\pagebreak`,
+    /// `\indent\pagebreak` or `\textbf{\pagebreak Bold}` followed by a
+    /// two-line paragraph ends page 1 after that paragraph's *first* line;
+    /// `\label{a}\pagebreak` (vertical: `\label` is a whatsit) ends it before
+    /// the paragraph, and so does `\noindent` ended by a blank line.
+    #[test]
+    fn pagebreak_right_after_a_paragraph_starts_is_horizontal() {
+        let page_penalties = |parsed: &Parsed| -> Vec<i32> {
+            parsed
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    Block::Paragraph(inlines) => Some(inlines),
+                    _ => None,
+                })
+                .flatten()
+                .filter_map(|inline| match inline {
+                    Inline::PagePenalty { value, .. } => Some(*value),
+                    _ => None,
+                })
+                .collect()
+        };
+        let vertical = |parsed: &Parsed| -> Vec<i32> {
+            parsed
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    Block::Penalty { value, .. } => Some(*value),
+                    _ => None,
+                })
+                .collect()
+        };
+        for (source, value) in [
+            ("\\noindent\\pagebreak First.", -10000),
+            ("\\noindent \\pagebreak First.", -10000),
+            ("\\indent\\pagebreak First.", -10000),
+            ("\\textbf{\\pagebreak Bold} First.", -10000),
+            ("\\emph{\\nopagebreak[2] It} First.", 151),
+        ] {
+            let parsed = parse(&format!("Before.\n\n{source}"));
+            assert_eq!(page_penalties(&parsed), [value], "{source}: {:?}", parsed.blocks);
+            assert!(vertical(&parsed).is_empty(), "{source}: {:?}", parsed.blocks);
+        }
+        for source in ["\\label{a}\\pagebreak First.", "\\noindent\n\n\\pagebreak\nFirst."] {
+            let parsed = parse(&format!("Before.\n\n{source}"));
+            assert_eq!(vertical(&parsed), [-10000], "{source}: {:?}", parsed.blocks);
+            assert!(
+                parsed.blocks.iter().all(|block| !matches!(
+                    block,
+                    Block::Paragraph(inlines) if inlines.iter().any(|i| matches!(i, Inline::PagePenalty { .. }))
+                )),
+                "{source}: {:?}",
+                parsed.blocks
+            );
+        }
+    }
+
     /// amsmath `\nobreakdash`: `\setboxz@h{--\nobreak}\unhbox\z@`. pdflatex:
     /// with `pages 113--213` breaking after `113–` in a control paragraph,
     /// `113\nobreakdash--213` never ends a line with the dash.
@@ -11205,6 +11348,46 @@ mod tests {
     /// typed-space source below; the firing itself is pinned by the
     /// decision-function assertions plus `\today`, whose handler does read
     /// the pending space.
+    /// A cross-reference in a heading, caption or style argument goes through
+    /// `inlines_from_tokens`, which flattens tokens instead of re-parsing them.
+    /// Before the `ref`/`pageref`/`eqref` arm existed the command was dropped and
+    /// its braced key survived as ordinary text, so `\\section{Back to \\ref{sec:a}}`
+    /// typeset the literal "sec:a" instead of the section number.
+    #[test]
+    fn reference_in_a_heading_is_a_reference_not_text() {
+        let parsed = parse(
+            "\\section{Intro}\\label{sec:a}\n\\section{Back to \\ref{sec:a} again}\n",
+        );
+        let mut headings = Vec::new();
+        for block in &parsed.blocks {
+            if let Block::Heading { content, .. } = block {
+                headings.push(content.clone());
+            }
+        }
+        let second = headings.last().expect("two headings");
+        let keys: Vec<_> = second
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Reference { key, page, equation, .. } => {
+                    Some((key.clone(), *page, *equation))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            vec![("sec:a".to_string(), false, false)],
+            "the heading's \\ref must be an Inline::Reference: {second:?}"
+        );
+        assert!(
+            !second.iter().any(|inline| matches!(
+                inline,
+                Inline::Text { text, .. } if text.contains("sec:a")
+            )),
+            "the key must not survive as text: {second:?}"
+        );
+    }
+
     #[test]
     fn xspace_before_ordinary_commands_inserts_space() {
         // The decision function itself: ordinary commands fire, the
