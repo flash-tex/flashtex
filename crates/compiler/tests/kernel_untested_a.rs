@@ -113,6 +113,28 @@ fn at_begin_document_multiple_hooks_run_in_registration_order() {
 }
 
 #[test]
+fn atbegindoc_hook_uses_the_definition_current_at_begin_document() {
+    let out = paragraphs(
+        r"\newcommand{\deferred}{FIRST}\AtBeginDocument{\deferred}\renewcommand{\deferred}{SECOND}\begin{document}Body\end{document}",
+    );
+    assert_eq!(out, vec!["SECONDBody".to_string()]);
+}
+
+#[test]
+fn atbegindoc_hook_can_use_a_macro_defined_after_registration() {
+    let source = r"\AtBeginDocument{\late}\newcommand{\late}{LATE}\begin{document}Body\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    assert_eq!(paragraphs(source), vec!["LATEBody".to_string()]);
+}
+
+#[test]
+fn atbegindoc_multiple_hooks_defer_and_keep_registration_order() {
+    let source = r"\newcommand{\myv}{1}\AtBeginDocument{A\myv}\AtBeginDocument{B\myv}\renewcommand{\myv}{2}\begin{document}C\end{document}";
+    assert!(messages(source).is_empty(), "{:?}", messages(source));
+    assert_eq!(paragraphs(source), vec!["A2B2C".to_string()]);
+}
+
+#[test]
 fn at_begin_document_hook_with_a_space_keeps_word_separation() {
     let source = "\\AtBeginDocument{HOOK A}\\begin{document}Body\\end{document}";
     assert!(messages(source).is_empty(), "{:?}", messages(source));

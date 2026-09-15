@@ -112,9 +112,12 @@ pub struct Expansion {
 /// (left undefined, so the engine passes them through): the converter holds
 /// marked output back and re-emits it after `\\begin{document}` closes, so
 /// the hook typesets ahead of the body instead of being dropped as
-/// preamble. Calls after `\\begin{document}` bypass the wrapper entirely
-/// (`\\AtBeginDocument` is `\\let` to `\\@firstofone` by then) and run in
-/// the body, as in LaTeX.
+/// preamble. Like the kernel's `\\g@addto@macro`, the append routes through
+/// the `\\toks@` register so the chunk is stored unexpanded and only
+/// resolves when the hook runs at `\\begin{document}` (a bare `\\xdef` would
+/// bake preamble definitions in eagerly). Calls after `\\begin{document}`
+/// bypass the wrapper entirely (`\\AtBeginDocument` is `\\let` to
+/// `\\@firstofone` by then) and run in the body, as in LaTeX.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
@@ -128,7 +131,7 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\tabular{\\flashtexbegintabular\\expandafter{\\arraystretch}}%
 \\expandafter\\def\\csname tabular*\\endcsname{\\flashtexbegintabularstar\\expandafter{\\arraystretch}}%
 \\def\\array{\\flashtexbeginarray\\expandafter{\\arraystretch}}%
-\\long\\def\\AtBeginDocument#1{\\expandafter\\xdef\\csname @begindocumenthook\\endcsname{\\csname @begindocumenthook\\endcsname\\flashtexatbeginstart#1\\flashtexatbeginend}}%
+\\long\\def\\flashtexaddtobeginhook#1#2{\\begingroup\\csname toks@\\endcsname\\expandafter{#1\\flashtexatbeginstart#2\\flashtexatbeginend}\\xdef#1{\\the\\csname toks@\\endcsname}\\endgroup}%\n\\long\\def\\AtBeginDocument#1{\\expandafter\\flashtexaddtobeginhook\\csname @begindocumenthook\\endcsname{#1}}%
 ";
 
 /// Engine diagnostics that duplicate the parser's own reports, or only note
