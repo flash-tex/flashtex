@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 307 text-mode and 551 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 307 text-mode and 551 math-mode command entries, 59 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -851,6 +851,16 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `flushright` | text | right-aligned paragraphs |
 | `quote` | text | indented paragraphs |
 | `quotation` | text | indented paragraphs |
+| `tiny` | text | the tiny size for the environment body |
+| `scriptsize` | text | the scriptsize size for the environment body |
+| `footnotesize` | text | the footnotesize size for the environment body |
+| `small` | text | the small size for the environment body |
+| `normalsize` | text | the body size for the environment body |
+| `large` | text | the large size for the environment body |
+| `Large` | text | the Large size for the environment body |
+| `LARGE` | text | the LARGE size for the environment body |
+| `huge` | text | the huge size for the environment body |
+| `Huge` | text | the Huge size for the environment body |
 | `verse` | text | indented lines; each \\ ends a line |
 | `itemize` | text | bulleted list; article labels per depth, \item[label] |
 | `enumerate` | text | numbered list; article labels per depth, enumitem label/label*/shortlabels, start and resume |

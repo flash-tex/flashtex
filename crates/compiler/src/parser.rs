@@ -4203,6 +4203,22 @@ impl P<'_> {
                 self.verbatim_environment(span, argument_span, &environment, blocks, para);
                 return;
             }
+            // A size environment is a group with the size declaration applied
+            // for its extent (style save/restore below scopes it).
+            let size_env = self.in_body
+                && matches!(
+                    environment.as_str(),
+                    "tiny"
+                        | "scriptsize"
+                        | "footnotesize"
+                        | "small"
+                        | "normalsize"
+                        | "large"
+                        | "Large"
+                        | "LARGE"
+                        | "huge"
+                        | "Huge"
+                );
             self.env_alignments.push(self.declared_alignment);
             if environment == "document" && self.has_document {
                 self.in_body = true;
@@ -4296,6 +4312,11 @@ impl P<'_> {
                 // ships no page (see `Block::PageBreak` in `layout`).
                 blocks.push(Block::PageBreak);
                 self.finish_block_dependencies();
+            } else if size_env {
+                // Implemented above (the size list): this arm only keeps
+                // size environments out of the "not implemented" warning.
+                // The declaration itself is applied after the style save
+                // below, so the `\end` restore sees the surrounding style.
             } else if self.in_body {
                 self.diags.push(Diagnostic::environment_warning(
                     &environment,
@@ -4315,6 +4336,12 @@ impl P<'_> {
             self.env_stack
                 .push((environment.clone(), span.merge(argument_span)));
             self.env_styles.push(self.style);
+            // The size declaration itself, after the save above (which keeps
+            // the surrounding style for the `\end` restore), exactly like
+            // `begin_theorem` below.
+            if size_env {
+                self.style = apply_style(self.style, &environment);
+            }
             if self.in_body {
                 if let Some(theorem) = self.theorems.get(&environment).cloned() {
                     self.begin_theorem(&theorem, &environment, span, para);
@@ -9382,6 +9409,53 @@ mod tests {
         ] {
             assert_eq!(size_of(&items, text), size, "{text}");
         }
+    }
+
+    #[test]
+    fn size_environments_match_their_command_forms() {
+        // `\begin{small}` is a group with `\small` applied for its extent:
+        // every size environment sets the same size as its declaration, is
+        // scoped by `\end`, and produces no `unsupported_feature` warning.
+        const LEVELS: [&str; 10] = [
+            "tiny",
+            "scriptsize",
+            "footnotesize",
+            "small",
+            "normalsize",
+            "large",
+            "Large",
+            "LARGE",
+            "huge",
+            "Huge",
+        ];
+        let mut body = String::from("n0 ");
+        for (i, level) in LEVELS.iter().enumerate() {
+            body.push_str(&format!("\\begin{{{level}}}e{i} \\end{{{level}}} \\{level} c{i} "));
+        }
+        let (parsed, laid_out) = items(&body);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        for (i, level) in LEVELS.iter().enumerate() {
+            let (env, cmd) = (format!("e{i}"), format!("c{i}"));
+            assert_eq!(size_of(&laid_out, &env), size_of(&laid_out, &cmd), "{level}");
+        }
+        // Spot checks against the default (12pt-class) table, including the
+        // `normalsize` environment resetting to the body size.
+        assert_eq!(size_of(&laid_out, "e3"), 10.95, "small");
+        assert_eq!(size_of(&laid_out, "e2"), 10.0, "footnotesize");
+        assert_eq!(
+            size_of(&laid_out, "e4"),
+            crate::layout::BODY_SIZE_PT,
+            "normalsize"
+        );
+        // The environment form scopes like the group form: text after
+        // `\end{small}` is back at the surrounding size.
+        let (scoped, scoped_items) = items(r"Body \begin{small}Small\end{small} After");
+        assert!(scoped.diagnostics.is_empty(), "{:?}", scoped.diagnostics);
+        assert_eq!(size_of(&scoped_items, "Small"), 10.95);
+        assert_eq!(
+            size_of(&scoped_items, "After"),
+            crate::layout::BODY_SIZE_PT
+        );
     }
 
     #[test]
