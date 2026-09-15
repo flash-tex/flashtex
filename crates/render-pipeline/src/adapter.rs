@@ -5240,32 +5240,33 @@ fn text_font_command(name: &str) -> Option<&'static [crate::nfss::Command]> {
     })
 }
 
-/// The NFSS commands of a font declaration, and whether the end of its
-/// group is recorded for italic correction (the declarations the pipeline
-/// read before NFSS selection existed keep that behaviour). The LaTeX
+/// The NFSS commands of a font declaration. Its group's end never takes an
+/// italic correction: LaTeX adds `\/` only through `\text@command`'s
+/// `\maybe@ic` (`\textit`, `\emph`, ...), and `{\itshape leaf} then` sets
+/// no kern after `leaf` (pdfLaTeX). The LaTeX
 /// 2.09 forms reset first: `\bf` is `\normalfont\bfseries` (latex.ltx
 /// `\DeclareOldFontCommand`).
-fn font_declaration(name: &str) -> Option<(&'static [crate::nfss::Command], bool)> {
+fn font_declaration(name: &str) -> Option<&'static [crate::nfss::Command]> {
     use crate::nfss::{Command as C, FamilyKind as F, Series as S, ShapeRequest as R};
     Some(match name {
-        "bfseries" => (&[C::Series(S::Bx)], true),
-        "itshape" => (&[C::Shape(R::It)], true),
-        "slshape" => (&[C::Shape(R::Sl)], true),
-        "em" => (&[C::Emph], true),
-        "mdseries" => (&[C::Series(S::M)], false),
-        "scshape" => (&[C::Shape(R::Sc)], false),
-        "upshape" => (&[C::Shape(R::Up)], false),
-        "rmfamily" => (&[C::Family(F::Rm)], false),
-        "sffamily" => (&[C::Family(F::Sf)], false),
-        "ttfamily" => (&[C::Family(F::Tt)], false),
-        "normalfont" => (&[C::Normal], false),
-        "bf" => (&[C::Normal, C::Series(S::Bx)], false),
-        "it" => (&[C::Normal, C::Shape(R::It)], false),
-        "sl" => (&[C::Normal, C::Shape(R::Sl)], false),
-        "sc" => (&[C::Normal, C::Shape(R::Sc)], false),
-        "rm" => (&[C::Normal, C::Family(F::Rm)], false),
-        "sf" => (&[C::Normal, C::Family(F::Sf)], false),
-        "tt" => (&[C::Normal, C::Family(F::Tt)], false),
+        "bfseries" => &[C::Series(S::Bx)],
+        "itshape" => &[C::Shape(R::It)],
+        "slshape" => &[C::Shape(R::Sl)],
+        "em" => &[C::Emph],
+        "mdseries" => &[C::Series(S::M)],
+        "scshape" => &[C::Shape(R::Sc)],
+        "upshape" => &[C::Shape(R::Up)],
+        "rmfamily" => &[C::Family(F::Rm)],
+        "sffamily" => &[C::Family(F::Sf)],
+        "ttfamily" => &[C::Family(F::Tt)],
+        "normalfont" => &[C::Normal],
+        "bf" => &[C::Normal, C::Series(S::Bx)],
+        "it" => &[C::Normal, C::Shape(R::It)],
+        "sl" => &[C::Normal, C::Shape(R::Sl)],
+        "sc" => &[C::Normal, C::Shape(R::Sc)],
+        "rm" => &[C::Normal, C::Family(F::Rm)],
+        "sf" => &[C::Normal, C::Family(F::Sf)],
+        "tt" => &[C::Normal, C::Family(F::Tt)],
         _ => return None,
     })
 }
@@ -5467,7 +5468,7 @@ fn macro_argument_intervals(source: &str) -> Vec<StyleInterval> {
         let mut params: Vec<(usize, Vec<(crate::nfss::Command, bool, bool)>)> = Vec::new();
         for k in 1..=9usize {
             let Some(p) = body.find(&format!("#{k}")) else { continue };
-            let chain: Vec<_> = body_intervals.iter().filter(|(s, e, _, _)| *s <= p && p < *e).map(|(_, e, c, _)| (*c, *e == p + 2, *e >= body.len())).collect();
+            let chain: Vec<_> = body_intervals.iter().filter(|(s, e, _, _)| *s <= p && p < *e).map(|(_, e, c, ic)| (*c, *ic && *e == p + 2, *e >= body.len())).collect();
             if !chain.is_empty() {
                 params.push((k, chain));
             }
@@ -5625,12 +5626,12 @@ fn source_style_intervals(source: &str) -> Vec<StyleInterval> {
                     i = word_end;
                     continue;
                 }
-                if let Some((commands, correction)) = font_declaration(name) {
+                if let Some(commands) = font_declaration(name) {
                     let end = match groups.last() {
                         Some(&open) => matching_brace(bytes, open).unwrap_or(bytes.len()),
                         None => find_command(&source[word_end..], "end").map_or(bytes.len(), |e| word_end + e),
                     };
-                    out.extend(commands.iter().map(|c| (word_end, end, *c, correction)));
+                    out.extend(commands.iter().map(|c| (word_end, end, *c, false)));
                 }
                 i = word_end.max(i + 2);
             }
@@ -5855,6 +5856,20 @@ fn macro_arg_index(source: &str, inv: Span, at: usize) -> Option<(&str, usize)> 
 struct BodyCursor {
     inv: Span,
     at: usize,
+    /// Where the last token was found in the body (`None` when its place is
+    /// not known), for the font the body's own commands put it in
+    /// ([`Styles::in_body`]).
+    word: Option<usize>,
+    /// The first blank of the gap read before the last token, when that gap
+    /// lies wholly inside the body: the interword space is set in the font in
+    /// force there.
+    blank: Option<usize>,
+}
+
+impl BodyCursor {
+    fn new(inv: Span, at: usize) -> BodyCursor {
+        BodyCursor { inv, at, word: None, blank: None }
+    }
 }
 
 /// The bytes TeX read between the previous token and this one, in the
@@ -5890,7 +5905,7 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
             let Some(text) = text else {
                 // Glue or math of a replacement: its place is not searched;
                 // separate tokens of one replacement are taken as spaced.
-                *cursor = Some(BodyCursor { inv: span, at: start });
+                *cursor = Some(BodyCursor::new(span, start));
                 return prev_end.map(|_| " ".to_string());
             };
             // A control word (the glue arms pass `\hfill`/`\quad`/...) is
@@ -5902,8 +5917,9 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
             match body.get(start..).and_then(find_text) {
                 Some(p) => {
                     let pos = start + p;
-                    *cursor = Some(BodyCursor { inv: span, at: pos + text.len() });
                     let gap = &body[start..pos];
+                    let blank = gap.find(|c: char| c.is_whitespace()).filter(|_| prefix.is_none()).map(|off| start + off);
+                    *cursor = Some(BodyCursor { inv: span, at: pos + text.len(), word: Some(pos), blank });
                     return Some(match prefix {
                         Some(before) => format!("{before}{gap}"),
                         None => gap.to_string(),
@@ -5911,7 +5927,7 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
                 }
                 None => {
                     // Not found verbatim (ligatures rewrote it).
-                    *cursor = Some(BodyCursor { inv: span, at: start });
+                    *cursor = Some(BodyCursor::new(span, start));
                     return prev_end.map(|_| " ".to_string());
                 }
             }
@@ -5924,11 +5940,13 @@ fn token_gap(src: &str, prev_end: Option<usize>, prev_span: Option<Span>, span: 
                 if let Some(p) = body.get(c.at..).and_then(|rest| rest.find(&format!("#{k}"))) {
                     let pos = c.at + p;
                     let gap = body[c.at..pos].to_string();
-                    *cursor = Some(BodyCursor { inv: c.inv, at: pos + digits(k) });
+                    let blank = gap.find(|c: char| c.is_whitespace()).map(|off| c.at + off);
+                    *cursor = Some(BodyCursor { blank, ..BodyCursor::new(c.inv, pos + digits(k)) });
                     return Some(gap);
                 }
                 // Further tokens of the same argument: the source between
                 // them (the cursor stays after `#k`).
+                *cursor = Some(BodyCursor::new(c.inv, c.at));
                 return prev_end.zip(prev_span).and_then(|(pe, ps)| source_gap(pe, ps));
             }
         }
@@ -6751,6 +6769,23 @@ impl Styles {
     /// selection (`crate::nfss::apply`), so order matters exactly as in
     /// LaTeX (`\textsc{\emph{x}}` is not `\emph{\textsc{x}}`).
     fn at(&self, at: usize) -> TextStyle {
+        self.at_then(at, std::iter::empty())
+    }
+
+    /// The style of a token of a user macro's replacement text, invoked at
+    /// byte `at`, that sits at byte `offset` of the definition `body`: the
+    /// call site's font, then the body's own groups and commands around the
+    /// token (`\newcommand{\x}{\textbf{Note:}}` sets `Note:` bold — the
+    /// compiler spans the token at the invocation, whose bytes are not in
+    /// the `\textbf` group).
+    fn in_body(&self, at: usize, body: &str, offset: usize) -> TextStyle {
+        let inner = source_style_intervals(body);
+        self.at_then(at, inner.into_iter().filter(|(s, e, _, _)| *s <= offset && offset < *e).map(|(_, _, c, _)| c))
+    }
+
+    /// [`Styles::at`] with `extra` commands applied after the chain in force
+    /// at `at`.
+    fn at_then(&self, at: usize, extra: impl Iterator<Item = crate::nfss::Command>) -> TextStyle {
         let p = self.intervals.partition_point(|(start, _, _)| *start <= at);
         let mut chain = Vec::new();
         let mut i = p;
@@ -6764,9 +6799,11 @@ impl Styles {
                 chain.push(command);
             }
         }
+        chain.reverse();
+        chain.extend(extra);
         let mut key = crate::nfss::FontKey::default();
         let mut undefined = None;
-        for command in chain.into_iter().rev() {
+        for command in chain {
             let s = crate::nfss::apply(self.scheme, key, command);
             key = s.key;
             undefined = s.undefined.or(undefined);
@@ -6777,8 +6814,12 @@ impl Styles {
     /// Whether the font in force at byte `at` is slanted (`\fontdimen1 >
     /// 0`): the loaded shape after `sub*`/`ssub*`.
     fn slanted_at(&self, at: usize) -> bool {
-        let key = self.at(at).key();
-        crate::nfss::terminal(self.scheme, crate::nfss::select(self.scheme, key).key).0.slanted()
+        self.slanted(self.at(at))
+    }
+
+    /// Whether `style`'s loaded font is slanted (see [`Styles::slanted_at`]).
+    fn slanted(&self, style: TextStyle) -> bool {
+        crate::nfss::terminal(self.scheme, crate::nfss::select(self.scheme, style.key()).key).0.slanted()
     }
 
     /// Whether a style group's content ends exactly at `at`.
@@ -7116,7 +7157,7 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
     let styles_of = |d: DocumentId| -> &Styles { styles.get(d.0).unwrap_or(&no_styles) };
 
     // Where the reader stands in a macro's replacement text (`token_gap`).
-    let mut cursor: Option<BodyCursor> = None;
+    let cursor: std::cell::Cell<Option<BodyCursor>> = std::cell::Cell::new(None);
     // Whether the previous token was a glue control word (`\hfill`,
     // `\quad`, `\hspace`): TeX eats the whitespace right after it, and
     // the gap read next starts at that whitespace.
@@ -7128,7 +7169,10 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
     // bodies), so the gap is never scanned for fills here.
     let mut space_between = |prev_end: Option<usize>, prev_span: Option<Span>, span: Span, text: Option<&str>, after_control_word: bool| -> bool {
         let src = text_of(span.document);
-        match token_gap(src, prev_end, prev_span, span, text, &mut cursor) {
+        let mut c = cursor.get();
+        let gap = token_gap(src, prev_end, prev_span, span, text, &mut c);
+        cursor.set(c);
+        match gap {
             None => false,
             Some(gap) if after_control_word => gap_has_space_after_control_word(&gap),
             Some(gap) => gap_has_space(&gap),
@@ -7528,7 +7572,15 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 } else {
                     None
                 };
-                let mut style = style_at(styles_of(span.document), span.start);
+                let has_space = space_between(prev_end, prev_span, *span, Some(text), after_control_word);
+                after_control_word = false;
+                // A word of a user macro's replacement text, found in the
+                // definition body: the body's own font commands apply to it.
+                let in_body = cursor.get().filter(|c| c.inv == *span).and_then(|c| Some((macro_body(source, control_word_at(source, span.start, span.end)?, span.start)?, c.word?)));
+                let mut style = match in_body {
+                    Some((body, offset)) => styles_of(span.document).in_body(span.start, body, offset),
+                    None => style_at(styles_of(span.document), span.start),
+                };
                 // Verbatim text: no ligatures, no kerns, rigid blanks. The
                 // span of a `\verb|...|` starts at the backslash, so the
                 // body byte is what decides — `span.start` is the `\`.
@@ -7549,14 +7601,23 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     style.bold = compiler_style.bold;
                     style.italic = compiler_style.italic;
                 }
-                let has_space = space_between(prev_end, prev_span, *span, Some(text), after_control_word);
-                after_control_word = false;
                 if has_space || pending_head_sep.get().is_some() {
                     // TeX sizes an interword space with the font current
                     // where the space token is read ("Plain, \textbf{bold}"
                     // gets a regular space, "\textbf{bold words}" a bold one,
-                    // "\textbf{\emph{x}} y" a regular one).
-                    let mut gap_style = space_style(texts, styles, prev_end, *span, style);
+                    // "\textbf{\emph{x}} y" a regular one). A blank of a
+                    // macro body is read in the body's font there.
+                    let body_blank = cursor.get().and_then(|c| {
+                        let blank = c.blank?;
+                        let body = macro_body(source, control_word_at(source, c.inv.start, c.inv.end)?, c.inv.start)?;
+                        Some(styles_of(span.document).in_body(c.inv.start, body, blank))
+                    });
+                    let mut gap_style = match body_blank {
+                        // A heading's weight comes from the compiler at the
+                        // word (`medium`), as for the word itself.
+                        Some(blank_style) => TextStyle { size_cpt: style.size_cpt, color: style.color, medium: style.medium, ..blank_style },
+                        None => space_style(texts, styles, prev_end, *span, style),
+                    };
                     if compiler_weight {
                         gap_style.bold = style.bold;
                         gap_style.italic = style.italic;
@@ -7722,7 +7783,21 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 // \text@command appends \/ (`\maybe@ic`) unless the next
                 // token is in \nocorrlist (`,` and `.`) or the enclosing
                 // font is itself slanted (`\fontdimen1 > 0`).
-                if styles_of(span.document).closes_at(span.end)
+                if let Some((body, offset)) = in_body {
+                    // The same inside a macro body (`\newcommand{\x}{\textit{Note}}`):
+                    // the group closes in the body, and the next token is the
+                    // body's next byte, or what follows the invocation.
+                    let end = offset + text.len();
+                    let next = body.as_bytes().get(end + 1).or(source.as_bytes().get(span.end));
+                    if source_style_intervals(body).iter().any(|i| i.3 && i.1 == end)
+                        && body.as_bytes().get(end) == Some(&b'}')
+                        && !matches!(next, Some(b'.') | Some(b','))
+                        && !styles_of(span.document).slanted(styles_of(span.document).in_body(span.start, body, end + 1))
+                        && matches!(items.last(), Some(Item::Word(_)))
+                    {
+                        items.push(Item::ItalicCorrection);
+                    }
+                } else if styles_of(span.document).closes_at(span.end)
                     && source.as_bytes().get(span.end) == Some(&b'}')
                     && !matches!(source.as_bytes().get(span.end + 1), Some(b'.') | Some(b','))
                     && !styles_of(span.document).slanted_at(span.end + 1)
