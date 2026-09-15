@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/aux-lists",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/543",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-15T06:27:50Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-AUX-LISTS",
-  "updated_utc": "2026-09-15T06:27:50Z"
+  "updated_utc": "2026-09-15T07:08:15Z"
 }
