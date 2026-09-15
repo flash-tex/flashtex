@@ -67,7 +67,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // Colour and graphics packages.
     "tikz",
     "usetikzlibrary", "draw", "node", "fill", "path", "scalebox", "resizebox", "rotatebox",
-    "subcaption", "listoflistings", "lstinline", "mintinline",
+    "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
     "intertext", "shortintertext", "substack", "sideset", "xrightarrow", "xleftarrow", "overbrace",
     "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",
@@ -246,8 +246,8 @@ pub fn command_package(name: &str) -> Option<&'static str> {
         "tikz" | "usetikzlibrary" | "draw" | "node" | "fill" | "path" => Some("tikz"),
         "includegraphics" | "graphicspath" | "scalebox" | "resizebox" | "rotatebox"
         | "reflectbox" => Some("graphicx"),
-        "lstinline" | "listoflistings" | "lstset" => Some("listings"),
-        "mintinline" => Some("minted"),
+        "lstinline" | "lstlistoflistings" | "lstset" => Some("listings"),
+        "mintinline" | "listoflistings" => Some("minted"),
         "citep" | "citet" | "citeauthor" => Some("natbib"),
         "addbibresource" | "printbibliography" => Some("biblatex"),
         "eqref" | "intertext" | "shortintertext" | "substack" | "DeclareMathOperator"
