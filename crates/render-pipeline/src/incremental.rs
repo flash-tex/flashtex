@@ -257,12 +257,45 @@ pub fn block_origin(items: &[Item]) -> Option<(DocumentId, usize)> {
     origin
 }
 
+/// The kind tag hashed before an enum's payload, so that two kinds can
+/// never open the same key stream.
+///
+/// Taken from the variant itself rather than a hand-written constant: two
+/// distinct variants have two distinct [`std::mem::Discriminant`]s by
+/// construction, and a variant added later gets its own tag with no edit
+/// here. The hand-numbered constants this replaced had drifted into four
+/// collisions -- `Item::Table` and `Item::Logo` both hashed 9,
+/// `Item::Footnote` and `Item::Rule` both hashed 10, `Item::ColorBox` and
+/// `Item::Kern` both hashed 11, and `Nucleus::Rule` and `Nucleus::SubArray`
+/// both hashed 15 -- which made two different item lists hash to one key
+/// (see `tests/layout_cache_keys.rs`).
+#[inline]
+pub(crate) fn tag<T>(value: &T, h: &mut DefaultHasher) {
+    kind_tag(value).hash(h);
+}
+
+/// The tag [`hash_items`] and [`hash_math`] open a value with, so a test can
+/// check the tags themselves rather than whole keys
+/// (`tests/layout_cache_keys.rs`). Distinct variants have distinct
+/// discriminants by construction, so the mapping is injective for free --
+/// which is the point of it replacing the hand-written numbers.
+#[inline]
+pub fn kind_tag<T>(value: &T) -> std::mem::Discriminant<T> {
+    std::mem::discriminant(value)
+}
+
 /// Hashes the items with offsets relative to `base`.
+///
+/// The stream is self-delimiting: every sequence is length-prefixed and
+/// every element opens with its kind tag, so no two distinct item lists
+/// share a byte stream.
 pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
+    items.len().hash(h);
     for it in items {
+        tag(it, h);
         match it {
             Item::Word(w) => {
-                0u8.hash(h);
+                w.segments.len().hash(h);
                 for seg in &w.segments {
                     seg.text.hash(h);
                     seg.style.bold.hash(h);
@@ -277,7 +310,6 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 }
             }
             Item::Space { style, factor, no_break } => {
-                1u8.hash(h);
                 style.bold.hash(h);
                 style.italic.hash(h);
                 (style.slanted, style.caps, style.family, style.undefined).hash(h);
@@ -286,61 +318,55 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 no_break.hash(h);
             }
             Item::Math { list, span } => {
-                2u8.hash(h);
                 hash_math(list, h);
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
             }
             Item::LineBreak { skip_pt } => {
-                3u8.hash(h);
                 skip_pt.to_bits().hash(h);
             }
-            Item::Quad { em } => {
+            Item::Quad { em, style } => {
                 4u8.hash(h);
                 em.to_bits().hash(h);
+                (style.bold, style.italic, style.size_cpt, style.medium).hash(h);
+                (style.slanted, style.caps, style.family, style.undefined).hash(h);
             }
             Item::Label { key } => {
-                5u8.hash(h);
                 key.hash(h);
             }
-            Item::ItalicCorrection => 6u8.hash(h),
-            Item::NoteParBreak => 200u8.hash(h),
-            Item::HFill { fill, leader } => {
-                7u8.hash(h);
+            // The tag is the whole payload.
+            Item::ItalicCorrection => {}
+            Item::NoteParBreak => {}
+            Item::HFill { fill, leader, style } => {
                 fill.hash(h);
                 leader.hash(h);
+                style.hash(h);
             }
             Item::HSpace { pt, stretch_pt, shrink_pt } => {
-                8u8.hash(h);
                 pt.to_bits().hash(h);
                 stretch_pt.to_bits().hash(h);
                 shrink_pt.to_bits().hash(h);
             }
             Item::Logo { logo, style, span } => {
-                9u8.hash(h);
                 logo.hash(h);
                 style.hash(h);
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
             }
             Item::Rule { rule, style, span } => {
-                10u8.hash(h);
                 rule.hash(h);
                 style.hash(h);
                 (span.start.wrapping_sub(base)).hash(h);
                 (span.end.wrapping_sub(base)).hash(h);
             }
             Item::Kern { amount, style } => {
-                11u8.hash(h);
                 amount.hash(h);
                 style.hash(h);
             }
             Item::Table(t) => {
-                9u8.hash(h);
                 format!("{t:?}").hash(h);
             }
             Item::Footnote { number, mark, span, text } => {
-                10u8.hash(h);
                 number.hash(h);
                 mark.hash(h);
                 (span.start.wrapping_sub(base)).hash(h);
@@ -351,18 +377,15 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 }
             }
             Item::ColorBox(b) => {
-                11u8.hash(h);
                 format!("{b:?}").hash(h);
             }
             Item::Lap { items } => {
-                202u8.hash(h);
                 hash_items(items, base, h);
             }
             Item::Underline(u) => {
-                12u8.hash(h);
                 format!("{u:?}").hash(h);
             }
-            Item::LeaveVmode => 201u8.hash(h),
+            Item::LeaveVmode => {}
         }
     }
 }
@@ -371,30 +394,25 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
 pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
     list.atoms.len().hash(h);
     for a in &list.atoms {
+        tag(&a.nucleus, h);
         match &a.nucleus {
             Nucleus::Symbol(s) => {
-                0u8.hash(h);
                 s.hash(h);
             }
             Nucleus::Rule(rule) => {
-                15u8.hash(h);
                 rule.hash(h);
             }
             Nucleus::Fraction { numerator, denominator } => {
-                1u8.hash(h);
                 hash_math(numerator, h);
                 hash_math(denominator, h);
             }
             Nucleus::Radical(r) => {
-                2u8.hash(h);
                 hash_math(r, h);
             }
             Nucleus::Text(s) => {
-                3u8.hash(h);
                 s.hash(h);
             }
             Nucleus::Space { em, .. } => {
-                4u8.hash(h);
                 em.to_bits().hash(h);
                 #[cfg(feature = "amsmath-inline")]
                 if let Nucleus::Space { font_em, .. } = &a.nucleus {
@@ -402,7 +420,6 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                 }
             }
             Nucleus::Matrix { rows, columns, left, right } => {
-                5u8.hash(h);
                 columns.hash(h);
                 left.hash(h);
                 right.hash(h);
@@ -415,16 +432,13 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                 }
             }
             Nucleus::Bold(s) => {
-                6u8.hash(h);
                 s.hash(h);
             }
             Nucleus::Framed { body, frame } => {
-                7u8.hash(h);
                 (*frame as u8).hash(h);
                 hash_math(body, h);
             }
             Nucleus::Stacked { base, over, under } => {
-                8u8.hash(h);
                 hash_math(base, h);
                 for part in [over, under] {
                     match part {
@@ -437,14 +451,12 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
                 }
             }
             Nucleus::Accent { accent, body } => {
-                9u8.hash(h);
                 accent.command().hash(h);
                 hash_math(body, h);
             }
             // `\big(`..`\Bigg)` and `\left`/`\right` (pin `d416472a`): the
             // glyph, its cmex10 step and the delimiter role all drive layout.
             Nucleus::SizedDelimiter { glyph, scale, role } => {
-                10u8.hash(h);
                 glyph.hash(h);
                 scale.to_bits().hash(h);
                 (*role as u8).hash(h);
@@ -454,12 +466,10 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
             // re-reads from the source bytes (`typeset::class_override_of`);
             // the block key already covers those bytes.
             Nucleus::Group(body) => {
-                11u8.hash(h);
                 hash_math(body, h);
             }
             #[cfg(feature = "amsmath-inline")]
             Nucleus::GenFraction { numerator, denominator, thickness_pt, left, right, style } => {
-                12u8.hash(h);
                 hash_math(numerator, h);
                 hash_math(denominator, h);
                 thickness_pt.map(f64::to_bits).hash(h);
@@ -469,20 +479,17 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
             }
             #[cfg(feature = "amsmath-inline")]
             Nucleus::Phantom { body, horizontal, vertical } => {
-                13u8.hash(h);
                 horizontal.hash(h);
                 vertical.hash(h);
                 hash_math(body, h);
             }
             #[cfg(feature = "amsmath-inline")]
             Nucleus::Operator { body, limits } => {
-                14u8.hash(h);
                 limits.hash(h);
                 hash_math(body, h);
             }
             #[cfg(feature = "amsmath-inline")]
             Nucleus::SubArray { rows, align } => {
-                15u8.hash(h);
                 align.hash(h);
                 rows.len().hash(h);
                 for r in rows {
@@ -491,7 +498,6 @@ pub fn hash_math(list: &MathList, h: &mut DefaultHasher) {
             }
             #[cfg(feature = "amsmath-inline")]
             Nucleus::ExtArrow { arrow, above, below } => {
-                16u8.hash(h);
                 arrow.hash(h);
                 hash_math(above, h);
                 hash_math(below, h);

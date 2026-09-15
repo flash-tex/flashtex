@@ -927,12 +927,20 @@ pub fn paginate(
     let mut markers: Vec<(usize, usize)> = Vec::new();
     for (f, spec) in specs.iter().enumerate() {
         let at = spec.span;
+        // The last block read before the float: by reading order when the
+        // project has one (a float in the entry file after an `\include`
+        // follows that file's blocks), else within the float's document.
+        let position = |s: Span| crate::adapter::reading_position(&ctx.reading_order, s.document, s.start);
+        let float_at = position(at);
         let mut after_block = None;
         for (bi, b) in blocks.iter().enumerate().take(text_blocks) {
-            if let Some(first) = block_source(ctx, b, 0..b.items.len()).into_iter().find(|s| s.document == at.document) {
-                if first.start < at.start {
-                    after_block = Some(bi);
-                }
+            let sources = block_source(ctx, b, 0..b.items.len());
+            let before = match float_at {
+                Some(float_at) => sources.iter().find_map(|s| position(*s)).is_some_and(|p| p < float_at),
+                None => sources.iter().find(|s| s.document == at.document).is_some_and(|first| first.start < at.start),
+            };
+            if before {
+                after_block = Some(bi);
             }
         }
         let index = match after_block {

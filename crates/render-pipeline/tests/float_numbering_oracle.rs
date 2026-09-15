@@ -9,6 +9,11 @@
 //! print the reference label, on the reference page, within 1 pt (bp) of
 //! the reference caption start, and every `\ref` must resolve to the same
 //! value.
+//!
+//! A `NN-*/` directory is a multi-file project (`main.tex` plus the files
+//! it `\include`s or `\input`s), handed over in file-name order rather
+//! than reading order, so the numbers must follow the resolved source
+//! order, `\includeonly` included.
 
 mod common;
 
@@ -51,17 +56,29 @@ fn float_numbers_match_pdflatex() {
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .unwrap()
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
-        .filter(|n| n.ends_with(".tex") && n.as_bytes()[0].is_ascii_digit())
+        .filter(|n| n.as_bytes()[0].is_ascii_digit() && (n.ends_with(".tex") || std::path::Path::new(&format!("{dir}/{n}")).is_dir()))
         .collect();
     names.sort();
-    assert_eq!(names.len(), 4, "expected 4 float-numbering fixtures");
+    assert_eq!(names.len(), 7, "expected 7 float-numbering fixtures");
     let fonts = FontSet::with_default_dirs(&[]);
     let options = RenderOptions { project_root: Some(dir.into()), ..RenderOptions::default() };
     let mut failures = Vec::new();
     for name in &names {
-        let tex = std::fs::read_to_string(format!("{dir}/{name}")).unwrap();
-        let reference = json::parse(&std::fs::read_to_string(format!("{dir}/reference/{}", name.replace(".tex", ".json"))).unwrap()).unwrap();
-        let r = render(&[SourceDocument { path: "main.tex", text: &tex }], "main.tex", 1, "float-numbering", &fonts, &options);
+        let reference = json::parse(&std::fs::read_to_string(format!("{dir}/reference/{}.json", name.trim_end_matches(".tex"))).unwrap()).unwrap();
+        let files: Vec<(String, String)> = if name.ends_with(".tex") {
+            vec![("main.tex".to_string(), std::fs::read_to_string(format!("{dir}/{name}")).unwrap())]
+        } else {
+            let mut files: Vec<(String, String)> = std::fs::read_dir(format!("{dir}/{name}"))
+                .unwrap()
+                .filter_map(|e| e.ok()?.file_name().into_string().ok())
+                .filter(|f| f.ends_with(".tex"))
+                .map(|f| (f.clone(), std::fs::read_to_string(format!("{dir}/{name}/{f}")).unwrap()))
+                .collect();
+            files.sort();
+            files
+        };
+        let docs: Vec<SourceDocument<'_>> = files.iter().map(|(path, text)| SourceDocument { path, text }).collect();
+        let r = render(&docs, "main.tex", 1, "float-numbering", &fonts, &options);
         let runs = runs(&r);
         let ref_pages = num(&reference, "pages") as usize;
         if r.v2.pages.len() != ref_pages {

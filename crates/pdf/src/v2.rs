@@ -33,7 +33,7 @@
 //!   `opentype-cff` (the pipeline's documented deviation from the schema
 //!   token) or `static-truetype`; `core14-afm` has no bytes and is refused
 //!   when a run uses it.
-//! - `rule` items become `Op::rule`. Paint must be opaque; black is the
+//! - `rule` items become `Op::rule`. Black is the
 //!   default fill, any other opaque sRGB colour is written as `rg` with each
 //!   component rounded to [`COLOR_DECIMAL_DIGITS`] (xcolor's precision:
 //!   pdflatex writes `\definecolor{c}{RGB}{20,80,170}` as `0.07843 0.31374
@@ -41,14 +41,29 @@
 //! - `path_fill` / `path_stroke` items (TikZ, proposal path-v0) become
 //!   `q [colour] [clip path W n]… [w M d J j] path f|f*|S Q`, in the operator
 //!   order pgf's pdfTeX driver writes (measured, pdflatex 1.40: `1 0 0 rg 1 0
-//!   0 RG`, `4.98138 w`, `4.5 M`, `[…] 0.0 d`, `1 J`, `2 j`, path, `S`). Path
+//!   0 RG`, `/pgf@CA0.4 gs`, `4.98138 w`, `4.5 M`, `[…] 0.0 d`, `1 J`, `2 j`,
+//!   path, `S`). Path
 //!   coordinates are exact tick decimals like every other coordinate here;
 //!   `M` is written only when the limit differs from PDF's default 10, `J`
 //!   and `j` only when not butt/miter, `d` only for a dashed line.
+//! - A paint alpha below 1 selects pgf's ExtGState right after the colour,
+//!   inside the item's `q … Q` (measured, pdflatex 1.40 with pgf: `\fill[red,
+//!   fill opacity=.3]` is `q 1 0 0 rg 1 0 0 RG /pgf@ca0.3 gs … f Q`, the page
+//!   resources `/pgf@ca0.3 << /ca 0.3 >>`): `path_stroke` sets the stroking
+//!   alpha (`/pgf@CA<a>`, `draw opacity`), `path_fill`, `rule` and
+//!   `glyph_run` the non-stroking one (`/pgf@ca<a>`, `fill`/`text opacity`).
+//!   The display list carries one alpha per item, so TikZ's `opacity=` (pgf
+//!   writes both states) sets only the one the item paints with; the other
+//!   would not change a pixel. The value is rounded like a colour component.
 //! - Cluster ActualText is reduced to a per-glyph ToUnicode entry (the
 //!   cluster's text); a glyph seen with two different texts keeps the first
 //!   and the report says so. Marked-content `/ActualText` is outside the
-//!   bounded operator set.
+//!   bounded operator set. Only a cluster of *one* glyph names that glyph's
+//!   text: the three periods of an ellipsis share the cluster `…`, and
+//!   mapping the period glyph to `…` would make every period of the document
+//!   extract as `…` (and the ellipsis as `………`). A glyph seen only in
+//!   clusters of several glyphs takes the character the font's own `cmap`
+//!   maps to it (`.`, as pdfTeX's `. . .` extracts), else the cluster text.
 //! - `image` items (`display-list-v2-images`,
 //!   `protocol/proposals/display-list-v2-image.md`) need
 //!   a project root ([`from_v2_rooted`]): the file is read under it without following
@@ -279,6 +294,8 @@ struct Paint {
     /// fill then stroke (`pdftex.def`: `r g b rg r g b RG`); an sRGB paint
     /// becomes an exact `rg`.
     ops: Option<Vec<Op>>,
+    /// The paint's alpha when below 1, rounded like a colour component.
+    alpha: Option<Decimal>,
 }
 
 /// `paint.device_color`: `{"space": "rgb"|"cmyk"|"gray", "values": [..]}`
@@ -327,22 +344,18 @@ fn device_color(v: &Value, what: &str) -> Result<Vec<Op>, String> {
 
 fn paint(v: Option<&Value>, what: &str) -> Result<Paint, String> {
     let Some(p) = v else {
-        return Ok(Paint { ops: None });
+        return Ok(Paint { ops: None, alpha: None });
     };
-    let a = f(p.get("a"), &format!("{what}.paint.a"))?;
-    if a != 1.0 {
-        return Err(format!(
-            "{what}: paint alpha {a} is not 1; alpha needs an ExtGState, which is outside the bounded operator set"
-        ));
-    }
+    let a = unit_component(f(p.get("a"), &format!("{what}.paint.a"))?, &format!("{what}.paint.a"))?;
+    let alpha = (a.as_str() != "1").then_some(a);
     if let Some(dc) = p.get("device_color") {
-        return Ok(Paint { ops: Some(device_color(dc, &format!("{what}.paint"))?) });
+        return Ok(Paint { ops: Some(device_color(dc, &format!("{what}.paint"))?), alpha });
     }
     let r = f(p.get("r"), &format!("{what}.paint.r"))?;
     let g = f(p.get("g"), &format!("{what}.paint.g"))?;
     let b = f(p.get("b"), &format!("{what}.paint.b"))?;
     if r == 0.0 && g == 0.0 && b == 0.0 {
-        return Ok(Paint { ops: None });
+        return Ok(Paint { ops: None, alpha });
     }
     Ok(Paint {
         ops: Some(vec![Op::FillRgb([
@@ -350,6 +363,7 @@ fn paint(v: Option<&Value>, what: &str) -> Result<Paint, String> {
             unit_component(g, what)?,
             unit_component(b, what)?,
         ])]),
+        alpha,
     })
 }
 
@@ -520,6 +534,10 @@ pub fn from_v2_rooted(
     struct Used {
         gids: BTreeSet<u16>,
         to_unicode: BTreeMap<u16, String>,
+        /// The first text of a cluster of several glyphs each glyph was
+        /// seen in; used only for glyphs with no one-glyph cluster and no
+        /// `cmap` character.
+        shared: BTreeMap<u16, String>,
         conflicts: usize,
         /// Observed `advance_x` per glyph as a reduced ratio in 1000/em
         /// (`advance_x * 1000 / font_size`), with occurrence counts. The
@@ -540,6 +558,7 @@ pub fn from_v2_rooted(
             resource: String,
             size_ticks: i128,
             color: Option<Vec<Op>>,
+            alpha: Option<Decimal>,
             glyphs: Vec<Glyph>,
         },
         Ops(Vec<Op>),
@@ -591,14 +610,21 @@ pub fn from_v2_rooted(
                     let u = used.entry(font_id.to_string()).or_insert_with(|| Used {
                         gids: BTreeSet::new(),
                         to_unicode: BTreeMap::new(),
+                        shared: BTreeMap::new(),
                         conflicts: 0,
                         advances: BTreeMap::new(),
                     });
                     let mut glyphs = Vec::new();
-                    for (gi, gv) in arr(iv.get("glyphs"), &format!("{iw}.glyphs"))?
-                        .iter()
-                        .enumerate()
-                    {
+                    let glyph_values = arr(iv.get("glyphs"), &format!("{iw}.glyphs"))?;
+                    // Glyphs per cluster index (out-of-range indices are
+                    // refused below, glyph by glyph).
+                    let mut cluster_glyphs: BTreeMap<usize, usize> = BTreeMap::new();
+                    for gv in glyph_values.iter() {
+                        if let Some(c) = gv.get("cluster").and_then(|c| c.as_f64()) {
+                            *cluster_glyphs.entry(c as usize).or_default() += 1;
+                        }
+                    }
+                    for (gi, gv) in glyph_values.iter().enumerate() {
                         let gw = format!("{iw}.glyphs[{gi}]");
                         let gid = f(gv.get("gid"), &format!("{gw}.gid"))?;
                         if gid.fract() != 0.0 || !(0.0..=65535.0).contains(&gid) {
@@ -628,11 +654,15 @@ pub fn from_v2_rooted(
                         let b = f(cv.get("text_end_byte"), "cluster.text_end_byte")? as usize;
                         let cluster_text = text.get(a..b).unwrap_or("").to_string();
                         if let Some(t) = text.get(a..b) {
-                            match u.to_unicode.get(&gid) {
-                                Some(prev) if prev != t => u.conflicts += 1,
-                                Some(_) => {}
-                                None => {
-                                    u.to_unicode.insert(gid, t.to_string());
+                            if cluster_glyphs.get(&cluster).copied().unwrap_or(0) > 1 {
+                                u.shared.entry(gid).or_insert_with(|| t.to_string());
+                            } else {
+                                match u.to_unicode.get(&gid) {
+                                    Some(prev) if prev != t => u.conflicts += 1,
+                                    Some(_) => {}
+                                    None => {
+                                        u.to_unicode.insert(gid, t.to_string());
+                                    }
                                 }
                             }
                         }
@@ -665,6 +695,7 @@ pub fn from_v2_rooted(
                         resource: entry.resource.clone(),
                         size_ticks: size,
                         color: pt.ops.clone(),
+                        alpha: pt.alpha.clone(),
                         glyphs,
                     });
                 }
@@ -677,12 +708,14 @@ pub fn from_v2_rooted(
                         return Err(format!("{iw}: rule {w}x{h} ticks is not positive"));
                     }
                     let mut ops = Vec::new();
-                    if let Some(color) = &pt.ops {
+                    let state = pt.ops.is_some() || pt.alpha.is_some();
+                    if state {
                         ops.push(Op::Save);
-                        ops.extend(color.iter().cloned());
+                        ops.extend(pt.ops.iter().flatten().cloned());
+                        ops.extend(pt.alpha.clone().map(Op::FillAlpha));
                     }
                     ops.extend(Op::rule(bp(x)?, bp(height - top - h)?, bp(w)?, bp(h)?));
-                    if pt.ops.is_some() {
+                    if state {
                         ops.push(Op::Restore);
                     }
                     report.rules += 1;
@@ -697,6 +730,13 @@ pub fn from_v2_rooted(
                     let mut ops = vec![Op::Save];
                     if let Some(color) = &pt.ops {
                         ops.extend(fill_and_stroke(color));
+                    }
+                    if let Some(a) = &pt.alpha {
+                        ops.push(if kind == "path_fill" {
+                            Op::FillAlpha(a.clone())
+                        } else {
+                            Op::StrokeAlpha(a.clone())
+                        });
                     }
                     let clips = match iv.get("clips") {
                         None => &[][..],
@@ -914,8 +954,14 @@ pub fn from_v2_rooted(
                 entry.postscript_name, entry.format
             ));
         }
+        let mut to_unicode = u.to_unicode.clone();
+        for (gid, text) in &u.shared {
+            to_unicode
+                .entry(*gid)
+                .or_insert_with(|| font.char_for_glyph(*gid).map_or_else(|| text.clone(), String::from));
+        }
         let (mut exact, outcome, note) =
-            ExactFont::cid_from_opentype(&font, &u.gids, u.to_unicode.clone())
+            ExactFont::cid_from_opentype(&font, &u.gids, to_unicode)
                 .map_err(|e| e.to_string())?;
         let replaced = apply_display_widths(&mut exact, &u.advances);
         if replaced > 0 {
@@ -1019,7 +1065,7 @@ pub fn from_v2_rooted(
         // boundaries an extractor reads from geometry.
         let mut last: Option<(i128, i128, i128, String)> = None;
         for item in items {
-            let (resource, size_ticks, color, glyphs) = match item {
+            let (resource, size_ticks, color, alpha, glyphs) = match item {
                 Pending::Ops(o) => {
                     ops.extend(o);
                     continue;
@@ -1039,8 +1085,9 @@ pub fn from_v2_rooted(
                     resource,
                     size_ticks,
                     color,
+                    alpha,
                     glyphs,
-                } => (resource, size_ticks, color, glyphs),
+                } => (resource, size_ticks, color, alpha, glyphs),
             };
             let widths = cid_widths(&exact_fonts[&resource]);
             let mut placed = Vec::with_capacity(glyphs.len());
@@ -1114,9 +1161,10 @@ pub fn from_v2_rooted(
                 glyphs: placed,
             };
             let run_ops = run.to_ops().map_err(|e| e.to_string())?;
-            if let Some(color) = color {
+            if color.is_some() || alpha.is_some() {
                 ops.push(Op::Save);
-                ops.extend(color);
+                ops.extend(color.into_iter().flatten());
+                ops.extend(alpha.map(Op::FillAlpha));
                 ops.extend(run_ops);
                 ops.push(Op::Restore);
             } else {

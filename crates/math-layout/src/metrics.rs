@@ -192,9 +192,11 @@ pub trait MathFontMetrics {
     /// TeX's `make_ord` (tex.web §752) for an ordinary character `left`
     /// without scripts followed by the character `right` of an Ord..Punct
     /// atom: `None` unless both are in the same math family; otherwise the
-    /// kern the family's font program puts between them at `size` and
-    /// whether that font is a text font. Providers without lig/kern data
-    /// keep the default, which never kerns.
+    /// kern or ligature the family's font program puts between them at
+    /// `size` and whether that font is a text font. The same question is
+    /// asked between the characters of a [`Nucleus::Text`](crate::Nucleus::Text)
+    /// run (`MathChar::Text` pairs). Providers without lig/kern data keep
+    /// the default, which never kerns or ligatures.
     fn ord_pair(&self, _left: MathChar, _right: MathChar, _size: SizeClass) -> Option<OrdPair> {
         None
     }
@@ -214,12 +216,29 @@ pub enum MathChar {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OrdPair {
     /// The font kern appended after the left character, in points; 0 when
-    /// the pair has no kern instruction (or a ligature, which is not formed).
+    /// the pair has no kern instruction or a ligature instruction.
     pub kern: f64,
     /// The family's font has a nonzero interword space (fontdimen 2), so
     /// TeX drops the left character's italic correction (§755: "no italic
     /// correction in mid-word of text font"). False for cmmi and cmsy.
     pub text_font: bool,
+    /// The pair's program instruction is a ligature (cmr `f` `i`); `kern`
+    /// is then 0. `None` for a kern or no instruction.
+    pub ligature: Option<OrdLigature>,
+}
+
+/// A ligature instruction of a font's lig/kern program, as `make_ord`
+/// applies it between two math characters (tex.web §752-§753).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OrdLigature {
+    /// The TFM op byte (tex.web §545): 0 `=:` replaces both characters, 1
+    /// `=:|` the left one, 2 `|=:` the right one, 3 `|=:|` inserts the
+    /// ligature between them; 5, 6, 7 and 11 are the `>` forms, after which
+    /// `make_ord` stops instead of retrying the new pair.
+    pub op: u8,
+    /// The ligature character, of the same kind (symbol or text character)
+    /// as the pair, so the provider's `glyph`/`text_glyph` boxes it.
+    pub ch: MathChar,
 }
 
 /// The subset of OpenType `MathConstants` (font units) needed to derive TeX's

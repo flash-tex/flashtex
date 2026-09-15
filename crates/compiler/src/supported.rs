@@ -156,6 +156,7 @@ const EXPANSION_COMMANDS: &[(&str, &str, &str)] = &[
     ("space", "", "expands to one space"),
     ("ignorespaces", "", "skips the spaces that follow"),
     ("jobname", "", "expands to texput"),
+    ("ifthenelse", "{test}{true}{false}", "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time"),
 ];
 
 /// (name, arguments, description) for every `parser::BUILT_INS` entry that
@@ -196,7 +197,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("subsection", "{...}", "numbered subsection heading; starred form unnumbered"),
     ("label", "{key}", "names the current section, equation or figure number"),
     ("ref", "{key}", "number of the labelled item"),
-    ("pageref", "{key}", "page number of the labelled item"),
+    ("pageref", "{key}", "page number of the labelled item, in the \\pagenumbering style in force at the label"),
+    ("thepage", "", "current page's number, resolved when the page is set, in the \\pagenumbering style in force here"),
     ("cref", "*{key list}", "cleveref lower-case named references; consecutive ranges are compressed"),
     ("Cref", "*{key list}", "cleveref capitalised named references; consecutive ranges are compressed"),
     ("crefrange", "*{first}{last}", "cleveref named reference range"),
@@ -207,6 +209,11 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("crefname", "{type}{singular}{plural}", "cleveref lower-case singular and plural name override"),
     ("Crefname", "{type}{singular}{plural}", "cleveref capitalised singular and plural name override"),
     ("caption", "{...}", "numbered \"Figure N:\" caption inside figure"),
+    (
+        "captionof",
+        "{type}[short]{...}",
+        "numbered caption outside a float: \"Figure N:\" for figure, \"Table N:\" for table",
+    ),
     ("item", "[label]", "entry of an itemize, enumerate or description list"),
     ("textbf", "{...}", "bold text"),
     ("textmd", "{...}", "medium-weight text"),
@@ -253,6 +260,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("dotfill", "", "\\hfill filled with dots in 0.44em boxes, centred (latex.ltx \\cleaders)"),
     ("hfil", "", "infinite-stretch horizontal glue (same order as \\hfill)"),
     ("hspace", "{dimension}", "fixed horizontal space; starred form identical"),
+    ("hskip", "<glue>", "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll"),
     ("quad", "", "1em of horizontal space"),
     ("qquad", "", "2em of horizontal space"),
     ("bigskip", "", "ends the paragraph and adds 12pt of vertical space"),
@@ -280,6 +288,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("footnotemark", "[n]", "footnote mark only"),
     ("footnotetext", "[n]{...}", "footnote text without a mark"),
     ("fnsymbol", "{counter}", "a counter's value 1-9 as a footnote symbol"),
+    ("marginpar", "[left]{right}", "margin note set in the right margin at footnotesize; always the right side, with no collision avoidance between close notes"),
     ("includegraphics", "*[keys]{file}", "image box in running text (graphicx keys as written)"),
     ("scalebox", "{x}[y]{...}", "graphics.sty scaled box of the content"),
     ("resizebox", "*{width}{height}{...}", "graphics.sty box scaled to a width and/or height; ! keeps the aspect ratio"),
@@ -287,6 +296,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("reflectbox", "{...}", "graphics.sty box mirrored left to right"),
     ("graphicspath", "{{dir/}...}", "image search directories; no material"),
     ("allowdisplaybreaks", "[0-4]", "amsmath page-break permission inside displays; no material"),
+    ("index", "{entry}", "makeidx index entry (|modifier, @sort key and !subentry live inside the braces): accepted, never typeset (no indexing backend)"),
+    ("glossary", "{entry}", "glossary entry: accepted, never typeset (no glossary backend)"),
     ("clearpage", "", "forces a page break"),
     ("cleardoublepage", "", "forces a page break (one-sided article)"),
     ("c", "{letter}", "cedilla text accent: the precomposed character the dfu tables declare (tex-text-encoding); without one the bare letter and a warning"),
@@ -309,6 +320,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("rule", "[raise]{dimension}{dimension}", "filled rule box; pt/in/cm/mm/bp/dd/cc/pc/sp, em, ex, \\textwidth, \\linewidth, \\columnwidth"),
     ("uline", "{...}", "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)"),
     ("underline", "{...}", "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox"),
+    ("underbar", "{...}", "kernel text underline: Rule 10 rule like \\underline but content depth zeroed (fixed position)"),
     ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
     ("thinspace", "", "text kern .16667em (math: thin muskip)"),
     ("negthinspace", "", "text kern -.16667em"),
@@ -319,17 +331,38 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("enspace", "", "text kern .5em"),
     ("enskip", "", "horizontal glue of .5em"),
     ("xspace", "", "word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"),
-    ("pagebreak", "[n]", "forces a page break"),
-    ("nopagebreak", "[n]", "accepted no-op; the layout never breaks there on its own"),
-    ("linebreak", "[n]", "line break"),
-    ("nolinebreak", "[n]", "accepted no-op"),
+    ("pagebreak", "[n]", "page-break penalty -\\@getpen{n} (4: a forced break); in a paragraph, after the line it is set on"),
+    ("nopagebreak", "[n]", "page-break penalty \\@getpen{n}; in a paragraph, after the line it is set on"),
+    ("linebreak", "[n]", "line-break penalty -\\@getpen{n} (4: a forced break, the line stays justified)"),
+    ("nolinebreak", "[n]", "line-break penalty \\@getpen{n}, the space before it moved after it"),
+    ("penalty", "<number>", "penalty node: in a paragraph a line-break penalty, between paragraphs a page-break penalty"),
+    ("nobreak", "", "\\penalty10000"),
+    ("allowbreak", "", "\\penalty0"),
+    ("goodbreak", "", "ends the paragraph, then \\penalty-500"),
+    ("filbreak", "", "ends the paragraph, then \\vfil\\penalty-200\\vfilneg"),
+    ("discretionary", "{pre}{post}{nobreak}", "discretionary break (plain text of each argument)"),
+    ("nobreakdash", "- -- ---", "amsmath: the dashes that follow, with no line break after them (\\nobreak)"),
+    ("tolerance", "=<number>", "line-breaking parameter, restored at the end of its group"),
+    ("pretolerance", "=<number>", "line-breaking parameter, restored at the end of its group"),
+    ("looseness", "=<number>", "line-breaking parameter for the next paragraph end"),
+    ("widowpenalty", "=<number>", "page-breaking parameter, restored at the end of its group"),
+    ("clubpenalty", "=<number>", "page-breaking parameter, restored at the end of its group"),
+    ("interlinepenalty", "=<number>", "page-breaking parameter, restored at the end of its group"),
+    ("emergencystretch", "=<dimen>", "line-breaking parameter, restored at the end of its group"),
+    ("sloppy", "", "\\tolerance 9999, \\emergencystretch 3em, \\hfuzz .5pt"),
+    ("fussy", "", "\\tolerance 200, \\emergencystretch 0pt, \\hfuzz .1pt"),
+    ("samepage", "", "\\interlinepenalty 10000 for the rest of the group"),
+    ("raggedbottom", "", "pages keep their natural height"),
+    ("flushbottom", "", "pages are stretched to the text height"),
+    ("enlargethispage", "*{dimension}", "the current page's text height grows by the dimension (* also shrinks its glue); pt/cm/.../\\baselineskip multiples"),
+    ("hyphenation", "{words}", "hyphenation exceptions: the hyphens mark each word's only break points"),
     ("vfill", "", "vertical glue filling the rest of the page"),
     ("columnbreak", "[n]", "multicol: ends the current column of multicols (priority n, default 4)"),
     ("newcolumn", "", "multicol: ends the current column of multicols, filling it"),
     ("raggedcolumns", "", "multicol: columns keep their natural height"),
     ("flushcolumns", "", "multicol: columns are stretched to one height (the default)"),
     ("thispagestyle", "{style}", "accepted; no headers or footers are rendered"),
-    ("pagenumbering", "{style}", "accepted; no page numbers are rendered"),
+    ("pagenumbering", "{style}", "resets the page counter to 1 and selects the \\thepage/\\pageref style (arabic, roman, Roman, alph, Alph); unknown styles fall back to arabic"),
     ("centering", "", "centres the following paragraphs"),
     ("Centering", "", "centres the following paragraphs (ragged2e form)"),
     ("raggedright", "", "left-aligned following paragraphs"),
@@ -337,14 +370,17 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("raggedleft", "", "right-aligned following paragraphs"),
     ("RaggedLeft", "", "right-aligned following paragraphs (ragged2e form)"),
     ("indent", "", "accepted; the first-line indent is diagnosed, not drawn"),
-    ("cite", "[note]{keys}", "numbered citation from thebibliography entries; natbib redefines it as \\citet, or as \\citep when an optional argument follows"),
+    ("cite", "[note]{keys}", "numbered citation from thebibliography entries, or biblatex's numeric citation when biblatex is loaded; natbib redefines it as \\citet, or as \\citep when an optional argument follows"),
+    ("parencite", "[pre][post]{keys}", "biblatex parenthetical citation: [n] in numeric style"),
+    ("textcite", "[pre][post]{keys}", "biblatex textual citation: Author [n] in numeric style"),
+    ("autocite", "[pre][post]{keys}", "biblatex automatic citation, equivalent to \\parencite in this compiler"),
     ("citet", "[pre][post]{keys}", "natbib textual citation: Name (Year); one optional argument is the post-note"),
     ("citep", "[pre][post]{keys}", "natbib parenthetical citation: (Name, Year); one optional argument is the post-note"),
     ("citealt", "[pre][post]{keys}", "natbib \\citet without the parentheses: Name Year"),
     ("citealp", "[pre][post]{keys}", "natbib \\citep without the parentheses: Name, Year"),
-    ("citeauthor", "[pre][post]{keys}", "natbib author list alone; the starred form is the long list"),
+    ("citeauthor", "[pre][post]{keys}", "natbib author list alone, or biblatex author text; the starred form is the long list"),
     ("citefullauthor", "[pre][post]{keys}", "natbib \\citeauthor*: the long author list"),
-    ("citeyear", "[pre][post]{keys}", "natbib year alone"),
+    ("citeyear", "[pre][post]{keys}", "natbib year alone, or biblatex year text"),
     ("citeyearpar", "[pre][post]{keys}", "natbib year in parentheses"),
     ("citenum", "[pre][post]{keys}", "natbib \\bibitem number alone, whatever the citation style"),
     ("citetext", "{text}", "natbib's citation delimiters around arbitrary text"),
@@ -353,7 +389,9 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("Citealt", "[pre][post]{keys}", "natbib \\citealt with the author list's first letter uppercased"),
     ("Citealp", "[pre][post]{keys}", "natbib \\citealp with the author list's first letter uppercased"),
     ("Citeauthor", "[pre][post]{keys}", "natbib \\citeauthor with the author list's first letter uppercased"),
-    ("nocite", "{keys}", "accepted no-op; there is no .bib pipeline"),
+    ("nocite", "{keys}", "biblatex includes keys, including * for every resource entry, without visible citation output"),
+    ("addbibresource", "[location]{file}", "biblatex registers a project-relative .bib resource"),
+    ("printbibliography", "[key=value,...]", "biblatex heading and formatted entries from the registered .bib resources"),
     ("bibitem", "[label]{key}", "entry of thebibliography; natbib's [Author(Year)] and [Author, Year] labels feed author-year citations"),
     ("bibliography", "{files}", "diagnosed: .bib input is not read"),
     ("bibliographystyle", "{style}", "diagnosed: no effect without .bib support"),
@@ -491,6 +529,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         &["phantom", "hphantom", "vphantom"],
         "{x}",
         "empty box with the width and/or height and depth of the argument",
+        true,
+    ),
+    (
+        &["mathllap", "mathrlap", "mathclap"],
+        "{x}",
+        "mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\\llap/\\rlap/\\clap); needs mathtools",
         true,
     ),
     (
@@ -647,9 +691,15 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
     ),
     (&["text"], "{text}", "literal text in math", true),
     (
-        &["boxed", "overline", "underline"],
+        &["boxed", "overline", "underline", "underbar"],
         "{...}",
-        "real rule around, over or under the body",
+        "real rule around, over or under the body (underbar works in math like underline)",
+        true,
+    ),
+    (
+        &["Aboxed"],
+        "{lhs rel rhs}",
+        "mathtools: real \\boxed rule around the whole row, keeping the relation as the shared alignment point",
         true,
     ),
     (
@@ -681,7 +731,7 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
     (&["bold"], "{text}", "obsolete amsfonts alias of \\mathbf", true),
     (
         &[
-            "hat", "bar", "vec", "tilde", "dot", "ddot", "acute", "grave",
+            "hat", "bar", "vec", "tilde", "dot", "ddot", "acute", "grave", "mathring",
         ],
         "{body}",
         "base-14 accent glyph centred over the body",
@@ -698,6 +748,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         "{body}",
         "parsed, but no base-14 glyph exists: diagnosed and typeset without a mark",
         false,
+    ),
+    (
+        &["dddot", "ddddot"],
+        "{body}",
+        "amsmath mathop-limits shape: three/four text dots centred above the body",
+        true,
     ),
     (
         &[
@@ -763,6 +819,11 @@ const CONTROL_SYMBOLS: &[(&str, Mode, &str)] = &[
         Mode::Text,
         "line break; an optional [length] is consumed",
     ),
+    (
+        "-",
+        Mode::Text,
+        "discretionary hyphen: a break point, invisible unless the line breaks there",
+    ),
     (",", Mode::Text, "text kern .16667em (\\thinspace)"),
     ("!", Mode::Text, "text kern -.16667em (\\negthinspace)"),
     (":", Mode::Text, "text kern .2222em (\\medspace)"),
@@ -805,6 +866,14 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("flalign", "rows aligned at &, each numbered"),
     ("flalign*", "rows aligned at &"),
     (
+        "eqnarray",
+        "three columns (right, centred, left) with 2\\arraycolsep gaps, each row numbered",
+    ),
+    (
+        "eqnarray*",
+        "three columns (right, centred, left) with 2\\arraycolsep gaps",
+    ),
+    (
         "multline",
         "multi-line display; only the last line is numbered",
     ),
@@ -814,12 +883,32 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
         "amsmath: displays inside number as the parent number plus a, b, ...; a \\label right after \\begin gets the parent number",
     ),
     ("figure", "numbered captions; no floating"),
+    (
+        "frame",
+        "rule-bordered box around its body (\\fboxsep padding, \\fboxrule rule in the current colour)",
+    ),
     ("center", "centred paragraphs"),
     ("flushleft", "left-aligned paragraphs"),
     ("flushright", "right-aligned paragraphs"),
     ("quote", "indented paragraphs"),
     ("quotation", "indented paragraphs"),
+    ("sloppypar", "a paragraph set with \\sloppy"),
+    ("samepage", "\\samepage for the body"),
+    ("tiny", "the tiny size for the environment body"),
+    ("scriptsize", "the scriptsize size for the environment body"),
+    ("footnotesize", "the footnotesize size for the environment body"),
+    ("small", "the small size for the environment body"),
+    ("normalsize", "the body size for the environment body"),
+    ("large", "the large size for the environment body"),
+    ("Large", "the Large size for the environment body"),
+    ("LARGE", "the LARGE size for the environment body"),
+    ("huge", "the huge size for the environment body"),
+    ("Huge", "the Huge size for the environment body"),
     ("verse", "indented lines; each \\\\ ends a line"),
+    (
+        "tabbing",
+        "tab stops: \\= sets a stop, \\> jumps right, \\\\ ends a row, \\kill ends a row silently (\\<, \\+ and \\- warn and are ignored)",
+    ),
     ("itemize", "bulleted list; article labels per depth, \\item[label]"),
     (
         "enumerate",
@@ -831,6 +920,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("verbatim", "literal monospaced lines"),
     ("verbatim*", "literal monospaced lines with visible spaces"),
     ("lstlisting", "literal monospaced lines (basic listings)"),
+    ("comment", "body discarded unread, even invalid commands inside (comment package)"),
     ("proof", "amsthm proof with a closing square"),
     (
         "thebibliography",
@@ -941,6 +1031,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; sort, compress, super and openbib are diagnosed",
     ),
     (
+        "biblatex",
+        "style=numeric, sorting=none, backend=biber",
+        "basic project-relative .bib resources with numeric citations, textcite/parencite/autocite, citeauthor/citeyear, nocite and printbibliography; authoryear labels are minimal, alphabetic warns",
+    ),
+    (
         "ulem",
         "normalem",
         "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined",
@@ -949,6 +1044,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "xspace",
         "",
         "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)",
+    ),
+    (
+        "ifthen",
+        "",
+        "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used",
     ),
 ];
 
@@ -1132,6 +1232,7 @@ pub fn inventory() -> Inventory {
         let fences = match (left, right) {
             ("", "") => String::new(),
             (l, "") => format!(" with a left {l}"),
+            ("", r) => format!(" with a right {r}"),
             (l, r) => format!(" in {l} {r}"),
         };
         let align = match align {
@@ -1522,4 +1623,29 @@ pub fn render_markdown(inventory: &Inventory) -> String {
     out.push_str(DOC_END);
     out.push('\n');
     out
+}
+
+#[cfg(test)]
+mod fence_description_tests {
+    use super::*;
+
+    /// A grid environment with no left delimiter and a real right one
+    /// (`rcases`'s exact shape, `("rcases", 'l', "", "}")`) must describe
+    /// only the right fence, not fall through to the two-sided `"in {l} {r}"`
+    /// arm with an empty `{l}` (which produced the malformed
+    /// `"...cells in  }"`, a stray double space before a lone brace).
+    #[test]
+    fn a_right_only_fence_describes_only_the_right_delimiter() {
+        let inventory = inventory();
+        let rcases = inventory
+            .environments
+            .iter()
+            .find(|e| e.name == "rcases")
+            .expect("rcases is in the inventory");
+        assert_eq!(
+            rcases.description,
+            "math grid, left-aligned cells with a right }"
+        );
+        assert!(!rcases.description.contains("  "), "{}", rcases.description);
+    }
 }

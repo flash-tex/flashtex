@@ -61,6 +61,12 @@ pub enum Piece {
     /// carried into every later run of the same float (its scope is the rest
     /// of the float box, which a `\caption` between them must not end).
     Align { span: Span, align: Align },
+    /// A size declaration (`\tiny` ... `\Huge`, `\normalsize`) at the body's
+    /// own level. Like [`Piece::Align`] its bytes stay in their run and are
+    /// carried into every later run: `\@caption` sets its box inside
+    /// `\begingroup ... \normalsize ... \endgroup` (latex.ltx), so a
+    /// `\small` before a `\caption` still sets the `tabular` after it.
+    Size { span: Span },
     /// `\includegraphics[options]{path}`; `span` covers the whole command.
     Graphic { span: Span, options: String, path: String },
     /// `\caption[...]{...}`: `span` covers the command, `arg` the argument's
@@ -125,11 +131,18 @@ pub fn placement_bits(placement: Option<&str>, starred: bool) -> Result<u32, Str
 }
 
 /// Finds every `figure`/`table` environment in the body of `text`.
+///
+/// Markup that only *spells* a float is skipped: a `%` comment, and the
+/// body of `verbatim`, `lstlisting`, `minted`, `comment`, `\verb|...|` or
+/// `\lstinline` (`adapter::opaque_regions`). pdflatex never reads those
+/// bytes as `\begin{figure}`, and `mask` must not blank them.
 pub fn scan(text: &str, document: DocumentId) -> Vec<FloatEnv> {
-    let body_start = find_uncommented(text, "\\begin{document}", 0).map_or(0, |p| p + "\\begin{document}".len());
+    let regions = crate::adapter::opaque_regions(text);
+    let find_uncommented = |needle: &str, from: usize| find_markup(text, needle, from, &regions);
+    let body_start = find_uncommented("\\begin{document}", 0).map_or(0, |p| p + "\\begin{document}".len());
     let mut out = Vec::new();
     let mut at = body_start;
-    while let Some(pos) = find_uncommented(text, "\\begin{", at) {
+    while let Some(pos) = find_uncommented("\\begin{", at) {
         let name_start = pos + "\\begin{".len();
         let Some(close) = text[name_start..].find('}') else { break };
         let name = &text[name_start..name_start + close];
@@ -143,7 +156,7 @@ pub fn scan(text: &str, document: DocumentId) -> Vec<FloatEnv> {
         };
         let mut cursor = name_start + close + 1;
         let end_tag = format!("\\end{{{name}}}");
-        let Some(end) = find_uncommented(text, &end_tag, cursor) else { break };
+        let Some(end) = find_uncommented(&end_tag, cursor) else { break };
         let mut placement = None;
         let rest = &text[cursor..end];
         let lead = rest.len() - rest.trim_start().len();
@@ -154,7 +167,17 @@ pub fn scan(text: &str, document: DocumentId) -> Vec<FloatEnv> {
             }
         }
         let before = &text[body_start..pos];
-        let hmode = !before.trim().is_empty() && !preceded_by_blank_line(before);
+        // A float right after another float (only spaces and one newline
+        // between) is in the same mode: the `\end{figure}` before it is no
+        // paragraph end, unlike a display environment's.
+        let after_float = out.last().filter(|p: &&FloatEnv| {
+            let gap = &text[p.span.end..pos];
+            gap.trim().is_empty() && gap.matches('\n').count() < 2
+        });
+        let hmode = match after_float {
+            Some(prev) => prev.hmode,
+            None => !before.trim().is_empty() && !preceded_by_blank_line(before),
+        };
         let pieces = pieces(text, cursor, end, document);
         out.push(FloatEnv {
             kind,
@@ -181,21 +204,33 @@ fn ends_with_env_end(s: &str) -> bool {
 
 /// `needle` at or after `from`, skipping `%` comments.
 fn find_uncommented(text: &str, needle: &str, from: usize) -> Option<usize> {
+    find_markup(text, needle, from, &[])
+}
+
+/// `needle` at or after `from` that TeX reads as markup: not in a `%`
+/// comment and not inside any of the sorted, disjoint `opaque` byte ranges
+/// (whose own `%` characters start no comment).
+fn find_markup(text: &str, needle: &str, from: usize, opaque: &[(usize, usize)]) -> Option<usize> {
+    let region = |i: usize| opaque.get(opaque.partition_point(|r| r.1 <= i)).filter(|r| r.0 <= i);
+    let inside = |i: usize| region(i).is_some();
     let mut at = from;
     while let Some(rel) = text.get(at..)?.find(needle) {
         let pos = at + rel;
+        if let Some(&(_, end)) = region(pos) {
+            at = end;
+            continue;
+        }
         let line_start = text[..pos].rfind('\n').map_or(0, |i| i + 1);
-        if !is_commented(&text[line_start..pos]) {
+        let b = text.as_bytes();
+        let commented = (line_start..pos).any(|i| {
+            b[i] == b'%' && !inside(i) && b[line_start..i].iter().rev().take_while(|&&c| c == b'\\').count() % 2 == 0
+        });
+        if !commented {
             return Some(pos);
         }
         at = pos + needle.len();
     }
     None
-}
-
-fn is_commented(line_prefix: &str) -> bool {
-    let b = line_prefix.as_bytes();
-    (0..b.len()).any(|i| b[i] == b'%' && (i == 0 || b[i - 1] != b'\\'))
 }
 
 /// The inner byte range of the balanced `{...}` group starting at `open`.
@@ -312,6 +347,13 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                         body!(i, name_end);
                         i = name_end;
                     }
+                    "tiny" | "scriptsize" | "footnotesize" | "small" | "normalsize" | "large" | "Large" | "LARGE" | "huge" | "Huge"
+                        if outer(braces, envs) =>
+                    {
+                        out.push(Piece::Size { span: span(i, name_end) });
+                        body!(i, name_end);
+                        i = name_end;
+                    }
                     "par" if run.is_none() => {
                         out.push(Piece::ParBreak);
                         i = name_end;
@@ -396,11 +438,40 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
 
 /// `text` with every float environment replaced by spaces (byte length and
 /// every other byte offset preserved).
+///
+/// A float alone on its line(s) would leave a line of spaces, which TeX
+/// reads as a blank line (`\par`). The float itself is no paragraph end: in
+/// `First.\n<figure>\nSecond.` pdflatex keeps one paragraph (the newline
+/// before the float is the space, `\@esphack` ignores the one after). So
+/// such a span starts with `%` instead, which comments out the rest of its
+/// line exactly as the float's own bytes left no blank line behind.
 pub fn mask(text: &str, floats: &[FloatEnv]) -> String {
     let mut bytes = text.as_bytes().to_vec();
     for f in floats {
-        for b in &mut bytes[f.span.start..f.span.end] {
+        let (start, end) = (f.span.start, f.span.end);
+        for b in &mut bytes[start..end] {
             *b = b' ';
+        }
+        let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
+        let line_end = text[end..].find('\n').map_or(text.len(), |i| end + i);
+        let blank = |s: &[u8]| s.iter().all(|b| b.is_ascii_whitespace());
+        let rest = &bytes[end..line_end];
+        let rest_is_empty = blank(rest) || rest.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'%');
+        // float.sty's `[H]` is no float: `\float@endH` ends the paragraph
+        // with `\par`, so its blank line stays.
+        let here_box = !f.starred && f.placement.as_deref() == Some("H");
+        // A float at the very tail of a file (only blanks and comments
+        // follow, so no `\end{document}`: an `\input`/`\include`d file)
+        // keeps the blank-line mask. `\include`'s closing `\clearpage`
+        // ends the paragraph in pdflatex, and a `%` here would leave it
+        // open across the file boundary, joining it with the entry
+        // document's next text (tests/include_float_lists.rs).
+        let file_tail = text[end..].lines().all(|l| {
+            let t = l.trim_start();
+            t.is_empty() || t.starts_with('%')
+        });
+        if start < end && !here_box && !file_tail && blank(&bytes[line_start..start]) && rest_is_empty {
+            bytes[start] = b'%';
         }
     }
     String::from_utf8(bytes).expect("ASCII spaces keep UTF-8 valid")
@@ -456,47 +527,42 @@ pub const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 /// `\refstepcounter{chapter}`. `\chapter*`, and book's `\chapter` outside
 /// `\mainmatter`, step nothing; `\appendix` sets the chapter counter to zero
 /// and `\thechapter` to `\@Alph`. The chapter commands are read from `texts`
-/// (the masked sources), in the same document order as the floats.
-pub fn number(envs: &[Vec<FloatEnv>], texts: &[&str], chapters: Option<bool>) -> (Vec<Vec<String>>, Vec<(String, String)>) {
-    use crate::adapter::{BodyKind, Matter};
-    let (mut figures, mut tables) = (0u32, 0u32);
-    let (mut chapter, mut appendix, mut mainmatter) = (0u32, false, true);
-    let mut numbers = Vec::new();
+/// (the masked sources). Floats and commands are taken in `order`
+/// ([`adapter::reading_order`]), so a float in the entry file after an
+/// `\include` whose file has its own `\chapter` is in that chapter. A
+/// float of a document never read (an `\includeonly`-excluded file) has no
+/// number and no label value.
+pub fn number(envs: &[Vec<FloatEnv>], texts: &[&str], order: &[Span], chapters: Option<bool>) -> (Vec<Vec<Option<String>>>, Vec<(String, String)>) {
+    let mut counters = Counters { figures: 0, tables: 0, chapter: 0, appendix: false, mainmatter: true };
+    let mut numbers: Vec<Vec<Option<String>>> = envs.iter().map(|doc| vec![None; doc.len()]).collect();
     let mut labels = Vec::new();
-    for (d, doc) in envs.iter().enumerate() {
-        let commands = match (chapters, texts.get(d)) {
-            (Some(book), Some(text)) => crate::adapter::body_commands(text, true, book),
+    let commands: Vec<Vec<adapter::BodyCommand>> = texts
+        .iter()
+        .enumerate()
+        .map(|(d, text)| match chapters {
+            Some(book) if order.iter().any(|s| s.document.0 == d) => adapter::body_commands(text, true, book),
             _ => Vec::new(),
-        };
-        let mut next = 0;
-        let mut nums = Vec::new();
-        for f in doc {
-            while let Some(cmd) = commands.get(next).filter(|c| c.start < f.span.start) {
-                next += 1;
-                match cmd.kind {
-                    BodyKind::Chapter { starred: false, .. } if mainmatter => {
-                        chapter += 1;
-                        figures = 0;
-                        tables = 0;
-                    }
-                    BodyKind::Appendix => {
-                        chapter = 0;
-                        appendix = true;
-                    }
-                    BodyKind::Matter(m) => mainmatter = m == Matter::Main,
-                    _ => {}
-                }
+        })
+        .collect();
+    for segment in order {
+        let d = segment.document.0;
+        let inside = |at: usize| (segment.start..segment.end).contains(&at);
+        let mut cmds = commands.get(d).into_iter().flatten().filter(|c| inside(c.start)).peekable();
+        for (fi, f) in envs.get(d).into_iter().flatten().enumerate().filter(|(_, f)| inside(f.span.start)) {
+            while let Some(cmd) = cmds.next_if(|c| c.start < f.span.start) {
+                counters.step(cmd);
             }
             let has_caption = f.pieces.iter().any(|p| matches!(p, Piece::Caption { .. }));
             let counter = match f.kind {
-                FloatKind::Figure => &mut figures,
-                FloatKind::Table => &mut tables,
+                FloatKind::Figure => &mut counters.figures,
+                FloatKind::Table => &mut counters.tables,
             };
             if has_caption {
                 *counter += 1;
             }
-            let value = if chapter > 0 {
-                let the_chapter = if appendix { flashtex_class_geometry::Numbering::UpperAlph.format(i64::from(chapter)) } else { chapter.to_string() };
+            let counter = *counter;
+            let value = if counters.chapter > 0 {
+                let the_chapter = if counters.appendix { flashtex_class_geometry::Numbering::UpperAlph.format(i64::from(counters.chapter)) } else { counters.chapter.to_string() };
                 format!("{the_chapter}.{counter}")
             } else {
                 counter.to_string()
@@ -510,11 +576,40 @@ pub fn number(envs: &[Vec<FloatEnv>], texts: &[&str], chapters: Option<bool>) ->
                     _ => {}
                 }
             }
-            nums.push(value);
+            numbers[d][fi] = Some(value);
         }
-        numbers.push(nums);
+        // The commands after the segment's last float reach the next one.
+        cmds.for_each(|cmd| counters.step(cmd));
     }
     (numbers, labels)
+}
+
+/// report/book's float counters as [`number`] steps them.
+struct Counters {
+    figures: u32,
+    tables: u32,
+    chapter: u32,
+    appendix: bool,
+    mainmatter: bool,
+}
+
+impl Counters {
+    fn step(&mut self, cmd: &adapter::BodyCommand) {
+        use crate::adapter::{BodyKind, Matter};
+        match cmd.kind {
+            BodyKind::Chapter { starred: false, .. } if self.mainmatter => {
+                self.chapter += 1;
+                self.figures = 0;
+                self.tables = 0;
+            }
+            BodyKind::Appendix => {
+                self.chapter = 0;
+                self.appendix = true;
+            }
+            BodyKind::Matter(m) => self.mainmatter = m == Matter::Main,
+            _ => {}
+        }
+    }
 }
 
 type Loaded = Result<(Rc<ImageResource>, ImageInfo), String>;
@@ -600,7 +695,7 @@ fn em_ex(body: f64) -> (f64, f64) {
 #[allow(clippy::too_many_arguments)]
 pub fn prepare(
     envs: &[Vec<FloatEnv>],
-    numbers: &[Vec<String>],
+    numbers: &[Vec<Option<String>>],
     documents: &[SourceDocument<'_>],
     entry_index: usize,
     texts: &[&str],
@@ -629,7 +724,8 @@ pub fn prepare(
         let path: Rc<str> = Rc::from(documents[d].path);
         let src = |span: Span| SourceRange { path: path.clone(), start_byte: span.start, end_byte: span.end };
         for (fi, f) in doc_envs.iter().enumerate() {
-            let number = numbers[d][fi].as_str();
+            // A float of a document never read is not set (`number`).
+            let Some(number) = numbers[d][fi].as_deref() else { continue };
             // `\figure*` is `\@dbflt` only `\if@twocolumn` (latex.ltx
             // 17419); in a one-column document the star does nothing.
             let wide = f.starred && twocolumn;
@@ -655,8 +751,8 @@ pub fn prepare(
             };
             let mut parts = Vec::new();
             let mut spec_labels = Vec::new();
-            // `\centering` and friends stay in force for the rest of the
-            // float box, so every later content run is parsed with them.
+            // `\centering`, `\small` and friends stay in force for the rest
+            // of the float box, so every later content run is parsed with them.
             let mut aligns: Vec<Span> = Vec::new();
             for piece in &f.pieces {
                 match piece {
@@ -664,6 +760,7 @@ pub fn prepare(
                         aligns.push(*span);
                         parts.push(FloatPart::Align(*align));
                     }
+                    Piece::Size { span } => aligns.push(*span),
                     Piece::ParBreak => parts.push(FloatPart::ParBreak),
                     Piece::Label { key, .. } => spec_labels.push(key.clone()),
                     Piece::Content { span } => {
@@ -924,6 +1021,23 @@ mod tests {
     }
 
     #[test]
+    fn a_size_declaration_is_carried_past_the_caption() {
+        let src = "\\begin{document}\n\\begin{table}\n\\centering\\small\n\\caption{C}\n\\begin{tabular}{l}\na\n\\end{tabular}\n{\\large x}\n\\end{table}\n\\end{document}\n";
+        let f = scan(src, DocumentId(0));
+        let sizes: Vec<&str> = f[0]
+            .pieces
+            .iter()
+            .filter_map(|p| match p {
+                Piece::Size { span } => Some(&src[span.start..span.end]),
+                _ => None,
+            })
+            .collect();
+        // `\small` is float-level; the `\large` inside a group is not.
+        assert_eq!(sizes, ["\\small"]);
+        assert!(matches!(&f[0].pieces[2], Piece::Content { span } if &src[span.start..span.end] == "\\centering\\small"));
+    }
+
+    #[test]
     fn a_command_inside_a_cell_does_not_cut_the_run() {
         let src = "\\begin{document}\n\\begin{table}\n\\centering\n\\begin{tabular}{ll}\nA\\label{r}& \\includegraphics{p.png}\\\\\n\\end{tabular}\n\\caption{C}\n\\end{table}\n\\end{document}\n";
         let f = scan(src, DocumentId(0));
@@ -947,5 +1061,72 @@ mod tests {
     fn a_float_inside_a_paragraph_is_horizontal_mode() {
         let src = "Some text\n\\begin{figure}\\caption{x}\\end{figure} more.";
         assert!(scan(src, DocumentId(0))[0].hmode);
+    }
+
+    #[test]
+    fn a_float_on_its_own_lines_is_masked_without_a_blank_line() {
+        let fig = "\\begin{figure}[h]\n\\caption{x}\n\\end{figure}";
+        let masked = |src: &str| mask(src, &scan(src, DocumentId(0)));
+        // Inside a paragraph: a comment line, not a line of spaces.
+        let src = format!("\\begin{{document}}\nFirst.\n  {fig}  \nSecond.\n");
+        let m = masked(&src);
+        assert_eq!(m.len(), src.len());
+        assert_eq!(m, format!("\\begin{{document}}\nFirst.\n  %{}  \nSecond.\n", " ".repeat(fig.len() - 1)));
+        // Text before or after on the same line keeps the line non-blank,
+        // so nothing may be commented out.
+        for src in [format!("\\begin{{document}}\nFirst. {fig}\nSecond.\n"), format!("\\begin{{document}}\nFirst.\n{fig} Second.\n")] {
+            let m = masked(&src);
+            assert!(!m.contains('%') && m.contains("Second.") && m.contains("First."), "{m:?}");
+        }
+        // Blank lines around the float are the document's own: still there.
+        let src = format!("\\begin{{document}}\nFirst.\n\n{fig}\n\nSecond.\n");
+        assert!(masked(&src).contains("First.\n\n%"));
+        // float.sty's `[H]` ends the paragraph in pdflatex: no `%`.
+        let src = format!("\\begin{{document}}\nFirst.\n{}\nSecond.\n", fig.replace("[h]", "[H]"));
+        assert!(!masked(&src).contains('%'));
+        // Two floats in a row inside a paragraph are both horizontal mode;
+        // after a blank line, both vertical.
+        let two = scan(&format!("\\begin{{document}}\nFirst.\n{fig}\n{fig}\nSecond.\n"), DocumentId(0));
+        assert!(two[0].hmode && two[1].hmode);
+        let two = scan(&format!("\\begin{{document}}\nFirst.\n\n{fig}\n{fig}\nSecond.\n"), DocumentId(0));
+        assert!(!two[0].hmode && !two[1].hmode);
+        // `wrapfigure` is not a float here: its bytes reach the compiler.
+        let src = "\\begin{document}\nFirst.\n\\begin{wrapfigure}{r}{1in}\nx\n\\end{wrapfigure}\nSecond.\n";
+        assert!(scan(src, DocumentId(0)).is_empty());
+    }
+
+    #[test]
+    fn markup_that_only_spells_a_float_is_not_one() {
+        let fig = "\\begin{figure}[h]\n\\caption{x}\n\\end{figure}";
+        let lookalikes = [
+            format!("\\begin{{verbatim}}\n{fig}\n\\end{{verbatim}}"),
+            format!("\\begin{{verbatim*}}\n{fig}\n\\end{{verbatim*}}"),
+            format!("\\begin{{lstlisting}}[language=TeX]\n{fig}\n\\end{{lstlisting}}"),
+            format!("\\begin{{minted}}{{latex}}\n{fig}\n\\end{{minted}}"),
+            format!("\\begin{{comment}}\n{fig}\n\\end{{comment}}"),
+            "Write \\verb|\\begin{figure}| and \\verb+\\end{figure}+.".to_string(),
+            "Write \\lstinline!\\begin{figure}\\end{figure}! here.".to_string(),
+            "% \\begin{figure}\\caption{x}\\end{figure}".to_string(),
+            "Text. % \\begin{figure}\n% \\end{figure}".to_string(),
+        ];
+        for body in lookalikes {
+            let src = format!("\\begin{{document}}\nFirst.\n{body}\nSecond.\n");
+            assert!(scan(&src, DocumentId(0)).is_empty(), "{src:?}");
+        }
+        // A real float right after a verbatim block that holds a lookalike:
+        // found once, vertical mode (after `\end{verbatim}`), and the
+        // verbatim bytes survive `mask` untouched.
+        let verbatim = format!("\\begin{{verbatim}}\n{fig}\n\\end{{verbatim}}");
+        let src = format!("\\begin{{document}}\nFirst.\n{verbatim}\n{fig}\nSecond.\n");
+        let found = scan(&src, DocumentId(0));
+        assert_eq!(found.len(), 1);
+        let real = src.rfind("\\begin{figure}").unwrap();
+        assert_eq!((found[0].span.start, found[0].hmode), (real, false));
+        assert!(mask(&src, &found).contains(&verbatim));
+        // A `%` inside `\verb` starts no comment, and `\\%` is a comment.
+        let src = format!("\\begin{{document}}\nFirst \\verb|%| {fig}\nSecond.\n");
+        assert_eq!(scan(&src, DocumentId(0)).len(), 1);
+        let src = format!("\\begin{{document}}\nFirst \\\\% {fig}\nSecond.\n");
+        assert!(scan(&src, DocumentId(0)).is_empty());
     }
 }

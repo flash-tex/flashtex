@@ -175,7 +175,8 @@ pub enum Nucleus {
     Radical(MathList),
     /// `\mathbf{...}`: literal text in the bold roman face.
     Bold(String),
-    /// `\boxed`, `\overline` and `\underline`: a list with real rules.
+    /// `\boxed`, `\overline`, `\underline` and (kernel, like `\underline`)
+    /// `\underbar`: a list with real rules.
     Framed {
         body: MathList,
         frame: Frame,
@@ -259,6 +260,24 @@ pub enum Nucleus {
         above: MathList,
         below: MathList,
     },
+    /// mathtools `\mathllap`/`\mathrlap`/`\mathclap` (`mathtools.sty`
+    /// 1539-1563): `{{}\llap{...}}`, `{{}\rlap{...}}`, `{{}\clap{...}}` —
+    /// `\hb@xt@\z@` boxes with zero advance whose ink is still painted,
+    /// hanging left (`\hss` after), right (`\hss` before) or centred
+    /// (`\hss` on both sides) on the current point. The opposite of
+    /// [`Nucleus::Phantom`], which reserves the width but paints nothing.
+    Lap { body: MathList, align: LapAlign },
+}
+
+/// Which side of the current point a [`Nucleus::Lap`] box's ink hangs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LapAlign {
+    /// `\mathllap`: `\llap` is `\hb@xt@\z@{\hss ...}`, ink extends left.
+    Left,
+    /// `\mathclap`: `\clap` is `\hb@xt@\z@{\hss ... \hss}`, ink centred.
+    Center,
+    /// `\mathrlap`: `\rlap` is `\hb@xt@\z@{... \hss}`, ink extends right.
+    Right,
 }
 
 /// Returns the literal text when a run contains no nested math.
@@ -381,7 +400,10 @@ fn append_math_reference_text(out: &mut String, list: &MathList, source: Option<
                     }
                 }
             }
-            Nucleus::Group(body) | Nucleus::Phantom { body, .. } | Nucleus::Operator { body, .. } => {
+            Nucleus::Group(body)
+            | Nucleus::Phantom { body, .. }
+            | Nucleus::Operator { body, .. }
+            | Nucleus::Lap { body, .. } => {
                 append_math_reference_text(out, body, source)
             }
             Nucleus::ExtArrow { above, below, .. } => {
@@ -436,7 +458,8 @@ fn reference_atom_end(atom: &MathAtom) -> usize {
         | Nucleus::Group(body)
         | Nucleus::Phantom { body, .. }
         | Nucleus::Operator { body, .. }
-        | Nucleus::Accent { body, .. } => extend(body),
+        | Nucleus::Accent { body, .. }
+        | Nucleus::Lap { body, .. } => extend(body),
         Nucleus::TextRun(pieces) => {
             for piece in pieces {
                 if let TextPiece::Math(list) = piece {
@@ -676,7 +699,11 @@ pub enum DelimiterRole {
     Right,
 }
 
-/// `\hat`..`\grave`, plus `\widehat`/`\widetilde`.
+/// `\hat`..`\grave`, plus `\widehat`/`\widetilde` and `\mathring`.
+///
+/// (`\dddot`/`\ddddot` are deliberately NOT here: amsmath defines them as
+/// `{\mathop{\kern\z@#1}\limits^{...}}`, not as `\mathaccent`s — see
+/// [`MathParser::mathop_dots_atom`].)
 ///
 /// The compiler renders math with Adobe's Core 14 Symbol/Times-Roman faces,
 /// not Computer Modern, so TeX's exact accent geometry is not reproducible.
@@ -700,6 +727,7 @@ pub enum Accent {
     Grave,
     WideHat,
     WideTilde,
+    Mathring,
 }
 
 impl Accent {
@@ -717,6 +745,7 @@ impl Accent {
             Accent::Grave => "grave",
             Accent::WideHat => "widehat",
             Accent::WideTilde => "widetilde",
+            Accent::Mathring => "mathring",
         }
     }
 
@@ -745,6 +774,11 @@ impl Accent {
             Accent::Ddot => Some('\u{A8}'),  // diaeresis
             Accent::Acute => Some('\u{B4}'), // acute accent
             Accent::Grave => Some('\u{60}'), // grave accent
+            // TeX's \mathring is a small ring above; no ring-above
+            // character exists in WinAnsi or the Symbol encoding, so the
+            // degree sign — a real ring-shaped base-14 glyph — is the
+            // closest stand-in.
+            Accent::Mathring => Some('\u{B0}'), // degree sign
             Accent::Check | Accent::Breve => None,
         }
     }
@@ -827,6 +861,11 @@ pub(crate) const GRID_ENVIRONMENTS: &[(&str, char, &str, &str)] = &[
     ("cases", 'l', "{", ""),
     // mathtools.sty `\newcases{dcases}`: `cases` with `\displaystyle` cells.
     ("dcases", 'l', "{", ""),
+    // mathtools.sty `\newcases{rcases}` (TeX Live 2026 lines 1029-1030):
+    // the same `\quad`-separated textstyle two-column preamble as `cases`
+    // (`\MT_start_cases:nnnn` runs for both), but a null left delimiter
+    // and `\rbrace` right — the mirror image of `cases`.
+    ("rcases", 'l', "", "}"),
     ("aligned", 'c', "", ""),
     ("alignedat", 'c', "", ""),
     ("split", 'c', "", ""),
@@ -1077,6 +1116,8 @@ pub fn parse_tokens_reporting_unclosed(
         pending: Vec::new(),
         unclosed: None,
         cut_off,
+        open_lefts: 0,
+        dropped_lefts: 0,
     };
     let list = parser.list(false);
     (list, parser.unclosed)
@@ -1105,6 +1146,22 @@ pub fn is_math_environment(name: &str) -> bool {
 // depth, so the guard fires first on every profile.
 pub const MAX_MATH_DEPTH: usize = 32;
 
+/// The deepest `\left`...`\right` nesting in one formula. Sizing a pair lays
+/// out everything it encloses (`left_right_stretch_scales`), so the cost is
+/// the nesting depth times the formula length: 10k nested pairs took 15 s.
+/// Past the limit the extra delimiters are dropped with TeX's capacity error:
+/// each `\left` is a TeX group, and TeX allows 255 grouping levels
+/// ([`TEX_GROUPING_LEVELS`]). A formula in a document body already sits in
+/// two of them (the `document` environment and the math shift), so pdflatex
+/// accepts 253 nested `\left`s there and stops at the 254th, in display and
+/// inline math alike (measured, TeX Live 2026). Other enclosing groups make
+/// TeX stop sooner; they are not counted here. The layout is not recursive
+/// per pair: 255 levels ran on a 256 KiB release and 512 KiB debug thread.
+pub const MAX_LEFT_RIGHT_DEPTH: usize = TEX_GROUPING_LEVELS - 2;
+
+/// tex.web `max_quarterword`: the most grouping levels TeX allows (§274).
+pub const TEX_GROUPING_LEVELS: usize = 255;
+
 struct MathParser<'a> {
     tokens: &'a [Token],
     i: usize,
@@ -1121,6 +1178,10 @@ struct MathParser<'a> {
     unclosed: Option<Span>,
     /// The tokens end where unterminated math was cut off.
     cut_off: bool,
+    /// `\left`s still open, and those dropped past [`MAX_LEFT_RIGHT_DEPTH`]
+    /// (their `\right`s are dropped too).
+    open_lefts: usize,
+    dropped_lefts: usize,
 }
 
 impl MathParser<'_> {
@@ -1725,6 +1786,50 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
+            // mathtools' lap family needs `\usepackage{mathtools}`:
+            // `mathtools.sty` 1540-1558 defines all three, and neither the
+            // base LaTeX sources nor amsmath does, so without it pdflatex
+            // answers "Undefined control sequence".
+            "mathllap" | "mathrlap" | "mathclap" if !self.packages.mathtools => {
+                self.missing_package(&name, "mathtools", span)
+            }
+            // mathtools.sty 1561-1563: `\mathllap` is `{{}\llap{...}}`,
+            // `\mathrlap` is `{{}\rlap{...}}`, `\mathclap` is `{{}\clap{...}}`.
+            // The outer group is an ordinary atom, so no class is forced
+            // (`atom_class` defaults such boxes to Ord, as TeX does).
+            "mathllap" | "mathrlap" | "mathclap" => {
+                let align = match name.as_str() {
+                    "mathllap" => LapAlign::Left,
+                    "mathclap" => LapAlign::Center,
+                    _ => LapAlign::Right,
+                };
+                // mathtools also accepts `\mathllap[<style>]{...}` (an
+                // explicit `\displaystyle`/`\textstyle`/`\scriptstyle`/
+                // `\scriptscriptstyle` for the body instead of `\mathpalette`'s
+                // current style). This layout has no style threading for lap
+                // bodies — `\genfrac`'s own style argument is likewise laid out
+                // at the ambient size — so the override is consumed and
+                // reported rather than silently becoming the body: without
+                // this, `required_group` below would take the `[` itself as a
+                // single-token argument and garble the rest undiagnosed.
+                if self.raw_bracket_text().is_some() {
+                    self.diagnostics.push(Diagnostic::error(
+                        format!("\\{name}'s optional style argument is not supported"),
+                        Some(span),
+                        Some("ignored the style and continued".into()),
+                    ));
+                }
+                let body = self.required_group(&name, span);
+                MathAtom {
+                    nucleus: Nucleus::Lap { body, align },
+                    span,
+                    superscript: None,
+                    subscript: None,
+                    class_override: None,
+                    width_em: None,
+                    ams_symbol: None,
+                }
+            }
             "xrightarrow" | "xleftarrow" | "xleftrightarrow" => {
                 let below = self
                     .optional_bracket_list()
@@ -1807,12 +1912,29 @@ impl MathParser<'_> {
             // time (`left_right_stretch_scales`); here they just record which
             // role they play so that pairing pass can find them.
             "left" | "right" => {
-                let role = if name == "left" {
-                    DelimiterRole::Left
+                let delimiter = self.take_delimiter(&name, span);
+                if name == "left" {
+                    if self.open_lefts >= MAX_LEFT_RIGHT_DEPTH {
+                        if self.dropped_lefts == 0 {
+                            self.diagnostics.push(Diagnostic::error(
+                                format!("TeX capacity exceeded, sorry [grouping levels={TEX_GROUPING_LEVELS}]."),
+                                Some(span),
+                                Some("dropped the \\left/\\right delimiters nested past the limit".into()),
+                            ));
+                        }
+                        self.dropped_lefts += 1;
+                        space(0.0, span)
+                    } else {
+                        self.open_lefts += 1;
+                        left_right_delimiter(delimiter, DelimiterRole::Left)
+                    }
+                } else if self.dropped_lefts > 0 {
+                    self.dropped_lefts -= 1;
+                    space(0.0, span)
                 } else {
-                    DelimiterRole::Right
-                };
-                left_right_delimiter(self.take_delimiter(&name, span), role)
+                    self.open_lefts = self.open_lefts.saturating_sub(1);
+                    left_right_delimiter(delimiter, DelimiterRole::Right)
+                }
             }
             "big" | "Big" | "bigg" | "Bigg" | "bigl" | "Bigl" | "biggl" | "Biggl" | "bigr"
             | "Bigr" | "biggr" | "Biggr" | "bigm" | "Bigm" | "biggm" | "Biggm" => {
@@ -2009,12 +2131,16 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
-            "boxed" | "overline" | "underline" | "overbrace" | "underbrace" | "overrightarrow"
-            | "overleftarrow" | "overleftrightarrow" | "underrightarrow" | "underleftarrow"
-            | "underleftrightarrow" => {
+            "boxed" | "Aboxed" | "overline" | "underline" | "underbar" | "overbrace" | "underbrace"
+            | "overrightarrow" | "overleftarrow" | "overleftrightarrow" | "underrightarrow"
+            | "underleftarrow" | "underleftrightarrow" => {
                 let body = self.required_group(&name, span);
                 let frame = match name.as_str() {
-                    "boxed" => Frame::Box,
+                    // mathtools' `\Aboxed{<lhs> <rel> <rhs>}` boxes the whole
+                    // row with the `\boxed` frame; the relation stays a plain
+                    // body atom at its natural position, so the align grid
+                    // keeps a shared alignment point across boxed rows.
+                    "boxed" | "Aboxed" => Frame::Box,
                     "overline" => Frame::Over,
                     "overbrace" => Frame::OverBrace,
                     "underbrace" => Frame::UnderBrace,
@@ -2210,6 +2336,9 @@ impl MathParser<'_> {
             "grave" => self.accent_atom(Accent::Grave, span),
             "widehat" => self.accent_atom(Accent::WideHat, span),
             "widetilde" => self.accent_atom(Accent::WideTilde, span),
+            "dddot" => self.mathop_dots_atom("dddot", "...", span),
+            "ddddot" => self.mathop_dots_atom("ddddot", "....", span),
+            "mathring" => self.accent_atom(Accent::Mathring, span),
             // The dashed arrows are drawn from msam pieces `amsfonts.sty`
             // declares, so without the package there is nothing to draw with
             // and pdflatex answers "Undefined control sequence".
@@ -2563,6 +2692,8 @@ impl MathParser<'_> {
             pending: Vec::new(),
             unclosed: None,
             cut_off: false,
+            open_lefts: 0,
+            dropped_lefts: 0,
         };
         let list = parser.list(false);
         if let Some(open) = parser.unclosed {
@@ -2601,6 +2732,41 @@ impl MathParser<'_> {
             superscript: None,
             subscript: None,
             class_override: None,
+            width_em: None,
+            ams_symbol: None,
+        }
+    }
+
+    /// `\dddot`/`\ddddot` (amsmath.sty 744-749): these are NOT `\mathaccent`s
+    /// like `\dot`/`\ddot` (fontmath.ltx 412-419 `\DeclareMathAccent`). The
+    /// real definition is `{\mathop{\kern\z@#1}\limits^{\vbox...}}` — the
+    /// base set as an operator nucleus with a fixed box of three (`...`) or
+    /// four (`....`) `\normalfont` text dots in limits position above it.
+    /// That is the existing [`Nucleus::Stacked`] shape (the `\overset`
+    /// machinery), reused here with no new layout code: the dots are laid
+    /// out in script size, centred over the base at a fixed gap, however
+    /// tall the base is — unlike [`Accent`] marks, which rise with the
+    /// body's ascent. The mark needs no "no representable glyph" diagnostic:
+    /// real `\dddot`/`\ddddot` always typeset, and periods are representable
+    /// (the same `...` text this compiler already uses for `\ldots`).
+    /// The outer braces make the whole an ordinary atom, so the class is
+    /// forced to `Ord`: a `\dddot{=}` is Ord in real TeX, where the shared
+    /// `\overset` path would keep a single-atom relation base's Rel class.
+    fn mathop_dots_atom(&mut self, command: &str, dots: &str, span: Span) -> MathAtom {
+        let base = self.required_group(command, span);
+        let over = MathList {
+            atoms: vec![text_atom(dots.into(), span)],
+        };
+        MathAtom {
+            nucleus: Nucleus::Stacked {
+                base,
+                over: Some(over),
+                under: None,
+            },
+            span,
+            superscript: None,
+            subscript: None,
+            class_override: Some(AtomClass::Ord),
             width_em: None,
             ams_symbol: None,
         }
@@ -3775,6 +3941,9 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("top", "⊤"),
     ("measuredangle", "∡"),
     ("square", "□"),
+    // amssymb's `\Box` is `\let` to `\square` (amsfonts.sty:152, AMSa "03,
+    // Ord): the same open-square glyph and class, drawn generically.
+    ("Box", "□"),
     ("blacksquare", "■"),
     ("lozenge", "◊"),
     ("checkmark", "✓"),
@@ -4780,6 +4949,25 @@ fn layout_nucleus(
             }
             b
         }
+        // mathtools.sty 1539-1563: `\llap`/`\rlap`/`\clap` are
+        // `\hb@xt@\z@` boxes — zero advance, but the ink is painted. The
+        // opposite of `Phantom` above (kept width, cleared ink): here the
+        // items stay and only the width zeroes, shifted so the ink hangs
+        // off the current point on the commanded side. The caller then
+        // advances by 0, so following material overlaps the ink from the
+        // right (`\mathrlap`), the ink overlaps preceding material from
+        // the left (`\mathllap`), or the two overlap equally (`\mathclap`).
+        Nucleus::Lap { body, align } => {
+            let mut b = layout_list(body, size, root_size, level, diagnostics);
+            let shift = match align {
+                LapAlign::Left => -b.width,
+                LapAlign::Center => -b.width / 2.0,
+                LapAlign::Right => 0.0,
+            };
+            offset_items(&mut b.items, shift, 0.0);
+            b.width = 0.0;
+            b
+        }
         Nucleus::Operator { body, .. } => layout_list(body, size, root_size, level, diagnostics),
         // Approximated as the arrow glyph with its labels stacked over and
         // under it (render-pipeline builds amsmath's stretched arrow).
@@ -5138,6 +5326,10 @@ fn shift_atom(atom: &MathAtom, delta: isize) -> MathAtom {
                 horizontal: *horizontal,
                 vertical: *vertical,
             },
+            Nucleus::Lap { body, align } => Nucleus::Lap {
+                body: shift_list(body, delta),
+                align: *align,
+            },
             Nucleus::Operator { body, limits } => Nucleus::Operator {
                 body: shift_list(body, delta),
                 limits: *limits,
@@ -5249,6 +5441,75 @@ mod parse_tests {
                 assert_eq!(columns, want, "{src}");
             }
         }
+    }
+
+    #[test]
+    fn rcases_parses_as_a_right_brace_mirror_of_cases() {
+        // mathtools.sty `\newcases{rcases}` (TeX Live 2026 lines
+        // 1029-1030): the same two-column textstyle preamble as `cases`
+        // (`\MT_start_cases:nnnn` runs for both), a null left delimiter
+        // and `\rbrace` right — the mirror image. `cases`/`dcases` pin
+        // the pre-existing arms unchanged.
+        for (src, want_left, want_right) in [
+            (r"\begin{cases} a & b \\ c & d \end{cases}", "{", ""),
+            (r"\begin{dcases} a & b \\ c & d \end{dcases}", "{", ""),
+            (r"\begin{rcases} a & b \\ c & d \end{rcases}", "", "}"),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(src);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            let Nucleus::Matrix {
+                rows,
+                columns,
+                left,
+                right,
+            } = &list.atoms[0].nucleus
+            else {
+                panic!("{src}: not a grid: {:?}", list.atoms)
+            };
+            assert_eq!(rows.len(), 2, "{src}");
+            assert!(rows.iter().all(|row| row.len() == 2), "{src}");
+            assert_eq!(columns, "ll", "{src}");
+            assert_eq!(left, want_left, "{src}");
+            assert_eq!(right, want_right, "{src}");
+        }
+    }
+
+    #[test]
+    fn rcases_brace_lays_out_on_the_right_where_cases_lays_out_on_the_left() {
+        let laid = |src: &str| {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(src);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
+            layout(&list, 12.0, &mut diagnostics)
+        };
+        let cases = laid(r"\begin{cases} a & b \\ c & d \end{cases}");
+        let brace = cases
+            .items
+            .iter()
+            .find(|item| item.text == "{")
+            .expect("cases lays out a left brace");
+        assert_eq!(brace.x, 0.0, "cases brace starts the row");
+        assert!(
+            cases.items.iter().all(|item| item.x >= brace.x),
+            "cases brace is the leftmost ink"
+        );
+        let rcases = laid(r"\begin{rcases} a & b \\ c & d \end{rcases}");
+        let brace = rcases
+            .items
+            .iter()
+            .find(|item| item.text == "}")
+            .expect("rcases lays out a right brace");
+        assert!(
+            brace.x > 0.0,
+            "rcases brace sits past the grid, not at its start"
+        );
+        assert!(
+            rcases.items.iter().all(|item| item.x <= brace.x),
+            "rcases brace is the rightmost ink"
+        );
     }
 
     #[test]
@@ -5564,6 +5825,61 @@ mod parse_tests {
     }
 
     #[test]
+    fn aboxed_boxes_the_full_expression_with_the_boxed_primitive() {
+        // GitHub #567: mathtools' `\Aboxed` draws the `\boxed` frame around
+        // the whole row, so it must reuse the same `Framed`/`Box` primitive
+        // (drawn by the existing `layout_nucleus` arm) rather than inventing
+        // new box-drawing code.
+        for source in [r"\Aboxed{a = b}", r"\boxed{a = b}"] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{source}: {list:?}");
+            let Nucleus::Framed { body, frame } = &list.atoms[0].nucleus else {
+                panic!(
+                    "{source}: expected a framed nucleus, got {:?}",
+                    list.atoms[0].nucleus
+                );
+            };
+            assert_eq!(*frame, Frame::Box, "{source}");
+            let texts: Vec<_> = body
+                .atoms
+                .iter()
+                .filter_map(|atom| match &atom.nucleus {
+                    Nucleus::Symbol(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(texts, ["a", "=", "b"], "{source}: {body:?}");
+            // The frame covers the full expression: four rules whose outer
+            // edges are the laid-out box, with every body glyph strictly
+            // inside them horizontally.
+            let size = 10.0;
+            let laid = layout(&list, size, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            let rules: Vec<_> = laid.items.iter().filter(|item| item.rule.is_some()).collect();
+            assert_eq!(rules.len(), 4, "{source}: {laid:?}");
+            let left = rules
+                .iter()
+                .map(|item| item.x)
+                .fold(f64::INFINITY, f64::min);
+            let right = rules
+                .iter()
+                .map(|item| item.x + item.rule.unwrap().width)
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!((left - 0.0).abs() < 1e-9, "{source}: {laid:?}");
+            assert!((right - laid.width).abs() < 1e-9, "{source}: {laid:?}");
+            for item in laid.items.iter().filter(|item| item.rule.is_none()) {
+                assert!(
+                    item.x > 0.0 && item.x < laid.width,
+                    "{source}: {item:?} outside the frame in {laid:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn sqrt_draws_its_vinculum_over_the_whole_body() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\sqrt{10-x}");
@@ -5811,6 +6127,7 @@ mod unbraced_argument_tests {
             "grave",
             "widehat",
             "widetilde",
+            "mathring",
         ] {
             let mut diagnostics = Vec::new();
             let source = format!(r"\{command} x");
@@ -6275,6 +6592,169 @@ mod accent_tests {
             assert_eq!(b.items.len(), 1);
             assert_eq!(b.items[0].text, "x");
         }
+    }
+
+    #[test]
+    fn mathring_parses_to_its_accent_variant() {
+        // `\mathring` is a genuine `\DeclareMathAccent` (amsmath.sty 793-794),
+        // unlike `\dddot`/`\ddddot` below.
+        let mut diagnostics = Vec::new();
+        let tokens = crate::lexer::tokenize(r"\mathring{x}");
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+        assert_eq!(list.atoms.len(), 1, "{:?}", list.atoms);
+        match &list.atoms[0].nucleus {
+            Nucleus::Accent { accent, body } => {
+                assert_eq!(*accent, Accent::Mathring);
+                assert_eq!(body.atoms.len(), 1, "{:?}", body.atoms);
+                assert_eq!(body.atoms[0].nucleus, Nucleus::Symbol("x".into()));
+            }
+            other => panic!("expected an accent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dddot_and_ddddot_parse_to_the_mathop_limits_stacked_shape() {
+        // amsmath.sty 744-749 defines these as
+        // `{\mathop{\kern\z@#1}\limits^{\vbox...}}` — an operator base with a
+        // fixed three/four-dot box in limits position — NOT a `\mathaccent`
+        // (contrast `\dot`/`\ddot`, fontmath.ltx `\DeclareMathAccent`). So
+        // they build the existing Stacked nucleus shared with `\overset`,
+        // never `Nucleus::Accent`.
+        for (source, dots) in [
+            (r"\dddot{x}", "..."),
+            (r"\ddddot{x}", "...."),
+            (r"\dddot x", "..."),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
+            // The outer braces make the whole an ordinary atom.
+            assert_eq!(
+                list.atoms[0].class_override,
+                Some(AtomClass::Ord),
+                "{source}"
+            );
+            match &list.atoms[0].nucleus {
+                Nucleus::Stacked { base, over, under } => {
+                    assert!(under.is_none(), "{source}");
+                    assert_eq!(base.atoms.len(), 1, "{source}: {:?}", base.atoms);
+                    assert_eq!(base.atoms[0].nucleus, Nucleus::Symbol("x".into()));
+                    let over = over.as_ref().expect("{source}: dots above the base");
+                    assert_eq!(over.atoms.len(), 1, "{source}: {:?}", over.atoms);
+                    assert_eq!(
+                        over.atoms[0].nucleus,
+                        Nucleus::Text(dots.into()),
+                        "{source}"
+                    );
+                }
+                other => panic!(
+                    "{source}: expected the mathop-limits stacked shape, got {other:?}"
+                ),
+            }
+        }
+        // The braces make even a relation base ordinary (real TeX: Ord),
+        // where the shared `\overset` path preserves the base's Rel class.
+        for (source, expected) in [
+            (r"\dddot{=}", AtomClass::Ord),
+            (r"\overset{?}{=}", AtomClass::Rel),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(atom_class(&list.atoms[0]), Some(expected), "{source}");
+        }
+    }
+
+    #[test]
+    fn dddot_and_ddddot_typeset_centred_dots_above_the_base() {
+        let size = 10.0;
+        for (source, dots) in [(r"\dddot{x}", "..."), (r"\ddddot{x}", "....")] {
+            let (b, diagnostics) = laid_out(source, size);
+            // Real `\dddot`/`\ddddot` always typeset: no diagnostic (the old
+            // Accent shape warned and left the bare base).
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            let dots_item = b
+                .items
+                .iter()
+                .find(|i| i.text == dots)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{source}: no {dots:?} mark in {:?}",
+                        b.items.iter().map(|i| &i.text).collect::<Vec<_>>()
+                    )
+                });
+            let base_item = b.items.iter().find(|i| i.text == "x").unwrap();
+            // Limits position: strictly above the base ...
+            assert!(
+                dots_item.baseline < base_item.baseline,
+                "{source}: dots at {}, base at {}",
+                dots_item.baseline,
+                base_item.baseline
+            );
+            // ... and centred over it: both boxes share the layout's centre.
+            let mut d = Vec::new();
+            let base_width = crate::layout::shaped_width(
+                "x",
+                size,
+                crate::layout::math_font("x"),
+                base_item.span,
+                &mut d,
+            )
+            .0;
+            let dots_width = crate::layout::shaped_width(
+                dots,
+                size * SCRIPT_SCALE,
+                crate::layout::Font::TimesRoman,
+                dots_item.span,
+                &mut d,
+            )
+            .0;
+            assert!(d.is_empty(), "{source}: {d:?}");
+            let base_centre = base_item.x + base_width / 2.0;
+            let dots_centre = dots_item.x + dots_width / 2.0;
+            assert!(
+                (dots_centre - base_centre).abs() < 1e-9,
+                "{source}: dots centred at {dots_centre}, base at {base_centre}"
+            );
+        }
+        // Fixed-height overlay (the real `\vbox to-1.4\ex@`): the dots sit at
+        // the same height over a tall base as over `x`, unlike an `Accent`
+        // mark, which rises with the body's ascent.
+        let (short, d1) = laid_out(r"\dddot{x}", size);
+        let (tall, d2) = laid_out(r"\dddot{\frac{a}{b}}", size);
+        assert!(d1.is_empty(), "{d1:?}");
+        assert!(d2.is_empty(), "{d2:?}");
+        let short_y = short
+            .items
+            .iter()
+            .find(|i| i.text == "...")
+            .unwrap()
+            .baseline;
+        let tall_y = tall
+            .items
+            .iter()
+            .find(|i| i.text == "...")
+            .unwrap()
+            .baseline;
+        assert!(
+            (short_y - tall_y).abs() < 1e-9,
+            "dots should sit at a fixed height: {short_y} over x, {tall_y} over a fraction"
+        );
+    }
+
+    #[test]
+    fn mathring_centres_the_degree_sign_over_the_body() {
+        let (b, diagnostics) = laid_out(r"\mathring{x}", 10.0);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(
+            b.items.iter().any(|i| i.text == "\u{B0}"),
+            "expected degree-sign accent in {:?}",
+            b.items.iter().map(|i| &i.text).collect::<Vec<_>>()
+        );
+        assert!(b.items.iter().any(|i| i.text == "x"));
     }
 
     #[test]
@@ -6966,6 +7446,7 @@ mod shift_tests {
                         Nucleus::Accent { body, .. } => min_start(body),
                         Nucleus::Group(body)
                         | Nucleus::Phantom { body, .. }
+                        | Nucleus::Lap { body, .. }
                         | Nucleus::Operator { body, .. } => min_start(body),
                         Nucleus::GenFraction {
                             numerator,
@@ -7146,6 +7627,76 @@ mod package_gating_tests {
             assert_eq!(symbol.name, *target);
             assert_eq!(symbol.provider, Provider::Amssymb, "\\{alias}");
         }
+    }
+
+    /// Issue #516: amssymb's `\Box` is `\let` to `\square` (amsfonts.sty:152,
+    /// AMSa "03, Ord), so it parses to the same open-square glyph with the
+    /// same atom class — and `$\Box$` compiles with no diagnostics.
+    #[test]
+    fn box_parses_to_squares_open_square_glyph_and_class() {
+        for packages in [MathPackages::KERNEL, AMSSYMB] {
+            let (list, diagnostics) = parsed(r"\Box", packages);
+            assert!(diagnostics.is_empty(), "\\Box: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "\\Box");
+            assert!(
+                matches!(&list.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == "□"),
+                "\\Box: {:?}",
+                list.atoms[0].nucleus
+            );
+        }
+        let (square, diagnostics) = parsed(r"\square", AMSSYMB);
+        assert!(diagnostics.is_empty(), "\\square: {diagnostics:?}");
+        assert_eq!(square.atoms.len(), 1, "\\square");
+        assert!(
+            matches!(&square.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == "□"),
+            "\\square: {:?}",
+            square.atoms[0].nucleus
+        );
+        let (list, _) = parsed(r"\Box", AMSSYMB);
+        assert_eq!(
+            atom_class(&list.atoms[0]),
+            atom_class(&square.atoms[0]),
+            "\\Box and \\square take different classes"
+        );
+        assert_eq!(atom_class(&list.atoms[0]), Some(AtomClass::Ord));
+    }
+
+    /// Regression: `\square` itself is unaffected — still gated on its
+    /// package with nothing loaded, still clean once it is.
+    #[test]
+    fn square_keeps_its_package_gate() {
+        let (_, kernel) = parsed(r"\square", MathPackages::KERNEL);
+        assert_eq!(
+            kernel.first().map(|d| d.message.as_str()),
+            Some(r"\square requires \usepackage{amsfonts}"),
+            "\\square without its package: {kernel:?}"
+        );
+        let (_, loaded) = parsed(r"\square", AMSSYMB);
+        assert!(loaded.is_empty(), "\\square under amssymb: {loaded:?}");
+    }
+
+    /// Issue #516: the two spellings lay out the same glyph at the same
+    /// place. `\Box` takes the generic path (Latin Modern Math U+25A1, 778
+    /// units) while `\square` takes the msam slot advance (0.777781em), so
+    /// the widths agree to 0.000219em — sub-pixel at any size, not bitwise.
+    #[test]
+    fn box_and_square_lay_out_the_same_open_square() {
+        let boxed = laid_out(r"\Box", AMSSYMB);
+        let squared = laid_out(r"\square", AMSSYMB);
+        for (name, b) in [("Box", &boxed), ("square", &squared)] {
+            let item = b
+                .items
+                .iter()
+                .find(|i| i.text == "□")
+                .unwrap_or_else(|| panic!("\\{name} has no open square: {b:?}"));
+            assert_eq!(item.x, 0.0, "\\{name}");
+        }
+        assert!(
+            (boxed.width - squared.width).abs() < 0.01,
+            "Box {} vs square {}",
+            boxed.width,
+            squared.width
+        );
     }
 
     /// mathtools' colon-relation family needs `\usepackage{mathtools}`: base
@@ -7496,5 +8047,188 @@ mod double_bar_tests {
     fn the_double_bar_is_bound_to_latin_modern_math() {
         assert!(crate::lm_math::advance('\u{2016}').is_some());
         assert!(crate::export::unrepresentable("\u{2016}").is_empty());
+    }
+}
+
+/// mathtools `\mathllap`/`\mathrlap`/`\mathclap` (`mathtools.sty` 1539-1563):
+/// `\hb@xt@\z@` boxes with zero advance whose ink is still painted.
+#[cfg(test)]
+mod lap_tests {
+    use super::*;
+
+    /// 1mu = 1pt, so a measured mu reads straight off a coordinate.
+    const SIZE: f64 = 18.0;
+
+    /// A document that loaded `mathtools` (which requires `amsmath`): the lap
+    /// family exists. Base LaTeX2e defines none of it, so the tests that use
+    /// these commands have to say so — see `laps_need_mathtools`.
+    const MATHTOOLS: MathPackages = MathPackages {
+        amsmath: true,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: true,
+    };
+
+    /// `amsmath` without `mathtools`: the lap family is still undefined.
+    const AMSMATH: MathPackages = MathPackages {
+        amsmath: true,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: false,
+    };
+
+    fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), packages, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    fn laid_out(source: &str) -> MathBox {
+        let (list, diagnostics) = parsed(source, MATHTOOLS);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        layout(&list, SIZE, &mut Vec::new())
+    }
+
+    fn width(source: &str) -> f64 {
+        laid_out(source).width
+    }
+
+    fn x(b: &MathBox, text: &str) -> f64 {
+        b.items
+            .iter()
+            .find(|i| i.text == text)
+            .unwrap_or_else(|| panic!("{text:?} not painted in {:?}", b.items))
+            .x
+    }
+
+    fn close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    /// Each command parses to a one-atom `Lap` with its own alignment and the
+    /// argument as its body; a multi-atom argument stays one boxed atom.
+    #[test]
+    fn each_lap_parses_to_its_own_alignment() {
+        for (command, align) in [
+            ("mathllap", LapAlign::Left),
+            ("mathclap", LapAlign::Center),
+            ("mathrlap", LapAlign::Right),
+        ] {
+            let (list, diagnostics) = parsed(&format!("\\{command}{{y}}"), MATHTOOLS);
+            assert!(diagnostics.is_empty(), "{command}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{command}");
+            match &list.atoms[0].nucleus {
+                Nucleus::Lap { body, align: got } => {
+                    assert_eq!(*got, align, "{command}");
+                    assert_eq!(body.atoms.len(), 1, "{command}");
+                    assert!(
+                        matches!(&body.atoms[0].nucleus, Nucleus::Symbol(s) if s == "y"),
+                        "{command}: {body:?}"
+                    );
+                }
+                other => panic!("{command} parsed as {other:?}"),
+            }
+        }
+        let (list, diagnostics) = parsed(r"\mathclap{a+b}", MATHTOOLS);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        match &list.atoms[0].nucleus {
+            Nucleus::Lap { body, .. } => assert_eq!(body.atoms.len(), 3, "{body:?}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Base LaTeX2e (and amsmath alone) defines none of the three — each was
+    /// searched for in TeX Live 2026's base and amsmath sources — so without
+    /// `mathtools` each reports the missing package, as pdflatex answers
+    /// "Undefined control sequence".
+    #[test]
+    fn laps_need_mathtools() {
+        for command in ["mathllap", "mathclap", "mathrlap"] {
+            for packages in [MathPackages::KERNEL, AMSMATH] {
+                let (_, diagnostics) = parsed(&format!("\\{command}{{y}}"), packages);
+                assert_eq!(diagnostics.len(), 1, "{command}: {diagnostics:?}");
+                assert_eq!(
+                    diagnostics[0].message,
+                    format!("\\{command} requires \\usepackage{{mathtools}}"),
+                    "{command}"
+                );
+                // Slice 2 (#549 follow-up): the family is implemented, so the
+                // gate reports a known-but-gated command — never an unknown
+                // command with a did-you-mean rewrite.
+                assert_eq!(
+                    diagnostics[0].code,
+                    Some(crate::diagnostics::DiagnosticCode::UnsupportedFeature),
+                    "{command}"
+                );
+                assert_eq!(
+                    diagnostics[0].help.as_ref().map(|h| h.message.as_str()),
+                    Some("add \\usepackage{mathtools} in the preamble"),
+                    "{command}"
+                );
+                assert_eq!(diagnostics[0].suggestion, None, "{command}");
+            }
+        }
+    }
+
+    /// The box advances nothing: flanking material closes up exactly as if the
+    /// lapped content were absent. All three atoms are Ord, so no inter-atom
+    /// glue enters on either side.
+    #[test]
+    fn laps_advance_nothing() {
+        for command in ["mathllap", "mathclap", "mathrlap"] {
+            close(width(&format!("a\\{command}{{x}}b")), width("ab"));
+        }
+        // A wider body still advances nothing.
+        close(width(r"a\mathrlap{xyz}b"), width("ab"));
+    }
+
+    /// The ink is still painted, hung off the current point on the commanded
+    /// side: `\mathrlap`'s ink starts where the following atom starts (it is
+    /// overlapped from the right), `\mathllap`'s ends where the preceding atom
+    /// ends (it overlaps from the left), `\mathclap`'s is centred.
+    #[test]
+    fn lapped_ink_is_painted_at_the_commanded_offset() {
+        let origin = width("a");
+        let ink = width("x");
+        let b = laid_out(r"a\mathrlap{x}b");
+        close(x(&b, "x"), origin);
+        close(x(&b, "b"), origin);
+        let b = laid_out(r"a\mathllap{x}b");
+        close(x(&b, "x"), origin - ink);
+        close(x(&b, "b"), origin);
+        let b = laid_out(r"a\mathclap{x}b");
+        close(x(&b, "x"), origin - ink / 2.0);
+        close(x(&b, "b"), origin);
+    }
+
+    /// Zero width but full paint, vertically too: the lap of `xy` is as tall
+    /// and deep as `xy` itself, and contributes no advance.
+    #[test]
+    fn lap_keeps_the_body_box_except_its_width() {
+        let lapped = laid_out(r"\mathclap{xy}");
+        let plain = laid_out("xy");
+        close(lapped.width, 0.0);
+        assert_eq!(lapped.items.len(), plain.items.len());
+        assert_eq!(lapped.ascent, plain.ascent);
+        assert_eq!(lapped.descent, plain.descent);
+    }
+
+    /// mathtools' `\mathllap[<style>]{...}` override is consumed and reported
+    /// rather than becoming the body; the argument still laps at ambient size.
+    #[test]
+    fn style_override_is_diagnosed_and_ignored() {
+        let (list, diagnostics) = parsed(r"\mathrlap[\scriptstyle]{x}", MATHTOOLS);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(
+            diagnostics[0].message,
+            r"\mathrlap's optional style argument is not supported"
+        );
+        match &list.atoms[0].nucleus {
+            Nucleus::Lap { body, align } => {
+                assert_eq!(*align, LapAlign::Right);
+                assert_eq!(body.atoms.len(), 1, "{body:?}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

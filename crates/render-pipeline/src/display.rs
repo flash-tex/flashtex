@@ -106,6 +106,11 @@ pub struct Caret {
     pub height: Tick,
 }
 
+/// Synthetic-provenance reason for page furniture the typesetter creates
+/// with no source of its own: page numbers, header/footer marks, and the
+/// column separator rule.
+pub const PAGE_CHROME: &str = "page chrome";
+
 /// Where a cluster's bytes came from: exact source ranges, or a stated
 /// reason when the pipeline synthesised it.
 #[derive(Debug, Clone, PartialEq)]

@@ -127,7 +127,8 @@ fn real_pipeline_envelope_exports_glyphs_by_original_gid_at_exact_positions() {
 
 /// A hand-built envelope over Latin Modern 12: the plain SHA-256(bytes) hash
 /// form, a glyph that continues by hmtx advance, one that does not, a rule
-/// and a coloured run.
+/// and a coloured run at `text opacity=.5` (pgf: colour, then `/pgf@ca0.5 gs`,
+/// then the text object, inside `q … Q`).
 #[test]
 fn hand_built_envelope_joins_by_hmtx_advance_and_converts_rules_and_colour() {
     let Some(font_path) = lm12() else {
@@ -164,7 +165,7 @@ fn hand_built_envelope_joins_by_hmtx_advance_and_converts_rules_and_colour() {
              {{"gid":{gh},"origin_x":{x2},"baseline_y":{y},"advance_x":{adv},"advance_y":0,"cluster":2}}],
            "clusters":[{{"text_start_byte":0,"text_end_byte":1}},{{"text_start_byte":1,"text_end_byte":2}},{{"text_start_byte":2,"text_end_byte":3}}]}},
           {{"kind":"rule","x":{x0},"top":{rt},"width":{rw},"height":{rh},"paint":{{"r":0,"g":0,"b":0,"a":1}}}},
-          {{"kind":"glyph_run","font_id":"{sha}","font_size":{size},"text":"e","paint":{{"r":0.5,"g":0,"b":1,"a":1}},
+          {{"kind":"glyph_run","font_id":"{sha}","font_size":{size},"text":"e","paint":{{"r":0.5,"g":0,"b":1,"a":0.5}},
            "glyphs":[{{"gid":{ge},"origin_x":{x0},"baseline_y":{y2},"advance_x":{adv_e},"advance_y":0,"cluster":0}}],
            "clusters":[{{"text_start_byte":0,"text_end_byte":1}}]}}
         ]}}],"diagnostics":[]}}}}"#,
@@ -208,7 +209,7 @@ fn hand_built_envelope_joins_by_hmtx_advance_and_converts_rules_and_colour() {
     // The second H sits 1005 ticks past e's natural advance (e is 435/1000
     // wide): n = 435 - 1000 * 1005 / 12,500,000 = 434.9196, exactly.
     let expect = format!(
-        "BT\n/F1 11.920928955078125 Tf\n1 0 0 1 72 692 Tm\n[(\\000{h}\\000{e})434.9196(\\000{h})] TJ\nET\n72 {ry} 1.5 0.25 re\nf\nq\n0.5 0 1 rg\nBT\n/F1 11.920928955078125 Tf\n1 0 0 1 72 592 Tm\n(\\000{e}) Tj\nET\nQ\n",
+        "BT\n/F1 11.920928955078125 Tf\n1 0 0 1 72 692 Tm\n[(\\000{h}\\000{e})434.9196(\\000{h})] TJ\nET\n72 {ry} 1.5 0.25 re\nf\nq\n0.5 0 1 rg\n/pgf@ca0.5 gs\nBT\n/F1 11.920928955078125 Tf\n1 0 0 1 72 592 Tm\n(\\000{e}) Tj\nET\nQ\n",
         h = gid_h as u8 as char,
         e = gid_e as u8 as char,
         ry = v2::bp(((792i64 << 20) - (110i64 << 20) - (1 << 18)) as i128).unwrap(),
@@ -393,8 +394,10 @@ fn unsupported_envelope_content_is_refused_not_approximated() {
             "items[0].width: expected a number",
         ),
         (
-            r#"{"kind":"rule","x":0,"top":0,"width":5,"height":5,"paint":{"r":0,"g":0,"b":0,"a":0.5}}"#,
-            "alpha 0.5",
+            // Alpha below 1 is an ExtGState (tests below); outside [0, 1]
+            // it is refused.
+            r#"{"kind":"rule","x":0,"top":0,"width":5,"height":5,"paint":{"r":0,"g":0,"b":0,"a":-0.5}}"#,
+            "paint.a: -0.5 is not in [0, 1]",
         ),
         (
             r#"{"kind":"rule","x":0,"top":0,"width":0,"height":5,"paint":{"r":0,"g":0,"b":0,"a":1}}"#,
@@ -650,4 +653,224 @@ fn tikz_path_items_are_stroked_and_filled_with_pdftex_operators() {
     verify::check_structure(&out.bytes).unwrap();
     assert_eq!(exact::parse(text.as_bytes()).unwrap(), page_ops(&doc));
     assert_eq!(exact::render_exact(&doc).unwrap().bytes, out.bytes, "deterministic");
+}
+
+fn alpha_envelope(items: &str, pw: i64, ph: i64) -> String {
+    format!(
+        r#"{{"protocol_version":2,"id":"t","type":"display_list","payload":{{"render_format":"display-list-v2","coordinate_unit":"bp_2pow20","color_space":"srgb","fonts":[],"pages":[{{"number":1,"width":{pw},"height":{ph},"items":[{items}]}}],"diagnostics":[]}}}}"#
+    )
+}
+
+/// TikZ `\fill[red,fill opacity=.4]`, `\draw[blue,draw opacity=.5]`, a
+/// translucent rule, and `\fill[blue,opacity=.4]` (the corpus document
+/// `tikz-clipping-patterns`): pgf's pdfTeX driver selects `/pgf@ca<a>` or
+/// `/pgf@CA<a>` right after the colour inside the item's `q … Q` (measured,
+/// pdflatex 1.40: `q 1 0 0 rg 1 0 0 RG /pgf@ca0.3 gs … f Q`, resources
+/// `/pgf@ca0.3 << /ca 0.3 >>`). A stroke and a fill at the same alpha are
+/// two different states; repeats of either are declared once.
+#[test]
+fn tikz_alpha_selects_pgf_ext_gstates_inside_the_items_save_restore() {
+    let t = |bp: i64| bp << 20;
+    let square = format!(
+        r#"[["m",{a},{a}],["l",{b},{a}],["l",{b},{b}],["z"]]"#,
+        a = t(10),
+        b = t(20)
+    );
+    let items = format!(
+        r#"{{"fill_rule":"nonzero","kind":"path_fill","paint":{{"a":0.4,"b":0,"g":0,"r":1}},"path":{square}}},
+          {{"kind":"path_stroke","paint":{{"a":0.5,"b":1,"g":0,"r":0}},"path":{square},"stroke":{{"cap":"butt","join":"miter","miter_limit":10,"width":{w}}}}},
+          {{"kind":"rule","x":{x},"top":{x},"width":{x},"height":{x},"paint":{{"r":0,"g":0,"b":0,"a":0.30000000000000004}}}},
+          {{"fill_rule":"evenodd","kind":"path_fill","paint":{{"a":0.4,"b":1,"g":0,"r":0}},"path":{square}}},
+          {{"kind":"path_stroke","paint":{{"a":0.4,"b":0,"g":0,"r":0}},"path":{square},"stroke":{{"cap":"butt","join":"miter","miter_limit":10,"width":{w}}}}},
+          {{"fill_rule":"nonzero","kind":"path_fill","paint":{{"a":1,"b":0,"g":0,"r":1}},"path":{square}}}"#,
+        w = t(2),
+        x = t(1),
+    );
+    let (doc, report) = v2::from_v2(&alpha_envelope(&items, t(100), t(100)), &V2Options::default()).unwrap();
+    assert_eq!((report.paths, report.rules), (5, 1));
+    let text = String::from_utf8(exact::serialize(page_ops(&doc))).unwrap();
+    assert_eq!(
+        text,
+        "q\n1 0 0 rg\n1 0 0 RG\n/pgf@ca0.4 gs\n10 90 m\n20 90 l\n20 80 l\nh\nf\nQ\n\
+         q\n0 0 1 rg\n0 0 1 RG\n/pgf@CA0.5 gs\n2 w\n10 90 m\n20 90 l\n20 80 l\nh\nS\nQ\n\
+         q\n/pgf@ca0.3 gs\n1 98 1 1 re\nf\nQ\n\
+         q\n0 0 1 rg\n0 0 1 RG\n/pgf@ca0.4 gs\n10 90 m\n20 90 l\n20 80 l\nh\nf*\nQ\n\
+         q\n/pgf@CA0.4 gs\n2 w\n10 90 m\n20 90 l\n20 80 l\nh\nS\nQ\n\
+         q\n1 0 0 rg\n1 0 0 RG\n10 90 m\n20 90 l\n20 80 l\nh\nf\nQ\n"
+    );
+    let out = exact::render_exact(&doc).unwrap();
+    verify::check_structure(&out.bytes).unwrap();
+    // The page resources: one entry per distinct state, sorted by name, with
+    // pgf's one-key dictionaries; no transparency group (pdflatex writes none).
+    let resources = "/ExtGState << /pgf@CA0.4 << /CA 0.4 >> /pgf@CA0.5 << /CA 0.5 >> /pgf@ca0.3 << /ca 0.3 >> /pgf@ca0.4 << /ca 0.4 >> >>";
+    let raw = String::from_utf8_lossy(&out.bytes);
+    assert_eq!(raw.matches(resources).count(), 1, "{raw}");
+    assert!(!raw.contains("/Group"), "{raw}");
+    let file = PdfFile::parse(&out.bytes).unwrap();
+    let page = file.pages().unwrap()[0];
+    let res = file.resolve(file.page_attr(page, "Resources").unwrap()).as_dict().unwrap();
+    let gs = file.resolve(&res["ExtGState"]).as_dict().unwrap();
+    let got: Vec<(String, String, String)> = gs
+        .iter()
+        .map(|(name, v)| {
+            let d = file.resolve(v).as_dict().unwrap();
+            assert_eq!(d.len(), 1, "/{name}: {d:?}");
+            let (k, n) = d.iter().next().unwrap();
+            (name.clone(), k.clone(), n.as_number().unwrap().to_string())
+        })
+        .collect();
+    let want = [
+        ("pgf@CA0.4", "CA", "0.4"),
+        ("pgf@CA0.5", "CA", "0.5"),
+        ("pgf@ca0.3", "ca", "0.3"),
+        ("pgf@ca0.4", "ca", "0.4"),
+    ];
+    assert_eq!(
+        got,
+        want.map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string()))
+    );
+    // The content stream parses back to the same operators, and the bytes
+    // are deterministic.
+    let content = file.page_content(page).unwrap();
+    assert_eq!(exact::parse(&content).unwrap(), page_ops(&doc));
+    let (again, _) = v2::from_v2(&alpha_envelope(&items, t(100), t(100)), &V2Options::default()).unwrap();
+    assert_eq!(exact::render_exact(&again).unwrap().bytes, out.bytes, "deterministic");
+}
+
+/// The same alpha on many items and pages is one resource entry per page;
+/// a page without alpha declares no `/ExtGState`.
+#[test]
+fn alpha_ext_gstates_are_deduplicated_per_page() {
+    let fill = |a: &str| exact::Op::FillAlpha(exact::Decimal::new(a).unwrap());
+    let rule = || exact::Op::rule(
+        exact::Decimal::new("1").unwrap(),
+        exact::Decimal::new("1").unwrap(),
+        exact::Decimal::new("2").unwrap(),
+        exact::Decimal::new("2").unwrap(),
+    );
+    let mut ops = Vec::new();
+    for _ in 0..5 {
+        ops.push(Op::Save);
+        ops.push(fill("0.4"));
+        ops.extend(rule());
+        ops.push(Op::Restore);
+    }
+    let page = |ops: Vec<Op>| exact::ExactPage {
+        width: exact::Decimal::new("10").unwrap(),
+        height: exact::Decimal::new("10").unwrap(),
+        content: exact::Content::Ops(ops),
+        fonts: Some(Vec::new()),
+    };
+    let doc = exact::ExactDocument {
+        pages: vec![page(ops.clone()), page(ops), page(rule().to_vec())],
+        ..Default::default()
+    };
+    let out = exact::render_exact(&doc).unwrap();
+    verify::check_structure(&out.bytes).unwrap();
+    let raw = String::from_utf8_lossy(&out.bytes);
+    assert_eq!(raw.matches("/ExtGState << /pgf@ca0.4 << /ca 0.4 >> >>").count(), 2, "{raw}");
+    assert_eq!(raw.matches("/ExtGState").count(), 2, "the opaque page declares none");
+    assert_eq!(raw.matches("/pgf@ca0.4 gs\n").count(), 10);
+}
+
+/// `gs` is in the bounded set only for pgf's alpha states: any other
+/// ExtGState name, an alpha outside `[0, 1]` or a `gs` inside path
+/// construction is refused, and a paint alpha outside `[0, 1]` is an error.
+#[test]
+fn only_pgf_alpha_ext_gstates_are_accepted() {
+    assert_eq!(
+        exact::parse(b"/pgf@CA.4 gs\n/pgf@ca1 gs\n").unwrap(),
+        vec![
+            Op::StrokeAlpha(exact::Decimal::new(".4").unwrap()),
+            Op::FillAlpha(exact::Decimal::new("1").unwrap())
+        ]
+    );
+    for bad in [&b"/GS1 gs\n"[..], b"/pgf@caX gs\n", b"0.4 gs\n", b"/pgf@ca0.4 /x gs\n"] {
+        assert!(exact::parse(bad).is_err(), "{}", String::from_utf8_lossy(bad));
+    }
+    let page = |bytes: &[u8]| exact::ExactDocument {
+        pages: vec![exact::ExactPage {
+            width: exact::Decimal::new("10").unwrap(),
+            height: exact::Decimal::new("10").unwrap(),
+            content: exact::Content::Verbatim(bytes.to_vec()),
+            fonts: Some(Vec::new()),
+        }],
+        ..Default::default()
+    };
+    let e = exact::render_exact(&page(b"q /pgf@ca1.5 gs 0 0 1 1 re f Q\n")).unwrap_err();
+    assert!(e.to_string().contains("not in [0, 1]"), "{e}");
+    let e = exact::render_exact(&page(b"0 0 1 1 re /pgf@ca0.5 gs f\n")).unwrap_err();
+    assert!(e.to_string().contains("path is under construction"), "{e}");
+    let ok = exact::render_exact(&page(b"q /pgf@ca0.5 gs 0 0 1 1 re f Q\n")).unwrap();
+    assert!(String::from_utf8_lossy(&ok.bytes).contains("/ExtGState << /pgf@ca0.5 << /ca 0.5 >> >>"));
+    let e = v2::from_v2(
+        &alpha_envelope(r#"{"kind":"rule","x":0,"top":0,"width":1048576,"height":1048576,"paint":{"r":0,"g":0,"b":0,"a":1.5}}"#, 1 << 24, 1 << 24),
+        &V2Options::default(),
+    )
+    .unwrap_err();
+    assert!(e.contains("paint.a: 1.5 is not in [0, 1]"), "{e}");
+}
+
+/// The three periods of an ellipsis are one cluster whose text is `…`. The
+/// period glyph must not take that text into ToUnicode: every period of the
+/// document would extract as `…` and the ellipsis as `………`. A glyph seen
+/// only in clusters of several glyphs maps to its own `cmap` character (`.`,
+/// as pdfTeX's `. . .` extracts); a one-glyph cluster still names its glyph.
+#[test]
+fn ellipsis_periods_keep_the_period_in_to_unicode() {
+    let Some(font_path) = lm12() else {
+        eprintln!("skipped: Latin Modern 12 not installed");
+        return;
+    };
+    let bytes = std::fs::read(&font_path).unwrap();
+    let font = TrueTypeFont::load(&font_path).unwrap();
+    let sha = sha256::hex(&bytes);
+    let gid_a = font.glyph_id('a').unwrap();
+    let gid_dot = font.glyph_id('.').unwrap();
+    assert_eq!(font.char_for_glyph(gid_dot), Some('.'));
+    let size: i64 = 12_500_000;
+    let step: i64 = 4 << 20;
+    let x0: i64 = 72 << 20;
+    let y: i64 = 100 << 20;
+    let glyph = |gid: u16, i: i64, cluster: usize| {
+        format!(
+            r#"{{"gid":{gid},"origin_x":{x},"baseline_y":{y},"advance_x":{adv},"advance_y":0,"cluster":{cluster}}}"#,
+            x = x0 + i * step,
+            adv = i64::from(font.advance(gid)) * size / 1000,
+        )
+    };
+    // "a…": `a` is cluster 0 (one glyph), the ellipsis cluster 1 (three
+    // periods, bytes 1..4).
+    let glyphs = [glyph(gid_a, 0, 0), glyph(gid_dot, 1, 1), glyph(gid_dot, 2, 1), glyph(gid_dot, 3, 1)].join(",");
+    let envelope = format!(
+        r#"{{"protocol_version":2,"id":"t","type":"display_list","payload":{{
+        "render_format":"display-list-v2","coordinate_unit":"bp_2pow20","color_space":"srgb","text_extraction":"cluster-actualtext",
+        "project_id":"t","revision":1,"required_features":["glyph_run"],"documents":[],
+        "fonts":[{{"font_id":"{sha}","sha256":"{sha}","byte_length":{len},"format":"opentype-cff","face_index":0,"units_per_em":1000,"glyph_count":{gc},"postscript_name":"LMRoman12-Regular"}}],
+        "pages":[{{"number":1,"width":{pw},"height":{ph},"items":[
+          {{"kind":"glyph_run","font_id":"{sha}","font_size":{size},"text":"a…","paint":{{"r":0,"g":0,"b":0,"a":1}},
+           "glyphs":[{glyphs}],
+           "clusters":[{{"text_start_byte":0,"text_end_byte":1}},{{"text_start_byte":1,"text_end_byte":4}}]}}
+        ]}}],"diagnostics":[]}}}}"#,
+        len = bytes.len(),
+        gc = font.num_glyphs(),
+        pw = 612i64 << 20,
+        ph = 792i64 << 20,
+    );
+    let dir = std::env::temp_dir().join(format!("flashtex-pdf-v2-ellipsis-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(&font_path, dir.join("lm.otf")).unwrap();
+    let (doc, report) = v2::from_v2(&envelope, &V2Options { font_dirs: vec![dir.clone()] }).unwrap();
+    assert!(!report.notes.iter().any(|n| n.contains("different cluster text")), "{:?}", report.notes);
+    let out = exact::render_exact(&doc).unwrap();
+    let file = PdfFile::parse(&out.bytes).unwrap();
+    let page = file.pages().unwrap()[0];
+    let fonts = file.page_fonts(page);
+    let exact::ExactFont::CidCff(cid) = flashtex_pdf::compare::font_from_dict(&file, fonts["F1"]).unwrap() else {
+        panic!("expected CIDFontType0C")
+    };
+    let tu = exact::parse_to_unicode(cid.to_unicode_verbatim.as_deref().unwrap()).unwrap();
+    assert_eq!(tu.get(&gid_dot).map(String::as_str), Some("."), "{tu:?}");
+    assert_eq!(tu.get(&gid_a).map(String::as_str), Some("a"), "{tu:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

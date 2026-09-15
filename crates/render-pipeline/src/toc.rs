@@ -118,6 +118,9 @@ pub struct FloatEntry {
     /// Their text in the unmasked document (the parse sees the float
     /// blanked).
     pub text: String,
+    /// `\thefigure`/`\thetable` ([`crate::floats::number`]), which `\ref`
+    /// gives the float's `\label` too.
+    pub number: String,
     pub key: String,
     /// Writes its line: false for a `nolol` listing, which still steps
     /// `\c@lstlisting`.
@@ -126,11 +129,15 @@ pub struct FloatEntry {
 
 /// Every captioned float in source order; `texts` are the documents before
 /// `floats::mask`.
-pub fn float_entries(envs: &[Vec<FloatEnv>], texts: &[&str]) -> Vec<FloatEntry> {
+pub fn float_entries(envs: &[Vec<FloatEnv>], texts: &[&str], numbers: &[Vec<Option<String>>]) -> Vec<FloatEntry> {
     let mut out = Vec::new();
     for (d, doc) in envs.iter().enumerate() {
         let source = texts.get(d).copied().unwrap_or("");
         for (i, f) in doc.iter().enumerate() {
+            // A float of a document never read writes no `.lof` line.
+            let Some(number) = numbers.get(d).and_then(|n| n.get(i)).cloned().flatten() else {
+                continue;
+            };
             let Some(caption) = f.pieces.iter().find_map(|p| match p {
                 // `\@caption#1[#2]#3`: the list shows `#2` (`\@dblarg`
                 // makes it `#3` when absent).
@@ -147,6 +154,7 @@ pub fn float_entries(envs: &[Vec<FloatEnv>], texts: &[&str]) -> Vec<FloatEntry> 
                 at: f.span.start,
                 caption,
                 text: source.get(caption.start..caption.end).unwrap_or("").to_string(),
+                number,
                 key: float_key(d, i),
                 listed: true,
             });
@@ -173,6 +181,10 @@ pub fn listing_entries(texts: &[&str]) -> Vec<FloatEntry> {
                 at: l.begin.0,
                 caption,
                 text: source.get(s..e).unwrap_or("").to_string(),
+                // `\thelstlisting` comes from `chapter_numbers` in
+                // `list_blocks`; listings do not go through
+                // [`crate::floats::number`].
+                number: String::new(),
                 key: listing_key(i),
                 listed: !l.keys.nolol,
             })
@@ -645,8 +657,9 @@ pub fn entry_items(documents: &[SourceDocument<'_>], entry_index: usize, texts: 
 /// `\chapter*` in report/book, `\@mkboth` under `headings`) and every entry
 /// within `tocdepth`, figures and tables numbered `\thefigure` /
 /// `\thetable` (`<chapter>.<n>` with chapters), listings `\thelstlisting`.
-/// `chapter_gaps`: the offsets of every unstarred `\chapter`, whose
-/// `\@chapter` writes an `\addvspace{10\p@}` into the `.lof` and `.lot`.
+/// `chapter_gaps`: the reading-order positions of every unstarred
+/// `\chapter`, whose `\@chapter` writes an `\addvspace{10\p@}` into the
+/// `.lof` and `.lot`.
 #[allow(clippy::too_many_arguments)]
 pub fn list_blocks(
     kind: ListKind,
@@ -707,13 +720,15 @@ pub fn list_blocks(
         })));
     };
     // Float captions and `\addcontentsline{lof}` records are merged in
-    // source order: captions by their float's position, records by the
-    // position of their first title byte.
+    // reading order (`Labels::reading_order`, so an `\include`d file's
+    // floats sit where it is read): captions by their float's position,
+    // records by the position of their first title byte.
+    let position = |span: Span| adapter::reading_position(&labels.reading_order, span.document, span.start).unwrap_or(span.start);
     let record_at = |r: &Record| -> usize {
-        r.number.as_ref().map(|(_, s)| s.start).or_else(|| r.title.iter().find_map(|i| match i {
-            Item::Word(w) => Some(w.span().start),
+        r.number.as_ref().map(|(_, s)| *s).or_else(|| r.title.iter().find_map(|i| match i {
+            Item::Word(w) => Some(w.span()),
             _ => None,
-        })).unwrap_or(0)
+        })).map_or(0, position)
     };
     let mut floats: Vec<(usize, Option<(usize, &FloatEntry)>, Option<&Record>)> = Vec::new();
     for r in records.iter().filter(|r| r.list == kind) {
@@ -722,13 +737,16 @@ pub fn list_blocks(
     let mut numbers: Vec<String> = Vec::new();
     if kind != ListKind::Toc {
         let mine: Vec<&FloatEntry> = labels.floats.iter().filter(|f| f.list == kind).collect();
-        // `\thefigure`: `\@arabic\c@figure`, `\thechapter.` first with
-        // chapters (`\@addtoreset{figure}{chapter}`); `\thelstlisting`
-        // likewise, without the `0.` before the first chapter.
-        let ats: Vec<usize> = mine.iter().map(|f| f.at).collect();
-        numbers = chapter_numbers(&ats, chapter_starts, settings.chapters && kind != ListKind::Lol);
+        // `\thelstlisting`: `<chapter>.<n>` from the entry document's
+        // chapter starts, without the `0.` before the first chapter.
+        // Figures and tables instead carry their reading-order number
+        // (`FloatEntry::number`, [`crate::floats::number`]).
+        if kind == ListKind::Lol {
+            let ats: Vec<usize> = mine.iter().map(|f| f.at).collect();
+            numbers = chapter_numbers(&ats, chapter_starts, false);
+        }
         for (i, f) in mine.into_iter().enumerate() {
-            floats.push((f.at, Some((i, f)), None));
+            floats.push((position(Span::in_document(f.caption.document, f.at, f.at)), Some((i, f)), None));
         }
         floats.sort_by_key(|(at, ..)| *at);
     }
@@ -745,11 +763,17 @@ pub fn list_blocks(
             (_, Some(r)) => push(r.level, r.number.clone(), r.title.clone(), &r.key, &mut addvspace_pt),
             (Some((i, f)), None) if f.listed => {
                 let doc = f.caption.document;
+                // `\addcontentsline{lof}{figure}{\protect\numberline{\thefigure}..}`:
+                // the number the caption and `\ref` show.
                 let title = labels.entry_items.get(doc, f.caption.start, f.caption.end).unwrap_or_else(|| adapter::words_at(&f.text, doc, f.caption.start));
-                push(1, Some((numbers[i].clone(), f.caption)), title, &f.key, &mut addvspace_pt);
+                let number = if kind == ListKind::Lol { numbers[i].clone() } else { f.number.clone() };
+                push(1, Some((number, f.caption)), title, &f.key, &mut addvspace_pt);
             }
             _ => {}
         }
     }
+    // `\@starttoc`: `\@input{\jobname.<ext>}` then `\@nobreakfalse`, which
+    // outlasts even `\l@part`'s `\global\@nobreaktrue` in the last entry.
+    out.push(Block::NoBreakFalse { span });
     out
 }

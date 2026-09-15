@@ -21,13 +21,15 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "dots", "ldots", "dotsc", "dotso", "cdots", "dotsb", "dotsm", "dotsi", "iint", "lbrace",
     "rbrace", "iiint", "bmod", "mod", "dfrac", "tfrac", "cfrac", "frac", "begin", "sqrt", "overset",
     "stackrel", "underset", "binom", "dbinom", "tbinom", "mathbf", "textbf", "boxed", "overline",
-    "underline", "tag", "pmod", "text", "bigl", "bigr", "quad", "qquad", "mathbb", "hat", "bar",
+    "underline", "underbar", "tag", "pmod", "text", "bigl", "bigr", "quad", "qquad", "mathbb", "hat", "bar",
     "vec", "tilde", "dot", "ddot", "check", "breve", "acute", "grave", "widehat", "widetilde",
+    "dddot", "ddddot", "mathring",
     "overbrace", "underbrace", "overrightarrow", "overleftarrow", "overleftrightarrow",
     "num", "qty", "unit", "si", "SI", "numlist", "numrange", "qtylist", "qtyrange", "SIlist",
     "SIrange", "ang", "sisetup",
     "underrightarrow", "underleftarrow", "underleftrightarrow", "Bbb", "bold", "dashrightarrow",
     "dasharrow", "dashleftarrow",
+    "mathllap", "mathrlap", "mathclap",
 ];
 
 /// Real LaTeX2e, amsmath/amssymb and widely used package commands this
@@ -41,13 +43,13 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "index", "glossary", "bibliography", "bibliographystyle", "bibitem", "cite", "nocite",
     // Boxes, spacing, breaking and page control.
     "centering", "raggedright", "raggedleft", "linespread", "vfill", "hss", "vss", "vbox",
-    "makebox", "fbox", "framebox", "parbox", "raisebox", "rule", "newline", "linebreak",
-    "nolinebreak", "pagebreak", "nopagebreak", "clearpage", "cleardoublepage", "thispagestyle",
-    "enlargethispage", "indent", "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
-    "vskip", "hskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
+    "makebox", "fbox", "framebox", "parbox", "raisebox", "rule", "newline",
+    "clearpage", "cleardoublepage", "thispagestyle",
+    "indent", "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
+    "vskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
     "multicolumn", "tabularnewline", "arraystretch",
     // Fonts and text symbols.
-    "textsuperscript", "textsubscript", "underbar", "LaTeX",
+    "textsuperscript", "textsubscript", "LaTeX",
     "LaTeXe", "TeX", "dag", "ddag", "S", "P", "copyright", "pounds", "textbackslash",
     "textasciitilde", "textasciicircum", "textbar", "textless", "textgreater", "textendash",
     "textemdash", "textbullet", "textperiodcentered", "textquoteleft", "textquoteright",
@@ -57,28 +59,28 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "def", "edef", "gdef", "let", "providecommand", "newenvironment", "renewenvironment",
     "newtheorem", "newcounter", "setcounter", "addtocounter", "stepcounter", "refstepcounter",
     "value", "arabic", "roman", "Roman", "alph", "Alph", "fnsymbol", "the", "makeatletter",
-    "makeatother", "ifthenelse", "newif", "relax", "expandafter", "csname", "endcsname",
+    "makeatother", "newif", "relax", "expandafter", "csname", "endcsname",
     "newlength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
-    "verb", "hyphenation", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
+    "verb", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
     "PassOptionsToPackage", "AtBeginDocument",
     // Cross-references and links.
     "eqref", "autoref", "nameref", "url", "href", "hyperref", "hyperlink",
-    "hypertarget", "citep", "citet", "citeauthor", "addbibresource", "printbibliography",
+    "hypertarget", "cite", "parencite", "textcite", "autocite", "citep", "citet", "citeauthor", "citeyear", "nocite", "addbibresource", "printbibliography",
     // Colour and graphics packages.
     "tikz",
     "usetikzlibrary", "draw", "node", "fill", "path", "scalebox", "resizebox", "rotatebox",
-    "subcaption", "captionof", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
+    "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
     "intertext", "shortintertext", "substack", "sideset", "xrightarrow", "xleftarrow", "overbrace",
     "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",
     "limits", "nolimits", "displaylimits", "colon", "eqqcolon", "Coloneqq", "Eqqcolon",
     "vcentcolon", "dblcolon", "vdots", "ddots", "iff", "implies", "impliedby",
-    "genfrac", "operatornamewithlimits", "dddot", "ddddot", "cancel", "bcancel", "xcancel",
-    "cancelto", "numberwithin", "allowdisplaybreaks", "mathring", "lvert", "rvert", "lVert",
+    "genfrac", "operatornamewithlimits", "cancel", "bcancel", "xcancel",
+    "cancelto", "numberwithin", "allowdisplaybreaks", "lvert", "rvert", "lVert",
     "rVert", "varepsilon", "vartheta", "varphi", "varrho", "varsigma", "varpi", "digamma",
     "varkappa", "hbar", "hslash", "ell", "wp", "Re", "Im", "aleph", "beth", "gimel", "emptyset",
     "varnothing", "nabla", "partial", "infty", "forall", "exists", "nexists", "neg", "lnot", "top",
-    "bot", "angle", "measuredangle", "triangle", "square", "blacksquare", "Box", "Diamond",
+    "bot", "angle", "measuredangle", "triangle", "square", "blacksquare", "Diamond",
     "clubsuit", "diamondsuit", "heartsuit", "spadesuit", "flat", "natural", "sharp", "prime",
     "backprime", "surd", "mathstrut", "not", "neq", "ne", "leq", "le", "geq", "ge", "ll", "gg",
     "leqslant", "geqslant", "approx", "cong", "equiv", "sim", "simeq", "propto", "subset", "supset",
@@ -99,9 +101,12 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
 /// Environments this compiler implements outside math mode.
 #[rustfmt::skip]
 const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
-    "document", "figure", "center", "flushright", "flushleft", "quote", "quotation", "itemize",
+    "document", "figure", "frame", "center", "flushright", "flushleft", "quote", "quotation", "itemize",
     "enumerate", "equation", "equation*", "displaymath", "gather", "gather*", "align", "align*",
-    "alignat", "alignat*", "flalign", "flalign*", "multline", "multline*",
+    "alignat", "alignat*", "flalign", "flalign*", "eqnarray", "eqnarray*", "multline", "multline*",
+    "tiny", "scriptsize", "footnotesize", "small", "normalsize",
+    "large", "Large", "LARGE", "huge", "Huge",
+    "tabbing",
 ];
 
 /// Real LaTeX2e / amsmath / common-package environments not implemented.
@@ -109,10 +114,9 @@ const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
 const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "description", "table", "table*", "figure*", "tabular", "tabular*", "tabularx", "longtable",
     "verbatim", "verbatim*", "verse", "abstract", "minipage", "titlepage", "thebibliography",
-    "list", "trivlist", "picture", "math", "eqnarray", "eqnarray*", "gathered", "multlined",
-    "subequations", "dcases", "rcases", "proof", "tikzpicture", "lstlisting", "minted",
-    "wrapfigure", "subfigure", "comment", "landscape", "samepage", "sloppypar", "filecontents",
-    "frame", "tabbing", "small", "footnotesize",
+    "list", "trivlist", "picture", "math", "gathered", "multlined",
+    "subequations", "proof", "tikzpicture", "lstlisting", "minted",
+    "wrapfigure", "subfigure", "comment", "landscape", "filecontents",
 ];
 
 fn implemented_commands() -> impl Iterator<Item = &'static str> {
@@ -127,9 +131,12 @@ fn implemented_commands() -> impl Iterator<Item = &'static str> {
 }
 
 pub fn is_known_command(name: &str) -> bool {
-    implemented_commands()
-        .chain(KNOWN_UNIMPLEMENTED_COMMANDS.iter().copied())
-        .any(|known| known == name)
+    // A set, not a scan of every table: an unknown command inside a runaway
+    // macro loop is diagnosed hundreds of thousands of times.
+    static KNOWN: std::sync::OnceLock<std::collections::HashSet<&'static str>> = std::sync::OnceLock::new();
+    KNOWN
+        .get_or_init(|| implemented_commands().chain(KNOWN_UNIMPLEMENTED_COMMANDS.iter().copied()).collect())
+        .contains(name)
 }
 
 pub fn is_known_environment(name: &str) -> bool {
@@ -161,6 +168,28 @@ pub fn is_known_environment(name: &str) -> bool {
 /// result is de-duplicated: a name repeated across tables is one candidate,
 /// not a tie with itself.
 pub fn closest_commands(name: &str) -> Vec<&'static str> {
+    // Memoised per thread: the same unknown name repeats (a runaway macro
+    // loop diagnoses it hundreds of thousands of times), and each lookup
+    // measures the distance to every vocabulary entry.
+    thread_local! {
+        static CACHE: std::cell::RefCell<std::collections::HashMap<String, Vec<&'static str>>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    if let Some(hit) = CACHE.with(|cache| cache.borrow().get(name).cloned()) {
+        return hit;
+    }
+    let result = closest_commands_uncached(name);
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= 4096 {
+            cache.clear();
+        }
+        cache.insert(name.to_string(), result.clone());
+    });
+    result
+}
+
+fn closest_commands_uncached(name: &str) -> Vec<&'static str> {
     let width = name.chars().count();
     let limit = if width <= 3 { 1 } else { 2 };
     let mut best = usize::MAX;
@@ -168,6 +197,12 @@ pub fn closest_commands(name: &str) -> Vec<&'static str> {
     for candidate in implemented_commands().chain(KNOWN_UNIMPLEMENTED_COMMANDS.iter().copied()) {
         if candidate == name {
             return Vec::new();
+        }
+        // The distance is at least the difference in length: skip before
+        // `edit_distance` copies `name` (a 100k-character control sequence
+        // was copied once per vocabulary entry).
+        if candidate.chars().count().abs_diff(width) > limit {
+            continue;
         }
         let distance = edit_distance(name, candidate);
         if distance > limit {
@@ -248,7 +283,8 @@ pub fn command_package(name: &str) -> Option<&'static str> {
         | "reflectbox" => Some("graphicx"),
         "lstinline" | "lstlistoflistings" | "lstset" => Some("listings"),
         "mintinline" | "listoflistings" => Some("minted"),
-        "citep" | "citet" | "citeauthor" => Some("natbib"),
+        "citep" | "citet" | "citeauthor" | "citeyear" => Some("natbib"),
+        "cite" | "parencite" | "textcite" | "autocite" | "nocite" => Some("biblatex"),
         "addbibresource" | "printbibliography" => Some("biblatex"),
         "eqref" | "intertext" | "shortintertext" | "substack" | "DeclareMathOperator"
         | "numberwithin" | "allowdisplaybreaks" => Some("amsmath"),
@@ -462,6 +498,20 @@ mod tests {
         );
         assert!(math_mode_help("bogusxyz").is_none());
         assert!(math_mode_help("alpha").is_none());
+        // Slice 2 (#549 follow-up): the lap family is implemented
+        // (`Nucleus::Lap`), so it must read as math vocabulary, not as
+        // unimplemented text commands — otherwise text-mode use gets no
+        // mode hint and math-mode help calls them text commands.
+        for name in ["mathllap", "mathrlap", "mathclap"] {
+            assert!(is_known_command(name), "{name}");
+            assert_eq!(
+                command_help(name),
+                Some(format!("wrap this in math mode: \\(\\{name}\\)")),
+                "{name}"
+            );
+            assert!(math_mode_help(name).is_none(), "{name}");
+            assert!(closest_commands(name).is_empty(), "{name}");
+        }
         assert!(environment_help("tabbing").is_none());
         assert_eq!(
             environment_help("tikzpicture").as_deref(),

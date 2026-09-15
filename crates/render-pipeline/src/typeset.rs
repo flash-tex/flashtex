@@ -488,6 +488,9 @@ pub struct Context<'a> {
     /// `\footnotetext`): see [`footnotes`].
     notes: Vec<footnotes::NoteSrc>,
     note_anchors: Vec<(usize, usize)>,
+    /// The body in reading order (`adapter::reading_order`): where a float
+    /// of an `\include`d file stands among the other documents' blocks.
+    reading_order: Vec<Span>,
     /// `multicols` environments of the project (`multicol::attach`).
     multicol: multicol::State,
     /// Footnote marks are `\rlap`ped (article/report/book `\maketitle`).
@@ -505,6 +508,11 @@ pub struct Context<'a> {
 
 impl<'a> Context<'a> {
     /// Formula colours (`adapter::Doc::math_colors`).
+    /// `adapter::Labels::reading_order`, for placing floats.
+    pub fn set_reading_order(&mut self, order: Vec<Span>) {
+        self.reading_order = order;
+    }
+
     pub fn set_math_colors(&mut self, colors: std::collections::HashMap<(usize, usize, usize), flashtex_compiler::color::DeviceColor>) {
         self.math_colors = colors;
     }
@@ -541,6 +549,7 @@ impl<'a> Context<'a> {
             label_recs: BTreeSet::new(),
             notes: Vec::new(),
             note_anchors: Vec::new(),
+            reading_order: Vec::new(),
             parbox: false,
             multicol: multicol::State::default(),
             rlap_marks: false,
@@ -2080,11 +2089,15 @@ impl<'a> Context<'a> {
                     }
                     push(&mut out, &mut recs, pl::Item::penalty(pl::FORCED_BREAK), None);
                 }
-                AItem::Quad { em } => {
-                    let quad = self.text_params(base, size).quad;
+                AItem::Quad { em, style } => {
+                    // `em` is `\fontdimen6` of the font current where the
+                    // glue is read: `{\Large a\hspace{2em}b}` is two quads
+                    // of the `\Large` face, `{\bfseries a\quad b}` of the bold.
+                    let style = merge_base(*style, base);
+                    let quad = self.text_params(style, style.size_or(size)).quad;
                     push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(em * quad)), None);
                 }
-                AItem::HFill { fill, leader } => {
+                AItem::HFill { fill, leader, style } => {
                     // `\hfill` is second-order glue: it beats the line's
                     // `\parfillskip` (`\hfil`), as in a `\section` title
                     // set as `Problem 1 \hfill [4 points]`.
@@ -2094,7 +2107,15 @@ impl<'a> Context<'a> {
                     }
                     let (box_width, dot) = match leader {
                         FillLeader::Dots => {
-                            let face = self.face(base, size, Span::new(0, 0));
+                            // TeX sets the leader box (`.44em`) and its dot
+                            // in the font in force at the fill, not the
+                            // paragraph's: `{\Large A\dotfill B}` dots at
+                            // `\Large`. The other leaders read no style (a
+                            // rule leader is a fixed 0.4pt rule, plain
+                            // `\hfill` paints nothing).
+                            let dot_style = merge_base(*style, base);
+                            let dot_size = dot_style.size_or(size);
+                            let face = self.face(dot_style, dot_size, Span::new(0, 0));
                             let shaped = self.shaper.shape(&face, ".");
                             let glyphs = shaped
                                 .clusters
@@ -2107,14 +2128,14 @@ impl<'a> Context<'a> {
                                 .collect::<Vec<_>>();
                             let run = pl::GlyphRun::from_shaped(
                                 face.layout_id(),
-                                size,
+                                dot_size,
                                 shaped.units_per_em as f64,
                                 f64::from(shaped.height_units),
                                 -f64::from(shaped.depth_units),
                                 &glyphs,
                                 0..1,
                             );
-                            (0.44 * self.text_params(base, size).quad, Some((face, run)))
+                            (0.44 * self.text_params(dot_style, dot_size).quad, Some((face, run)))
                         }
                         _ => (0.0, None),
                     };
@@ -2744,7 +2765,12 @@ impl<'a> Context<'a> {
                 TableMaterial::Rule(span) => MPiece::Rule(*span),
                 TableMaterial::VLine(span, width) => MPiece::VLine(*span, *width),
                 TableMaterial::DoubleRuleGap(width) => MPiece::DoubleRuleGap(*width),
-                TableMaterial::Text(items) => match self.table_hbox(items, size) {
+                // `@{...}` material is set in the template as it stands, with
+                // no `\ignorespaces`/`\unskip` around it, so glue at either
+                // end is kept (`@{\hspace{1em}}`, `@{\quad--\quad}`). The
+                // empty boxes `\leavevmode` would put there keep `hlist`'s
+                // paragraph end from dropping it.
+                TableMaterial::Text(items) => match self.table_hbox(&anchored(items), size) {
                     Some((block, dims)) => {
                         blocks.insert((key.0, key.1, if before { Slot::Before(i) } else { Slot::After(i) }), block);
                         MPiece::Text(dims)
@@ -2909,6 +2935,19 @@ impl<'a> Context<'a> {
                         lead.push((pl::Item::Box(run), Some(rec)));
                     }
                     lead.push((pl::Item::kern(labelsep), None));
+                    // enumitem `style=nextline` (`\enit@postlabel@i`'s
+                    // `\newline`): the label takes a line of its own, so a
+                    // `\\` follows it and the body starts on the next line
+                    // at the hanging indent (`break_paragraph` indents every
+                    // line after the first by `hang_pt` on its own). Before
+                    // the protrusion kern, which belongs to the body text's
+                    // first character, not to the label's line.
+                    if geom.nextline {
+                        if !matches!(style, ParaStyle::Center | ParaStyle::FlushRight) {
+                            lead.push((pl::Item::Glue(pl::Glue::fil()), None));
+                        }
+                        lead.push((pl::Item::penalty(pl::FORCED_BREAK), None));
+                    }
                     if protrude != 0.0 {
                         lead.push((pl::Item::kern(-protrude), None));
                     }
@@ -3430,6 +3469,7 @@ impl<'a> Context<'a> {
                         Block::Part { .. } => "\\part",
                         Block::Title { .. } => "\\maketitle",
                         Block::ClearPage { .. } => "\\clearpage",
+                        Block::NoBreakFalse { .. } => "a contents list",
                         Block::Chrome { .. } => "a page-style command",
                         Block::TocEntry(_) => "a contents list",
                         Block::LongTable { .. } => "longtable",
@@ -5668,6 +5708,16 @@ fn skip_tuple(s: crate::style::Skip) -> (f64, f64, f64) {
     (s.natural, s.stretch, s.shrink)
 }
 
+/// `items` between two empty `\hbox`es ([`AItem::LeaveVmode`]), so glue at
+/// either end of an `\hbox`'s material is not taken for a paragraph's.
+fn anchored(items: &[AItem]) -> Vec<AItem> {
+    let mut out = Vec::with_capacity(items.len() + 2);
+    out.push(AItem::LeaveVmode);
+    out.extend(items.iter().cloned());
+    out.push(AItem::LeaveVmode);
+    out
+}
+
 /// A table entry's lines as a block assembled like a paragraph's.
 fn table_cell_block(lines: pl::Lines, items: Vec<pl::Item>, recs: Vec<Option<usize>>, labels: Vec<(String, usize)>) -> BuiltBlock {
     let vertical = VBlock {
@@ -6331,6 +6381,22 @@ pub fn convert_math_classed(
             // (`math_text_keeps_italic`), and it decides the italic
             // correction of the run's last character: `$\lim$` and
             // `$\mathrm{lim}$` are 16.3773 pt, `$\text{lim}$` 16.31999 pt.
+            // `\mathrm{K}`: a group holding one ordinary character is that
+            // math character of family 0 (TeX §1186), so `make_ord` joins it
+            // to a neighbouring one (`\mathrm{f}\mathrm{i}` is the fi
+            // ligature, `\mathrm{A}\mathrm{V}` kerned) and its scripts sit
+            // as on a character; the provider boxes it from the roman TFM.
+            // Only letters and digits: they are the variable-family math
+            // codes `\mathrm` moves to family 0.
+            #[cfg(feature = "math-font-kerns")]
+            N::Text(text)
+                if text_italic(&a.span)
+                    && op_limits(&a.span).is_none()
+                    && text_split(&a.span).is_none()
+                    && matches!(text.as_bytes(), [c] if c.is_ascii_alphanumeric()) =>
+            {
+                vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::TextChar(char::from(text.as_bytes()[0])))]
+            }
             N::Text(text) => {
                 // `\limsup`/`\liminf` are `lim\,sup` and `lim\,inf`: one
                 // operator whose nucleus is a list of two math-character runs
@@ -7637,8 +7703,14 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     // only the excess over the skip the previous block left
                     // (`\lastskip`: a display's `\belowdisplayskip`, an
                     // environment's closing `\topsep`), that skip removed.
+                    // `\addpenalty\@secpenalty` belongs to the same branch:
+                    // under `\@nobreak` there is no breakpoint between the
+                    // two heads at all.
                     if after_heading {
                         b.vertical.space_before = None;
+                        if !*eject_before {
+                            b.vertical.penalty_before = None;
+                        }
                     } else if let (Some(before), Some(prev)) = (b.vertical.space_before, blocks.last_mut()) {
                         if let Some(last) = prev.vertical.space_after {
                             if last.0 < before.0 {
@@ -7779,6 +7851,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                 blocks.extend(built);
                 after_heading = true;
             }
+            // `\@starttoc`'s `\@nobreakfalse`: a heading next takes its
+            // `\addvspace` again (only the excess over the list heading's
+            // after-skip), and a paragraph next its normal `\clubpenalty`.
+            Block::NoBreakFalse { .. } => after_heading = false,
             Block::ClearPage { double, .. } => {
                 clears.push(blocks.len());
                 if *double {
@@ -8353,6 +8429,26 @@ fn align_columns(built: &mut Vec<pagebuild::BuiltPage>, columns: usize, page_sta
     inserted
 }
 
+/// Span of typesetter-made page furniture (page numbers, header/footer
+/// marks, the column separator rule): the sentinel document id marks
+/// content with no source of its own, so [`provenance_of`] turns it into
+/// [`Provenance::Synthetic`] instead of a real (and wrong) source range.
+const NO_SOURCE_SPAN: Span = Span {
+    document: DocumentId(usize::MAX),
+    start: 0,
+    end: 0,
+};
+
+/// Provenance of `span`: synthetic page chrome when it carries the
+/// no-source sentinel document, the exact source range otherwise.
+fn provenance_of(span: Span, source_of: &dyn Fn(Span) -> SourceRange) -> Provenance {
+    if span.document == NO_SOURCE_SPAN.document {
+        Provenance::Synthetic(display::PAGE_CHROME.into())
+    } else {
+        Provenance::Source(source_of(span))
+    }
+}
+
 /// Header, footer and `\columnseprule` of every page (`\@outputpage`,
 /// `\@outputdblcol`): the page style in force when the page ships
 /// (`\pagestyle` changes before its last material count; `\thispagestyle`
@@ -8380,8 +8476,10 @@ fn page_chrome(ctx: &mut Context, g: &flashtex_class_geometry::ResolvedDocument,
     for (b, e, _) in events {
         by_page[page_of(*b)].push(e);
     }
-    // Page numbers and rules have no source of their own.
-    let span = Span::in_document(DocumentId(0), 0, 0);
+    // Page numbers and rules have no source of their own: the sentinel
+    // document becomes synthetic provenance (`source: null` in runtime-v1)
+    // instead of claiming document 0, byte 0.
+    let span = NO_SOURCE_SPAN;
     let frame = &g.frame;
     let width = frame_pt(frame.text_width);
     let text_x = ctx.style.text_x_pt;
@@ -8943,7 +9041,7 @@ fn assemble_block(
                         width: Tick::from_tex_pt(*width).max(Tick(1)),
                         height: Tick::from_tex_pt(*height).max(Tick(1)),
                         paint: Paint::BLACK,
-                        provenance: Provenance::Source(source_of(*span)),
+                        provenance: provenance_of(*span, source_of),
                     }));
                 }
             }
@@ -9424,7 +9522,7 @@ fn text_item(
                     height: box_height,
                 },
                 carets,
-                provenance: Provenance::Source(source_of(c.span)),
+                provenance: provenance_of(c.span, source_of),
             }
         })
         .collect();
@@ -9666,7 +9764,10 @@ fn math_items(
             None if g.ch == crate::mathfont::VARNOTHING_SENTINEL => r.text.push('\u{2205}'),
             // An amssymb sentinel stands for its table text.
             None if ams.is_some() => r.text.push_str(ams.expect("checked").text),
-            None => r.text.push(g.ch),
+            None => match crate::mathfont::MathFonts::extraction_text(g.ch) {
+                Some(text) => r.text.push_str(text),
+                None => r.text.push(g.ch),
+            },
         }
         let ci = r.clusters.len() as u32;
         let top = Tick::from_tex_pt(baseline_y - h);

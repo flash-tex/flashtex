@@ -238,6 +238,9 @@ impl P<'_> {
         self.parse_stream(&mut blocks, &mut para);
         self.flush_paragraph(&mut blocks, &mut para);
         self.block_dependencies.truncate(outer_dependency_blocks);
+        // The box's paragraphs never reach `blocks`: their leadings must not
+        // reach `block_par_leading` either, which carries exactly one entry
+        // per pushed block (see `argument_inlines`).
         self.block_par_leading.truncate(outer_par_leading_blocks);
         self.t = outer_tokens;
         self.i = outer_index;
