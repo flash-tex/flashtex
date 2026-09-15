@@ -7307,32 +7307,42 @@ fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
         // `\emptyset` slot but only force this one's advance and outline.
         '\u{2205}' if width_em.is_some() => vec![ml::Atom::symbol(crate::mathfont::VARNOTHING_SENTINEL)],
         _ => match long_arrow_pieces(c) {
-            Some((left, right)) => vec![long_arrow(left, right)],
+            Some(pieces) => vec![long_arrow(pieces)],
             None => vec![ml::Atom::symbol(c)],
         },
     }
 }
 
-/// The two relations a LaTeX long arrow joins (`latex.ltx`:
-/// `\longrightarrow` = `\relbar\joinrel\rightarrow`, `\Longrightarrow` =
-/// `\Relbar\joinrel\Rightarrow`, ...). `\relbar` is cmsy's minus and
-/// `\Relbar` cmr's `=`; the arrows are cmsy "20/"21/"24/"28/"29/"2C.
-fn long_arrow_pieces(c: char) -> Option<(char, char)> {
+/// The pieces a LaTeX long arrow joins, each with the kern (in mu) before it
+/// (`latex.ltx`: `\longrightarrow` = `\relbar\joinrel\rightarrow`,
+/// `\Longrightarrow` = `\Relbar\joinrel\Rightarrow`, ...; `\longmapsto` =
+/// `\mapstochar\longrightarrow`, whose flag is backed up by its own
+/// advance). `\relbar` is cmsy's minus and `\Relbar` cmr's `=`; the arrows
+/// are cmsy "20/"21/"24/"28/"29/"2C.
+fn long_arrow_pieces(c: char) -> Option<&'static [(char, f64)]> {
     Some(match c {
-        '\u{27F5}' => ('\u{2190}', '\u{2212}'), // \longleftarrow
-        '\u{27F6}' => ('\u{2212}', '\u{2192}'), // \longrightarrow
-        '\u{27F7}' => ('\u{2190}', '\u{2192}'), // \longleftrightarrow
-        '\u{27F8}' => ('\u{21D0}', '='),        // \Longleftarrow
-        '\u{27F9}' => ('=', '\u{21D2}'),        // \Longrightarrow
-        '\u{27FA}' => ('\u{21D0}', '\u{21D2}'), // \Longleftrightarrow
+        '\u{27F5}' => &[('\u{2190}', 0.0), ('\u{2212}', -3.0)], // \longleftarrow
+        '\u{27F6}' => &[('\u{2212}', 0.0), ('\u{2192}', -3.0)], // \longrightarrow
+        '\u{27F7}' => &[('\u{2190}', 0.0), ('\u{2192}', -3.0)], // \longleftrightarrow
+        '\u{27F8}' => &[('\u{21D0}', 0.0), ('=', -3.0)],        // \Longleftarrow
+        '\u{27F9}' => &[('=', 0.0), ('\u{21D2}', -3.0)],        // \Longrightarrow
+        '\u{27FA}' => &[('\u{21D0}', 0.0), ('\u{21D2}', -3.0)], // \Longleftrightarrow
+        // \longmapsto is \mapstochar\longrightarrow (amsmath.sty): the flag
+        // is U+2223, this compiler's \mid glyph, backed up by its own
+        // advance (cmsy10 slot "6A is 0.277779em = 5.00002mu, so -5mu nets
+        // +0.00002mu ≈ 1e-5pt) so it contributes zero width like pdfTeX's
+        // zero-advance \mapstochar, then the usual relbar + \joinrel join.
+        '\u{27FC}' => &[('\u{2223}', 0.0), ('\u{2212}', -5.0), ('\u{2192}', -3.0)], // \longmapsto
         _ => return None,
     })
 }
 
-/// A long arrow as TeX builds it: the two relations with `\joinrel`
+/// A long arrow as TeX builds it: the pieces with `\joinrel`
 /// (`\mathrel{\mkern-3mu}`) between them. Adjacent relations get no
-/// inter-atom space and no break between them, so the three are one
-/// relation whose nucleus is `left`, a -3mu kern and `right`. Latin Modern
+/// inter-atom space and no break between them, so the pieces are one
+/// relation whose nucleus is each glyph preceded by its kern. `\longmapsto`
+/// carries a third leading piece, `\mapstochar`'s flag, backed up by its
+/// own advance so it nets zero width. Latin Modern
 /// Math's single U+27F9 glyph is 1.457em wide where pdfTeX's `=`+`⇒` join
 /// is 0.777781 + 1.000003 - 3/18 = 1.611em, which moved every glyph after
 /// `\Longrightarrow` in a centred display by half the 1.69bp difference at
@@ -7341,9 +7351,19 @@ fn long_arrow_pieces(c: char) -> Option<(char, char)> {
 /// Not modelled: `\relbar` is `\smash`ed (amsmath `\mathsm@sh`), so pdfTeX's
 /// `\longrightarrow` box is only as tall as the arrow; here the minus keeps
 /// its 0.583em height and 0.083em depth.
-fn long_arrow(left: char, right: char) -> ml::Atom {
+fn long_arrow(pieces: &[(char, f64)]) -> ml::Atom {
     let piece = |ch| ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Symbol(ch));
-    ml::Atom::new(ml::AtomClass::Rel, ml::Nucleus::List(ml::MathList::new(vec![piece(left), ml::Atom::glue(-3.0, 0.0), piece(right)])))
+    let mut atoms = Vec::with_capacity(2 * pieces.len() - 1);
+    for (i, &(ch, kern_mu)) in pieces.iter().enumerate() {
+        if i > 0 {
+            atoms.push(ml::Atom::glue(kern_mu, 0.0));
+        }
+        atoms.push(piece(ch));
+    }
+    ml::Atom::new(
+        ml::AtomClass::Rel,
+        ml::Nucleus::List(ml::MathList::new(atoms)),
+    )
 }
 
 /// Adds `\addvspace` glue (a list environment's `\topsep`) to the block's
