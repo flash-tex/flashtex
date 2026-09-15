@@ -43,7 +43,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "centering", "raggedright", "raggedleft", "linespread", "vfill", "hss", "vss", "vbox",
     "makebox", "fbox", "framebox", "parbox", "raisebox", "rule", "newline", "linebreak",
     "nolinebreak", "pagebreak", "nopagebreak", "clearpage", "cleardoublepage", "thispagestyle",
-    "enlargethispage", "indent", "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
+    "enlargethispage", "indent", "phantom", "hphantom", "vphantom", "smash", "strut",
     "vskip", "hskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
     "multicolumn", "tabularnewline", "arraystretch",
     // Fonts and text symbols.
