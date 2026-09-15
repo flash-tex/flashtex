@@ -20,7 +20,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
     "Bigg", "bigm", "Bigm", "biggm", "Biggm", "Bigl", "Bigr", "biggl", "biggr", "Biggl", "Biggr",
     "dots", "ldots", "dotsc", "dotso", "cdots", "dotsb", "dotsm", "dotsi", "iint", "lbrace",
     "rbrace", "iiint", "bmod", "mod", "dfrac", "tfrac", "cfrac", "frac", "begin", "sqrt", "overset",
-    "stackrel", "underset", "binom", "dbinom", "tbinom", "mathbf", "textbf", "boxed", "overline",
+    "stackrel", "underset", "sideset", "binom", "dbinom", "tbinom", "mathbf", "textbf", "boxed", "overline",
     "underline", "underbar", "tag", "pmod", "text", "bigl", "bigr", "quad", "qquad", "mathbb", "hat", "bar",
     "vec", "tilde", "dot", "ddot", "check", "breve", "acute", "grave", "widehat", "widetilde",
     "dddot", "ddddot", "mathring",
@@ -46,7 +46,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "makebox", "fbox", "framebox", "parbox", "raisebox", "rule", "newline",
     "clearpage", "cleardoublepage", "thispagestyle",
     "indent", "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
-    "vskip", "hskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
+    "vskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
     "multicolumn", "tabularnewline", "arraystretch",
     // Fonts and text symbols.
     "textsuperscript", "textsubscript", "LaTeX",
@@ -71,7 +71,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "usetikzlibrary", "draw", "node", "fill", "path", "scalebox", "resizebox", "rotatebox",
     "subcaption", "listoflistings", "lstlistoflistings", "lstinline", "mintinline",
     // amsmath and amssymb.
-    "intertext", "shortintertext", "substack", "sideset", "xrightarrow", "xleftarrow", "overbrace",
+    "intertext", "shortintertext", "substack", "xrightarrow", "xleftarrow", "overbrace",
     "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",
     "limits", "nolimits", "displaylimits", "colon", "eqqcolon", "Coloneqq", "Eqqcolon",
     "vcentcolon", "dblcolon", "vdots", "ddots", "iff", "implies", "impliedby",

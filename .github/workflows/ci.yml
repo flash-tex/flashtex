@@ -119,7 +119,12 @@ jobs:
           key: helpers
       - name: Build every bundled helper (release)
         # Prints FLASHTEX_<NAME>=<path> lines; the app and its tests read them.
-        run: scripts/ci/build-helpers.sh | tee -a "$GITHUB_ENV"
+        # Without pipefail a failed helper build is hidden by `tee`, and the
+        # missing FLASHTEX_* lines then make every integration test XCTSkip --
+        # a green run that tested none of the Rust/Swift boundary.
+        run: |
+          set -o pipefail
+          scripts/ci/build-helpers.sh | tee -a "$GITHUB_ENV"
       - name: Completion vocabulary is the compiler's inventory
         # apps/mac/Sources/FlashTeXMac/Resources/supported-latex.json must be
         # byte-identical to crates/compiler/supported/supported-latex.json.
@@ -131,7 +136,12 @@ jobs:
         working-directory: apps/mac
         # Serial, as rehearsed locally (877 tests in ~5 min on an M1 Max):
         # the Nearby tests bind loopback ports and share fixtures.
-        run: swift test 2>&1 | tee swift-test.log | grep -vE '^\s*$' | tail -n 400
+        # `pipefail` is what makes a failing test fail the step: the default
+        # shell is `bash -e`, and a pipeline's status is its LAST command's,
+        # so without it `tail` returned 0 over any number of test failures.
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee swift-test.log | grep -vE '^\s*$' | tail -n 400
       - name: Upload swift test log
         if: always()
         uses: actions/upload-artifact@v4

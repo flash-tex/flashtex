@@ -260,6 +260,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("dotfill", "", "\\hfill filled with dots in 0.44em boxes, centred (latex.ltx \\cleaders)"),
     ("hfil", "", "infinite-stretch horizontal glue (same order as \\hfill)"),
     ("hspace", "{dimension}", "fixed horizontal space; starred form identical"),
+    ("hskip", "<glue>", "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll"),
     ("quad", "", "1em of horizontal space"),
     ("qquad", "", "2em of horizontal space"),
     ("bigskip", "", "ends the paragraph and adds 12pt of vertical space"),
@@ -570,6 +571,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         &["overset", "stackrel", "underset"],
         "{script}{base}",
         "script-size list centred above or below a base",
+        true,
+    ),
+    (
+        &["sideset"],
+        "{left scripts}{right scripts}{operator}",
+        "scripts on both sides of a large operator, set in \\displaystyle (\\mathop)",
         true,
     ),
     (
@@ -962,7 +969,7 @@ const PACKAGES: &[(&str, &str, &str)] = &[
     (
         "amsmath",
         "centertags, sumlimits, nointlimits, namelimits, reqno",
-        "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\sideset, \\shoveleft, \\smash, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used",
+        "the align, gather, multline, split, aligned, gathered, cases and matrix families; \\dfrac, \\tfrac, \\binom, \\genfrac, \\cfrac, \\substack, \\operatorname, \\DeclareMathOperator, \\boxed, \\phantom, \\overset/\\underset, the extensible arrows, \\text in math, \\tag/\\notag and \\eqref, \\sideset, with \\lim-family, \\sum and \\prod display limits and amsmath's wider \\colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \\shoveleft, \\smash, \\mspace, \\hdotsfor and \\varinjlim are each diagnosed where they are used",
     ),
     (
         "amssymb",

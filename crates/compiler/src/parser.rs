@@ -216,11 +216,21 @@ pub enum Inline {
         /// or dots (`\dotfill`).
         leader: FillLeader,
     },
-    /// `\hspace{<dimen>}`/`\hspace*{<dimen>}`: a fixed, non-stretching space.
-    /// `pt` is already converted (see `parse_dimen_pt`). Real TeX also lets
-    /// plain `\hspace` glue (unlike the starred form) be discarded when it
-    /// falls at a line break; this layout never discards glue at a line
-    /// start, so both forms behave identically here.
+    /// `\hspace{<dimen>}`/`\hspace*{<dimen>}` and `\hskip<glue>`: horizontal
+    /// glue. `pt` is the fixed part, already converted (see `parse_dimen_pt`
+    /// and `parse_fil_dimen_pt_at`). Real TeX also lets plain `\hspace` glue
+    /// (unlike the starred form) be discarded when it falls at a line break;
+    /// this layout never discards glue at a line start, so both forms behave
+    /// identically here.
+    ///
+    /// The stretch/shrink pairs only ever come from `\hskip`'s optional
+    /// `plus`/`minus` clauses (tex.web §461): each is finite points when its
+    /// `fil` order is 0, or the `fil`/`fill`/`filll` coefficient when the
+    /// order is 1/2/3. `\hspace{...}` takes no glue spec, so its pairs are
+    /// always zero. Finite stretch/shrink is recorded but not acted on —
+    /// this greedy layout has no badness model to stretch short lines with
+    /// (see `layout::LayoutCursor::hspace`); infinite stretch joins the
+    /// line's `\hfill` marks instead.
     HSpace {
         pt: f64,
         /// Inter-word glue immediately before/after the command. It is
@@ -229,6 +239,10 @@ pub enum Inline {
         space_before_pt: f64,
         space_after_pt: f64,
         span: Span,
+        stretch_pt: f64,
+        stretch_fil: u8,
+        shrink_pt: f64,
+        shrink_fil: u8,
     },
     /// `\=` inside `tabbing`: record the current horizontal position (the
     /// end of the placed content so far, excluding reserved inter-word
@@ -1228,6 +1242,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "dotfill",
     "hfil",
     "hspace",
+    "hskip",
     "footnote",
     "footnotemark",
     "footnotetext",
@@ -1603,6 +1618,28 @@ fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> 
         _ => return None,
     };
     Some(value * per_pt)
+}
+
+/// A `<fil dimen>` for `\hskip`'s `plus`/`minus` clauses (tex.web §461-463):
+/// `<number><fil unit>` with unit `fil`/`fill`/`filll` (orders 1/2/3), or a
+/// plain `<dimen>` (order 0). Returns the value with its fil order: points
+/// for order 0, the infinite-unit coefficient otherwise. A bare `fil` reads
+/// as `1fil`, and signs (`-1fil`) ride on the number, as in TeX. Longest
+/// unit first, so `1fill` is order 2, not `1` + `fil` misread.
+fn parse_fil_dimen_pt_current(text: &str, units: (i64, i64)) -> Option<(f64, u8)> {
+    let s = text.trim();
+    for (unit, order) in [("filll", 3u8), ("fill", 2u8), ("fil", 1u8)] {
+        if let Some(number) = s.strip_suffix(unit) {
+            let number = number.trim();
+            let value = if number.is_empty() {
+                1.0
+            } else {
+                number.parse::<f64>().ok()?
+            };
+            return Some((value, order));
+        }
+    }
+    parse_dimen_pt_current(s, units).map(|pt| (pt, 0))
 }
 
 /// Parses TeX glue (`<dimen> plus <dimen> minus <dimen>`) to
@@ -2699,6 +2736,14 @@ impl P<'_> {
         self.finish_block_dependencies();
     }
 
+    /// Dispatches one control word.
+    ///
+    /// This frame is on the stack once per nested sub-parse (a table cell,
+    /// box or footnote re-enters [`P::parse_stream`]), and an unoptimised
+    /// build gives every local of every arm its own stack slot. So each arm
+    /// is a single call: a command's work, with its locals, lives in an
+    /// `#[inline(never)]` handler below. Inline arm bodies here grew this
+    /// frame to 23 KB in debug.
     fn command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         if self.document_ended {
             return;
@@ -2749,20 +2794,7 @@ impl P<'_> {
             "arraybackslash" => {}
             // colortbl.sty 156-165: global colour of later rules and
             // `\doublerulesep` gaps (inside a table the row scanner takes them).
-            "arrayrulecolor" | "doublerulesepcolor" => {
-                let color = self.table_color_argument(name, span);
-                if !self.colortbl() {
-                    self.diags.push(Diagnostic::error(
-                        format!("\\{name} needs the colortbl package (or xcolor with the table option)"),
-                        Some(span),
-                        Some("ignored the colour".into()),
-                    ));
-                } else if name == "arrayrulecolor" {
-                    self.table_rule_color = Some(color);
-                } else {
-                    self.table_double_rule_sep_color = Some(color);
-                }
-            }
+            "arrayrulecolor" | "doublerulesepcolor" => self.table_rule_color_command(name, span),
             "setlist" => self.set_list(span),
             // Definitions run in the expansion pass (`crate::expansion`); the
             // parser only sees their expansions, never these names.
@@ -2791,18 +2823,7 @@ impl P<'_> {
             // real LaTeX also accepts them in the body before `\maketitle`;
             // this arm runs in either place, unlike the preamble catch-all
             // just below.
-            "title" => {
-                let (tokens, argument_span) = self.required_group(name, span);
-                self.title = Some((tokens, span.merge(argument_span)));
-            }
-            "author" => {
-                let (tokens, argument_span) = self.required_group(name, span);
-                self.author = Some((tokens, span.merge(argument_span)));
-            }
-            "date" => {
-                let (tokens, argument_span) = self.required_group(name, span);
-                self.date = Some((tokens, span.merge(argument_span)));
-            }
+            "title" | "author" | "date" => self.title_block_command(name, span),
             "maketitle" => self.maketitle(span, blocks, para),
             // letter.cls's preamble declarations (lines 154-163). Each is
             // `\def`ined to empty by the class, so writing one simply
@@ -2826,9 +2847,7 @@ impl P<'_> {
             // left margin). Consuming the argument here would silently
             // delete the author's sentence.
             "ps" | "startbreaks" | "stopbreaks" | "stopletter" => {
-                if self.letter_command_available(name, span) && name == "ps" {
-                    self.flush_paragraph(blocks, para);
-                }
+                self.letter_break_command(name, span, blocks, para)
             }
             // `\makelabels` (letter.cls 165-173) writes an address-label
             // page from the `.aux` at the end of the document. There is no
@@ -2864,96 +2883,16 @@ impl P<'_> {
             // `BUILT_INS` panicked the debug build instead. These arms make the
             // documented behaviour real. Same latent bug as `\today` below,
             // different command.
-            "thanks" => {
-                // `\thanks{...}` is `\footnotemark\footnotetext` (latex.ltx);
-                // this compiler has no footnote implementation, so the note
-                // text must not leak into the running prose either.
-                let (_, argument_span) = self.required_group(name, span);
-                self.diags.push(Diagnostic::command_error(
-                    name,
-                    "\\thanks outside \\title/\\author/\\date makes a footnote, which this compiler does not implement",
-                    Some(span.merge(argument_span)),
-                    Some("dropped the command and its note text rather than typesetting the note inline".into()),
-                ));
-            }
-            "and" => {
-                // latex.ltx defines `\and` only for the `\author` block's
-                // tabular; elsewhere real LaTeX produces spurious column
-                // material rather than anything meaningful.
-                self.diags.push(Diagnostic::command_error(
-                    name,
-                    "\\and separates authors inside \\author; outside it there is no author block to split",
-                    Some(span),
-                    Some("ignored the command".into()),
-                ));
-            }
-            "today" => {
-                let space_before = self.space_precedes(self.i - 1);
-                para.push(Inline::Text {
-                    text: self.today.latex_today(),
-                    span,
-                    style: self.style,
-                    space_before,
-                });
-            }
+            "thanks" | "and" | "today" => self.title_text_command(name, span, para),
             // Preamble or body: amsmath's `\numberwithin` and the kernel's
             // `\counterwithin`/`\counterwithout` (handed to the parser by
             // `expansion::HOST_PRELUDE`).
             "numberwithin" => self.counter_numbering(name, span),
             "counterwithin" | "counterwithout" => self.counter_numbering(name, span),
-            // siunitx settings are ordinary preamble material (`crate::siunitx`).
-            "sisetup" => {
-                let (tokens, argument_span) = self.required_group(name, span);
-                let keys = siunitx::raw_text(tokens.iter().map(|t| &t.token));
-                siunitx::sisetup(&keys, span.merge(argument_span), &mut self.diags);
-            }
-            "DeclareSIUnit" => {
-                let _ = self.siunitx_bracket();
-                let unit = self.command_or_group(name, span);
-                let (tokens, _) = self.required_group(name, span);
-                siunitx::declare_unit(&unit, &siunitx::raw_text(tokens.iter().map(|t| &t.token)));
-            }
-            // `\def\graphicspath#1{\def\Ginput@path{#1}}` (graphics.sty): no
-            // material. The search list is re-read from the source by the
-            // consumer that loads image files (see `crate::graphics`).
-            "graphicspath" => {
-                let _ = self.required_group(name, span);
-            }
-            // amsmath's `\allowdisplaybreaks[<0-4>]` only changes where a
-            // page may break inside a display: nothing typeset, no material.
-            "allowdisplaybreaks" => {
-                let _ = self.optional_bracket_argument();
-            }
-            // Preamble or body (GH#321: the preamble is where documents usually
-            // declare them).
-            "pagestyle" => {
-                // No header/footer rendering exists yet, so every style is
-                // accepted with the same (honest) effect: none. `empty` and
-                // `plain` both describe "no footer content beyond a page
-                // number", which is already what happens.
-                let _ = self.required_group(name, span);
-            }
-            // `\thispagestyle` differs from `\pagestyle` only in scope
-            // (current page vs. every later one); since no style ever
-            // renders anything either way, the same honest no-op covers it.
-            "thispagestyle" => {
-                let _ = self.required_group(name, span);
-            }
-            // `\pagenumbering{arabic|roman|alph|...}` resets the page
-            // counter to 1 and selects the display style `\thepage` (and
-            // `\pageref`, which prints the labelled page the same way)
-            // uses from here on. The marker is zero-width inside the
-            // paragraph, so a switch between paragraphs — or even
-            // mid-paragraph — moves no glyph; layout applies markers in
-            // document order when the paragraph is set. An unrecognised
-            // style falls back to arabic rather than diagnosing: the
-            // command itself stays accepted, as before.
-            "pagenumbering" => {
-                let (tokens, _) = self.required_group(name, span);
-                let style = crate::xref::NumberStyle::from_command(&token_text(&tokens))
-                    .unwrap_or(crate::xref::NumberStyle::Arabic);
-                self.document_global_state = true;
-                para.push(Inline::PageNumbering { style, span });
+            "sisetup" | "DeclareSIUnit" => self.siunitx_setup_command(name, span),
+            "pagenumbering" => self.pagenumbering_command(span, para),
+            "graphicspath" | "allowdisplaybreaks" | "pagestyle" | "thispagestyle" => {
+                self.argument_only_command(name, span)
             }
             // `\hypersetup{key=value,...}` (hyperref): the same keys the
             // package options take, settable anywhere. Every key this
@@ -3093,46 +3032,289 @@ impl P<'_> {
             // arm only retires the `\paragraph is not supported by this
             // compiler version` error, which has been stale since the
             // pipeline started laying these heads out correctly.
-            "paragraph" | "subparagraph" => {
-                let _ = self.take_optional_star();
+            "paragraph" | "subparagraph" => self.run_in_heading_command(),
+            "section" | "subsection" | "subsubsection" => self.section_command(name, span, blocks, para),
+            "label" | "ref" | "pageref" | "eqref" | "thepage" => self.label_or_reference_command(name, span, para),
+            "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
+            | "labelcref" => self.clever_reference(name, span, para),
+            "tableofcontents" => self.table_of_contents_command(span, blocks, para),
+            "cite" | "citetext" | "nocite" | "bibliography" | "bibliographystyle" => {
+                self.citation_command(name, span, para)
+            }
+            "parencite" | "textcite" | "autocite" => self.biblatex_cite(name, span, para),
+            "citet" | "citep" | "citealt" | "citealp" | "citeauthor" | "citefullauthor"
+            | "citeyear" | "citeyearpar" | "citenum" | "Citet" | "Citep" | "Citealt"
+            | "Citealp" | "Citeauthor" => self.natbib_cite(name, span, para),
+            "caption" | "captionof" => self.caption_command(name, span, blocks, para),
+            "printbibliography" => self.print_bibliography(span, blocks, para),
+            "item" | "bibitem" => self.item_command(name, span, blocks, para),
+            "includegraphics" => self.include_graphics(span, para),
+            "scalebox" | "resizebox" | "rotatebox" | "reflectbox" => {
+                self.transform_box(name, span, para)
+            }
+            "url" | "nolinkurl" | "href" => self.url_command(name, span, para),
+            _ if style_command(name) => self.style_command_argument(name, span, para),
+            _ if style_declaration(name) => self.style = apply_style(self.style, name),
+            "hfill" | "hfil" | "hrulefill" | "dotfill" | "linebreak" | "nolinebreak" | "hspace"
+            | "noindent" | "indent" | "quad" | "qquad" | "thinspace" | "negthinspace" | "medspace"
+            | "negmedspace" | "thickspace" | "negthickspace" | "enspace" | "enskip"
+            | "nobreakdash" | "discretionary" => {
+                self.horizontal_command(name, span, para)
+            }
+            // latex.ltx `\discretionary` is TeX's primitive; `\-` is
+            // `\discretionary{\char\hyphenchar\font}{}{}`.
+            "-" if self.tabbing_active() => self.tabbing_control("-", span, para),
+            "-" => self.horizontal_command(name, span, para),
+            // `\hskip<dimen> plus<dimen> minus<dimen>`: TeX's kernel
+            // horizontal-glue primitive (tex.web §461, the `<glue>`
+            // production), which `\hspace{<dimen>}` is built on. Unlike
+            // `\hspace`, the spec takes no braces, the `plus`/`minus`
+            // clauses are optional, and stretch/shrink may use infinite
+            // `fil`/`fill`/`filll` units. A trailing `\relax` — the
+            // idiomatic glue terminator (`\def\enskip{\hskip.5em\relax}`)
+            // — is consumed so it is not diagnosed as unsupported.
+            "hskip" => self.hskip(span, para),
+            "footnote" | "footnotemark" | "footnotetext" => self.footnote(name, span, para),
+            "fnsymbol" => self.fnsymbol_command(span, para),
+            "marginpar" => self.marginpar(span, para),
+            "par" => self.flush_paragraph(blocks, para),
+            "bigskip" | "medskip" | "smallskip" | "vspace" | "hrule" | "newpage" | "clearpage"
+            | "cleardoublepage" | "pagebreak" | "nopagebreak" | "vfill" | "columnbreak" | "newcolumn"
+            | "raggedcolumns" | "flushcolumns" | "penalty" | "nobreak" | "allowbreak"
+            | "goodbreak" | "filbreak" => self.vertical_command(name, span, blocks, para),
+            // Kernel text symbols (`text_builtins::TEXT_SYMBOLS`; the
+            // `text_symbol_arms_match_the_builtin_table` test keeps them equal).
+            "AA" | "aa" | "AE" | "ae" | "OE" | "oe" | "O" | "o" | "L" | "l" | "ss" | "SS"
+            | "TH" | "th" | "DH" | "dh" | "DJ" | "dj" | "NG" | "ng" | "IJ" | "ij" | "i" | "j"
+            | "S" | "P" | "dag" | "ddag" | "copyright" | "pounds" | "dots" | "ldots"
+            | "textsection" | "textparagraph" | "textdagger" | "textdaggerdbl"
+            | "textcopyright" | "textsterling" | "textellipsis" | "textbackslash"
+            | "textasciitilde" | "textasciicircum" | "textunderscore" | "textbar" | "textless"
+            | "textgreater" | "textbraceleft" | "textbraceright" => {
+                self.text_symbol(name, span, para)
+            }
+            // `text_builtins::TEXT_ACCENTS` and the
+            // `text_builtins::CAPITAL_ACCENT_ALIASES` names that resolve to
+            // one of them; the alias reaches the same implementation under
+            // its canonical name.
+            "c" | "v" | "u" | "H" | "r" | "k" | "d" | "b" | "capitalcaron" | "capitalbreve"
+            | "capitalring" | "capitalogonek" | "capitalhungarumlaut" | "capitalcedilla" => {
+                self.text_accent(text_builtins::canonical_accent_name(name), span, para)
+            }
+            "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
+            // ulem `\uline`/`\sout` (need the package). Kernel text-mode
+            // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
+            // Rule 10); math-mode `\underline`/`\underbar` are in `math.rs`.
+            "uline" | "underline" | "underbar" | "sout" => self.underline_command(name, span, para),
+            // `\xspace` (xspace.sty): a word space unless the token after
+            // the macro call is `}`, another command, or `, . ! ? ; : ' /`.
+            "xspace" => self.xspace(span),
+            "rule" => self.text_rule(span, para),
+            "frac" | "sqrt" => self.text_mode_math_command(name, span),
+            other => self.unsupported(other, span),
+        }
+        self.pending_global = false;
+    }
+
+    /// `\arrayrulecolor`/`\doublerulesepcolor` (see [`P::command`]).
+    #[inline(never)]
+    fn table_rule_color_command(&mut self, name: &str, span: Span) {
+        let color = self.table_color_argument(name, span);
+        if !self.colortbl() {
+            self.diags.push(Diagnostic::error(
+                format!("\\{name} needs the colortbl package (or xcolor with the table option)"),
+                Some(span),
+                Some("ignored the colour".into()),
+            ));
+        } else if name == "arrayrulecolor" {
+            self.table_rule_color = Some(color);
+        } else {
+            self.table_double_rule_sep_color = Some(color);
+        }
+    }
+
+    /// `\title`, `\author` and `\date`.
+    #[inline(never)]
+    fn title_block_command(&mut self, name: &str, span: Span) {
+        match name {
+        "title" => {
+            let (tokens, argument_span) = self.required_group(name, span);
+            self.title = Some((tokens, span.merge(argument_span)));
+        }
+        "author" => {
+            let (tokens, argument_span) = self.required_group(name, span);
+            self.author = Some((tokens, span.merge(argument_span)));
+        }
+        "date" => {
+            let (tokens, argument_span) = self.required_group(name, span);
+            self.date = Some((tokens, span.merge(argument_span)));
+        }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// letter.cls `\ps`, `\startbreaks`, `\stopbreaks` and `\stopletter`.
+    #[inline(never)]
+    fn letter_break_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        if self.letter_command_available(name, span) && name == "ps" {
+            self.flush_paragraph(blocks, para);
+        }
+    }
+
+    /// `\thanks`, `\and` and `\today` outside the title block.
+    #[inline(never)]
+    fn title_text_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        match name {
+        "thanks" => {
+            // `\thanks{...}` is `\footnotemark\footnotetext` (latex.ltx);
+            // this compiler has no footnote implementation, so the note
+            // text must not leak into the running prose either.
+            let (_, argument_span) = self.required_group(name, span);
+            self.diags.push(Diagnostic::command_error(
+                name,
+                "\\thanks outside \\title/\\author/\\date makes a footnote, which this compiler does not implement",
+                Some(span.merge(argument_span)),
+                Some("dropped the command and its note text rather than typesetting the note inline".into()),
+            ));
+        }
+        "and" => {
+            // latex.ltx defines `\and` only for the `\author` block's
+            // tabular; elsewhere real LaTeX produces spurious column
+            // material rather than anything meaningful.
+            self.diags.push(Diagnostic::command_error(
+                name,
+                "\\and separates authors inside \\author; outside it there is no author block to split",
+                Some(span),
+                Some("ignored the command".into()),
+            ));
+        }
+        "today" => {
+            let space_before = self.space_precedes(self.i - 1);
+            para.push(Inline::Text {
+                text: self.today.latex_today(),
+                span,
+                style: self.style,
+                space_before,
+            });
+        }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// siunitx preamble settings: `\sisetup` and `\DeclareSIUnit`.
+    #[inline(never)]
+    fn siunitx_setup_command(&mut self, name: &str, span: Span) {
+        match name {
+            "sisetup" => {
+                let (tokens, argument_span) = self.required_group(name, span);
+                let keys = siunitx::raw_text(tokens.iter().map(|t| &t.token));
+                siunitx::sisetup(&keys, span.merge(argument_span), &mut self.diags);
+            }
+            "DeclareSIUnit" => {
+                let _ = self.siunitx_bracket();
+                let unit = self.command_or_group(name, span);
+                let (tokens, _) = self.required_group(name, span);
+                siunitx::declare_unit(&unit, &siunitx::raw_text(tokens.iter().map(|t| &t.token)));
+            }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// Commands whose arguments are read and dropped: `\graphicspath`,
+    /// `\allowdisplaybreaks`, `\pagestyle`, `\thispagestyle` and `\pagenumbering`.
+    #[inline(never)]
+    fn argument_only_command(&mut self, name: &str, span: Span) {
+        match name {
+            // `\def\graphicspath#1{\def\Ginput@path{#1}}` (graphics.sty): no
+            // material. The search list is re-read from the source by the
+            // consumer that loads image files (see `crate::graphics`).
+            "graphicspath" => {
+                let _ = self.required_group(name, span);
+            }
+            // amsmath's `\allowdisplaybreaks[<0-4>]` only changes where a
+            // page may break inside a display: nothing typeset, no material.
+            "allowdisplaybreaks" => {
                 let _ = self.optional_bracket_argument();
             }
-            "section" | "subsection" | "subsubsection" => {
-                let level = match name {
-                    "section" => 1,
-                    "subsection" => 2,
-                    _ => 3,
-                };
-                let starred = self.take_optional_star();
-                let (tokens, _) = self.required_group(name, span);
-                self.flush_paragraph(blocks, para);
-                let number = if starred {
-                    String::new()
-                } else {
-                    if level == 1 {
-                        theorems::reset_within_section(&self.theorems, &mut self.theorem_counters);
-                    }
-                    self.counters.step(name).unwrap_or_default()
-                };
-                if !starred {
-                    self.set_current_counter(name, Some(number.clone()));
-                }
-                let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
-                if content.is_empty() {
-                    // A missing/empty heading is already diagnosed where
-                    // applicable and has nothing to position. Do not create an
-                    // empty block: incremental block spans require real source.
-                    self.current_dependencies.clear();
-                } else {
-                    blocks.push(Block::Heading {
-                        level,
-                        number,
-                        number_span: span,
-                        content,
-                    });
-                    self.finish_block_dependencies();
-                }
+            // Preamble or body (GH#321: the preamble is where documents usually
+            // declare them).
+            "pagestyle" => {
+                // No header/footer rendering exists yet, so every style is
+                // accepted with the same (honest) effect: none. `empty` and
+                // `plain` both describe "no footer content beyond a page
+                // number", which is already what happens.
+                let _ = self.required_group(name, span);
             }
+            // `\thispagestyle` differs from `\pagestyle` only in scope
+            // (current page vs. every later one); since no style ever
+            // renders anything either way, the same honest no-op covers it.
+            "thispagestyle" => {
+                let _ = self.required_group(name, span);
+            }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// `\pagenumbering{arabic|roman|...}` (see [`P::command`]).
+    #[inline(never)]
+    fn pagenumbering_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let (tokens, _) = self.required_group("pagenumbering", span);
+        let style = crate::xref::NumberStyle::from_command(&token_text(&tokens))
+            .unwrap_or(crate::xref::NumberStyle::Arabic);
+        self.document_global_state = true;
+        para.push(Inline::PageNumbering { style, span });
+    }
+
+    /// Run-in `\paragraph`/`\subparagraph` (see the comment in [`P::command`]).
+    #[inline(never)]
+    fn run_in_heading_command(&mut self) {
+        let _ = self.take_optional_star();
+        let _ = self.optional_bracket_argument();
+    }
+
+    /// `\section`, `\subsection` and `\subsubsection`.
+    #[inline(never)]
+    fn section_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+            let level = match name {
+                "section" => 1,
+                "subsection" => 2,
+                _ => 3,
+            };
+            let starred = self.take_optional_star();
+            let (tokens, _) = self.required_group(name, span);
+            self.flush_paragraph(blocks, para);
+            let number = if starred {
+                String::new()
+            } else {
+                if level == 1 {
+                    theorems::reset_within_section(&self.theorems, &mut self.theorem_counters);
+                }
+                self.counters.step(name).unwrap_or_default()
+            };
+            if !starred {
+                self.set_current_counter(name, Some(number.clone()));
+            }
+            let content = self.inlines_from_tokens(tokens, TextStyle::BOLD);
+            if content.is_empty() {
+                // A missing/empty heading is already diagnosed where
+                // applicable and has nothing to position. Do not create an
+                // empty block: incremental block spans require real source.
+                self.current_dependencies.clear();
+            } else {
+                blocks.push(Block::Heading {
+                    level,
+                    number,
+                    number_span: span,
+                    content,
+                });
+                self.finish_block_dependencies();
+            }
+    }
+
+    /// `\label`, `\ref`, `\pageref` and `\eqref`.
+    #[inline(never)]
+    fn label_or_reference_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        match name {
             "label" => {
                 let (tokens, argument_span) = self.required_group(name, span);
                 let key = token_text(&tokens).trim().to_string();
@@ -3181,14 +3363,23 @@ impl P<'_> {
                 self.document_global_state = true;
                 para.push(Inline::ThePage { span, space_before });
             }
-            "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
-            | "labelcref" => self.clever_reference(name, span, para),
-            "tableofcontents" => {
-                self.flush_paragraph(blocks, para);
-                self.document_global_state = true;
-                blocks.push(Block::TableOfContents { span });
-                self.finish_block_dependencies();
-            }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// `\tableofcontents`.
+    #[inline(never)]
+    fn table_of_contents_command(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+            self.flush_paragraph(blocks, para);
+            self.document_global_state = true;
+            blocks.push(Block::TableOfContents { span });
+            self.finish_block_dependencies();
+    }
+
+    /// `\cite`, `\citetext`, `\nocite`, `\bibliography` and `\bibliographystyle`.
+    #[inline(never)]
+    fn citation_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        match name {
             "cite" => {
                 if self.biblatex.enabled() {
                     self.biblatex_cite(name, span, para);
@@ -3231,13 +3422,8 @@ impl P<'_> {
                         &mut self.diags,
                     ));
                 }
+
             }
-            "parencite" | "textcite" | "autocite" => self.biblatex_cite(name, span, para),
-            "citet" | "citep" | "citealt" | "citealp" | "citeauthor" | "citefullauthor"
-            | "citeyear" | "citeyearpar" | "citenum" | "Citet" | "Citep" | "Citealt"
-            | "Citealp" | "Citeauthor" => self.natbib_cite(name, span, para),
-            // `\citetext{...}`: natbib's delimiters around arbitrary text
-            // (natbib.sty line 741).
             "citetext" => {
                 let options = self.natbib_options(name, span);
                 let (tokens, argument_span) = self.required_group(name, span);
@@ -3248,7 +3434,6 @@ impl P<'_> {
                     full_span,
                 ));
             }
-            "printbibliography" => self.print_bibliography(span, blocks, para),
             // Real LaTeX's `\nocite` has no visible output; biblatex's
             // pre-scan uses its keys to include entries in the printed list.
             "nocite" => {
@@ -3270,6 +3455,14 @@ impl P<'_> {
                     Some("ignored the style and continued".into()),
                 ));
             }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// `\caption`.
+    #[inline(never)]
+    fn caption_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        match name {
             "caption" => {
                 let (tokens, _) = self.required_group(name, span);
                 if self.env_stack.last().map(|(name, _)| name.as_str()) != Some("figure") {
@@ -3319,6 +3512,14 @@ impl P<'_> {
                     para.extend(self.inlines_from_tokens(tokens, style));
                 }
             }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// `\item` and `\bibitem`.
+    #[inline(never)]
+    fn item_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        match name {
             "item" => {
                 let gap_before = self
                     .list_stack
@@ -3400,476 +3601,475 @@ impl P<'_> {
                     self.pending_item_label = Some((text, span));
                 }
             }
-            "includegraphics" => self.include_graphics(span, para),
-            "scalebox" | "resizebox" | "rotatebox" | "reflectbox" => {
-                self.transform_box(name, span, para)
-            }
-            // See `url_argument` for why the URL is read from raw source
-            // bytes rather than the ordinary token stream, and
-            // `note_links_unclickable` for the once-per-document diagnostic.
-            "url" => {
-                let space_before = self.space_precedes(self.i - 1);
-                let (text, arg_span) = self.url_argument(name, span);
-                let full_span = span.merge(arg_span);
-                self.note_links_unclickable(full_span);
-                self.push_url_text(&text, full_span, space_before, para);
-            }
-            // `\nolinkurl`: url.sty-style literal, monospaced text with no
-            // hyperlink at all, so it never needs the "not clickable" notice
-            // — nothing here was ever meant to be clickable.
-            "nolinkurl" => {
-                let space_before = self.space_precedes(self.i - 1);
-                let (text, arg_span) = self.url_argument(name, span);
-                self.push_url_text(&text, span.merge(arg_span), space_before, para);
-            }
-            "href" => {
-                let (_url, url_span) = self.url_argument(name, span);
-                let (text_tokens, text_span) = self.required_group(name, span.merge(url_span));
-                self.note_links_unclickable(span.merge(text_span));
-                let style = self.style;
-                para.extend(self.inlines_from_tokens(text_tokens, style));
-            }
-            // latex.ltx `\DeclareTextFontCommand`: `\hmode@bgroup` is
-            // `\leavevmode\bgroup`.
-            _ if style_command(name) => {
-                self.paragraph_started = true;
-                self.skip_spaces();
-                let next = apply_style(self.style, name);
-                if let Some(open) = self.closed_group_start() {
-                    // Re-enter the argument as an ordinary group so math and
-                    // other commands inside it are parsed normally.
-                    self.i += 1;
-                    self.open_group(open);
-                    self.style = next;
-                } else {
-                    let (tokens, _) = self.required_group(name, span);
-                    para.extend(self.inlines_from_tokens(tokens, next));
-                }
-            }
-            _ if style_declaration(name) => self.style = apply_style(self.style, name),
-            "hfill" | "hfil" => para.push(Inline::HFill { span, leader: FillLeader::None }),
-            "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule }),
-            "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots }),
-            "footnote" | "footnotemark" | "footnotetext" => self.footnote(name, span, para),
-            "fnsymbol" => self.fnsymbol_command(span, para),
-            "marginpar" => self.marginpar(span, para),
-            // latex.ltx `\linebreak`/`\nolinebreak` (`\@no@lnbk`): a penalty of
-            // `-\@getpen{n}`/`\@getpen{n}` with the space in front of the
-            // command moved after it; in vertical mode, `\@nolnerr`.
-            "linebreak" | "nolinebreak" => {
-                let (priority, bracket) = self.break_priority_penalty();
-                // The span covers the bracket, so a consumer reading the
-                // source after it starts past `]`.
-                let span = bracket.map_or(span, |bracket| span.merge(bracket));
-                if para.is_empty() {
-                    self.diags.push(Diagnostic::error(
-                        format!("LaTeX Error: There's no line here to end (\\{name} outside a paragraph)"),
-                        Some(span),
-                        Some("ignored the command".into()),
-                    ));
-                } else {
-                    let value = if name == "linebreak" {
-                        -priority
-                    } else {
-                        priority
-                    };
-                    para.push(Inline::Penalty {
-                        value,
-                        span,
-                        unskip: true,
-                    });
-                }
-            }
-            // TeX's `\penalty<number>`, and plain/latex.ltx `\nobreak`
-            // (`\penalty\@M`) and `\allowbreak` (`\penalty\z@`): a node in the
-            // horizontal list inside a paragraph, in the vertical list between
-            // paragraphs.
-            "penalty" | "nobreak" | "allowbreak" => {
-                // `\penalty`'s span covers its number.
-                let mut span = span;
-                let value = match name {
-                    "nobreak" => INF_PENALTY,
-                    "allowbreak" => 0,
-                    _ => match self.integer_value() {
-                        Some((value, number)) => {
-                            span = span.merge(number);
-                            value
-                        }
-                        None => {
-                            self.diags.push(Diagnostic::error(
-                                "\\penalty needs a number (Missing number, treated as zero)",
-                                Some(span),
-                                Some("used a penalty of 0".into()),
-                            ));
-                            0
-                        }
-                    },
-                };
-                if para.is_empty() {
-                    blocks.push(Block::Penalty {
-                        value,
-                        fil: false,
-                        span,
-                    });
-                    self.finish_block_dependencies();
-                } else {
-                    para.push(Inline::Penalty {
-                        value,
-                        span,
-                        unskip: false,
-                    });
-                }
-            }
-            // amsmath `\nobreakdash`: the hyphens right after it are set in
-            // an `\hbox`, where TeX appends no discretionary after a hyphen
-            // (§1039 does so only in unrestricted horizontal mode), and
-            // unboxed before a `\nobreak`: `\nobreakdash-`, `--` and `---`
-            // cannot end a line. Blanks after the control word are no tokens
-            // to `\futurelet`.
-            "nobreakdash" => {
-                self.skip_spaces();
-                let dashes = match self.peek().map(|token| &token.kind) {
-                    Some(TokenKind::Word(word)) => word.len() - word.trim_start_matches('-').len(),
-                    _ => 0,
-                };
-                if dashes > 0 {
-                    let token = self.t[self.i].token.span;
-                    let length = match &self.t[self.i].token.kind {
-                        TokenKind::Word(word) => word.len(),
-                        _ => 0,
-                    };
-                    let dash_span = if token.end - token.start == length {
-                        Span::in_document(token.document, token.start, token.start + dashes)
-                    } else {
-                        token
-                    };
-                    para.push(Inline::Text {
-                        text: apply_text_ligatures(&"-".repeat(dashes)),
-                        span: dash_span,
-                        style: self.style,
-                        space_before: false,
-                    });
-                    if dashes == length {
-                        self.i += 1;
-                    } else {
-                        self.trim_word_front(dashes);
-                    }
-                }
-                para.push(Inline::Penalty {
-                    value: INF_PENALTY,
-                    span,
-                    unskip: false,
-                });
-            }
-            // latex.ltx `\discretionary` is TeX's primitive; `\-` is
-            // `\discretionary{\char\hyphenchar\font}{}{}`. Inside a
-            // `tabbing` body the environment redefines `\-` (indent
-            // decrease), so the tabbing handler takes precedence there.
-            "-" if self.tabbing_active() => self.tabbing_control("-", span, para),
-            "-" => para.push(Inline::Discretionary {
-                pre: "-".into(),
-                post: String::new(),
-                nobreak: String::new(),
-                hyphen: true,
-                span,
-                style: self.style,
-            }),
-            "discretionary" => {
-                let (pre, _) = self.required_group(name, span);
-                let (post, _) = self.required_group(name, span);
-                let (nobreak, last) = self.required_group(name, span);
-                let style = self.style;
-                let pre = plain_inline_text(&self.inlines_from_tokens(pre, style));
-                let post = plain_inline_text(&self.inlines_from_tokens(post, style));
-                let nobreak = plain_inline_text(&self.inlines_from_tokens(nobreak, style));
-                para.push(Inline::Discretionary {
-                    pre,
-                    post,
-                    nobreak,
-                    hyphen: false,
-                    span: span.merge(last),
-                    style,
-                });
-            }
-            "hspace" => {
-                // The star only affects whether the glue survives being
-                // discarded at a line break in real TeX, which this layout
-                // never does anyway (see the `Inline::HSpace` comment), so
-                // both forms are parsed identically.
-                let _starred = self.take_optional_star();
-                // A source space starts an interword gap only when this is
-                // not the first item in the current horizontal run. Spaces
-                // after row/line commands are otherwise mistaken for glue
-                // before the first cell item.
-                let space_before = !para.is_empty() && self.space_precedes(self.i - 1);
-                let (tokens, argument_span) = self.required_group(name, span);
-                let raw = token_text(&tokens);
-                let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-                match parse_dimen_pt_current(&raw, self.font_setup().em_ex_sp(self.style)) {
-                    Some(pt) => {
-                        let space_after = matches!(
-                            self.t.get(self.i).map(|input| &input.token.kind),
-                            Some(TokenKind::Space)
-                        );
-                        let size = self.style.size.map_or(body, |level| {
-                            crate::layout::size_declaration_pt(level, body)
-                        });
-                        let word_space = crate::layout::word_space(
-                            size,
-                            crate::layout::style_font(self.style),
-                        );
-                        para.push(Inline::HSpace {
-                            pt,
-                            space_before_pt: if space_before { word_space } else { 0.0 },
-                            space_after_pt: if space_after { word_space } else { 0.0 },
-                            span: span.merge(argument_span),
-                        });
-                    }
-                    None => self.diags.push(Diagnostic::error(
-                        format!(
-                            "\\hspace requires a recognised dimension, got '{}'",
-                            raw.trim()
-                        ),
-                        Some(span.merge(argument_span)),
-                        Some("ignored the malformed \\hspace argument".into()),
-                    )),
-                }
-            }
-            // No paragraph is ever given a first-line indent in this layout
-            // model, so there is nothing for \noindent to suppress: an honest
-            // no-op rather than a fabricated indent to cancel. It still
-            // starts the paragraph (TeX §1091 `new_graf`), as `\indent` does.
-            "noindent" => self.paragraph_started = true,
-            // The opposite request: unlike \noindent above, this one is not a
-            // coincidental match with real LaTeX's output — \indent asks for
-            // a first-line indent that this layout has no way to draw (see
-            // `set_length`'s `\parindent` handling), so it is named honestly
-            // via a diagnostic rather than silently accepted.
-            "indent" => {
-                self.paragraph_started = true;
-                self.diags.push(Diagnostic::warning(
-                    "\\indent is recognised but paragraph indentation is not implemented",
+
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// `\url`, `\nolinkurl` and `\href`.
+    #[inline(never)]
+    fn url_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        match name {
+        // See `url_argument` for why the URL is read from raw source
+        // bytes rather than the ordinary token stream, and
+        // `note_links_unclickable` for the once-per-document diagnostic.
+        "url" => {
+            let space_before = self.space_precedes(self.i - 1);
+            let (text, arg_span) = self.url_argument(name, span);
+            let full_span = span.merge(arg_span);
+            self.note_links_unclickable(full_span);
+            self.push_url_text(&text, full_span, space_before, para);
+        }
+        // `\nolinkurl`: url.sty-style literal, monospaced text with no
+        // hyperlink at all, so it never needs the "not clickable" notice
+        // — nothing here was ever meant to be clickable.
+        "nolinkurl" => {
+            let space_before = self.space_precedes(self.i - 1);
+            let (text, arg_span) = self.url_argument(name, span);
+            self.push_url_text(&text, span.merge(arg_span), space_before, para);
+        }
+        "href" => {
+            let (_url, url_span) = self.url_argument(name, span);
+            let (text_tokens, text_span) = self.required_group(name, span.merge(url_span));
+            self.note_links_unclickable(span.merge(text_span));
+            let style = self.style;
+            para.extend(self.inlines_from_tokens(text_tokens, style));
+        }
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// A text style command with an argument (`\textbf{..}`, `\emph{..}`, ...).
+    #[inline(never)]
+    fn style_command_argument(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        // latex.ltx `\DeclareTextFontCommand`: `\hmode@bgroup` is
+        // `\leavevmode\bgroup`.
+        self.paragraph_started = true;
+        self.skip_spaces();
+        let next = apply_style(self.style, name);
+        if let Some(open) = self.closed_group_start() {
+            // Re-enter the argument as an ordinary group so math and
+            // other commands inside it are parsed normally.
+            self.i += 1;
+            self.open_group(open);
+            self.style = next;
+        } else {
+            let (tokens, _) = self.required_group(name, span);
+            para.extend(self.inlines_from_tokens(tokens, next));
+        }
+    }
+
+    /// `\hfill`, glue, breaks, discretionaries and fixed spaces in running
+    /// text (see [`P::command`]).
+    #[inline(never)]
+    fn horizontal_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        match name {
+        "hfill" | "hfil" => para.push(Inline::HFill { span, leader: FillLeader::None }),
+        "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule }),
+        "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots }),
+        // latex.ltx `\linebreak`/`\nolinebreak` (`\@no@lnbk`): a penalty of
+        // `-\@getpen{n}`/`\@getpen{n}` with the space in front of the
+        // command moved after it; in vertical mode, `\@nolnerr`.
+        "linebreak" | "nolinebreak" => {
+            let (priority, bracket) = self.break_priority_penalty();
+            // The span covers the bracket, so a consumer reading the
+            // source after it starts past `]`.
+            let span = bracket.map_or(span, |bracket| span.merge(bracket));
+            if para.is_empty() {
+                self.diags.push(Diagnostic::error(
+                    format!("LaTeX Error: There's no line here to end (\\{name} outside a paragraph)"),
                     Some(span),
-                    Some("the paragraph was not given a first-line indent".into()),
-                ))
-            }
-            // Text-mode horizontal glue. `\quad`/`\qquad` are also implemented
-            // in math mode (`src/math.rs`); this arm covers the same commands
-            // used directly in running text, 1em/2em of the body text size.
-            "quad" => para.push(Inline::TextGlue {
-                em: math::QUAD_EM,
-                span,
-            }),
-            "qquad" => para.push(Inline::TextGlue {
-                em: 2.0 * math::QUAD_EM,
-                span,
-            }),
-            "par" => self.flush_paragraph(blocks, para),
-            "bigskip" | "medskip" | "smallskip" => {
-                let (pt, stretch_pt, shrink_pt) = match name {
-                    "bigskip" => (BIG_SKIP_PT, BIG_SKIP_STRETCH_PT, BIG_SKIP_SHRINK_PT),
-                    "medskip" => (
-                        MEDIUM_SKIP_PT,
-                        MEDIUM_SKIP_STRETCH_PT,
-                        MEDIUM_SKIP_SHRINK_PT,
-                    ),
-                    _ => (
-                        SMALL_SKIP_PT,
-                        SMALL_SKIP_STRETCH_PT,
-                        SMALL_SKIP_SHRINK_PT,
-                    ),
-                };
-                self.flush_paragraph(blocks, para);
-                blocks.push(Block::VSpace {
-                    pt,
-                    stretch_pt,
-                    shrink_pt,
-                });
-                self.finish_block_dependencies();
-            }
-            "vspace" => {
-                // The star only affects whether the glue survives being
-                // discarded at a page break in real TeX, which this layout
-                // never does anyway (see `hspace`'s identical star), so both
-                // forms are parsed identically. Consuming it here (as
-                // `hspace` already does for itself) is the fix: left alone,
-                // `required_group` sees `*` where it expects `{` and reports
-                // a missing argument instead of reading the dimension after it.
-                let _starred = self.take_optional_star();
-                let (tokens, argument_span) = self.required_group(name, span);
-                let raw = token_text(&tokens);
-                let units = self.font_setup().em_ex_sp(self.style);
-                match parse_glue_pt_current(&raw, units) {
-                    Some((pt, stretch_pt, shrink_pt)) => {
-                        self.flush_paragraph(blocks, para);
-                        blocks.push(Block::VSpace {
-                            pt,
-                            stretch_pt,
-                            shrink_pt,
-                        });
-                        self.finish_block_dependencies();
-                    }
-                    None => self.diags.push(Diagnostic::error(
-                        format!(
-                            "\\vspace requires a recognised dimension, got '{}'",
-                            raw.trim()
-                        ),
-                        Some(span.merge(argument_span)),
-                        Some("ignored the vertical space and continued".into()),
-                    )),
-                }
-            }
-            "hrule" => {
-                self.flush_paragraph(blocks, para);
-                blocks.push(Block::Rule { span });
-                self.finish_block_dependencies();
-            }
-            "newpage" => {
-                self.flush_paragraph(blocks, para);
-                blocks.push(Block::PageBreak);
-                self.finish_block_dependencies();
-            }
-            // `\clearpage`/`\cleardoublepage` also flush any queued floats
-            // and, for `\cleardoublepage` in a `twoside` class, insert a
-            // blank page to land back on an odd one. Neither float queuing
-            // nor the oneside/twoside distinction exists in this compiler
-            // (article defaults to oneside, where the two commands are
-            // already identical in real LaTeX), so both reduce honestly to
-            // the same unconditional break as `\newpage`.
-            "clearpage" | "cleardoublepage" => {
-                self.flush_paragraph(blocks, para);
-                blocks.push(Block::PageBreak);
-                self.finish_block_dependencies();
-            }
-            // latex.ltx `\pagebreak[n]`/`\nopagebreak[n]` (`\@no@pgbk`):
-            // `\penalty -\@getpen{n}`/`\penalty \@getpen{n}` in vertical mode,
-            // `\vadjust{\penalty ...}` in a paragraph, which is not broken:
-            // the penalty lands after the line the command is set on. A
-            // vertical-mode `\pagebreak` with priority 4 is a bare
-            // `\penalty-10000`, not `\newpage`: there is no `\vfil` before
-            // it, so a `\flushbottom` page it ends is stretched to
-            // `\textheight`. The mode is TeX's, not whether text has been
-            // collected: `\noindent\pagebreak text` is horizontal (the page
-            // ends after the first line), `\label{x}\pagebreak text` is still
-            // vertical (`\label` puts only a whatsit in the current list).
-            "pagebreak" | "nopagebreak" => {
-                let (priority, bracket) = self.break_priority_penalty();
-                let span = bracket.map_or(span, |bracket| span.merge(bracket));
-                let value = if name == "pagebreak" {
+                    Some("ignored the command".into()),
+                ));
+            } else {
+                let value = if name == "linebreak" {
                     -priority
                 } else {
                     priority
                 };
-                let horizontal = self.paragraph_started
-                    || para.iter().any(|inline| !matches!(inline, Inline::Label { .. }));
-                if horizontal {
-                    para.push(Inline::PagePenalty { value, span });
+                para.push(Inline::Penalty {
+                    value,
+                    span,
+                    unskip: true,
+                });
+            }
+        }
+        // amsmath `\nobreakdash`: the hyphens right after it are set in
+        // an `\hbox`, where TeX appends no discretionary after a hyphen
+        // (§1039 does so only in unrestricted horizontal mode), and
+        // unboxed before a `\nobreak`: `\nobreakdash-`, `--` and `---`
+        // cannot end a line. Blanks after the control word are no tokens
+        // to `\futurelet`.
+        "nobreakdash" => {
+            self.skip_spaces();
+            let dashes = match self.peek().map(|token| &token.kind) {
+                Some(TokenKind::Word(word)) => word.len() - word.trim_start_matches('-').len(),
+                _ => 0,
+            };
+            if dashes > 0 {
+                let token = self.t[self.i].token.span;
+                let length = match &self.t[self.i].token.kind {
+                    TokenKind::Word(word) => word.len(),
+                    _ => 0,
+                };
+                let dash_span = if token.end - token.start == length {
+                    Span::in_document(token.document, token.start, token.start + dashes)
                 } else {
-                    blocks.push(Block::Penalty {
-                        value,
-                        fil: false,
-                        span,
+                    token
+                };
+                para.push(Inline::Text {
+                    text: apply_text_ligatures(&"-".repeat(dashes)),
+                    span: dash_span,
+                    style: self.style,
+                    space_before: false,
+                });
+                if dashes == length {
+                    self.i += 1;
+                } else {
+                    self.trim_word_front(dashes);
+                }
+            }
+            para.push(Inline::Penalty {
+                value: INF_PENALTY,
+                span,
+                unskip: false,
+            });
+        }
+        // latex.ltx `\discretionary` is TeX's primitive; `\-` is
+        // `\discretionary{\char\hyphenchar\font}{}{}`.
+        "-" => para.push(Inline::Discretionary {
+            pre: "-".into(),
+            post: String::new(),
+            nobreak: String::new(),
+            hyphen: true,
+            span,
+            style: self.style,
+        }),
+        "discretionary" => {
+            let (pre, _) = self.required_group(name, span);
+            let (post, _) = self.required_group(name, span);
+            let (nobreak, last) = self.required_group(name, span);
+            let style = self.style;
+            let pre = plain_inline_text(&self.inlines_from_tokens(pre, style));
+            let post = plain_inline_text(&self.inlines_from_tokens(post, style));
+            let nobreak = plain_inline_text(&self.inlines_from_tokens(nobreak, style));
+            para.push(Inline::Discretionary {
+                pre,
+                post,
+                nobreak,
+                hyphen: false,
+                span: span.merge(last),
+                style,
+            });
+        }
+        "hspace" => {
+            // The star only affects whether the glue survives being
+            // discarded at a line break in real TeX, which this layout
+            // never does anyway (see the `Inline::HSpace` comment), so
+            // both forms are parsed identically.
+            let _starred = self.take_optional_star();
+            // A source space starts an interword gap only when this is
+            // not the first item in the current horizontal run. Spaces
+            // after row/line commands are otherwise mistaken for glue
+            // before the first cell item.
+            let space_before = !para.is_empty() && self.space_precedes(self.i - 1);
+            let (tokens, argument_span) = self.required_group(name, span);
+            let raw = token_text(&tokens);
+            let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+            match parse_dimen_pt_current(&raw, self.font_setup().em_ex_sp(self.style)) {
+                Some(pt) => {
+                    let space_after = matches!(
+                        self.t.get(self.i).map(|input| &input.token.kind),
+                        Some(TokenKind::Space)
+                    );
+                    let size = self.style.size.map_or(body, |level| {
+                        crate::layout::size_declaration_pt(level, body)
+                    });
+                    let word_space = crate::layout::word_space(
+                        size,
+                        crate::layout::style_font(self.style),
+                    );
+                    para.push(Inline::HSpace {
+                        pt,
+                        space_before_pt: if space_before { word_space } else { 0.0 },
+                        space_after_pt: if space_after { word_space } else { 0.0 },
+                        span: span.merge(argument_span),
+                        stretch_pt: 0.0,
+                        stretch_fil: 0,
+                        shrink_pt: 0.0,
+                        shrink_fil: 0,
+                    });
+                }
+                None => self.diags.push(Diagnostic::error(
+                    format!(
+                        "\\hspace requires a recognised dimension, got '{}'",
+                        raw.trim()
+                    ),
+                    Some(span.merge(argument_span)),
+                    Some("ignored the malformed \\hspace argument".into()),
+                )),
+            }
+        }
+        // No paragraph is ever given a first-line indent in this layout
+        // model, so there is nothing for \noindent to suppress: an honest
+        // no-op rather than a fabricated indent to cancel. It still
+        // starts the paragraph (TeX §1091 `new_graf`), as `\indent` does.
+        "noindent" => self.paragraph_started = true,
+        // The opposite request: unlike \noindent above, this one is not a
+        // coincidental match with real LaTeX's output — \indent asks for
+        // a first-line indent that this layout has no way to draw (see
+        // `set_length`'s `\parindent` handling), so it is named honestly
+        // via a diagnostic rather than silently accepted.
+        "indent" => {
+            self.paragraph_started = true;
+            self.diags.push(Diagnostic::warning(
+                "\\indent is recognised but paragraph indentation is not implemented",
+                Some(span),
+                Some("the paragraph was not given a first-line indent".into()),
+            ))
+        }
+        // Text-mode horizontal glue. `\quad`/`\qquad` are also implemented
+        // in math mode (`src/math.rs`); this arm covers the same commands
+        // used directly in running text, 1em/2em of the body text size.
+        "quad" => para.push(Inline::TextGlue {
+            em: math::QUAD_EM,
+            span,
+        }),
+        "qquad" => para.push(Inline::TextGlue {
+            em: 2.0 * math::QUAD_EM,
+            span,
+        }),
+        "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
+        | "negthickspace" | "enspace" => {
+            if let Some(amount) = text_builtins::text_kern(name, self.math_packages.amsmath) {
+                para.push(Inline::Kern {
+                    amount,
+                    span,
+                    style: self.style,
+                });
+            }
+        }
+        // `\def\enskip{\hskip.5em\relax}` (latex.ltx 9434): glue, like `\quad`.
+        "enskip" => para.push(Inline::TextGlue { em: 0.5, span }),
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// Vertical material and page/paragraph break control between and inside
+    /// paragraphs (see [`P::command`]).
+    #[inline(never)]
+    fn vertical_command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        match name {
+        // TeX's `\penalty<number>`, and plain/latex.ltx `\nobreak`
+        // (`\penalty\@M`) and `\allowbreak` (`\penalty\z@`): a node in the
+        // horizontal list inside a paragraph, in the vertical list between
+        // paragraphs.
+        "penalty" | "nobreak" | "allowbreak" => {
+            // `\penalty`'s span covers its number.
+            let mut span = span;
+            let value = match name {
+                "nobreak" => INF_PENALTY,
+                "allowbreak" => 0,
+                _ => match self.integer_value() {
+                    Some((value, number)) => {
+                        span = span.merge(number);
+                        value
+                    }
+                    None => {
+                        self.diags.push(Diagnostic::error(
+                            "\\penalty needs a number (Missing number, treated as zero)",
+                            Some(span),
+                            Some("used a penalty of 0".into()),
+                        ));
+                        0
+                    }
+                },
+            };
+            if para.is_empty() {
+                blocks.push(Block::Penalty {
+                    value,
+                    fil: false,
+                    span,
+                });
+                self.finish_block_dependencies();
+            } else {
+                para.push(Inline::Penalty {
+                    value,
+                    span,
+                    unskip: false,
+                });
+            }
+        }
+        "bigskip" | "medskip" | "smallskip" => {
+            let (pt, stretch_pt, shrink_pt) = match name {
+                "bigskip" => (BIG_SKIP_PT, BIG_SKIP_STRETCH_PT, BIG_SKIP_SHRINK_PT),
+                "medskip" => (
+                    MEDIUM_SKIP_PT,
+                    MEDIUM_SKIP_STRETCH_PT,
+                    MEDIUM_SKIP_SHRINK_PT,
+                ),
+                _ => (
+                    SMALL_SKIP_PT,
+                    SMALL_SKIP_STRETCH_PT,
+                    SMALL_SKIP_SHRINK_PT,
+                ),
+            };
+            self.flush_paragraph(blocks, para);
+            blocks.push(Block::VSpace {
+                pt,
+                stretch_pt,
+                shrink_pt,
+            });
+            self.finish_block_dependencies();
+        }
+        "vspace" => {
+            // The star only affects whether the glue survives being
+            // discarded at a page break in real TeX, which this layout
+            // never does anyway (see `hspace`'s identical star), so both
+            // forms are parsed identically. Consuming it here (as
+            // `hspace` already does for itself) is the fix: left alone,
+            // `required_group` sees `*` where it expects `{` and reports
+            // a missing argument instead of reading the dimension after it.
+            let _starred = self.take_optional_star();
+            let (tokens, argument_span) = self.required_group(name, span);
+            let raw = token_text(&tokens);
+            let units = self.font_setup().em_ex_sp(self.style);
+            match parse_glue_pt_current(&raw, units) {
+                Some((pt, stretch_pt, shrink_pt)) => {
+                    self.flush_paragraph(blocks, para);
+                    blocks.push(Block::VSpace {
+                        pt,
+                        stretch_pt,
+                        shrink_pt,
                     });
                     self.finish_block_dependencies();
                 }
+                None => self.diags.push(Diagnostic::error(
+                    format!(
+                        "\\vspace requires a recognised dimension, got '{}'",
+                        raw.trim()
+                    ),
+                    Some(span.merge(argument_span)),
+                    Some("ignored the vertical space and continued".into()),
+                )),
             }
-            // latex.ltx `\def\goodbreak{\par\penalty-500 }` and
-            // `\def\filbreak{\par\vfil\penalty-200\vfilneg}`.
-            "goodbreak" | "filbreak" => {
-                self.flush_paragraph(blocks, para);
-                let fil = name == "filbreak";
+        }
+        "hrule" => {
+            self.flush_paragraph(blocks, para);
+            blocks.push(Block::Rule { span });
+            self.finish_block_dependencies();
+        }
+        "newpage" => {
+            self.flush_paragraph(blocks, para);
+            blocks.push(Block::PageBreak);
+            self.finish_block_dependencies();
+        }
+        // `\clearpage`/`\cleardoublepage` also flush any queued floats
+        // and, for `\cleardoublepage` in a `twoside` class, insert a
+        // blank page to land back on an odd one. Neither float queuing
+        // nor the oneside/twoside distinction exists in this compiler
+        // (article defaults to oneside, where the two commands are
+        // already identical in real LaTeX), so both reduce honestly to
+        // the same unconditional break as `\newpage`.
+        "clearpage" | "cleardoublepage" => {
+            self.flush_paragraph(blocks, para);
+            blocks.push(Block::PageBreak);
+            self.finish_block_dependencies();
+        }
+        // latex.ltx `\pagebreak[n]`/`\nopagebreak[n]` (`\@no@pgbk`):
+        // `\penalty -\@getpen{n}`/`\penalty \@getpen{n}` in vertical mode,
+        // `\vadjust{\penalty ...}` in a paragraph, which is not broken:
+        // the penalty lands after the line the command is set on. A
+        // vertical-mode `\pagebreak` with priority 4 is a bare
+        // `\penalty-10000`, not `\newpage`: there is no `\vfil` before
+        // it, so a `\flushbottom` page it ends is stretched to
+        // `\textheight`. The mode is TeX's, not whether text has been
+        // collected: `\noindent\pagebreak text` is horizontal (the page
+        // ends after the first line), `\label{x}\pagebreak text` is still
+        // vertical (`\label` puts only a whatsit in the current list).
+        "pagebreak" | "nopagebreak" => {
+            let (priority, bracket) = self.break_priority_penalty();
+            let span = bracket.map_or(span, |bracket| span.merge(bracket));
+            let value = if name == "pagebreak" {
+                -priority
+            } else {
+                priority
+            };
+            let horizontal = self.paragraph_started
+                || para.iter().any(|inline| !matches!(inline, Inline::Label { .. }));
+            if horizontal {
+                para.push(Inline::PagePenalty { value, span });
+            } else {
                 blocks.push(Block::Penalty {
-                    value: if fil { -200 } else { -500 },
-                    fil,
+                    value,
+                    fil: false,
                     span,
                 });
                 self.finish_block_dependencies();
             }
-            "vfill" => {
-                self.flush_paragraph(blocks, para);
-                blocks.push(Block::VFill);
-                self.finish_block_dependencies();
+        }
+        // latex.ltx `\def\goodbreak{\par\penalty-500 }` and
+        // `\def\filbreak{\par\vfil\penalty-200\vfilneg}`.
+        "goodbreak" | "filbreak" => {
+            self.flush_paragraph(blocks, para);
+            let fil = name == "filbreak";
+            blocks.push(Block::Penalty {
+                value: if fil { -200 } else { -500 },
+                fil,
+                span,
+            });
+            self.finish_block_dependencies();
+        }
+        "vfill" => {
+            self.flush_paragraph(blocks, para);
+            blocks.push(Block::VFill);
+            self.finish_block_dependencies();
+        }
+        // multicol.sty 919-950: `\columnbreak[n]` and `\newcolumn` end a
+        // column of `multicols` (set by the render pipeline); outside the
+        // environment multicol raises an error.
+        "columnbreak" | "newcolumn" => {
+            if name == "columnbreak" {
+                let _ = self.optional_bracket_argument();
             }
-            // multicol.sty 919-950: `\columnbreak[n]` and `\newcolumn` end a
-            // column of `multicols` (set by the render pipeline); outside the
-            // environment multicol raises an error.
-            "columnbreak" | "newcolumn" => {
-                if name == "columnbreak" {
-                    let _ = self.optional_bracket_argument();
-                }
-                if !self.env_stack.iter().any(|(environment, _)| environment == "multicols" || environment == "multicols*") {
-                    self.diags.push(Diagnostic::error(
-                        format!("Package multicol Error: \\{name} outside multicols; this command can only be used within a multicols or multicols* environment"),
-                        Some(span),
-                        Some("ignored the command".into()),
-                    ));
-                }
+            if !self.env_stack.iter().any(|(environment, _)| environment == "multicols" || environment == "multicols*") {
+                self.diags.push(Diagnostic::error(
+                    format!("Package multicol Error: \\{name} outside multicols; this command can only be used within a multicols or multicols* environment"),
+                    Some(span),
+                    Some("ignored the command".into()),
+                ));
             }
-            // multicol.sty 564-567: column heights at output time.
-            "raggedcolumns" | "flushcolumns" => {}
-            // Kernel text symbols (`text_builtins::TEXT_SYMBOLS`; the
-            // `text_symbol_arms_match_the_builtin_table` test keeps them equal).
-            "AA" | "aa" | "AE" | "ae" | "OE" | "oe" | "O" | "o" | "L" | "l" | "ss" | "SS"
-            | "TH" | "th" | "DH" | "dh" | "DJ" | "dj" | "NG" | "ng" | "IJ" | "ij" | "i" | "j"
-            | "S" | "P" | "dag" | "ddag" | "copyright" | "pounds" | "dots" | "ldots"
-            | "textsection" | "textparagraph" | "textdagger" | "textdaggerdbl"
-            | "textcopyright" | "textsterling" | "textellipsis" | "textbackslash"
-            | "textasciitilde" | "textasciicircum" | "textunderscore" | "textbar" | "textless"
-            | "textgreater" | "textbraceleft" | "textbraceright" => {
-                self.text_symbol(name, span, para)
-            }
-            // `text_builtins::TEXT_ACCENTS` and the
-            // `text_builtins::CAPITAL_ACCENT_ALIASES` names that resolve to
-            // one of them; the alias reaches the same implementation under
-            // its canonical name.
-            "c" | "v" | "u" | "H" | "r" | "k" | "d" | "b" | "capitalcaron" | "capitalbreve"
-            | "capitalring" | "capitalogonek" | "capitalhungarumlaut" | "capitalcedilla" => {
-                self.text_accent(text_builtins::canonical_accent_name(name), span, para)
-            }
-            "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
-            // ulem `\uline`/`\sout` (need the package). Kernel text-mode
-            // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
-            // Rule 10); math-mode `\underline`/`\underbar` are in `math.rs`.
-            // Kernel `\underbar` (latex.ltx
-            // `\def\underbar#1{\underline{\sbox\tw@{#1}\dp\tw@\z@
-            // \box\tw@}}`) is the same Rule 10 construction over an
-            // unbreakable hbox whose depth is zeroed first, so it gets its
-            // own geometry (`UnderlineGeom::Underbar`).
-            "uline" | "underline" | "underbar" | "sout" => {
-                let geom = match name {
-                    "underline" => UnderlineGeom::MathUnderline,
-                    "underbar" => UnderlineGeom::Underbar,
-                    "sout" => UnderlineGeom::Strike,
-                    _ => UnderlineGeom::UlemDescender,
-                };
-                self.text_underline_cmd(name, span, para, geom);
-            }
-            "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
-            | "negthickspace" | "enspace" => {
-                if let Some(amount) = text_builtins::text_kern(name, self.math_packages.amsmath) {
-                    para.push(Inline::Kern {
-                        amount,
-                        span,
-                        style: self.style,
-                    });
-                }
-            }
-            // `\def\enskip{\hskip.5em\relax}` (latex.ltx 9434): glue, like `\quad`.
-            "enskip" => para.push(Inline::TextGlue { em: 0.5, span }),
-            // `\xspace` (xspace.sty): a word space unless the token after
-            // the macro call is `}`, another command, or `, . ! ? ; : ' /`.
-            "xspace" => self.xspace(span),
-            "rule" => self.text_rule(span, para),
-            "frac" | "sqrt" => self.diags.push(Diagnostic::error(
+        }
+        // multicol.sty 564-567: column heights at output time.
+        "raggedcolumns" | "flushcolumns" => {}
+            _ => unreachable!("\\{name} is not in this command family"),
+        }
+    }
+
+    /// ulem `\uline`/`\sout` and text-mode `\underline`.
+    #[inline(never)]
+    fn underline_command(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let geom = match name {
+            "underline" => UnderlineGeom::MathUnderline,
+            "underbar" => UnderlineGeom::Underbar,
+            "sout" => UnderlineGeom::Strike,
+            _ => UnderlineGeom::UlemDescender,
+        };
+        self.text_underline_cmd(name, span, para, geom);
+    }
+
+    /// `\frac`/`\sqrt` outside math mode.
+    #[inline(never)]
+    fn text_mode_math_command(&mut self, name: &str, span: Span) {
+        self.diags.push(
+            Diagnostic::error(
                 format!("\\{} requires math mode", name),
                 Some(span),
                 Some("skipped the command and typeset its braced arguments as plain text".into()),
             )
             .with_help(format!("wrap it in math mode: \\(\\{name}{{...}}\\)"))
-            .with_label(span, "this command", true)),
-            other => self.unsupported(other, span),
-        }
-        self.pending_global = false;
+            .with_label(span, "this command", true),
+        );
     }
 
     /// `\xspace` (xspace.sty) in running text: a word space unless the token
@@ -5399,6 +5599,9 @@ impl P<'_> {
         }
     }
 
+    /// `\begin{..}`/`\end{..}`. Like [`P::command`], this frame is on the
+    /// stack once per nested table, so only the dispatch to the environment
+    /// parsers stays here; the generic begin and end work is outlined.
     fn environment(
         &mut self,
         kind: &str,
@@ -5460,181 +5663,207 @@ impl P<'_> {
                 self.verbatim_environment(span, argument_span, &environment, blocks, para);
                 return;
             }
-            if environment == "comment" {
-                // Not gated on `in_body`: a comment body vanishes in the
-                // preamble too, exactly as real LaTeX discards it.
-                self.comment_environment(span, argument_span);
-                return;
-            }
-            // A size environment is a group with the size declaration applied
-            // for its extent (style save/restore below scopes it).
-            let size_env = self.in_body
-                && matches!(
-                    environment.as_str(),
-                    "tiny"
-                        | "scriptsize"
-                        | "footnotesize"
-                        | "small"
-                        | "normalsize"
-                        | "large"
-                        | "Large"
-                        | "LARGE"
-                        | "huge"
-                        | "Huge"
-                );
-            self.env_alignments.push(self.declared_alignment);
-            self.parameter_scopes.push(Vec::new());
-            if environment == "document" && self.has_document {
-                self.in_body = true;
-            } else if environment == "figure" && self.in_body {
-                self.flush_paragraph(blocks, para);
-            } else if let (Some(style), true) = (paragraph_style(&environment), self.in_body) {
-                self.flush_paragraph(blocks, para);
-                self.paragraph_styles.push(style);
-                // An inner alignment environment overrides an outer declaration.
-                if style != ParagraphStyle::Quote {
-                    self.declared_alignment = None;
-                }
-                if let Some(kind) = ListEnvironment::from_name(&environment) {
-                    self.push_list_frame(kind, Vec::new(), span.merge(argument_span));
-                }
-            } else if matches!(
-                environment.as_str(),
-                "itemize" | "enumerate" | "description"
-            ) && self.in_body
-            {
-                self.flush_paragraph(blocks, para);
-                let options = self.optional_bracket_argument();
-                let begin_span = options
-                    .as_ref()
-                    .map_or(span.merge(argument_span), |(_, o)| span.merge(*o));
-                self.open_list(&environment, options.map(|(text, _)| text), begin_span, blocks.len());
-            } else if self.in_body
-                && (self.theorems.contains_key(&environment) || environment == "proof")
-            {
-                self.flush_paragraph(blocks, para);
-            } else if environment == "thebibliography" && self.in_body {
-                self.flush_paragraph(blocks, para);
-                // article.cls: `\begin{thebibliography}{#1}` is
-                // `\section*{\refname}` followed by a `\list` whose
-                // `\labelwidth` is set from `#1` (the widest label the
-                // author expects, e.g. `{99}` for up to 99 entries).
-                let (widest_tokens, widest_span) = self.required_group(&environment, span);
-                let widest_label = token_text(&widest_tokens).trim().to_string();
-                self.document_global_state = true;
-                let heading_span = span.merge(argument_span).merge(widest_span);
-                blocks.push(Block::Heading {
-                    level: 1,
-                    number: String::new(),
-                    number_span: heading_span,
-                    content: vec![Inline::Text {
-                        text: "References".to_string(),
-                        span: heading_span,
-                        style: TextStyle::BOLD,
-                        space_before: false,
-                    }],
-                });
-                self.finish_block_dependencies();
-                let spacing = self
-                    .list_spacing
-                    .get(&environment)
-                    .copied()
-                    .unwrap_or_default();
-                self.list_stack.push(OpenList {
-                    kind: environment.clone(),
-                    count: 0,
-                    template: Some(widest_label),
-                    spacing,
-                    start: blocks.len(),
-                    counter: 0,
-                    label_star: None,
-                    current_label: String::new(),
-                    current_reference: String::new(),
-                    series: None,
-                    begin_options: Vec::new(),
-                });
-                self.push_list_frame(ListEnvironment::Bibliography, Vec::new(), heading_span);
-            } else if environment == "subequations" && self.in_body {
-                self.begin_subequations();
-            } else if matches!(environment.as_str(), "multicols" | "multicols*") && self.in_body {
-                // `\mult@@cols` starts with `\par`.
-                self.flush_paragraph(blocks, para);
-                self.multicols_arguments(span.merge(argument_span), &environment);
-            } else if environment == "letter" && self.in_body && self.is_letter_class() {
-                // letter.cls 174-186: `\newenvironment{letter}[1]{\newpage
-                // ... \c@page\@ne ... \@processto{...#1}}`. The mandatory
-                // argument is the recipient; `\@processto` splits it at the
-                // first `\\` into `\toname` and `\toaddress`, which
-                // `\opening` then sets one per line — so it is stored whole
-                // and the `\\`s are kept, exactly as written.
-                self.flush_paragraph(blocks, para);
-                let (recipient, recipient_span) = self.required_group(&environment, span);
-                self.letter.recipient = Some((recipient, span.merge(recipient_span)));
-                self.letter.opened = false;
-                // Each letter starts a fresh page; the first one in a
-                // document does not, because `\newpage` with nothing queued
-                // ships no page (see `Block::PageBreak` in `layout`).
-                blocks.push(Block::PageBreak);
-                self.finish_block_dependencies();
-            } else if environment == "tabbing" && self.in_body {
-                // Plain LaTeX2e kernel tabbing: rows align at `\=` stops,
-                // `\\` ends a row at the left margin, `\kill` ends a row
-                // silently. The paragraph buffer becomes the current row
-                // until `\end{tabbing}` (see `P::tabbing_stack`); earlier
-                // text is its own paragraph.
-                self.flush_paragraph(blocks, para);
-                self.tabbing_stack.push(TabbingFrame {
-                    lines: Vec::new(),
-                    span: span.merge(argument_span),
-                });
-            } else if environment == "sloppypar" && self.in_body {
-                // latex.ltx `\def\sloppypar{\par\sloppy}`.
-                self.flush_paragraph(blocks, para);
-                self.sloppy_or_fussy(true, span);
-            } else if environment == "samepage" && self.in_body {
-                // `\begin{samepage}` runs the `\samepage` declaration.
-                self.assign_parameter(BreakParameter::InterlinePenalty(INF_PENALTY), span);
-            } else if size_env {
-                // Implemented above (the size list): this arm only keeps
-                // size environments out of the "not implemented" warning.
-                // The declaration itself is applied after the style save
-                // below, so the `\end` restore sees the surrounding style.
-            } else if self.in_body {
-                self.diags.push(Diagnostic::environment_warning(
-                    &environment,
-                    format!(
-                        "environment '{}' is not implemented; its body is typeset as plain text",
-                        environment
-                    ),
-                    Some(span),
-                    Some("typeset the body without the environment's formatting".into()),
-                )
-                .with_optional_help(vocabulary::environment_help(&environment)));
-            }
-            if is_minipage(&environment) {
-                // `\@iiiminipage`: `\c@mpfootnote\z@`.
-                self.mpfootnote_counter = 0;
-            }
-            self.env_stack
-                .push((environment.clone(), span.merge(argument_span)));
-            self.env_styles.push(self.style);
-            self.length_scopes.push(self.length_state());
-            // The size declaration itself, after the save above (which keeps
-            // the surrounding style for the `\end` restore), exactly like
-            // `begin_theorem` below.
-            if size_env {
-                self.style = apply_style(self.style, &environment);
-            }
-            if self.in_body {
-                if let Some(theorem) = self.theorems.get(&environment).cloned() {
-                    self.begin_theorem(&theorem, &environment, span, para);
-                } else if environment == "proof" {
-                    self.begin_proof(span, para);
-                }
-            }
+            self.begin_environment(span, argument_span, environment, blocks, para);
             return;
         }
 
+        self.end_environment(span, environment, blocks, para);
+    }
+
+    /// `\begin{..}` of an environment without its own parser (see
+    /// [`P::environment`]); kept out of the recursive dispatch frame.
+    #[inline(never)]
+    fn begin_environment(
+        &mut self,
+        span: Span,
+        argument_span: Span,
+        environment: String,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        if environment == "comment" {
+            // Not gated on `in_body`: a comment body vanishes in the
+            // preamble too, exactly as real LaTeX discards it.
+            self.comment_environment(span, argument_span);
+            return;
+        }
+        // A size environment is a group with the size declaration applied
+        // for its extent (style save/restore below scopes it).
+        let size_env = self.in_body
+            && matches!(
+                environment.as_str(),
+                "tiny"
+                    | "scriptsize"
+                    | "footnotesize"
+                    | "small"
+                    | "normalsize"
+                    | "large"
+                    | "Large"
+                    | "LARGE"
+                    | "huge"
+                    | "Huge"
+            );
+        self.env_alignments.push(self.declared_alignment);
+        self.parameter_scopes.push(Vec::new());
+        if environment == "document" && self.has_document {
+            self.in_body = true;
+        } else if environment == "figure" && self.in_body {
+            self.flush_paragraph(blocks, para);
+        } else if let (Some(style), true) = (paragraph_style(&environment), self.in_body) {
+            self.flush_paragraph(blocks, para);
+            self.paragraph_styles.push(style);
+            // An inner alignment environment overrides an outer declaration.
+            if style != ParagraphStyle::Quote {
+                self.declared_alignment = None;
+            }
+            if let Some(kind) = ListEnvironment::from_name(&environment) {
+                self.push_list_frame(kind, Vec::new(), span.merge(argument_span));
+            }
+        } else if matches!(
+            environment.as_str(),
+            "itemize" | "enumerate" | "description"
+        ) && self.in_body
+        {
+            self.flush_paragraph(blocks, para);
+            let options = self.optional_bracket_argument();
+            let begin_span = options
+                .as_ref()
+                .map_or(span.merge(argument_span), |(_, o)| span.merge(*o));
+            self.open_list(&environment, options.map(|(text, _)| text), begin_span, blocks.len());
+        } else if self.in_body
+            && (self.theorems.contains_key(&environment) || environment == "proof")
+        {
+            self.flush_paragraph(blocks, para);
+        } else if environment == "thebibliography" && self.in_body {
+            self.flush_paragraph(blocks, para);
+            // article.cls: `\begin{thebibliography}{#1}` is
+            // `\section*{\refname}` followed by a `\list` whose
+            // `\labelwidth` is set from `#1` (the widest label the
+            // author expects, e.g. `{99}` for up to 99 entries).
+            let (widest_tokens, widest_span) = self.required_group(&environment, span);
+            let widest_label = token_text(&widest_tokens).trim().to_string();
+            self.document_global_state = true;
+            let heading_span = span.merge(argument_span).merge(widest_span);
+            blocks.push(Block::Heading {
+                level: 1,
+                number: String::new(),
+                number_span: heading_span,
+                content: vec![Inline::Text {
+                    text: "References".to_string(),
+                    span: heading_span,
+                    style: TextStyle::BOLD,
+                    space_before: false,
+                }],
+            });
+            self.finish_block_dependencies();
+            let spacing = self
+                .list_spacing
+                .get(&environment)
+                .copied()
+                .unwrap_or_default();
+            self.list_stack.push(OpenList {
+                kind: environment.clone(),
+                count: 0,
+                template: Some(widest_label),
+                spacing,
+                start: blocks.len(),
+                counter: 0,
+                label_star: None,
+                current_label: String::new(),
+                current_reference: String::new(),
+                series: None,
+                begin_options: Vec::new(),
+            });
+            self.push_list_frame(ListEnvironment::Bibliography, Vec::new(), heading_span);
+        } else if environment == "subequations" && self.in_body {
+            self.begin_subequations();
+        } else if matches!(environment.as_str(), "multicols" | "multicols*") && self.in_body {
+            // `\mult@@cols` starts with `\par`.
+            self.flush_paragraph(blocks, para);
+            self.multicols_arguments(span.merge(argument_span), &environment);
+        } else if environment == "letter" && self.in_body && self.is_letter_class() {
+            // letter.cls 174-186: `\newenvironment{letter}[1]{\newpage
+            // ... \c@page\@ne ... \@processto{...#1}}`. The mandatory
+            // argument is the recipient; `\@processto` splits it at the
+            // first `\\` into `\toname` and `\toaddress`, which
+            // `\opening` then sets one per line — so it is stored whole
+            // and the `\\`s are kept, exactly as written.
+            self.flush_paragraph(blocks, para);
+            let (recipient, recipient_span) = self.required_group(&environment, span);
+            self.letter.recipient = Some((recipient, span.merge(recipient_span)));
+            self.letter.opened = false;
+            // Each letter starts a fresh page; the first one in a
+            // document does not, because `\newpage` with nothing queued
+            // ships no page (see `Block::PageBreak` in `layout`).
+            blocks.push(Block::PageBreak);
+            self.finish_block_dependencies();
+        } else if environment == "tabbing" && self.in_body {
+            // Plain LaTeX2e kernel tabbing: rows align at `\=` stops,
+            // `\\` ends a row at the left margin, `\kill` ends a row
+            // silently. The paragraph buffer becomes the current row
+            // until `\end{tabbing}` (see `P::tabbing_stack`); earlier
+            // text is its own paragraph.
+            self.flush_paragraph(blocks, para);
+            self.tabbing_stack.push(TabbingFrame {
+                lines: Vec::new(),
+                span: span.merge(argument_span),
+            });
+        } else if environment == "sloppypar" && self.in_body {
+            // latex.ltx `\def\sloppypar{\par\sloppy}`.
+            self.flush_paragraph(blocks, para);
+            self.sloppy_or_fussy(true, span);
+        } else if environment == "samepage" && self.in_body {
+            // `\begin{samepage}` runs the `\samepage` declaration.
+            self.assign_parameter(BreakParameter::InterlinePenalty(INF_PENALTY), span);
+        } else if size_env {
+            // Implemented above (the size list): this arm only keeps
+            // size environments out of the "not implemented" warning.
+            // The declaration itself is applied after the style save
+            // below, so the `\end` restore sees the surrounding style.
+        } else if self.in_body {
+            self.diags.push(Diagnostic::environment_warning(
+                &environment,
+                format!(
+                    "environment '{}' is not implemented; its body is typeset as plain text",
+                    environment
+                ),
+                Some(span),
+                Some("typeset the body without the environment's formatting".into()),
+            )
+            .with_optional_help(vocabulary::environment_help(&environment)));
+        }
+        if is_minipage(&environment) {
+            // `\@iiiminipage`: `\c@mpfootnote\z@`.
+            self.mpfootnote_counter = 0;
+        }
+        self.env_stack
+            .push((environment.clone(), span.merge(argument_span)));
+        self.env_styles.push(self.style);
+        self.length_scopes.push(self.length_state());
+        // The size declaration itself, after the save above (which keeps
+        // the surrounding style for the `\end` restore), exactly like
+        // `begin_theorem` below.
+        if size_env {
+            self.style = apply_style(self.style, &environment);
+        }
+        if self.in_body {
+            if let Some(theorem) = self.theorems.get(&environment).cloned() {
+                self.begin_theorem(&theorem, &environment, span, para);
+            } else if environment == "proof" {
+                self.begin_proof(span, para);
+            }
+        }
+    }
+
+    /// `\end{..}` (see [`P::environment`]).
+    #[inline(never)]
+    fn end_environment(
+        &mut self,
+        span: Span,
+        environment: String,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
         let popped = self.env_stack.pop();
         let had_open_environment = popped.is_some();
         match popped {
@@ -7591,6 +7820,121 @@ impl P<'_> {
         }
     }
 
+    /// Reads TeX's `<glue>` after `\hskip`: one dimension word, then up to
+    /// one `plus` and one `minus` clause (either order) each followed by a
+    /// `<fil dimen>` word. Words are read atomically — a number split from
+    /// its unit by a space (`1 em`) is not rejoined — and anything that is
+    /// not a dimension word or clause keyword ends the spec, leaving the
+    /// following text (including a second use of the same keyword) for the
+    /// ordinary token loop.
+    fn hskip(&mut self, span: Span, para: &mut Vec<Inline>) {
+        self.skip_spaces();
+        let units = self.font_setup().em_ex_sp(self.style);
+        let (base_text, mut end) = match self.peek().cloned() {
+            Some(Token {
+                kind: TokenKind::Word(word),
+                span: word_span,
+            }) => (word, word_span),
+            _ => {
+                self.diags.push(Diagnostic::error(
+                    "\\hskip requires a glue spec such as '1em' or '1em plus 2pt minus 1pt'",
+                    Some(span),
+                    Some("ignored the \\hskip with no usable glue and continued".into()),
+                ));
+                return;
+            }
+        };
+        let Some(base_pt) = parse_dimen_pt_current(&base_text, units) else {
+            // Unlike a `plus`/`minus` dimension below — where the keyword
+            // already commits the author to writing glue — a bare word may
+            // be ordinary prose after a spec-less `\hskip`, so it is left
+            // for the token loop instead of being swallowed (see the
+            // prose-preservation policy on `unsupported`).
+            self.diags.push(Diagnostic::error(
+                format!("\\hskip requires a recognised dimension, got '{base_text}'"),
+                Some(span.merge(end)),
+                Some("left the word for the paragraph and continued".into()),
+            ));
+            return;
+        };
+        self.i += 1;
+        let mut stretch = (0.0, 0u8);
+        let mut shrink = (0.0, 0u8);
+        let mut seen_plus = false;
+        let mut seen_minus = false;
+        for _ in 0..2 {
+            self.skip_spaces();
+            let keyword = match self.peek() {
+                Some(Token {
+                    kind: TokenKind::Word(word),
+                    ..
+                }) if word == "plus" || word == "minus" => word.clone(),
+                _ => break,
+            };
+            if (keyword == "plus" && seen_plus) || (keyword == "minus" && seen_minus) {
+                break;
+            }
+            let keyword_span = self.peek().map(|token| token.span).unwrap_or(span);
+            self.i += 1;
+            self.skip_spaces();
+            let (text, dimen_span) = match self.peek().cloned() {
+                Some(Token {
+                    kind: TokenKind::Word(word),
+                    span: word_span,
+                }) => {
+                    self.i += 1;
+                    (word, word_span)
+                }
+                _ => {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\hskip '{keyword}' requires a dimension, but none followed"),
+                        Some(span.merge(keyword_span)),
+                        Some("used the glue without that stretch".into()),
+                    ));
+                    break;
+                }
+            };
+            match parse_fil_dimen_pt_current(&text, units) {
+                Some((value, order)) => {
+                    end = end.merge(dimen_span);
+                    if keyword == "plus" {
+                        seen_plus = true;
+                        stretch = (value, order);
+                    } else {
+                        seen_minus = true;
+                        shrink = (value, order);
+                    }
+                }
+                None => {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\hskip '{keyword}' requires a recognised dimension, got '{text}'"),
+                        Some(span.merge(dimen_span)),
+                        Some("used the glue without that stretch".into()),
+                    ));
+                    break;
+                }
+            }
+        }
+        // TeX's idiomatic glue terminator; without this it falls through to
+        // `unsupported` and earns a spurious "not supported" diagnostic.
+        if matches!(
+            self.peek().map(|token| &token.kind),
+            Some(TokenKind::Command(name)) if name == "relax"
+        ) {
+            self.i += 1;
+        }
+        para.push(Inline::HSpace {
+            pt: base_pt,
+            space_before_pt: 0.0,
+            space_after_pt: 0.0,
+            span: span.merge(end),
+            stretch_pt: stretch.0,
+            stretch_fil: stretch.1,
+            shrink_pt: shrink.0,
+            shrink_fil: shrink.1,
+        });
+    }
+
     /// The `{` span when the next token opens a group that closes in this
     /// token stream. Unclosed arguments keep `required_group`'s diagnostics.
     fn closed_group_start(&self) -> Option<Span> {
@@ -7891,6 +8235,10 @@ impl P<'_> {
                                 },
                                 space_after_pt: if space_after { word_space } else { 0.0 },
                                 span: input.token.span.merge(argument_span),
+                                stretch_pt: 0.0,
+                                stretch_fil: 0,
+                                shrink_pt: 0.0,
+                                shrink_fil: 0,
                             });
                         } else {
                             self.diags.push(Diagnostic::error(
@@ -9370,7 +9718,7 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         //
         // Like `siunitx` and `enumitem` above, the gaps that remain report
         // themselves where they are used rather than at \usepackage:
-        // \sideset, \shoveleft, \smash, \mspace, \hdotsfor and the
+        // \shoveleft, \smash, \mspace, \hdotsfor and the
         // \varinjlim family each raise "\X is not supported in math mode" at
         // their own span. A blanket package warning on top of that is false
         // for every document that stays inside the implemented set --
@@ -12271,6 +12619,119 @@ mod tests {
             ],
             "{body_words:?}"
         );
+    }
+
+    #[test]
+    fn hskip_fixed_glue_matches_hspace() {
+        let (parsed, hskip_items) = items(r"A\hskip 1em B");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let (_, hspace_items) = items(r"A\hspace{1em}B");
+        let b_x = |list: &[crate::layout::TextItem]| {
+            list.iter()
+                .find(|i| i.text == "B")
+                .unwrap_or_else(|| panic!("no item B in {list:?}"))
+                .x_pt
+        };
+        assert!(
+            (b_x(&hskip_items) - b_x(&hspace_items)).abs() < 0.02,
+            "hskip={} hspace={}",
+            b_x(&hskip_items),
+            b_x(&hspace_items)
+        );
+    }
+
+    #[test]
+    fn hskip_plus_and_minus_are_recorded() {
+        let parsed = parse(r"A\hskip 1em plus 2pt minus 1pt B");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let mut found = None;
+        for block in &parsed.blocks {
+            if let Block::Paragraph(inlines) = block {
+                for inline in inlines {
+                    if let Inline::HSpace {
+                        pt,
+                        stretch_pt,
+                        stretch_fil,
+                        shrink_pt,
+                        shrink_fil,
+                        ..
+                    } = inline
+                    {
+                        found = Some((*pt, *stretch_pt, *stretch_fil, *shrink_pt, *shrink_fil));
+                    }
+                }
+            }
+        }
+        let (pt, stretch_pt, stretch_fil, shrink_pt, shrink_fil) =
+            found.expect("an HSpace node for the \\hskip glue");
+        // `1em` is the active font's quad (cmr10's \fontdimen6, 10.00002pt,
+        // with no document class) — see `parse_dimen_pt_current`.
+        assert!(
+            (pt - 655_361.0 / 65_536.0).abs() < 1e-9,
+            "base 1em, got {pt}"
+        );
+        assert_eq!((stretch_pt, stretch_fil), (2.0, 0));
+        assert_eq!((shrink_pt, shrink_fil), (1.0, 0));
+    }
+
+    #[test]
+    fn hskip_fil_stretch_parses_and_fills_the_line() {
+        let parsed = parse(r"A\hskip 0pt plus 1fil B");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let mut found = None;
+        for block in &parsed.blocks {
+            if let Block::Paragraph(inlines) = block {
+                for inline in inlines {
+                    if let Inline::HSpace {
+                        stretch_pt, stretch_fil, ..
+                    } = inline
+                    {
+                        found = Some((*stretch_pt, *stretch_fil));
+                    }
+                }
+            }
+        }
+        assert_eq!(found, Some((1.0, 1)), "plus 1fil must be recorded");
+        // Infinite stretch is real fill glue: like `\hfill`, it pushes `B`
+        // to the right margin (see `hfil_behaves_like_hfill`).
+        let (_, fill_items) = items(r"A \hfil B");
+        let (_, hskip_items) = items(r"A\hskip 0pt plus 1fil B");
+        let b_right = |list: &[crate::layout::TextItem]| {
+            let b = list
+                .iter()
+                .find(|i| i.text == "B")
+                .unwrap_or_else(|| panic!("no item B in {list:?}"));
+            b.x_pt + layout::text_width("B", b.font_size_pt, b.font)
+        };
+        assert!(
+            (b_right(&hskip_items) - b_right(&fill_items)).abs() < 0.5,
+            "hskip={} hfil={}",
+            b_right(&hskip_items),
+            b_right(&fill_items)
+        );
+    }
+
+    #[test]
+    fn hskip_unrecognised_base_leaves_prose_in_place() {
+        let (parsed, items) = items(r"A\hskip banana B");
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains(r"\hskip requires a recognised dimension")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        assert!(
+            !parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("not supported")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        assert!(items.iter().any(|i| i.text == "banana"));
+        assert!(items.iter().any(|i| i.text == "B"));
     }
 
     #[test]
