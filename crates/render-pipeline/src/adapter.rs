@@ -729,11 +729,16 @@ fn inlines_of(block: &CBlock) -> &[Inline] {
 ///   exact `\vskip`s and `\thanks` are not.
 /// - `\vfill`: dropped (the page builder has no stretchable vertical
 ///   glue), reported on the next block.
-fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: bool) -> (Vec<(CBlock, ParLeading)>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>) {
+fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: bool, parskip_pt: f64) -> (Vec<(CBlock, ParLeading)>, Vec<(&'static str, Span, String)>, Vec<StashedTitle>, Vec<Span>) {
     use flashtex_compiler::parser::{FontSizeLevel, LetterPart, ParagraphStyle, TextFamily, TextStyle as CStyle};
     let mut out: Vec<(CBlock, ParLeading)> = Vec::with_capacity(blocks.len());
     let mut limitations: Vec<(&'static str, Span, String)> = Vec::new();
     let mut titles: Vec<StashedTitle> = Vec::new();
+    // The source spans of the `\opening`/`\closing` blocks lowered below.
+    // Their `\raggedleft`/`\raggedright` is a *declaration*, not a
+    // `flushright`/`flushleft` environment, so the `env_close` pass must not
+    // give them `\@endparenv`'s `\@topsepadd` glue.
+    let mut letter_spans: Vec<Span> = Vec::new();
     let mut pending_vfill = 0usize;
     let sized = |inlines: &[Inline], size: FontSizeLevel| -> Vec<Inline> {
         inlines
@@ -857,62 +862,133 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
                     ));
                 }
             }
+            // letter.cls's three positioned blocks. The pipeline has no
+            // layout for any of them yet (`\raggedleft` boxes, a fixed
+            // `\longindentation` offset and the class's own inter-block
+            // skips), so each line is set as an ordinary paragraph in the
+            // nearest alignment the pipeline does have and the geometry that
+            // is lost is named once per block. Nothing is dropped: every
+            // line of every part reaches the page in source order.
             // letter.cls's three positioned blocks (`\opening`'s return
-            // address + date and its recipient, `\closing`'s closing +
-            // signature). The pipeline has no layout for any of them yet, so
-            // each is set as ordinary paragraphs in the nearest alignment it
-            // does have, with one typed limitation naming what is missing.
-            // Nothing is dropped: every line of every part reaches the page,
-            // in source order.
+            // address + date and recipient, `\closing`'s closing +
+            // signature). The compiler resolved the class's own skips into
+            // `gap_before_pt`/`gap_after_pt`/`extra_gap_after_pt`, all of
+            // them multiples of letter.cls's `\parskip` (line 91,
+            // `0.7em` = 7.66498pt at 11pt), so the pipeline's job here is to
+            // spend them, not to recompute them.
             //
-            // A *typesetting* PR follows this re-pin and replaces this arm:
-            // the class's own skips are already resolved by the compiler
-            // (`gap_before_pt`/`gap_after_pt`/`extra_gap_after_pt`, all
-            // multiples of letter.cls's `\parskip`) and are spent there.
+            // Each run of lines with no extra gap between them becomes **one**
+            // paragraph whose lines are joined by `Inline::LineBreak` -- not
+            // one paragraph per line. That distinction is the whole vertical
+            // structure: a `\\` inside a paragraph costs `\baselineskip`,
+            // while a new paragraph costs `\baselineskip` *plus* `\parskip`,
+            // and letter.cls sets the address and the recipient as single
+            // `\\`-separated paragraphs (a `tabular{l@{}}` and a
+            // `{\raggedright ...\par}` group).
+            //
+            // `extra_gap_after_pt` (the `\\*[2\parskip]` between
+            // `\fromaddress` and `\@date`) does split the paragraph, so the
+            // `\vspace` that carries it has the following paragraph's own
+            // `\parskip` taken out of it: the two together must add up to the
+            // gap the class asked for, once.
             CBlock::LetterBlock { part, lines, extra_gap_after_pt, gap_before_pt, gap_after_pt, indent_pt, span } => {
-                let style = match part {
-                    LetterPart::ReturnAddress => ParagraphStyle::FlushRight,
-                    LetterPart::Recipient | LetterPart::Closing => ParagraphStyle::FlushLeft,
+                let para_style = match part {
+                    // `\opening`'s `{\raggedleft ...}`. See the limitation
+                    // below: this is the *nearest* style, not the class's.
+                    LetterPart::ReturnAddress => Some(ParagraphStyle::FlushRight),
+                    // `{\raggedright ...}` and `\parbox{...}{\raggedright ...}`
+                    // are *declarations*, not `flushleft`/`flushright`
+                    // environments, so they carry none of `\trivlist`'s
+                    // `\topsep`/`\partopsep` glue. A `Styled` block here does
+                    // carry it (9pt + 3pt at 11pt), which put the recipient
+                    // and the closing 12pt too low. These blocks are short,
+                    // unwrapped lines, where `\raggedright` and justification
+                    // set identical text, so a plain paragraph is both the
+                    // right vertical answer and the same horizontal one.
+                    LetterPart::Recipient | LetterPart::Closing => None,
                 };
+                if *gap_before_pt != 0.0 {
+                    out.push((CBlock::VSpace { pt: *gap_before_pt }, None));
+                }
+                let mut group: Vec<Inline> = Vec::new();
+                let mut prev_end: Option<Span> = None;
+                for (i, line) in lines.iter().enumerate() {
+                    let first = line.iter().map(inline_span).next();
+                    if !group.is_empty() {
+                        // The break owns the bytes between the two lines, so
+                        // no interword space is read across it (as the
+                        // `verbatim` lowering above does).
+                        if let (Some(prev), Some(at)) = (prev_end, first) {
+                            group.push(Inline::LineBreak {
+                                span: Span {
+                                    document: at.document,
+                                    start: prev.end.min(at.start),
+                                    end: at.start,
+                                },
+                            });
+                        }
+                    }
+                    group.extend(line.iter().cloned());
+                    prev_end = line.iter().map(inline_span).last().or(prev_end);
+                    let extra = extra_gap_after_pt.get(i).copied().unwrap_or(0.0);
+                    if extra == 0.0 && i + 1 != lines.len() {
+                        continue;
+                    }
+                    if !group.is_empty() {
+                        let content = std::mem::take(&mut group);
+                        // Keyed by the first inline's span, not the block's:
+                        // `\address`'s text comes from the *preamble*, so it
+                        // lies outside `\opening`'s own span entirely.
+                        if let Some(at) = content.iter().map(inline_span).next() {
+                            letter_spans.push(at);
+                        }
+                        out.push((
+                            match para_style {
+                                Some(style) => CBlock::Styled { style, content, lists: Vec::new(), line_break_before: None },
+                                None => CBlock::Paragraph(content),
+                            },
+                            par_leading,
+                        ));
+                    }
+                    if extra != 0.0 {
+                        out.push((CBlock::VSpace { pt: extra - parskip_pt }, None));
+                    }
+                }
+                if *gap_after_pt != 0.0 {
+                    out.push((CBlock::VSpace { pt: *gap_after_pt }, None));
+                }
+                // What is still approximate is horizontal, and only
+                // horizontal: the pipeline has no per-paragraph left offset
+                // or measure, so neither `\longindentation` nor the
+                // `\raggedleft` *box* can be expressed yet. Reported once per
+                // block rather than silently produced.
                 let mut lost: Vec<String> = Vec::new();
                 if *indent_pt != 0.0 {
-                    lost.push(format!("its {indent_pt} pt \\longindentation offset"));
+                    lost.push(format!(
+                        "its {indent_pt} pt \\longindentation offset (it is set at the left margin instead)"
+                    ));
                 }
-                if *gap_before_pt != 0.0 || *gap_after_pt != 0.0 || extra_gap_after_pt.iter().any(|g| *g != 0.0) {
-                    lost.push("the class's own vertical skips around and inside it".to_string());
-                }
-                if matches!(part, LetterPart::ReturnAddress) {
+                if para_style.is_some() {
                     lost.push(
                         "the \\raggedleft box, whose lines share a *left* edge at the right margin \
-                         (flushright aligns their right edges instead)"
+                         (flushright aligns their right edges instead, so lines of unequal length differ)"
                             .to_string(),
                     );
                 }
-                limitations.push((
-                    "unsupported_block",
-                    *span,
-                    format!(
-                        "{} set as plain paragraphs: {} not applied",
-                        match part {
-                            LetterPart::ReturnAddress => "\\opening's return address and date",
-                            LetterPart::Recipient => "\\opening's recipient",
-                            LetterPart::Closing => "\\closing and signature",
-                        },
-                        lost.join(", "),
-                    ),
-                ));
-                for line in lines {
-                    if line.is_empty() {
-                        continue;
-                    }
-                    out.push((
-                        CBlock::Styled {
-                            style,
-                            content: line.clone(),
-                            lists: Vec::new(),
-                            line_break_before: None,
-                        },
-                        par_leading,
+                if !lost.is_empty() {
+                    limitations.push((
+                        "unsupported_block",
+                        *span,
+                        format!(
+                            "{}: the class's vertical skips are applied exactly; {} {} not",
+                            match part {
+                                LetterPart::ReturnAddress => "\\opening's return address and date",
+                                LetterPart::Recipient => "\\opening's recipient",
+                                LetterPart::Closing => "\\closing and signature",
+                            },
+                            lost.join(" and "),
+                            if lost.len() == 1 { "is" } else { "are" },
+                        ),
                     ));
                 }
             }
@@ -933,7 +1009,7 @@ fn lower_blocks(texts: &[&str], blocks: &[(CBlock, ParLeading)], stash_titles: b
             format!("\\vfill ({pending_vfill} at the end of the document) dropped: the page builder has no stretchable vertical glue"),
         ));
     }
-    (out, limitations, titles)
+    (out, limitations, titles, letter_spans)
 }
 
 /// A compiler `TitleBlock`'s title, authors and date, set aside for the
@@ -1168,7 +1244,7 @@ pub fn adapt_cached(
         .cloned()
         .zip(leadings.into_iter().chain(std::iter::repeat(None)))
         .collect();
-    let (mut lowered, mut limitations, stashed) = lower_blocks(texts, &paired, stash_titles);
+    let (mut lowered, mut limitations, stashed, letter_spans) = lower_blocks(texts, &paired, stash_titles, style.parskip.natural);
     let mut stashed = stashed.into_iter();
     let title_of = |(title, authors, date): StashedTitle, span: Span| Block::Title {
         title: items_for(&title, false),
@@ -1791,9 +1867,31 @@ pub fn adapt_cached(
             _ => ParaStyle::Plain,
         })
         .collect();
+    let from_letter = |parts: &[ParaPart]| {
+        parts
+            .iter()
+            .find_map(|p| match p {
+                ParaPart::Lines(items) => items.iter().find_map(|i| match i {
+                    Item::Word(w) => Some(w.span()),
+                    Item::Math { span, .. } => Some(*span),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .is_some_and(|at| {
+                letter_spans
+                    .iter()
+                    .any(|s| s.document == at.document && s.start == at.start)
+            })
+    };
     for (i, block) in blocks.iter_mut().enumerate() {
-        if let Block::Paragraph { style, env_close, .. } = block {
-            if *style != ParaStyle::Plain {
+        if let Block::Paragraph { style, env_close, parts, .. } = block {
+            // `letter.cls` positions `\opening`'s address with a
+            // `{\raggedleft ...\par}` *group*. That is a declaration, not a
+            // `flushright` environment, so it closes no `\trivlist` and adds
+            // no `\@topsepadd` after itself -- 9pt at 11pt, which is exactly
+            // how much too far down the recipient block used to start.
+            if *style != ParaStyle::Plain && !from_letter(parts) {
                 *env_close = styles.get(i + 1).is_none_or(|next| *next != *style);
             }
         }

@@ -7826,6 +7826,45 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         }
         (pages, images, labels)
     };
+    // `letter.cls` line 405:
+    //
+    //     \def\@texttop{\ifnum\c@page=1\vskip \z@ plus.00006fil\relax\fi}
+    //
+    // On **page 1 only** a fil glue sits at the top of the text block. Line
+    // 404's unguarded `\raggedbottom` puts `\@textbottom`'s
+    // `\vskip \z@ \@plus.0001fil` at the bottom, so the page's leftover space
+    // is shared between the two in the ratio of their stretch: the top takes
+    // .00006/(.00006+.0001) = 3/8 of it and the first baseline moves down by
+    // that much. This is page building, not a frame length, which is why
+    // `crates/class-geometry`'s `letter_oracle` checks its model on page 2
+    // and only bounds page 1 -- the shift belongs here.
+    //
+    // Without it every letter's page 1 rode 3/8 of its slack too high:
+    // 41.95 bp on `fixtures/real-world/letter`, a rigid offset that put 0%
+    // of the page's words within 0.5 bp on the vertical axis however exactly
+    // the spacing between them was set.
+    if ctx
+        .style
+        .class_geometry
+        .as_ref()
+        .is_some_and(|d| d.options.kind == flashtex_class_geometry::ClassKind::Letter)
+        && ctx.style.raggedbottom
+    {
+        if let Some(page1) = built.first_mut() {
+            let used = page1
+                .lines
+                .iter()
+                .map(|l| l.baseline + l.depth.min(params.maxdepth))
+                .fold(0.0_f64, f64::max);
+            let leftover = params.vsize - used;
+            if leftover > 0.0 {
+                let shift = leftover * (6e-5 / (6e-5 + 1e-4));
+                for l in &mut page1.lines {
+                    l.baseline += shift;
+                }
+            }
+        }
+    }
     // The `\twocolumn[...]` box sits at the top of the first page
     // (`\@combinedblfloats`), both columns `\dbltextfloatsep` below it --
     // that is, the material's natural height below the top of the text area,
