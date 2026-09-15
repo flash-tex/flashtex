@@ -327,6 +327,7 @@
     {"name": "space", "mode": "text", "origin": "expansion", "arguments": "", "description": "expands to one space", "renders": true},
     {"name": "ignorespaces", "mode": "text", "origin": "expansion", "arguments": "", "description": "skips the spaces that follow", "renders": true},
     {"name": "jobname", "mode": "text", "origin": "expansion", "arguments": "", "description": "expands to texput", "renders": true},
+    {"name": "ifthenelse", "mode": "text", "origin": "expansion", "arguments": "{test}{true}{false}", "description": "the ifthen package's conditional: \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests select one branch at expansion time", "renders": true},
     {"name": "\\", "mode": "text", "origin": "control_symbol", "arguments": "", "description": "line break; an optional [length] is consumed", "renders": true},
     {"name": "-", "mode": "text", "origin": "control_symbol", "arguments": "", "description": "discretionary hyphen: a break point, invisible unless the line breaks there", "renders": true},
     {"name": ",", "mode": "text", "origin": "control_symbol", "arguments": "", "description": "text kern .16667em (\\thinspace)", "renders": true},
@@ -966,7 +967,8 @@
     {"name": "multicol", "silent_options": "", "description": "multicols and multicols* with preface, \\columnbreak, \\raggedcolumns (columns set by the render pipeline)"},
     {"name": "natbib", "silent_options": "numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak", "description": "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; sort, compress, super and openbib are diagnosed"},
     {"name": "ulem", "silent_options": "normalem", "description": "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined"},
-    {"name": "xspace", "silent_options": "", "description": "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"}
+    {"name": "xspace", "silent_options": "", "description": "\\xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\\footnote, \\footnotemark, \\bgroup, \\egroup, control space)"},
+    {"name": "ifthen", "silent_options": "", "description": "\\ifthenelse with \\equal, \\NOT, \\AND, \\OR, \\isodd, \\isundefined, \\lengthtest and \\boolean tests, and \\newif conditionals with \\newboolean/\\setboolean; \\whiledo loops are diagnosed where they are used"}
   ],
   "coverage": {
     "sources": [
