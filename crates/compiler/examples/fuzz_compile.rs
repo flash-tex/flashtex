@@ -6,7 +6,7 @@
 //! cargo run --release --example fuzz_compile -- --replay CASE [--seed S] [--out DIR]
 //! cargo run --release --example fuzz_compile -- --check FILE.tex
 //! cargo run --release --example fuzz_compile -- --minimise FILE.tex
-//! cargo run --release --example fuzz_compile -- --diagnostics FILE.tex [--limit N]
+//! cargo run --release --example fuzz_compile -- --diagnostics FILE.tex [--limit N] [--digest]
 //! cargo run --release --example fuzz_compile -- --digest
 //! ```
 //!
@@ -119,6 +119,21 @@ fn main() {
             out.pages.len(),
             out.diagnostics.len()
         );
+        if args.iter().any(|a| a == "--digest") {
+            // `--diagnostics FILE --digest`: hashes of the pages and
+            // diagnostics, to diff two builds on one input.
+            use std::hash::{Hash, Hasher};
+            let digest = |value: String| {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                value.hash(&mut hasher);
+                hasher.finish()
+            };
+            println!(
+                "pages {:016x} diagnostics {:016x}",
+                digest(format!("{:?}", out.pages)),
+                digest(format!("{:?}", out.diagnostics))
+            );
+        }
         for d in out
             .diagnostics
             .iter()

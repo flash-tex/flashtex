@@ -13,7 +13,11 @@
 //! hashes every protocol reply of the scenario in order, so any output change
 //! between two builds is visible as a different digest.
 //!
-//! Usage: edit_latency_bench [iterations] (default 60).
+//! `HW1 runaway` is HW1 with a `\def\r{x\r}\r` loop in its body: every
+//! typing revision runs into the expansion step limit, and the line edit
+//! deletes and restores the loop.
+//!
+//! Usage: edit_latency_bench [iterations] (default 60) [--verify] [--only SUBSTR].
 
 use flashtex_compiler::incremental::{compile_full_project, Session};
 use flashtex_compiler::json::{self, Value};
@@ -153,6 +157,18 @@ fn all_scenarios() -> Vec<Scenario> {
             (0, "For every true proposition"),
         ],
     );
+    let runaway = HW1.replacen("Your solution", "\\def\\r{x\\r}\\r Your solution", 1);
+    scenarios.extend(scenarios_for(
+        "HW1 runaway",
+        &runaway,
+        [
+            (0, "Your solution"),
+            (0, "Let $a"),
+            (0, "5=2"),
+            // Deleting the loop's line ends the runaway; restoring starts it.
+            (0, "\\def\\r{"),
+        ],
+    ));
     let big = scaling_document(500_000);
     let mid = big.len() / 2;
     scenarios.extend(scenarios_for(
@@ -214,6 +230,8 @@ fn main() {
         .map(|arg| arg.parse().expect("iterations must be a number"))
         .unwrap_or(60);
     let verify = std::env::args().any(|arg| arg == "--verify");
+    let args: Vec<String> = std::env::args().collect();
+    let only = args.iter().position(|arg| arg == "--only").and_then(|at| args.get(at + 1).cloned());
     let constraints = LayoutConstraints::default();
     println!(
         "edit latency, {iterations} iterations per scenario, profile={}",
@@ -229,6 +247,9 @@ fn main() {
     );
 
     for (scenario_index, scenario) in all_scenarios().iter().enumerate() {
+        if only.as_ref().is_some_and(|only| !scenario.name.contains(only.as_str())) {
+            continue;
+        }
         let texts: Vec<String> = (0..=iterations).map(|i| scenario.text_at(i)).collect();
 
         let mut session = Session::new();
