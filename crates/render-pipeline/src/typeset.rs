@@ -3183,7 +3183,22 @@ impl<'a> Context<'a> {
                         }
                     }
                     ParaPart::Rows { env, rows, span, bracket } => {
-                        if first {
+                        // TeX §1145, exactly as the `Display` arm below: a
+                        // display that opens a paragraph whose horizontal
+                        // list is still empty sets no line at all. After a
+                        // heading `\@afterheading`'s `\everypar` has taken
+                        // the `\parindent` box straight back off
+                        // (`\setbox\z@\lastbox`), so there is nothing left
+                        // to break into one and only `\parskip` precedes the
+                        // alignment. Without this an `align` right after a
+                        // `\section` carried a phantom empty line worth
+                        // `\baselineskip` less the heading's depth -- 13.6 pt
+                        // under a heading with no descender, 10.8007 pt under
+                        // one with (`tests/align_after_heading.rs`).
+                        let mut empty_start = None;
+                        if first && st.after_heading && geom.is_none_or(|g| g.label.is_none()) {
+                            empty_start = Some((std::mem::take(&mut eject), std::mem::take(&mut vspace), env_before.take()));
+                        } else if first {
                             let (mut opener, _) = ctx.display_opener_block(*bracket, geom);
                             if std::mem::take(&mut eject) {
                                 opener.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
@@ -3217,7 +3232,16 @@ impl<'a> Context<'a> {
                         } else {
                             (None, None)
                         };
-                        if let Some(b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span)) {
+                        if let Some(mut b) = ctx.cached(cache, key, origin, |c| c.rows_block(*env, rows, *span)) {
+                            if let Some((ej, vs, env_skip)) = empty_start {
+                                let parskip = geom.map_or(ctx.style.parskip, |g| g.parsep);
+                                if ej {
+                                    b.vertical.penalty_before = Some(pagebuild::EJECT_PENALTY);
+                                }
+                                add_skip_before(&mut b.vertical, Some(skip_tuple(parskip)));
+                                add_vspace(&mut b.vertical, vs);
+                                add_skip_before(&mut b.vertical, env_skip);
+                            }
                             blocks.push(b);
                         }
                         pre_display = None;
@@ -4094,6 +4118,25 @@ impl<'a> Context<'a> {
             if !tab.cells.is_empty() {
                 tabs.push(tab);
             }
+        }
+        // `\@maketitle` sets the author `tabular` unconditionally
+        // (`{\large \lineskip .5em \begin{tabular}[t]{c}\@author
+        // \end{tabular}\par}`), so `\author{}` -- and no `\author` at all,
+        // which only adds a warning -- still contributes a line to the
+        // centred paragraph: a `tabular` with no rows, `\hbox(0.0+0.0)`.
+        // It carries no ink but it does carry its own interline glue, and
+        // dropping it took `\baselineskip` less the title's depth out of the
+        // title block -- 10.63972 pt at an 11pt base, which is what
+        // `fixtures/real-world/math-sheet` (`\author{}`) was missing
+        // (`tests/maketitle_empty_author.rs`).
+        if tabs.is_empty() {
+            tabs.push(Tab {
+                cells: vec![(Vec::new(), 0.0)],
+                row_h: vec![0.0],
+                row_d: vec![0.0],
+                offsets: vec![0.0],
+                column: 0.0,
+            });
         }
         let tab_width = |t: &Tab| t.column + 2.0 * TABCOLSEP_PT;
         let tab_height = |t: &Tab| t.row_h.first().copied().unwrap_or(0.0);
@@ -7865,6 +7908,45 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         }
         (pages, images, labels)
     };
+    // `letter.cls` line 405:
+    //
+    //     \def\@texttop{\ifnum\c@page=1\vskip \z@ plus.00006fil\relax\fi}
+    //
+    // On **page 1 only** a fil glue sits at the top of the text block. Line
+    // 404's unguarded `\raggedbottom` puts `\@textbottom`'s
+    // `\vskip \z@ \@plus.0001fil` at the bottom, so the page's leftover space
+    // is shared between the two in the ratio of their stretch: the top takes
+    // .00006/(.00006+.0001) = 3/8 of it and the first baseline moves down by
+    // that much. This is page building, not a frame length, which is why
+    // `crates/class-geometry`'s `letter_oracle` checks its model on page 2
+    // and only bounds page 1 -- the shift belongs here.
+    //
+    // Without it every letter's page 1 rode 3/8 of its slack too high:
+    // 41.95 bp on `fixtures/real-world/letter`, a rigid offset that put 0%
+    // of the page's words within 0.5 bp on the vertical axis however exactly
+    // the spacing between them was set.
+    if ctx
+        .style
+        .class_geometry
+        .as_ref()
+        .is_some_and(|d| d.options.kind == flashtex_class_geometry::ClassKind::Letter)
+        && ctx.style.raggedbottom
+    {
+        if let Some(page1) = built.first_mut() {
+            let used = page1
+                .lines
+                .iter()
+                .map(|l| l.baseline + l.depth.min(params.maxdepth))
+                .fold(0.0_f64, f64::max);
+            let leftover = params.vsize - used;
+            if leftover > 0.0 {
+                let shift = leftover * (6e-5 / (6e-5 + 1e-4));
+                for l in &mut page1.lines {
+                    l.baseline += shift;
+                }
+            }
+        }
+    }
     // The `\twocolumn[...]` box sits at the top of the first page
     // (`\@combinedblfloats`), both columns `\dbltextfloatsep` below it --
     // that is, the material's natural height below the top of the text area,

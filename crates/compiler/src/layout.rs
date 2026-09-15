@@ -12,9 +12,9 @@ use crate::bib;
 use crate::diagnostics::Diagnostic;
 use crate::export::{self, ExportFont};
 use crate::math::{self, MathBox};
-use crate::parser::{FillLeader, 
-    Block, FontSizeLevel, Inline, ListLeftMargin, MathRow, ParagraphStyle, TextFamily, TextStyle,
-    CMR_EX_PER_EM,
+use crate::parser::{
+    Block, FillLeader, FontSizeLevel, Inline, LetterPart, ListLeftMargin, MathRow, ParagraphStyle,
+    TextFamily, TextStyle, CMR_EX_PER_EM,
 };
 use crate::Span;
 use flashtex_font_engine::core14::Core14;
@@ -1408,6 +1408,23 @@ impl LayoutCursor {
                     self.vertical_gap(PARAGRAPH_GAP_PT);
                 }
             }
+            // Every letter block starts a paragraph of its own, so it takes
+            // the ordinary `\parskip` on top of the class's own `\vspace`
+            // before it (`gap_before_pt`). The previous block may already
+            // have closed its line and laid down its own `\vspace`
+            // (`gap_after_pt`, reported through `closed_line_skip`), in which
+            // case only the skips are still owed.
+            Block::LetterBlock { gap_before_pt, .. } if closed.is_some() => {
+                self.vertical_gap(parskip + gap_before_pt);
+            }
+            Block::LetterBlock { gap_before_pt, .. } => {
+                if !self.first_block {
+                    self.newline(body_size);
+                    self.vertical_gap(parskip + gap_before_pt);
+                } else {
+                    self.vertical_gap(*gap_before_pt);
+                }
+            }
             Block::PageBreak => {
                 if !self.first_block {
                     self.force_page_break();
@@ -1462,6 +1479,65 @@ impl LayoutCursor {
             Block::Paragraph(inlines) => {
                 self.justify = true;
                 emit(self, inlines, body_size, Font::TimesRoman);
+            }
+            // `\opening`'s return-address box and `\closing`'s signature
+            // parbox. Both are *boxes*: every line is set flush left inside
+            // the box and the whole box is then placed horizontally, which
+            // is why neither is a `ParagraphStyle`. `\raggedleft` around a
+            // `tabular` moves the box, not its lines — in the committed
+            // `fixtures/real-world/letter/reference.pdf` all three lines of
+            // the address block start at the same x (437.195bp), even though
+            // they are different lengths.
+            Block::LetterBlock {
+                part,
+                lines,
+                extra_gap_after_pt,
+                gap_after_pt,
+                indent_pt,
+                ..
+            } => {
+                self.style = None;
+                self.justify = false;
+                let starts: Vec<usize> = self.pages.iter().map(|page| page.items.len()).collect();
+                let mut widest_end: f64 = self.left_edge();
+                for (index, line) in lines.iter().enumerate() {
+                    self.x = self.left_edge();
+                    self.content_end = self.x;
+                    emit(self, line, body_size, Font::TimesRoman);
+                    widest_end = widest_end.max(self.content_end);
+                    let last = index + 1 == lines.len();
+                    if !last {
+                        self.newline(body_size);
+                        if let Some(gap) = extra_gap_after_pt.get(index) {
+                            self.vertical_gap(*gap);
+                        }
+                    }
+                }
+                let shift = match part {
+                    // `{\raggedleft <box> \par}`: the box's right edge is the
+                    // right margin.
+                    LetterPart::ReturnAddress => (self.right_edge() - widest_end).max(0.0),
+                    // The left margin, or `\hspace*{\longindentation}`,
+                    // already resolved by the parser from the class size.
+                    LetterPart::Recipient | LetterPart::Closing => *indent_pt,
+                };
+                if shift > 0.0 {
+                    for (page, start) in self.pages.iter_mut().zip(starts) {
+                        for item in page.items.iter_mut().skip(start) {
+                            item.x_pt = round2(item.x_pt + shift);
+                        }
+                    }
+                    self.x += shift;
+                    self.content_end += shift;
+                }
+                // The class's `\vspace` after the block. Reporting it as a
+                // closed-line skip is what stops the next block from opening
+                // a second line of its own (see `prepare_block`).
+                if *gap_after_pt > 0.0 {
+                    self.newline(body_size);
+                    self.vertical_gap(*gap_after_pt);
+                    self.closed_line_skip = Some(*gap_after_pt);
+                }
             }
             Block::Styled { style, content, .. } => {
                 self.style = Some(*style);
@@ -2169,6 +2245,11 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
                 visit_inline_references(authors, visitor);
                 if let Some(date) = date {
                     visit_inline_references(date, visitor);
+                }
+            }
+            Block::LetterBlock { lines, .. } => {
+                for line in lines {
+                    visit_inline_references(line, visitor);
                 }
             }
             Block::VSpace { .. }
