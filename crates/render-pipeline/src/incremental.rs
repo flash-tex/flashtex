@@ -325,8 +325,11 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
             Item::LineBreak { skip_pt } => {
                 skip_pt.to_bits().hash(h);
             }
-            Item::Quad { em } => {
+            Item::Quad { em, style } => {
+                4u8.hash(h);
                 em.to_bits().hash(h);
+                (style.bold, style.italic, style.size_cpt, style.medium).hash(h);
+                (style.slanted, style.caps, style.family, style.undefined).hash(h);
             }
             Item::Label { key } => {
                 key.hash(h);

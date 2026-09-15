@@ -14,7 +14,8 @@ use crate::export::{self, ExportFont};
 use crate::math::{self, MathBox};
 use crate::parser::{
     Block, FillLeader, FontSizeLevel, Inline, LetterPart, ListLeftMargin, MathRow, ParagraphStyle,
-    TextFamily, TextStyle, CMR_EX_PER_EM,
+    TextFamily, TextStyle, CMR_EX_PER_EM, TEXT_DESCENDER_DEPTH_EM, TEXT_DESCENDER_GLYPHS,
+    UnderlineGeom,
 };
 use crate::Span;
 use flashtex_font_engine::core14::Core14;
@@ -70,6 +71,11 @@ pub const REFERENCE_ITERATION_LIMIT: usize = 5;
 struct ReferenceValue {
     number: String,
     page: u32,
+    /// The page formatted in the `\pagenumbering` style in force where the
+    /// label fell: what `\pageref` prints. Kept beside the raw page (which
+    /// still orders and detects consecutive cleveref ranges) so a style
+    /// switch changes displayed references without disturbing them.
+    page_text: String,
     kind: String,
 }
 
@@ -565,6 +571,70 @@ pub struct PlacedItem {
     pub item: TextItem,
 }
 
+/// Cursor line state saved before a killed (`\kill`) `tabbing` row is
+/// laid out, so the row can register its `\=` stops and then be rewound
+/// to an un-typeset line: no items, no cursor movement, no labels, no
+/// queued footnote text. The stops and any diagnostics live outside the
+/// cursor and survive.
+struct TabbingUndo {
+    pages_len: usize,
+    items_len: usize,
+    x: f64,
+    y: f64,
+    line_ascent: f64,
+    line_descent: f64,
+    line_start: usize,
+    content_end: f64,
+    line_fills_len: usize,
+    line_spaces_len: usize,
+    closed_line_skip: Option<f64>,
+    collected_labels: BTreeMap<String, ReferenceValue>,
+    footnotes: (usize, usize),
+}
+
+impl TabbingUndo {
+    fn capture(c: &LayoutCursor) -> Self {
+        Self {
+            pages_len: c.pages.len(),
+            items_len: c.pages.last().expect("at least one page").items.len(),
+            x: c.x,
+            y: c.y,
+            line_ascent: c.line_ascent,
+            line_descent: c.line_descent,
+            line_start: c.line_start,
+            content_end: c.content_end,
+            line_fills_len: c.line_fills.len(),
+            line_spaces_len: c.line_spaces.len(),
+            closed_line_skip: c.closed_line_skip,
+            collected_labels: c.collected_labels.clone(),
+            footnotes: c.footnotes.undo_point(),
+        }
+    }
+
+    fn restore(self, c: &mut LayoutCursor) {
+        // Pages the killed row opened (it wrapped past the page bottom)
+        // go away with their items; the surviving last page is the
+        // captured one, truncated back to its captured items.
+        c.pages.truncate(self.pages_len);
+        c.pages
+            .last_mut()
+            .expect("at least one page")
+            .items
+            .truncate(self.items_len);
+        c.x = self.x;
+        c.y = self.y;
+        c.line_ascent = self.line_ascent;
+        c.line_descent = self.line_descent;
+        c.line_start = self.line_start;
+        c.content_end = self.content_end;
+        c.line_fills.truncate(self.line_fills_len);
+        c.line_spaces.truncate(self.line_spaces_len);
+        c.closed_line_skip = self.closed_line_skip;
+        c.collected_labels = self.collected_labels;
+        c.footnotes.rollback(self.footnotes);
+    }
+}
+
 /// Resumable layout cursor shared by clean and incremental compilation.
 pub struct LayoutCursor {
     pages: Vec<Page>,
@@ -594,6 +664,13 @@ pub struct LayoutCursor {
     constraints: LayoutConstraints,
     resolved_labels: BTreeMap<String, ReferenceValue>,
     collected_labels: BTreeMap<String, ReferenceValue>,
+    /// The `\pagenumbering` display style in force at the position being
+    /// set (`\thepage`'s format; latex.ltx's `\thepage` definition).
+    page_style: crate::xref::NumberStyle,
+    /// The displayed number of the current physical page: 1 at the start,
+    /// reset to 1 by every `\pagenumbering` marker, stepped by every page
+    /// shipped after it (latex.ltx's `\c@page`).
+    page_value: u32,
     cleveref: crate::xref::CleverefConfig,
     /// Contents entries from the previous pass, typeset by
     /// `Block::TableOfContents`.
@@ -673,6 +750,8 @@ impl LayoutCursor {
             constraints,
             resolved_labels,
             collected_labels: BTreeMap::new(),
+            page_style: crate::xref::NumberStyle::Arabic,
+            page_value: 1,
             cleveref,
             resolved_toc: Vec::new(),
             collected_toc: Vec::new(),
@@ -1436,13 +1515,14 @@ impl LayoutCursor {
         };
         match block {
             Block::Paragraph(_)
+            | Block::Tabbing { .. }
             | Block::FigureCaption { .. }
             | Block::Styled { .. }
             | Block::Rule { .. }
                 if closed.is_some() =>
             {
                 let gap = match block {
-                    Block::Paragraph(_) => parskip,
+                    Block::Paragraph(_) | Block::Tabbing { .. } => parskip,
                     // A `\\` that ended a centred paragraph is `\@centercr`,
                     // which cancels the next paragraph's `\parskip`.
                     Block::Styled { .. } if closed == Some(0.0) => 0.0,
@@ -1468,7 +1548,7 @@ impl LayoutCursor {
                         + parskip,
                 );
             }
-            Block::Paragraph(_) => {
+            Block::Paragraph(_) | Block::Tabbing { .. } => {
                 if !self.first_block {
                     self.newline(body_size);
                     self.vertical_gap(parskip);
@@ -1652,6 +1732,78 @@ impl LayoutCursor {
                     self.newline(body_size);
                     self.vertical_gap(*gap_after_pt);
                     self.closed_line_skip = Some(*gap_after_pt);
+                }
+            }
+            // `tabbing`: rows align at dynamically recorded stops, not at
+            // columns from a spec. Stops persist across the rows in source
+            // order: every `\=` (on live and `\kill`ed rows alike) records
+            // the current row position, and every `\>` jumps right to the
+            // next recorded stop. Like `LetterBlock`, rows break where the
+            // source's `\\` (or `\kill`, or a blank line) puts them; an
+            // overlong row still wraps on overflow through `place`'s usual
+            // check, exactly as a `LetterBlock` row does.
+            Block::Tabbing { lines, .. } => {
+                self.justify = false;
+                let mut stops: Vec<f64> = Vec::new();
+                for (index, line) in lines.iter().enumerate() {
+                    // A row starts where the previous one left off only
+                    // when that row was killed (it took no space);
+                    // otherwise the previous row's line is still open and
+                    // must close first.
+                    if index > 0 && !lines[index - 1].killed {
+                        self.newline(body_size);
+                    }
+                    let undo = TabbingUndo::capture(self);
+                    for inline in &line.content {
+                        match inline {
+                            Inline::TabStop { .. } => {
+                                let x = self.content_end;
+                                if !stops.iter().any(|stop| (stop - x).abs() < 1e-6) {
+                                    stops.push(x);
+                                    stops.sort_by(|a, b| {
+                                        a.partial_cmp(b).expect("finite stops")
+                                    });
+                                }
+                            }
+                            Inline::TabJump { span } => {
+                                if let Some(stop) = stops
+                                    .iter()
+                                    .find(|stop| **stop > self.content_end + 1e-6)
+                                {
+                                    let delta = stop - self.content_end;
+                                    self.hspace(delta, 0.0, 0.0);
+                                } else {
+                                    self.diagnostics.push(Diagnostic::warning(
+                                        "\\> has no tab stop to its right; stayed in place",
+                                        Some(*span),
+                                        Some(
+                                            "set one with \\= first, usually on a \\kill setup row"
+                                                .into(),
+                                        ),
+                                    ));
+                                }
+                            }
+                            _ => emit(
+                                self,
+                                std::slice::from_ref(inline),
+                                body_size,
+                                Font::TimesRoman,
+                            ),
+                        }
+                    }
+                    if line.killed {
+                        // The row registers its stops but takes no space
+                        // and leaves no items: rewind to the capture. The
+                        // stops and diagnostics live outside the cursor, so
+                        // they survive the rewind.
+                        undo.restore(self);
+                    }
+                }
+                if lines.last().is_some_and(|line| line.killed) {
+                    // The cursor sits on a fresh, still-empty line (as after
+                    // a `center` row's trailing `\\`): report it so the next
+                    // block does not open a second line of its own.
+                    self.closed_line_skip = Some(0.0);
                 }
             }
             Block::Styled { style, content, .. } => {
@@ -2048,6 +2200,11 @@ impl LayoutCursor {
                 height_pt: PAGE_HEIGHT_PT,
                 items: Vec::new(),
             });
+            // Reached only without document-global state (which takes the
+            // full-recompile path instead), so no `\thepage` can observe
+            // this; kept in step anyway so the counter never lies about a
+            // reused fragment's pages.
+            self.page_value += 1;
         }
         for placed_item in placed {
             self.pages[placed_item.page_index]
@@ -2377,6 +2534,11 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
                     visit_inline_references(line, visitor);
                 }
             }
+            Block::Tabbing { lines, .. } => {
+                for line in lines {
+                    visit_inline_references(&line.content, visitor);
+                }
+            }
             Block::VSpace { .. }
             | Block::Rule { .. }
             | Block::PageBreak
@@ -2418,6 +2580,7 @@ fn visit_inline_references(inlines: &[Inline], visitor: &mut impl FnMut(&str, Sp
 struct CleverReferenceItem {
     number: String,
     page: u32,
+    page_text: String,
     kind: String,
     raw_kind: String,
 }
@@ -2441,6 +2604,7 @@ fn clever_reference_text(
             Some(value) => items.push(CleverReferenceItem {
                 number: value.number.clone(),
                 page: value.page,
+                page_text: value.page_text.clone(),
                 kind: crate::xref::cleveref_kind(&value.kind).to_string(),
                 raw_kind: value.kind.clone(),
             }),
@@ -2539,9 +2703,9 @@ fn format_page_numbers(items: &[CleverReferenceItem]) -> String {
             end += 1;
         }
         if end - start >= 2 {
-            parts.push(format!("{} to {}", items[start].page, items[end].page));
+            parts.push(format!("{} to {}", items[start].page_text, items[end].page_text));
         } else {
-            parts.extend(items[start..=end].iter().map(|item| item.page.to_string()));
+            parts.extend(items[start..=end].iter().map(|item| item.page_text.clone()));
         }
         start = end + 1;
     }
@@ -2641,6 +2805,31 @@ pub(crate) fn style_font(style: TextStyle) -> Font {
     }
 }
 
+/// Hbox depth of underline content visible to a Core 14 layout: the
+/// pdflatex-measured descender depth ([`TEXT_DESCENDER_DEPTH_EM`] × size)
+/// when any text fragment holds a descender glyph from
+/// [`TEXT_DESCENDER_GLYPHS`] (transparent wrappers recursed into), else 0.
+/// Content that carries its own measured depth (math, rules) is picked up by
+/// the caller from the line extents instead.
+fn content_descender_depth(inlines: &[Inline], size: f64) -> f64 {
+    fn has_descender(inlines: &[Inline]) -> bool {
+        inlines.iter().any(|inline| match inline {
+            Inline::Text { text, .. } => text
+                .chars()
+                .any(|ch| TEXT_DESCENDER_GLYPHS.contains(&ch)),
+            Inline::ColorBox(b) => has_descender(&b.content),
+            Inline::Underline(u) => has_descender(&u.content),
+            Inline::Transform(b) => has_descender(&b.content),
+            _ => false,
+        })
+    }
+    if has_descender(inlines) {
+        TEXT_DESCENDER_DEPTH_EM * size
+    } else {
+        0.0
+    }
+}
+
 fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
     for inline in inlines {
         match inline {
@@ -2724,9 +2913,29 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     ReferenceValue {
                         number: value.clone(),
                         page: c.pages.len() as u32,
+                        page_text: c.page_style.format(c.page_value),
                         kind: kind.clone(),
                     },
                 );
+            }
+            Inline::ThePage { span, space_before } => {
+                // Late-bound like `\pageref`: the page is whatever physical
+                // page this inline is being set on, formatted in the
+                // `\pagenumbering` style in force here.
+                c.place(
+                    c.page_style.format(c.page_value),
+                    size,
+                    *span,
+                    font,
+                    *space_before,
+                );
+            }
+            Inline::PageNumbering { style, .. } => {
+                // `\pagenumbering{style}`: reset the displayed page counter
+                // to 1 and switch `\thepage`'s format from here on. The
+                // marker itself sets nothing visible.
+                c.page_style = *style;
+                c.page_value = 1;
             }
             Inline::Reference {
                 key,
@@ -2737,7 +2946,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
             } => match c.resolved_labels.get(key) {
                 Some(value) => {
                     let text = if *page {
-                        value.page.to_string()
+                        value.page_text.clone()
                     } else {
                         value.number.clone()
                     };
@@ -2802,6 +3011,10 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     c.mark_hfill(FillLeader::None, size, font, *span);
                 }
             }
+            // `tabbing` markers only occur inside `Block::Tabbing` rows,
+            // which `render_prepared_block` lays out through its own arm
+            // below; the generic path never sees them, so it ignores them.
+            Inline::TabStop { .. } | Inline::TabJump { .. } => {}
             Inline::Footnote {
                 number,
                 span,
@@ -2809,6 +3022,10 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 text,
                 space_before,
             } => c.footnote(number, *span, *mark, text.as_deref(), *space_before),
+            // `\marginpar` has no mark, and this layout has no margin
+            // model (the render pipeline sets the note in the right
+            // margin): skip it rather than leaking it into the prose.
+            Inline::Marginpar { .. } => {}
             Inline::Tabular(table) => {
                 let table_size = table.style.size.map_or(size, |level| {
                     size_declaration_pt(level, c.constraints.font_size_pt)
@@ -2881,18 +3098,30 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     c.x = c.content_end;
                 }
                 let start_x = c.x;
+                let descent_before = c.line_descent;
                 emit(c, &u.content, size, font);
                 let width = c.content_end - start_x;
                 let baseline = c.y;
                 // Core 14 has no per-glyph TFM: `\uline` uses the cmr/lmr
-                // 0.25em `(` depth; kernel `\underline` uses hbox depth 0
-                // (true for no-descender words). `\sout` uses cmr ex, not
-                // Times x-height, so 0.55ex matches pdflatex within 0.01pt.
+                // 0.25em `(` depth. Kernel `\underline` keeps its hbox depth
+                // (latex.ltx `$\@@underline{\hbox{#1}}$`): descender-bearing
+                // text contributes TEXT_DESCENDER_DEPTH_EM, and content that
+                // already deepened the line (math, rules) contributes what it
+                // measured. Kernel `\underbar` zeroes the hbox first
+                // (latex.ltx `\dp\tw@\z@`), so its rule stays fixed.
+                // `\sout` uses cmr ex, not Times x-height, so 0.55ex matches
+                // pdflatex within 0.01pt.
                 let descender = 0.25 * size;
                 let ex = CMR_EX_PER_EM * size;
+                let box_depth = match u.geom {
+                    UnderlineGeom::Underbar => 0.0,
+                    _ => (c.line_descent - descent_before)
+                        .max(0.0)
+                        .max(content_descender_depth(&u.content, size)),
+                };
                 let (top, extra_depth) = u.geom.rule_top_and_depth(
                     u.thickness_pt,
-                    0.0,
+                    box_depth,
                     descender,
                     ex,
                 );

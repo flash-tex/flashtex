@@ -486,6 +486,20 @@ impl MathFonts {
         }
     }
 
+    /// Semantic Unicode corrections for math glyph text. This is separate
+    /// from [`math_char`], which selects the painted OpenType glyph. The
+    /// default pdfTeX cmex/cmsy maps are font-slot artefacts (for example,
+    /// `\sum` maps to `P`), so they are not the extraction oracle here.
+    pub fn extraction_text(ch: char) -> Option<&'static str> {
+        match ch {
+            '-' => Some("\u{2212}"),
+            '*' => Some("\u{2217}"),
+            '\u{03C6}' => Some("\u{03D5}"),
+            '\u{03D5}' => Some("\u{03C6}"),
+            _ => None,
+        }
+    }
+
     fn glyph_for(&self, gid: u16, ch: char, size_pt: f64) -> Glyph {
         Self::glyph_from(&self.face, MATH_FONT, gid, ch, size_pt)
     }
@@ -870,6 +884,42 @@ mod tests {
         assert!(parens.len() >= 3, "{} paren sizes", parens.len());
         assert!(parens.windows(2).all(|w| w[0].total_height() <= w[1].total_height()));
         assert!(m.radical_sizes(SizeClass::Text).len() >= 2);
+    }
+
+    #[test]
+    fn extraction_text_uses_semantic_math_unicode() {
+        let expected = [
+            ('-', "−"),
+            ('*', "∗"),
+            ('\u{03C6}', "ϕ"),
+            ('\u{03D5}', "φ"),
+        ];
+        for (ch, text) in expected {
+            assert_eq!(MathFonts::extraction_text(ch), Some(text), "{ch:?}");
+        }
+        // pdfTeX's default cmex/cmsy mappings make copy-paste worse by
+        // exposing font-slot artefacts such as `\sum` -> `P`; semantic
+        // Unicode, not that output, is the contract.
+        for ch in [
+            '\u{2217}',
+            '\u{2218}',
+            '\u{22C5}',
+            '\u{2216}',
+            '\u{0338}',
+            '\u{21A6}',
+            '\u{27F9}',
+            '\u{27F6}',
+            '\u{21AA}',
+            '\u{03BC}',
+            '\u{0394}',
+            '\u{03A9}',
+            '\u{2211}',
+            '\u{220F}',
+            '\u{222B}',
+            '\u{222E}',
+        ] {
+            assert_eq!(MathFonts::extraction_text(ch), None, "{ch:?}");
+        }
     }
 
     #[test]

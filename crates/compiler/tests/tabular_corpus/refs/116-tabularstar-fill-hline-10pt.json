@@ -1,0 +1,114 @@
+{
+ "fixture": "116-tabularstar-fill-hline-10pt.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 81.963
+   },
+   {
+    "text": "before",
+    "x": 95.2467,
+    "y_top": 81.963
+   },
+   {
+    "text": "the",
+    "x": 125.1634,
+    "y_top": 81.963
+   },
+   {
+    "text": "table.",
+    "x": 142.319,
+    "y_top": 81.963
+   },
+   {
+    "text": "Left",
+    "x": 72.0,
+    "y_top": 91.726
+   },
+   {
+    "text": "Middle",
+    "x": 237.8076,
+    "y_top": 91.726
+   },
+   {
+    "text": "Right",
+    "x": 416.2078,
+    "y_top": 91.726
+   },
+   {
+    "text": "one",
+    "x": 72.0,
+    "y_top": 104.08
+   },
+   {
+    "text": "two",
+    "x": 245.141,
+    "y_top": 104.08
+   },
+   {
+    "text": "three",
+    "x": 418.2522,
+    "y_top": 104.08
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 115.924
+   },
+   {
+    "text": "after",
+    "x": 95.2467,
+    "y_top": 115.924
+   },
+   {
+    "text": "the",
+    "x": 118.7953,
+    "y_top": 115.924
+   },
+   {
+    "text": "table.",
+    "x": 135.9509,
+    "y_top": 115.924
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    72.0,
+    82.959,
+    374.401,
+    0.398,
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    72.0,
+    95.313,
+    374.401,
+    0.398,
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    72.0,
+    107.666,
+    374.401,
+    0.398,
+    0.0,
+    0.0,
+    0.0
+   ]
+  ]
+ ]
+}

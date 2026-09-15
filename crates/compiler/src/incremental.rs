@@ -543,6 +543,12 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             }
             map_span(span, changes, deltas)
         }
+        Block::Tabbing { lines, span } => {
+            for line in lines.iter_mut() {
+                shift_inlines(&mut line.content, changes, deltas)?;
+            }
+            map_span(span, changes, deltas)
+        }
     }
 }
 
@@ -614,6 +620,8 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 space_before: _,
             } => map_span(span, changes, deltas)?,
             Inline::CleverReference { span, .. } => map_span(span, changes, deltas)?,
+            Inline::ThePage { span, .. } => map_span(span, changes, deltas)?,
+            Inline::PageNumbering { span, .. } => map_span(span, changes, deltas)?,
             Inline::HFill { span, .. } => map_span(span, changes, deltas)?,
             Inline::HSpace { span, .. } => map_span(span, changes, deltas)?,
             Inline::Footnote {
@@ -627,6 +635,10 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 if let Some(text) = text {
                     shift_inlines(text, changes, deltas)?;
                 }
+            }
+            Inline::Marginpar { text, span, space_before: _ } => {
+                map_span(span, changes, deltas)?;
+                shift_inlines(text, changes, deltas)?;
             }
             Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => {
                 map_span(span, changes, deltas)?
@@ -645,6 +657,9 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 span,
                 style: _,
             } => map_span(span, changes, deltas)?,
+            Inline::TabStop { span } | Inline::TabJump { span } => {
+                map_span(span, changes, deltas)?
+            }
             Inline::Tabular(table) => {
                 // `Tabular` only offers a mapping copy; its nested inlines are
                 // shifted through the same in-place walk.
@@ -856,6 +871,12 @@ fn block_signature(block: &Block) -> BlockSignature {
         // enough to narrow the candidate set, and `shift_block`'s full
         // equality check still gates every reuse.
         Block::LetterBlock { lines, .. } => lines.first().map_or(&[][..], |line| &line[..]),
+        // Same signature-only role as `LetterBlock`: the first row narrows
+        // the candidate set, and `shift_block`'s full equality check still
+        // gates every reuse.
+        Block::Tabbing { lines, .. } => lines
+            .first()
+            .map_or(&[][..], |line| &line.content[..]),
         // Signature only, not identity (see the doc comment above): using
         // just `title` here (never `authors`/`date`) can only widen the
         // candidate set on an author/date-only edit, never produce a wrong
@@ -871,9 +892,12 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::Label { span, .. } => *span,
         Inline::Reference { span, .. } => *span,
         Inline::CleverReference { span, .. } => *span,
+        Inline::ThePage { span, .. } => *span,
+        Inline::PageNumbering { span, .. } => *span,
         Inline::HFill { span, .. } => *span,
         Inline::HSpace { span, .. } => *span,
         Inline::Footnote { span, .. } => *span,
+        Inline::Marginpar { span, .. } => *span,
         Inline::Tabular(table) => table.span,
         Inline::Verbatim { span, .. } => *span,
         Inline::ColorBox(b) => b.span,
@@ -884,6 +908,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::Penalty { span, .. }
         | Inline::PagePenalty { span, .. }
         | Inline::Discretionary { span, .. } => *span,
+        Inline::TabStop { span } | Inline::TabJump { span } => *span,
     };
     let first = inlines.first().map(span_of);
     let last = inlines.last().map(span_of);

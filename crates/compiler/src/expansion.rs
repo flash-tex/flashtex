@@ -23,10 +23,12 @@
 //!   [`crate::parser::Parsed::expansions`]). Tokens substituted for a
 //!   macro's arguments keep their own source spans.
 //! - **Verbatim.** `\verb` arguments and the bodies of `verbatim`,
-//!   `verbatim*` and `lstlisting` are hidden from the engine before it reads
-//!   the source (their bytes are blanked in a private copy; offsets do not
-//!   move), so no `%`, `\`, `$`, `{`, `}` or macro in them is interpreted.
-//!   The parser keeps reading those regions from the original text.
+//!   `verbatim*`, `lstlisting` and `comment` are hidden from the engine
+//!   before it reads the source (their bytes are blanked in a private
+//!   copy; offsets do not move), so no `%`, `\`, `$`, `{`, `}` or macro
+//!   in them is interpreted. The parser keeps reading the verbatim-like
+//!   regions from the original text; `comment` bodies are discarded there
+//!   instead (see `parser`'s `comment` environment handling).
 //! - **Environments.** The engine turns `\begin{name}` into `\name` (so a
 //!   `\newenvironment` definition runs); an undefined `\name` produced that
 //!   way is turned back into `\begin`, `{`, `name`, `}` with the exact spans
@@ -225,7 +227,8 @@ fn prepare<'a>(text: &'a str, document: DocumentId) -> Prepared<'a> {
         || text.contains("\\verb")
         || text.contains("\\lstinline")
         || text.contains("verbatim")
-        || text.contains("lstlisting"))
+        || text.contains("lstlisting")
+        || text.contains("comment"))
     {
         return prepared;
     }
@@ -310,7 +313,7 @@ fn prepare<'a>(text: &'a str, document: DocumentId) -> Prepared<'a> {
                     i += 1;
                     continue;
                 };
-                if !matches!(env.as_str(), "verbatim" | "verbatim*" | "lstlisting") {
+                if !matches!(env.as_str(), "verbatim" | "verbatim*" | "lstlisting" | "comment") {
                     i += 1;
                     continue;
                 }
@@ -326,7 +329,11 @@ fn prepare<'a>(text: &'a str, document: DocumentId) -> Prepared<'a> {
                     *b = b' ';
                 }
                 prepared.skip.push((content_start, tag_start));
-                if env != "lstlisting" {
+                if !matches!(env.as_str(), "lstlisting" | "comment") {
+                    // `comment` needs no entry: unlike `verbatim`, the
+                    // LaTeX kernel defines no `comment` environment, so
+                    // the engine can never read one of its bodies itself
+                    // and close it with a frozen `\endcomment`.
                     prepared.verbatim_ends.insert(token.span.start, tag_start);
                 }
                 blanked = true;

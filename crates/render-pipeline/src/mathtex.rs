@@ -25,7 +25,7 @@ use flashtex_math_layout::metrics::Extensible;
 use flashtex_math_layout::tfm as mtfm;
 use flashtex_math_layout::{FontId as MathFontId, Glyph, MathFontMetrics, MathParams, SizeClass};
 #[cfg(feature = "math-font-kerns")]
-use flashtex_math_layout::{MathChar, OrdPair};
+use flashtex_math_layout::{MathChar, OrdLigature, OrdPair};
 
 use crate::fonts::{FontSet, LoadedFace, Role, TfmStatus};
 use crate::mathfont::{MathFonts, MathSizes};
@@ -839,28 +839,53 @@ impl MathFontMetrics for TexMathMetrics {
     /// Families 1–3 answer from math-layout's embedded CM programs (the
     /// `lmmi`/`lmsy`/`lmex` TFMs are metric-identical, see the module docs);
     /// family 0 from the installed `rm-lmr` TFM [`Self::roman_glyph`] boxes
-    /// with. Characters no CM slot covers (AMS fonts, math alphabets,
-    /// OpenType fallbacks) are in no family here and never kern.
+    /// with, ligatures included (`\mathrm{f}\mathrm{i}` is one fi glyph); a
+    /// one-character math alphabet (`\mathbf{T}\mathbf{o}`) from its text
+    /// font's TFM [`Self::alphabet_glyph`] boxes with. Characters no CM slot
+    /// covers (AMS fonts, OpenType fallbacks) are in no family here and never
+    /// kern.
     #[cfg(feature = "math-font-kerns")]
     fn ord_pair(&self, left: MathChar, right: MathChar, size: SizeClass) -> Option<OrdPair> {
+        let i = Self::size_index(size);
+        let at = self.cm.sizes[i];
+        let text_font = |tfm: &Tfm| tfm.param(2).is_some_and(|space| space != 0);
+        // Math alphabets: each is a family of its own (`\DeclareMathAlphabet`
+        // allocates one), so both characters must be of the same alphabet.
+        let alphabet = |c: MathChar| match c {
+            MathChar::Symbol(ch) => crate::mathalpha::classify(ch).filter(|(a, _)| a.text_key().is_some()),
+            MathChar::Text(_) => None,
+        };
+        match (alphabet(left), alphabet(right)) {
+            (None, None) => {}
+            (Some((a, l)), Some((b, r))) if a == b => {
+                let (_, _, _, tfm) = self.alphabets.iter().find(|(al, j, ..)| *al == a && *j == i)?;
+                // The alphabet fonts are addressed by letter, with no
+                // character standing for a ligature slot: a ligature pair
+                // gets no kern and is not formed.
+                let kern = match tfm.pair_program(l as u8, r as u8) {
+                    Some(mtfm::LigKern::Kern(k)) => mtfm::scale(k, at),
+                    _ => 0.0,
+                };
+                return Some(OrdPair { kern, text_font: text_font(tfm), ligature: None });
+            }
+            _ => return None,
+        }
         // `self.cm` settles the family (and kerns families 1–3); a family-0
         // pair then takes the roman TFM's program instead of cmr's.
         let pair = self.cm.ord_pair(left, right, size)?;
         let roman_code = |c: MathChar| match c {
-            MathChar::Text(ch) => Some(ch as u8),
+            MathChar::Text(ch) => cm::ot1_text_slot(ch),
             MathChar::Symbol(ch) => cm::symbol_slot(ch).filter(|&(f, _)| f == Family::Roman).map(|(_, code)| code),
         };
-        let i = Self::size_index(size);
         let (Some(l), Some(r), Some(tfm)) = (roman_code(left), roman_code(right), &self.roman[i]) else {
             return Some(pair);
         };
-        let codes = [l, r];
-        let run = tfm.ligkern(&codes).ok()?;
-        let kern = match run.glyphs.as_slice() {
-            [a, b] if a.code == codes[0] && b.code == codes[1] => mtfm::scale(a.kern_after, self.cm.sizes[i]),
-            _ => 0.0,
+        let (kern, ligature) = match tfm.pair_program(l, r) {
+            Some(mtfm::LigKern::Kern(k)) => (mtfm::scale(k, at), None),
+            Some(mtfm::LigKern::Ligature { op, rem }) => (0.0, cm::ligature_char(left, Family::Roman, rem).map(|ch| OrdLigature { op, ch })),
+            None => (0.0, None),
         };
-        Some(OrdPair { kern, text_font: tfm.param(2).is_some_and(|space| space != 0) })
+        Some(OrdPair { kern, text_font: text_font(tfm), ligature })
     }
 
     fn delimiter_extensible(&self, ch: char, size: SizeClass) -> Option<Extensible> {
@@ -873,10 +898,14 @@ impl MathFontMetrics for TexMathMetrics {
 
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
         if ch.is_ascii() {
-            self.roman_glyph(ch as u8, ch, size)
-        } else {
-            self.cm.text_glyph(ch, size)
+            return self.roman_glyph(ch as u8, ch, size);
         }
+        // A ligature `make_ord` formed (`ﬁ`) is its OT1 slot of `rm-lmr`.
+        #[cfg(feature = "math-font-kerns")]
+        if let Some(code) = cm::ot1_text_slot(ch) {
+            return self.roman_glyph(code, ch, size);
+        }
+        self.cm.text_glyph(ch, size)
     }
 }
 

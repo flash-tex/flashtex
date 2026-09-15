@@ -175,7 +175,8 @@ pub enum Nucleus {
     Radical(MathList),
     /// `\mathbf{...}`: literal text in the bold roman face.
     Bold(String),
-    /// `\boxed`, `\overline` and `\underline`: a list with real rules.
+    /// `\boxed`, `\overline`, `\underline` and (kernel, like `\underline`)
+    /// `\underbar`: a list with real rules.
     Framed {
         body: MathList,
         frame: Frame,
@@ -698,7 +699,11 @@ pub enum DelimiterRole {
     Right,
 }
 
-/// `\hat`..`\grave`, plus `\widehat`/`\widetilde`.
+/// `\hat`..`\grave`, plus `\widehat`/`\widetilde` and `\mathring`.
+///
+/// (`\dddot`/`\ddddot` are deliberately NOT here: amsmath defines them as
+/// `{\mathop{\kern\z@#1}\limits^{...}}`, not as `\mathaccent`s — see
+/// [`MathParser::mathop_dots_atom`].)
 ///
 /// The compiler renders math with Adobe's Core 14 Symbol/Times-Roman faces,
 /// not Computer Modern, so TeX's exact accent geometry is not reproducible.
@@ -722,6 +727,7 @@ pub enum Accent {
     Grave,
     WideHat,
     WideTilde,
+    Mathring,
 }
 
 impl Accent {
@@ -739,6 +745,7 @@ impl Accent {
             Accent::Grave => "grave",
             Accent::WideHat => "widehat",
             Accent::WideTilde => "widetilde",
+            Accent::Mathring => "mathring",
         }
     }
 
@@ -767,6 +774,11 @@ impl Accent {
             Accent::Ddot => Some('\u{A8}'),  // diaeresis
             Accent::Acute => Some('\u{B4}'), // acute accent
             Accent::Grave => Some('\u{60}'), // grave accent
+            // TeX's \mathring is a small ring above; no ring-above
+            // character exists in WinAnsi or the Symbol encoding, so the
+            // degree sign — a real ring-shaped base-14 glyph — is the
+            // closest stand-in.
+            Accent::Mathring => Some('\u{B0}'), // degree sign
             Accent::Check | Accent::Breve => None,
         }
     }
@@ -2119,7 +2131,7 @@ impl MathParser<'_> {
                     ams_symbol: None,
                 }
             }
-            "boxed" | "Aboxed" | "overline" | "underline" | "overbrace" | "underbrace"
+            "boxed" | "Aboxed" | "overline" | "underline" | "underbar" | "overbrace" | "underbrace"
             | "overrightarrow" | "overleftarrow" | "overleftrightarrow" | "underrightarrow"
             | "underleftarrow" | "underleftrightarrow" => {
                 let body = self.required_group(&name, span);
@@ -2324,6 +2336,9 @@ impl MathParser<'_> {
             "grave" => self.accent_atom(Accent::Grave, span),
             "widehat" => self.accent_atom(Accent::WideHat, span),
             "widetilde" => self.accent_atom(Accent::WideTilde, span),
+            "dddot" => self.mathop_dots_atom("dddot", "...", span),
+            "ddddot" => self.mathop_dots_atom("ddddot", "....", span),
+            "mathring" => self.accent_atom(Accent::Mathring, span),
             // The dashed arrows are drawn from msam pieces `amsfonts.sty`
             // declares, so without the package there is nothing to draw with
             // and pdflatex answers "Undefined control sequence".
@@ -2717,6 +2732,41 @@ impl MathParser<'_> {
             superscript: None,
             subscript: None,
             class_override: None,
+            width_em: None,
+            ams_symbol: None,
+        }
+    }
+
+    /// `\dddot`/`\ddddot` (amsmath.sty 744-749): these are NOT `\mathaccent`s
+    /// like `\dot`/`\ddot` (fontmath.ltx 412-419 `\DeclareMathAccent`). The
+    /// real definition is `{\mathop{\kern\z@#1}\limits^{\vbox...}}` — the
+    /// base set as an operator nucleus with a fixed box of three (`...`) or
+    /// four (`....`) `\normalfont` text dots in limits position above it.
+    /// That is the existing [`Nucleus::Stacked`] shape (the `\overset`
+    /// machinery), reused here with no new layout code: the dots are laid
+    /// out in script size, centred over the base at a fixed gap, however
+    /// tall the base is — unlike [`Accent`] marks, which rise with the
+    /// body's ascent. The mark needs no "no representable glyph" diagnostic:
+    /// real `\dddot`/`\ddddot` always typeset, and periods are representable
+    /// (the same `...` text this compiler already uses for `\ldots`).
+    /// The outer braces make the whole an ordinary atom, so the class is
+    /// forced to `Ord`: a `\dddot{=}` is Ord in real TeX, where the shared
+    /// `\overset` path would keep a single-atom relation base's Rel class.
+    fn mathop_dots_atom(&mut self, command: &str, dots: &str, span: Span) -> MathAtom {
+        let base = self.required_group(command, span);
+        let over = MathList {
+            atoms: vec![text_atom(dots.into(), span)],
+        };
+        MathAtom {
+            nucleus: Nucleus::Stacked {
+                base,
+                over: Some(over),
+                under: None,
+            },
+            span,
+            superscript: None,
+            subscript: None,
+            class_override: Some(AtomClass::Ord),
             width_em: None,
             ams_symbol: None,
         }
@@ -3891,6 +3941,9 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("top", "⊤"),
     ("measuredangle", "∡"),
     ("square", "□"),
+    // amssymb's `\Box` is `\let` to `\square` (amsfonts.sty:152, AMSa "03,
+    // Ord): the same open-square glyph and class, drawn generically.
+    ("Box", "□"),
     ("blacksquare", "■"),
     ("lozenge", "◊"),
     ("checkmark", "✓"),
@@ -6074,6 +6127,7 @@ mod unbraced_argument_tests {
             "grave",
             "widehat",
             "widetilde",
+            "mathring",
         ] {
             let mut diagnostics = Vec::new();
             let source = format!(r"\{command} x");
@@ -6538,6 +6592,169 @@ mod accent_tests {
             assert_eq!(b.items.len(), 1);
             assert_eq!(b.items[0].text, "x");
         }
+    }
+
+    #[test]
+    fn mathring_parses_to_its_accent_variant() {
+        // `\mathring` is a genuine `\DeclareMathAccent` (amsmath.sty 793-794),
+        // unlike `\dddot`/`\ddddot` below.
+        let mut diagnostics = Vec::new();
+        let tokens = crate::lexer::tokenize(r"\mathring{x}");
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+        assert_eq!(list.atoms.len(), 1, "{:?}", list.atoms);
+        match &list.atoms[0].nucleus {
+            Nucleus::Accent { accent, body } => {
+                assert_eq!(*accent, Accent::Mathring);
+                assert_eq!(body.atoms.len(), 1, "{:?}", body.atoms);
+                assert_eq!(body.atoms[0].nucleus, Nucleus::Symbol("x".into()));
+            }
+            other => panic!("expected an accent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dddot_and_ddddot_parse_to_the_mathop_limits_stacked_shape() {
+        // amsmath.sty 744-749 defines these as
+        // `{\mathop{\kern\z@#1}\limits^{\vbox...}}` — an operator base with a
+        // fixed three/four-dot box in limits position — NOT a `\mathaccent`
+        // (contrast `\dot`/`\ddot`, fontmath.ltx `\DeclareMathAccent`). So
+        // they build the existing Stacked nucleus shared with `\overset`,
+        // never `Nucleus::Accent`.
+        for (source, dots) in [
+            (r"\dddot{x}", "..."),
+            (r"\ddddot{x}", "...."),
+            (r"\dddot x", "..."),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
+            // The outer braces make the whole an ordinary atom.
+            assert_eq!(
+                list.atoms[0].class_override,
+                Some(AtomClass::Ord),
+                "{source}"
+            );
+            match &list.atoms[0].nucleus {
+                Nucleus::Stacked { base, over, under } => {
+                    assert!(under.is_none(), "{source}");
+                    assert_eq!(base.atoms.len(), 1, "{source}: {:?}", base.atoms);
+                    assert_eq!(base.atoms[0].nucleus, Nucleus::Symbol("x".into()));
+                    let over = over.as_ref().expect("{source}: dots above the base");
+                    assert_eq!(over.atoms.len(), 1, "{source}: {:?}", over.atoms);
+                    assert_eq!(
+                        over.atoms[0].nucleus,
+                        Nucleus::Text(dots.into()),
+                        "{source}"
+                    );
+                }
+                other => panic!(
+                    "{source}: expected the mathop-limits stacked shape, got {other:?}"
+                ),
+            }
+        }
+        // The braces make even a relation base ordinary (real TeX: Ord),
+        // where the shared `\overset` path preserves the base's Rel class.
+        for (source, expected) in [
+            (r"\dddot{=}", AtomClass::Ord),
+            (r"\overset{?}{=}", AtomClass::Rel),
+        ] {
+            let mut diagnostics = Vec::new();
+            let tokens = crate::lexer::tokenize(source);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            assert_eq!(atom_class(&list.atoms[0]), Some(expected), "{source}");
+        }
+    }
+
+    #[test]
+    fn dddot_and_ddddot_typeset_centred_dots_above_the_base() {
+        let size = 10.0;
+        for (source, dots) in [(r"\dddot{x}", "..."), (r"\ddddot{x}", "....")] {
+            let (b, diagnostics) = laid_out(source, size);
+            // Real `\dddot`/`\ddddot` always typeset: no diagnostic (the old
+            // Accent shape warned and left the bare base).
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+            let dots_item = b
+                .items
+                .iter()
+                .find(|i| i.text == dots)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{source}: no {dots:?} mark in {:?}",
+                        b.items.iter().map(|i| &i.text).collect::<Vec<_>>()
+                    )
+                });
+            let base_item = b.items.iter().find(|i| i.text == "x").unwrap();
+            // Limits position: strictly above the base ...
+            assert!(
+                dots_item.baseline < base_item.baseline,
+                "{source}: dots at {}, base at {}",
+                dots_item.baseline,
+                base_item.baseline
+            );
+            // ... and centred over it: both boxes share the layout's centre.
+            let mut d = Vec::new();
+            let base_width = crate::layout::shaped_width(
+                "x",
+                size,
+                crate::layout::math_font("x"),
+                base_item.span,
+                &mut d,
+            )
+            .0;
+            let dots_width = crate::layout::shaped_width(
+                dots,
+                size * SCRIPT_SCALE,
+                crate::layout::Font::TimesRoman,
+                dots_item.span,
+                &mut d,
+            )
+            .0;
+            assert!(d.is_empty(), "{source}: {d:?}");
+            let base_centre = base_item.x + base_width / 2.0;
+            let dots_centre = dots_item.x + dots_width / 2.0;
+            assert!(
+                (dots_centre - base_centre).abs() < 1e-9,
+                "{source}: dots centred at {dots_centre}, base at {base_centre}"
+            );
+        }
+        // Fixed-height overlay (the real `\vbox to-1.4\ex@`): the dots sit at
+        // the same height over a tall base as over `x`, unlike an `Accent`
+        // mark, which rises with the body's ascent.
+        let (short, d1) = laid_out(r"\dddot{x}", size);
+        let (tall, d2) = laid_out(r"\dddot{\frac{a}{b}}", size);
+        assert!(d1.is_empty(), "{d1:?}");
+        assert!(d2.is_empty(), "{d2:?}");
+        let short_y = short
+            .items
+            .iter()
+            .find(|i| i.text == "...")
+            .unwrap()
+            .baseline;
+        let tall_y = tall
+            .items
+            .iter()
+            .find(|i| i.text == "...")
+            .unwrap()
+            .baseline;
+        assert!(
+            (short_y - tall_y).abs() < 1e-9,
+            "dots should sit at a fixed height: {short_y} over x, {tall_y} over a fraction"
+        );
+    }
+
+    #[test]
+    fn mathring_centres_the_degree_sign_over_the_body() {
+        let (b, diagnostics) = laid_out(r"\mathring{x}", 10.0);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(
+            b.items.iter().any(|i| i.text == "\u{B0}"),
+            "expected degree-sign accent in {:?}",
+            b.items.iter().map(|i| &i.text).collect::<Vec<_>>()
+        );
+        assert!(b.items.iter().any(|i| i.text == "x"));
     }
 
     #[test]
@@ -7410,6 +7627,76 @@ mod package_gating_tests {
             assert_eq!(symbol.name, *target);
             assert_eq!(symbol.provider, Provider::Amssymb, "\\{alias}");
         }
+    }
+
+    /// Issue #516: amssymb's `\Box` is `\let` to `\square` (amsfonts.sty:152,
+    /// AMSa "03, Ord), so it parses to the same open-square glyph with the
+    /// same atom class — and `$\Box$` compiles with no diagnostics.
+    #[test]
+    fn box_parses_to_squares_open_square_glyph_and_class() {
+        for packages in [MathPackages::KERNEL, AMSSYMB] {
+            let (list, diagnostics) = parsed(r"\Box", packages);
+            assert!(diagnostics.is_empty(), "\\Box: {diagnostics:?}");
+            assert_eq!(list.atoms.len(), 1, "\\Box");
+            assert!(
+                matches!(&list.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == "□"),
+                "\\Box: {:?}",
+                list.atoms[0].nucleus
+            );
+        }
+        let (square, diagnostics) = parsed(r"\square", AMSSYMB);
+        assert!(diagnostics.is_empty(), "\\square: {diagnostics:?}");
+        assert_eq!(square.atoms.len(), 1, "\\square");
+        assert!(
+            matches!(&square.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == "□"),
+            "\\square: {:?}",
+            square.atoms[0].nucleus
+        );
+        let (list, _) = parsed(r"\Box", AMSSYMB);
+        assert_eq!(
+            atom_class(&list.atoms[0]),
+            atom_class(&square.atoms[0]),
+            "\\Box and \\square take different classes"
+        );
+        assert_eq!(atom_class(&list.atoms[0]), Some(AtomClass::Ord));
+    }
+
+    /// Regression: `\square` itself is unaffected — still gated on its
+    /// package with nothing loaded, still clean once it is.
+    #[test]
+    fn square_keeps_its_package_gate() {
+        let (_, kernel) = parsed(r"\square", MathPackages::KERNEL);
+        assert_eq!(
+            kernel.first().map(|d| d.message.as_str()),
+            Some(r"\square requires \usepackage{amsfonts}"),
+            "\\square without its package: {kernel:?}"
+        );
+        let (_, loaded) = parsed(r"\square", AMSSYMB);
+        assert!(loaded.is_empty(), "\\square under amssymb: {loaded:?}");
+    }
+
+    /// Issue #516: the two spellings lay out the same glyph at the same
+    /// place. `\Box` takes the generic path (Latin Modern Math U+25A1, 778
+    /// units) while `\square` takes the msam slot advance (0.777781em), so
+    /// the widths agree to 0.000219em — sub-pixel at any size, not bitwise.
+    #[test]
+    fn box_and_square_lay_out_the_same_open_square() {
+        let boxed = laid_out(r"\Box", AMSSYMB);
+        let squared = laid_out(r"\square", AMSSYMB);
+        for (name, b) in [("Box", &boxed), ("square", &squared)] {
+            let item = b
+                .items
+                .iter()
+                .find(|i| i.text == "□")
+                .unwrap_or_else(|| panic!("\\{name} has no open square: {b:?}"));
+            assert_eq!(item.x, 0.0, "\\{name}");
+        }
+        assert!(
+            (boxed.width - squared.width).abs() < 0.01,
+            "Box {} vs square {}",
+            boxed.width,
+            squared.width
+        );
     }
 
     /// mathtools' colon-relation family needs `\usepackage{mathtools}`: base
