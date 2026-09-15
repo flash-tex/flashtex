@@ -125,11 +125,18 @@ pub fn placement_bits(placement: Option<&str>, starred: bool) -> Result<u32, Str
 }
 
 /// Finds every `figure`/`table` environment in the body of `text`.
+///
+/// Markup that only *spells* a float is skipped: a `%` comment, and the
+/// body of `verbatim`, `lstlisting`, `minted`, `comment`, `\verb|...|` or
+/// `\lstinline` (`adapter::opaque_regions`). pdflatex never reads those
+/// bytes as `\begin{figure}`, and `mask` must not blank them.
 pub fn scan(text: &str, document: DocumentId) -> Vec<FloatEnv> {
-    let body_start = find_uncommented(text, "\\begin{document}", 0).map_or(0, |p| p + "\\begin{document}".len());
+    let regions = crate::adapter::opaque_regions(text);
+    let find_uncommented = |needle: &str, from: usize| find_markup(text, needle, from, &regions);
+    let body_start = find_uncommented("\\begin{document}", 0).map_or(0, |p| p + "\\begin{document}".len());
     let mut out = Vec::new();
     let mut at = body_start;
-    while let Some(pos) = find_uncommented(text, "\\begin{", at) {
+    while let Some(pos) = find_uncommented("\\begin{", at) {
         let name_start = pos + "\\begin{".len();
         let Some(close) = text[name_start..].find('}') else { break };
         let name = &text[name_start..name_start + close];
@@ -143,7 +150,7 @@ pub fn scan(text: &str, document: DocumentId) -> Vec<FloatEnv> {
         };
         let mut cursor = name_start + close + 1;
         let end_tag = format!("\\end{{{name}}}");
-        let Some(end) = find_uncommented(text, &end_tag, cursor) else { break };
+        let Some(end) = find_uncommented(&end_tag, cursor) else { break };
         let mut placement = None;
         let rest = &text[cursor..end];
         let lead = rest.len() - rest.trim_start().len();
@@ -191,21 +198,33 @@ fn ends_with_env_end(s: &str) -> bool {
 
 /// `needle` at or after `from`, skipping `%` comments.
 fn find_uncommented(text: &str, needle: &str, from: usize) -> Option<usize> {
+    find_markup(text, needle, from, &[])
+}
+
+/// `needle` at or after `from` that TeX reads as markup: not in a `%`
+/// comment and not inside any of the sorted, disjoint `opaque` byte ranges
+/// (whose own `%` characters start no comment).
+fn find_markup(text: &str, needle: &str, from: usize, opaque: &[(usize, usize)]) -> Option<usize> {
+    let region = |i: usize| opaque.get(opaque.partition_point(|r| r.1 <= i)).filter(|r| r.0 <= i);
+    let inside = |i: usize| region(i).is_some();
     let mut at = from;
     while let Some(rel) = text.get(at..)?.find(needle) {
         let pos = at + rel;
+        if let Some(&(_, end)) = region(pos) {
+            at = end;
+            continue;
+        }
         let line_start = text[..pos].rfind('\n').map_or(0, |i| i + 1);
-        if !is_commented(&text[line_start..pos]) {
+        let b = text.as_bytes();
+        let commented = (line_start..pos).any(|i| {
+            b[i] == b'%' && !inside(i) && b[line_start..i].iter().rev().take_while(|&&c| c == b'\\').count() % 2 == 0
+        });
+        if !commented {
             return Some(pos);
         }
         at = pos + needle.len();
     }
     None
-}
-
-fn is_commented(line_prefix: &str) -> bool {
-    let b = line_prefix.as_bytes();
-    (0..b.len()).any(|i| b[i] == b'%' && (i == 0 || b[i - 1] != b'\\'))
 }
 
 /// The inner byte range of the balanced `{...}` group starting at `open`.
@@ -959,5 +978,40 @@ mod tests {
         // `wrapfigure` is not a float here: its bytes reach the compiler.
         let src = "\\begin{document}\nFirst.\n\\begin{wrapfigure}{r}{1in}\nx\n\\end{wrapfigure}\nSecond.\n";
         assert!(scan(src, DocumentId(0)).is_empty());
+    }
+
+    #[test]
+    fn markup_that_only_spells_a_float_is_not_one() {
+        let fig = "\\begin{figure}[h]\n\\caption{x}\n\\end{figure}";
+        let lookalikes = [
+            format!("\\begin{{verbatim}}\n{fig}\n\\end{{verbatim}}"),
+            format!("\\begin{{verbatim*}}\n{fig}\n\\end{{verbatim*}}"),
+            format!("\\begin{{lstlisting}}[language=TeX]\n{fig}\n\\end{{lstlisting}}"),
+            format!("\\begin{{minted}}{{latex}}\n{fig}\n\\end{{minted}}"),
+            format!("\\begin{{comment}}\n{fig}\n\\end{{comment}}"),
+            "Write \\verb|\\begin{figure}| and \\verb+\\end{figure}+.".to_string(),
+            "Write \\lstinline!\\begin{figure}\\end{figure}! here.".to_string(),
+            "% \\begin{figure}\\caption{x}\\end{figure}".to_string(),
+            "Text. % \\begin{figure}\n% \\end{figure}".to_string(),
+        ];
+        for body in lookalikes {
+            let src = format!("\\begin{{document}}\nFirst.\n{body}\nSecond.\n");
+            assert!(scan(&src, DocumentId(0)).is_empty(), "{src:?}");
+        }
+        // A real float right after a verbatim block that holds a lookalike:
+        // found once, vertical mode (after `\end{verbatim}`), and the
+        // verbatim bytes survive `mask` untouched.
+        let verbatim = format!("\\begin{{verbatim}}\n{fig}\n\\end{{verbatim}}");
+        let src = format!("\\begin{{document}}\nFirst.\n{verbatim}\n{fig}\nSecond.\n");
+        let found = scan(&src, DocumentId(0));
+        assert_eq!(found.len(), 1);
+        let real = src.rfind("\\begin{figure}").unwrap();
+        assert_eq!((found[0].span.start, found[0].hmode), (real, false));
+        assert!(mask(&src, &found).contains(&verbatim));
+        // A `%` inside `\verb` starts no comment, and `\\%` is a comment.
+        let src = format!("\\begin{{document}}\nFirst \\verb|%| {fig}\nSecond.\n");
+        assert_eq!(scan(&src, DocumentId(0)).len(), 1);
+        let src = format!("\\begin{{document}}\nFirst \\\\% {fig}\nSecond.\n");
+        assert!(scan(&src, DocumentId(0)).is_empty());
     }
 }

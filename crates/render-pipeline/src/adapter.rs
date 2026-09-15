@@ -4995,6 +4995,22 @@ fn declared_size(level: Option<flashtex_compiler::parser::FontSizeLevel>, base: 
 /// character, and reading it as LaTeX silently drops the style of everything
 /// after it.
 fn literal_spans(source: &str) -> Vec<VerbatimSpan> {
+    literal_spans_of(source, verbatim_environment)
+}
+
+/// The byte ranges a scan for LaTeX markup must not look inside: every
+/// [`literal_spans`] construct plus the environments whose body pdflatex
+/// never reads as markup though the compiler does not set them literally —
+/// `minted` (a listing) and `comment` (verbatim.sty's discarded body).
+/// `%` comments are not included; callers skip those line by line.
+pub(crate) fn opaque_regions(source: &str) -> Vec<(usize, usize)> {
+    literal_spans_of(source, |name| verbatim_environment(name) || matches!(name, "minted" | "comment"))
+        .into_iter()
+        .map(|s| s.whole)
+        .collect()
+}
+
+fn literal_spans_of(source: &str, environment: fn(&str) -> bool) -> Vec<VerbatimSpan> {
     let bytes = source.as_bytes();
     let mut out: Vec<VerbatimSpan> = Vec::new();
     let mut i = 0;
@@ -5028,7 +5044,7 @@ fn literal_spans(source: &str) -> Vec<VerbatimSpan> {
             }
         } else if name == "begin" {
             if let Some((env, after)) = environment_name(source, word_end) {
-                if verbatim_environment(env) {
+                if environment(env) {
                     if let Some(span) = verbatim_environment_span(source, i, env, after) {
                         i = span.whole.1;
                         out.push(span);

@@ -141,3 +141,96 @@ fn a_float_between_two_paragraphs_still_separates_them() {
         &[(1, 83.96, "Kilo", "uniform"), (1, 98.40, "whiskey", "sierra"), (1, 112.85, "xray", "delta"), (1, 127.29, "yankee", "hotel."), (1, 215.57, "[img]", "[img]"), (1, 239.97, "Figure", "box."), (1, 268.37, "Foxtrot", "foxtrot"), (1, 282.81, "zulu", "whiskey"), (1, 297.26, "romeo", "foxtrot"), (1, 311.70, "whiskey", "xray.")],
     );
 }
+
+/// Every item of `body`'s render, as its `Debug` text with glyph ids
+/// dropped and every `from` in a run's text read as `to`, so a same-length,
+/// same-width spelling change is the only difference allowed.
+fn items(preamble: &str, body: &str, from: &str, to: &str) -> Vec<String> {
+    let text = format!("\\documentclass[12pt]{{article}}\n\\usepackage[T1]{{fontenc}}\n\\usepackage{{lmodern}}\n{preamble}\\pagestyle{{empty}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
+    let fonts = FontSet::with_default_dirs(&[]);
+    let docs = [SourceDocument { path: "main.tex", text: &text }];
+    let r = render(&docs, "main.tex", 1, "float-lookalike", &fonts, &RenderOptions::default());
+    let mut out = Vec::new();
+    for page in &r.v2.pages {
+        for it in &page.items {
+            let mut it = it.clone();
+            if let Item::GlyphRun(run) = &mut it {
+                run.text = run.text.replace(from, to);
+                for g in &mut run.glyphs {
+                    g.gid = 0;
+                }
+            }
+            out.push(format!("{}: {it:?}", page.number));
+        }
+    }
+    out
+}
+
+/// A float spelled out inside `open`..`close` renders exactly as the same
+/// block spelled `\begin{fIgure}`, which no float scan ever matched: the
+/// literal lines, byte for byte, apart from the one glyph. `floats::mask`
+/// used to blank (and, with the `%` above, comment out) the lookalike.
+fn lookalike_is_literal(preamble: &str, open: &str, close: &str) {
+    let lookalike = "\\begin{figure}[h]\n\\caption{x}\n\\end{figure}";
+    let body = |fig: &str| format!("First.\n{open}\n{fig}\n{close}\nSecond.");
+    let got = items(preamble, &body(lookalike), "fIgure", "figure");
+    let want = items(preamble, &body(&lookalike.replace("figure", "fIgure")), "fIgure", "figure");
+    assert_eq!(got, want, "{open}");
+    let text: String = got.join("\n");
+    for word in ["\\\\begin{figure}[h]", "\\\\caption{x}", "\\\\end{figure}"] {
+        assert!(text.contains(word), "{open}: {word} not set literally");
+    }
+}
+
+#[test]
+fn a_float_inside_verbatim_is_literal_text() {
+    if !common::lm_available() {
+        return;
+    }
+    lookalike_is_literal("", "\\begin{verbatim}", "\\end{verbatim}");
+}
+
+#[test]
+fn a_float_inside_lstlisting_is_literal_text() {
+    if !common::lm_available() {
+        return;
+    }
+    lookalike_is_literal("\\usepackage{listings}\n", "\\begin{lstlisting}", "\\end{lstlisting}");
+}
+
+#[test]
+fn a_float_inside_verb_is_literal_text() {
+    if !common::lm_available() {
+        return;
+    }
+    let body = |name: &str| format!("First \\verb|\\begin{{{name}}}| and \\verb+\\end{{{name}}}+ second.");
+    let got = items("", &body("figure"), "fIgure", "figure");
+    assert_eq!(got, items("", &body("fIgure"), "fIgure", "figure"));
+    assert!(got.join("\n").contains("\\\\begin{figure}"));
+}
+
+#[test]
+fn a_float_in_a_comment_is_ignored() {
+    if !common::lm_available() {
+        return;
+    }
+    // The comment eats its own newline, so the paragraph is the one
+    // without the comment line at all.
+    check(
+        "commented-out float",
+        &format!("{A}\n% \\begin{{figure}}[h]\\caption{{x}}\\end{{figure}}\n{B}"),
+        &lines(&format!("{A}\n{B}")).iter().map(|l| (l.0, l.1, l.2.as_str(), l.3.as_str())).collect::<Vec<_>>(),
+    );
+}
+
+#[test]
+fn a_real_float_after_a_verbatim_block_is_still_a_float() {
+    if !common::lm_available() {
+        return;
+    }
+    let verbatim = "\\begin{verbatim}\n\\begin{figure}[h]\n\\end{figure}\n\\end{verbatim}";
+    let got = lines(&format!("{A}\n{verbatim}\n{}\n{B}", fig("h")));
+    assert_eq!(got.iter().filter(|l| l.2 == "[img]").count(), 1, "{got:?}");
+    assert!(got.iter().any(|l| l.2 == "Figure" && l.3 == "box."), "{got:?}");
+    assert!(got.iter().any(|l| l.2 == "\\begin{figure}[h]"), "{got:?}");
+}
