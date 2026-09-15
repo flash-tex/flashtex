@@ -198,6 +198,14 @@ fn block_inlines(block: Block) -> Vec<Inline> {
         // happen: both flush the paragraph and push a block of their own,
         // and a cell only ever collects inline content.
         Block::LetterBlock { lines, .. } => lines.into_iter().flatten().collect(),
+        // Same for `tabbing`: it pushes a block of its own, so a cell
+        // never holds one; flatten live rows (a killed row's content is
+        // never output, so it contributes nothing here either).
+        Block::Tabbing { lines, .. } => lines
+            .into_iter()
+            .filter(|line| !line.killed)
+            .flat_map(|line| line.content)
+            .collect(),
     }
 }
 

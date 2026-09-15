@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use crate::bib;
+use crate::biblatex;
 use crate::date::TodayDate;
 use crate::color::{Colors, DeviceColor};
 use crate::diagnostics::Diagnostic;
@@ -146,8 +147,10 @@ pub enum Inline {
         /// the colour of the range containing its span, else `color`.
         color_ranges: Vec<(Span, DeviceColor)>,
     },
-    /// A multi-row amsmath display (`gather`, `align` and their starred forms).
-    /// `aligned` cells alternate right/left alignment around shared tab stops.
+    /// A multi-row display (`gather`, `align`, `eqnarray` and starred forms).
+    /// `aligned` cells share tab stops across rows (`align` alternates
+    /// right/left around them; `eqnarray` is right/centred/left, resolved
+    /// from the environment name where it is laid out).
     MathRows {
         rows: Vec<MathRow>,
         aligned: bool,
@@ -184,6 +187,24 @@ pub enum Inline {
         /// See `Inline::Text::space_before`.
         space_before: bool,
     },
+    /// `\thepage`: the current page's formatted number. The page is only
+    /// known once the paragraph is set, so this resolves at layout time
+    /// like `Reference { page: true }`, honouring the `\pagenumbering`
+    /// style in force at this position. `span` is the command token.
+    ThePage {
+        span: Span,
+        /// See `Inline::Text::space_before`.
+        space_before: bool,
+    },
+    /// `\pagenumbering{style}`: a zero-width marker recording a page-number
+    /// style switch (and page-counter reset to 1) at this document
+    /// position. Layout applies markers in order as it sets paragraphs,
+    /// so `\thepage` and `\pageref` after the switch use the new style.
+    /// `span` is the command token.
+    PageNumbering {
+        style: crate::xref::NumberStyle,
+        span: Span,
+    },
     /// `\hfill`/`\hfil`: infinite horizontal stretch. Multiple fills on one
     /// line share the line's leftover width equally, as real TeX glue does;
     /// unlike TeX, `\hfil` and `\hfill` are not distinguished by stretch
@@ -209,6 +230,21 @@ pub enum Inline {
         space_after_pt: f64,
         span: Span,
     },
+    /// `\=` inside `tabbing`: record the current horizontal position (the
+    /// end of the placed content so far, excluding reserved inter-word
+    /// space) as a tab stop for the rest of the environment. Only ever
+    /// emitted inside a [`Block::Tabbing`] line; the generic inline path
+    /// (`layout::emit`) ignores it.
+    TabStop {
+        span: Span,
+    },
+    /// `\>` inside `tabbing`: jump right to the next recorded tab stop (a
+    /// positive-only move, like `HSpace` to that stop). With no stop to the
+    /// right it stays in place and warns. Only ever emitted inside a
+    /// [`Block::Tabbing`] line; the generic inline path ignores it.
+    TabJump {
+        span: Span,
+    },
     /// `\footnote[<n>]{..}`, `\footnotemark[<n>]` or `\footnotetext[<n>]{..}`.
     /// `number` is the resolved `\thefootnote` (arabic). `span` is the
     /// command token, attributed to both superscript marks. `mark` is false
@@ -219,6 +255,16 @@ pub enum Inline {
         span: Span,
         mark: bool,
         text: Option<Vec<Inline>>,
+        /// See `Inline::Text::space_before`.
+        space_before: bool,
+    },
+    /// `\marginpar[<left>]{<right>}`. The render pipeline always sets the
+    /// one-sided `<right>` note in the right margin at `\footnotesize`
+    /// (see `render-pipeline`'s `typeset::marginpar`), so the running text
+    /// carries no mark. `span` is the command token.
+    Marginpar {
+        text: Vec<Inline>,
+        span: Span,
         /// See `Inline::Text::space_before`.
         space_before: bool,
     },
@@ -679,6 +725,19 @@ pub enum Block {
     /// on the current page, computed at layout time from the cursor's
     /// actual position (unlike `VSpace`'s flat, parse-time amount).
     VFill,
+    /// A `tabbing` environment (plain LaTeX2e kernel, not a package): rows
+    /// of text aligned at tab stops. Unlike `tabular` there is no column
+    /// spec: `\=` records the current horizontal position as a stop,
+    /// `\>` jumps right to the next recorded stop, `\\` ends a row back
+    /// at the left margin, and `\kill` ends a row that registers its
+    /// stops but produces no output (the usual dummy setup line). Stops
+    /// persist across the environment's rows in source order. `\<`, `\+`
+    /// and `\-` are not implemented yet (a follow-up slice); they warn
+    /// and are ignored.
+    Tabbing {
+        lines: Vec<TabbingLine>,
+        span: Span,
+    },
     /// A `letter.cls` block whose horizontal placement no [`ParagraphStyle`]
     /// expresses: the return address, which is a *left-aligned box pushed to
     /// the right margin* (not a ragged-left column — `\opening` sets it in a
@@ -727,6 +786,15 @@ pub enum LetterPart {
     /// `\closing`'s `\hspace*{\longindentation}\parbox{\indentedwidth}{...}`:
     /// the closing line, `6\medskipamount`, then `\fromsig` (or `\fromname`).
     Closing,
+}
+
+/// One row of a [`Block::Tabbing`]: the inline content up to the row's
+/// `\\` or `\kill` (including [`Inline::TabStop`] / [`Inline::TabJump`]
+/// markers). `killed` rows register their stops but produce no output.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TabbingLine {
+    pub content: Vec<Inline>,
+    pub killed: bool,
 }
 
 /// verse's `\\` (`\@centercr`, latex.ltx `\@xcentercr`/`\@icentercr`).
@@ -1126,6 +1194,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "label",
     "ref",
     "pageref",
+    "thepage",
     "eqref",
     "cref",
     "Cref",
@@ -1140,6 +1209,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "counterwithin",
     "counterwithout",
     "caption",
+    "captionof",
     "item",
     "includegraphics",
     "scalebox",
@@ -1162,6 +1232,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "footnotemark",
     "footnotetext",
     "fnsymbol",
+    "marginpar",
     "normalfont",
     "bfseries",
     "mdseries",
@@ -1243,6 +1314,9 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "huge",
     "Huge",
     "cite",
+    "parencite",
+    "textcite",
+    "autocite",
     "citet",
     "citep",
     "citealt",
@@ -1259,6 +1333,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "Citealp",
     "Citeauthor",
     "nocite",
+    "addbibresource",
+    "printbibliography",
     "bibitem",
     "bibliography",
     "bibliographystyle",
@@ -1849,6 +1925,8 @@ pub fn parse_project_with(
     let has_document = has_document_environment(&expanded.tokens);
     let mut bibliography_diags = Vec::new();
     let bibliography = bib::prescan(&expanded.tokens[..], &mut bibliography_diags);
+    let biblatex_bibliography =
+        biblatex::prescan(&expanded.tokens[..], documents, &mut bibliography_diags);
     let mut expansions: Vec<ExpansionSite> = Vec::new();
     for token in expanded.tokens.iter() {
         if let (true, Some(definition)) = (token.maps_to_invocation, token.definition) {
@@ -1923,6 +2001,7 @@ pub fn parse_project_with(
         paragraph_started: false,
         pending_item: None,
         pending_line_break: None,
+        tabbing_stack: Vec::new(),
         paragraph_styles: Vec::new(),
         document_global_state: false,
         cleveref: crate::xref::CleverefConfig::default(),
@@ -1940,6 +2019,7 @@ pub fn parse_project_with(
         noted_hypersetup_keys: false,
         noted_lstset_keys: false,
         bibliography,
+        biblatex: biblatex_bibliography,
         bib_cursor: 0,
         natbib_limitations: std::collections::BTreeSet::new(),
         natbib_forced_numbers_reported: false,
@@ -2158,6 +2238,11 @@ struct P<'a> {
     pending_item: Option<ItemLabel>,
     /// verse's `\\` waiting for the next paragraph.
     pending_line_break: Option<LineBreakBefore>,
+    /// Open `tabbing` environments, outermost first. While one is open the
+    /// paragraph buffer (`para`) is the current row's content: `\\`,
+    /// `\kill` and blank lines drain it into a [`TabbingLine`], and
+    /// `\end{tabbing}` drains the last row and pushes [`Block::Tabbing`].
+    tabbing_stack: Vec<TabbingFrame>,
     paragraph_styles: Vec<ParagraphStyle>,
     document_global_state: bool,
     cleveref: crate::xref::CleverefConfig,
@@ -2165,6 +2250,8 @@ struct P<'a> {
     /// `bib::prescan` before this parse starts — see that module's doc
     /// comment for why `\cite` does not need a page-aware two-pass pass.
     bibliography: bib::Bibliography,
+    /// The optional biblatex database, resolved from project .bib files.
+    biblatex: biblatex::Bibliography,
     /// How many of `bibliography`'s document-order `\bibitem`s this parse has
     /// reached so far; advanced by each real `\bibitem`, whose own displayed
     /// label is looked up at this index.
@@ -2269,6 +2356,14 @@ struct LetterDeclarations {
     opened: bool,
 }
 
+/// One open `tabbing` environment: its finished rows so far, plus the
+/// `\begin{tabbing}` span for the eventual [`Block::Tabbing`].
+#[derive(Debug, Clone)]
+struct TabbingFrame {
+    lines: Vec<TabbingLine>,
+    span: Span,
+}
+
 /// One open `itemize`/`enumerate`/`description`/`thebibliography`.
 #[derive(Debug, Clone)]
 struct OpenList {
@@ -2366,10 +2461,23 @@ impl P<'_> {
                 TokenKind::ParBreak => {
                     self.i += 1;
                     if render {
-                        self.flush_paragraph(blocks, para);
+                        if self.tabbing_active() {
+                            // A blank line ends the row, like `\\`.
+                            self.end_tabbing_line(false, para);
+                        } else {
+                            self.flush_paragraph(blocks, para);
+                        }
                     }
                 }
                 TokenKind::Space | TokenKind::Comment => self.i += 1,
+                TokenKind::Word(word)
+                    if render
+                        && self.tabbing_active()
+                        && is_tabbing_control(&word, tok.span) =>
+                {
+                    self.i += 1;
+                    self.tabbing_control(&word, tok.span, para);
+                }
                 TokenKind::Word(word)
                     if control_symbol_kern(
                         &word,
@@ -2411,6 +2519,15 @@ impl P<'_> {
                 }
                 TokenKind::LineBreak => {
                     self.i += 1;
+                    if render && self.tabbing_active() {
+                        // `\\` ends the row back at the left margin (a new
+                        // row always starts there, never at a tab stop).
+                        // Unlike ordinary `\\` there is no `[...]` skip or
+                        // `*` form: a following `[` is ordinary row text,
+                        // as in real LaTeX's tabbing.
+                        self.end_tabbing_line(false, para);
+                        continue;
+                    }
                     // article.cls 390 `verse`: `\let\\\@centercr`, which ends
                     // the paragraph (latex.ltx `\@centercr`: `\par`, then
                     // `\@xcentercr` `\addvspace{-\parskip}` and `\@icentercr`
@@ -2511,6 +2628,15 @@ impl P<'_> {
                 | TokenKind::InlineMathClose
                 | TokenKind::Superscript
                 | TokenKind::Subscript => self.i += 1,
+                // `\kill` ends a `tabbing` row with no output (its `\=`
+                // stops still register). Outside `tabbing` it falls
+                // through to `command` and its unknown-command diagnostic.
+                TokenKind::Command(name)
+                    if render && name == "kill" && self.tabbing_active() =>
+                {
+                    self.i += 1;
+                    self.end_tabbing_line(true, para);
+                }
                 TokenKind::Command(name) => {
                     self.i += 1;
                     self.command(&name, tok.span, blocks, para);
@@ -2544,6 +2670,33 @@ impl P<'_> {
                 }
             }
         }
+    }
+
+    /// A numbered float caption: `\caption` inside its float, or caption.sty's
+    /// standalone `\captionof{<type>}`. Steps the float's counter (LaTeX's
+    /// `\refstepcounter`, so a following `\label` resolves), prefixes
+    /// "Figure N:"/"Table N:" and pushes the caption block the layout draws.
+    fn push_float_caption(
+        &mut self,
+        kind: &str,
+        label: &str,
+        tokens: Vec<InputToken>,
+        span: Span,
+        blocks: &mut Vec<Block>,
+        para: &mut Vec<Inline>,
+    ) {
+        self.flush_paragraph(blocks, para);
+        let number = self.counters.step(kind).unwrap_or_default();
+        self.set_current_counter(kind, Some(number.clone()));
+        let mut content = vec![Inline::Text {
+            text: format!("{label} {number}:"),
+            span,
+            style: TextStyle::default(),
+            space_before: true,
+        }];
+        content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
+        blocks.push(Block::FigureCaption { content });
+        self.finish_block_dependencies();
     }
 
     fn command(&mut self, name: &str, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
@@ -2581,6 +2734,7 @@ impl P<'_> {
             "setlength" => self.set_length(span),
             "addtolength" => self.add_to_length(span),
             "usepackage" => self.use_package(span),
+            "addbibresource" => self.add_bib_resource(name, span),
             "definecolor" | "providecolor" | "xdefinecolor" | "colorlet" | "definecolorset"
             | "DefineNamedColor" => self.define_color(name, span),
             "selectcolormodel" => self.select_color_model(span),
@@ -2785,16 +2939,21 @@ impl P<'_> {
             "thispagestyle" => {
                 let _ = self.required_group(name, span);
             }
-            // `\pagenumbering{arabic|roman}` resets the page counter and its
-            // display style. With no footer rendering to show a number in
-            // (see `\pagestyle` above) and no separate "displayed page
-            // number" distinct from `Page::number` for `\pageref` to read,
-            // there is nothing observable left for it to change; accepted
-            // with the same honest no-op rather than faking a counter reset
-            // whose only visible effect would be through those two missing
-            // features.
+            // `\pagenumbering{arabic|roman|alph|...}` resets the page
+            // counter to 1 and selects the display style `\thepage` (and
+            // `\pageref`, which prints the labelled page the same way)
+            // uses from here on. The marker is zero-width inside the
+            // paragraph, so a switch between paragraphs — or even
+            // mid-paragraph — moves no glyph; layout applies markers in
+            // document order when the paragraph is set. An unrecognised
+            // style falls back to arabic rather than diagnosing: the
+            // command itself stays accepted, as before.
             "pagenumbering" => {
-                let _ = self.required_group(name, span);
+                let (tokens, _) = self.required_group(name, span);
+                let style = crate::xref::NumberStyle::from_command(&token_text(&tokens))
+                    .unwrap_or(crate::xref::NumberStyle::Arabic);
+                self.document_global_state = true;
+                para.push(Inline::PageNumbering { style, span });
             }
             // `\hypersetup{key=value,...}` (hyperref): the same keys the
             // package options take, settable anywhere. Every key this
@@ -3013,6 +3172,15 @@ impl P<'_> {
                     space_before,
                 });
             }
+            "thepage" => {
+                // `\thepage`: the current page's formatted number. The
+                // page is only known once pagination completes, so this
+                // resolves at layout time on the same path as `\pageref`,
+                // honouring the `\pagenumbering` style in force here.
+                let space_before = self.space_precedes(self.i - 1);
+                self.document_global_state = true;
+                para.push(Inline::ThePage { span, space_before });
+            }
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
             | "labelcref" => self.clever_reference(name, span, para),
             "tableofcontents" => {
@@ -3022,6 +3190,10 @@ impl P<'_> {
                 self.finish_block_dependencies();
             }
             "cite" => {
+                if self.biblatex.enabled() {
+                    self.biblatex_cite(name, span, para);
+                    return;
+                }
                 // natbib redefines `\cite` (natbib.sty line 693): with an
                 // optional argument it is `\citep`, without one `\citet`.
                 // That asymmetry is natbib's, not a simplification here.
@@ -3060,6 +3232,7 @@ impl P<'_> {
                     ));
                 }
             }
+            "parencite" | "textcite" | "autocite" => self.biblatex_cite(name, span, para),
             "citet" | "citep" | "citealt" | "citealp" | "citeauthor" | "citefullauthor"
             | "citeyear" | "citeyearpar" | "citenum" | "Citet" | "Citep" | "Citealt"
             | "Citealp" | "Citeauthor" => self.natbib_cite(name, span, para),
@@ -3075,11 +3248,9 @@ impl P<'_> {
                     full_span,
                 ));
             }
-            // Real LaTeX's `\nocite` only writes a BibTeX aux-file entry (to
-            // pull an uncited reference into the printed bibliography); it
-            // has no visible output of its own either way, and this compiler
-            // has no `.bib`/aux-file pipeline to feed (see `bibliography`
-            // below), so consuming the argument is the whole honest behaviour.
+            "printbibliography" => self.print_bibliography(span, blocks, para),
+            // Real LaTeX's `\nocite` has no visible output; biblatex's
+            // pre-scan uses its keys to include entries in the printed list.
             "nocite" => {
                 let _ = self.required_group(name, span);
             }
@@ -3110,18 +3281,42 @@ impl P<'_> {
                     let style = self.style;
                     para.extend(self.inlines_from_tokens(tokens, style));
                 } else {
-                    self.flush_paragraph(blocks, para);
-                    let number = self.counters.step("figure").unwrap_or_default();
-                    self.set_current_counter("figure", Some(number.clone()));
-                    let mut content = vec![Inline::Text {
-                        text: format!("Figure {number}:"),
-                        span,
-                        style: TextStyle::default(),
-                        space_before: true,
-                    }];
-                    content.extend(self.inlines_from_tokens(tokens, TextStyle::default()));
-                    blocks.push(Block::FigureCaption { content });
-                    self.finish_block_dependencies();
+                    self.push_float_caption("figure", "Figure", tokens, span, blocks, para);
+                }
+            }
+            // caption.sty's `\captionof{<type>}[<short>]{<text>}`: the same
+            // numbered caption `\caption` would produce inside the named
+            // float, usable with no float around it. The `[<short>]`
+            // list-of-figures text has no list to feed here, so it is
+            // consumed and ignored, as longtable captions already do.
+            "captionof" => {
+                let (type_tokens, _) = self.required_group(name, span);
+                let float_type = token_text(&type_tokens);
+                let float_type = float_type.trim();
+                let _ = self.optional_bracket_argument();
+                let (tokens, _) = self.required_group(name, span);
+                // `if` chains, not a `match`: the inventory test scrapes this
+                // dispatch region for `"name" =>` arm heads, and inner match
+                // arms would read as commands the inventory does not list.
+                if float_type == "figure" {
+                    self.push_float_caption("figure", "Figure", tokens, span, blocks, para);
+                } else if float_type == "table" {
+                    self.push_float_caption("table", "Table", tokens, span, blocks, para);
+                } else {
+                    // A missing `{type}` already produced "\captionof
+                    // requires a braced argument" above; only diagnose a type
+                    // that was actually given.
+                    if !float_type.is_empty() {
+                        self.diags.push(Diagnostic::error(
+                            format!(
+                                "\\captionof is only supported for the figure and table float types, not '{float_type}'"
+                            ),
+                            Some(span),
+                            Some("typeset the caption text as an ordinary paragraph".into()),
+                        ));
+                    }
+                    let style = self.style;
+                    para.extend(self.inlines_from_tokens(tokens, style));
                 }
             }
             "item" => {
@@ -3257,6 +3452,7 @@ impl P<'_> {
             "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots }),
             "footnote" | "footnotemark" | "footnotetext" => self.footnote(name, span, para),
             "fnsymbol" => self.fnsymbol_command(span, para),
+            "marginpar" => self.marginpar(span, para),
             // latex.ltx `\linebreak`/`\nolinebreak` (`\@no@lnbk`): a penalty of
             // `-\@getpen{n}`/`\@getpen{n}` with the space in front of the
             // command moved after it; in vertical mode, `\@nolnerr`.
@@ -3366,7 +3562,10 @@ impl P<'_> {
                 });
             }
             // latex.ltx `\discretionary` is TeX's primitive; `\-` is
-            // `\discretionary{\char\hyphenchar\font}{}{}`.
+            // `\discretionary{\char\hyphenchar\font}{}{}`. Inside a
+            // `tabbing` body the environment redefines `\-` (indent
+            // decrease), so the tabbing handler takes precedence there.
+            "-" if self.tabbing_active() => self.tabbing_control("-", span, para),
             "-" => para.push(Inline::Discretionary {
                 pre: "-".into(),
                 post: String::new(),
@@ -4197,6 +4396,71 @@ impl P<'_> {
         input.token.kind = TokenKind::Word(rest);
     }
 
+    /// `\addbibresource[<options>]{<file>}`. Kept out of `P::command`: that
+    /// function's frame is on the stack once per nested sub-parse, and in debug
+    /// builds every local of every arm gets its own slot in it (see
+    /// [`STREAM_DEPTH_LIMIT`]).
+    #[inline(never)]
+    fn add_bib_resource(&mut self, name: &str, span: Span) {
+        let _ = self.optional_bracket_argument();
+        let (_, argument_span) = self.required_group(name, span);
+        self.biblatex
+            .add_resource(span.merge(argument_span), &mut self.diags);
+    }
+
+    /// `\printbibliography[<options>]`; out of line for the same reason as
+    /// `P::add_bib_resource`.
+    #[inline(never)]
+    fn print_bibliography(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let options = self
+            .optional_bracket_argument()
+            .map(|(options, _)| options);
+        let printed = self.biblatex.print_bibliography(
+            options.as_deref(),
+            self.chapter_class,
+            span,
+            &mut self.diags,
+        );
+        if !printed.is_empty() {
+            self.flush_paragraph(blocks, para);
+            self.document_global_state = true;
+            for block in printed {
+                blocks.push(block);
+                self.finish_block_dependencies();
+            }
+        }
+    }
+
+    /// Reads the biblatex citation notes and key list, then delegates rendering
+    /// to the pre-resolved bibliography.
+    #[inline(never)]
+    fn biblatex_cite(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i.saturating_sub(1));
+        let (pre, post) = self.cite_notes();
+        let (tokens, argument_span) = self.required_group(name, span);
+        let full_span = span.merge(argument_span);
+        let keys = cite_keys(&tokens);
+        self.document_global_state = true;
+        if keys.is_empty() {
+            self.diags.push(Diagnostic::warning(
+                format!("\\{name} was given an empty key list"),
+                Some(full_span),
+                Some("rendered nothing for the empty citation".into()),
+            ));
+            return;
+        }
+        let inlines = self.biblatex.cite_inlines(
+            name,
+            &keys,
+            pre.as_deref(),
+            post.as_deref(),
+            full_span,
+            space_before,
+            &mut self.diags,
+        );
+        para.extend(inlines);
+    }
+
     /// The natbib options in force, or natbib's own defaults plus one error
     /// when the document never loaded the package — which is what pdfLaTeX
     /// reports too, as an undefined control sequence.
@@ -4217,7 +4481,13 @@ impl P<'_> {
     /// `\citet`, `\citep`, `\citealt`, `\citealp`, `\citeauthor`,
     /// `\citefullauthor`, `\citeyear`, `\citeyearpar`, `\citenum` and their
     /// starred and `\Cite`-capitalised forms.
+    ///
+    /// With biblatex loaded, `\citeauthor` and `\citeyear` are biblatex's.
     fn natbib_cite(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        if self.biblatex.enabled() && matches!(name, "citeauthor" | "citeyear") {
+            self.biblatex_cite(name, span, para);
+            return;
+        }
         let star = self.take_cite_star();
         let command = if star { format!("{name}*") } else { name.to_string() };
         let options = self.natbib_options(name, span);
@@ -5059,6 +5329,76 @@ impl P<'_> {
         self.finish_block_dependencies();
     }
 
+    /// Whether source is inside a `tabbing` environment whose rows are
+    /// being collected (the paragraph buffer is the current row).
+    fn tabbing_active(&self) -> bool {
+        !self.tabbing_stack.is_empty()
+    }
+
+    /// A `tabbing` control symbol (`\=`, `\>`, `\<`, `\+`, `\-`; the lexer
+    /// emits each as a one-character [`TokenKind::Word`] whose span covers
+    /// the backslash too). Only call when [`P::tabbing_active`]; ordinary
+    /// text such as `a = b` never reaches here (see
+    /// [`is_tabbing_control`]).
+    fn tabbing_control(&mut self, word: &str, span: Span, para: &mut Vec<Inline>) {
+        match word {
+            "=" => para.push(Inline::TabStop { span }),
+            ">" => para.push(Inline::TabJump { span }),
+            // A follow-up slice owns `\<` (jump to the previous stop, even
+            // leftwards) and `\+`/`\-` (the indent level new rows start
+            // at); warn and ignore rather than typesetting them as text.
+            "<" | "+" | "-" => {
+                let what = match word {
+                    "<" => "the previous-tab-stop command `\\<`",
+                    "+" => "the indent-increase command `\\+`",
+                    _ => "the indent-decrease command `\\-`",
+                };
+                self.diags.push(Diagnostic::warning(
+                    format!("{what} in tabbing is not implemented yet"),
+                    Some(span),
+                    Some("ignored the command and continued".into()),
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    /// End the current `tabbing` row: drain the paragraph buffer into the
+    /// open frame. `killed` rows (`\kill`) register their `\=` stops but
+    /// produce no output; `\\` and blank lines end ordinary rows.
+    fn end_tabbing_line(&mut self, killed: bool, para: &mut Vec<Inline>) {
+        if let Some(frame) = self.tabbing_stack.last_mut() {
+            frame.lines.push(TabbingLine {
+                content: std::mem::take(para),
+                killed,
+            });
+        }
+    }
+
+    /// `\end{tabbing}`: drain the last row and push the block. An
+    /// environment with no rows and no pending content pushes nothing.
+    fn end_tabbing(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let last = std::mem::take(para);
+        if let Some(frame) = self.tabbing_stack.pop() {
+            let mut lines = frame.lines;
+            if !last.is_empty() {
+                lines.push(TabbingLine {
+                    content: last,
+                    killed: false,
+                });
+            }
+            if !lines.is_empty() {
+                blocks.push(Block::Tabbing {
+                    lines,
+                    span: frame.span,
+                });
+                self.finish_block_dependencies();
+            }
+        } else if !last.is_empty() {
+            para.extend(last);
+        }
+    }
+
     fn environment(
         &mut self,
         kind: &str,
@@ -5097,6 +5437,8 @@ impl P<'_> {
                     | "flalign*"
                     | "multline"
                     | "multline*"
+                    | "eqnarray"
+                    | "eqnarray*"
             ) && self.in_body
             {
                 self.multirow_environment(span, &environment, blocks, para);
@@ -5116,6 +5458,12 @@ impl P<'_> {
             ) && self.in_body
             {
                 self.verbatim_environment(span, argument_span, &environment, blocks, para);
+                return;
+            }
+            if environment == "comment" {
+                // Not gated on `in_body`: a comment body vanishes in the
+                // preamble too, exactly as real LaTeX discards it.
+                self.comment_environment(span, argument_span);
                 return;
             }
             // A size environment is a group with the size declaration applied
@@ -5228,6 +5576,17 @@ impl P<'_> {
                 // ships no page (see `Block::PageBreak` in `layout`).
                 blocks.push(Block::PageBreak);
                 self.finish_block_dependencies();
+            } else if environment == "tabbing" && self.in_body {
+                // Plain LaTeX2e kernel tabbing: rows align at `\=` stops,
+                // `\\` ends a row at the left margin, `\kill` ends a row
+                // silently. The paragraph buffer becomes the current row
+                // until `\end{tabbing}` (see `P::tabbing_stack`); earlier
+                // text is its own paragraph.
+                self.flush_paragraph(blocks, para);
+                self.tabbing_stack.push(TabbingFrame {
+                    lines: Vec::new(),
+                    span: span.merge(argument_span),
+                });
             } else if environment == "sloppypar" && self.in_body {
                 // latex.ltx `\def\sloppypar{\par\sloppy}`.
                 self.flush_paragraph(blocks, para);
@@ -5392,6 +5751,8 @@ impl P<'_> {
             self.flush_paragraph(blocks, para);
         } else if environment == "figure" || self.theorems.contains_key(&environment) {
             self.flush_paragraph(blocks, para);
+        } else if environment == "tabbing" && self.in_body {
+            self.end_tabbing(blocks, para);
         } else if environment == "proof" {
             para.push(Inline::HFill { span, leader: FillLeader::None });
             para.push(Inline::Text {
@@ -5822,6 +6183,54 @@ impl P<'_> {
         self.finish_block_dependencies();
     }
 
+    /// The `comment` package's `comment` environment: the entire body
+    /// vanishes. It is never tokenized, expanded, typeset, or diagnosed —
+    /// no output block is pushed, the pending paragraph is untouched (so
+    /// text before and after the block stays in one paragraph), and the
+    /// environment is never entered on `env_stack`.
+    ///
+    /// Like `verbatim_environment` above, this scans the raw source bytes
+    /// directly for a plain literal `\end{comment}` and fast-forwards
+    /// `self.i` past every token the raw region swallowed, so `%`, `\`,
+    /// `$`, `{`, `}` and unknown commands inside are never even seen.
+    /// There is deliberately no nesting: real `comment.sty` (v3.8,
+    /// verified against TeX Live 2026 pdflatex) scoops the body line by
+    /// line and ends it at the first `\end{comment}` line — an inner
+    /// `\begin{comment}` is inert discarded text, and garbage (even
+    /// `\badcommand`s or unbalanced braces) compiles with zero errors.
+    /// One deliberate simplification: `comment.sty` only accepts the end
+    /// tag alone on its line (its whole-line `\ifx` comparison runs past
+    /// `\end{comment}After` to end of file), while this search also ends
+    /// there, exactly like this compiler's verbatim scanner. The two
+    /// agree on all documented usage, where the end tag stands on its
+    /// own line.
+    fn comment_environment(&mut self, open: Span, argument_span: Span) {
+        let document = open.document;
+        let source = self.documents[document.0].text;
+        let content_start = argument_span.end;
+        let end_tag = "\\end{comment}";
+        let (tag_end, found) = match source[content_start..].find(end_tag) {
+            Some(offset) => {
+                let tag_start = content_start + offset;
+                (tag_start + end_tag.len(), true)
+            }
+            None => (source.len(), false),
+        };
+        if !found {
+            self.diags.push(Diagnostic::error(
+                "unterminated environment 'comment' — no matching \\end",
+                Some(open),
+                Some("discarded the comment body to end of input".into()),
+            ));
+        }
+        while self.i < self.t.len()
+            && self.t[self.i].token.span.document == document
+            && self.t[self.i].token.span.start < tag_end
+        {
+            self.i += 1;
+        }
+    }
+
     fn custom_tag_text(list: &MathList, source: &str, document: DocumentId) -> Option<String> {
         list.atoms.iter().find_map(|atom| {
             if atom.span.document != document
@@ -5972,9 +6381,12 @@ impl P<'_> {
         None
     }
 
-    /// amsmath `gather`/`align` (and starred forms): rows split on top-level
-    /// `\\`, `align` cells split on top-level `&`. Numbered forms number every
-    /// row except those carrying `\nonumber`/`\notag`.
+    /// amsmath `gather`/`align` (and starred forms) and LaTeX's `eqnarray`:
+    /// rows split on top-level `\\`, `align`/`eqnarray` cells split on
+    /// top-level `&`. Numbered forms number every row except those carrying
+    /// `\nonumber`/`\notag`. `eqnarray` shares tab stops across rows (its
+    /// three columns are right/centred/left in the renderer, which re-reads
+    /// the environment name from source), so it counts as aligned here.
     fn multirow_environment(
         &mut self,
         open: Span,
@@ -5984,7 +6396,8 @@ impl P<'_> {
     ) {
         self.flush_paragraph(blocks, para);
         let numbered = !name.ends_with('*');
-        let aligned = name.starts_with("align") || name.starts_with("flalign");
+        let aligned =
+            name.starts_with("align") || name.starts_with("flalign") || name.starts_with("eqnarray");
         if name.starts_with("alignat") {
             // The column-pair count; cells are split on `&` regardless.
             let _ = self.required_group("alignat", open);
@@ -6199,6 +6612,14 @@ impl P<'_> {
                 intertext,
                 shove,
             });
+        }
+        if name == "eqnarray" || name == "eqnarray*" {
+            // ltmath.dtx `\eqnarray` opens with `\stepcounter{equation}` on
+            // top of `\@@eqncr`'s per-row `\refstepcounter`, so N rows
+            // consume N+1 numbers (the `*` form still consumes its one).
+            // Each row prints before its own step, so the extra step lands
+            // here at the end, where it moves no visible number.
+            let _ = self.counters.step("equation");
         }
         para.push(Inline::MathRows {
             rows: math_rows,
@@ -7999,6 +8420,30 @@ impl P<'_> {
         self.argument_inlines(tokens, span, TextStyle::default())
     }
 
+    /// `\marginpar[<left>]{<right>}` (latex.ltx `\@marginpar`): the
+    /// optional argument is the note for even pages of a two-sided
+    /// document, the required one the note everywhere else. This compiler
+    /// always sets the note in the right margin (the one-sided default),
+    /// so a present `[<left>]` is consumed and reported rather than set.
+    /// Margin placement breaks pages, so incremental block reuse is
+    /// disabled (the same conservative rule `\label`/`\ref` use).
+    fn marginpar(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        self.document_global_state = true;
+        if let Some((_, raw_span)) = self.optional_bracket_argument() {
+            self.diags.push(Diagnostic::warning(
+                "\\marginpar's optional [left] argument is ignored: the note is always set in the right margin",
+                Some(raw_span),
+                Some("used the required {right} argument instead".into()),
+            ));
+        }
+        // Like `\@footnotetext`, the argument is `\long`: a blank line
+        // inside it is a paragraph break in the note, not its end.
+        let (tokens, _) = self.required_group_bounded("marginpar", span, true);
+        let text = self.argument_inlines(tokens, span, TextStyle::default());
+        para.push(Inline::Marginpar { text, span, space_before });
+    }
+
     /// Parses an argument with the ordinary dispatch starting in `style`
     /// (see [`P::footnote_inlines`]); paragraph breaks become line breaks
     /// attributed to `span`.
@@ -8888,6 +9333,9 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         "natbib" => options
             .iter()
             .all(|option| crate::natbib::IMPLEMENTED_OPTIONS.contains(option)),
+        // biblatex's supported options are parsed by crate::biblatex; package
+        // loading itself has no additional layout effect.
+        "biblatex" => true,
         // siunitx v3 numbers, units, quantities, lists, ranges and angles
         // (crate::siunitx); its options are \sisetup keys, and a key that
         // is not modelled gets its own diagnostic there.
@@ -9221,6 +9669,15 @@ fn preamble_source(text: &str, has_document: bool, tokens: &[InputToken]) -> Str
     end.filter(|end| *end <= text.len() && text.is_char_boundary(*end))
         .map_or("", |end| &text[..end])
         .to_string()
+}
+
+/// Whether a [`TokenKind::Word`] is really a `tabbing` control symbol
+/// (`\=`, `\>`, `\<`, `\+`, `\-`): a single character whose span covers
+/// the backslash too (two bytes), exactly like [`control_symbol_kern`]'s
+/// own test. A literal `=` typed as text (`a = b`) is one byte wide and
+/// never matches.
+fn is_tabbing_control(word: &str, span: Span) -> bool {
+    matches!(word, "=" | ">" | "<" | "+" | "-") && span.end - span.start == 2
 }
 
 /// The kern a control-symbol token (`\,` lexed as the word `,` with a
@@ -10949,6 +11406,70 @@ mod tests {
     }
 
     #[test]
+    fn eqnarray_rows_are_three_column_displays_on_the_equation_counter() {
+        let source = "\\begin{eqnarray} x^{2} &=& y \\\\ 2xyz &=& 1 \\nonumber \\\\ w &=& 3 \\end{eqnarray}";
+        let (parsed, items) = items(source);
+        // The body is math now: no `unsupported_feature`, no plain text.
+        assert!(
+            !parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.code == Some(crate::diagnostics::DiagnosticCode::UnsupportedFeature)),
+            "{:?}",
+            parsed.diagnostics
+        );
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph");
+        };
+        let Inline::MathRows { rows, aligned, .. } = &inlines[0] else {
+            panic!("expected multi-row math, got {inlines:?}");
+        };
+        assert!(aligned, "eqnarray columns share tab stops like align");
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|row| row.cells.len() == 3), "{rows:?}");
+        // `\nonumber` suppresses exactly one row's number.
+        assert_eq!(
+            rows.iter().map(|r| r.number.as_deref()).collect::<Vec<_>>(),
+            [Some("1"), None, Some("2")]
+        );
+        let equals: Vec<_> = items.iter().filter(|i| i.text == "=").collect();
+        assert_eq!(equals.len(), 3);
+        assert!(equals.iter().all(|i| (i.x_pt - equals[0].x_pt).abs() < 0.01));
+    }
+
+    #[test]
+    fn eqnarray_star_is_unnumbered_but_still_consumes_an_equation_number() {
+        // ltmath.dtx: `\eqnarray` opens with `\stepcounter{equation}` on top
+        // of `\@@eqncr`'s per-row `\refstepcounter`, so N rows consume N+1
+        // numbers however they print; the `*` form still consumes its one.
+        let source = "\\begin{eqnarray*} a &=& b \\\\ c &=& d \\end{eqnarray*}\\begin{equation} e \\end{equation}";
+        let (parsed, items) = items(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let rows = parsed
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .flatten()
+            .find_map(|i| match i {
+                Inline::MathRows { rows, .. } => Some(rows),
+                _ => None,
+            })
+            .expect("eqnarray* rows");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row.cells.len() == 3));
+        assert!(rows.iter().all(|row| row.number.is_none()));
+        let numbers: Vec<_> = items
+            .iter()
+            .filter(|i| i.text.starts_with('('))
+            .map(|i| i.text.as_str())
+            .collect();
+        assert_eq!(numbers, ["(2)"]);
+    }
+
+    #[test]
     fn aboxed_rows_keep_the_relation_at_the_shared_alignment_point() {
         // GitHub #567: each `\Aboxed{<lhs> <rel> <rhs>}` row boxes its full
         // expression while keeping the relation symbol at the same structural
@@ -12641,6 +13162,83 @@ mod tests {
         assert_eq!(lines[0].text, "abc");
     }
 
+    /// The `comment` package's `comment` environment discards its entire
+    /// body unread: real LaTeX never tokenizes it (verified against TeX
+    /// Live 2026 pdflatex + comment.sty v3.8, which scoops the body line
+    /// by line and ends it at the first line that is `\end{comment}`),
+    /// so garbage — even fake commands and unbalanced braces — leaves no
+    /// output and no diagnostics.
+    #[test]
+    fn comment_environment_discards_garbage_body_entirely() {
+        let source =
+            "Before\\begin{comment}This should vanish, including \\badcommand{x}.\\end{comment}After";
+        let parsed = parse(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(parsed.blocks.len(), 1, "{:?}", parsed.blocks);
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks[0]);
+        };
+        let text: String = inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "BeforeAfter");
+    }
+
+    /// Nesting does not exist for `comment`: like real `comment.sty` (no
+    /// brace or environment matching — just a search for `\end{comment}`),
+    /// an inner `\begin{comment}`, other environments' tags, stray braces,
+    /// `%` and `$` inside the body are all inert discarded text. The first
+    /// `\end{comment}` ends the block.
+    #[test]
+    fn comment_environment_ignores_nested_begins_and_unbalanced_braces() {
+        let source = "A\\begin{comment}\n\\begin{comment}\n\\begin{itemize}\n\\item x\n\\end{itemize}\n% a percent and $math$ and } unbalanced {{{ braces\n\\badcommand{1}{2}\n\\end{comment}B";
+        let parsed = parse(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(parsed.blocks.len(), 1, "{:?}", parsed.blocks);
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks[0]);
+        };
+        let text: String = inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "AB");
+    }
+
+    /// A `comment` block that never closes discards through end of input
+    /// and says so under its own name, mirroring unterminated `verbatim`.
+    #[test]
+    fn unterminated_comment_environment_recovers_at_end_of_input() {
+        let source = "Keep \\begin{comment}\n\\badcommand swallowed";
+        let parsed = parse(source);
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("unterminated environment 'comment'")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks[0]);
+        };
+        let text: String = inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "Keep");
+    }
+
     #[test]
     fn inline_verb_wraps_like_a_word_in_running_text() {
         let source = r"Use \verb|foo(x)| here.";
@@ -12870,5 +13468,45 @@ mod tests {
         assert!(parsed.diagnostics[0]
             .message
             .contains("\\bibitem is only supported"));
+    }
+
+    #[test]
+    fn marginpar_parses_to_a_margin_note_without_diagnostics() {
+        let (parsed, _items) = items(r"Text\marginpar{note}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(parsed.document_global_state);
+        let mut notes = Vec::new();
+        for block in &parsed.blocks {
+            if let Block::Paragraph(content) = block {
+                for inline in content {
+                    if let Inline::Marginpar { text, .. } = inline {
+                        notes.push(text.clone());
+                    }
+                }
+            }
+        }
+        assert_eq!(notes.len(), 1, "{:?}", parsed.blocks);
+        let words: Vec<String> = notes[0]
+            .iter()
+            .filter_map(|i| match i {
+                Inline::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(words, vec!["note".to_string()]);
+        // The note text stays out of the running prose: the Core 14 layout
+        // has no margin model and skips it (the render pipeline places it).
+        let prose: String = _items.iter().map(|item| item.text.as_str()).collect();
+        assert!(!prose.contains("note"), "{prose:?}");
+    }
+
+    #[test]
+    fn marginpar_optional_left_argument_is_reported_and_ignored() {
+        let (parsed, _items) = items(r"Text\marginpar{left}{right}");
+        // Two braced groups: the second is ordinary prose after the note.
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let parsed = parse(r"Text\marginpar[left]{right}");
+        assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+        assert!(parsed.diagnostics[0].message.contains("[left]"));
     }
 }
