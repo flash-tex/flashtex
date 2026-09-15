@@ -27,7 +27,7 @@ path = "src/bin/flashtex-render.rs"
 # (`hash_math`/`shift_math`/`math_grids`/`math_glue_em`/`convert_math_classed`)
 # fail to build. `--no-default-features` still builds against a pinned vendor
 # older than this without the new variants.
-default = ["amsmath-inline"]
+default = ["amsmath-inline", "request-date", "compiler-package-gating", "par-leading", "math-class-override"]
 # The compiler's `Nucleus::Text` (`\text{...}` in math) is an isolated
 # candidate (crates/preview-controller/docs/handoffs/hw1-text-candidate/
 # candidate.patch on compiler base 1c02a2bc, not on main nor in
@@ -35,6 +35,18 @@ default = ["amsmath-inline"]
 # it; it builds only against a compiler that carries the variant. Off by
 # default so the crate builds against the pinned vendor.
 compiler-text-nucleus = []
+# The request's date reaches `\today` (`RenderOptions::today`,
+# `protocol/proposals/runtime-v1-request-date.md`). Builds only against a
+# compiler carrying `parser::parse_project_with`/`date::TodayDate`
+# (crates/compiler of branch engine/today-date-compiler, PR #220). That re-pin
+# landed in #225 -- `vendor/compiler/src/date.rs` is present and `TODAY_TEXT`
+# is gone -- so, exactly as `amsmath-inline` did once its own precondition was
+# met, this is now a default feature. Without it the shipped `flashtex-render`
+# validates, carries and cache-keys the request's date and then renders the
+# epoch anyway, which is the bug the whole chain exists to fix. With the feature off the
+# request's date is still validated, carried and cache-keyed -- only the
+# substitution is missing, so `\today` renders the epoch as it always has.
+request-date = []
 # FT-061 amsmath inline constructs: the compiler's `GenFraction`
 # (`\dfrac`/`\tfrac`/`\binom`/`\genfrac`), `Phantom`, `Operator`
 # (`\operatorname`, `\DeclareMathOperator`) and `SubArray` (`\substack`)
@@ -44,6 +56,13 @@ compiler-text-nucleus = []
 # (crates/compiler and crates/math-layout of branch
 # agent/kabir-claude/amsmath-inline); off until vendor/ is re-pinned.
 amsmath-inline = []
+# The compiler gates package-provided math commands on the packages the
+# document loaded, which gave `text_builtins::text_kern` a required `amsmath`
+# parameter (amsmath renews `\thinspace`/`\negthinspace` to `.1667em`). Only
+# `kern_command_text`'s reverse lookup here reads that function. Off until
+# vendor/ is re-pinned past the compiler change; turning it on is then a
+# one-line default-feature edit, like `amsmath-inline` was.
+compiler-package-gating = []
 # Per-glyph source spans inside math (math-layout `SourceTag`, PR #161):
 # math clusters and rules get the provenance of the atom that produced them
 # (sub/superscripts, fraction parts, `\left`/`\right` delimiters, ...) instead
@@ -51,6 +70,53 @@ amsmath-inline = []
 # (`MathRec::span_paints`). Builds only against a vendor/math-layout that
 # carries `SourceTag`; off until vendor/ is re-pinned.
 math-glyph-spans = []
+# The compiler exposes `MathAtom::class_override` and `math::AtomClass`
+# publicly, so the forced atom class is read from the atom instead of being
+# re-derived by matching the control word at its span
+# (`typeset::class_override_of`). Needed for `\colon`, whose class depends on
+# whether amsmath is loaded and so cannot be recovered from the source text at
+# all; the re-derivation stays as the fallback. Its precondition is met as of
+# the 6a47ed49 re-pin -- `vendor/compiler/src/math.rs` declares `pub
+# class_override: Option<AtomClass>` and `pub enum AtomClass` -- so, exactly as
+# `amsmath-inline` and `par-leading` did once theirs were, it is a default
+# feature. Without it #472's mathtools colon relations are merged but inert
+# here: every `\colon` is re-derived from the same five source characters and
+# so takes one class whether or not amsmath is loaded.
+# `--no-default-features` still builds against an older pinned vendor.
+math-class-override = []
+# A paragraph's `\baselineskip` follows the size declaration in force when its
+# `\par` ran (`\begin{quote}\small ...\end{quote}`, `{\small ...\par}`),
+# which is what TeX reads in `append_to_vlist` (§679). Needs the compiler's
+# `Parsed::block_par_leading`; off until vendor/ is re-pinned past that change,
+# and with it off every paragraph keeps the body leading exactly as before.
+# Turning it on is then a one-line default-feature edit, like `amsmath-inline`
+# was.
+par-leading = []
+# `\\[<dimen>]`'s skip is read off the compiler's own `Inline::LineBreak`
+# (`skip_pt`) instead of being re-scanned out of the source bytes after the
+# node's span. The byte scan cannot see the argument of a `\\` that came from a
+# macro body -- there the span is the invocation, so the bytes after it are the
+# call's arguments -- which silently drops every `\\[-6pt]` inside a
+# `\newcommand` (`fixtures/real-world/cv`: +5.98bp per `\cvsection`,
+# `tests/line_break_skip_macro.rs`). Needs the compiler's
+# `parser::Inline::LineBreak::skip_pt`; off until vendor/ is re-pinned past
+# that change, and with it off the byte scan behaves exactly as before.
+# Turning it on is then a one-line default-feature edit, like `amsmath-inline`
+# was.
+linebreak-skip = []
+# TeX's math font kerns (`make_ord`, tex.web §752): `TexMathMetrics` and
+# `TextRunMetrics` answer math-layout's `MathFontMetrics::ord_pair`, so an Ord
+# character followed by a character of the same family gets the font's kern
+# (cmmi `r` `,` = -0.0556 em: HW1's `$r,a,b$`, #66) and a roman character loses
+# its italic correction before the next one. The same step forms the roman
+# ligatures (`\mathrm{f}\mathrm{i}` is one fi glyph, a one-character `\mathrm`
+# being a family-0 math character) and kerns one-character math alphabets
+# (`\mathbf{T}\mathbf{o}`). Needs math-layout's `ord_pair`
+# (`crates/math-layout`, GH-MATH-FONT-KERNS); off until vendor/math-layout is
+# re-pinned past that change, and with it off no math kern is inserted, exactly
+# as before. Turning it on is then a one-line default-feature edit, like
+# `amsmath-inline` was.
+math-font-kerns = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }

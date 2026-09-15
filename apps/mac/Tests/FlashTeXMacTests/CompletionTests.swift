@@ -2,6 +2,7 @@ import CryptoKit
 import SwiftUI
 import XCTest
 import FlashTeXAccessibility
+import HostedWindows
 @testable import FlashTeXProtocol
 @testable import FlashTeXMac
 
@@ -59,9 +60,13 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(dbl.first?.detail, "line break; an optional [length] is consumed")
 
         // Math commands say so and show the glyph the compiler renders.
+        // `\allowdisplaybreaks` matches `al` too and is not a symbol; it sorts
+        // ahead of the two by inventory order, which is what this asserts.
         let math = Completion.suggestions(in: "$\\al", caretUTF16: 4, result: nil)
-        XCTAssertEqual(labels(math), ["\\alpha", "\\aleph"], "inventory (math_symbol) order")
-        XCTAssertEqual(math.map(\.detail), ["math · symbol α", "math · symbol ℵ"])
+        XCTAssertEqual(labels(math), ["\\allowdisplaybreaks[0-4]", "\\alpha", "\\aleph"],
+                       "inventory (math_symbol) order")
+        XCTAssertEqual(math.map(\.detail), ["amsmath page-break permission inside displays; no material",
+                                            "math · symbol α", "math · symbol ℵ"])
         XCTAssertEqual(Completion.Vocabulary.symbols.count, Completion.Vocabulary.inventory.commands.filter { $0.origin == .mathSymbol && $0.renders }.count)
         XCTAssertGreaterThan(Completion.Vocabulary.entries.count, Completion.Vocabulary.symbols.count)
         // Math-only commands are marked once, by the `math ·` prefix of `Entry.detail`.
@@ -104,12 +109,16 @@ final class CompletionTests: XCTestCase {
         let text = "\\begin{document}\n\\begin{itemize}\n\\item a\n\\e"
         let s = Completion.suggestions(in: text, caretUTF16: (text as NSString).length, result: nil)
         // Innermost closer first, then the vocabulary's `e` commands in table
-        // order (text entries, then math entries).
-        XCTAssertEqual(Array(labels(s).prefix(7)), ["\\end{itemize}", "\\end{document}", "\\emph{...}", "\\end{env}", "\\eqref{key}", "\\em", "\\enspace"])
+        // order (text entries, then math entries). `\encl{text}` is letter.cls's
+        // enclosure line; the vocabulary is the compiler's whole inventory, not
+        // the loaded classes, so it ranks here in every document.
+        XCTAssertEqual(Array(labels(s).prefix(7)), ["\\end{itemize}", "\\end{document}", "\\emph{...}", "\\end{env}", "\\eqref{key}", "\\em", "\\encl{text}"])
         // `\enspace`/`\enskip` are dual-mode entries (like `\quad`/`\qquad`): text
         // entries whose detail states their math behaviour without a `math ·`
-        // prefix, so only the entries after them are math-only.
-        XCTAssertTrue(s.dropFirst(8).allSatisfy { $0.detail.hasPrefix("math · ") }, "\(labels(s))")
+        // prefix, so only the entries after them are math-only. `\encl{text}`
+        // is plain text, so the math-only run starts one entry later than the
+        // count of text entries alone would suggest.
+        XCTAssertTrue(s.dropFirst(9).allSatisfy { $0.detail.hasPrefix("math · ") }, "\(labels(s))")
         XCTAssertEqual(s[0].kind, .environment)
         XCTAssertEqual(s[0].detail, "closes \\begin{itemize} at byte 17")
         XCTAssertEqual(s[0].insertText, "\\end{itemize}")
@@ -118,7 +127,7 @@ final class CompletionTests: XCTestCase {
         // spelling still ranks behind the closer it would have to name.
         let closed = text + "nd{itemize}\n\\en"
         let s2 = Completion.suggestions(in: closed, caretUTF16: (closed as NSString).length, result: nil)
-        XCTAssertEqual(labels(s2), ["\\end{document}", "\\end{env}", "\\enspace", "\\enskip"])
+        XCTAssertEqual(labels(s2), ["\\end{document}", "\\end{env}", "\\encl{text}", "\\enspace", "\\enskip"])
         let typed = closed + "d"
         XCTAssertEqual(labels(Completion.suggestions(in: typed, caretUTF16: (typed as NSString).length, result: nil)), ["\\end{document}", "\\end{env}"])
 
@@ -927,7 +936,7 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(delivered.count, 1)
         XCTAssertEqual(delivered[0].generation, g3)
         XCTAssertEqual(delivered[0].items.map(\.label),
-                       ["\\subsection{...}", "\\subsubsection{...}", "\\substack{a \\\\ b}", "\\subset", "\\subseteq",
+                       ["\\subsection{...}", "\\subsubsection{...}", "\\subparagraph{...}", "\\substack{a \\\\ b}", "\\subset", "\\subseteq",
                         "\\subseteqq", "\\subsetneqq", "\\subsetneq"])
         XCTAssertEqual(delivered[0].range, NSRange(location: 2, length: 4))
         XCTAssertEqual(delivered[0].caretUTF16, 6)
@@ -949,7 +958,7 @@ final class CompletionTests: XCTestCase {
     @MainActor
     func testTextViewCancelsOnCaretMoveTextChangeAndResign() throws {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -1055,7 +1064,7 @@ final class CompletionTests: XCTestCase {
     @MainActor
     func testKeyboardChoosesInsertsAndClosesThroughTheRealTextView() async throws {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -1214,7 +1223,7 @@ final class CompletionTests: XCTestCase {
     @MainActor
     func testTabAndShiftTabTraverseTheListWithVoiceOverLabels() async throws {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -1229,8 +1238,8 @@ final class CompletionTests: XCTestCase {
         try await waitUntil("popup") { tv.session != nil }
         let items = try XCTUnwrap(tv.session?.items)
         let labels = items.map(\.label)
-        XCTAssertEqual(labels, ["\\subsection{...}", "\\subsubsection{...}", "\\substack{a \\\\ b}", "\\sup", "\\subset", "\\subseteq",
-                                "\\supset", "\\supseteq", "\\sum", "\\succsim", "\\succcurlyeq", "\\subseteqq"])
+        XCTAssertEqual(labels, ["\\subsection{...}", "\\subsubsection{...}", "\\subparagraph{...}", "\\substack{a \\\\ b}", "\\sup", "\\subset", "\\subseteq",
+                                "\\supset", "\\supseteq", "\\sum", "\\succsim", "\\succcurlyeq"])
         let back = labels.count - 2 // where two ⇧Tab from the top land
         let popup = tv.completionPopup
         let table = popup.accessibilityTable
@@ -1292,7 +1301,7 @@ final class CompletionTests: XCTestCase {
     @MainActor
     func testSnippetsInsertThroughTheRealTextViewAsOneUndoStep() async throws {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -1308,8 +1317,16 @@ final class CompletionTests: XCTestCase {
             tv.setSelectedRange(NSRange(location: (seed as NSString).length, length: 0))
             undo.removeAllActions()
             for ch in typing { key(tv, String(ch), code: 0) } // typed, so the typing undo group is open
+            // GH#256: typing arms the automatic open (#215). Fire it now rather
+            // than racing its timer against ⌃Space and Return, then wait until
+            // every scan either lifecycle scheduled has resolved, so Return
+            // meets the settled session.
+            tv.flushAutomaticCompletion()
             key(tv, " ", code: 49, flags: .control)
-            try await waitUntil("popup for \(typing)") { tv.session != nil }
+            try await waitUntil("popup for \(typing)") {
+                let s = tv.scheduler.statistics
+                return tv.session != nil && s.delivered + s.refusedStale + s.cancelled >= s.scheduled
+            }
             key(tv, "\r", code: 36)
             XCTAssertNil(tv.session)
             XCTAssertEqual(tv.lastCloseReason, .accepted)
@@ -1425,7 +1442,7 @@ final class CompletionTests: XCTestCase {
     @MainActor
     func testKeystrokeThroughOpenListOnDemoTexDoesNotScanOnMain() async throws {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -1611,7 +1628,7 @@ final class CompletionLiveHelperTests: XCTestCase {
         model.autoCompile = true
         XCTAssertEqual(model.openTex(at: tex), .opened)
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model))
         window.orderFrontRegardless() // never makeKey
         defer { window.orderOut(nil); model.detachController() }
@@ -1753,7 +1770,7 @@ final class CompletionLiveHelperTests: XCTestCase {
         model.autoCompile = true
         XCTAssertEqual(model.openTex(at: tex), .opened)
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model))
         window.orderFrontRegardless() // never makeKey
         defer { window.orderOut(nil); model.detachController() }

@@ -112,7 +112,9 @@ pub enum V1Item {
         x_pt: f64,
         baseline_y_pt: f64,
         font_size_pt: f64,
-        source: SourceRange,
+        /// `None` for content with no source of its own (page chrome):
+        /// the wire item carries `"source": null`.
+        source: Option<SourceRange>,
         font: Option<FontHint>,
     },
     Rule {
@@ -120,7 +122,9 @@ pub enum V1Item {
         y_pt: f64,
         width_pt: f64,
         height_pt: f64,
-        source: SourceRange,
+        /// `None` for content with no source of its own (page chrome):
+        /// the wire item carries `"source": null`.
+        source: Option<SourceRange>,
     },
 }
 
@@ -185,6 +189,13 @@ fn union_of<'a>(mut sources: impl Iterator<Item = &'a SourceRange>) -> Option<So
 
 /// Builds the v1 payload. `accepted` is `None` when the request carried no
 /// `layout_capabilities` field (the field is then omitted in the reply).
+/// Typesetter-made page furniture: it has no source, but it is visible page
+/// content, so the fallback keeps it (with a `null` source) where other
+/// synthetic items stay v2-only.
+fn is_chrome(p: &display::Provenance) -> bool {
+    matches!(p, display::Provenance::Synthetic(reason) if reason == display::PAGE_CHROME)
+}
+
 pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<String>>) -> V1Payload {
     let mut pages = Vec::with_capacity(v2.pages.len());
     // One hint per font resource, shared by every run that uses it.
@@ -198,7 +209,11 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
                     let size = run.font_size.to_bp();
                     match run.role {
                         display::RunRole::Text => {
-                            let (Some(source), Some(first)) = (union_of(run.clusters.iter().flat_map(|c| c.provenance.sources())), run.glyphs.first()) else { continue };
+                            let Some(first) = run.glyphs.first() else { continue };
+                            let source = union_of(run.clusters.iter().flat_map(|c| c.provenance.sources()));
+                            if source.is_none() && !run.clusters.iter().any(|c| is_chrome(&c.provenance)) {
+                                continue;
+                            }
                             items.push(V1Item::Text {
                                 text: run.text.clone(),
                                 x_pt: first.origin_x.to_bp(),
@@ -211,7 +226,10 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
                         display::RunRole::Math => {
                             for g in &run.glyphs {
                                 let Some(c) = run.clusters.get(g.cluster as usize) else { continue };
-                                let Some(source) = union(c.provenance.sources()) else { continue };
+                                let source = union(c.provenance.sources());
+                                if source.is_none() && !is_chrome(&c.provenance) {
+                                    continue;
+                                }
                                 items.push(V1Item::Text {
                                     text: run.text[c.text_start_byte..c.text_end_byte].to_string(),
                                     x_pt: g.origin_x.to_bp(),
@@ -230,7 +248,10 @@ pub fn fallback(v2: &DisplayList, caps: Capabilities, accepted: Option<Vec<Strin
                 // runtime-v1 has no image item; the v2 image proposal carries them.
                 display::Item::Image(_) => {}
                 display::Item::Rule(rule) => {
-                    let Some(source) = union(rule.provenance.sources()) else { continue };
+                    let source = union(rule.provenance.sources());
+                    if source.is_none() && !is_chrome(&rule.provenance) {
+                        continue;
+                    }
                     let (x, top, w, h) = (rule.x.to_bp(), rule.top.to_bp(), rule.width.to_bp(), rule.height.to_bp());
                     if caps.rules {
                         items.push(V1Item::Rule {
@@ -308,6 +329,9 @@ pub fn diagnostic_json(d: &display::Diagnostic) -> Value {
     v.set("source", d.sources.first().map(source_json).unwrap_or(Value::Null));
     v.set("recovery", d.recovery.clone().map(json::str_).unwrap_or(Value::Null));
     v.set("code", json::str_(d.code.clone()));
+    if let Some(s) = &d.suggestion {
+        v.set("suggestion", json::str_(s.clone()));
+    }
     v
 }
 
@@ -348,7 +372,7 @@ impl V1Payload {
                                                 o.set("x_pt", pt(*x_pt));
                                                 o.set("baseline_y_pt", pt(*baseline_y_pt));
                                                 o.set("font_size_pt", pt(*font_size_pt));
-                                                o.set("source", source_json(source));
+                                                o.set("source", source.as_ref().map(source_json).unwrap_or(Value::Null));
                                                 if let Some(f) = font {
                                                     let mut fo = Value::obj();
                                                     fo.set("family", json::str_(f.family.to_string()));
@@ -369,7 +393,7 @@ impl V1Payload {
                                                 o.set("y_pt", pt(*y_pt));
                                                 o.set("width_pt", pt(*width_pt));
                                                 o.set("height_pt", pt(*height_pt));
-                                                o.set("source", source_json(source));
+                                                o.set("source", source.as_ref().map(source_json).unwrap_or(Value::Null));
                                             }
                                         }
                                         o
@@ -522,6 +546,10 @@ fn jdiag(out: &mut String, d: &display::Diagnostic) {
         Some(s) => jsource(out, s),
         None => out.push_str("null"),
     }
+    if let Some(s) = &d.suggestion {
+        out.push_str(",\"suggestion\":");
+        js(out, s);
+    }
     out.push('}');
 }
 
@@ -593,7 +621,10 @@ impl V1Payload {
                         out.push_str(",\"font_size_pt\":");
                         jpt(out, *font_size_pt);
                         out.push_str(",\"kind\":\"text\",\"source\":");
-                        jsource(out, source);
+                        match source {
+                            Some(s) => jsource(out, s),
+                            None => out.push_str("null"),
+                        }
                         out.push_str(",\"text\":");
                         js(out, text);
                         out.push_str(",\"x_pt\":");
@@ -610,7 +641,10 @@ impl V1Payload {
                         out.push_str("{\"height_pt\":");
                         jpt(out, *height_pt);
                         out.push_str(",\"kind\":\"rule\",\"source\":");
-                        jsource(out, source);
+                        match source {
+                            Some(s) => jsource(out, s),
+                            None => out.push_str("null"),
+                        }
                         out.push_str(",\"width_pt\":");
                         jpt(out, *width_pt);
                         out.push_str(",\"x_pt\":");
@@ -678,7 +712,7 @@ mod tests {
                         x_pt: 72.0004,
                         baseline_y_pt: 83.955,
                         font_size_pt: 11.955,
-                        source: src("a/b.tex", 3, 10),
+                        source: Some(src("a/b.tex", 3, 10)),
                         font: Some(FontHint {
                             family: "Latin Modern Roman".into(),
                             weight: "bold",
@@ -690,7 +724,7 @@ mod tests {
                         x_pt: 1.0,
                         baseline_y_pt: 2.0,
                         font_size_pt: 3.0,
-                        source: src("main.tex", 0, 1),
+                        source: Some(src("main.tex", 0, 1)),
                         font: None,
                     },
                     V1Item::Rule {
@@ -698,7 +732,23 @@ mod tests {
                         y_pt: 101.4675,
                         width_pt: 43.351,
                         height_pt: 0.3985,
-                        source: src("main.tex", 37, 78),
+                        source: Some(src("main.tex", 37, 78)),
+                    },
+                    // Page chrome: no source of its own, `"source":null`.
+                    V1Item::Text {
+                        text: "1".into(),
+                        x_pt: 303.0,
+                        baseline_y_pt: 756.0,
+                        font_size_pt: 9.963,
+                        source: None,
+                        font: None,
+                    },
+                    V1Item::Rule {
+                        x_pt: 0.0,
+                        y_pt: 1.0,
+                        width_pt: 2.0,
+                        height_pt: 3.0,
+                        source: None,
                     },
                 ],
             }],
@@ -719,6 +769,15 @@ mod tests {
         none.diagnostics.clear();
         env.set("payload", none.to_json());
         assert_eq!(none.write_envelope("r-1"), json::write(&env));
+        let mut with_suggestion = display::Diagnostic::error("unknown_command", r"\alpah", vec![src("main.tex", 5, 11)]);
+        with_suggestion.suggestion = Some(r"\alpha".into());
+        let mut suggested = payload.clone();
+        suggested.diagnostics = vec![with_suggestion, display::Diagnostic::error("unsupported_feature", r"\tikz", Vec::new())];
+        env.set("payload", suggested.to_json());
+        let line = suggested.write_envelope("r-1");
+        assert_eq!(line, json::write(&env));
+        assert!(line.contains(r#""suggestion":"\\alpha""#), "{line}");
+        assert!(!line.contains(r#""suggestion":null"#), "{line}");
     }
 
     /// `jpt`/`js` fast paths print exactly what `fmt` printed before.

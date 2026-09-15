@@ -26,6 +26,9 @@ pub struct Diagnostic {
     pub code: String,
     pub message: String,
     pub recovery: Option<String>,
+    /// Replacement text for the source span (pipeline `suggestion`), when the
+    /// compiler offered a did-you-mean edit. `None` is omitted from `--json`.
+    pub suggestion: Option<String>,
 }
 
 impl Diagnostic {
@@ -45,7 +48,8 @@ impl Diagnostic {
             _ => format!("{}: ", self.path),
         };
         let tail = self.recovery.as_deref().map_or(String::new(), |r| format!(" (recovery: {r})"));
-        format!("{at}{}[{}] {}{tail}", self.severity(), self.code, self.message)
+        let hint = self.suggestion.as_deref().map_or(String::new(), |s| format!(" (did you mean {s}?)"));
+        format!("{at}{}[{}] {}{tail}{hint}", self.severity(), self.code, self.message)
     }
 }
 
@@ -100,6 +104,7 @@ pub fn compile(project: &Project, fonts: &FontSet, options: &RenderOptions, revi
                 code: d.code.to_string(),
                 message: d.message.clone(),
                 recovery: None,
+                suggestion: None,
             }
         })
         .collect();
@@ -107,7 +112,7 @@ pub fn compile(project: &Project, fonts: &FontSet, options: &RenderOptions, revi
         let source = d.sources.first();
         let path = source.map_or(project.entry.as_str(), |s| &*s.path);
         let at = source.and_then(|s| text_of(path).map(|t| line_col(t, s.start_byte)));
-        diagnostics.push(Diagnostic {
+        let mut diagnostic = Diagnostic {
             path: path.to_string(),
             line: at.map(|a| a.0),
             column: at.map(|a| a.1),
@@ -115,9 +120,23 @@ pub fn compile(project: &Project, fonts: &FontSet, options: &RenderOptions, revi
             end_byte: source.map(|s| s.end_byte),
             error: d.severity == Severity::Error,
             code: d.code.clone(),
+            suggestion: d.suggestion.clone(),
             message: d.message.clone(),
             recovery: d.recovery.clone(),
-        });
+        };
+        // Project discovery already reports this missing include; retain its canonical diagnostic and carry over only the compiler's recovery note.
+        // The pipeline labels every compiler diagnostic "compiler" today; once it forwards the compiler's own code this one is "recovered_input".
+        if matches!(diagnostic.code.as_str(), "compiler" | "recovered_input") && diagnostic.message.starts_with("included file not found") {
+            if let Some(existing) = diagnostics.iter_mut().find(|existing| {
+                existing.path == diagnostic.path && existing.start_byte == diagnostic.start_byte && existing.code == "missing_file"
+            }) {
+                if existing.recovery.is_none() {
+                    existing.recovery = diagnostic.recovery.take();
+                }
+                continue;
+            }
+        }
+        diagnostics.push(diagnostic);
     }
     // The runtime-v1 status rule (render-pipeline `v1::fallback`): a
     // project-closure error is an error diagnostic like the compiler's.
@@ -194,19 +213,7 @@ pub fn report_json(project: &Project, outcome: &Outcome, outputs: &[(&str, &Path
             outcome
                 .diagnostics
                 .iter()
-                .map(|d| {
-                    let mut v = Value::obj();
-                    v.set("path", json::str_(d.path.clone()));
-                    v.set("line", opt_num(d.line));
-                    v.set("column", opt_num(d.column));
-                    v.set("start_byte", opt_num(d.start_byte));
-                    v.set("end_byte", opt_num(d.end_byte));
-                    v.set("severity", json::str_(d.severity()));
-                    v.set("code", json::str_(d.code.clone()));
-                    v.set("message", json::str_(d.message.clone()));
-                    v.set("recovery", d.recovery.clone().map_or(Value::Null, json::str_));
-                    v
-                })
+                .map(diagnostic_json)
                 .collect(),
         ),
     );
@@ -228,6 +235,23 @@ pub fn report_json(project: &Project, outcome: &Outcome, outputs: &[(&str, &Path
     json::write(&o)
 }
 
+fn diagnostic_json(d: &Diagnostic) -> Value {
+    let mut v = Value::obj();
+    v.set("path", json::str_(d.path.clone()));
+    v.set("line", opt_num(d.line));
+    v.set("column", opt_num(d.column));
+    v.set("start_byte", opt_num(d.start_byte));
+    v.set("end_byte", opt_num(d.end_byte));
+    v.set("severity", json::str_(d.severity()));
+    v.set("code", json::str_(d.code.clone()));
+    v.set("message", json::str_(d.message.clone()));
+    v.set("recovery", d.recovery.clone().map_or(Value::Null, json::str_));
+    if let Some(s) = &d.suggestion {
+        v.set("suggestion", json::str_(s.clone()));
+    }
+    v
+}
+
 fn opt_num(n: Option<usize>) -> Value {
     n.map_or(Value::Null, |n| json::num(n as f64))
 }
@@ -239,4 +263,32 @@ fn round2(x: f64) -> f64 {
 /// `-o` default: the entry's stem with `.pdf`, next to the entry file.
 pub fn default_pdf_path(main: &Path) -> PathBuf {
     main.with_extension("pdf")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn suggestion_less_diagnostic() -> Diagnostic {
+        Diagnostic {
+            path: "main.tex".into(),
+            line: Some(3),
+            column: Some(1),
+            start_byte: Some(40),
+            end_byte: Some(51),
+            error: true,
+            code: "unknown_command".into(),
+            message: "\\frobnicate is not supported".into(),
+            recovery: None,
+            suggestion: None,
+        }
+    }
+
+    #[test]
+    fn json_omits_the_suggestion_key_when_the_diagnostic_has_none() {
+        let v = diagnostic_json(&suggestion_less_diagnostic());
+        assert!(v.get("suggestion").is_none(), "{v:?}");
+        let text = json::write(&v);
+        assert!(!text.contains("suggestion"), "{text}");
+    }
 }

@@ -4,7 +4,7 @@ import Network
 /// One `_flashtex._tcp` service seen by Bonjour, with its TXT record parsed
 /// (proposal §1). Nothing here is authenticated; `fingerprint` only picks
 /// which stored pairing to try, the TLS handshake decides.
-public struct DiscoveredMac: Hashable {
+public struct DiscoveredMac: Hashable, Sendable {
     /// Bonjour instance name (the Mac's user-visible name).
     public let name: String
     public let endpoint: NWEndpoint

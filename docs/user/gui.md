@@ -153,6 +153,16 @@ without leaving the app, or open an existing `.tex` file.
   (`\centering`, `\includegraphics`, `\caption`, `\label{fig:}`), `\begin{table}`
   a table skeleton; other environments an indented empty body line and the
   matching `\end`.
+- **Completion opens on its own while you type** — you do not need ⌃Space:
+  typing a control word (including a bare `\`, which lists the vocabulary) or
+  an argument key for a command that has completions (`\begin{`, `\end{`,
+  `\ref{`, `\cite{`, `\label{`, `\usepackage{`, `\input{`) opens the list a
+  short pause (50 ms) after the keystroke, so one burst of fast typing costs
+  one scan rather than one per character. A plain prose word does not open it
+  on its own — word suggestions from the document are still available, just
+  via explicit ⌃Space, since offering them on every letter would be noise.
+  Esc dismisses the list for that token; typing more of the same token stays
+  quiet. Turn the feature off with *Show completion list* in Preferences.
 - **Signature help**: typing `{` after a command (or pressing **⌘⇧Space**
   inside a command's argument) shows the argument pattern with the current
   argument highlighted and a one-line description; it closes on `}`, Esc, or
@@ -450,10 +460,10 @@ you trust.
 | Tab width 2–8, indent with spaces or tab | 4, spaces |
 | Editor appearance: System / Light / Dark (also seeds the dark-preview switch) | System |
 | Auto-close brackets & math | on |
-| Show completion list (off disables ⌃Space / Esc completion) | on |
+| Show completion list (off disables both automatic-while-typing and explicit ⌃Space / Esc completion) | on |
 | Vim keybindings (also View › Toggle Vim Keybindings, ⌃⌘V) | off |
 | Preview follows the caret while you edit | on |
-| Capture conversion: provider (None / xAI), key in Keychain, model | None |
+| Capture conversion: provider (None / xAI), key in Keychain, model | xAI (no-op until a key is added) |
 | Restore Defaults | |
 
 ## Keyboard shortcuts
@@ -475,7 +485,7 @@ you trust.
 | ⌘⇧E | Export PDF… (CoreGraphics) |
 | ⌘⌥E | Export PDF via Rust writer… |
 | ⌘Z | Undo (including an applied fix or capture insertion) |
-| Esc / ⌃Space | Open the completion list |
+| Esc / ⌃Space | Open the completion list explicitly (it also opens on its own — see below) |
 | ↑ ↓ / Tab ⇧Tab / Return / Esc | While the list is open: choose / insert / close |
 | Tab / ⇧Tab / Esc | After inserting a snippet: next / previous placeholder / leave |
 | Tab / ⇧Tab | Otherwise: indent / outdent the touched line(s) |
@@ -533,6 +543,12 @@ as you type it; the caret is a block outside insert mode.
   a composition is in progress). ⌘-shortcuts always work.
 - Counts; motions `h j k l w b e W B E 0 ^ $ gg G { } ( ) f F t T ; , % H M L`,
   ⌃D ⌃U ⌃F ⌃B (`%` also jumps between `\begin` and `\end`).
+- Visual-row motions `gj gk g0 g^ g$`: one *screen* row rather than one logical
+  line. Line wrapping is on by default, so a wrapped paragraph is many rows but
+  one line, and plain `j` jumps over all of it; `gj` moves the way the text
+  looks. They keep their own remembered column, so mixing `j` and `gj` does not
+  make either drift, and they take counts and operators (`3gj`, `dgj`). With
+  wrapping off — or on a line that does not wrap — `gj` is exactly `j`.
 - Operators `d c y > <` with motions, `dd cc yy >> <<`, and text objects
   `iw aw i( a( i[ a[ i{ a{ i" a" i$ a$` (inline math) and `ie ae` (LaTeX environment).
 - `x X D C Y p P J u ⌃R . ~`, marks `m a` / `'a` / `` `a ``, registers `"a`–`"z`
@@ -556,7 +572,6 @@ as you type it; the caret is a block outside insert mode.
   ⌘⇧R); a menu item for the preview-controller helper route, so Find in
   Project, Rename Citation, Durable History and `\cite` navigation need the
   environment-variable launch described under *Compiling*.
-- Completion does not pop up while typing (open it with ⌃Space / Esc); signature help does.
 - `\includegraphics` outside a `figure`/`table` float (and its `trim`/`clip`/
   `viewport` keys), tables, bibliographies and other constructs listed under
   [Supported LaTeX](compiler.md#supported-latex) render as diagnostics, not

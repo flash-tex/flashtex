@@ -59,6 +59,10 @@ enum EditorDiagnostics {
         /// mark was kept from the last result that had output (`Carried`);
         /// nil for marks of the result currently shown.
         var carried: Carried? = nil
+        /// Whether the diagnostic carries a mechanical edit Tab can apply at
+        /// the caret; the gutter marks these lines (design-principles §9 —
+        /// the Tab affordance is invisible without a marker).
+        var hasFix: Bool = false
 
         var id: String { identity.key }
         var diagnosticIndex: Int { identity.index }
@@ -156,10 +160,22 @@ enum EditorDiagnostics {
     /// `environment 'x' is not implemented`, `\includegraphics is unsupported`).
     /// Gaps are listed and marked, but counted apart from errors and warnings
     /// so an all-gap document such as HW1 reads "0 errors, 30 not implemented"
-    /// instead of "24 errors". A message heuristic until runtime-v1 carries a
-    /// category; the strings are the compiler's own (crates/compiler).
+    /// instead of "24 errors". When `code` is present, `unsupported_feature` is
+    /// a gap and the other issue-#76 codes are not; unknown codes and a missing
+    /// `code` fall back to the message phrases (the compiler's own wording).
     static func isGap(_ message: String) -> Bool {
         gapPhrases.contains { message.contains($0) }
+    }
+    static func isGap(_ diagnostic: RuntimeV1.Diagnostic) -> Bool {
+        if let code = diagnostic.code, !code.isEmpty {
+            switch code {
+            case "unsupported_feature": return true
+            case "unknown_command", "syntax_error", "export_limitation", "fidelity_note", "recovered_input":
+                return false
+            default: return isGap(diagnostic.message)
+            }
+        }
+        return isGap(diagnostic.message)
     }
     private static let gapPhrases = ["not implemented", "not supported by this compiler version",
                                      "not supported in math mode", "not supported in the document preamble", "is unsupported"]
@@ -168,9 +184,28 @@ enum EditorDiagnostics {
     static func counts(_ diagnostics: [RuntimeV1.Diagnostic]) -> (errors: Int, warnings: Int, gaps: Int) {
         var errors = 0, warnings = 0, gaps = 0
         for d in diagnostics {
-            if isGap(d.message) { gaps += 1 } else if d.severity == .error { errors += 1 } else { warnings += 1 }
+            if isGap(d) { gaps += 1 } else if d.severity == .error { errors += 1 } else { warnings += 1 }
         }
         return (errors, warnings, gaps)
+    }
+
+    /// Problems header / VoiceOver wording: "2 errors · 5 warnings · 46 FlashTeX gaps".
+    /// Zero buckets stay in the string so an all-gap document still reads
+    /// "0 errors · 0 warnings · 30 FlashTeX gaps" rather than hiding the error
+    /// count (the original #76 complaint). Singular forms match `withheldNote`.
+    static func summary(_ diagnostics: [RuntimeV1.Diagnostic]) -> String {
+        summary(counts(diagnostics))
+    }
+    static func summary(_ c: (errors: Int, warnings: Int, gaps: Int)) -> String {
+        "\(c.errors) error\(c.errors == 1 ? "" : "s") · \(c.warnings) warning\(c.warnings == 1 ? "" : "s") · \(c.gaps) FlashTeX gap\(c.gaps == 1 ? "" : "s")"
+    }
+
+    /// 0 = author error, 1 = warning, 2 = FlashTeX gap. The Problems list,
+    /// copy-text and in-group occurrence stepping share this order; occurrence
+    /// order inside a group stays document order. Does not reorder `diagnostics`.
+    static func listBucket(_ d: RuntimeV1.Diagnostic) -> Int {
+        if isGap(d) { return 2 }
+        return d.severity == .error ? 0 : 1
     }
 
     /// Recovery line for a diagnostic of a result with `status` (see `Mark.recoveryLine`).
@@ -226,7 +261,8 @@ enum EditorDiagnostics {
             // current buffer is not drawn anywhere.
             guard let ns = currentText.clusterAlignedNSRange(utf8Start: start, utf8End: end) else { continue }
             marks.append(Mark(identity: identity, nsRange: ns, severity: diagnostic.severity,
-                              message: diagnostic.message, recovery: diagnostic.recovery, resultStatus: result.status))
+                              message: diagnostic.message, recovery: diagnostic.recovery, resultStatus: result.status,
+                              hasFix: mechanicalEdit(for: diagnostic) != nil))
         }
         return Report(marks: marks, stale: stale, edit: region)
     }
@@ -311,14 +347,18 @@ extension EditorDiagnostics {
 // MARK: - Identical diagnostics grouped (count + per-occurrence jump)
 
 extension EditorDiagnostics {
-    /// Diagnostics of one result with the same severity and message, in the
-    /// order of their first occurrence; `occurrences` are indices into
-    /// `result.diagnostics` in document order (by path in `documentOrder`,
-    /// then start byte; unsourced last), so "occurrence k of n" is stable
-    /// and each one can be jumped to on its own.
+    /// Diagnostics of one result with the same severity and message. Groups
+    /// list author errors first, then warnings, then FlashTeX gaps (`isGap`);
+    /// within a bucket, the order of their first occurrence. `occurrences`
+    /// are indices into `result.diagnostics` in document order (by path in
+    /// `documentOrder`, then start byte; unsourced last), so "occurrence k of
+    /// n" is stable and each one can be jumped to on its own.
     struct Group: Equatable, Identifiable {
         let severity: RuntimeV1.Severity
         let message: String
+        /// Snake_case `code` when every occurrence has the same one; nil when
+        /// the group was keyed off message text (no code, or mixed).
+        let code: String?
         /// The recovery note when every occurrence has the same one, else nil.
         let recovery: String?
         let occurrences: [Int]
@@ -326,13 +366,17 @@ extension EditorDiagnostics {
         var count: Int { occurrences.count }
         /// Index of the first occurrence (document order); the row's explanation and quick fix use it.
         var first: Int { occurrences[0] }
-        var id: String { "\(severity.rawValue):\(message)" }
+        var id: String {
+            if let code, !code.isEmpty { return "\(severity.rawValue):\(code):\(message)" }
+            return "\(severity.rawValue):\(message)"
+        }
         /// "12× \in is not supported in math mode", or just the message for one.
         var title: String { count > 1 ? "\(count)× " + message : message }
     }
 
-    /// Groups `result.diagnostics` by (severity, message). `documentOrder`
-    /// orders occurrences across documents (unknown paths after known ones).
+    /// Groups `result.diagnostics` by (severity, code, message). Listed
+    /// errors, then warnings, then gaps; `documentOrder` orders occurrences
+    /// across documents within a bucket (unknown paths after known ones).
     static func groups(of result: RuntimeV1.CompileResult, documentOrder: [String] = []) -> [Group] {
         groups(of: result.diagnostics, documentOrder: documentOrder)
     }
@@ -344,7 +388,7 @@ extension EditorDiagnostics {
         var order: [String] = []
         var members: [String: [Int]] = [:]
         for (i, d) in diagnostics.enumerated() {
-            let key = "\(d.severity.rawValue):\(d.message)"
+            let key = groupKey(d)
             if members[key] == nil { order.append(key); members[key] = [] }
             members[key]!.append(i)
         }
@@ -361,10 +405,16 @@ extension EditorDiagnostics {
         var groups: [Group] = order.map { key in
             let sorted = members[key]!.sorted(by: before)
             let recoveries = Set(sorted.map { diagnostics[$0].recovery })
+            let codes = Set(sorted.map { diagnostics[$0].code ?? "" })
             return Group(severity: diagnostics[sorted[0]].severity, message: diagnostics[sorted[0]].message,
+                         code: (codes.count == 1 && !codes.contains("")) ? diagnostics[sorted[0]].code : nil,
                          recovery: recoveries.count == 1 ? diagnostics[sorted[0]].recovery : nil, occurrences: sorted)
         }
-        groups.sort { before($0.first, $1.first) }
+        groups.sort {
+            let ba = listBucket(diagnostics[$0.first]), bb = listBucket(diagnostics[$1.first])
+            if ba != bb { return ba < bb }
+            return before($0.first, $1.first)
+        }
         return groups
     }
 
@@ -404,6 +454,14 @@ extension EditorDiagnostics {
         var line = 1
         for b in text.utf8.prefix(offset) where b == 0x0A { line += 1 }
         return line
+    }
+
+    /// Grouping key: `(severity, code, message)` when `code` is present, else
+    /// today's `(severity, message)`. Same-code diagnostics with different
+    /// messages stay separate rows.
+    static func groupKey(_ d: RuntimeV1.Diagnostic) -> String {
+        if let code = d.code, !code.isEmpty { return "\(d.severity.rawValue):\(code):\(d.message)" }
+        return "\(d.severity.rawValue):\(d.message)"
     }
 }
 
@@ -982,5 +1040,98 @@ extension EditorDiagnostics {
                                   before: beforeSnippet, after: afterSnippet, grouped: group, apply: { group })
             return .success(preview)
         }
+    }
+
+    /// Mechanical Fix… from `help.replacement` (preferred) or `suggestion`
+    /// over the diagnostic `source`. Feeds the same `QuickFix.prepare` path
+    /// as explanation-service edits — one grouped undoable replacement.
+    static func mechanicalEdit(for d: RuntimeV1.Diagnostic) -> Explanation.Edit? {
+        if let r = d.help?.replacement {
+            guard let path = d.path(of: r) else { return nil }
+            guard r.startByte <= r.endByte else { return nil }
+            return .init(path: path, startByte: r.startByte, endByte: r.endByte, replacement: r.text)
+        }
+        if let suggestion = d.suggestion, let source = d.source {
+            return .init(path: source.path, startByte: source.startByte, endByte: source.endByte, replacement: suggestion)
+        }
+        return nil
+    }
+
+    /// True when the diagnostic's mechanical edit is in-bounds for
+    /// `currentText`, targets `path`, and the compile revision still matches
+    /// the editor — the Fix… affordance is hidden otherwise. Advice-only help
+    /// and a stale buffer never show it.
+    ///
+    /// The edit comes from `mechanicalEdit`, so this accepts both forms: a
+    /// `help.replacement`, and the flat `suggestion` over the diagnostic's own
+    /// `source`. Gating on `help.replacement` alone made the affordance
+    /// unreachable in the shipping configuration — `ShellModel`
+    /// `locateDefaultProducer` attaches `flashtex-render`, whose
+    /// `display::Diagnostic` carries no `help` field at all, so the wire has
+    /// only `suggestion`. The compiler sets `suggestion` at exactly one site
+    /// (`Diagnostic::command_error`), where the span is the command token, so
+    /// replacing `source` with it is the same edit `help.replacement` would
+    /// have carried.
+    static func canApplyHelpReplacement(_ d: RuntimeV1.Diagnostic, path: String, currentText: String,
+                                        compiledRevision: Int?, editorRevision: Int) -> Bool {
+        guard compiledRevision == editorRevision else { return false }
+        guard let edit = mechanicalEdit(for: d) else { return false }
+        guard edit.path == path else { return false }
+        guard edit.startByte >= 0, edit.startByte <= edit.endByte else { return false }
+        return currentText.rangeOfUTF8(start: edit.startByte, end: edit.endByte) != nil
+    }
+
+    /// A mechanical fix offered for the diagnostic the caret is sitting on, so
+    /// the editor can show it inline and let Tab accept it.
+    ///
+    /// The caret counts as "on" the diagnostic at both ends inclusive: an
+    /// author who has just finished typing a word leaves the caret directly
+    /// after it, and a fix that vanished there would be useless.
+    struct CaretFix: Equatable {
+        /// Index into the model's `displayedDiagnostics`, so accepting it can
+        /// reuse the Problems panel's `previewQuickFix`/`applyQuickFix` path.
+        var diagnosticIndex: Int
+        /// What the hint says Tab will do.
+        var title: String
+        /// The text Tab inserts.
+        var replacement: String
+        /// UTF-8 range the replacement covers.
+        var startByte: Int
+        var endByte: Int
+    }
+
+    /// The first diagnostic in document order whose span covers `caretByte` and
+    /// carries an applicable mechanical edit; `nil` when the caret is not on
+    /// one. `nil` must leave Tab alone — a fix the author cannot see must never
+    /// change what the key does.
+    static func fixOffered(at caretByte: Int, in diagnostics: [RuntimeV1.Diagnostic],
+                           path: String, currentText: String,
+                           compiledRevision: Int?, editorRevision: Int) -> CaretFix? {
+        for (index, d) in diagnostics.enumerated() {
+            guard let source = d.source, source.path == path else { continue }
+            guard caretByte >= source.startByte, caretByte <= source.endByte else { continue }
+            guard canApplyHelpReplacement(d, path: path, currentText: currentText,
+                                          compiledRevision: compiledRevision,
+                                          editorRevision: editorRevision),
+                  let edit = mechanicalEdit(for: d) else { continue }
+            return CaretFix(diagnosticIndex: index,
+                            title: d.help?.message ?? "Replace with \(edit.replacement)",
+                            replacement: edit.replacement,
+                            startByte: edit.startByte, endByte: edit.endByte)
+        }
+        return nil
+    }
+
+    /// `QuickFix.prepare` for the diagnostic's mechanical edit (same refusal
+    /// cases as an explanation suggestion).
+    static func prepareHelpReplacement(_ d: RuntimeV1.Diagnostic, path: String,
+                                       in currentText: String, compiledText: String?) -> Result<QuickFix.Preview, QuickFix.Refusal> {
+        guard let edit = mechanicalEdit(for: d) else { return .failure(.noEdits) }
+        let text = d.help?.message ?? d.suggestion ?? "Apply suggested fix"
+        let explanation = Explanation(
+            catalogID: d.code, title: text, category: d.code ?? "diagnostic",
+            severity: d.severity.rawValue, message: d.message, why: text, whatHappened: d.recovery ?? "",
+            suggestions: [.init(text: text, confidence: "high", edits: [edit])], context: nil)
+        return QuickFix.prepare(explanation, path: path, in: currentText, compiledText: compiledText)
     }
 }

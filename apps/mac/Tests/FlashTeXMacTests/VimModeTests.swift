@@ -1,4 +1,5 @@
 import AppKit
+import HostedWindows
 import XCTest
 @testable import FlashTeXMac
 
@@ -12,7 +13,7 @@ final class VimModeTests: XCTestCase {
 
     override func setUp() async throws {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
         scroll.frame = window.contentView!.bounds
         window.contentView!.addSubview(scroll)
@@ -416,5 +417,166 @@ final class VimModeTests: XCTestCase {
         XCTAssertEqual(mode, .normal)
         XCTAssertFalse(tv.isCompletionActive)
         XCTAssertEqual(text, "\\sec")
+    }
+
+    // MARK: visual-row motions (gj / gk / g0 / g^ / g$)
+
+    /// Forces a narrow, monospaced text container so the sample paragraph
+    /// really wraps, then lays it out. Line wrapping is on by default in the
+    /// app (`EditorPreferences.lineWrapping`), which is exactly why these
+    /// motions matter: without them `j` skips a whole wrapped paragraph.
+    private func wrap(at width: CGFloat) {
+        tv.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        tv.textContainer?.widthTracksTextView = false
+        tv.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        if let container = tv.textContainer { tv.layoutManager?.ensureLayout(for: container) }
+    }
+
+    /// Every laid-out visual row, as character ranges — the layout's own
+    /// answer, which the motions must agree with.
+    private func rows() -> [NSRange] {
+        guard let lm = tv.layoutManager, let container = tv.textContainer else { return [] }
+        lm.ensureLayout(for: container)
+        var out: [NSRange] = []
+        var glyph = 0
+        while glyph < lm.numberOfGlyphs {
+            var fragment = NSRange()
+            _ = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: &fragment)
+            out.append(lm.characterRange(forGlyphRange: fragment, actualGlyphRange: nil))
+            glyph = NSMaxRange(fragment)
+        }
+        return out
+    }
+
+    private let paragraph = String(repeating: "word ", count: 40).trimmingCharacters(in: .whitespaces)
+
+    func testGjAndGkStepOneVisualRowInsideAWrappedLine() throws {
+        load(paragraph + "\nsecond line\n")
+        wrap(at: 160)
+        let rows = rows()
+        try XCTSkipIf(rows.count < 4, "the paragraph did not wrap into enough rows to test")
+        XCTAssertEqual(caret, 0)
+        type("gj")
+        XCTAssertEqual(caret, rows[1].location, "gj lands at the same column of the next visual row")
+        type("gj")
+        XCTAssertEqual(caret, rows[2].location)
+        type("gk")
+        XCTAssertEqual(caret, rows[1].location)
+        type("gk")
+        XCTAssertEqual(caret, 0)
+        type("gk")
+        XCTAssertEqual(caret, 0, "gk at the first row stays put")
+    }
+
+    func testPlainJSkipsTheWholeWrappedParagraphWhileGjDoesNot() throws {
+        load(paragraph + "\nsecond line\n")
+        wrap(at: 160)
+        let rows = rows()
+        try XCTSkipIf(rows.count < 3, "the paragraph did not wrap")
+        type("j")
+        let afterJ = caret
+        XCTAssertGreaterThan(afterJ, NSMaxRange(rows[0]), "j leaves the paragraph entirely — the gap these motions close")
+        type("gg")
+        type("gj")
+        XCTAssertLessThan(caret, afterJ, "gj is still inside the first paragraph")
+        XCTAssertTrue(NSLocationInRange(caret, rows[1]))
+    }
+
+    func testGjKeepsItsColumnAndClampsOnAShortRow() throws {
+        load(paragraph + "\nab\ncdefgh\n")
+        wrap(at: 160)
+        let rows = rows()
+        try XCTSkipIf(rows.count < 3, "the paragraph did not wrap")
+        type("5l") // column 5 of the first row
+        XCTAssertEqual(caret, 5)
+        type("gj")
+        XCTAssertEqual(caret, rows[1].location + 5, "the column is kept across rows")
+        type("gj")
+        XCTAssertEqual(caret, rows[2].location + 5)
+        // Down onto the two-character line: clamped to its last character, and
+        // the remembered column is restored on the row after it.
+        let ab = try XCTUnwrap(rows.first { tv.string[Range($0, in: tv.string)!].hasPrefix("ab") })
+        let abIndex = try XCTUnwrap(rows.firstIndex(of: ab))
+        tv.setSelectedRange(NSRange(location: rows[abIndex - 1].location + 5, length: 0))
+        type("gj")
+        XCTAssertEqual(caret, ab.location + 1, "clamped to the last character of the short row")
+        type("gj")
+        XCTAssertEqual(caret, rows[abIndex + 1].location + 5, "the column comes back on a row that is long enough")
+    }
+
+    func testJAndGjKeepSeparateColumns() throws {
+        load("abcdefghij\nklmnopqrst\nuvwxyz\n")
+        wrap(at: 4000) // nothing wraps: every visual row is a logical line
+        type("8l")
+        XCTAssertEqual(caret, 8)
+        type("j")
+        XCTAssertEqual(caret, 19, "j keeps column 8 on line 2")
+        type("gj")
+        XCTAssertEqual(caret, 27, "gj keeps the same column when a line does not wrap")
+        // With no wrapping gj is j, which is the point: the user never has to
+        // think about which one to press.
+        type("gk")
+        XCTAssertEqual(caret, 19)
+    }
+
+    func testG0AndG6AndGDollarGoToTheEndsOfTheVisualRow() throws {
+        load("    " + paragraph)
+        wrap(at: 160)
+        let rows = rows()
+        try XCTSkipIf(rows.count < 3, "the paragraph did not wrap")
+        tv.setSelectedRange(NSRange(location: rows[1].location + 3, length: 0))
+        type("g$")
+        XCTAssertEqual(caret, NSMaxRange(rows[1]) - 1, "g$ is the last character of this row, not of the line")
+        type("g0")
+        XCTAssertEqual(caret, rows[1].location)
+        // `g^` on the first row skips the indent; `g0` does not.
+        type("gg")
+        type("g0")
+        XCTAssertEqual(caret, 0)
+        type("g^")
+        XCTAssertEqual(caret, 4, "g^ is the first non-blank of the row")
+    }
+
+    func testDgjDeletesThroughTheNextVisualRow() throws {
+        load(paragraph)
+        wrap(at: 160)
+        let rows = rows()
+        try XCTSkipIf(rows.count < 3, "the paragraph did not wrap")
+        let removed = rows[1].location
+        type("dgj")
+        XCTAssertEqual(text, (paragraph as NSString).substring(from: removed),
+                       "dgj is exclusive: it removes up to the same column of the next row")
+        XCTAssertEqual(caret, 0)
+    }
+
+    func testGjReachesTheEmptyLineAfterATrailingNewline() {
+        load("abc\n")
+        wrap(at: 4000)
+        type("gj")
+        XCTAssertEqual(caret, 4, "the empty final line has no glyphs of its own but j reaches it, so gj must too")
+        type("gk")
+        XCTAssertEqual(caret, 0)
+    }
+
+    func testCountedGjMovesThatManyRowsAndStopsAtTheEnd() throws {
+        load(paragraph)
+        wrap(at: 160)
+        let rows = rows()
+        try XCTSkipIf(rows.count < 4, "the paragraph did not wrap into enough rows")
+        type("3gj")
+        XCTAssertEqual(caret, rows[3].location)
+        type("99gj")
+        XCTAssertEqual(caret, rows.last!.location, "a count past the end stops on the last row instead of refusing")
+    }
+
+    func testVisualModeSelectsByVisualRows() throws {
+        load(paragraph)
+        wrap(at: 160)
+        let rows = rows()
+        try XCTSkipIf(rows.count < 3, "the paragraph did not wrap")
+        type("vgj")
+        XCTAssertEqual(mode, .visual)
+        XCTAssertEqual(tv.selectedRange().location, 0)
+        XCTAssertEqual(NSMaxRange(tv.selectedRange()), rows[1].location + 1)
     }
 }

@@ -6,7 +6,8 @@ import AppKit
 /// `doCommandBy` dispatch (SourceEditorView.swift), and one closure property
 /// plus a single call site in Completion.swift's snippet insertion, so a
 /// completion's placeholder closer (`\section{}`) is tracked for overtype the
-/// same way a hand-typed `{` already is.
+/// same way a hand-typed `{` already is. LaTeX-aware Re-indent Lines / Document
+/// (⌃I) lives in EditorIndentation.swift so this file stays Tab/Shift-Tab only.
 enum EditorKeyHandling {
     /// One text-storage edit in the *original* text's coordinates.
     struct LineEdit: Equatable {
@@ -101,6 +102,37 @@ enum EditorKeyHandling {
         return (edits, selectionAfter(edits, range: range, firstLineStart: starts[0]))
     }
 
+    // MARK: duplicate line (⌥⇧↓ / ⌥⇧↑)
+
+    /// Copies every line `range` touches, placing the copy below (`below`) or
+    /// above the block, as one edit. The returned `selection` lands on the
+    /// **copy** in both directions, so holding the key stacks copies and the
+    /// caret keeps its column — which is the point of the shortcut when you
+    /// are working an equation down the page a line at a time.
+    ///
+    /// Duplicating downward inserts after the block and shifts the selection
+    /// by the inserted length; duplicating upward inserts before it, which
+    /// leaves the original offsets describing the copy, so the selection does
+    /// not move at all. The last line of a document has no newline to copy,
+    /// so one is supplied on whichever side the copy is joined.
+    static func duplicateLinesEdit(in text: String, range: NSRange, below: Bool) -> (edit: LineEdit, selection: NSRange)? {
+        let ns = text as NSString
+        guard range.location >= 0, NSMaxRange(range) <= ns.length else { return nil }
+        let starts = lineStarts(in: text, range: range)
+        guard let first = starts.first, let last = starts.last else { return nil }
+        let blockStart = first
+        let blockEnd = NSMaxRange(ns.lineRange(for: NSRange(location: last, length: 0)))
+        let block = ns.substring(with: NSRange(location: blockStart, length: blockEnd - blockStart))
+        // `lineRange(for:)` includes the terminator when there is one; the
+        // document's last line has none.
+        let terminated = block.hasSuffix("\n") || block.hasSuffix("\r") || block.hasSuffix("\r\n")
+        let replacement = terminated ? block : (below ? "\n" + block : block + "\n")
+        let at = below ? blockEnd : blockStart
+        let edit = LineEdit(range: NSRange(location: at, length: 0), replacement: replacement)
+        let shift = below ? (replacement as NSString).length : 0
+        return (edit, NSRange(location: range.location + shift, length: range.length))
+    }
+
     // MARK: completion-inserted closers (Completion.swift's small hook)
 
     /// A programmatic multi-character insertion (a completion snippet like
@@ -118,6 +150,44 @@ enum EditorKeyHandling {
         guard let ch = unit.first, SourceEditorView.BraceMatcher.isCloser(ch) else { return nil }
         return caretUTF16
     }
+
+    /// Brackets whose two halves differ, so nesting can be counted. `$` (and
+    /// the `\\` of an auto-inserted `\\)`) are deliberately absent: they are
+    /// their own partner, so an unmatched one cannot be recognised.
+    private static let bracketPairs: [Character: Character] = ["{": "}", "[": "]", "(": ")"]
+
+    /// Whether `insertedText` itself closes a delimiter that was opened
+    /// *before* it: its first bracket left unmatched by the text is `closer`.
+    ///
+    /// Completion snippets are written to continue an argument the user has
+    /// already opened — accepting `proof` after `\begin{` inserts
+    /// `proof}\n…\n\end{proof}`, which supplies the `}` for that `{`. When the
+    /// editor auto-closed the same `{` the buffer already holds a `}` right
+    /// after the replaced range, and inserting leaves it stranded
+    /// (`\end{proof}}`). The caller consumes the tracked closer when this
+    /// returns true. `\frac{}{}` and friends are balanced, so nothing is eaten.
+    static func supersedesTrackedCloser(_ insertedText: String, closer: Character) -> Bool {
+        guard bracketPairs.values.contains(closer) else { return false }
+        var stack: [Character] = []
+        var i = insertedText.startIndex
+        while i < insertedText.endIndex {
+            let c = insertedText[i]
+            if c == "\\" { // `\{`, `\}`, `\$`: an escaped literal, never a delimiter (a control word is harmless to skip too)
+                i = insertedText.index(after: i)
+                if i < insertedText.endIndex { i = insertedText.index(after: i) }
+                continue
+            }
+            if let partner = bracketPairs[c] {
+                stack.append(partner)
+            } else if bracketPairs.values.contains(c) {
+                guard let expected = stack.last else { return c == closer } // unmatched: it belongs to an opener before this text
+                if expected != c { return false } // crossed brackets: not a shape we understand
+                stack.removeLast()
+            }
+            i = insertedText.index(after: i)
+        }
+        return false
+    }
 }
 
 extension SourceEditorView.Coordinator {
@@ -133,6 +203,24 @@ extension SourceEditorView.Coordinator {
         if let completing = tv as? CompletingTextView, completing.isCompletionActive { return false }
         let text = currentText(of: tv)
         let range = tv.selectedRange()
+        // The fix at the caret sits between the modal lanes and indentation.
+        //
+        // Completion and snippets come first and are already handled above and
+        // in `CompletingTextView.keyDown`: both are mid-interaction, the author
+        // is looking at them, and Tab plainly belongs to them. Indentation
+        // comes after, but only loses the key on three conditions, so Tab never
+        // does something invisible:
+        //   - a fix is actually offered (`parent.caretFix` is non-nil, which is
+        //     the same value that draws the hint, and Esc has not taken it down);
+        //   - the selection is empty — Tab on a multi-line selection is
+        //     unambiguously "indent this block", never "fix a word in it";
+        //   - it is Tab, not ⇧Tab, which always means outdent.
+        // With no fix offered this falls straight through and Tab indents
+        // exactly as it did before.
+        if !reverse, range.length == 0, parent.caretFix != nil {
+            parent.onAcceptCaretFix()
+            return true
+        }
         let unit = EditorPreferences.shared.indentString
         if reverse {
             guard let (edits, selection) = EditorKeyHandling.outdentEdits(in: text, range: range, unit: unit) else { return true }
@@ -154,7 +242,7 @@ extension SourceEditorView.Coordinator {
     /// per-keystroke path (autoClose, announcements) exactly as the single-edit
     /// paths (`applyPendingEdit`, capture insertion) already do; the buffer and
     /// selection are then pushed through once, like a committed user edit.
-    func applyLineEdits(_ edits: [EditorKeyHandling.LineEdit], to tv: NSTextView, actionName: String, selection: NSRange) {
+    func applyLineEdits(_ edits: [EditorKeyHandling.LineEdit], to tv: NSTextView, actionName: String, selection: NSRange, pushBinding: Bool = true) {
         guard !edits.isEmpty else { return }
         tv.breakUndoCoalescing()
         tv.undoManager?.beginUndoGrouping()
@@ -171,7 +259,7 @@ extension SourceEditorView.Coordinator {
         tv.setSelectedRange(selection)
         let s = SourceEditorView.nativeText(of: tv)
         lastKnownText = s
-        parent.text = s
+        if pushBinding { parent.text = s }
         refreshBraceHighlight(tv)
     }
 }

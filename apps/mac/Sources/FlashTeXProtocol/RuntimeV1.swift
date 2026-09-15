@@ -43,6 +43,17 @@ public enum RuntimeV1 {
         /// producer (`project_root`, display-list-v2-images proposal §2).
         /// Optional; omitted from the wire when nil. Old producers ignore it.
         public var projectRoot: String?
+        /// The civil date `\today` renders, `YYYY-MM-DD`
+        /// (`date`, runtime-v1-request-date proposal).
+        ///
+        /// The compiler must never read the wall clock -- runtime-v1 requires
+        /// byte-identical output for byte-identical input -- so the app reads
+        /// it and sends the answer. A civil date rather than a timestamp
+        /// because `\today` is a local calendar date; see `RuntimeV1.localDate`.
+        ///
+        /// Optional; omitted from the wire when nil, and an omitted date
+        /// compiles as the Unix epoch exactly as before. Old workers ignore it.
+        public var date: String?
 
         public struct DisplayListBase: Codable, Equatable {
             public var requestId: String
@@ -63,14 +74,17 @@ public enum RuntimeV1 {
             case layoutCapabilities = "layout_capabilities"
             case displayListBase = "display_list_base"
             case projectRoot = "project_root"
+            case date
         }
         public init(projectId: String, revision: Int, entryPath: String, documents: [Document],
-                    layoutCapabilities: [String]? = nil, displayListBase: DisplayListBase? = nil, projectRoot: String? = nil) {
+                    layoutCapabilities: [String]? = nil, displayListBase: DisplayListBase? = nil, projectRoot: String? = nil,
+                    date: String? = nil) {
             self.projectId = projectId; self.revision = revision
             self.entryPath = entryPath; self.documents = documents
             self.layoutCapabilities = layoutCapabilities
             self.displayListBase = displayListBase
             self.projectRoot = projectRoot
+            self.date = date
         }
 
         public init(from decoder: Decoder) throws {
@@ -83,6 +97,8 @@ public enum RuntimeV1 {
             if let caps = layoutCapabilities { try LayoutCapabilities.validate(caps) }
             displayListBase = try c.decodeIfPresent(DisplayListBase.self, forKey: .displayListBase)
             projectRoot = try c.decodeIfPresent(String.self, forKey: .projectRoot)
+            date = try c.decodeIfPresent(String.self, forKey: .date)
+            if let date { try RuntimeV1.validateDate(date) }
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -97,7 +113,56 @@ public enum RuntimeV1 {
             }
             if let base = displayListBase { try c.encode(base, forKey: .displayListBase) }
             if let root = projectRoot { try c.encode(root, forKey: .projectRoot) }
+            if let date {
+                try RuntimeV1.validateDate(date)
+                try c.encode(date, forKey: .date)
+            }
         }
+    }
+
+    /// Rejects anything that is not exactly a `YYYY-MM-DD` civil date.
+    ///
+    /// Strict on purpose. The worker refuses a malformed date rather than
+    /// guessing, so catching it here turns a failed compile into a programming
+    /// error at the call site instead.
+    public static func validateDate(_ value: String) throws {
+        let bytes = Array(value.utf8)
+        guard bytes.count == 10, bytes[4] == UInt8(ascii: "-"), bytes[7] == UInt8(ascii: "-") else {
+            throw DecodeError.invalidDate(value)
+        }
+        func number(_ range: Range<Int>) throws -> Int {
+            var n = 0
+            for i in range {
+                guard bytes[i] >= UInt8(ascii: "0"), bytes[i] <= UInt8(ascii: "9") else {
+                    throw DecodeError.invalidDate(value)
+                }
+                n = n * 10 + Int(bytes[i] - UInt8(ascii: "0"))
+            }
+            return n
+        }
+        let year = try number(0..<4), month = try number(5..<7), day = try number(8..<10)
+        guard (1...9999).contains(year), (1...12).contains(month) else {
+            throw DecodeError.invalidDate(value)
+        }
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+        let lengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        guard (1...lengths[month - 1]).contains(day) else {
+            throw DecodeError.invalidDate(value)
+        }
+    }
+
+    /// Today's date in the user's own calendar and timezone, in the wire form.
+    ///
+    /// This is the clock read the engine is forbidden to make. `Calendar.current`
+    /// is deliberate: `\today` is a *local* calendar date, so a UTC instant
+    /// would print the neighbouring day for much of the world near midnight.
+    /// The Gregorian components are requested explicitly so a non-Gregorian
+    /// user calendar still yields the Gregorian date LaTeX renders.
+    public static func localDate(_ now: Date = Date(), timeZone: TimeZone = .current) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let c = calendar.dateComponents([.year, .month, .day], from: now)
+        return String(format: "%04d-%02d-%02d", c.year ?? 1970, c.month ?? 1, c.day ?? 1)
     }
 
     /// Negotiated layout capabilities (runtime-v1-layout-capabilities.md).
@@ -288,13 +353,156 @@ public enum RuntimeV1 {
 
     public enum Severity: String, Codable { case error, warning }
 
+    /// Frozen keys: `severity`, `message`, `source`, `recovery`. Additive optional
+    /// fields (`code`, `suggestion` from issue #76; `labels`, `notes`, `help`
+    /// from #277) are omitted when unset — never null, never `[]`/`{}`. Unknown
+    /// extra keys are ignored. `code` is snake_case (`unknown_command`,
+    /// `unsupported_feature`, …); unknown values must be tolerated.
     public struct Diagnostic: Codable, Equatable {
         public var severity: Severity
         public var message: String
         public var source: SourceRange?
         public var recovery: String?
-        public init(severity: Severity, message: String, source: SourceRange?, recovery: String?) {
+        public var code: String?
+        public var suggestion: String?
+        public var labels: [Label]?
+        public var notes: [String]?
+        public var help: Help?
+
+        /// Extra underlined span with caption (`labels[]`). `source` is the
+        /// same shape as diagnostic `source`; `primary` is true for exactly
+        /// one element of a non-empty array.
+        public struct Label: Codable, Equatable {
+            public var source: SourceRange
+            public var text: String
+            public var primary: Bool
+            public init(source: SourceRange, text: String, primary: Bool) {
+                self.source = source; self.text = text; self.primary = primary
+            }
+        }
+
+        /// Suggested fix (`= help:`). `replacement` is a byte-range edit of
+        /// `source.path` unless it carries its own `path`.
+        public struct Help: Codable, Equatable {
+            public var message: String
+            public var replacement: Replacement?
+            enum CodingKeys: String, CodingKey { case message, replacement }
+            public init(message: String, replacement: Replacement? = nil) {
+                self.message = message; self.replacement = replacement
+            }
+            public init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                message = try c.decode(String.self, forKey: .message)
+                replacement = try c.decodeIfPresent(Replacement.self, forKey: .replacement)
+            }
+            public func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(message, forKey: .message)
+                if let replacement { try c.encode(replacement, forKey: .replacement) }
+            }
+        }
+
+        /// Mechanical edit for Fix…. Offsets are UTF-8, zero-based,
+        /// end-exclusive. The compiler emits them nested in a `source` object
+        /// (the same shape as `labels[].source`), so that is the shape to
+        /// expect; a flat `start_byte`/`end_byte` pair is also accepted and
+        /// wins when both are present. `path` is optional on the wire and
+        /// falls back to `source.path`, then to the diagnostic's own source.
+        public struct Replacement: Codable, Equatable {
+            public var startByte: Int
+            public var endByte: Int
+            public var text: String
+            public var path: String?
+            enum CodingKeys: String, CodingKey {
+                case startByte = "start_byte", endByte = "end_byte", text, path, source
+            }
+            public init(startByte: Int, endByte: Int, text: String, path: String? = nil) {
+                self.startByte = startByte; self.endByte = endByte; self.text = text; self.path = path
+            }
+            public init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                let src = try c.decodeIfPresent(SourceRange.self, forKey: .source)
+                // The compiler nests the range in `source`; a flat pair is also
+                // accepted and wins when both are present.
+                guard let s = try c.decodeIfPresent(Int.self, forKey: .startByte) ?? src?.startByte else {
+                    throw DecodingError.keyNotFound(CodingKeys.startByte, .init(
+                        codingPath: c.codingPath,
+                        debugDescription: "replacement has neither start_byte nor source.start_byte"))
+                }
+                guard let e = try c.decodeIfPresent(Int.self, forKey: .endByte) ?? src?.endByte else {
+                    throw DecodingError.keyNotFound(CodingKeys.endByte, .init(
+                        codingPath: c.codingPath,
+                        debugDescription: "replacement has neither end_byte nor source.end_byte"))
+                }
+                startByte = s
+                endByte = e
+                text = try c.decode(String.self, forKey: .text)
+                if let p = try c.decodeIfPresent(String.self, forKey: .path), !p.isEmpty {
+                    path = p
+                } else {
+                    path = src?.path
+                }
+            }
+            public func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(startByte, forKey: .startByte)
+                try c.encode(endByte, forKey: .endByte)
+                try c.encode(text, forKey: .text)
+                if let path { try c.encode(path, forKey: .path) }
+            }
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case severity, message, source, recovery, code, suggestion, labels, notes, help
+        }
+
+        public init(severity: Severity, message: String, source: SourceRange?, recovery: String?,
+                    code: String? = nil, suggestion: String? = nil,
+                    labels: [Label]? = nil, notes: [String]? = nil, help: Help? = nil) {
             self.severity = severity; self.message = message; self.source = source; self.recovery = recovery
+            self.code = Self.emptyToNil(code); self.suggestion = suggestion
+            self.labels = Self.emptyToNil(labels); self.notes = Self.emptyToNil(notes); self.help = help
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            severity = try c.decode(Severity.self, forKey: .severity)
+            message = try c.decode(String.self, forKey: .message)
+            source = try c.decodeIfPresent(SourceRange.self, forKey: .source)
+            recovery = try c.decodeIfPresent(String.self, forKey: .recovery)
+            code = Self.emptyToNil(try c.decodeIfPresent(String.self, forKey: .code))
+            suggestion = try c.decodeIfPresent(String.self, forKey: .suggestion)
+            labels = Self.emptyToNil(try c.decodeIfPresent([Label].self, forKey: .labels))
+            notes = Self.emptyToNil(try c.decodeIfPresent([String].self, forKey: .notes))
+            help = try c.decodeIfPresent(Help.self, forKey: .help)
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(severity, forKey: .severity)
+            try c.encode(message, forKey: .message)
+            try c.encode(source, forKey: .source)
+            try c.encode(recovery, forKey: .recovery)
+            if let code { try c.encode(code, forKey: .code) }
+            if let suggestion { try c.encode(suggestion, forKey: .suggestion) }
+            if let labels { try c.encode(labels, forKey: .labels) }
+            if let notes { try c.encode(notes, forKey: .notes) }
+            if let help { try c.encode(help, forKey: .help) }
+        }
+
+        /// Path `replacement` edits: its own `path` if present, else this
+        /// diagnostic's `source.path`.
+        public func path(of replacement: Replacement) -> String? {
+            replacement.path ?? source?.path
+        }
+
+        private static func emptyToNil(_ s: String?) -> String? {
+            guard let s, !s.isEmpty else { return nil }
+            return s
+        }
+        private static func emptyToNil<T>(_ a: [T]?) -> [T]? {
+            guard let a, !a.isEmpty else { return nil }
+            return a
         }
     }
 
@@ -353,6 +561,10 @@ public enum RuntimeV1 {
         case unsupportedVersion(Int)
         case unexpectedType(expected: String, actual: String)
         case invalidLayoutCapabilities(String)
+        /// `payload.date` was not a `YYYY-MM-DD` civil date. The worker refuses
+        /// a malformed date rather than guessing at another one, so this is
+        /// caught here too rather than being sent and failing the compile.
+        case invalidDate(String)
     }
 
     /// Fast path first (FastJSON, same values for every valid frame); any

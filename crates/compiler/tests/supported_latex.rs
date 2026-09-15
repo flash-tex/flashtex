@@ -285,11 +285,48 @@ fn diagnostics(text: &str) -> Vec<String> {
 
 fn not_supported(messages: &[String], name: &str) -> Option<String> {
     let needle = format!("\\{name} is not supported");
-    messages.iter().find(|m| m.starts_with(&needle)).cloned()
+    let wrong_class = format!("\\{name} is defined by the letter");
+    messages
+        .iter()
+        // letter.cls commands are refused by their own message when the
+        // class is not `letter`. Without the second prefix this probe could
+        // not fail for any of them: an `\opening` diagnosed as "defined by
+        // the letter document class" sails past a match on "\opening is not
+        // supported", and the inventory row keeps claiming `renders: true`.
+        .find(|m| m.starts_with(&needle) || m.starts_with(&wrong_class))
+        .cloned()
+}
+
+/// A letter with everything `\opening` and `\closing` read already declared.
+/// `#` marks where a probe's own command goes.
+const LETTER_DOCUMENT: &str = "\\documentclass{letter}\n\\address{1 Example Street}\n\\signature{A. Author}\n\\begin{document}\n\\begin{letter}{A Name\\\\An Address}\n\\opening{Dear reader,}\nBody.\n#\n\\end{letter}\n\\end{document}\n";
+
+/// Where a letter.cls command has to sit to be exercised for real: the
+/// preamble declarations before `\begin{document}`, the rest inside an open
+/// letter. `None` for anything that is not a letter.cls command.
+fn letter_probe(name: &str, arguments: &str) -> Option<String> {
+    let source = match name {
+        "address" | "signature" | "name" | "location" | "telephone" | "makelabels" => {
+            LETTER_DOCUMENT.replace(
+                "\\begin{document}",
+                &format!(
+                    "{}\n\\begin{{document}}",
+                    with_arguments(name, arguments, "1pt")
+                ),
+            )
+        }
+        "opening" | "closing" | "cc" | "encl" | "ps" | "startbreaks" | "stopbreaks"
+        | "stopletter" => LETTER_DOCUMENT.replace('#', &with_arguments(name, arguments, "1pt")),
+        _ => return None,
+    };
+    Some(source.replace('#', ""))
 }
 
 /// A compilable use of `\name` built from its argument shape.
 fn text_probe(name: &str, arguments: &str) -> String {
+    if let Some(letter) = letter_probe(name, arguments) {
+        return letter;
+    }
     match name {
         "\\" => "a\\\\b".into(),
         "begin" | "end" => "\\begin{center}x\\end{center}".into(),
@@ -297,11 +334,32 @@ fn text_probe(name: &str, arguments: &str) -> String {
         "renewcommand" => "\\newcommand{\\foo}{x}\\renewcommand{\\foo}{y}\\foo".into(),
         "usepackage" => "\\usepackage{geometry}".into(),
         "setlength" => "\\setlength{\\parskip}{1pt}".into(),
+        "addtolength" => "\\addtolength{\\textwidth}{1pt}".into(),
         "setlist" => "\\setlist{itemsep=1pt}".into(),
         "item" => "\\begin{itemize}\\item x\\end{itemize}".into(),
+        // natbib's commands exist only once the package is loaded, and an
+        // author-year citation needs an `[Author(Year)]` entry to resolve to
+        // — exactly as `\item` needs its list around it.
+        n if natbib_command(n) => format!(
+            "\\usepackage{{natbib}}\\begin{{thebibliography}}{{9}}\\bibitem[Knuth(1984)]{{x}}A.\\end{{thebibliography}}{}",
+            with_arguments(n, arguments, "1pt")
+        ),
         "caption" => "\\begin{figure}\\caption{x}\\end{figure}".into(),
+        // A bare `{x}` test is not a valid `\ifthenelse` test (the engine
+        // reports "Missing test"), so probe the real form instead.
+        "ifthenelse" => "\\ifthenelse{\\equal{a}{a}}{yes}{no}".into(),
+        "captionof" => "\\captionof{figure}{x}".into(),
+        "uline" => "\\usepackage{ulem}\\uline{x}".into(),
+        "sout" => "\\usepackage{ulem}\\sout{x}".into(),
         _ => with_arguments(name, arguments, "1pt"),
     }
+}
+
+/// The natbib citation commands, which `\usepackage{natbib}` defines.
+fn natbib_command(name: &str) -> bool {
+    name != "cite"
+        && (name.starts_with("cite") || name.starts_with("Cite"))
+        && name != "citation"
 }
 
 fn with_arguments(name: &str, arguments: &str, dimension: &str) -> String {
@@ -365,6 +423,12 @@ fn every_inventory_entry_compiles_without_an_unsupported_diagnostic() {
     }
     for e in &inventory.environments {
         let (source, needle) = match e.mode {
+            // `letter` is the one text environment that exists in exactly
+            // one class, and it takes a mandatory recipient argument.
+            Mode::Text if e.name == "letter" => (
+                LETTER_DOCUMENT.replace('#', ""),
+                "environment 'letter' is not implemented".to_string(),
+            ),
             Mode::Text => (
                 format!(
                     "\\begin{{{0}}}{1}a\\end{{{0}}}",

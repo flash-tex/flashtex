@@ -45,7 +45,13 @@ pub struct MathAtom {
     /// `\mathbin`/`\mathrel`/`\mathord`/`\mathop`/`\mathopen`/`\mathclose`/
     /// `\mathpunct` family, which boxes an arbitrary math list as one atom of
     /// the stated class.
-    pub(crate) class_override: Option<AtomClass>,
+    ///
+    /// Public because the class cannot be recovered downstream: the render
+    /// pipeline re-derives it today by reading the control word back out of
+    /// the source at the atom's span (`typeset::class_override_of`), which
+    /// cannot tell `\colon`'s two definitions apart -- the kernel's is Punct
+    /// and amsmath's is Ord, from the same five characters of source.
+    pub class_override: Option<AtomClass>,
     /// Forces a symbol atom's advance, in ems of its size, when the glyph is
     /// shared by commands whose TeX fonts differ (`\varnothing` is msbm10's
     /// 0.777781em where `\emptyset`'s identical U+2205 is cmsy10's).
@@ -400,14 +406,189 @@ pub struct MathBox {
     pub descent: f64,
 }
 
-pub fn parse_tokens(tokens: &[Token], diagnostics: &mut Vec<Diagnostic>) -> MathList {
-    let (list, unclosed) = parse_tokens_reporting_unclosed(tokens, diagnostics, false);
+/// The loaded packages that change what a math command *means*.
+///
+/// Math parsing is otherwise package-blind, which silently picks the LaTeX
+/// kernel's definition for every construct a package redefines — the wrong one
+/// whenever the document loaded the package, which for amsmath is most
+/// documents that use the affected commands. The parser resolves this from the
+/// document class and `\usepackage` (`parser::P::math_packages`) and hands it
+/// to every entry point below; `MathPackages::KERNEL` is "nothing loaded", the
+/// definition in `fontmath.ltx`/`latex.ltx`.
+///
+/// Deliberately a plain `Copy` value passed down the parse, not a global: the
+/// same process compiles many documents, and `siunitx`'s thread-local settings
+/// are the mistake this is not repeating.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MathPackages {
+    /// `amsmath` is loaded, directly or by a package or class that loads it.
+    ///
+    /// Currently this only reaches `\colon`, which amsmath redefines
+    /// (`amsmath.sty` 409-410) from the kernel's `\mathpunct{:}` to
+    /// `\mskip2mu{:}\mskip6mu plus1mu` — 5mu wider in a formula, measured
+    /// against pdflatex. Other amsmath redefinitions the audit found are
+    /// listed on the pull request; each one that lands reads this same flag.
+    pub amsmath: bool,
+    /// `amssymb` is loaded, so the whole `AMSa`/`AMSb` (msam/msbm) inventory
+    /// of `amssymb.sty` exists.
+    ///
+    /// Without it base LaTeX2e has **no definition at all** for 203 of the
+    /// names in `crate::amssymb` (`\square`, `\nleq`, ... — every one probed
+    /// with `\ifcsname` under TeX Live 2025) and pdflatex answers "Undefined
+    /// control sequence". The table used to be applied unconditionally, which
+    /// made every such document silently diverge.
+    pub amssymb: bool,
+    /// `amsfonts` is loaded — by itself, or by `amssymb`, which requires it.
+    ///
+    /// `amsfonts.sty` declares a 22-name subset of the same symbol fonts
+    /// (`\ulcorner`, `\square`, `\yen`, the dashed arrows) plus the
+    /// `\mathbb`/`\mathfrak` alphabets, so `\usepackage{amsfonts}` alone
+    /// provides those and nothing else. Each symbol carries which of the two
+    /// files declares it (`amssymb::Provider`).
+    pub amsfonts: bool,
+    /// `mathtools` is loaded, so its colon-relation family exists
+    /// (`\eqqcolon`, `\Coloneqq`, `\Eqqcolon`, `\vcentcolon`, `\dblcolon`).
+    ///
+    /// Base LaTeX2e defines none of these five names (each probed with
+    /// `\ifcsname` under TeX Live 2025), so without `mathtools` pdflatex
+    /// answers "Undefined control sequence". `mathtools.sty` requires
+    /// `amsmath`, so this flag always arrives with `amsmath` set — see
+    /// `AMSMATH_PACKAGES`, which already lists `mathtools`.
+    pub mathtools: bool,
+}
+
+/// Packages that load amsmath, so that `\usepackage{X}` alone gives amsmath's
+/// definitions. Measured, not assumed: each name was confirmed by compiling
+/// `\documentclass[10pt]{article}\usepackage{X}` with TeX Live 2025 pdflatex
+/// and checking `\hbox{$a a\colon b b$}` against `\hbox{$a a\mathpunct{:}b b$}`
+/// (kernel, 23.5995pt) and `\hbox{$a a\mskip2mu{:}\mskip6mu plus1mu b b$}`
+/// (amsmath, 26.37721pt).
+///
+/// `amsthm`, `amssymb`, `amsfonts`, `amsopn`, `amsbsy`, `amscd`, `amstext`,
+/// `bm`, `unicode-math`, `siunitx`, `esint`, `breqn`, `cases`, `mathdots`,
+/// `thmtools`, `braket`, `cancel`, `tikz-cd` and `diagbox` measured as kernel
+/// and are deliberately absent.
+const AMSMATH_PACKAGES: &[&str] = &[
+    "amsmath",
+    "mathtools",
+    "empheq",
+    "physics",
+    "nccmath",
+    "aligned-overset",
+    "cool",
+    "commath",
+    "mismath",
+    "mhchem",
+    "chemformula",
+];
+
+/// Document classes that load amsmath before the preamble runs, measured the
+/// same way with an empty preamble. `article`, `report`, `book`, `memoir`,
+/// `scrartcl`, `scrbook`, `scrreprt`, `revtex4-2`, `elsarticle`, `IEEEtran`,
+/// `letter`, `proc`, `slides` and `amsdtx` measured as kernel.
+const AMSMATH_CLASSES: &[&str] = &["amsart", "amsbook", "amsproc", "acmart", "beamer"];
+
+/// Packages that make the full `amssymb` inventory exist. Measured the same
+/// way: `\documentclass[10pt]{article}\usepackage{X}` compiled with TeX Live
+/// 2025 pdflatex, asking `\ifcsname nleq\endcsname` (an `amssymb.sty`-only
+/// name) and `\ifcsname ulcorner\endcsname` (also in `amsfonts.sty`).
+///
+/// The eight non-AMS names are math *font* packages that really do
+/// `\RequirePackage{amssymb}`, so the commands exist; they then point the
+/// symbol fonts at their own faces, which this compiler does not model — a
+/// separate, pre-existing divergence, not one this gate introduces.
+///
+/// `libertinust1math` is deliberately absent although `\nleq` is defined
+/// under it: it defines part of the inventory itself without loading either
+/// AMS package (`\ulcorner`, `\yen`, `\mathfrak` and the dashed arrows stay
+/// undefined), so neither flag describes it. `fourier` and `siunitx` define
+/// `\square` alone by other means and are absent for the same reason.
+/// `amsthm`, `amsopn`, `amsbsy`, `amscd`, `amstext`, `bm`, `unicode-math`,
+/// `stmaryrd`, `wasysym`, `esint`, `mathrsfs`, `eucal`, `euler`, `mathpazo`,
+/// `mathptmx`, `mathdesign`, `concmath`, `dsfont`, `bbm`, `bbold`, `cmll`,
+/// `physics`, `mathtools` and 20 more measured as providing neither.
+const AMSSYMB_PACKAGES: &[&str] = &[
+    "amssymb",
+    "MnSymbol",
+    "txfonts",
+    "pxfonts",
+    "newtxmath",
+    "newpxmath",
+    "mathabx",
+    "kpfonts",
+    "cool",
+];
+
+/// Classes that load `amssymb` before the preamble runs. `amsart`, `amsbook`
+/// and `amsproc` load only `amsfonts` and are in `AMSFONTS_CLASSES` instead;
+/// `article`, `report`, `book`, `memoir`, `scrartcl`, `scrbook`, `scrreprt`,
+/// `revtex4-2`, `elsarticle`, `IEEEtran`, `letter`, `proc`, `slides` and
+/// `amsdtx` load neither.
+const AMSSYMB_CLASSES: &[&str] = &["acmart", "beamer"];
+
+/// Packages that make the `amsfonts.sty` subset exist without necessarily
+/// bringing the rest of `amssymb`. Every name in `AMSSYMB_PACKAGES` also
+/// measured as loading `amsfonts` (`amssymb.sty` requires it), so those are
+/// folded in by `load_package` rather than repeated here.
+const AMSFONTS_PACKAGES: &[&str] = &["amsfonts"];
+
+/// Classes that load `amsfonts`: the AMS classes load it (and `amsmath`) but
+/// not `amssymb`, so `\usepackage`-less `amsart` gets `\ulcorner` but not
+/// `\nleq` — measured.
+const AMSFONTS_CLASSES: &[&str] = &["amsart", "amsbook", "amsproc", "acmart", "beamer"];
+
+impl MathPackages {
+    /// Nothing loaded: every command takes its LaTeX kernel definition, and
+    /// every package-provided symbol is undefined.
+    pub const KERNEL: Self = Self {
+        amsmath: false,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: false,
+    };
+
+    /// Folds one `\documentclass` name in.
+    pub fn load_class(&mut self, class: &str) {
+        self.amsmath |= AMSMATH_CLASSES.contains(&class);
+        self.amssymb |= AMSSYMB_CLASSES.contains(&class);
+        self.amsfonts |= AMSFONTS_CLASSES.contains(&class);
+    }
+
+    /// Folds one `\usepackage`/`\RequirePackage` name in. Loading is
+    /// cumulative: no package unloads another's redefinitions.
+    pub fn load_package(&mut self, package: &str) {
+        self.amsmath |= AMSMATH_PACKAGES.contains(&package);
+        self.mathtools |= package == "mathtools";
+        let amssymb = AMSSYMB_PACKAGES.contains(&package);
+        self.amssymb |= amssymb;
+        // `amssymb.sty` line 8 is `\RequirePackage{amsfonts}`, so anything
+        // that gives the full inventory gives the subset too.
+        self.amsfonts |= amssymb || AMSFONTS_PACKAGES.contains(&package);
+    }
+
+    /// Whether a symbol of `crate::amssymb` is defined at all: the file that
+    /// declares it has to have been loaded.
+    pub fn provides(&self, symbol: &crate::amssymb::AmsSymbol) -> bool {
+        match symbol.provider {
+            crate::amssymb::Provider::Amsfonts => self.amsfonts,
+            crate::amssymb::Provider::Amssymb => self.amssymb,
+        }
+    }
+}
+
+pub fn parse_tokens(
+    tokens: &[Token],
+    packages: MathPackages,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> MathList {
+    let (list, unclosed) = parse_tokens_reporting_unclosed(tokens, packages, diagnostics, false);
     if let Some(open) = unclosed {
         diagnostics.push(Diagnostic::error(
             "math group is missing its closing brace",
             Some(open),
             Some("closed the group at the math delimiter".into()),
-        ));
+        )
+        .with_help("add a closing '}'"));
     }
     list
 }
@@ -425,6 +606,7 @@ pub fn parse_tokens(tokens: &[Token], diagnostics: &mut Vec<Diagnostic>) -> Math
 /// not typed yet, covered by the caller's diagnostic, and is not reported.
 pub fn parse_tokens_reporting_unclosed(
     tokens: &[Token],
+    packages: MathPackages,
     diagnostics: &mut Vec<Diagnostic>,
     cut_off: bool,
 ) -> (MathList, Option<Span>) {
@@ -434,6 +616,7 @@ pub fn parse_tokens_reporting_unclosed(
         i: 0,
         depth: 0,
         diagnostics,
+        packages,
         pending: Vec::new(),
         unclosed: None,
         cut_off,
@@ -457,14 +640,21 @@ pub fn is_math_environment(name: &str) -> bool {
 /// Exceeding the bound is an explicit diagnostic, not a crash.
 // Keep ample headroom for the command parser's stack frame on the macOS Swift
 // app's worker thread as the supported command set grows. The previous 256
-// limit could exhaust that thread before the guard was reached.
-pub const MAX_MATH_DEPTH: usize = 128;
+// limit could exhaust that thread before the guard was reached. The previous
+// 128 limit still overflowed debug builds: `\frac`/`\sqrt` nesting recurses
+// through several large frames per level (`list`/`list_inner`/`atom`/
+// `command_atom`/`required_group`) and aborts around 60 levels deep in debug,
+// before the guard is ever reached. This limit sits at half that measured
+// depth, so the guard fires first on every profile.
+pub const MAX_MATH_DEPTH: usize = 32;
 
 struct MathParser<'a> {
     tokens: &'a [Token],
     i: usize,
     depth: usize,
     diagnostics: &'a mut Vec<Diagnostic>,
+    /// The packages whose redefinitions apply to this list (`MathPackages`).
+    packages: MathPackages,
     /// Atoms produced by the last `atom()` call beyond the one it returned
     /// (a flattened style group, a root index), in order after it.
     pending: Vec<MathAtom>,
@@ -478,7 +668,11 @@ struct MathParser<'a> {
 
 impl MathParser<'_> {
     fn list(&mut self, stop_at_brace: bool) -> MathList {
-        if self.depth >= MAX_MATH_DEPTH {
+        // `>` (not `>=`): the outermost list occupies one depth unit, so
+        // nesting of exactly `MAX_MATH_DEPTH` still parses cleanly and the
+        // diagnostic fires first at one level past the limit — matching
+        // `required_text_group`'s `depth > MAX_MATH_DEPTH` check below.
+        if self.depth > MAX_MATH_DEPTH {
             // Consume the rest so the caller cannot loop on the same tokens.
             let span = self.tokens.get(self.i).map(|t| t.span);
             self.diagnostics.push(Diagnostic::error(
@@ -731,13 +925,17 @@ impl MathParser<'_> {
                         return Some(space(mu / 18.0, token.span));
                     }
                     if ch == '|' {
-                        return Some(symbol("∣∣".into(), token.span));
+                        return Some(symbol("‖".into(), token.span));
                     }
                 }
                 Some(symbol(ch.to_string(), span))
             }
             TokenKind::Command(name) => Some(self.command_atom(name, token.span)),
-            TokenKind::DisplayMathOpen | TokenKind::DisplayMathClose | TokenKind::MathShift => {
+            TokenKind::DisplayMathOpen
+            | TokenKind::DisplayMathClose
+            | TokenKind::InlineMathOpen
+            | TokenKind::InlineMathClose
+            | TokenKind::MathShift => {
                 self.diagnostics.push(Diagnostic::error(
                     "unexpected math delimiter inside math mode",
                     Some(token.span),
@@ -764,7 +962,36 @@ impl MathParser<'_> {
         }
     }
 
+    /// A command whose defining package the document did not load.
+    ///
+    /// pdflatex's own answer is `! Undefined control sequence`, which typesets
+    /// nothing and carries on; this reports the missing `\usepackage` by name
+    /// — the actionable half — and falls back to the same literal recovery
+    /// every unsupported math command already uses, so the divergence is
+    /// visible in the output as well as in the diagnostics.
+    fn missing_package(&mut self, name: &str, package: &str, span: Span) -> MathAtom {
+        self.diagnostics.push(Diagnostic::command_error(
+            name,
+            format!("\\{name} requires \\usepackage{{{package}}}"),
+            Some(span),
+            Some("typeset the command literally and continued".into()),
+        )
+        .with_help(format!("add \\usepackage{{{package}}} in the preamble")));
+        symbol(format!("\\{name}"), span)
+    }
+
     fn command_atom(&mut self, name: String, span: Span) -> MathAtom {
+        // The `amsfonts.sty` math alphabets (`\mathbb` 108, `\mathfrak` 106)
+        // and its two obsolete spellings exist only once the package is
+        // loaded; base LaTeX2e has no definition for any of the four, so
+        // pdflatex answers "Undefined control sequence". `\mathbf`, which
+        // `\bold` stands for, is the kernel's and stays unconditional — the
+        // gate is on the spelling the document wrote, before the alias below.
+        if matches!(name.as_str(), "mathbb" | "mathfrak" | "Bbb" | "bold")
+            && !self.packages.amsfonts
+        {
+            return self.missing_package(&name, "amsfonts", span);
+        }
         // amsfonts' obsolete `\Bbb` and `\bold` (`amsfonts.sty` 111-116) are
         // `\mathbb` and `\mathbf` after an obsolescence warning.
         let name = match name.as_str() {
@@ -790,6 +1017,114 @@ impl MathParser<'_> {
                 self.pending.push(space(5.0 / 18.0, span));
                 space(5.0 / 18.0, span)
             }
+            // `\colon` sets the same character as a bare `:` but never that
+            // character's class. The kernel declares it punctuation
+            // (`fontmath.ltx` 400, `\DeclareMathSymbol{\colon}{\mathpunct}
+            // {operators}{"3A}`) where `:` itself is a relation (line 385):
+            // 0mu before and 3mu after, not 5mu on each side.
+            //
+            // amsmath renews it (`amsmath.sty` 409-410) to
+            // `\nobreak\mskip2mu\mathpunct{}\nonscript\mkern-\thinmuskip{:}%
+            // \mskip6mu plus1mu\relax`. The empty punctuation atom's 3mu is
+            // exactly cancelled by the negative kern behind it, so what is
+            // left is an *ordinary* `:` with 2mu of glue before and 6mu
+            // after — 5mu wider than the kernel's, and most documents that
+            // write `\colon` load amsmath.
+            //
+            // Measured at 10pt against TeX Live 2025 pdflatex, with
+            // `\hbox{$ab$}` = 9.57755pt as the control: `\hbox{$a\colon b$}`
+            // is 14.02196pt without amsmath and 16.79967pt with it. The
+            // three-atom form below reproduces amsmath's box to the scaled
+            // point in text, display, script and scriptscript style.
+            "colon" if self.packages.amsmath => {
+                self.pending.push(MathAtom {
+                    class_override: Some(AtomClass::Ord),
+                    ..symbol(":".into(), span)
+                });
+                self.pending.push(space(6.0 / 18.0, span));
+                space(2.0 / 18.0, span)
+            }
+            "colon" => MathAtom {
+                class_override: Some(AtomClass::Punct),
+                ..symbol(":".into(), span)
+            },
+            // mathtools' colon-relation family needs `\usepackage{mathtools}`:
+            // base LaTeX2e defines none of these five names (each probed with
+            // `\ifcsname` under TeX Live 2025), so without it pdflatex answers
+            // "Undefined control sequence".
+            "eqqcolon" | "Coloneqq" | "Eqqcolon" | "vcentcolon" | "dblcolon"
+                if !self.packages.mathtools =>
+            {
+                self.missing_package(&name, "mathtools", span)
+            }
+            // mathtools.sty 486-507 (legacycolonsymbols, `kpsewhich
+            // mathtools.sty`): every multi-glyph member of this family is
+            // built from `\vcentcolon`/`=` joined by an explicit negative
+            // `\mkern`, not by adjacency — the kern REPLACES the normal
+            // inter-atom spacing TeX would otherwise insert between two
+            // relation glyphs, it does not add to it. `mkern` below converts
+            // mu to font-relative em (`QUAD_EM` = 18mu) via the same
+            // `space(n / 18.0, span)` convention the `"colon"` arm above
+            // already uses for amsmath's measured 6mu/2mu split. A
+            // `Nucleus::Space` atom carries no class, so — like `\,`/`\quad`
+            // — layout skips normal class-pair spacing across it (see this
+            // enum's own doc comment on `Nucleus`), leaving exactly the
+            // written kern between the two glyphs, not kern-plus-Rel-Rel-gap.
+            //
+            // `\eqqcolon` ("=:") = `= \mathrel{\mkern-1.2mu} \vcentcolon`.
+            "eqqcolon" => {
+                let atoms = vec![symbol("=".into(), span), mkern(-1.2, span), vcentcolon_atom(span)];
+                MathAtom {
+                    nucleus: Nucleus::Group(MathList { atoms }),
+                    class_override: Some(AtomClass::Rel),
+                    ..symbol(String::new(), span)
+                }
+            }
+            // `\Coloneqq` ("::=") = `\dblcolon \mathrel{\mkern-1.2mu} =`.
+            "Coloneqq" => {
+                let atoms = vec![
+                    vcentcolon_atom(span),
+                    mkern(-0.9, span),
+                    vcentcolon_atom(span),
+                    mkern(-1.2, span),
+                    symbol("=".into(), span),
+                ];
+                MathAtom {
+                    nucleus: Nucleus::Group(MathList { atoms }),
+                    class_override: Some(AtomClass::Rel),
+                    ..symbol(String::new(), span)
+                }
+            }
+            // `\Eqqcolon` ("=::") = `= \mathrel{\mkern-1.2mu} \dblcolon`.
+            "Eqqcolon" => {
+                let atoms = vec![
+                    symbol("=".into(), span),
+                    mkern(-1.2, span),
+                    vcentcolon_atom(span),
+                    mkern(-0.9, span),
+                    vcentcolon_atom(span),
+                ];
+                MathAtom {
+                    nucleus: Nucleus::Group(MathList { atoms }),
+                    class_override: Some(AtomClass::Rel),
+                    ..symbol(String::new(), span)
+                }
+            }
+            // mathtools' `\vcentcolon` is the SAME base glyph as kernel
+            // `\colon` above (the operators-family `"3A` character, plain
+            // `":"`), just given `\mathrel` spacing instead of `\mathpunct`
+            // spacing — so it is built the same structural way, with Rel
+            // forced instead of Punct. NOT U+2236 RATIO, which would render a
+            // visually different glyph than pdfLaTeX actually produces.
+            "vcentcolon" => vcentcolon_atom(span),
+            // `\dblcolon` ("::") = `\vcentcolon \mathrel{\mkern-.9mu} \vcentcolon`.
+            "dblcolon" => MathAtom {
+                nucleus: Nucleus::Group(MathList {
+                    atoms: vec![vcentcolon_atom(span), mkern(-0.9, span), vcentcolon_atom(span)],
+                }),
+                class_override: Some(AtomClass::Rel),
+                ..symbol(String::new(), span)
+            },
             // `\bot` renders the exact same Symbol glyph as `\perp`
             // (U+22A5), but is Ord where `\perp` is Rel; `symbol_class` is
             // keyed by glyph, so the class must be forced on the atom instead
@@ -1012,7 +1347,44 @@ impl MathParser<'_> {
             "lbrace" => symbol("{".into(), span),
             "rbrace" => symbol("}".into(), span),
             "iiint" => symbol("∫∫∫".into(), span),
-            "bmod" | "mod" => text_atom("mod".into(), span),
+            // `\bmod` is not a bare `\mathbin` (`latex.ltx` 15703-15706):
+            //
+            //   \nonscript\mskip-\medmuskip\mkern5mu
+            //   \mathbin{\operator@font mod}\penalty900
+            //   \mkern5mu\nonscript\mskip-\medmuskip
+            //
+            // so the 4mu the Bin class contributes is cancelled and 5mu put in
+            // its place — 1mu more on each side than the class alone, and the
+            // same under amsmath, which does not touch it. The extra mu is
+            // added around the Bin atom rather than replacing it, so TeX's
+            // Bin-with-no-left-operand rule still applies and the boundary
+            // cases come out right.
+            //
+            // Measured with TeX Live 2025 pdflatex at 10pt, `\mathrm{mod}`
+            // being the same letters as an ordinary atom:
+            //
+            //   $a\bmod b$     34.29970   $a\mathrm{mod}b$   28.74428  (+10mu)
+            //   $\bmod b$      24.56947   $\mathrm{mod}b$    23.45839  (+2mu)
+            //   $\bmod$        20.27782   $\mathrm{mod}$     19.16673  (+2mu)
+            //
+            // and `$a\mkern5mu\mathrm{mod}\mkern5mu b$` is 34.29970 exactly.
+            // The rows with 2mu are the Bin degrading to Ord at a boundary,
+            // where only the explicit 5mu and the -4mu survive.
+            //
+            // Residual: the two `\nonscript`s drop the -4mu in script styles,
+            // where the Bin class contributes nothing either, so pdflatex
+            // keeps the full 5mu there and this keeps 1mu. That needs a
+            // style-aware kern, which no atom here carries.
+            "bmod" => {
+                self.pending.push(text_atom("mod".into(), span));
+                self.pending.push(space(BMOD_EXTRA_MU / 18.0, span));
+                space(BMOD_EXTRA_MU / 18.0, span)
+            }
+            // amsmath's `\mod` (`amsmath.sty` 726-728) is a different command
+            // with a different kern and no parentheses, and is undefined in
+            // base LaTeX2e; it is left exactly as it was, with the rest of the
+            // amsmath-provided constructs.
+            "mod" => text_atom("mod".into(), span),
             // amsmath.sty lines 237-241: `\dfrac` = `\genfrac{}{}{}0`,
             // `\tfrac` = `\genfrac{}{}{}1`, `\binom` = `\genfrac()\z@{}`,
             // `\dbinom` = `\genfrac(){0pt}0`, `\tbinom` = `\genfrac(){0pt}1`.
@@ -1189,13 +1561,36 @@ impl MathParser<'_> {
                     .push(text_atom(label, span.merge(argument_span)));
                 text_space(2.0 * QUAD_EM, span)
             }
+            // The kernel's `\pmod` (`latex.ltx` 15709) opens with
+            // `\mkern18mu`; amsmath renews it through `\pod`, which is
+            // `\if@display\mkern18mu\else\mkern8mu\fi` (`amsmath.sty`
+            // 719-724), so **inline** it is 10mu narrower while display is
+            // byte-identical. Both then set `(mod` + 6mu + the argument + `)`
+            // — the kernel as `\,\,`, amsmath as `\mkern6mu`.
+            //
+            // Measured with TeX Live 2025 pdflatex at 10pt: `\hbox{$a\pmod
+            // {y}$}` is 50.82503pt under the kernel and 45.26960pt under
+            // amsmath, matching `$a\mkern18mu(\mathrm{mod}\mkern6mu y)$` and
+            // `$a\mkern8mu(...)$` exactly; `\hbox{$\pmod{y}$}` alone is
+            // 45.53914 against 39.98372, the same 10mu. Setting
+            // `\@displaytrue` by hand puts amsmath back on 50.82503, which is
+            // what makes the display case identical.
+            //
+            // This compiler has no display flag on the atom, so the inline
+            // definition is the one that moves; every display formula reaches
+            // the same 18mu it does today.
             "pmod" => {
                 let body = self.required_group("pmod", span);
                 self.pending.push(text_atom("(mod".into(), span));
                 self.pending.push(space(6.0 / 18.0, span));
                 self.pending.extend(body.atoms);
                 self.pending.push(text_atom(")".into(), span));
-                space(QUAD_EM, span)
+                let opening = if self.packages.amsmath {
+                    AMSMATH_POD_MU / 18.0
+                } else {
+                    QUAD_EM
+                };
+                space(opening, span)
             }
             // siunitx inside a formula (`crate::siunitx`).
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
@@ -1283,6 +1678,11 @@ impl MathParser<'_> {
                 }
             }
             // amssymb: msbm10 char "3F, 0.777781em (cmsy10's \emptyset is 0.5em).
+            // Its own arm rather than a table row, so it needs its own gate;
+            // `\emptyset`, the kernel's cmsy10 "3B, is not affected.
+            "varnothing" if !self.packages.amssymb => {
+                self.missing_package(&name, "amssymb", span)
+            }
             "varnothing" => MathAtom {
                 width_em: Some(VARNOTHING_MSBM_EM),
                 ..symbol("∅".into(), span)
@@ -1299,6 +1699,43 @@ impl MathParser<'_> {
             "grave" => self.accent_atom(Accent::Grave, span),
             "widehat" => self.accent_atom(Accent::WideHat, span),
             "widetilde" => self.accent_atom(Accent::WideTilde, span),
+            // The dashed arrows are drawn from msam pieces `amsfonts.sty`
+            // declares, so without the package there is nothing to draw with
+            // and pdflatex answers "Undefined control sequence".
+            "dashrightarrow" | "dasharrow" | "dashleftarrow" if !self.packages.amsfonts => {
+                self.missing_package(&name, "amsfonts", span)
+            }
+            // `\angle` and `\hbar` are the two commands of this inventory that
+            // base LaTeX2e *does* define and amsfonts replaces with a single
+            // msam/msbm glyph of different metrics, so an unloaded document
+            // gets the kernel composite rather than an error. `fontmath.ltx`
+            // 243 builds `\angle` from an `\ialign` of rules and 241 sets
+            // `\hbar` as `\mathchar'26\mkern-9mu h`; measured with TeX Live
+            // 2025 pdflatex at 10pt, `\hbox{$\angle$}` is 6.37344pt against
+            // amssymb's 7.22223pt and `\hbox{$\hbar$}` 5.76172pt against
+            // 5.40280pt. (The `\hbar` composite reproduces exactly: the
+            // macron is 5.00002pt, `\mkern-9mu` is -4.99988pt and math italic
+            // `h` is 5.76158pt.) `\rightleftharpoons` is the third such
+            // command; this compiler has no row for it at all, so there is
+            // nothing to gate yet.
+            //
+            // Only the advance is forced here: the nearest Latin Modern Math
+            // character stays the glyph either way, because the kernel's
+            // `\angle` is a rule drawing with no character to name and the
+            // barred `h` is what U+210F already shows.
+            "angle" | "hbar" if !self.packages.amsfonts => MathAtom {
+                width_em: Some(if name == "angle" {
+                    KERNEL_ANGLE_EM
+                } else {
+                    KERNEL_HBAR_EM
+                }),
+                ..symbol(
+                    command_glyph(&name)
+                        .expect("\\angle and \\hbar have kernel glyph rows")
+                        .into(),
+                    span,
+                )
+            },
             // amsfonts `\dashrightarrow` = `\mathrel{\dabar@\dabar@\mathchar"0\hexnumber@
             // \symAMSa 4B}` (`\dasharrow` its alias) and `\dashleftarrow` with the
             // "4C head first (`amsfonts.sty` 87-95).
@@ -1322,9 +1759,23 @@ impl MathParser<'_> {
             }
             // amssymb/amsfonts symbols take precedence over the older glyph
             // rows for the same names (`\square`, `\nleq`, ...): they carry
-            // the msam/msbm slot and declared class pdfLaTeX sets.
+            // the msam/msbm slot and declared class pdfLaTeX sets — but only
+            // once the document has loaded the file that declares them.
             _ => match (crate::amssymb::by_name(&name), command_glyph(&name)) {
-                (Some(ams), _) => ams_atom(ams, span),
+                (Some(ams), _) if self.packages.provides(ams) => ams_atom(ams, span),
+                // Base LaTeX2e defines none of these 212 names (every one
+                // probed with `\ifcsname` under TeX Live 2025), so pdflatex
+                // answers "Undefined control sequence" and typesets nothing.
+                // A `COMMAND_GLYPHS` row for the same name must not stand in
+                // for the package: rendering it anyway is the divergence this
+                // gate closes, and it was table-wide.
+                (Some(ams), _) => {
+                    let package = match ams.provider {
+                        crate::amssymb::Provider::Amsfonts => "amsfonts",
+                        crate::amssymb::Provider::Amssymb => "amssymb",
+                    };
+                    self.missing_package(&name, package, span)
+                }
                 (None, Some(glyph)) => symbol(glyph.into(), span),
                 (None, None) => {
                     self.diagnostics.push(Diagnostic::command_error(
@@ -1332,7 +1783,9 @@ impl MathParser<'_> {
                         format!("\\{} is not supported in math mode", name),
                         Some(span),
                         Some("typeset the command literally and continued".into()),
-                    ));
+                    )
+                    .with_optional_help(crate::vocabulary::math_mode_help(&name))
+                    .with_label(span, "this command", true));
                     symbol(format!("\\{}", name), span)
                 }
             },
@@ -1379,6 +1832,7 @@ impl MathParser<'_> {
             pre_unit.as_deref(),
             &args,
             true,
+            self.packages,
             full,
             self.diagnostics,
         )
@@ -1546,7 +2000,8 @@ impl MathParser<'_> {
             format!("\\{command} argument is missing its closing brace"),
             Some(open.merge(end)),
             Some("used the text up to the end of the formula".into()),
-        ));
+        )
+        .with_help("add a closing '}'"));
         (text, open.merge(end))
     }
 
@@ -1590,6 +2045,7 @@ impl MathParser<'_> {
             i: 0,
             depth: self.depth,
             diagnostics: self.diagnostics,
+            packages: self.packages,
             pending: Vec::new(),
             unclosed: None,
             cut_off: false,
@@ -1600,7 +2056,8 @@ impl MathParser<'_> {
                 "math group is missing its closing brace",
                 Some(open),
                 Some("closed the group at the math delimiter".into()),
-            ));
+            )
+            .with_help("add a closing '}'"));
         }
         list
     }
@@ -1658,7 +2115,7 @@ impl MathParser<'_> {
                 "lbrace" => Some("{"),
                 "rbrace" => Some("}"),
                 "vert" => Some("|"),
-                "Vert" => Some("∣∣"),
+                "Vert" => Some("‖"),
                 other => command_glyph(other).filter(|_| DELIMITER_COMMANDS.contains(&other)),
             };
             if let Some(glyph) = glyph {
@@ -1681,7 +2138,7 @@ impl MathParser<'_> {
         }
         if delimiter == "|" && token.span.end - token.span.start == 2 {
             self.i += 1;
-            return symbol("∣∣".into(), span.merge(token.span));
+            return symbol("‖".into(), span.merge(token.span));
         }
         if delimiter.chars().count() != 1 || !"()[]{}|./<>".contains(delimiter.as_str()) {
             self.diagnostics.push(Diagnostic::error(
@@ -1834,6 +2291,8 @@ impl MathParser<'_> {
                 TokenKind::MathShift
                 | TokenKind::DisplayMathOpen
                 | TokenKind::DisplayMathClose
+                | TokenKind::InlineMathOpen
+                | TokenKind::InlineMathClose
                 | TokenKind::Superscript
                 | TokenKind::Subscript => {
                     self.diagnostics.push(Diagnostic::error(
@@ -1845,6 +2304,8 @@ impl MathParser<'_> {
                         TokenKind::MathShift => "$",
                         TokenKind::DisplayMathOpen => "\\[",
                         TokenKind::DisplayMathClose => "\\]",
+                        TokenKind::InlineMathOpen => "\\(",
+                        TokenKind::InlineMathClose => "\\)",
                         TokenKind::Superscript => "^",
                         TokenKind::Subscript => "_",
                         _ => unreachable!(),
@@ -1857,7 +2318,8 @@ impl MathParser<'_> {
             format!("argument to \\{command} is missing its closing brace"),
             Some(open.span),
             Some("closed the text argument at the math delimiter".into()),
-        ));
+        )
+        .with_help("add a closing '}'"));
         (text, open.span.merge(end))
     }
 
@@ -2152,7 +2614,8 @@ impl MathParser<'_> {
                 format!("\\{command} argument is missing its closing brace"),
                 Some(span),
                 Some("closed the argument at the end of the formula".into()),
-            ));
+            )
+            .with_help("add a closing '}'"));
         }
         self.i = (end + 1).min(self.tokens.len());
         let mut rows = Vec::new();
@@ -2236,6 +2699,28 @@ fn operator_body(list: MathList) -> MathList {
 /// `\varnothing`'s advance in ems: msbm10.tfm character "3F (CHARWD R 0.777781).
 pub(crate) const VARNOTHING_MSBM_EM: f64 = 0.777781;
 
+/// The mu `\bmod` adds on each side beyond the 4mu of its Bin class: its
+/// definition cancels `\medmuskip` and puts an explicit `\mkern5mu` there.
+pub(crate) const BMOD_EXTRA_MU: f64 = 1.0;
+
+/// The mu amsmath's `\pod` opens with in a non-display formula, against the
+/// kernel's 18mu (`QUAD_EM`).
+pub(crate) const AMSMATH_POD_MU: f64 = 8.0;
+
+/// The kernel `\angle`'s advance in ems, without amsfonts: `fontmath.ltx` 243
+/// builds it from an `\ialign` of rules, so it has no character and no font —
+/// `\showthe\wd` of `\hbox{$\angle$}` is 6.37344pt at every size from 10pt,
+/// and the same 6.37344pt in `\scriptstyle`, TeX Live 2025. amsfonts replaces
+/// it with msam "5A, 0.722224em.
+pub(crate) const KERNEL_ANGLE_EM: f64 = 0.637344;
+
+/// The kernel `\hbar`'s advance in ems, without amsfonts: `fontmath.ltx` 241
+/// is `{\mathchar'26\mkern-9mu h}` — the OT1 macron (0.500002em), `\mkern-9mu`
+/// (-0.499988em) and math italic `h` (0.576158em), which sum to the 0.576172em
+/// `\showthe\wd` of `\hbox{$\hbar$}` reports. amsfonts replaces it with msbm
+/// "7E, 0.540280em.
+pub(crate) const KERNEL_HBAR_EM: f64 = 0.576172;
+
 /// The Unicode mathematical alphanumeric symbol that stands for `ch` in the
 /// math alphabet of `command`: `\mathsf` sans-serif (U+1D5A0, digits
 /// U+1D7E2), `\mathtt` monospace (U+1D670, digits U+1D7F6), `\mathit`
@@ -2278,6 +2763,43 @@ fn symbol(text: String, span: Span) -> MathAtom {
         width_em: None,
         ams_symbol: None,
     }
+}
+
+/// mathtools' `\vcentcolon`: the plain `":"` with `\mathrel` spacing. Shared
+/// by the `"vcentcolon"` arm and `"dblcolon"`, which is two of these atoms.
+///
+/// mathtools defines it as `\mathrel{\mathop\ordinarycolon}`: the `\mathop`
+/// centres the colon's ink on the math axis. The actual raise happens in
+/// `layout_nucleus` (see `vcentcolon_raise`), which recognises exactly these
+/// atoms: this is the only `":"` carrying a forced `Rel` class (kernel
+/// `\colon` is `Punct`, amsmath's is `Ord`, a literal `:` has none).
+fn vcentcolon_atom(span: Span) -> MathAtom {
+    MathAtom {
+        class_override: Some(AtomClass::Rel),
+        ..symbol(":".into(), span)
+    }
+}
+
+/// How far a `\vcentcolon` colon rises above the math baseline, in points.
+///
+/// The colon's dots span the text face's x-height (the bottom dot sits on
+/// the baseline), so the ink centre is half the real x-height above the
+/// item baseline and the raise is what is left to reach
+/// `MATH_AXIS_EM * size` — the same axis-minus-visual-centre pattern the
+/// fence baseline in `layout_matrix` uses, not a guessed offset. The
+/// x-height comes from the same real font metric `layout_accent` uses
+/// (`crate::layout::x_height_pt`) rather than a constant from nowhere.
+fn vcentcolon_raise(size: f64) -> f64 {
+    MATH_AXIS_EM * size - crate::layout::x_height_pt(crate::layout::Font::TimesRoman, size) / 2.0
+}
+
+/// An explicit `\mkern<mu>mu` as mathtools.sty writes it between two colon
+/// glyphs: `mu` math units, converted to the font-relative em `space` already
+/// takes (`QUAD_EM` = 18mu, the same conversion the `"colon"` arm above uses
+/// for amsmath's measured 6mu/2mu). A negative `mu` is a real, intentional
+/// mathtools value (tightening two adjacent colon glyphs), not a mistake.
+fn mkern(mu: f64, span: Span) -> MathAtom {
+    space(mu / 18.0, span)
 }
 
 /// Scales a delimiter taken by `\big`..`\Biggm`. The null delimiter (a zero
@@ -2466,16 +2988,33 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("prime", "′"),
     ("cup", "∪"),
     ("cap", "∩"),
+    // The cmsy square relations are base LaTeX2e kernel symbols, not amssymb:
+    // `fontmath.ltx` 279/278 declare `\sqcup`/`\sqcap` `\mathbin` at symbols
+    // "74/"75 and 301/302 `\sqsubseteq`/`\sqsupseteq` `\mathrel` at "76/"77.
+    // (amsfonts adds only the strict `\sqsubset`/`\sqsupset`, from msam.)
+    // Verified with pdfTeX 3.141592653 (TeX Live 2025): `\show` gives
+    // \mathchar"2274/"2275/"3276/"3277 both with and without amssymb, and at
+    // 10pt against the 9.57755pt `$ab$` control, `$a\sqcup b$` is 20.68857pt
+    // (glyph 6.66669pt + 8mu, so Bin) and `$a\sqsubseteq b$` 22.91077pt
+    // (glyph 7.7778pt + 10mu, so Rel).
+    ("sqcup", "⊔"),
+    ("sqcap", "⊓"),
     ("subset", "⊂"),
     ("subseteq", "⊆"),
+    ("sqsubseteq", "⊑"),
     ("supset", "⊃"),
     ("supseteq", "⊇"),
+    ("sqsupseteq", "⊒"),
     ("notin", "∉"),
     ("ni", "∋"),
     ("emptyset", "∅"),
     ("varnothing", "∅"),
     ("oplus", "⊕"),
     ("otimes", "⊗"),
+    ("ominus", "⊖"),
+    ("oslash", "⊘"),
+    ("odot", "⊙"),
+    ("bigcirc", "◯"),
     ("wedge", "∧"),
     ("land", "∧"),
     ("lor", "∨"),
@@ -2500,13 +3039,21 @@ pub const COMMAND_GLYPHS: &[(&str, &str)] = &[
     ("Re", "ℜ"),
     ("Im", "ℑ"),
     ("wp", "℘"),
-    ("langle", "〈"),
-    ("rangle", "〉"),
+    ("langle", "⟨"),
+    ("rangle", "⟩"),
     ("lvert", "∣"),
     ("rvert", "∣"),
-    // Symbol has no double bar U+2016: two real verticalbar glyphs.
-    ("lVert", "∣∣"),
-    ("rVert", "∣∣"),
+    // `\|`/`\Vert`/`\lVert`/`\rVert` are U+2016 DOUBLE VERTICAL LINE, a
+    // different symbol from `\mid`'s U+2223: plain.tex gives `\Vert` the
+    // cmsy `"6B` small variant and the cmex `"0D` extensible recipe, where
+    // `\mid` gets cmsy `"6A`/cmex `"0C`. They differ in width at every size
+    // (5.00002/5.55557 pt against 2.77779/3.33333 at 10 pt), so spelling one
+    // as two of the other is wrong in the box, not only in the ink. The
+    // base-14 Symbol face has no double bar, but U+2016 is drawn from the
+    // pinned Latin Modern Math resource (`crate::lm_math`) exactly as
+    // `\parallel`'s U+2225 already is.
+    ("lVert", "‖"),
+    ("rVert", "‖"),
     ("times", "×"),
     ("div", "÷"),
     ("pm", "±"),
@@ -2665,7 +3212,7 @@ fn takes_display_limits(nucleus: &Nucleus) -> bool {
 
 /// TeX's atom classes (TeXbook Chapter 17), which drive inter-atom spacing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AtomClass {
+pub enum AtomClass {
     Ord,
     Op,
     Bin,
@@ -2740,9 +3287,14 @@ fn symbol_class(glyph: &str) -> AtomClass {
         // HW2 follow-up: the remaining long arrows (issue #62), also from the
         // pinned Latin Modern Math resource. `⊥` above is `\perp`'s glyph;
         // `\bot` shares it but overrides the class to Ord (see `command_atom`).
-        | "⟺" | "⟶" | "⟵" | "⟸" | "⟷" => Rel,
+        | "⟺" | "⟶" | "⟵" | "⟸" | "⟷"
+        // fontmath.ltx 301-302: `\sqsubseteq`/`\sqsupseteq`, `\mathrel` at
+        // cmsy "76/"77 (kernel, not amssymb).
+        | "⊑" | "⊒" => Rel,
         "+" | "-" | "−" | "*" | "±" | "×" | "÷" | "⋅" | "·" | "∗" | "∪" | "∩" | "∨" | "∧" | "⊕"
-        | "⊗" | "∖" | "∓" | "∘"
+        | "⊗" | "⊖" | "⊘" | "⊙" | "◯" | "∖" | "∓" | "∘"
+        // fontmath.ltx 278-279: `\sqcap`/`\sqcup`, `\mathbin` at cmsy "75/"74.
+        | "⊓" | "⊔"
         // `\bigtriangledown`; `\bigtriangleup` shares `\triangle`'s glyph
         // (Ord by default here) and overrides its class to Bin instead.
         | "▽" => Bin,
@@ -2819,13 +3371,47 @@ fn layout_list_with(
     display: bool,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> MathBox {
+    let delimiter_scales = left_right_stretch_scales(list, size, root_size, level, display);
+    layout_list_with_scales(
+        list,
+        &delimiter_scales,
+        size,
+        root_size,
+        level,
+        display,
+        diagnostics,
+    )
+}
+
+/// The atom-by-atom half of [`layout_list_with`]: lays `list` out, stretching
+/// each matched `\left`/`\right` nucleus by the corresponding entry of
+/// `delimiter_scales` (one slot per atom, as returned by
+/// [`left_right_stretch_scales`]).
+///
+/// Split out so the stretch pre-pass can measure a pair's content with the
+/// already-computed inner scales instead of re-deriving them through a fresh
+/// recursive layout, which duplicated the whole inner layout once per
+/// enclosing level (exponential in nesting depth).
+fn layout_list_with_scales(
+    list: &MathList,
+    delimiter_scales: &[Option<f64>],
+    size: f64,
+    root_size: f64,
+    level: usize,
+    display: bool,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> MathBox {
+    debug_assert_eq!(
+        delimiter_scales.len(),
+        list.atoms.len(),
+        "one stretch slot per atom"
+    );
     let mut out = MathBox {
         items: Vec::new(),
         width: 0.0,
         ascent: size,
         descent: 0.2 * size,
     };
-    let delimiter_scales = left_right_stretch_scales(list, size, root_size, level, display);
     let classes = spacing_classes(list);
     let mut previous_class = None;
     for (index, (atom, class)) in list.atoms.iter().zip(classes).enumerate() {
@@ -2939,6 +3525,15 @@ fn layout_list_with(
 /// before it ever reaches this list — is left `None` and stays at its parsed
 /// scale of 1, the same as plain TeX leaves a runaway fence alone rather than
 /// guessing a size for it.
+///
+/// Pairs are measured innermost-first in a single pass: stack matching pops
+/// the inner `\right` before the outer one, so when a pair closes, every pair
+/// nested inside it already has its final scale in `scales` (stack matching
+/// never straddles pair boundaries, so no later pair can touch those slots).
+/// The content is therefore measured with [`layout_list_with_scales`] reusing
+/// those inner scales instead of a fresh recursive [`layout_list_with`] —
+/// each atom is measured once per enclosing level (quadratic in nesting
+/// depth), not re-derived once per level (exponential).
 fn left_right_stretch_scales(
     list: &MathList,
     size: f64,
@@ -2963,8 +3558,15 @@ fn left_right_stretch_scales(
                 // once, by the atom-by-atom pass below that actually lays
                 // this list out.
                 let mut scratch = Vec::new();
-                let content_box =
-                    layout_list_with(&content, size, root_size, level, display, &mut scratch);
+                let content_box = layout_list_with_scales(
+                    &content,
+                    &scales[left + 1..index],
+                    size,
+                    root_size,
+                    level,
+                    display,
+                    &mut scratch,
+                );
                 let scale = delimiter_stretch_scale(&content_box, size);
                 scales[left] = Some(scale);
                 scales[index] = Some(scale);
@@ -3052,43 +3654,63 @@ fn layout_nucleus(
             level,
             diagnostics,
         ),
-        Nucleus::Symbol(text) | Nucleus::Text(text) => MathBox {
-            items: vec![MathItem {
-                font: matches!(atom.nucleus, Nucleus::Text(_))
-                    .then_some(crate::layout::Font::TimesRoman),
-                text: text.clone(),
-                x: 0.0,
-                baseline: 0.0,
-                size,
-                span: atom.span,
-                rule: None,
-            }],
-            width: match (
-                &atom.nucleus,
-                atom.width_em.map(|em| em * size).or_else(|| {
-                    crate::lm_math::width_pt(text, size)
-                        .or_else(|| crate::newcm_math::width_pt(text, size))
-                }),
-            ) {
-                (Nucleus::Symbol(_), Some(width)) => width,
-                _ => {
-                    crate::layout::shaped_width(
-                        text,
-                        size,
-                        if matches!(atom.nucleus, Nucleus::Text(_)) {
-                            crate::layout::Font::TimesRoman
-                        } else {
-                            crate::layout::math_font(text)
-                        },
-                        atom.span,
-                        diagnostics,
-                    )
-                    .0
-                }
-            },
-            ascent: size,
-            descent: 0.2 * size,
-        },
+        Nucleus::Symbol(text) | Nucleus::Text(text) => {
+            let mut laid = MathBox {
+                items: vec![MathItem {
+                    font: matches!(atom.nucleus, Nucleus::Text(_))
+                        .then_some(crate::layout::Font::TimesRoman),
+                    text: text.clone(),
+                    x: 0.0,
+                    baseline: 0.0,
+                    size,
+                    span: atom.span,
+                    rule: None,
+                }],
+                width: match (
+                    &atom.nucleus,
+                    atom.width_em.map(|em| em * size).or_else(|| {
+                        crate::lm_math::width_pt(text, size)
+                            .or_else(|| crate::newcm_math::width_pt(text, size))
+                    }),
+                ) {
+                    (Nucleus::Symbol(_), Some(width)) => width,
+                    _ => {
+                        crate::layout::shaped_width(
+                            text,
+                            size,
+                            if matches!(atom.nucleus, Nucleus::Text(_)) {
+                                crate::layout::Font::TimesRoman
+                            } else {
+                                crate::layout::math_font(text)
+                            },
+                            atom.span,
+                            diagnostics,
+                        )
+                        .0
+                    }
+                },
+                ascent: size,
+                descent: 0.2 * size,
+            };
+            // `\vcentcolon` is `\mathrel{\mathop\ordinarycolon}`: the colon's
+            // ink centre belongs on the math axis, not on the baseline. Only
+            // `vcentcolon_atom` makes a `":"` with a forced `Rel` class, so
+            // this raises exactly the mathtools family (and everything built
+            // from it: `\dblcolon`, `\Coloneqq`, `\Eqqcolon`, `\eqqcolon`
+            // nest those same atoms in groups laid out here) while kernel
+            // `\colon`, amsmath `\colon` and a literal `:` stay put. The box
+            // follows the item rigidly, so widths and spacing are untouched.
+            if matches!(atom.nucleus, Nucleus::Symbol(_))
+                && text.as_str() == ":"
+                && atom.class_override == Some(AtomClass::Rel)
+            {
+                let raise = vcentcolon_raise(size);
+                offset_items(&mut laid.items, 0.0, -raise);
+                laid.ascent += raise;
+                laid.descent -= raise;
+            }
+            laid
+        }
         Nucleus::SizedDelimiter { glyph, scale, .. } => {
             let glyph_size = size * scale;
             let width = match crate::lm_math::width_pt(glyph, glyph_size) {
@@ -3834,7 +4456,11 @@ mod parse_tests {
     fn primes_mathrm_and_epsilons_follow_latex() {
         let parse = |src: &str| {
             let mut diagnostics = Vec::new();
-            let list = parse_tokens(&crate::lexer::tokenize(src), &mut diagnostics);
+            let list = parse_tokens(
+                &crate::lexer::tokenize(src),
+                MathPackages::KERNEL,
+                &mut diagnostics,
+            );
             assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
             list
         };
@@ -3860,6 +4486,13 @@ mod parse_tests {
         assert!(list.atoms[0].superscript.is_some());
         // cmmi "0F is `\epsilon` (lunate), "22 `\varepsilon`.
         assert_eq!(symbols(&parse(r"\epsilon\varepsilon")), ["\u{03F5}", "\u{03B5}"]);
+        // fontmath.ltx `\langle`/`\rangle` are `\mathopen`/`\mathclose` cmsy
+        // "68/"69: the mathematical angle brackets U+27E8/U+27E9, as `\left`
+        // uses, never the CJK U+3008 or the deprecated U+2329.
+        let list = parse(r"\langle x \rangle");
+        assert_eq!(symbols(&list), ["\u{27E8}", "x", "\u{27E9}"]);
+        assert_eq!(atom_class(&list.atoms[0]), Some(AtomClass::Open));
+        assert_eq!(atom_class(&list.atoms[2]), Some(AtomClass::Close));
     }
 
     #[test]
@@ -3872,7 +4505,7 @@ mod parse_tests {
         ] {
             let mut diagnostics = Vec::new();
             let tokens = crate::lexer::tokenize(src);
-            let list = parse_tokens(&tokens, &mut diagnostics);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
             assert!(diagnostics.is_empty(), "{src}: {diagnostics:?}");
             let Nucleus::Matrix { rows, columns, .. } = &list.atoms[0].nucleus else {
                 panic!("{src}: not a grid: {:?}", list.atoms)
@@ -3893,7 +4526,7 @@ mod parse_tests {
     fn big_delimiters_scale_like_cmex_and_keep_tex_classes() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\bigl(x\bigr) \Bigm| \bigg[ \Biggr] \big.");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let sized: Vec<(&str, f64, DelimiterRole)> = list
             .atoms
@@ -3922,7 +4555,11 @@ mod parse_tests {
         ));
 
         let boxed = layout(
-            &parse_tokens(&crate::lexer::tokenize(r"\bigl("), &mut diagnostics),
+            &parse_tokens(
+                &crate::lexer::tokenize(r"\bigl("),
+                MathPackages::KERNEL,
+                &mut diagnostics,
+            ),
             10.0,
             &mut diagnostics,
         );
@@ -3937,7 +4574,7 @@ mod parse_tests {
     fn left_right_hug_ordinary_content_at_scale_one() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\left( x \right)");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let sized: Vec<(&str, f64, DelimiterRole)> = list
             .atoms
@@ -3971,7 +4608,7 @@ mod parse_tests {
     fn left_right_stretch_around_a_fraction_and_agree_on_scale() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\left( \frac{a}{b} \right)");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let size = 10.0;
         let boxed = layout(&list, size, &mut diagnostics);
@@ -3991,7 +4628,7 @@ mod parse_tests {
     fn nested_left_right_pairs_each_hug_their_own_content() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\left[ \left( \frac{a}{b} \right) \right]");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let size = 10.0;
         let boxed = layout(&list, size, &mut diagnostics);
@@ -4018,7 +4655,7 @@ mod parse_tests {
     fn null_left_delimiter_stretches_invisibly_with_its_paired_fence() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\left. \frac{a}{b} \right|");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let size = 10.0;
         let boxed = layout(&list, size, &mut diagnostics);
@@ -4042,7 +4679,7 @@ mod parse_tests {
     fn unmatched_left_delimiter_does_not_panic_and_stays_at_scale_one() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\left( x");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         let _ = layout(&list, 10.0, &mut diagnostics);
         let open = list
             .atoms
@@ -4061,7 +4698,7 @@ mod parse_tests {
     fn logical_commands_are_real_exportable_symbol_atoms() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\in\forall\exists\vee\Rightarrow\mid");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let glyphs: Vec<&str> = list
             .atoms
@@ -4080,7 +4717,7 @@ mod parse_tests {
     fn display_limits_stack_under_lim_but_stay_beside_inline_and_on_integrals() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\lim_{x\to 0} f \int_0^1 g");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         let x_of = |b: &MathBox, text: &str| {
             b.items
                 .iter()
@@ -4119,7 +4756,7 @@ mod parse_tests {
         let tokens = crate::lexer::tokenize(
             r"\overset{?}{=} \underset{x}{\min} {n \choose k} {a \over b} \lim\limits_{x}",
         );
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let nuclei: Vec<&Nucleus> = list.atoms.iter().map(|atom| &atom.nucleus).collect();
         assert_eq!(nuclei.len(), 5, "{nuclei:?}");
@@ -4158,7 +4795,7 @@ mod parse_tests {
         let tokens = crate::lexer::tokenize(
             r"\binom{n}{k} \sqrt[3]{8} \mathbf{F} \boxed{x=4} \overline{AB} a \pmod{n} \tag{2}",
         );
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let nuclei: Vec<&Nucleus> = list.atoms.iter().map(|atom| &atom.nucleus).collect();
         assert!(matches!(
@@ -4201,7 +4838,7 @@ mod parse_tests {
     fn sqrt_draws_its_vinculum_over_the_whole_body() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\sqrt{10-x}");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         let size = 10.0;
         let laid = layout(&list, size, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
@@ -4229,7 +4866,7 @@ mod parse_tests {
               \mathrm{d}x \Gamma\Delta\partial\nabla\equiv\propto\cup\subseteq\notin\emptyset
               \iff\langle u\rangle \big\{ \bigr\} \left. \right| \dfrac{1}{2} a\!b\cdots\dots",
         );
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let _ = layout(&list, 12.0, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
@@ -4249,7 +4886,7 @@ mod parse_tests {
     fn delimiter_sizes_consume_the_source_delimiter_once() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\bigl(x\bigr)");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let glyphs: Vec<&str> = list
             .atoms
@@ -4274,7 +4911,7 @@ mod parse_tests {
         // misplaced alignment tab.
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize("a & b");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         assert!(diagnostics[0].message.contains("misplaced alignment tab"));
         let glyphs: Vec<&str> = list
@@ -4291,7 +4928,7 @@ mod parse_tests {
     #[test]
     fn quad_is_text_font_em_and_thin_space_is_math_units() {
         let tokens = crate::lexer::tokenize(r"a\quad b\,c");
-        let list = parse_tokens(&tokens, &mut Vec::new());
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut Vec::new());
         let spaces: Vec<(f64, bool)> = list
             .atoms
             .iter()
@@ -4306,7 +4943,7 @@ mod parse_tests {
     #[test]
     fn xrightarrow_takes_optional_below_and_required_above() {
         let tokens = crate::lexer::tokenize(r"A \xrightarrow{f} B \xleftarrow[g]{h} C");
-        let list = parse_tokens(&tokens, &mut Vec::new());
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut Vec::new());
         let arrows: Vec<_> = list
             .atoms
             .iter()
@@ -4332,7 +4969,7 @@ mod parse_tests {
     fn quad_text_and_qquad_have_distinct_semantics() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\quad\text{two words}\qquad");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert!(matches!(list.atoms[0].nucleus, Nucleus::Space { em, .. } if em == 1.0));
         assert!(matches!(&list.atoms[1].nucleus, Nucleus::Text(text) if text == "two words"));
@@ -4358,7 +4995,7 @@ mod parse_tests {
         for source in [r"\bigl", r"\text"] {
             let mut diagnostics = Vec::new();
             let tokens = crate::lexer::tokenize(source);
-            let _ = parse_tokens(&tokens, &mut diagnostics);
+            let _ = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
             assert!(!diagnostics.is_empty(), "{source:?} must remain diagnostic");
         }
 
@@ -4367,7 +5004,7 @@ mod parse_tests {
         // ordinary math symbols rather than erroring or being swallowed.
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\text x");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(list.atoms.len(), 1, "{:?}", list.atoms);
         assert!(matches!(list.atoms[0].nucleus, Nucleus::Text(ref text) if text == "x"));
@@ -4388,7 +5025,7 @@ mod unbraced_argument_tests {
         // it, exactly like real TeX (and unlike the pre-fix empty-body bug).
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\hat AB");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(list.atoms.len(), 2, "{:?}", list.atoms);
         match &list.atoms[0].nucleus {
@@ -4416,7 +5053,7 @@ mod unbraced_argument_tests {
         ] {
             let mut diagnostics = Vec::new();
             let tokens = crate::lexer::tokenize(source);
-            let list = parse_tokens(&tokens, &mut diagnostics);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
             assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
             assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
             match &list.atoms[0].nucleus {
@@ -4449,7 +5086,7 @@ mod unbraced_argument_tests {
             let mut diagnostics = Vec::new();
             let source = format!(r"\{command} x");
             let tokens = crate::lexer::tokenize(&source);
-            let list = parse_tokens(&tokens, &mut diagnostics);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
             assert!(
                 diagnostics
                     .iter()
@@ -4472,7 +5109,7 @@ mod unbraced_argument_tests {
         // `\sqrt 2x`: roots only "2"; "x" is outside the radical.
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\sqrt 2x");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(list.atoms.len(), 2, "{:?}", list.atoms);
         match &list.atoms[0].nucleus {
@@ -4497,7 +5134,7 @@ mod unbraced_argument_tests {
             let mut diagnostics = Vec::new();
             let source = format!(r"\{command}12");
             let tokens = crate::lexer::tokenize(&source);
-            let list = parse_tokens(&tokens, &mut diagnostics);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
             assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
             assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
             match &list.atoms[0].nucleus {
@@ -4537,7 +5174,7 @@ mod unbraced_argument_tests {
             let mut diagnostics = Vec::new();
             let source = format!(r"\{command} nk");
             let tokens = crate::lexer::tokenize(&source);
-            let list = parse_tokens(&tokens, &mut diagnostics);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
             assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
             assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
             match &list.atoms[0].nucleus {
@@ -4564,6 +5201,15 @@ mod unbraced_argument_tests {
         }
     }
 
+    /// A document that loaded `amsfonts`: its `\mathbb`/`\mathfrak` alphabets
+    /// exist. Base LaTeX2e defines neither.
+    const AMSFONTS: MathPackages = MathPackages {
+        amsmath: false,
+        amssymb: false,
+        amsfonts: true,
+        mathtools: false,
+    };
+
     #[test]
     fn math_alphabets_map_plain_letters_to_unicode_alphanumerics() {
         for (source, expected) in [
@@ -4575,14 +5221,22 @@ mod unbraced_argument_tests {
             (r"\mathfrak{g1}", "\u{1D524}1"),
         ] {
             let mut diagnostics = Vec::new();
-            let list = parse_tokens(&crate::lexer::tokenize(source), &mut diagnostics);
+            let list = parse_tokens(
+                &crate::lexer::tokenize(source),
+                AMSFONTS,
+                &mut diagnostics,
+            );
             assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
             assert_eq!(list.atoms.len(), 1, "{source}: {:?}", list.atoms);
             assert_eq!(list.atoms[0].nucleus, Nucleus::Symbol(expected.into()), "{source}");
         }
         // Any other argument keeps the surrounding math letters.
         let mut diagnostics = Vec::new();
-        let list = parse_tokens(&crate::lexer::tokenize(r"\mathsf{x^2}"), &mut diagnostics);
+        let list = parse_tokens(
+            &crate::lexer::tokenize(r"\mathsf{x^2}"),
+            MathPackages::KERNEL,
+            &mut diagnostics,
+        );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(list.atoms[0].nucleus, Nucleus::Symbol("x".into()));
     }
@@ -4592,7 +5246,7 @@ mod unbraced_argument_tests {
         // The issue's own examples: `\mathbb R` and `\mathbf v`.
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\mathbb RS");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, AMSFONTS, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(list.atoms.len(), 2, "{:?}", list.atoms);
         assert_eq!(
@@ -4609,7 +5263,7 @@ mod unbraced_argument_tests {
 
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\mathbf vw");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(list.atoms.len(), 2, "{:?}", list.atoms);
         assert_eq!(list.atoms[0].nucleus, Nucleus::Bold("v".into()));
@@ -4627,11 +5281,15 @@ mod unbraced_argument_tests {
         for command in ["mathrm", "mathit", "mathsf", "mathtt", "boldsymbol", "bm"] {
             let mut braced_diagnostics = Vec::new();
             let braced = crate::lexer::tokenize(&format!(r"\{command}{{d}}x"));
-            let braced_list = parse_tokens(&braced, &mut braced_diagnostics);
+            let braced_list = parse_tokens(&braced, MathPackages::KERNEL, &mut braced_diagnostics);
 
             let mut unbraced_diagnostics = Vec::new();
             let unbraced = crate::lexer::tokenize(&format!(r"\{command} dx"));
-            let unbraced_list = parse_tokens(&unbraced, &mut unbraced_diagnostics);
+            let unbraced_list = parse_tokens(
+                &unbraced,
+                MathPackages::KERNEL,
+                &mut unbraced_diagnostics,
+            );
 
             assert!(
                 braced_diagnostics.is_empty() && unbraced_diagnostics.is_empty(),
@@ -4670,7 +5328,7 @@ mod unbraced_argument_tests {
             let mut diagnostics = Vec::new();
             let source = format!(r"\{command} xy");
             let tokens = crate::lexer::tokenize(&source);
-            let list = parse_tokens(&tokens, &mut diagnostics);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
             assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
             assert_eq!(list.atoms.len(), 2, "{source}: {:?}", list.atoms);
             match &list.atoms[0].nucleus {
@@ -4689,7 +5347,7 @@ mod unbraced_argument_tests {
     fn unbraced_text_takes_one_character_leaving_the_rest_as_math() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"\text nR");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(list.atoms.len(), 2, "{:?}", list.atoms);
         assert!(matches!(&list.atoms[0].nucleus, Nucleus::Text(text) if text == "n"));
@@ -4708,7 +5366,7 @@ mod unbraced_argument_tests {
         for source in [r"\mathbf\alpha", r"\mathbf{\alpha}"] {
             let mut diagnostics = Vec::new();
             let tokens = crate::lexer::tokenize(source);
-            let list = parse_tokens(&tokens, &mut diagnostics);
+            let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
             assert_eq!(diagnostics.len(), 1, "{source}: {diagnostics:?}");
             assert!(
                 diagnostics[0]
@@ -4727,7 +5385,7 @@ mod unbraced_argument_tests {
         // `x^ab` is `x^a` followed by an ordinary "b", not `x^{ab}`.
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(r"x^ab");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(list.atoms.len(), 2, "{:?}", list.atoms);
         assert_eq!(list.atoms[0].nucleus, Nucleus::Symbol("x".into()));
@@ -4745,7 +5403,7 @@ mod accent_tests {
     fn laid_out(source: &str, size: f64) -> (MathBox, Vec<Diagnostic>) {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize(source);
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         let b = layout(&list, size, &mut diagnostics);
         (b, diagnostics)
     }
@@ -4936,8 +5594,12 @@ mod spacing_tests {
     const SIZE: f64 = 18.0; // 1mu = 1pt
 
     fn laid_out(source: &str, size: f64) -> MathBox {
+        laid_out_with(source, size, MathPackages::KERNEL)
+    }
+
+    fn laid_out_with(source: &str, size: f64, packages: MathPackages) -> MathBox {
         let mut diagnostics = Vec::new();
-        let list = parse_tokens(&crate::lexer::tokenize(source), &mut diagnostics);
+        let list = parse_tokens(&crate::lexer::tokenize(source), packages, &mut diagnostics);
         let b = layout(&list, size, &mut diagnostics);
         assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
         b
@@ -4946,6 +5608,32 @@ mod spacing_tests {
     fn width(source: &str, size: f64) -> f64 {
         laid_out(source, size).width
     }
+
+    /// A document that loaded `amssymb`, which requires `amsfonts`: the whole
+    /// msam/msbm inventory exists. Base LaTeX2e defines none of it, so the
+    /// tests below that use those commands have to say so — see
+    /// `amssymb_commands_are_diagnosed_when_the_package_is_not_loaded`.
+    const AMSSYMB: MathPackages = MathPackages {
+        amsmath: false,
+        amssymb: true,
+        amsfonts: true,
+        mathtools: false,
+    };
+
+    fn width_with(source: &str, size: f64, packages: MathPackages) -> f64 {
+        laid_out_with(source, size, packages).width
+    }
+
+    /// A document that loaded `mathtools` (which requires `amsmath`): the
+    /// colon-relation family exists. Base LaTeX2e defines none of it, so the
+    /// tests below that use those commands have to say so — see
+    /// `package_gating_tests::mathtools_colon_relations_need_mathtools`.
+    const MATHTOOLS: MathPackages = MathPackages {
+        amsmath: true,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: true,
+    };
 
     fn x(b: &MathBox, text: &str) -> f64 {
         b.items.iter().find(|i| i.text == text).unwrap().x
@@ -4967,6 +5655,15 @@ mod spacing_tests {
         let b = laid_out("a+b", SIZE);
         close(x(&b, "+"), width("a", SIZE) + 4.0);
         close(x(&b, "b"), x(&b, "+") + width("+", SIZE) + 4.0);
+    }
+
+    #[test]
+    fn odot_is_a_binary_operator() {
+        for (command, glyph) in [("ominus", "⊖"), ("oslash", "⊘"), ("odot", "⊙"), ("bigcirc", "◯")] {
+            let b = laid_out(&format!("a\\{command} b"), SIZE);
+            close(x(&b, glyph), width("a", SIZE) + 4.0);
+            close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE) + 4.0);
+        }
     }
 
     #[test]
@@ -5046,10 +5743,116 @@ mod spacing_tests {
                 .unwrap_or_else(|| command_glyph(command).unwrap());
             // A space after a control word is swallowed by the lexer (like
             // real TeX), so it safely separates the command from `b`.
-            let b = laid_out(&format!(r"a\{command} b"), SIZE);
+            let b = laid_out_with(&format!(r"a\{command} b"), SIZE, AMSSYMB);
             close(x(&b, glyph), width("a", SIZE) + 5.0);
-            let own = width(&format!(r"\{command}"), SIZE);
+            let own = width_with(&format!(r"\{command}"), SIZE, AMSSYMB);
             close(x(&b, "b"), x(&b, glyph) + own + 5.0);
+        }
+    }
+
+    /// mathtools' colon-relation family are all relations: 5mu on each side,
+    /// like `\coloneqq`. `\vcentcolon` is a single atom. The other four are
+    /// built from real `mathtools.sty` `\mkern` arithmetic (486-507,
+    /// `kpsewhich mathtools.sty`), so their expected width is computed here
+    /// from independent glyph widths (`width(":", SIZE)`/`width("=", SIZE)`,
+    /// never the implementation's own reported width) plus the literal `.sty`
+    /// mu values, converted at `SIZE = 18.0` where 1mu = 1pt exactly:
+    /// `\eqqcolon` = `= \mkern-1.2mu \vcentcolon`;
+    /// `\Coloneqq` = `\vcentcolon \mkern-.9mu \vcentcolon \mkern-1.2mu =`;
+    /// `\Eqqcolon` = `= \mkern-1.2mu \vcentcolon \mkern-.9mu \vcentcolon`;
+    /// `\dblcolon` = `\vcentcolon \mkern-.9mu \vcentcolon`. A kern is
+    /// `Nucleus::Space`, which lays out with zero `items` (verified against
+    /// the `Nucleus::Space` layout arm), so the glyph sequence below never
+    /// includes it.
+    #[test]
+    fn mathtools_colon_relations_get_thick_space_like_coloneqq() {
+        let colon = width(":", SIZE);
+        let equals = width("=", SIZE);
+        for (command, glyph, own) in [("vcentcolon", ":", colon), ("eqqcolon", "=", equals - 1.2 + colon)] {
+            let b = laid_out_with(&format!(r"a\{command} b"), SIZE, MATHTOOLS);
+            close(x(&b, glyph), width("a", SIZE) + 5.0);
+            close(x(&b, "b"), x(&b, glyph) + own + 5.0);
+        }
+        for (command, glyphs, own) in [
+            ("Coloneqq", vec![":", ":", "="], 2.0 * colon + equals - 0.9 - 1.2),
+            ("Eqqcolon", vec!["=", ":", ":"], equals + 2.0 * colon - 1.2 - 0.9),
+            ("dblcolon", vec![":", ":"], 2.0 * colon - 0.9),
+        ] {
+            let b = laid_out_with(&format!(r"a\{command} b"), SIZE, MATHTOOLS);
+            close(x(&b, glyphs[0]), width("a", SIZE) + 5.0);
+            close(
+                b.width,
+                width("a", SIZE) + 5.0 + own + 5.0 + width("b", SIZE),
+            );
+            // The group lays out exactly its glyphs between the operands;
+            // the kerns between them contribute no items (see doc comment).
+            let texts: Vec<&str> = b.items.iter().map(|i| i.text.as_str()).collect();
+            let mut expected = vec!["a"];
+            expected.extend(glyphs);
+            expected.push("b");
+            assert_eq!(texts, expected, "\\{command}");
+        }
+    }
+
+    /// `\vcentcolon` is `\mathrel{\mathop\ordinarycolon}`
+    /// (`mathtools.sty`): the `\mathop` puts the colon's ink centre on the
+    /// math axis, so every member of the family sits higher than a baseline
+    /// colon. The raise is `MATH_AXIS_EM * size` minus half the text face's
+    /// real x-height — the dots span baseline..x-height — via the same
+    /// helper `layout_accent` uses, so this test recomputes the expected
+    /// centre from those same real metrics: the ink centre sits half the
+    /// ink height above the glyph's own baseline, which the item places
+    /// `baseline` (positive downward) from the math baseline, so centre
+    /// `ink/2 - baseline` above the math baseline must equal the axis.
+    /// The tolerance is a fraction of the
+    /// ink height itself, so it scales with size instead of naming an
+    /// absolute number — and it is tighter than the miss an unshifted colon
+    /// leaves, so the test fails with the raise removed (asserted below,
+    /// and checked by the mutation run in the check-in).
+    #[test]
+    fn vcentcolon_centres_the_colon_ink_on_the_math_axis() {
+        let size = SIZE;
+        let axis = MATH_AXIS_EM * size;
+        let ink_height = crate::layout::x_height_pt(crate::layout::Font::TimesRoman, size);
+        let ink_depth = 0.0;
+        let tolerance = (ink_height + ink_depth) / 20.0;
+        // Self-validating: an unshifted colon misses the axis by
+        // `axis - ink_height / 2`, which must exceed the tolerance, or this
+        // test could pass without the fix.
+        assert!(
+            tolerance < axis - ink_height / 2.0,
+            "tolerance {tolerance} must be tighter than the unshifted miss {}",
+            axis - ink_height / 2.0
+        );
+        // The fix lives in `vcentcolon_atom`'s atoms, so every family member
+        // built from them carries raised colons — each `":"` item, not just
+        // the first.
+        for command in ["vcentcolon", "eqqcolon", "Coloneqq", "Eqqcolon", "dblcolon"] {
+            let b = laid_out_with(&format!(r"\{command}"), size, MATHTOOLS);
+            let colons: Vec<_> = b.items.iter().filter(|i| i.text == ":").collect();
+            assert!(!colons.is_empty(), "\\{command} lays out no colon");
+            for colon in colons {
+                let centre = (ink_height - ink_depth) / 2.0 - colon.baseline;
+                assert!(
+                    (centre - axis).abs() <= tolerance,
+                    "\\{command}: ink centre {centre} != axis {axis}"
+                );
+            }
+        }
+        // Negative controls: every other colon stays on the baseline.
+        for (source, packages) in [
+            (r"\colon", MATHTOOLS),
+            (r"\colon", MathPackages::KERNEL),
+            (":", MathPackages::KERNEL),
+        ] {
+            let b = laid_out_with(source, size, packages);
+            for item in b.items.iter().filter(|i| i.text == ":") {
+                assert!(
+                    item.baseline.abs() < 1e-9,
+                    "{source}: baseline colon moved to {}",
+                    item.baseline
+                );
+            }
         }
     }
 
@@ -5060,6 +5863,28 @@ mod spacing_tests {
             let b = laid_out(&format!(r"a\{command} b"), SIZE);
             close(x(&b, glyph), width("a", SIZE) + 4.0);
             close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE) + 4.0);
+        }
+    }
+
+    /// The kernel cmsy square relations, whose classes come from
+    /// `fontmath.ltx` 278-279 (`\sqcap`/`\sqcup`, `\mathbin`) and 301-302
+    /// (`\sqsubseteq`/`\sqsupseteq`, `\mathrel`). Measured with pdfTeX
+    /// 3.141592653 (TeX Live 2025) at 10pt against the 9.57755pt `$ab$`
+    /// control: `$a\sqcup b$` and `$a\sqcap b$` are 20.68857pt (glyph
+    /// 6.66669pt plus 8mu, so 4mu a side), `$a\sqsubseteq b$` and
+    /// `$a\sqsupseteq b$` 22.91077pt (glyph 7.7778pt plus 10mu, so 5mu).
+    #[test]
+    fn square_relations_take_their_kernel_classes() {
+        for (command, space) in [
+            ("sqcup", 4.0),
+            ("sqcap", 4.0),
+            ("sqsubseteq", 5.0),
+            ("sqsupseteq", 5.0),
+        ] {
+            let glyph = command_glyph(command).unwrap();
+            let b = laid_out(&format!(r"a\{command} b"), SIZE);
+            close(x(&b, glyph), width("a", SIZE) + space);
+            close(x(&b, "b"), x(&b, glyph) + width(glyph, SIZE) + space);
         }
     }
 
@@ -5134,7 +5959,7 @@ mod spacing_tests {
             "lozenge",
             "checkmark",
         ] {
-            laid_out(&format!(r"\{command}"), SIZE);
+            laid_out_with(&format!(r"\{command}"), SIZE, AMSSYMB);
         }
     }
 
@@ -5235,6 +6060,121 @@ mod spacing_tests {
         close(x(&group, "B"), x(&group, "b") + width("b", SIZE) + 4.0);
     }
 
+    /// `\colon` sets the same `:` as a bare colon, but its class and its
+    /// spacing come from whichever definition is in force.
+    ///
+    /// The kernel declares it punctuation (`fontmath.ltx` 400) where `:`
+    /// itself is a relation (line 385), so it loses the relation's 5mu on
+    /// each side and gains punctuation's 3mu after it only. amsmath renews it
+    /// (`amsmath.sty` 409-410) to an *ordinary* `:` with explicit 2mu and 6mu
+    /// glue around it.
+    ///
+    /// Measured against TeX Live 2025 pdflatex at 10pt, control
+    /// `\hbox{$ab$}` = 9.57755pt:
+    ///
+    /// | box | no amsmath | with amsmath |
+    /// | --- | ---: | ---: |
+    /// | `\hbox{$\colon$}` | 2.77779pt | 7.22212pt (+8mu) |
+    /// | `\hbox{$a\colon b$}` | 14.02196pt | 16.79967pt (+5mu) |
+    /// | `\hbox{$a\colon=b$}` | 24.57747pt | 30.13289pt (+10mu) |
+    #[test]
+    fn colon_is_kernel_punctuation_until_amsmath_renews_it() {
+        const AMS: MathPackages = MathPackages {
+            amsmath: true,
+            ..MathPackages::KERNEL
+        };
+
+        // Kernel: no space before, punctuation's thin space after — exactly
+        // what `\mathpunct{:}` gives, and 5mu narrower than a bare `:`.
+        let kernel = laid_out(r"a\colon b", SIZE);
+        close(x(&kernel, ":"), width("a", SIZE));
+        close(x(&kernel, "b"), x(&kernel, ":") + width(":", SIZE) + 3.0);
+        close(kernel.width, width(r"a\mathpunct{:}b", SIZE));
+        close(width("a:b", SIZE), kernel.width + 7.0);
+
+        // amsmath: 2mu of glue, an ordinary `:`, then 6mu — no punctuation
+        // space anywhere, so the `=` below still gets its own relation space.
+        let ams = laid_out_with(r"a\colon b", SIZE, AMS);
+        close(x(&ams, ":"), width("a", SIZE) + 2.0);
+        close(x(&ams, "b"), x(&ams, ":") + width(":", SIZE) + 6.0);
+        close(ams.width, kernel.width + 5.0);
+
+        // Before a relation the gap widens to 10mu, and before a binary
+        // operator to 13mu, because the kernel's punctuation atom changes
+        // what comes *after* it and amsmath's ordinary one does not: the
+        // kernel turns the `+` below into an Ord (TeXbook Chapter 17's
+        // Bin-after-Punct rule) where amsmath leaves it a Bin.
+        // pdflatex, 10pt: `a\colon=b` 24.57747pt -> 30.13289pt (+10mu),
+        // `a\colon+b` 21.79976pt -> 29.0218pt (+13mu).
+        close(
+            laid_out_with(r"a\colon=b", SIZE, AMS).width,
+            width(r"a\colon=b", SIZE) + 10.0,
+        );
+        close(
+            laid_out_with(r"a\colon+b", SIZE, AMS).width,
+            width(r"a\colon+b", SIZE) + 13.0,
+        );
+
+        // On its own the explicit glue survives on both sides, where the
+        // kernel's punctuation space has no right neighbour to apply to:
+        // 2.77779pt -> 7.22212pt, +8mu.
+        close(
+            laid_out_with(r"\colon", SIZE, AMS).width,
+            width(r"\colon", SIZE) + 8.0,
+        );
+
+        // Neither definition is a bare `:`, which is a relation (5mu each
+        // side) in both.
+        assert_ne!(kernel.width, width("a:b", SIZE));
+        assert_ne!(ams.width, width("a:b", SIZE));
+    }
+
+    /// The packages that carry amsmath's definitions in, and the ones that
+    /// measured as leaving the kernel's alone. Each name below was checked by
+    /// compiling `\documentclass[10pt]{article}\usepackage{X}` with TeX Live
+    /// 2025 pdflatex and comparing `\hbox{$a a\colon b b$}` (23.5995pt with
+    /// the kernel's definition, 26.37721pt with amsmath's) against the two
+    /// hand-written expansions in the same document.
+    #[test]
+    fn amsmath_arrives_through_the_packages_and_classes_that_load_it() {
+        for name in [
+            "amsmath",
+            "mathtools",
+            "empheq",
+            "physics",
+            "nccmath",
+            "mhchem",
+        ] {
+            let mut packages = MathPackages::KERNEL;
+            packages.load_package(name);
+            assert!(packages.amsmath, "{name} loads amsmath");
+        }
+        for name in [
+            "amsthm",
+            "amssymb",
+            "amsfonts",
+            "amsopn",
+            "bm",
+            "siunitx",
+            "breqn",
+            "unicode-math",
+        ] {
+            let mut packages = MathPackages::KERNEL;
+            packages.load_package(name);
+            assert!(!packages.amsmath, "{name} does not load amsmath");
+        }
+        for class in ["amsart", "amsbook", "amsproc", "acmart", "beamer"] {
+            let mut packages = MathPackages::KERNEL;
+            packages.load_class(class);
+            assert!(packages.amsmath, "{class} loads amsmath");
+        }
+        for class in ["article", "report", "book", "memoir", "IEEEtran"] {
+            let mut packages = MathPackages::KERNEL;
+            packages.load_class(class);
+            assert!(!packages.amsmath, "{class} does not load amsmath");
+        }
+    }
+
     #[test]
     fn qed_glyph_is_in_the_pinned_font_and_carries_no_export_loss() {
         assert!(crate::lm_math::advance('\u{220E}').is_some());
@@ -5253,7 +6193,7 @@ mod shift_tests {
     fn shifting_reaches_nested_spans() {
         let mut diagnostics = Vec::new();
         let tokens = crate::lexer::tokenize("\\frac{a^2}{b}");
-        let list = parse_tokens(&tokens, &mut diagnostics);
+        let list = parse_tokens(&tokens, MathPackages::KERNEL, &mut diagnostics);
         let shifted = shift_list(&list, 10);
 
         fn min_start(list: &MathList) -> usize {
@@ -5314,5 +6254,482 @@ mod shift_tests {
         }
 
         assert_eq!(min_start(&shifted), min_start(&list) + 10);
+    }
+}
+
+/// The packages a document loads decide which math commands exist at all.
+///
+/// Every expectation here was probed against TeX Live 2025 pdflatex: each
+/// command's `\meaning` under an empty preamble, under `\usepackage{amssymb}`,
+/// under `\usepackage{amsfonts}` and under `\usepackage{amsmath}`, and the box
+/// dimensions with `\showthe\wd`/`\ht` of `\hbox{$...$}`.
+#[cfg(test)]
+mod package_gating_tests {
+    use super::*;
+    use crate::amssymb::Provider;
+
+    /// 1mu = 1pt, so a measured mu reads straight off a coordinate.
+    const SIZE: f64 = 18.0;
+
+    const AMSSYMB: MathPackages = MathPackages {
+        amsmath: false,
+        amssymb: true,
+        amsfonts: true,
+        mathtools: false,
+    };
+    const AMSFONTS: MathPackages = MathPackages {
+        amsmath: false,
+        amssymb: false,
+        amsfonts: true,
+        mathtools: false,
+    };
+    const AMSMATH: MathPackages = MathPackages {
+        amsmath: true,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: false,
+    };
+    const MATHTOOLS: MathPackages = MathPackages {
+        amsmath: true,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: true,
+    };
+
+    fn parsed(source: &str, packages: MathPackages) -> (MathList, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), packages, &mut diagnostics);
+        (list, diagnostics)
+    }
+
+    fn laid_out(source: &str, packages: MathPackages) -> MathBox {
+        let (list, diagnostics) = parsed(source, packages);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        layout(&list, SIZE, &mut Vec::new())
+    }
+
+    fn x(b: &MathBox, text: &str) -> f64 {
+        b.items
+            .iter()
+            .find(|i| i.text == text)
+            .unwrap_or_else(|| panic!("{text:?} not in {:?}", b.items))
+            .x
+    }
+
+    fn close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    /// Every command of the table needs its declaring package, and gets it
+    /// from `amssymb` — which requires `amsfonts`, so the whole inventory is
+    /// available under either flag combination a real document produces.
+    ///
+    /// This is the divergence the lane exists for: base LaTeX2e has no
+    /// definition for any of these 212 names, so pdflatex answers "Undefined
+    /// control sequence" where this compiler used to render the msam/msbm
+    /// glyph regardless of what the document loaded.
+    #[test]
+    fn every_table_command_is_diagnosed_without_its_package() {
+        let mut checked = 0;
+        for name in crate::amssymb::command_names() {
+            let source = format!("\\{name}");
+            let (_, kernel) = parsed(&source, MathPackages::KERNEL);
+            assert_eq!(kernel.len(), 1, "\\{name} with nothing loaded: {kernel:?}");
+            let package = match crate::amssymb::by_name(name).expect("named symbol").provider {
+                Provider::Amsfonts => "amsfonts",
+                Provider::Amssymb => "amssymb",
+            };
+            assert_eq!(
+                kernel[0].message,
+                format!("\\{name} requires \\usepackage{{{package}}}"),
+                "\\{name}"
+            );
+
+            let (_, loaded) = parsed(&source, AMSSYMB);
+            assert!(loaded.is_empty(), "\\{name} under amssymb: {loaded:?}");
+            checked += 1;
+        }
+        // 212 declarations plus the 6 `\global\let` aliases.
+        assert_eq!(checked, 218, "table command count");
+    }
+
+    /// `amsfonts.sty` alone declares a 15-command subset of the same symbol
+    /// fonts (plus the pieces the dashed arrows and wide accents are built
+    /// from). `\usepackage{amsfonts}` provides exactly those, and `\nleq` and
+    /// the other 197 stay undefined — probed name by name with `\ifcsname`.
+    #[test]
+    fn amsfonts_alone_provides_only_its_own_subset() {
+        let subset: Vec<&str> = crate::amssymb::command_names()
+            .filter(|n| {
+                crate::amssymb::by_name(n).expect("named symbol").provider == Provider::Amsfonts
+            })
+            .collect();
+        assert_eq!(
+            subset,
+            [
+                "square",
+                "lozenge",
+                "rightsquigarrow",
+                "vartriangleright",
+                "vartriangleleft",
+                "trianglerighteq",
+                "trianglelefteq",
+                "ulcorner",
+                "urcorner",
+                "llcorner",
+                "lrcorner",
+                "yen",
+                "checkmark",
+                "circledR",
+                "maltese",
+            ],
+            "the amsfonts.sty declarations (141-147, 74-77, 64-73)"
+        );
+        for name in &subset {
+            let (_, diagnostics) = parsed(&format!("\\{name}"), AMSFONTS);
+            assert!(
+                diagnostics.is_empty(),
+                "\\{name} under amsfonts: {diagnostics:?}"
+            );
+        }
+        for name in ["nleq", "boxdot", "circlearrowright"] {
+            let (_, diagnostics) = parsed(&format!("\\{name}"), AMSFONTS);
+            assert_eq!(diagnostics.len(), 1, "\\{name} under amsfonts");
+        }
+    }
+
+    /// The `\global\let` aliases are all `amssymb.sty`'s, and each resolves to
+    /// a symbol `amssymb.sty` declares, so gating the alias on its target's
+    /// provider gates it on `amssymb` — which is what pdflatex does.
+    #[test]
+    fn every_alias_resolves_to_an_amssymb_declaration() {
+        for (alias, target) in crate::amssymb::ALIASES {
+            let symbol = crate::amssymb::by_name(alias).expect("alias resolves");
+            assert_eq!(symbol.name, *target);
+            assert_eq!(symbol.provider, Provider::Amssymb, "\\{alias}");
+        }
+    }
+
+    /// mathtools' colon-relation family needs `\usepackage{mathtools}`: base
+    /// LaTeX2e defines none of the five, so pdflatex answers "Undefined
+    /// control sequence" there. `mathtools.sty` requires `amsmath`, so
+    /// loading it sets both flags.
+    #[test]
+    fn mathtools_colon_relations_need_mathtools() {
+        let mut packages = MathPackages::KERNEL;
+        packages.load_package("mathtools");
+        assert_eq!(packages, MATHTOOLS, "mathtools loads mathtools and amsmath");
+        for command in ["eqqcolon", "Coloneqq", "Eqqcolon", "vcentcolon", "dblcolon"] {
+            let (_, diagnostics) = parsed(&format!("\\{command}"), MathPackages::KERNEL);
+            assert_eq!(
+                diagnostics.first().map(|d| d.message.as_str()),
+                Some(format!("\\{command} requires \\usepackage{{mathtools}}").as_str()),
+                "\\{command}"
+            );
+            let (_, loaded) = parsed(&format!("\\{command}"), MATHTOOLS);
+            assert!(loaded.is_empty(), "\\{command} under mathtools: {loaded:?}");
+        }
+    }
+
+    /// With `mathtools` loaded each of the five parses to its relation
+    /// nucleus: `\vcentcolon` is the plain `":"` with Rel forced (the same
+    /// glyph as `\colon`, which is Punct); the other four are one relation
+    /// group each, built from those same base glyphs joined by real
+    /// `mathtools.sty` `\mkern` kerns (`Nucleus::Space` atoms — see the width
+    /// test above for the exact `.sty` source), not adjacency.
+    #[test]
+    fn mathtools_colon_relations_parse_to_relation_nuclei() {
+        let (list, _) = parsed(r"\eqqcolon", MATHTOOLS);
+        assert_eq!(list.atoms.len(), 1, "\\eqqcolon");
+        assert_eq!(
+            list.atoms[0].class_override,
+            Some(AtomClass::Rel),
+            "\\eqqcolon"
+        );
+        let Nucleus::Group(eqqcolon_inner) = &list.atoms[0].nucleus else {
+            panic!("\\eqqcolon is not a group: {:?}", list.atoms[0].nucleus);
+        };
+        assert_eq!(eqqcolon_inner.atoms.len(), 3, "= <kern> : -- {eqqcolon_inner:?}");
+        assert!(matches!(&eqqcolon_inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 1.2 / 18.0).abs() < 1e-9));
+
+        let (list, _) = parsed(r"\vcentcolon", MATHTOOLS);
+        assert_eq!(list.atoms.len(), 1, "\\vcentcolon");
+        assert!(
+            matches!(&list.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == ":"),
+            "\\vcentcolon: {:?}",
+            list.atoms[0].nucleus
+        );
+        assert_eq!(
+            list.atoms[0].class_override,
+            Some(AtomClass::Rel),
+            "\\vcentcolon"
+        );
+        // The same glyph as `\colon`, only the class differs.
+        let (colon, _) = parsed(r"\colon", MathPackages::KERNEL);
+        assert!(
+            matches!(&colon.atoms[0].nucleus, Nucleus::Symbol(glyph) if glyph == ":"),
+            "\\colon: {:?}",
+            colon.atoms[0].nucleus
+        );
+        assert_eq!(
+            colon.atoms[0].class_override,
+            Some(AtomClass::Punct),
+            "\\colon"
+        );
+
+        for (command, glyphs) in [
+            ("Coloneqq", vec![":", ":", "="]),
+            ("Eqqcolon", vec!["=", ":", ":"]),
+            ("dblcolon", vec![":", ":"]),
+        ] {
+            let (list, _) = parsed(&format!("\\{command}"), MATHTOOLS);
+            assert_eq!(list.atoms.len(), 1, "\\{command}");
+            assert_eq!(
+                list.atoms[0].class_override,
+                Some(AtomClass::Rel),
+                "\\{command}"
+            );
+            let Nucleus::Group(inner) = &list.atoms[0].nucleus else {
+                panic!("\\{command} is not a group: {:?}", list.atoms[0].nucleus);
+            };
+            // Kerns (`Nucleus::Space`) sit between the glyphs, not real
+            // glyph atoms themselves — skip them here, same as the width
+            // test's "no items" check; a separate assertion below confirms
+            // `\dblcolon`'s specific kern is really present and correct.
+            let inner_glyphs: Vec<&str> = inner
+                .atoms
+                .iter()
+                .filter_map(|atom| match &atom.nucleus {
+                    Nucleus::Symbol(glyph) => Some(glyph.as_str()),
+                    Nucleus::Space { .. } => None,
+                    other => panic!("\\{command} holds {other:?}"),
+                })
+                .collect();
+            assert_eq!(inner_glyphs, glyphs, "\\{command}");
+        }
+        // `\dblcolon` = `\vcentcolon \mkern-.9mu \vcentcolon`: exactly one
+        // kern, of exactly -0.9mu, between its two colon glyphs.
+        let (list, _) = parsed(r"\dblcolon", MATHTOOLS);
+        let Nucleus::Group(inner) = &list.atoms[0].nucleus else {
+            panic!("\\dblcolon is not a group: {:?}", list.atoms[0].nucleus);
+        };
+        assert_eq!(inner.atoms.len(), 3, ": <kern> : -- {inner:?}");
+        assert!(matches!(&inner.atoms[1].nucleus, Nucleus::Space { em, .. } if (em + 0.9 / 18.0).abs() < 1e-9));
+    }
+
+    /// The two math alphabets and the dashed arrows are `amsfonts.sty`'s too,
+    /// and are gated the same way. `\mathbf`, which the obsolete `\bold`
+    /// stands for, is the kernel's and stays available.
+    #[test]
+    fn amsfonts_alphabets_and_dashed_arrows_need_the_package() {
+        for name in ["mathbb", "mathfrak", "Bbb", "bold"] {
+            let (_, diagnostics) = parsed(&format!("\\{name}{{R}}"), MathPackages::KERNEL);
+            assert_eq!(
+                diagnostics.first().map(|d| d.message.as_str()),
+                Some(format!("\\{name} requires \\usepackage{{amsfonts}}").as_str()),
+                "\\{name}"
+            );
+            let (_, loaded) = parsed(&format!("\\{name}{{R}}"), AMSFONTS);
+            assert!(loaded.is_empty(), "\\{name} under amsfonts: {loaded:?}");
+        }
+        for name in ["dashrightarrow", "dasharrow", "dashleftarrow"] {
+            let (_, diagnostics) = parsed(&format!("\\{name}"), MathPackages::KERNEL);
+            assert_eq!(diagnostics.len(), 1, "\\{name}");
+            let (_, loaded) = parsed(&format!("\\{name}"), AMSFONTS);
+            assert!(loaded.is_empty(), "\\{name} under amsfonts: {loaded:?}");
+        }
+        // The kernel alphabet the obsolete spelling redirects to.
+        let (_, kernel) = parsed(r"\mathbf{v}", MathPackages::KERNEL);
+        assert!(kernel.is_empty(), "{kernel:?}");
+    }
+
+    /// `\angle` and `\hbar` are the two commands here that base LaTeX2e does
+    /// define, as composites amsfonts replaces with one glyph. Measured with
+    /// TeX Live 2025 pdflatex at 10pt: `\hbox{$\angle$}` 6.37344pt without the
+    /// package against 7.22223pt with it, `\hbox{$\hbar$}` 5.76172pt against
+    /// 5.40280pt. Neither changes atom class: `$a\angle b$` grows by exactly
+    /// the width difference (15.95099 -> 16.79977), and `$a\hbar b$` shrinks
+    /// by it (15.33926 -> 14.98035).
+    #[test]
+    fn angle_and_hbar_keep_the_kernel_composite_without_amsfonts() {
+        for (name, em) in [("angle", KERNEL_ANGLE_EM), ("hbar", KERNEL_HBAR_EM)] {
+            let (kernel, diagnostics) = parsed(&format!("\\{name}"), MathPackages::KERNEL);
+            assert!(diagnostics.is_empty(), "\\{name}: {diagnostics:?}");
+            assert_eq!(kernel.atoms[0].width_em, Some(em), "\\{name}");
+
+            // With the package the compiler's glyph row applies unchanged, so
+            // nothing forces the kernel advance any more.
+            let (loaded, diagnostics) = parsed(&format!("\\{name}"), AMSSYMB);
+            assert!(diagnostics.is_empty(), "\\{name}: {diagnostics:?}");
+            assert_eq!(loaded.atoms[0].width_em, None, "\\{name}");
+            assert_eq!(loaded.atoms[0].nucleus, kernel.atoms[0].nucleus, "\\{name}");
+        }
+        // pdflatex's widths at 10pt, which the two constants reproduce.
+        close(KERNEL_ANGLE_EM * 10.0, 6.37344);
+        close(KERNEL_HBAR_EM * 10.0, 5.76172);
+    }
+
+    /// `\bmod` cancels `\medmuskip` and puts an explicit `\mkern5mu` in its
+    /// place, so it is 1mu wider on each side than its Bin class alone — under
+    /// every package, amsmath included. Measured at 10pt: `$a\bmod b$`
+    /// 34.29970pt against `$a\mathrm{mod}b$` 28.74428pt (10mu), and
+    /// `$\bmod b$` 24.56947 against `$\mathrm{mod}b$` 23.45839 (2mu), the
+    /// second being the Bin degrading to Ord with no left operand.
+    #[test]
+    fn bmod_is_five_mu_on_each_side_not_the_four_of_its_class() {
+        for packages in [MathPackages::KERNEL, AMSMATH, AMSSYMB] {
+            let own = laid_out(r"\bmod", packages).width - 2.0 * BMOD_EXTRA_MU;
+
+            let mid = laid_out(r"a\bmod b", packages);
+            let a = laid_out("a", packages).width;
+            close(x(&mid, "mod"), a + 5.0);
+            close(x(&mid, "b"), x(&mid, "mod") + own + 5.0);
+
+            // No left operand: the Bin becomes Ord and only the explicit kern
+            // and the cancelled medmuskip are left.
+            let lead = laid_out(r"\bmod b", packages);
+            close(x(&lead, "mod"), BMOD_EXTRA_MU);
+            close(x(&lead, "b"), x(&lead, "mod") + own + BMOD_EXTRA_MU);
+        }
+    }
+
+    /// The kernel's `\pmod` opens with `\mkern18mu`; amsmath's `\pod` uses
+    /// `\mkern8mu` outside display. Measured at 10pt: `$a\pmod{y}$` is
+    /// 50.82503pt under the kernel and 45.26960pt under amsmath, matching
+    /// `$a\mkern18mu(\mathrm{mod}\mkern6mu y)$` and the 8mu form exactly; the
+    /// 6mu between `mod` and the argument is the same in both. Setting
+    /// `\@displaytrue` by hand puts amsmath back on the kernel's 50.82503,
+    /// which is why display formulas are left alone.
+    #[test]
+    fn pmod_opens_with_eight_mu_under_amsmath_and_eighteen_without() {
+        for (packages, opening) in [
+            (MathPackages::KERNEL, 18.0),
+            (AMSSYMB, 18.0),
+            (AMSMATH, AMSMATH_POD_MU),
+        ] {
+            let b = laid_out(r"a\pmod{y}", packages);
+            let a = laid_out("a", packages).width;
+            close(x(&b, "(mod"), a + opening);
+            // The 6mu before the argument does not move.
+            close(x(&b, "y") - x(&b, "(mod"), {
+                let label = laid_out(r"\pmod{y}", MathPackages::KERNEL);
+                x(&label, "y") - x(&label, "(mod")
+            });
+        }
+    }
+
+    /// Which `\usepackage` and `\documentclass` names set which flag, measured
+    /// by compiling each one and asking `\ifcsname nleq\endcsname` (amssymb
+    /// only), `\ifcsname ulcorner\endcsname` (also amsfonts) and
+    /// `\ifcsname binom\endcsname` (amsmath) under TeX Live 2025.
+    #[test]
+    fn loaders_match_the_measured_packages_and_classes() {
+        let package = |name: &str| {
+            let mut p = MathPackages::KERNEL;
+            p.load_package(name);
+            p
+        };
+        let class = |name: &str| {
+            let mut p = MathPackages::KERNEL;
+            p.load_class(name);
+            p
+        };
+        // amssymb requires amsfonts, so it sets both; amsfonts sets only its own.
+        assert_eq!(package("amssymb"), AMSSYMB);
+        assert_eq!(package("amsfonts"), AMSFONTS);
+        assert_eq!(package("amsmath"), AMSMATH);
+        // A math font package that really does load amssymb.
+        assert_eq!(package("txfonts"), AMSSYMB);
+        // Defines part of the inventory itself without either AMS package, so
+        // neither flag describes it.
+        assert_eq!(package("libertinust1math"), MathPackages::KERNEL);
+        for neither in ["amsthm", "bm", "stmaryrd", "siunitx", "fourier", "unicode-math"] {
+            let p = package(neither);
+            assert!(!p.amssymb && !p.amsfonts, "{neither}");
+        }
+        // The AMS classes load amsfonts and amsmath, but not amssymb.
+        assert_eq!(
+            class("amsart"),
+            MathPackages {
+                amsmath: true,
+                amssymb: false,
+                amsfonts: true,
+                mathtools: false
+            }
+        );
+        assert_eq!(
+            class("beamer"),
+            MathPackages {
+                amsmath: true,
+                amssymb: true,
+                amsfonts: true,
+                mathtools: false
+            }
+        );
+        assert_eq!(class("article"), MathPackages::KERNEL);
+    }
+}
+
+/// `\|`/`\Vert` against `\mid`: two different symbols, not one spelled twice.
+#[cfg(test)]
+mod double_bar_tests {
+    use super::*;
+
+    /// `\lVert`/`\rVert`/`\lvert`/`\rvert` are amsmath's, so they need it
+    /// loaded to exist at all (`package_gating_tests`).
+    const AMSMATH: MathPackages = MathPackages {
+        amsmath: true,
+        amssymb: false,
+        amsfonts: false,
+        mathtools: false,
+    };
+
+    /// The glyph texts a formula lays out, in order.
+    fn texts(source: &str, packages: MathPackages) -> Vec<String> {
+        let mut diagnostics = Vec::new();
+        let list = parse_tokens(&crate::lexer::tokenize(source), packages, &mut diagnostics);
+        let b = layout(&list, 10.0, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        b.items.iter().map(|i| i.text.clone()).collect()
+    }
+
+    /// plain.tex gives `\Vert` cmsy `"6B` and the cmex `"0D` recipe, `\mid`
+    /// cmsy `"6A` and cmex `"0C`. Spelling the first as two of the second put
+    /// a 2.77779 pt bar where a 5.00002 pt one belongs at text size, and the
+    /// 3.33333 pt single-bar extension where the 5.55557 pt double-bar one
+    /// belongs once the delimiter grows.
+    #[test]
+    fn every_spelling_of_the_double_bar_is_one_u2016() {
+        // `\Vert` on its own is still an unsupported command here (it is
+        // only a fence name, `DELIMITER_COMMANDS`); `\|` is its spelling
+        // that parses everywhere.
+        assert_eq!(texts(r"\|", MathPackages::KERNEL), vec!["\u{2016}"]);
+        for source in [r"\lVert", r"\rVert"] {
+            assert_eq!(texts(source, AMSMATH), vec!["\u{2016}"], "{source}");
+        }
+        for source in [r"\left\| x \right\|", r"\left\Vert x \right\Vert"] {
+            let t = texts(source, MathPackages::KERNEL);
+            assert!(
+                t.iter().filter(|s| *s == "\u{2016}").count() == 2
+                    && !t.iter().any(|s| s.contains('\u{2223}')),
+                "{source}: {t:?}"
+            );
+        }
+    }
+
+    /// `\mid` and `\vert` keep the single bar they always had.
+    #[test]
+    fn the_single_bar_commands_are_unchanged() {
+        assert_eq!(texts(r"\mid", MathPackages::KERNEL), vec!["\u{2223}"]);
+        assert_eq!(texts(r"\lvert", AMSMATH), vec!["\u{2223}"]);
+        assert_eq!(texts(r"\rvert", AMSMATH), vec!["\u{2223}"]);
+    }
+
+    /// U+2016 is bound to the same pinned Latin Modern Math resource that
+    /// already carries `\parallel`, so it stays exportable.
+    #[test]
+    fn the_double_bar_is_bound_to_latin_modern_math() {
+        assert!(crate::lm_math::advance('\u{2016}').is_some());
+        assert!(crate::export::unrepresentable("\u{2016}").is_empty());
     }
 }

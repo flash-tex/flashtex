@@ -181,7 +181,7 @@ def cmd_check(args):
             ref_braces = pinned["brace_extents"]
             text = open(os.path.join(FIXTURES, name + ".tex"), encoding="utf-8").read()
             req = {"protocol_version": 1, "id": name, "type": "compile",
-                   "payload": {"project_id": "amssymb-corpus", "revision": 1, "entry_path": "main.tex",
+                   "payload": {"project_id": "amssymb-corpus", "revision": 1, "entry_path": "main.tex", "date": "1970-01-01",
                                "documents": [{"path": "main.tex", "text": text}]}}
             v2 = os.path.join(work, name + ".v2.json")
             p = subprocess.run([args.render, "--v2", v2], input=(json.dumps(req) + "\n").encode(), env=env,

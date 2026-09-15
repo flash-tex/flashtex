@@ -274,6 +274,19 @@ impl TrueTypeFont {
             .filter(|&g| g != 0 && g < self.num_glyphs)
     }
 
+    /// The lowest code point the `cmap` maps to `gid` (`.` rather than
+    /// U+2024 for the period), or `None` for a glyph no character reaches
+    /// (ligatures, alternates).
+    pub fn char_for_glyph(&self, gid: u16) -> Option<char> {
+        if gid == 0 {
+            return None;
+        }
+        self.cmap
+            .iter()
+            .filter(|(_, g)| **g == gid)
+            .find_map(|(cp, _)| char::from_u32(*cp))
+    }
+
     pub fn advance(&self, gid: u16) -> u16 {
         self.metrics.get(gid as usize).map_or(0, |m| m.0)
     }

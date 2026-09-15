@@ -1,0 +1,14 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Text before the table.
+
+\begin{tabular}{lll}\toprule A & B & C\\\cmidrule(l{2pt}r{1em}){1-2}\cmidrule(r){3-3} d & e & f\\\bottomrule\end{tabular}
+
+Text after the table.
+\end{document}

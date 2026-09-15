@@ -42,6 +42,8 @@ fn plain_texts(source: &str) -> Vec<String> {
 const ITALIC: TextStyle = TextStyle {
     bold: false,
     italic: true,
+    slanted: false,
+    small_caps: false,
     family: flashtex_compiler::parser::TextFamily::Roman,
     size: None,
     color: None,
@@ -58,7 +60,12 @@ Every prime greater than two is odd.
     assert_eq!(head_text, "Theorem 1");
     assert_eq!(*head_style, TextStyle::BOLD);
     assert_eq!(runs[1].0, ".");
-    assert_eq!(runs[1].1, TextStyle::default());
+    assert_eq!(
+        runs[1].1,
+        TextStyle::BOLD,
+        "\\the\\thm@headpunct is typeset inside \\the\\thm@headfont's group: \
+         pdflatex traces a `plain` head's period as `\\T1/cmr/bx/n/10.95 .`"
+    );
     let body: Vec<&String> = runs[2..].iter().map(|(text, _)| text).collect();
     assert!(body.contains(&&"Every".to_string()));
     for (_, style) in &runs[2..] {
@@ -88,13 +95,25 @@ Statement.
 \end{theorem}";
     let runs = text_runs(source);
     assert_eq!(runs[0].0, "Theorem 1");
-    assert_eq!(runs[1].0, " (Fermat)");
+    // `\thmnote{ {\the\thm@notefont(#3)}}`: the space token is outside the
+    // `\thm@notefont` group, so pdflatex sets it from the head font — the
+    // fixture's `Definition 1.1 (Divides).` traces the *bold* interword
+    // glue `4.17043 plus 2.08443 minus 1.3896` there, not the body face's
+    // `3.63054 plus 1.81337 minus 1.20892`.
+    assert_eq!(runs[1].0, " ");
     assert_eq!(
         runs[1].1,
+        TextStyle::BOLD,
+        "the space before the note is a head-font space"
+    );
+    assert_eq!(runs[2].0, "(Fermat)");
+    assert_eq!(
+        runs[2].1,
         TextStyle::default(),
         "note must be upright, not italic"
     );
-    assert_eq!(runs[2].0, ".");
+    assert_eq!(runs[3].0, ".");
+    assert_eq!(runs[3].1, TextStyle::BOLD, "the head punctuation follows the note, in the head font");
 }
 
 #[test]
@@ -128,9 +147,21 @@ fn theoremstyle_remark_italicises_head_and_keeps_body_upright() {
 This generalizes to any ring.
 \end{remark}";
     let runs = text_runs(source);
-    assert_eq!(runs[0].0, "Remark 1");
+    // `\thmnumber{\@ifnotempty{#1}{ }\@upn{#2}}`: `\@upn` is `\textup`, so
+    // the number is upright inside an italic head. pdflatex traces
+    // `\OT1/cmr/m/it/10.95 R…k`, `\glue 3.91763 plus 1.67899 minus 1.11932`
+    // (italic), `\OT1/cmr/m/n/10.95 1`, `\OT1/cmr/m/it/10.95 .` — so the
+    // name, the space and the punctuation are italic and only the number
+    // is not.
+    assert_eq!(runs[0].0, "Remark");
     assert_eq!(runs[0].1, ITALIC, "remark style italicises the head");
-    for (_, style) in &runs[2..] {
+    assert_eq!(runs[1].0, " ");
+    assert_eq!(runs[1].1, ITALIC, "the space before the number is italic too");
+    assert_eq!(runs[2].0, "1");
+    assert_eq!(runs[2].1, TextStyle::default(), "\\@upn sets the number upright");
+    assert_eq!(runs[3].0, ".");
+    assert_eq!(runs[3].1, ITALIC, "the head punctuation is in the italic head font");
+    for (_, style) in &runs[4..] {
         assert_eq!(
             *style,
             TextStyle::default(),
@@ -311,19 +342,34 @@ fn amsthm_alone_is_silent() {
     assert!(msgs.is_empty(), "{msgs:?}");
 }
 
+/// `\usepackage{amsmath,amssymb,amsthm}` -- HW1's and HW2's line -- is silent
+/// now that all three are implemented, not only amsthm: `crate::math` sets the
+/// amsmath constructs and gates the amssymb inventory, and the constructs that
+/// are still missing report themselves where they are used rather than as a
+/// claim about the package. A package that really is only recognised still
+/// warns from the same `\usepackage`, and only names itself.
 #[test]
-fn amsmath_and_amssymb_still_warn_once_amsthm_no_longer_does() {
+fn the_ams_trio_is_silent_and_an_unimplemented_package_still_warns() {
     let msgs = messages(
         r"\documentclass{article}\usepackage{amsmath,amssymb,amsthm}\begin{document}x\end{document}",
+    );
+    assert!(msgs.is_empty(), "{msgs:?}");
+
+    let msgs = messages(
+        r"\documentclass{article}\usepackage{amsmath,amssymb,amsthm,fancyhdr}\begin{document}x\end{document}",
     );
     let package_msgs: Vec<&String> = msgs
         .iter()
         .filter(|m| m.contains("recognised but not implemented"))
         .collect();
     assert_eq!(package_msgs.len(), 1, "{msgs:?}");
-    assert!(package_msgs[0].contains("amsmath"));
-    assert!(package_msgs[0].contains("amssymb"));
-    assert!(!package_msgs[0].contains("amsthm"));
+    assert!(package_msgs[0].contains("fancyhdr"), "{package_msgs:?}");
+    for implemented in ["amsmath", "amssymb", "amsthm"] {
+        assert!(
+            !package_msgs[0].contains(implemented),
+            "{implemented} must not be blamed: {package_msgs:?}"
+        );
+    }
 }
 
 #[test]
@@ -336,4 +382,71 @@ fn unregistered_environment_name_still_reports_the_generic_gap() {
             .any(|m| m.contains("claim") && m.contains("not implemented")),
         "{msgs:?}"
     );
+}
+
+/// `fixtures/real-world/lecture-notes`' first head, run against pdflatex
+/// (TeX Live 2025, `\documentclass[11pt]{article}` + `[T1]{fontenc}`,
+/// `\tracingoutput=1`). The shipped page holds, in order:
+///
+/// ```text
+/// \T1/cmr/bx/n/10.95 D e ^^\ (ligature fi) n i t i o n
+/// \kern 0.0
+/// \glue 4.17043 plus 2.08443 minus 1.3896        % the *bold* space
+/// \T1/cmr/bx/n/10.95 1 . 1
+/// \kern 0.0
+/// \glue 4.17043 plus 2.08443 minus 1.3896        % bold again
+/// \T1/cmr/m/n/10.95 ( D i v i d e s )            % \thm@notefont
+/// \T1/cmr/bx/n/10.95 .                           % \the\thm@headpunct
+/// \glue 5.0 plus 1.0 minus 1.0                   % \hskip\thm@headsep
+/// \T1/cmr/m/n/10.95 L e t                        % the body
+/// ```
+///
+/// Everything but `(Divides)` is in the head font. The `\glue 5.0` head
+/// separator is the render pipeline's to emit (this crate's `Inline` list
+/// carries no rubber horizontal glue); what the compiler owns is which
+/// piece is set in which font.
+#[test]
+fn definition_head_with_a_note_matches_the_oracle_font_for_every_piece() {
+    let source = r"\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\section{Divisibility}
+\begin{definition}[Divides]
+Let $a$ divide $b$.
+\end{definition}";
+    let runs = text_runs(source);
+    let head: Vec<(&str, TextStyle)> = runs
+        .iter()
+        .take(4)
+        .map(|(text, style)| (text.as_str(), *style))
+        .collect();
+    assert_eq!(
+        head,
+        vec![
+            ("Definition 1.1", TextStyle::BOLD),
+            (" ", TextStyle::BOLD),
+            ("(Divides)", TextStyle::default()),
+            (".", TextStyle::BOLD),
+        ]
+    );
+}
+
+/// `proof`'s head is `\item[\hskip\labelsep \itshape #1\@addpunct{.}]`:
+/// name and period alike come from the italic face, and the body is
+/// upright. pdflatex traces the label box as `\glue 5.475` (`\labelsep` at
+/// 11pt) then `\OT1/cmr/m/it/10.95 P r o o f … .`.
+#[test]
+fn proof_head_and_its_period_are_italic() {
+    let source = r"\begin{proof}[Proof sketch]
+Run the Euclidean algorithm.
+\end{proof}";
+    let runs = text_runs(source);
+    assert_eq!(runs[0].0, "Proof sketch.");
+    assert_eq!(
+        runs[0].1,
+        TextStyle {
+            italic: true,
+            ..TextStyle::default()
+        }
+    );
+    assert_eq!(runs[1].1, TextStyle::default(), "the proof body is upright");
 }

@@ -1,0 +1,112 @@
+{
+ "fixture": "120-addtolength-tabcolsep.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 81.963
+   },
+   {
+    "text": "before",
+    "x": 95.2467,
+    "y_top": 81.963
+   },
+   {
+    "text": "the",
+    "x": 125.1634,
+    "y_top": 81.963
+   },
+   {
+    "text": "table.",
+    "x": 142.319,
+    "y_top": 81.963
+   },
+   {
+    "text": "a",
+    "x": 80.966,
+    "y_top": 93.818
+   },
+   {
+    "text": "b",
+    "x": 103.88,
+    "y_top": 93.818
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 105.873
+   },
+   {
+    "text": "after",
+    "x": 95.2467,
+    "y_top": 105.873
+   },
+   {
+    "text": "the",
+    "x": 118.7953,
+    "y_top": 105.873
+   },
+   {
+    "text": "table.",
+    "x": 135.9509,
+    "y_top": 105.873
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    72.0,
+    85.051,
+    46.382,
+    0.398,
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    71.801,
+    85.45,
+    0.398,
+    11.955,
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    94.715,
+    85.45,
+    0.398,
+    11.955,
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    118.183,
+    85.45,
+    0.398,
+    11.955,
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    72.0,
+    97.405,
+    46.382,
+    0.398,
+    0.0,
+    0.0,
+    0.0
+   ]
+  ]
+ ]
+}

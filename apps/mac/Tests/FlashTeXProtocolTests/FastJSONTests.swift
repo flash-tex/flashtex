@@ -26,9 +26,27 @@ final class FastJSONTests: XCTestCase {
         }
         let page = { (n: Int) in #"{"number":\#(n),"width_pt":612,"height_pt":792.0,"items":[\#(items.joined(separator: ","))]}"# }
         let pagesJSON = (1...pages).map(page).joined(separator: ",")
-        let diags = #"[{"severity":"error","message":"Undefined control sequence \\foo","source":{"path":"main.tex","start_byte":3,"end_byte":7},"recovery":"skipped"},{"severity":"warning","message":"loose","source":null,"recovery":null},{"severity":"warning","message":"no source"}]"#
+        let diags = #"[{"severity":"error","message":"Undefined control sequence \\foo","source":{"path":"main.tex","start_byte":3,"end_byte":7},"recovery":"skipped"},{"severity":"warning","message":"loose","source":null,"recovery":null},{"severity":"warning","message":"no source"},{"severity":"error","code":"unknown_command","message":"`\\foo` is unknown","source":{"path":"main.tex","start_byte":3,"end_byte":7},"suggestion":"\\alpha","labels":[{"source":{"path":"main.tex","start_byte":3,"end_byte":7},"text":"this command","primary":true},{"source":{"path":"main.tex","start_byte":0,"end_byte":1},"text":"here","primary":false}],"notes":["a note"],"help":{"message":"did you mean \\alpha","replacement":{"start_byte":3,"end_byte":7,"text":"\\alpha"}},"recovery":"skipped","extra_future":{"nested":true}}]"#
         let json = #"{"protocol_version":1,"id":"r-1","type":"compile_result","payload":{"project_id":"demo","revision":42,"status":"recovered","pages":[\#(pagesJSON)],"diagnostics":\#(diags),"pdf_path":null,"layout_capabilities":["rules-v1","font-hints-v1"]}}"#
         return Data(json.utf8)
+    }
+
+    /// Both decoders must accept the shape the compiler actually emits, where
+    /// the replacement's range is nested in `source` and there is no flat
+    /// `start_byte`. FastJSON parsed `source` for its path and threw the range
+    /// away, so it failed the same way the reference decoder did.
+    func testNestedReplacementRangeDecodesIdenticallyInBothDecoders() throws {
+        let diag = #"{"severity":"error","code":"unknown_command","message":"`\\foo` is unknown","source":{"path":"main.tex","start_byte":5,"end_byte":11},"help":{"message":"did you mean \\alpha?","replacement":{"source":{"end_byte":11,"path":"main.tex","start_byte":5},"text":"\\alpha"}}}"#
+        let json = #"{"protocol_version":1,"id":"r-1","type":"compile_result","payload":{"project_id":"demo","revision":1,"status":"ok","pages":[],"diagnostics":[\#(diag)],"pdf_path":null}}"#
+        let data = Data(json.utf8)
+        let fast = try FastJSON.compileResultEnvelope(data)
+        let reference = try RuntimeV1.decodeCompileResultReference(data)
+        XCTAssertEqual(fast.payload, reference.payload)
+        let r = try XCTUnwrap(fast.payload.diagnostics.first?.help?.replacement)
+        XCTAssertEqual(r.startByte, 5)
+        XCTAssertEqual(r.endByte, 11)
+        XCTAssertEqual(r.text, "\\alpha")
+        XCTAssertEqual(r.path, "main.tex")
     }
 
     func testFixtureDecodesIdentically() throws {

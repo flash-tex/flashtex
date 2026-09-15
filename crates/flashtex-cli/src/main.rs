@@ -3,7 +3,7 @@
 //! ```text
 //! flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
 //!                [--v2 out.json] [--timing] [--strict] [--json] [-j N]
-//! flashtex check <main.tex> [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
+//! flashtex check <main.tex> [--json] [--strict] [--fix] [--dry-run] [--project-root DIR] [--font-dir DIR]...
 //! flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
 //! flashtex supported [--json|--md|--coverage]
 //! flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json] [--pdf out.pdf] [--timing]
@@ -17,11 +17,15 @@
 //! font subsets, images, links), the same bytes the Mac app's Export PDF
 //! produces. Exit status: 0 when the document rendered (`ok`, or
 //! `recovered` unless `--strict`), 1 when it failed, 2 for a usage error.
-//! Diagnostics go to stderr as `file:line:col: severity[code] message`,
-//! then one summary line. See docs/user/compiler.md.
+//! Diagnostics go to stderr, rustc-style with a source excerpt when stderr
+//! is a terminal and as `file:line:col: severity[code] message` otherwise
+//! (`--diagnostics`), then one summary line. See docs/user/compiler.md.
 
 mod compile;
+mod fix;
 mod project;
+mod report;
+mod requestdate;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -40,7 +44,8 @@ flashtex — the FlashTeX LaTeX engine
 usage:
   flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
                  [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
-  flashtex check <main.tex> [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
+  flashtex check <main.tex> [--json] [--strict] [--fix] [--dry-run]
+                 [--project-root DIR] [--font-dir DIR]...
   flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
                  [--interval MS] [--timing]
   flashtex supported [--json|--md|--coverage]
@@ -53,7 +58,8 @@ usage:
 commands:
   build      typeset a project (entry file + its \\input/\\include closure) to a
              PDF through the exact route: embedded font subsets, images, links
-  check      diagnostics only, no output files (`--json`: flashtex-check/1)
+  check      diagnostics only, no output files (`--json`: flashtex-check/1;
+             `--fix` applies suggestions in place, `--dry-run` prints the diff)
   watch      rebuild whenever a file of the project closure changes; Ctrl-C stops
   supported  the implemented-LaTeX inventory and coverage of the linked compiler
   worker     the runtime-v1 JSON Lines worker the IDE speaks (stdin/stdout)
@@ -71,6 +77,13 @@ options:
   --strict             exit 1 when any error diagnostic was reported, even if
                        the document rendered (`recovered`)
   --json               (check/build) print the flashtex-check/1 report on stdout
+  --fix                (check) apply each diagnostic suggestion to its source
+                       span; overlapping edits and files that changed since
+                       compile are skipped; then the check is re-run
+  --dry-run            (check, with --fix) print a unified diff and write nothing
+  --diagnostics STYLE  full (source excerpt and carets), short (one line each)
+                       or json (= --json); default full on a terminal, else short
+  --color WHEN         auto (default; off when NO_COLOR is set), always, never
   -j, --jobs N         accepted for compatibility; the engine is single-threaded
   --class-options OPTS class options assumed when the source has no \\documentclass
                        (default `12pt`)
@@ -81,10 +94,12 @@ exit status: 0 rendered (ok/recovered), 1 failed (or recovered with --strict),
 environment: FLASHTEX_FONT_DIRS, FLASHTEX_TFM_DIRS, FLASHTEX_LM_DIR (colon separated)
 ";
 
-/// `flashtex --version`: crate version and the Git revision it was built
-/// from (`build.rs`).
+/// `flashtex --version`: the release version and the Git revision it was
+/// built from (both from `build.rs`). `FLASHTEX_VERSION` in the build
+/// environment is the release tag; a plain checkout falls back to the crate
+/// version.
 pub fn version_string() -> String {
-    format!("flashtex {} ({})", env!("CARGO_PKG_VERSION"), env!("FLASHTEX_GIT_SHA"))
+    format!("flashtex {} ({})", env!("FLASHTEX_VERSION"), env!("FLASHTEX_GIT_SHA"))
 }
 
 fn main() {
@@ -137,6 +152,12 @@ struct Common {
     verbose: bool,
     strict: bool,
     json: bool,
+    /// `None`: full when stderr is a terminal, short otherwise.
+    diagnostics: Option<report::Style>,
+    color: Option<bool>,
+    /// `check --fix`: apply suggestions, then re-run the check.
+    fix: bool,
+    dry_run: bool,
     interval_ms: u64,
     render: RenderOptions,
 }
@@ -152,26 +173,56 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
         verbose: false,
         strict: false,
         json: false,
+        diagnostics: None,
+        color: None,
+        fix: false,
+        dry_run: false,
         interval_ms: 250,
         render: RenderOptions::default(),
     };
     let mut main: Option<PathBuf> = None;
+    let mut explicit_date: Option<String> = None;
     let mut i = 0;
     let value = |i: &mut usize, flag: &str| -> Result<String, String> {
         *i += 1;
         args.get(*i).cloned().ok_or_else(|| format!("{flag} needs a value"))
     };
     while i < args.len() {
-        let a = args[i].as_str();
+        // `--diagnostics=full` is `--diagnostics full`.
+        let (a, inline) = match args[i].split_once('=') {
+            Some((flag, v)) if flag == "--diagnostics" || flag == "--color" => (flag, Some(v.to_string())),
+            _ => (args[i].as_str(), None),
+        };
         match a {
             "-o" | "--output" => c.output = Some(PathBuf::from(value(&mut i, a)?)),
             "--project-root" => c.project_root = Some(PathBuf::from(value(&mut i, a)?)),
             "--font-dir" => c.font_dirs.push(PathBuf::from(value(&mut i, a)?)),
             "--v2" => c.v2 = Some(PathBuf::from(value(&mut i, a)?)),
+            // What `\today` renders. The CLI is the caller, so it is the one
+            // component allowed to read the clock; the engine never does.
+            // protocol/proposals/runtime-v1-request-date.md
+            "--date" => {
+                let raw = value(&mut i, a)?;
+                explicit_date = Some(raw);
+            }
             "--timing" => c.timing = true,
             "-v" | "--verbose" => c.verbose = true,
             "--strict" => c.strict = true,
             "--json" => c.json = true,
+            "--fix" => c.fix = true,
+            "--dry-run" => c.dry_run = true,
+            "--diagnostics" => match inline.map_or_else(|| value(&mut i, a), Ok)?.as_str() {
+                "full" => c.diagnostics = Some(report::Style::Full),
+                "short" => c.diagnostics = Some(report::Style::Short),
+                "json" => c.json = true,
+                v => return Err(format!("--diagnostics is full, short or json, got {v:?}")),
+            },
+            "--color" => match inline.map_or_else(|| value(&mut i, a), Ok)?.as_str() {
+                "auto" => c.color = None,
+                "always" => c.color = Some(true),
+                "never" => c.color = Some(false),
+                v => return Err(format!("--color is auto, always or never, got {v:?}")),
+            },
             "-j" | "--jobs" => {
                 let n = value(&mut i, a)?;
                 n.parse::<usize>().map_err(|_| format!("{a} needs a number, got {n:?}"))?;
@@ -199,6 +250,20 @@ fn parse_common(args: &[String], mode: Mode) -> Result<Common, String> {
     if mode == Mode::Check && (c.output.is_some() || c.v2.is_some()) {
         return Err("`check` writes no output files; use `build` for -o/--v2".into());
     }
+    if c.dry_run && !c.fix {
+        return Err("`--dry-run` needs `--fix`".into());
+    }
+    if mode != Mode::Check && (c.fix || c.dry_run) {
+        return Err("`--fix` is only valid with `check`".into());
+    }
+    // `--date`, else SOURCE_DATE_EPOCH, else the clock. Resolved here, once per
+    // invocation, so the engine receives a date and never reads a clock itself.
+    c.render.today = requestdate::resolve(
+        explicit_date.as_deref(),
+        requestdate::source_date_epoch_from_env().as_deref(),
+        requestdate::now_unix_seconds(),
+    )
+    .map_err(|e| e.0)?;
     Ok(c)
 }
 
@@ -228,8 +293,8 @@ fn run(args: &[String], mode: Mode) -> i32 {
 /// One build (or check). `Err` is a usage-level failure (exit 2).
 fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<i32, String> {
     let started = Instant::now();
-    let project = project::load(&c.main, c.project_root.as_deref())?;
-    let outcome = compile::compile(&project, fonts, &c.render, revision);
+    let mut project = project::load(&c.main, c.project_root.as_deref())?;
+    let mut outcome = compile::compile(&project, fonts, &c.render, revision);
     let mut outputs: Vec<(&str, PathBuf)> = Vec::new();
     let mut pdf_ms = 0.0;
     let mut pdf_notes: Vec<String> = Vec::new();
@@ -258,12 +323,27 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
             }
         }
     }
-    let total_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let mut total_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     // Diagnostics, then the summary, on stderr; the JSON report on stdout.
     let mut err = std::io::stderr().lock();
-    for d in &outcome.diagnostics {
-        let _ = writeln!(err, "{}", d.line_text());
+    let terminal = std::io::IsTerminal::is_terminal(&err);
+    let style = c.diagnostics.unwrap_or(if terminal { report::Style::Full } else { report::Style::Short });
+    let color = c.color.unwrap_or(terminal && std::env::var_os("NO_COLOR").is_none());
+    let shown = match style {
+        report::Style::Full => report::collapse_repeats(&outcome.diagnostics),
+        report::Style::Short => outcome.diagnostics.clone(),
+    };
+    for d in &shown {
+        match style {
+            report::Style::Short => {
+                let _ = writeln!(err, "{}", d.line_text());
+            }
+            report::Style::Full => {
+                let text = project.documents.iter().find(|doc| doc.path == d.path).map(|doc| doc.text.as_str());
+                let _ = writeln!(err, "{}", report::render_full(d, text, color));
+            }
+        }
     }
     if c.verbose {
         for n in &pdf_notes {
@@ -301,6 +381,63 @@ fn build_once(c: &Common, fonts: &FontSet, mode: Mode, revision: u64) -> Result<
             pdf_ms,
             total_ms
         );
+    }
+    if c.fix {
+        let planned = fix::plan(fix::collect_edits(&outcome.diagnostics, &project), &project);
+        let applied = fix::apply(&project, planned, c.dry_run);
+        for s in &applied.skipped {
+            let _ = writeln!(err, "{}", s.line_text());
+        }
+        if c.dry_run {
+            for d in &applied.diffs {
+                let _ = write!(err, "{d}");
+            }
+        }
+        let _ = writeln!(err, "{}", fix::summary_line(applied.issues, applied.files, applied.skipped.len()));
+        if !c.dry_run {
+            let re_started = Instant::now();
+            project = project::load(&c.main, c.project_root.as_deref())?;
+            outcome = compile::compile(&project, fonts, &c.render, revision);
+            total_ms = re_started.elapsed().as_secs_f64() * 1000.0;
+            let shown = match style {
+                report::Style::Full => report::collapse_repeats(&outcome.diagnostics),
+                report::Style::Short => outcome.diagnostics.clone(),
+            };
+            for d in &shown {
+                match style {
+                    report::Style::Short => {
+                        let _ = writeln!(err, "{}", d.line_text());
+                    }
+                    report::Style::Full => {
+                        let text = project.documents.iter().find(|doc| doc.path == d.path).map(|doc| doc.text.as_str());
+                        let _ = writeln!(err, "{}", report::render_full(d, text, color));
+                    }
+                }
+            }
+            let _ = writeln!(
+                err,
+                "flashtex: {}: {}, {} page{}, {} error{}, {} warning{}",
+                project.entry,
+                outcome.status,
+                outcome.pages,
+                plural(outcome.pages),
+                outcome.errors(),
+                plural(outcome.errors()),
+                outcome.warnings(),
+                plural(outcome.warnings()),
+            );
+            if c.timing {
+                let _ = writeln!(
+                    err,
+                    "flashtex: timing: render {:.2} ms ({} pass{}), pdf {:.2} ms, total {:.2} ms",
+                    outcome.render_ms,
+                    outcome.passes,
+                    if outcome.passes == 1 { "" } else { "es" },
+                    0.0,
+                    total_ms
+                );
+            }
+        }
     }
     if c.json {
         let refs: Vec<(&str, &Path)> = outputs.iter().map(|(k, p)| (*k, p.as_path())).collect();
@@ -358,6 +495,10 @@ fn watch(c: &Common, fonts: &FontSet) -> i32 {
             .collect();
         snapshot = now;
         revision += 1;
+        if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+            // Clear the screen so the latest rebuild is the only one on it.
+            eprint!("\x1b[2J\x1b[H");
+        }
         eprintln!("flashtex: change in {} -> rebuild #{revision}", changed.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
         if let Err(e) = build_once(&timed, fonts, Mode::Build, revision) {
             eprintln!("flashtex: {e}");
@@ -376,6 +517,10 @@ fn clone_common(c: &Common) -> Common {
         verbose: c.verbose,
         strict: c.strict,
         json: c.json,
+        diagnostics: c.diagnostics,
+        color: c.color,
+        fix: c.fix,
+        dry_run: c.dry_run,
         interval_ms: c.interval_ms,
         render: c.render.clone(),
     }

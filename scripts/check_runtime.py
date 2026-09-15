@@ -83,6 +83,35 @@ def layout_capabilities(payload):
     return frozenset(values)
 
 
+def request_date(payload):
+    """`payload.date` -- the civil date `\\today` renders, YYYY-MM-DD.
+
+    Optional: an absent field means the compiler uses the Unix epoch, which is
+    what it printed before the field existed, so old producers and committed
+    fixtures stay byte-identical. A present value is strict -- no time, no
+    timezone, no alternative separator -- because a caller that sent a date
+    meant it, and guessing is the bug this field exists to end. See
+    protocol/proposals/runtime-v1-request-date.md.
+    """
+    if 'date' not in payload:
+        return None
+    value = payload['date']
+    string(value, 'date', True)
+    require(len(value) == 10 and value[4] == '-' and value[7] == '-',
+            'date must be a civil date in YYYY-MM-DD form')
+    parts = (value[0:4], value[5:7], value[8:10])
+    require(all(part.isdigit() and part.isascii() for part in parts),
+            'date must be a civil date in YYYY-MM-DD form')
+    year, month, day = (int(part) for part in parts)
+    require(1 <= year <= 9999, 'date year must be 0001-9999')
+    require(1 <= month <= 12, 'date month must be 01-12')
+    leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+    lengths = (31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    require(1 <= day <= lengths[month - 1],
+            'date names a day that does not exist in that month')
+    return value
+
+
 def strict_object(pairs):
     result = {}
     for key, value in pairs:
@@ -255,6 +284,7 @@ class Validator:
                 mapped[name] = text
             require(payload['entry_path'] in mapped, 'entry_path must exist in request documents')
             requested = layout_capabilities(payload)
+            request_date(payload)
             self.requests[ident] = (project, revision, mapped, requested)
             self.latest_request[project] = ident
             self.latest[project] = revision

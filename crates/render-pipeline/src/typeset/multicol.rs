@@ -57,7 +57,7 @@ use crate::display::Diagnostic;
 use crate::pagebuild::{badness, BuiltPage, PageParams, Placed, VBlock, AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY};
 use crate::style::Stylesheet;
 
-use super::{floatpage, BoxRec, BuiltBlock, Context, Laid};
+use super::{floatpage, BoxRec, BuiltBlock, Context, Laid, NO_SOURCE_SPAN};
 
 const COLUMNBREAK: i32 = -10005;
 const END_PENALTY: i32 = -10006;
@@ -493,10 +493,14 @@ fn block_start(b: &Block) -> Option<(usize, usize)> {
         | Block::Part { span, .. }
         | Block::Title { span, .. }
         | Block::ClearPage { span, .. }
+        | Block::NoBreakFalse { span }
         | Block::Chrome { span, .. }
         | Block::Rule { span, .. } => Some((span.document.0, span.start)),
         Block::TocEntry(e) => Some((e.list_span.document.0, e.list_span.start)),
         Block::Picture { document, picture, .. } => Some((document.0, picture.start)),
+        // A longtable is contributed straight to the vertical list, so its
+        // origin is the environment's own span (`crate::longtable`).
+        Block::LongTable { table, .. } => Some((table.span.document.0, table.span.start)),
     }
 }
 
@@ -508,7 +512,7 @@ fn body_first_start(body: &[Block]) -> Option<usize> {
 /// Splits a paragraph whose lines straddle `at` (a preface that ends in
 /// the middle of a paragraph: `[...]` is blanked, not a `\par`).
 fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Block)> {
-    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, endlist_adjust, list } = b else { return None };
+    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, list, sized, leading_pt } = b else { return None };
     let mut before: Vec<ParaPart> = Vec::new();
     let mut after: Vec<ParaPart> = Vec::new();
     for p in parts {
@@ -553,8 +557,12 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         eject_before: *eject_before,
         vspace_before: *vspace_before,
         addvspace_before: *addvspace_before,
+        addvspace_flex: *addvspace_flex,
+        vspace_flex: *vspace_flex,
         endlist_adjust: *endlist_adjust,
         list: list.clone(),
+        sized: *sized,
+        leading_pt: *leading_pt,
     };
     let second = Block::Paragraph {
         parts: after,
@@ -565,8 +573,12 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         eject_before: false,
         vspace_before: 0.0,
         addvspace_before: 0.0,
+        addvspace_flex: (0.0, 0.0),
+        vspace_flex: (0.0, 0.0),
         endlist_adjust: 0.0,
         list: None,
+        sized: *sized,
+        leading_pt: *leading_pt,
     };
     Some((first, second))
 }
@@ -740,6 +752,7 @@ pub(super) fn outer_doc(ctx: &mut Context, doc: &Doc, floats: &[floatpage::Float
         blocks: out,
         diagnostics: Vec::new(),
         limitations: Vec::new(),
+        superseded: Vec::new(),
         secnumdepth: doc.secnumdepth,
         page_starts,
         default_color: doc.default_color,
@@ -1809,6 +1822,8 @@ fn rec_span(ctx: &Context, r: usize) -> Option<Span> {
         BoxRec::Picture(p) => Some(p.span),
         BoxRec::Table(t) => Some(t.span),
         BoxRec::ColorBox(b) => Some(b.span),
+        BoxRec::Leader { .. } => None,
+        BoxRec::Underline(u) => Some(u.span),
     }
 }
 
@@ -1957,6 +1972,7 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
             blocks: body,
             diagnostics: Vec::new(),
             limitations: Vec::new(),
+            superseded: Vec::new(),
             secnumdepth: doc.secnumdepth,
             page_starts: Vec::new(),
             default_color: doc.default_color,
@@ -2034,7 +2050,9 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
         }
     }
     m.finish();
-    let span0 = Span::in_document(DocumentId(0), 0, 0);
+    // The inter-column separator rule is typesetter-made page chrome
+    // with no source of its own.
+    let span0 = NO_SOURCE_SPAN;
     let mut built = Vec::with_capacity(m.pages.len());
     let mut dx = Vec::with_capacity(m.pages.len());
     for page in std::mem::take(&mut m.pages) {

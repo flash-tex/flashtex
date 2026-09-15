@@ -74,11 +74,15 @@ def regroup(glyphs):
     # Glyphs whose origins coincide within TIE bp (amsmath's `\relbar`
     # and arrow head, 14mu apart by construction) have no reading order:
     # pdfTeX's quantised TJ offsets and FlashTeX's exact arithmetic may put
-    # them either way round, so they are ordered by text.
+    # them either way round, so they are ordered by text. A minus sign
+    # orders as the hyphen-minus the pinned references read it as
+    # (rank.norm aligns the two), or `−→` and `-→` sort differently.
+    def key(g):
+        return g["text"].replace("\u2212", "-")
     for i in range(1, len(glyphs)):
         j = i
         while (j > 0 and round(glyphs[j]["y_top"], 1) == round(glyphs[j - 1]["y_top"], 1)
-               and glyphs[j]["x"] - glyphs[j - 1]["x"] < TIE and glyphs[j]["text"] < glyphs[j - 1]["text"]):
+               and glyphs[j]["x"] - glyphs[j - 1]["x"] < TIE and key(glyphs[j]) < key(glyphs[j - 1])):
             glyphs[j], glyphs[j - 1] = glyphs[j - 1], glyphs[j]
             j -= 1
     return [{"text": w["text"], "x": round(w["x"], 4), "y_top": round(w["y_top"], 4)}
@@ -176,7 +180,7 @@ def cmd_check(args):
             ref_cols = pinned.get("extension_columns") or [[] for _ in ref]
             text = open(os.path.join(FIXTURES, name + ".tex"), encoding="utf-8").read()
             req = {"protocol_version": 1, "id": name, "type": "compile",
-                   "payload": {"project_id": "amsmath-corpus", "revision": 1, "entry_path": "main.tex",
+                   "payload": {"project_id": "amsmath-corpus", "revision": 1, "entry_path": "main.tex", "date": "1970-01-01",
                                "documents": [{"path": "main.tex", "text": text}]}}
             v2 = os.path.join(work, name + ".v2.json")
             p = subprocess.run([args.render, "--v2", v2], input=(json.dumps(req) + "\n").encode(), env=env,

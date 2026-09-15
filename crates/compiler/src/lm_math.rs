@@ -1,6 +1,6 @@
 //! Glyphs drawn from the pinned Latin Modern Math resource, not the base-14 fonts.
 //!
-//! Blackboard bold, `\setminus`, the long `\Longrightarrow` arrow, a
+//! Blackboard bold, the cmsy circled operators, `\setminus`, the long `\Longrightarrow` arrow, a
 //! further set of common amssymb/latexsym symbols (issue #62: `\mp`, `\ll`,
 //! `\gg`, `\simeq`, `\vdots`, `\ddots`, the floor/ceiling fences, `\oint`,
 //! `\mapsto`, `\ell`, `\hbar`, `\circ`, `\parallel`, and the relations/order
@@ -77,6 +77,7 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{210F}', 576),  // \hbar
     ('\u{2218}', 412),  // \circ
     ('\u{2225}', 500),  // \parallel
+    ('\u{2016}', 398),  // \| / \Vert / \lVert / \rVert
     ('\u{2224}', 388),  // \nmid
     ('\u{2270}', 778),  // \nleq
     ('\u{2271}', 778),  // \ngeq
@@ -91,6 +92,12 @@ pub const ADVANCES: &[(char, u16)] = &[
     ('\u{2293}', 667),  // \sqcap
     ('\u{2291}', 778),  // \sqsubseteq
     ('\u{2292}', 778),  // \sqsupseteq
+    // Kernel cmsy10 circled operators; advances measured with hb-shape from
+    // apps/mac/Fonts/latinmodern-math.otf (font units).
+    ('\u{2296}', 778),  // \ominus, cmsy10 "09
+    ('\u{2298}', 778),  // \oslash, cmsy10 "0B
+    ('\u{2299}', 778),  // \odot, cmsy10 "0C
+    ('\u{25EF}', 1013), // \bigcirc, cmsy10 "0D
     ('\u{2272}', 776),  // \lesssim
     ('\u{2273}', 776),  // \gtrsim
     ('\u{225C}', 778),  // \triangleq
@@ -150,10 +157,9 @@ pub fn double_struck(letter: char) -> Option<char> {
 }
 
 pub fn advance(c: char) -> Option<u16> {
-    ADVANCES
-        .iter()
-        .find(|(glyph, _)| *glyph == c)
-        .map(|(_, advance)| *advance)
+    static INDEX: crate::char_table::CharTable<u16> = crate::char_table::CharTable::new(ADVANCES);
+    INDEX
+        .get(c)
         // amssymb/amsfonts symbols bound to the same resource
         // (`crate::amssymb::LM_ADVANCES`, generated from this font program).
         .or_else(|| crate::amssymb::lm_advance(c))
@@ -194,7 +200,7 @@ mod tests {
         assert_eq!(double_struck('A'), Some('\u{1D538}'));
         assert_eq!(double_struck('a'), None);
         assert_eq!(double_struck('1'), None);
-        assert_eq!(ADVANCES.len(), 79);
+        assert_eq!(ADVANCES.len(), 84);
     }
 
     #[test]

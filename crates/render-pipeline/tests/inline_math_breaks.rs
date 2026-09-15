@@ -176,7 +176,7 @@ fn inline_math_breaks_against_pdflatex() {
     // Pieces of an unbroken formula sit exactly where the one box's
     // children did: on a paragraph's last line (set at natural width) the
     // display list is the same with and without the cuts.
-    let doc = "\\documentclass{article}\\begin{document}Let $r\\in\\mathbb{Q}\\setminus\\{0\\}$ and $a+b=c$ with $f(x) = \\frac{a+b}{2} + \\left(x - 1\\right) \\le 3 x$ hold.\n\nThen $\\|L_f\\|_{\\mathrm{op}} |v| \\to 0$ as $h\\to 0$; also $\\lim_{h\\to 0} |E_g(h)|/|h| = 0$.\\end{document}";
+    let doc = "\\documentclass{article}\\usepackage{amssymb}\\begin{document}Let $r\\in\\mathbb{Q}\\setminus\\{0\\}$ and $a+b=c$ with $f(x) = \\frac{a+b}{2} + \\left(x - 1\\right) \\le 3 x$ hold.\n\nThen $\\|L_f\\|_{\\mathrm{op}} |v| \\to 0$ as $h\\to 0$; also $\\lim_{h\\to 0} |E_g(h)|/|h| = 0$.\\end{document}";
     std::env::set_var("FLASHTEX_INLINE_MATH_BREAKS", "0");
     let whole = render_one(doc);
     std::env::remove_var("FLASHTEX_INLINE_MATH_BREAKS");

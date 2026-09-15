@@ -1,0 +1,24 @@
+\documentclass{report}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\includeonly{one,three}
+\begin{document}
+\include{one}
+\include{two}
+\include{three}
+
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{Entry file after the includes.}\label{fe}
+\end{figure}
+
+Refs \ref{f1}, \ref{t1}, \ref{f3} and \ref{fe}.
+
+\end{document}

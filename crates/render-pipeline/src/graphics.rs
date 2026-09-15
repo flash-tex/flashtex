@@ -9,8 +9,10 @@
 //!   cm); otherwise 72 dpi.
 //! * PDF — page 1 (or `page=`) CropBox (graphicx's default `pagebox`)
 //!   clipped to the MediaBox, both inheritable through `/Parent`, with
-//!   `/Rotate`. Only uncompressed page objects are read; a PDF whose page
-//!   tree lives in compressed object streams is reported, never guessed.
+//!   `/Rotate`. Uncompressed page objects are found by a byte scan; a PDF
+//!   whose page tree lives in Flate-compressed object streams (PDF 1.5,
+//!   pdfTeX's default) is read with `flashtex_pdf::reader`. Anything
+//!   neither can read is reported, never guessed.
 //!
 //! graphicx semantics (`graphicx.sty` `\Gin@esetsize`, `\Gin@ii`): keys
 //! before the first `angle` request the size of the unrotated image
@@ -230,15 +232,58 @@ fn is_type(dict: &[u8], ty: &str) -> bool {
 }
 
 fn probe_pdf(b: &[u8], page: u32) -> Result<ImageInfo, String> {
-    let compressed = find(b, b"/ObjStm").is_some();
-    let trailer_root = find(b, b"/Root").and_then(|p| ref_num(dict_value(&b[p..], "Root")?));
-    let fail = |what: &str| {
-        if compressed {
-            format!("PDF {what}: the page tree is in a compressed object stream, which is not read yet")
-        } else {
-            format!("PDF {what}")
-        }
+    match probe_pdf_scan(b, page) {
+        // PDF 1.5 object streams (pdfTeX's default `\pdfobjcompresslevel`
+        // 2, and most other producers): the catalog and page tree are
+        // inside Flate-compressed `/ObjStm` streams that a byte scan cannot
+        // see, so the file is read with the object reader instead.
+        Err(scan) if find(b, b"/ObjStm").is_some() => probe_pdf_objects(b, page).map_err(|m| format!("PDF {m} (object streams; {scan})")),
+        other => other,
+    }
+}
+
+/// [`probe_pdf`] for a PDF whose objects live in object streams.
+fn probe_pdf_objects(b: &[u8], page: u32) -> Result<ImageInfo, String> {
+    use flashtex_pdf::reader::{Obj, PdfFile};
+    let file = PdfFile::parse(b)?;
+    let pages = file.pages()?;
+    let dict = page.checked_sub(1).and_then(|i| pages.get(i as usize)).ok_or_else(|| format!("has fewer than {page} pages"))?;
+    let number = |o: &Obj| file.resolve(o).as_number().and_then(|n| n.parse::<f64>().ok());
+    let rect = |key: &str| -> Option<[f64; 4]> {
+        let a = file.page_attr(dict, key)?.as_array()?;
+        let n: Vec<f64> = a.iter().filter_map(number).collect();
+        (a.len() == 4 && n.len() == 4).then(|| [n[0].min(n[2]), n[1].min(n[3]), n[0].max(n[2]), n[1].max(n[3])])
     };
+    let media = rect("MediaBox").ok_or("page has no readable /MediaBox")?;
+    let rotate = file.page_attr(dict, "Rotate").and_then(number).map_or(0, |r| r as i32);
+    page_info(media, rect("CropBox"), rotate, page)
+}
+
+/// The natural size of a page from its inherited boxes (graphicx's default
+/// `pagebox` is the CropBox, clipped to the MediaBox) and `/Rotate`.
+fn page_info(media: [f64; 4], crop: Option<[f64; 4]>, rotate: i32, page: u32) -> Result<ImageInfo, String> {
+    let crop = crop.map(|c| [c[0].max(media[0]), c[1].max(media[1]), c[2].min(media[2]), c[3].min(media[3])]).unwrap_or(media);
+    let rotate = rotate.rem_euclid(360);
+    let (w, h) = (crop[2] - crop[0], crop[3] - crop[1]);
+    if w <= 0.0 || h <= 0.0 {
+        return Err("PDF page box is empty".into());
+    }
+    let (w, h) = if rotate % 180 == 90 { (h, w) } else { (w, h) };
+    Ok(ImageInfo {
+        format: ImageFormat::Pdf,
+        width_bp: w,
+        height_bp: h,
+        pixels: None,
+        pdf_box: Some(crop),
+        pdf_rotate: rotate,
+        pdf_page: page,
+    })
+}
+
+/// [`probe_pdf`] by scanning the bytes for uncompressed objects.
+fn probe_pdf_scan(b: &[u8], page: u32) -> Result<ImageInfo, String> {
+    let trailer_root = find(b, b"/Root").and_then(|p| ref_num(dict_value(&b[p..], "Root")?));
+    let fail = |what: &str| format!("PDF {what}");
     let root = trailer_root.ok_or_else(|| fail("has no /Root"))?;
     let catalog = pdf_object(b, root).ok_or_else(|| fail("catalog object not found"))?;
     let pages = dict_value(catalog, "Pages").and_then(ref_num).ok_or_else(|| fail("catalog has no /Pages"))?;
@@ -284,31 +329,20 @@ fn probe_pdf(b: &[u8], page: u32) -> Result<ImageInfo, String> {
         chain.iter().rev().find_map(|n| pdf_object(b, *n).and_then(|d| dict_value(d, key)))
     };
     let media = inherited("MediaBox").and_then(number_array).ok_or_else(|| fail("page has no readable /MediaBox"))?;
-    let crop = inherited("CropBox").and_then(number_array).map(|c| [c[0].max(media[0]), c[1].max(media[1]), c[2].min(media[2]), c[3].min(media[3])]).unwrap_or(media);
-    let rotate = inherited("Rotate")
-        .and_then(|v| std::str::from_utf8(&v[..v.len().min(8)]).ok()?.split(|c: char| !(c.is_ascii_digit() || c == '-')).next()?.parse::<i32>().ok())
-        .unwrap_or(0)
-        .rem_euclid(360);
-    let (w, h) = (crop[2] - crop[0], crop[3] - crop[1]);
-    if w <= 0.0 || h <= 0.0 {
-        return Err("PDF page box is empty".into());
-    }
-    let (w, h) = if rotate % 180 == 90 { (h, w) } else { (w, h) };
-    Ok(ImageInfo {
-        format: ImageFormat::Pdf,
-        width_bp: w,
-        height_bp: h,
-        pixels: None,
-        pdf_box: Some(crop),
-        pdf_rotate: rotate,
-        pdf_page: page,
-    })
+    let crop = inherited("CropBox").and_then(number_array);
+    let rotate = inherited("Rotate").and_then(|v| std::str::from_utf8(&v[..v.len().min(8)]).ok()?.split(|c: char| !(c.is_ascii_digit() || c == '-')).next()?.parse::<i32>().ok()).unwrap_or(0);
+    page_info(media, crop, rotate, page)
 }
 
 /// Lengths a graphicx dimension may refer to, in TeX points.
 #[derive(Debug, Clone, Copy)]
 pub struct LengthEnv {
+    /// `\textwidth`: the whole text block, both columns and `\columnsep`.
     pub text_width: f64,
+    /// `\linewidth`/`\columnwidth`/`\hsize` where the key is read: the
+    /// column in a two-column document, `\textwidth` inside a `figure*`
+    /// (`\@xdblfloat`: `\hsize\textwidth \linewidth\textwidth`).
+    pub line_width: f64,
     pub text_height: f64,
     pub paper_width: f64,
     pub paper_height: f64,
@@ -339,7 +373,8 @@ pub fn parse_dimen(raw: &str, env: &LengthEnv) -> Option<f64> {
         "sp" => 1.0 / 65536.0,
         "em" => env.em,
         "ex" => env.ex,
-        "\\textwidth" | "\\linewidth" | "\\columnwidth" | "\\hsize" => env.text_width,
+        "\\textwidth" => env.text_width,
+        "\\linewidth" | "\\columnwidth" | "\\hsize" => env.line_width,
         "\\textheight" | "\\vsize" => env.text_height,
         "\\paperwidth" => env.paper_width,
         "\\paperheight" => env.paper_height,
@@ -347,6 +382,56 @@ pub fn parse_dimen(raw: &str, env: &LengthEnv) -> Option<f64> {
     };
     Some(factor * per)
 }
+
+/// The `graphics`/`graphicx` package options that decide whether an image
+/// file is read at all.
+///
+/// LaTeX hands every global class option to each package, and `graphics.sty`
+/// declares `draft`, `final` and `demo`, so `\documentclass[draft]{article}`
+/// sets `\ifGin@draft` exactly as `\usepackage[draft]{graphicx}` does.
+/// `\ProcessOptions` runs the declared options in *declaration* order
+/// (`draft` on line 53, `final` on line 54 of `graphics.sty`), so a `final`
+/// anywhere -- class options or package options -- always wins over a
+/// `draft` anywhere. Measured on TeX Live 2025: `[draft,final]`,
+/// `[final,draft]` and `\documentclass[final]` + `\usepackage[draft]` all
+/// embed the file.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GraphicsMode {
+    /// `\ifGin@draft`: the file is still looked up for its bounding box,
+    /// but nothing is embedded -- `\Gin@setfile` sets a framed box of the
+    /// requested size with the file name inside. A file that is missing is
+    /// a `LaTeX Warning` and gets `pdftex.def`'s fallback bounding box
+    /// ([`MISSING_NATURAL_BP`]) instead of the package error it would
+    /// otherwise raise.
+    pub draft: bool,
+    /// `demo`: `\AtBeginDocument` replaces the whole of
+    /// `\Ginclude@graphics` with a `\rule`, so no file is looked up at all
+    /// and [`demo_box`] gives the size. It beats `draft`, whose branch
+    /// lives in `\Gin@setfile`, which is never reached.
+    pub demo: bool,
+}
+
+/// [`GraphicsMode`] of a document: its class options plus the options of
+/// every `\usepackage` of `graphics` or `graphicx`.
+pub fn mode(source: &str) -> GraphicsMode {
+    let mut lists = vec![crate::adapter::class_options(source).unwrap_or_default()];
+    lists.extend(["graphics", "graphicx"].iter().filter_map(|p| crate::adapter::package_options(source, p)));
+    let has = |name: &str| lists.iter().any(|l| l.split(',').any(|o| o.trim() == name));
+    GraphicsMode { draft: has("draft") && !has("final"), demo: has("demo") }
+}
+
+/// The `\rule` `demo` sets in place of a graphic, in TeX points
+/// (`graphics.sty`: `\rule{\@ifundefined{Gin@@ewidth}{150pt}{\Gin@@ewidth}}
+/// {\@ifundefined{Gin@@eheight}{100pt}{\Gin@@eheight}}`).
+pub const DEMO_WIDTH_PT: f64 = 150.0;
+pub const DEMO_HEIGHT_PT: f64 = 100.0;
+
+/// The bounding box `pdftex.def` gives a file it cannot find, in big
+/// points: `\Gread@pdftex` leaves `\Gin@llx`..`\Gin@ury` at `0 0 72 72`, so
+/// the natural size is one inch square and an image asked for by width
+/// alone comes out square. Measured: `\includegraphics[draft]{nofile.png}`
+/// is 72.26999pt wide and tall.
+pub const MISSING_NATURAL_BP: f64 = 72.0;
 
 /// One parsed `key=value` of the optional argument, in order.
 #[derive(Debug, Clone, PartialEq)]
@@ -357,6 +442,9 @@ pub enum GKey {
     Scale(f64),
     Angle(f64),
     KeepAspectRatio(bool),
+    /// `draft` / `draft=false`: `\ifGin@draft` for this one graphic, which
+    /// overrides the package's own setting ([`GraphicsMode::draft`]).
+    Draft(bool),
     Page(u32),
     /// Recognised but not honoured (`trim`, `clip`, `viewport`, ...):
     /// reported as a limitation.
@@ -385,8 +473,9 @@ pub fn parse_keys(options: &str, env: &LengthEnv) -> (Vec<GKey>, Vec<String>) {
             "scale" => number(v).map(GKey::Scale),
             "angle" => number(v).map(GKey::Angle),
             "keepaspectratio" => Some(GKey::KeepAspectRatio(v.is_none_or(|v| v != "false"))),
+            "draft" => Some(GKey::Draft(v.is_none_or(|v| v != "false"))),
             "page" => v.and_then(|v| v.parse().ok()).map(GKey::Page),
-            "trim" | "viewport" | "clip" | "bb" | "natwidth" | "natheight" | "origin" | "draft" | "pagebox" | "decodearray" | "interpolate" => Some(GKey::Unsupported(k.to_string())),
+            "trim" | "viewport" | "clip" | "bb" | "natwidth" | "natheight" | "origin" | "pagebox" | "decodearray" | "interpolate" => Some(GKey::Unsupported(k.to_string())),
             "alt" | "actualtext" | "artifact" | "quiet" => None,
             _ => {
                 problems.push(format!("unknown \\includegraphics key '{k}'"));
@@ -437,6 +526,28 @@ pub struct GraphicBox {
 /// graphicx sizing of an image whose natural size is `nat_w` x `nat_h`
 /// TeX points.
 pub fn size_box(nat_w: f64, nat_h: f64, keys: &[GKey]) -> GraphicBox {
+    place(nat_w, nat_h, keys, false)
+}
+
+/// The box `demo` sets: a [`DEMO_WIDTH_PT`] x [`DEMO_HEIGHT_PT`] rule, no
+/// file involved.
+///
+/// `\Ginclude@graphics` is gone, so `\Gin@req@sizes` -- the only thing that
+/// ever scales a natural size, applies `keepaspectratio` and honours the
+/// first `scale=` -- is never used. All that survives of the keys before
+/// the first `angle=`/`scale=` is `\Gin@@ewidth`/`\Gin@@eheight`, which
+/// `\Gin@esetsize` fills from `width=`/`height=`/`totalheight=` and which
+/// become the rule's dimensions *literally*: `[width=W]` gives a `W` x
+/// 100pt rule, not a proportional one, and `[keepaspectratio,width=W,
+/// height=H]` gives `W` x `H`. From the first `angle=`/`scale=` onwards the
+/// rule is wrapped in `\Gin@erotate`/`\Gscale@@box` exactly as a real
+/// graphic is, so those keys behave as usual -- including `keepaspectratio`,
+/// which `\Gscale@@box` does honour.
+pub fn demo_box(keys: &[GKey]) -> GraphicBox {
+    place(DEMO_WIDTH_PT, DEMO_HEIGHT_PT, keys, true)
+}
+
+fn place(nat_w: f64, nat_h: f64, keys: &[GKey], demo: bool) -> GraphicBox {
     // Box so far: [a b c d e f] of the unit square, and its extents.
     let mut m = [nat_w, 0.0, 0.0, nat_h, 0.0, 0.0];
     let mut rotated = false;
@@ -444,7 +555,12 @@ pub fn size_box(nat_w: f64, nat_h: f64, keys: &[GKey]) -> GraphicBox {
     // `\Gin@esetsize` before the first angle: request the unrotated size.
     let apply_request = |m: &mut [f64; 6], w: Option<f64>, h: Option<f64>, th: Option<f64>, scale: Option<f64>, iso: bool, rotated: bool| {
         let h = h.or(th);
-        if !rotated {
+        if demo && !rotated {
+            // The rule takes the requested lengths as they stand; there is
+            // no natural size to scale, so `scale` and `keepaspectratio`
+            // have nowhere to act.
+            *m = [w.unwrap_or(nat_w), 0.0, 0.0, h.unwrap_or(nat_h), 0.0, 0.0];
+        } else if !rotated {
             let (sx, sy) = match (w, h) {
                 (None, None) => {
                     let s = scale.unwrap_or(1.0);
@@ -499,8 +615,17 @@ pub fn size_box(nat_w: f64, nat_h: f64, keys: &[GKey]) -> GraphicBox {
             GKey::Width(v) => w = Some(v),
             GKey::Height(v) => h = Some(v),
             GKey::TotalHeight(v) => th = Some(v),
+            // A `scale=` sets `\if@tempswa`, which sends every later key
+            // -- and every earlier one still pending -- through
+            // `\Gscale@@box` around the finished graphic. Under `demo` that
+            // finished graphic is the default rule and the factor itself is
+            // lost with `\Gin@req@sizes`, so `[scale=2]` alone is a plain
+            // 150x100pt rule and `[width=100pt,scale=2]` resizes that rule
+            // to 100pt wide (measured: 99.99847pt x 66.66565pt).
+            GKey::Scale(_) if demo && !rotated => rotated = true,
             GKey::Scale(v) => scale = Some(v),
             GKey::KeepAspectRatio(v) => iso = v,
+            GKey::Draft(_) => {}
             GKey::Angle(deg) => {
                 apply_request(&mut m, w, h, th, scale, iso, rotated);
                 (w, h, th, scale) = (None, None, None, None);
@@ -542,7 +667,7 @@ mod tests {
     use super::*;
 
     fn env() -> LengthEnv {
-        LengthEnv { text_width: 469.75499, text_height: 650.43, paper_width: 614.295, paper_height: 794.96999, em: 11.74988, ex: 5.16 }
+        LengthEnv { text_width: 469.75499, line_width: 469.75499, text_height: 650.43, paper_width: 614.295, paper_height: 794.96999, em: 11.74988, ex: 5.16 }
     }
 
     #[test]
@@ -558,6 +683,17 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/floats/images/box-crop.pdf");
         let info = probe(&std::fs::read(path).unwrap(), 1).unwrap();
         assert_eq!((info.width_bp, info.height_bp), (200.0, 120.0));
+    }
+
+    #[test]
+    fn pdf_object_streams_are_read() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/float-graphics/images");
+        let info = probe(&std::fs::read(format!("{dir}/objstm.pdf")).unwrap(), 1).unwrap();
+        assert_eq!((info.width_bp, info.height_bp, info.pdf_rotate), (150.0, 60.0, 0));
+        let info = probe(&std::fs::read(format!("{dir}/objstm-rotate.pdf")).unwrap(), 1).unwrap();
+        assert_eq!((info.width_bp, info.height_bp, info.pdf_rotate, info.pdf_box), (60.0, 150.0, 90, Some([0.0, 0.0, 150.0, 60.0])));
+        let err = probe(&std::fs::read(format!("{dir}/objstm.pdf")).unwrap(), 2).unwrap_err();
+        assert!(err.contains("fewer than 2 pages"), "{err}");
     }
 
     #[test]
@@ -584,5 +720,101 @@ mod tests {
         assert!((b.height - 72.27).abs() < 1e-6 && (b.width - 36.135).abs() < 1e-6 && b.depth.abs() < 1e-9, "{b:?}");
         let (k, _) = parse_keys("width=0.5\\textwidth", &e);
         assert!((size_box(100.0, 50.0, &k).width - 234.877495).abs() < 1e-6);
+    }
+
+    /// `\usepackage[...]{graphicx}` and the class options, which LaTeX
+    /// passes to it. Measured on TeX Live 2025 (`\ProcessOptions` runs the
+    /// declared options in declaration order, and `final` is declared after
+    /// `draft`, so `final` wins wherever either is written).
+    #[test]
+    fn package_and_class_options_decide_draft_and_demo() {
+        let m = |p: &str| mode(&format!("{p}\n\\begin{{document}}x\\end{{document}}\n"));
+        assert_eq!(m("\\documentclass{article}\n\\usepackage{graphicx}"), GraphicsMode { draft: false, demo: false });
+        assert_eq!(m("\\documentclass{article}\n\\usepackage[draft]{graphicx}"), GraphicsMode { draft: true, demo: false });
+        assert_eq!(m("\\documentclass{article}\n\\usepackage[demo]{graphicx}"), GraphicsMode { draft: false, demo: true });
+        assert_eq!(m("\\documentclass{article}\n\\usepackage[demo]{graphics}"), GraphicsMode { draft: false, demo: true });
+        // The class options reach every package.
+        assert_eq!(m("\\documentclass[draft]{article}\n\\usepackage{graphicx}"), GraphicsMode { draft: true, demo: false });
+        assert_eq!(m("\\documentclass[demo]{article}\n\\usepackage{graphicx}"), GraphicsMode { draft: false, demo: true });
+        // `final` wins from either list and in either order.
+        assert!(!m("\\documentclass[draft]{article}\n\\usepackage[final]{graphicx}").draft);
+        assert!(!m("\\documentclass[final]{article}\n\\usepackage[draft]{graphicx}").draft);
+        assert!(!m("\\documentclass{article}\n\\usepackage[draft,final]{graphicx}").draft);
+        assert!(!m("\\documentclass{article}\n\\usepackage[final,draft]{graphicx}").draft);
+        // The class option alone is enough: the mode is only consulted
+        // for a graphic, and a graphic means the package was loaded.
+        assert_eq!(m("\\documentclass[draft]{article}"), GraphicsMode { draft: true, demo: false });
+    }
+
+    /// `draft` is a boolean key, not a limitation: it changes no dimension,
+    /// so the box is the one the same keys give a real file.
+    #[test]
+    fn draft_is_a_key_and_changes_no_dimension() {
+        let e = env();
+        let (k, p) = parse_keys("draft,width=100pt", &e);
+        assert!(p.is_empty());
+        assert!(!k.iter().any(|k| matches!(k, GKey::Unsupported(_))), "{k:?}");
+        assert_eq!(k.first(), Some(&GKey::Draft(true)));
+        assert_eq!(parse_keys("draft=false", &e).0, vec![GKey::Draft(false)]);
+        // Measured: \includegraphics[draft,width=100pt]{nofile.png} is
+        // 100pt x 100.00531pt -- `pdftex.def`'s 1 in square, scaled.
+        let nat = MISSING_NATURAL_BP / BP_PER_PT;
+        let b = size_box(nat, nat, &k);
+        assert!((b.width - 100.0).abs() < 1e-6 && (b.height - 100.0).abs() < 0.01 && b.depth == 0.0, "{b:?}");
+        // and with no keys at all, one inch square.
+        let b = size_box(nat, nat, &parse_keys("draft", &e).0);
+        assert!((b.width - 72.26999).abs() < 1e-4 && (b.height - 72.26999).abs() < 1e-4, "{b:?}");
+    }
+
+    /// Every row measured with pdflatex (TeX Live 2025) under
+    /// `\usepackage[demo]{graphicx}`; `\linewidth` there was 345pt.
+    #[test]
+    fn demo_boxes_match_pdflatex() {
+        let e = LengthEnv { text_width: 345.0, line_width: 345.0, ..env() };
+        let case = |opts: &str| {
+            let (k, p) = parse_keys(opts, &e);
+            assert!(p.is_empty(), "{opts}: {p:?}");
+            let b = demo_box(&k);
+            (b.width, b.height, b.depth)
+        };
+        let near = |got: (f64, f64, f64), want: (f64, f64), opts: &str| {
+            assert!((got.0 - want.0).abs() < 0.01 && (got.1 - want.1).abs() < 0.01 && got.2 == 0.0, "{opts}: {got:?} != {want:?}");
+        };
+        for (opts, want) in [
+            ("", (150.0, 100.0)),
+            // The height stays at 100pt however wide the rule is asked to be.
+            ("width=100pt", (100.0, 100.0)),
+            ("height=40pt", (150.0, 40.0)),
+            ("totalheight=40pt", (150.0, 40.0)),
+            ("width=100pt,height=40pt", (100.0, 40.0)),
+            // `\Gin@req@sizes` is never used, so `keepaspectratio` and a
+            // leading `scale` have nothing to act on.
+            ("width=100pt,height=40pt,keepaspectratio", (100.0, 40.0)),
+            ("keepaspectratio,width=100pt,height=40pt", (100.0, 40.0)),
+            ("scale=2", (150.0, 100.0)),
+            ("scale=0.5", (150.0, 100.0)),
+            // ... but a `scale` makes every width/height a `\Gscale@@box`
+            // around the default rule, in either order.
+            ("scale=2,width=100pt", (99.99847, 66.66565)),
+            ("width=100pt,scale=2", (99.99847, 66.66565)),
+            ("width=0.5\\linewidth", (172.5, 100.0)),
+            // From the first angle the rule rotates and rescales as usual.
+            ("angle=90", (100.0, 150.0)),
+            ("angle=90,width=100pt", (100.0, 150.0)),
+            ("width=100pt,angle=90", (100.0, 100.0)),
+            ("angle=30", (179.90036, 161.59897)),
+            ("angle=90,height=40pt", (26.66626, 39.99939)),
+            ("angle=45,width=100pt,height=40pt", (100.00398, 39.99889)),
+            ("angle=90,scale=2", (200.0, 300.0)),
+            ("width=100pt,angle=90,height=40pt", (39.99939, 39.99939)),
+            ("scale=2,width=100pt,angle=90", (66.66565, 99.99847)),
+            // `\Gscale@@box` does honour `keepaspectratio`.
+            ("angle=45,keepaspectratio,width=100pt,height=40pt", (39.99889, 39.99889)),
+            // `demo` beats `draft`: `\Gin@setfile` is never reached.
+            ("draft", (150.0, 100.0)),
+            ("draft,width=100pt", (100.0, 100.0)),
+        ] {
+            near(case(opts), want, opts);
+        }
     }
 }

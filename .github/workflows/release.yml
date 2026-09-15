@@ -57,6 +57,10 @@ jobs:
     env:
       TAG: ${{ needs.version.outputs.tag }}
       VERSION: ${{ needs.version.outputs.version }}
+      # Read by crates/flashtex-cli/build.rs: the crate version is 0.1.0 and
+      # is not bumped per release, so without this `flashtex --version`
+      # reports 0.1.0 out of a v0.1.4 tarball.
+      FLASHTEX_VERSION: ${{ needs.version.outputs.version }}
     outputs:
       signing: ${{ steps.sign.outputs.signing }}
       notarized: ${{ steps.sign.outputs.notarize != '' }}
@@ -162,7 +166,14 @@ jobs:
           head -c 8 "$RUNNER_TEMP/smoke.pdf" | grep -q '%PDF-1.'
           env -u FLASHTEX_FONT_DIRS -u FLASHTEX_TFM_DIRS -u FLASHTEX_LM_DIR \
             "$RUNNER_TEMP/cli/flashtex-cli-$VERSION-macos-arm64/bin/flashtex" build fixtures/real-world/hw1/HW1.tex -o "$RUNNER_TEMP/hw1.pdf"
-          "$RUNNER_TEMP/cli/flashtex-cli-$VERSION-macos-arm64/bin/flashtex" --version
+          # Not just run --version: assert it reports the release. This step
+          # printed "flashtex 0.1.0" through v0.1.4 and nothing checked it.
+          reported="$("$RUNNER_TEMP/cli/flashtex-cli-$VERSION-macos-arm64/bin/flashtex" --version)"
+          echo "$reported"
+          case "$reported" in
+            "flashtex $VERSION ("*) ;;
+            *) echo "--version reports '$reported', expected 'flashtex $VERSION (<sha>)'"; exit 1 ;;
+          esac
           env -u FLASHTEX_FONT_DIRS -u FLASHTEX_TFM_DIRS -u FLASHTEX_LM_DIR \
             "$RUNNER_TEMP/cli/flashtex-cli-$VERSION-macos-arm64/bin/flashtex-render" --tex "$RUNNER_TEMP/smoke.tex" --pdf "$RUNNER_TEMP/smoke-render.pdf"
           head -c 8 "$RUNNER_TEMP/smoke-render.pdf" | grep -q '%PDF-1.'
@@ -183,6 +194,8 @@ jobs:
     timeout-minutes: 60
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      # See the macOS job: gives `flashtex --version` the release version.
+      FLASHTEX_VERSION: ${{ needs.version.outputs.version }}
     outputs:
       built: ${{ steps.build.outputs.built }}
       skipped: ${{ steps.build.outputs.skipped }}

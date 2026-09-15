@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 import FlashTeXProtocol
+import HostedWindows
 @testable import FlashTeXMac
 @testable import FlashTeXAccessibility
 
@@ -50,6 +51,16 @@ final class EnvironmentPairTests: XCTestCase {
         // An unclosed environment extends to the end of the text.
         let open = "\\begin{proof}\nstuck" as NSString
         XCTAssertEqual(EN.selectEnvironment(around: NSRange(location: 16, length: 0), in: open)?.whole(limit: open.length), NSRange(location: 0, length: open.length))
+    }
+
+    func testBeginInsideACommentDoesNotPair() {
+        let s = "% \\begin{foo}\n\\begin{foo}\\end{foo}" as NSString
+        XCTAssertEqual(EN.environmentPairs(in: s).map(\.name), ["foo"])
+        XCTAssertEqual(EN.environmentPairs(in: s).count, 1)
+        XCTAssertNotNil(EN.environmentPairs(in: s)[0].end, "only the live pair matches")
+        let commented = s.range(of: "foo")
+        XCTAssertNil(EN.environmentPair(at: commented.location, in: s), "a \\begin{foo} after % is not a pair")
+        XCTAssertNil(EditorChangeEnvironment.linkedNames(at: commented.location, in: s))
     }
 
     func testWrapInlineBlockAndEmptySelection() {
@@ -136,7 +147,7 @@ final class EnvironmentPairTests: XCTestCase {
 
     private func host(_ model: ShellModel) async throws -> (NSWindow, NSTextView, SourceEditorView.Coordinator) {
         HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: Host(model: model))
         window.orderFrontRegardless()
         var found: NSTextView?
@@ -198,15 +209,19 @@ final class EnvironmentPairTests: XCTestCase {
     // MARK: command table
 
     func testCommandsAreInTheTableAndThePalette() {
-        for c in [AccessibilityCommand.selectEnvironment, .wrapInEnvironment, .goToDefinition, .goToSymbol, .renameSymbol] {
+        for c in [AccessibilityCommand.selectEnvironment, .wrapInEnvironment, .changeEnvironment, .goToDefinition, .goToSymbol, .renameSymbol] {
             XCTAssertTrue(CommandPaletteModel.isRunnable(c), "\(c)")
-            XCTAssertEqual(c.entry.menu, "Navigate")
             XCTAssertNotNil(c.entry.menuItem)
         }
+        XCTAssertEqual(AccessibilityCommand.selectEnvironment.entry.menu, "Navigate")
+        XCTAssertEqual(AccessibilityCommand.wrapInEnvironment.entry.menu, "Navigate")
+        XCTAssertEqual(AccessibilityCommand.changeEnvironment.entry.menu, "Editor")
         XCTAssertEqual(AccessibilityCommand.selectEnvironment.entry.shortcuts, ["⌘⇧A"])
         XCTAssertEqual(AccessibilityCommand.wrapInEnvironment.entry.shortcuts, ["⌘⇧W"])
+        XCTAssertEqual(AccessibilityCommand.changeEnvironment.entry.shortcuts, ["⌃⌘E"])
         XCTAssertEqual(AccessibilityCommand.renameSymbol.entry.shortcuts, ["⌥⇧R"])
         XCTAssertEqual(CommandPaletteModel.rows(matching: "wrap").first?.id, .wrapInEnvironment)
+        XCTAssertEqual(CommandPaletteModel.rows(matching: "change environment").first?.id, .changeEnvironment)
         XCTAssertEqual(CommandPaletteModel.rows(matching: "rename symbol").first?.id, .renameSymbol)
     }
 }

@@ -36,7 +36,7 @@ use std::cell::RefCell;
 
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{self, Token, TokenKind};
-use crate::math::{self, MathAtom, MathList, Nucleus};
+use crate::math::{self, MathAtom, MathList, MathPackages, Nucleus};
 use crate::Span;
 
 /// Commands that typeset material, with (required arguments, whether an
@@ -392,7 +392,11 @@ pub fn raw_text<'a>(tokens: impl IntoIterator<Item = &'a Token>) -> String {
             TokenKind::MathShift => out.push('$'),
             TokenKind::Superscript => out.push('^'),
             TokenKind::Subscript => out.push('_'),
-            TokenKind::DisplayMathOpen | TokenKind::DisplayMathClose | TokenKind::Comment => {}
+            TokenKind::DisplayMathOpen
+            | TokenKind::DisplayMathClose
+            | TokenKind::InlineMathOpen
+            | TokenKind::InlineMathClose
+            | TokenKind::Comment => {}
             TokenKind::Verb { text, .. } => out.push_str(text),
         }
     }
@@ -400,14 +404,18 @@ pub fn raw_text<'a>(tokens: impl IntoIterator<Item = &'a Token>) -> String {
 }
 
 /// Typesets one command. `math_mode` is true inside a formula (quantity
-/// product `\,` is 3mu glue there, a text-font kern outside). Returns the
+/// product `\,` is 3mu glue there, a text-font kern outside). `packages`
+/// reaches the math the unit formatter re-parses, which is otherwise the one
+/// path into `math::parse_tokens` with no document in scope. Returns the
 /// formula's atoms, every span set to `span`.
+#[allow(clippy::too_many_arguments)]
 pub fn typeset(
     name: &str,
     options: Option<&str>,
     pre_unit: Option<&str>,
     args: &[String],
     math_mode: bool,
+    packages: MathPackages,
     span: Span,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Vec<MathAtom> {
@@ -418,6 +426,7 @@ pub fn typeset(
     let cx = Context {
         s: &settings,
         math_mode,
+        packages,
         span,
     };
     let arg = |i: usize| args.get(i).map(String::as_str).unwrap_or("");
@@ -486,6 +495,8 @@ fn split_list(text: &str) -> Vec<String> {
 struct Context<'a> {
     s: &'a Settings,
     math_mode: bool,
+    /// The document's loaded packages, for the math this re-parses.
+    packages: MathPackages,
     span: Span,
 }
 
@@ -624,7 +635,7 @@ impl Context<'_> {
     fn math(&self, source: &str) -> Vec<MathAtom> {
         let tokens = lexer::tokenize(source);
         let mut ignored = Vec::new();
-        let mut list = math::parse_tokens(&tokens, &mut ignored);
+        let mut list = math::parse_tokens(&tokens, self.packages, &mut ignored);
         respan_list(&mut list, self.span);
         list.atoms
     }
@@ -1354,6 +1365,7 @@ mod tests {
         let cx = Context {
             s: &settings,
             math_mode: false,
+            packages: MathPackages::KERNEL,
             span: Span::new(0, 0),
         };
         cx.number_source(parse_number(input).expect("parses"))

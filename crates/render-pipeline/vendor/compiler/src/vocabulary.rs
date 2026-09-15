@@ -35,7 +35,7 @@ pub(crate) const MATH_COMMANDS: &[&str] = &[
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // LaTeX2e document structure and front matter.
-    "part", "chapter", "subsubsection", "paragraph", "subparagraph", "appendix", "maketitle",
+    "part", "chapter", "subsubsection", "appendix", "maketitle",
     "title", "author", "date", "thanks", "and", "today", "tableofcontents", "listoffigures",
     "listoftables", "abstractname", "footnote", "footnotemark", "footnotetext", "marginpar",
     "index", "glossary", "bibliography", "bibliographystyle", "bibitem", "cite", "nocite",
@@ -47,7 +47,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "vskip", "hskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
     "multicolumn", "tabularnewline", "arraystretch",
     // Fonts and text symbols.
-    "textsuperscript", "textsubscript", "underbar", "sout", "uline", "LaTeX",
+    "textsuperscript", "textsubscript", "underbar", "LaTeX",
     "LaTeXe", "TeX", "dag", "ddag", "S", "P", "copyright", "pounds", "textbackslash",
     "textasciitilde", "textasciicircum", "textbar", "textless", "textgreater", "textendash",
     "textemdash", "textbullet", "textperiodcentered", "textquoteleft", "textquoteright",
@@ -58,11 +58,11 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "newtheorem", "newcounter", "setcounter", "addtocounter", "stepcounter", "refstepcounter",
     "value", "arabic", "roman", "Roman", "alph", "Alph", "fnsymbol", "the", "makeatletter",
     "makeatother", "ifthenelse", "newif", "relax", "expandafter", "csname", "endcsname",
-    "newlength", "addtolength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
-    "verb", "hyphenation", "graphicspath", "geometry", "hypersetup", "RequirePackage",
+    "newlength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
+    "verb", "hyphenation", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
     "PassOptionsToPackage", "AtBeginDocument",
     // Cross-references and links.
-    "eqref", "autoref", "cref", "Cref", "nameref", "url", "href", "hyperref", "hyperlink",
+    "eqref", "autoref", "nameref", "url", "href", "hyperref", "hyperlink",
     "hypertarget", "citep", "citet", "citeauthor", "addbibresource", "printbibliography",
     // Colour and graphics packages.
     "tikz",
@@ -71,7 +71,8 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     // amsmath and amssymb.
     "intertext", "shortintertext", "substack", "sideset", "xrightarrow", "xleftarrow", "overbrace",
     "underbrace", "overleftarrow", "overrightarrow", "mathcal", "mathfrak", "mathscr", "pmb",
-    "limits", "nolimits", "displaylimits", "colon", "vdots", "ddots", "iff", "implies", "impliedby",
+    "limits", "nolimits", "displaylimits", "colon", "eqqcolon", "Coloneqq", "Eqqcolon",
+    "vcentcolon", "dblcolon", "vdots", "ddots", "iff", "implies", "impliedby",
     "genfrac", "operatornamewithlimits", "dddot", "ddddot", "cancel", "bcancel", "xcancel",
     "cancelto", "numberwithin", "allowdisplaybreaks", "mathring", "lvert", "rvert", "lVert",
     "rVert", "varepsilon", "vartheta", "varphi", "varrho", "varsigma", "varpi", "digamma",
@@ -83,7 +84,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "leqslant", "geqslant", "approx", "cong", "equiv", "sim", "simeq", "propto", "subset", "supset",
     "subseteq", "supseteq", "subsetneq", "supsetneq", "in", "ni", "notin", "cup", "cap", "bigcup",
     "bigcap", "setminus", "wedge", "vee", "bigwedge", "bigvee", "oplus", "otimes", "bigoplus",
-    "bigotimes", "odot", "times", "div", "cdot", "circ", "bullet", "star", "ast", "pm", "mp", "sum",
+    "bigotimes", "ominus", "oslash", "odot", "bigcirc", "times", "div", "cdot", "circ", "bullet", "star", "ast", "pm", "mp", "sum",
     "prod", "coprod", "int", "oint", "to", "gets", "mapsto", "rightarrow", "leftarrow",
     "leftrightarrow", "Rightarrow", "Leftarrow", "Leftrightarrow", "longrightarrow",
     "longleftarrow", "Longrightarrow", "Longleftarrow", "longmapsto", "hookrightarrow",
@@ -140,22 +141,177 @@ pub fn is_known_environment(name: &str) -> bool {
         .any(|known| known == name)
 }
 
-/// The closest known command to an unknown `name`, if one is within edit
-/// distance 2 (1 for names of three characters or fewer, where 2 edits
-/// rewrite most of the word). Implemented commands win ties, then list order.
-pub fn suggest_command(name: &str) -> Option<&'static str> {
-    let limit = if name.chars().count() <= 3 { 1 } else { 2 };
-    let mut best: Option<(usize, &'static str)> = None;
+/// Every *distinct* known command that is an equally good reading of the typo
+/// `name`, best first. Empty when `name` is itself known or nothing is close
+/// enough.
+///
+/// "Equally good" is two rounds. First the minimal edit distance, within 2
+/// (1 for names of three characters or fewer, where 2 edits rewrite most of
+/// the word). Then, among those, the smallest difference in length: an author
+/// who typed five characters far more often transposed or mistyped one of them
+/// than typed a whole extra one, so for `\alpah` the same-length `\alpha` beats
+/// the shorter `\alph`, though both are one edit away.
+///
+/// What survives both rounds is a genuine ambiguity. Case-only variants always
+/// do, since they cannot differ in length — and `\Bigl` versus `\bigl`, or
+/// `\Alph` versus `\alph`, is exactly the pair no heuristic should pick
+/// between: the two render differently and the author meant one of them.
+///
+/// The vocabulary tables overlap (`\alpha` is listed more than once), so the
+/// result is de-duplicated: a name repeated across tables is one candidate,
+/// not a tie with itself.
+pub fn closest_commands(name: &str) -> Vec<&'static str> {
+    let width = name.chars().count();
+    let limit = if width <= 3 { 1 } else { 2 };
+    let mut best = usize::MAX;
+    let mut matches: Vec<&'static str> = Vec::new();
     for candidate in implemented_commands().chain(KNOWN_UNIMPLEMENTED_COMMANDS.iter().copied()) {
         if candidate == name {
-            return None;
+            return Vec::new();
         }
         let distance = edit_distance(name, candidate);
+        if distance > limit {
+            continue;
+        }
+        if distance < best {
+            best = distance;
+            matches.clear();
+            matches.push(candidate);
+        } else if distance == best && !matches.contains(&candidate) {
+            matches.push(candidate);
+        }
+    }
+    let closest_width = matches
+        .iter()
+        .map(|c| c.chars().count().abs_diff(width))
+        .min();
+    if let Some(closest_width) = closest_width {
+        matches.retain(|c| c.chars().count().abs_diff(width) == closest_width);
+    }
+    matches
+}
+
+/// The closest known command to an unknown `name`. Ties are broken by list
+/// order (implemented commands first), so this is a *hint* for prose — it may
+/// be one of several equally close names. Anything mechanical must use
+/// [`unambiguous_command_fix`] instead.
+pub fn suggest_command(name: &str) -> Option<&'static str> {
+    closest_commands(name).first().copied()
+}
+
+/// The single known command to rewrite `name` to, or `None` when the closest
+/// match is not unique.
+///
+/// This is the only suggestion source allowed to drive a mechanical edit
+/// (`suggestion` / `help.replacement`), because such an edit is applied
+/// without the author re-reading it — the editor accepts it on Tab. Roughly a
+/// tenth of the typos this vocabulary can suggest for have two or more equally
+/// close candidates (`\Bggl` is one edit from both `\Biggl` and `\Bigl`;
+/// `\igl` from both `\Bigl` and `\bigl`), and picking by list order there is a
+/// coin flip that silently changes delimiter size or case. Those keep prose
+/// help naming the candidates and offer no edit.
+pub fn unambiguous_command_fix(name: &str) -> Option<&'static str> {
+    match closest_commands(name).as_slice() {
+        [only] => Some(only),
+        _ => None,
+    }
+}
+
+/// Closest of `names` to `needle`, same distance limit as [`suggest_command`].
+pub fn nearest_name<'a>(needle: &str, names: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    let limit = if needle.chars().count() <= 3 { 1 } else { 2 };
+    let mut best: Option<(usize, &'a str)> = None;
+    for candidate in names {
+        if candidate == needle {
+            continue;
+        }
+        let distance = edit_distance(needle, candidate);
         if distance <= limit && best.is_none_or(|(d, _)| distance < d) {
             best = Some((distance, candidate));
         }
     }
-    best.map(|(_, candidate)| candidate)
+    best.map(|(_, name)| name)
+}
+
+fn is_math_command(name: &str) -> bool {
+    MATH_COMMANDS.contains(&name)
+        || COMMAND_GLYPHS.iter().any(|(n, _)| *n == name)
+        || OPERATOR_NAMES.contains(&name)
+        || DELIMITER_COMMANDS.contains(&name)
+}
+
+/// Package that defines `name`, when that is the useful help.
+pub fn command_package(name: &str) -> Option<&'static str> {
+    match name {
+        "tikz" | "usetikzlibrary" | "draw" | "node" | "fill" | "path" => Some("tikz"),
+        "includegraphics" | "graphicspath" | "scalebox" | "resizebox" | "rotatebox"
+        | "reflectbox" => Some("graphicx"),
+        "lstinline" | "listoflistings" | "lstset" => Some("listings"),
+        "mintinline" => Some("minted"),
+        "citep" | "citet" | "citeauthor" => Some("natbib"),
+        "addbibresource" | "printbibliography" => Some("biblatex"),
+        "eqref" | "intertext" | "shortintertext" | "substack" | "DeclareMathOperator"
+        | "numberwithin" | "allowdisplaybreaks" => Some("amsmath"),
+        "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
+        | "labelcref" | "crefname" | "Crefname" => Some("cleveref"),
+        "autoref" | "nameref" | "url" | "href" | "hyperref" | "hyperlink" | "hypertarget"
+        | "hypersetup" => Some("hyperref"),
+        "geometry" => Some("geometry"),
+        _ => None,
+    }
+}
+
+/// `= help:` for an unsupported text-mode command (issue #277).
+///
+/// Returns `None` when the diagnostic message already says everything useful
+/// (a known command with no extra package/mode hint).
+pub fn command_help(name: &str) -> Option<String> {
+    if is_math_command(name) {
+        return Some(format!("wrap this in math mode: \\(\\{name}\\)"));
+    }
+    if let Some(package) = command_package(name) {
+        return Some(format!(
+            "\\{name} is a {package} command, which this compiler does not implement"
+        ));
+    }
+    if is_known_command(name) {
+        return None;
+    }
+    if let Some(known) = suggest_command(name) {
+        return Some(format!("did you mean \\{known}?"));
+    }
+    Some("no known LaTeX command has this name; check the spelling".into())
+}
+
+/// Help when a command has no math-mode definition. Known text commands get a
+/// mode hint; otherwise the message already says it is unsupported.
+pub fn math_mode_help(name: &str) -> Option<String> {
+    if is_known_command(name) && !is_math_command(name) {
+        Some(format!(
+            "\\{name} is a text command; use it outside math or inside \\text{{...}}"
+        ))
+    } else {
+        None
+    }
+}
+
+/// `= help:` for an unimplemented environment. Only when a package name is
+/// extra information; the diagnostic already says the body is plain text.
+pub fn environment_help(name: &str) -> Option<String> {
+    let package = match name {
+        "tikzpicture" => Some("tikz"),
+        "lstlisting" => Some("listings"),
+        "minted" => Some("minted"),
+        "longtable" => Some("longtable"),
+        "tabularx" => Some("tabularx"),
+        "wrapfigure" => Some("wrapfig"),
+        "subfigure" => Some("subcaption"),
+        "landscape" => Some("lscape"),
+        _ => None,
+    };
+    package.map(|p| {
+        format!("environment '{name}' needs the {p} package, which this compiler does not implement")
+    })
 }
 
 /// Optimal string alignment distance: Levenshtein plus adjacent transposition,
@@ -199,6 +355,74 @@ mod tests {
         assert_eq!(suggest_command("sectoin"), Some("section"));
         assert_eq!(suggest_command("frobnicate"), None);
         assert_eq!(suggest_command("alpha"), None);
+        assert_eq!(nearest_name("s2", ["s1", "sec2"].into_iter()), Some("s1"));
+        assert_eq!(nearest_name("nope", ["intro", "later"].into_iter()), None);
+    }
+
+    /// The everyday typos keep their mechanical fix: one candidate, no tie.
+    #[test]
+    fn an_unambiguous_typo_still_offers_an_automatic_fix() {
+        for (typo, fixed) in [
+            ("alpah", "alpha"),
+            ("textbff", "textbf"),
+            ("sectoin", "section"),
+        ] {
+            assert_eq!(closest_commands(typo), vec![fixed], "{typo}");
+            assert_eq!(unambiguous_command_fix(typo), Some(fixed), "{typo}");
+        }
+        assert_eq!(unambiguous_command_fix("frobnicate"), None);
+        assert_eq!(unambiguous_command_fix("alpha"), None);
+    }
+
+    /// A tie must not be resolved by list order for anything mechanical.
+    /// These all survive the length round because the candidates are the same
+    /// length as each other — case-only variants (`\Bigl`/`\bigl`,
+    /// `\Alph`/`\alph`) always do, and they render differently, so applying
+    /// either silently would be wrong half the time. `suggest_command` may
+    /// still name one for prose.
+    #[test]
+    fn an_ambiguous_typo_offers_no_automatic_fix() {
+        for typo in ["igl", "lph", "igm"] {
+            let candidates = closest_commands(typo);
+            assert!(candidates.len() > 1, "{typo} expected a tie, got {candidates:?}");
+            assert_eq!(unambiguous_command_fix(typo), None, "{typo} {candidates:?}");
+            assert!(suggest_command(typo).is_some(), "{typo} still hints in prose");
+        }
+    }
+
+    /// Candidate lists are de-duplicated: a command that appears in more than
+    /// one vocabulary table is one candidate, not a self-tie that would
+    /// suppress a perfectly good fix.
+    #[test]
+    fn a_name_repeated_across_tables_is_not_a_tie() {
+        let repeated: Vec<&str> = {
+            let mut seen: Vec<&str> = Vec::new();
+            let mut twice: Vec<&str> = Vec::new();
+            for c in implemented_commands().chain(KNOWN_UNIMPLEMENTED_COMMANDS.iter().copied()) {
+                if seen.contains(&c) {
+                    if !twice.contains(&c) {
+                        twice.push(c);
+                    }
+                } else {
+                    seen.push(c);
+                }
+            }
+            twice
+        };
+        assert!(!repeated.is_empty(), "expected the tables to overlap");
+        for name in repeated {
+            let candidates = closest_commands(name);
+            assert!(
+                !candidates.contains(&name),
+                "{name} must not be its own candidate: {candidates:?}"
+            );
+            // Every candidate list is distinct, whatever the tables do.
+            let mut sorted = candidates.clone();
+            sorted.sort_unstable();
+            let before = sorted.len();
+            sorted.dedup();
+            assert_eq!(before, sorted.len(), "{name} has duplicate candidates");
+        }
     }
 
     #[test]
@@ -211,6 +435,38 @@ mod tests {
         assert!(is_known_environment("tabular"));
         assert!(is_known_environment("pmatrix"));
         assert!(!is_known_environment("itemze"));
+    }
+
+    #[test]
+    fn help_does_not_restate_the_diagnostic_message() {
+        assert_eq!(
+            command_help("tikz").as_deref(),
+            Some("\\tikz is a tikz command, which this compiler does not implement")
+        );
+        assert_eq!(
+            command_help("alpha").as_deref(),
+            Some("wrap this in math mode: \\(\\alpha\\)")
+        );
+        assert!(command_help("maketitle").is_none(), "{:?}", command_help("maketitle"));
+        assert_eq!(
+            command_help("alpah").as_deref(),
+            Some("did you mean \\alpha?")
+        );
+        assert_eq!(
+            command_help("frobnicate").as_deref(),
+            Some("no known LaTeX command has this name; check the spelling")
+        );
+        assert_eq!(
+            math_mode_help("centering").as_deref(),
+            Some("\\centering is a text command; use it outside math or inside \\text{...}")
+        );
+        assert!(math_mode_help("bogusxyz").is_none());
+        assert!(math_mode_help("alpha").is_none());
+        assert!(environment_help("tabbing").is_none());
+        assert_eq!(
+            environment_help("tikzpicture").as_deref(),
+            Some("environment 'tikzpicture' needs the tikz package, which this compiler does not implement")
+        );
     }
 
     /// `MATH_COMMANDS` is hand-kept beside `math.rs`'s dispatch; an entry the

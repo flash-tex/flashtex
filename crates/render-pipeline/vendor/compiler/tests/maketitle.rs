@@ -7,7 +7,8 @@
 //! reproduces them without a dependency on that crate.
 use flashtex_compiler::incremental::compile_full_project;
 use flashtex_compiler::layout::{LayoutConstraints, LINE_SPACING, MARGIN_PT};
-use flashtex_compiler::parser::{parse, Block, Inline, SourceDocument, TODAY_TEXT};
+use flashtex_compiler::date::TodayDate;
+use flashtex_compiler::parser::{parse, Block, Inline, SourceDocument};
 
 fn doc(preamble: &str, body: &str) -> String {
     format!("\\documentclass{{article}}{preamble}\\begin{{document}}{body}\\end{{document}}")
@@ -33,7 +34,8 @@ fn compiled(source: &str) -> flashtex_compiler::incremental::CompileOutput {
 }
 
 #[test]
-fn maketitle_without_title_or_author_is_an_honest_error_not_a_placeholder() {
+fn maketitle_without_a_title_is_an_honest_error_not_a_placeholder() {
+    // latex.ltx `\def\@title{\@latex@error{No \noexpand\title given}\@ehc}`.
     let no_title = parse(&doc("\\author{A}", "\\maketitle"));
     assert!(
         no_title
@@ -47,24 +49,56 @@ fn maketitle_without_title_or_author_is_an_honest_error_not_a_placeholder() {
         .blocks
         .iter()
         .any(|b| matches!(b, Block::TitleBlock { .. })));
-
-    let no_author = parse(&doc("\\title{T}", "\\maketitle"));
-    assert!(
-        no_author
-            .diagnostics
-            .iter()
-            .any(|d| d.message.contains("requires \\author")),
-        "{:?}",
-        no_author.diagnostics
-    );
-    assert!(!no_author
-        .blocks
-        .iter()
-        .any(|b| matches!(b, Block::TitleBlock { .. })));
 }
 
+fn title_block_authors(parsed: &flashtex_compiler::parser::Parsed) -> Option<usize> {
+    parsed.blocks.iter().find_map(|b| match b {
+        Block::TitleBlock { authors, .. } => Some(authors.len()),
+        _ => None,
+    })
+}
+
+/// latex.ltx `\def\@author{\@latex@warning@no@line{No \noexpand\author
+/// given}}`: without `\author` the title block is still set, with a warning.
+/// pdflatex 1.40.29 (TeX Live 2026) logs `LaTeX Warning: No \author given.`
+/// and `\the\pagetotal` after `\maketitle` is 116.86673pt, as with `\author{A}`.
 #[test]
-fn maketitle_defaults_the_date_to_the_fixed_today_text() {
+fn maketitle_without_an_author_warns_like_latex_and_sets_the_title() {
+    let no_author = parse(&doc("\\title{T}", "\\maketitle"));
+    let messages: Vec<&str> = no_author
+        .diagnostics
+        .iter()
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(messages, ["No \\author given"]);
+    assert!(no_author
+        .diagnostics
+        .iter()
+        .all(|d| d.severity == flashtex_compiler::diagnostics::Severity::Warning));
+    assert_eq!(title_block_authors(&no_author), Some(0));
+}
+
+/// `\author{}` is an author that is given but empty: pdflatex sets the empty
+/// author box with no warning at all (`\the\pagetotal` 115.33337pt).
+#[test]
+fn an_empty_author_is_silent_like_latex() {
+    for preamble in ["\\title{T}\\author{}", "\\title{T}\\author{ \\and }"] {
+        let parsed = parse(&doc(preamble, "\\maketitle"));
+        assert!(
+            parsed.diagnostics.is_empty(),
+            "{preamble}: {:?}",
+            parsed.diagnostics
+        );
+        assert_eq!(title_block_authors(&parsed), Some(0), "{preamble}");
+    }
+}
+
+/// latex.ltx 17225 is `\gdef\@date{\today}`, so a document with no `\date` at
+/// all typesets exactly what `\date{\today}` does. Verified against pdflatex
+/// 3.141592653-2.6-1.40.27 (TeX Live 2025): `\the\pagetotal` immediately after
+/// `\maketitle` is 116.86673pt for both, to the scaled point.
+#[test]
+fn an_absent_date_is_exactly_date_today() {
     let default_date = doc("\\title{T}\\author{A}", "\\maketitle");
     let explicit_today = doc("\\title{T}\\author{A}\\date{\\today}", "\\maketitle");
     for source in [default_date, explicit_today] {
@@ -73,12 +107,18 @@ fn maketitle_defaults_the_date_to_the_fixed_today_text() {
         };
         let date = date.expect("date line present");
         assert!(
-            format!("{date:?}").contains(TODAY_TEXT),
-            "expected the fixed \\today text in {date:?}"
+            format!("{date:?}").contains(&TodayDate::EPOCH.latex_today()),
+            "expected the request date in {date:?}"
         );
     }
 }
 
+/// `\date{}` leaves `\@date` empty. article.cls still runs `\vskip 1em` and
+/// opens `{\large \@date}`, but an empty group typesets no material, so no
+/// line — and therefore no `\baselineskip` — is contributed. Verified against
+/// pdflatex (TeX Live 2025): `\the\pagetotal` after `\maketitle` is 95.2001pt
+/// with `\date{}` against 114.4001pt with `\date{Zz}`, a difference of exactly
+/// one `\large` baselineskip (19.2pt) and *not* the additional 1em, which stays.
 #[test]
 fn empty_date_suppresses_the_date_line() {
     let source = doc("\\title{T}\\author{A}\\date{}", "\\maketitle");
@@ -99,14 +139,14 @@ fn custom_date_text_is_used_verbatim() {
 }
 
 #[test]
-fn thanks_is_stripped_with_a_diagnostic_not_leaked_as_title_text() {
+fn thanks_is_a_symbol_footnote_not_title_text() {
     let source = doc(
         "\\title{Zzztitle\\thanks{Funded by a grant}}\\author{Zzzauthor}",
         "\\maketitle",
     );
     let parsed = parse(&source);
     assert!(
-        parsed
+        !parsed
             .diagnostics
             .iter()
             .any(|d| d.message.contains("\\thanks")),
@@ -121,12 +161,28 @@ fn thanks_is_stripped_with_a_diagnostic_not_leaked_as_title_text() {
     else {
         unreachable!()
     };
-    let text = format!("{title:?}");
+    let plain: Vec<&Inline> = title
+        .iter()
+        .filter(|i| !matches!(i, Inline::Footnote { .. }))
+        .collect();
+    let text = format!("{plain:?}");
     assert!(text.contains("Zzztitle"));
     assert!(
         !text.contains("grant"),
         "footnote text leaked into the title: {text}"
     );
+    let note = title
+        .iter()
+        .find_map(|i| match i {
+            Inline::Footnote {
+                number, mark, text, ..
+            } => Some((number.clone(), *mark, format!("{text:?}"))),
+            _ => None,
+        })
+        .expect("the \\thanks footnote");
+    assert_eq!(note.0, "\u{2217}");
+    assert!(note.1);
+    assert!(note.2.contains("grant"), "{}", note.2);
 }
 
 #[test]
