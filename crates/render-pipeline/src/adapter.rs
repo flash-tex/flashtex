@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use flashtex_compiler::math::MathList;
-use flashtex_compiler::parser::{Block as CBlock, FillLeader, Inline, Parsed, UnderlineGeom};
+use flashtex_compiler::parser::{Block as CBlock, FillLeader, Inline, ItemLabel, Parsed, UnderlineGeom};
 use flashtex_compiler::text_builtins::{TextDimen, TextLogo, TextRule};
 use flashtex_compiler::{DocumentId, Span};
 
@@ -586,6 +586,12 @@ pub struct ListGeom {
     /// need nothing; `multiline`/`unboxed` are a follow-up (label alignment
     /// and `\itemindent` nuances, not a plain break).
     pub nextline: bool,
+    /// Whether the compiler produced a default itemize symbol.
+    pub label_symbol: bool,
+    /// Whether the label's declaration applies bold text.
+    pub label_bold: bool,
+    /// Whether the list uses the kernel's left-extending label box.
+    pub llap: bool,
 }
 
 /// One list level's `\leftmargin`.
@@ -2646,7 +2652,12 @@ fn gap_has_page_break(texts: &[&str], prev: Span, next: Span) -> bool {
     PAGE_BREAKS.iter().any(|c| find_command(gap, c).is_some())
 }
 
-fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], size: u32, style: &Stylesheet) -> Vec<Unit<'p>> {
+fn split_at_page_breaks<'p>(
+    texts: &[&str],
+    blocks: &'p [(CBlock, ParLeading)],
+    size: u32,
+    style: &Stylesheet,
+) -> Vec<Unit<'p>> {
     let theorem_envs = theorem_environments(texts);
     let mut units = Vec::new();
     let mut prev_end: Option<Span> = None;
@@ -2805,7 +2816,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
             }
         }
         let mut list = None;
-        if let CBlock::ListItem { level, label, .. } = block {
+        if let CBlock::ListItem { level, label, item, .. } = block {
             let anchor = label.as_ref().map(|(_, span)| *span).or(first);
             if let Some(at) = anchor {
                 let index = indexes.get(at.document.0);
@@ -2890,10 +2901,13 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                     && label.as_ref().is_none_or(|(text, _)| text.is_empty());
                 list = Some(ListGeom {
                     level: *level,
-                    margins: list_margins(index, at.start, size, natbib_bib),
+                    margins: list_margins(index, at.start, size, natbib_bib, style.family),
                     label: label.clone(),
                     description: env == "description",
                     nextline: list_style_nextline(&index.setlist, env, begin_keys),
+                    label_symbol: matches!(item, Some(ItemLabel::Symbol { .. })),
+                    label_bold: matches!(item, Some(ItemLabel::Symbol { bold: true, .. })),
+                    llap: matches!(env, "itemize" | "enumerate"),
                     parsep: seps.parsep_skip,
                     // `\NAT@bibsetup`: `\itemindent-\leftmargin`, so the
                     // entry's first line is flush at the margin and the rest
@@ -5313,9 +5327,10 @@ fn widest_label(env: &str, depth: usize, label_key: Option<&str>, template: Opti
 /// class's `\leftmargin<i>` unless a `\setlist` naming the environment or
 /// the `\begin` options set enumitem's `leftmargin` (`*` = the widest
 /// label's width plus `\labelsep`; a `<dimen>` as given).
-fn list_margins(index: &SourceIndex, at: usize, size: u32, natbib_bib: bool) -> Vec<ListMargin> {
+fn list_margins(index: &SourceIndex, at: usize, size: u32, natbib_bib: bool, family: crate::fonts::Family) -> Vec<ListMargin> {
     let calls = &index.setlist;
-    let class_margin = |depth: usize| ListMargin::Fixed(parse_dimen(&format!("{}em", article_leftmargin_em(depth)), size).unwrap_or(0.0));
+    let em_ex = list_em_ex(size, family);
+    let class_margin = |depth: usize| ListMargin::Fixed(parse_dimen_in(&format!("{}em", article_leftmargin_em(depth)), size, em_ex).unwrap_or(0.0));
     index
         .list_stack(at)
         .iter()
@@ -5356,11 +5371,27 @@ fn list_margins(index: &SourceIndex, at: usize, size: u32, natbib_bib: bool) -> 
             let template = (!begin_keys && !options.is_empty()).then_some(*options);
             match leftmargin {
                 Some("*") => ListMargin::Widest(widest_label(env, depth, label_key, template)),
-                Some(dimen) => parse_dimen(dimen, size).map_or_else(|| class_margin(depth), ListMargin::Fixed),
+                Some(dimen) => parse_dimen_in(dimen, size, em_ex).map_or_else(|| class_margin(depth), ListMargin::Fixed),
                 None => class_margin(depth),
             }
         })
         .collect()
+}
+
+fn list_em_ex(size: u32, family: crate::fonts::Family) -> Option<(f64, f64)> {
+    match family {
+        crate::fonts::Family::LatinModern => {
+            let base = match size {
+                12 => flashtex_document_style::BaseSize::Pt12,
+                11 => flashtex_document_style::BaseSize::Pt11,
+                _ => flashtex_document_style::BaseSize::Pt10,
+            };
+            let font = flashtex_document_style::size_params(base).normal;
+            Some((font.quad.0, font.x_height.0))
+        }
+        crate::fonts::Family::ComputerModern => ec_em_ex(size, family),
+        crate::fonts::Family::Times => None,
+    }
 }
 
 /// Byte offset of `\name` (as a whole control word, outside comments).
