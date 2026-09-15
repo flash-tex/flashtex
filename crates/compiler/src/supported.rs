@@ -335,6 +335,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("nopagebreak", "[n]", "page-break penalty \\@getpen{n}; in a paragraph, after the line it is set on"),
     ("linebreak", "[n]", "line-break penalty -\\@getpen{n} (4: a forced break, the line stays justified)"),
     ("nolinebreak", "[n]", "line-break penalty \\@getpen{n}, the space before it moved after it"),
+    ("obeylines", "", "every source newline ends the line, like \\\\, for the rest of the group"),
     ("penalty", "<number>", "penalty node: in a paragraph a line-break penalty, between paragraphs a page-break penalty"),
     ("nobreak", "", "\\penalty10000"),
     ("allowbreak", "", "\\penalty0"),
