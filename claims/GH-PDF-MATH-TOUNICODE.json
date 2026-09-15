@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/pdf-math-tounicode",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-15T08:35:02Z",
+  "state": "claimed",
+  "task_id": "GH-PDF-MATH-TOUNICODE",
+  "updated_utc": "2026-09-15T08:35:02Z"
+}
