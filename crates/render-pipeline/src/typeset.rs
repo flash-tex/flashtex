@@ -163,7 +163,9 @@ pub struct UnderlineRec {
 /// unbreakable line at the `\sf@size` of the current size, painted `raise`
 /// points above the baseline (negative lowers, for subscripts). `height`
 /// and `depth` already include the shift, so the line breaker sees the
-/// raised box exactly like a footnote mark.
+/// raised box exactly like a footnote mark. `width` is the content plus
+/// `\scriptspace` (TeX §756); the inner `block` line keeps the content
+/// width.
 #[derive(Clone)]
 pub struct TextScriptRec {
     pub block: BuiltBlock,
@@ -4503,7 +4505,8 @@ impl<'a> Context<'a> {
     /// the shifts footnote marks and the `\LaTeX`e epsilon use). The
     /// outer run's height/depth already include the shift, so the line
     /// breaker treats it exactly like a footnote mark; assembly paints
-    /// the inner line shifted by `raise`.
+    /// the inner line shifted by `raise`. The outer width is the content
+    /// plus `\scriptspace` (TeX §756), like a footnote mark.
     fn textscript_box(&mut self, ts: &adapter::TextScriptItem, size: f64) -> (pl::GlyphRun, usize) {
         let sf = footnotes::script_size(size);
         let (placed, width) = self.hbox_runs(&ts.items, sf);
@@ -4568,6 +4571,12 @@ impl<'a> Context<'a> {
             labels: Vec::new(),
             cache_key: None,
         };
+        // §756: `\scriptspace` is part of every script box (never a
+        // separate, discardable kern): the outer advance is the content
+        // plus `footnotes::SCRIPT_SPACE`, exactly as `footnote_mark`
+        // widens its mark. The inner line keeps the content width — the
+        // space trails with no glyphs to paint.
+        let width = width + footnotes::SCRIPT_SPACE;
         let raise = if ts.superscript {
             footnotes::textsup_shift_pt(size, dp)
         } else {
@@ -5943,16 +5952,18 @@ impl flashtex_compiler::text_builtins::LogoMetrics for TfmLogoMetrics {
         flashtex_compiler::text_builtins::pt_to_sp(self.x_height)
     }
 
-    /// lmsy10's `\fontdimen16` (sub1, .15em) and `\fontdimen5` (.430555em)
-    /// at the text size and the script symbol font's `\fontdimen19`
-    /// (sub_drop, .05em at `\sf@size`): the formula `max` is decided by sub1
-    /// at every class size.
+    /// The shared per-design-size subscript constants
+    /// (`footnotes::sub1_pt` / `footnotes::sub_drop_pt`, `\fontdimen16`
+    /// and `\fontdimen19` of the lmsy design at the text / script size)
+    /// with the design-independent x-height (`\fontdimen5`, 0.430555em at
+    /// every lmsy design): the same values `footnotes::textsub_shift_pt`
+    /// uses, so the `\LaTeXe` epsilon drops like a `\textsubscript`.
     fn math_sub_params(&self) -> flashtex_compiler::text_builtins::MathSubParams {
         use flashtex_compiler::text_builtins::{pt_to_sp, MathSubParams};
         MathSubParams {
-            sub1: pt_to_sp(0.15 * self.size),
-            math_x_height: pt_to_sp(0.430555 * self.size),
-            script_sub_drop: pt_to_sp(0.05 * self.sf),
+            sub1: pt_to_sp(footnotes::sub1_pt(self.size)),
+            math_x_height: pt_to_sp(footnotes::CMR_EX_PER_EM * self.size),
+            script_sub_drop: pt_to_sp(footnotes::sub_drop_pt(self.sf)),
         }
     }
 }
