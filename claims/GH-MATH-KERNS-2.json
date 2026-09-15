@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/math-kerns-2",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/589",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-15T08:20:23Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-MATH-KERNS-2",
-  "updated_utc": "2026-09-15T08:45:09Z"
+  "updated_utc": "2026-09-15T08:48:35Z"
 }
