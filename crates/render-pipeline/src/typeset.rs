@@ -9643,13 +9643,13 @@ fn math_items(
         // See the matching glyph-run fallback above.
         #[cfg(not(feature = "math-glyph-spans"))]
         let (paint, rule_src) = (Paint::of(m.color), src.clone());
-        // A `\cancel`/`\bcancel`/`\xcancel` marker: the invisible full-body
-        // rule `cancel_math_box` overlaid, stroked corner-to-corner instead
-        // of painted as a rectangle.
+        // A `\cancel`/`\bcancel`/`\xcancel` marker: the invisible rule
+        // `cancel_math_box` overlaid covering exactly the slash's box,
+        // stroked as diagonal(s) instead of painted as a rectangle. The
+        // marker is never degenerate (`cancel.sty` clamps the body to at
+        // least 2pt by 6pt before drawing), so even `\cancel{}` strikes.
         if let Some(kind) = crate::mathtext::cancel_frame(rule.tag.attr) {
-            if rule.w > 0.0 && rule.h > 0.0 {
-                items.push(cancel_item(rule, kind, run.size, paint, rule_src));
-            }
+            items.push(cancel_item(rule, kind, paint, rule_src));
             continue;
         }
         if rule.w <= 0.0 || rule.h <= 0.0 {
@@ -9666,16 +9666,16 @@ fn math_items(
     }
 }
 
-/// A `\cancel`/`\bcancel`/`\xcancel` strike over the argument's box: `rule`
-/// is the invisible full-body marker, so its rect is the box and the stroke
-/// runs corner-to-corner (`\cancel` bottom-left to top-right, `\bcancel`
-/// the mirror, `\xcancel` both). Thickness follows the `Frame` rules'
-/// convention (`FRACTION_RULE_EM` of the formula size, as in the compiler's
-/// own `Framed` layout).
+/// A `\cancel`/`\bcancel`/`\xcancel` strike: `rule` is the invisible marker
+/// covering exactly the slash's box (centred on the body's centre and the
+/// math axis by `mathtext::cancel_math_box`), so the stroke runs corner-to-corner of
+/// the marker (`\cancel` bottom-left to top-right, `\bcancel` the mirror,
+/// `\xcancel` both). Thickness is a fixed 0.4pt in every style: `cancel.sty`
+/// draws with `\unitlength 1pt` and `\thinlines` (the `thicklines` option's
+/// 0.8pt is out of scope).
 fn cancel_item(
     rule: &ml::PositionedRule,
     kind: flashtex_compiler::math::Frame,
-    size: f64,
     paint: Paint,
     rule_src: SourceRange,
 ) -> display::Item {
@@ -9693,7 +9693,7 @@ fn cancel_item(
         commands.push(display::PathCmd::Move(x0, y0));
         commands.push(display::PathCmd::Line(x1, y1));
     }
-    let width = Tick::from_tex_pt(flashtex_compiler::math::FRACTION_RULE_EM * size).max(Tick(1));
+    let width = Tick::from_tex_pt(0.4).max(Tick(1));
     display::Item::Path(display::PathItem {
         op: display::PathPaintOp::Stroke(display::Stroke {
             width,
