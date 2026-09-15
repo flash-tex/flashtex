@@ -691,7 +691,10 @@ pub(crate) fn style_declaration(name: &str) -> bool {
 }
 
 /// The style after applying one style command or declaration to `style`.
-fn apply_style(style: TextStyle, name: &str) -> TextStyle {
+///
+/// Shared with the `\settowidth` box measurer (`crate::expansion`), which
+/// walks the same style commands over the engine's token stream.
+pub(crate) fn apply_style(style: TextStyle, name: &str) -> TextStyle {
     let mut next = style;
     match name {
         "textbf" | "bfseries" => next.bold = true,

@@ -4,7 +4,7 @@
 //! `crates/compiler/src/parser.rs`, math arms in `src/math.rs`).
 
 use flashtex_compiler::incremental::{compile_full, CompileOutput};
-use flashtex_compiler::layout::{text_width, Font, LayoutConstraints, TextItem, MARGIN_PT};
+use flashtex_compiler::layout::{text_width, word_space, Font, LayoutConstraints, TextItem, BODY_SIZE_PT, MARGIN_PT};
 use flashtex_compiler::parser::{
     self, Block, Inline, ParagraphStyle, TextFamily, TextStyle,
 };
@@ -207,6 +207,78 @@ fn settowidth_stores_the_width_and_grows_with_the_text() {
     };
     assert!(value(&short) > 0.0);
     assert!(value(&long) > value(&short), "wider text measures wider");
+}
+
+/// Slice 2 (`boxmeasurer` review finding #492): a styled argument measures at
+/// its own face, not as the literal characters of the command name at plain
+/// Times-Roman. Expected value comes from `layout::text_width` called
+/// directly with the bold face, not from a hardcoded literal.
+#[test]
+fn settowidth_measures_textbf_at_bold_width() {
+    let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{\textbf{Hi}}\the\mywidth");
+    assert_supported(&output);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let rendered = joined(&output);
+    let value: f64 = rendered.trim_end_matches("pt").parse().expect("numeric dimension");
+    let expected = text_width("Hi", BODY_SIZE_PT, Font::TimesBold);
+    assert!(
+        (value - expected).abs() < 0.02,
+        "bold Hi measures {value}pt, expected {expected}pt ({rendered:?})"
+    );
+    // The old flat-stringify bug measured the literal `\textbf Hi`
+    // characters as plain text, several times wider.
+    let literal = text_width(r"\textbf Hi", BODY_SIZE_PT, Font::TimesRoman);
+    assert!(
+        (value - literal).abs() > 1.0,
+        "must not measure the command name literally: {value}pt vs {literal}pt"
+    );
+}
+
+/// Slice 2: `~` is the tie — an interword space of the font in force — not a
+/// tilde glyph. Expected value is composed from the same `layout` primitives
+/// the measurer itself uses.
+#[test]
+fn settowidth_measures_tie_as_interword_space() {
+    let output = compile(r"\newlength{\mywidth}\settowidth{\mywidth}{a~b}\the\mywidth");
+    assert_supported(&output);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let rendered = joined(&output);
+    let value: f64 = rendered.trim_end_matches("pt").parse().expect("numeric dimension");
+    let expected = text_width("a", BODY_SIZE_PT, Font::TimesRoman)
+        + word_space(BODY_SIZE_PT, Font::TimesRoman)
+        + text_width("b", BODY_SIZE_PT, Font::TimesRoman);
+    assert!(
+        (value - expected).abs() < 0.02,
+        "a~b measures {value}pt, expected {expected}pt ({rendered:?})"
+    );
+    // A literal tilde glyph (the old behavior) is a different width.
+    let tilde = text_width("a~b", BODY_SIZE_PT, Font::TimesRoman);
+    assert!(
+        (value - tilde).abs() > 0.05,
+        "must not shape the tie as a tilde: {value}pt vs {tilde}pt"
+    );
+}
+
+/// Slice 2: height reflects the size in effect (`\Large` at the 12pt body
+/// size is 17.28pt against a 12pt body, so the ratio is exactly 1.44 —
+/// asserted relationally, not via hardcoded AFM literals).
+#[test]
+fn settoheight_uses_the_size_in_effect() {
+    let value = |source: &str| {
+        let output = compile(source);
+        assert_supported(&output);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        let rendered = joined(&output);
+        rendered.trim_end_matches("pt").parse::<f64>().expect("numeric dimension")
+    };
+    let body = value(r"\newlength{\myheight}\settoheight{\myheight}{X}\the\myheight");
+    let large = value(r"\newlength{\myheight}\settoheight{\myheight}{{\Large X}}\the\myheight");
+    assert!(body > 0.0 && large > 0.0);
+    let ratio = large / body;
+    assert!(
+        (ratio - 1.44).abs() < 0.01,
+        "\\Large height {large}pt should scale body height {body}pt by 1.44"
+    );
 }
 
 /// Parser-level coverage for the family switch: the run asserts below read the parsed `TextStyle`s; only the font assert checks the compiled output.
