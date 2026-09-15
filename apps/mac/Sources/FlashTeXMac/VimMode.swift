@@ -129,6 +129,53 @@ final class VimMode {
         var commandLine: String?
     }
 
+    /// Every live `VimMode` — one per editor view that has ever consulted
+    /// Vim — held weakly, so a closed editor drops out by itself.
+    /// `Status.shared` is a singleton but the truth behind it is per-view,
+    /// and this is what lets it be re-derived (and the preference applied in
+    /// both directions) instead of being left to whichever view happens to
+    /// still be observing the preference.
+    private static let liveModes = NSHashTable<VimMode>.weakObjects()
+
+    /// Whether Vim is switched on for this view (what the status line is
+    /// derived from). Distinct from `mode`, which is the modal state *while*
+    /// it is on.
+    private var isOn = false
+
+    /// Whether this view follows the global preference (rather than pinning
+    /// Vim per-view through `vimEnabledOverride`, which tests use).
+    private var followsPreference: Bool { (textView as? CompletingTextView)?.vimEnabledOverride == nil }
+
+    /// The `vimKeybindings` preference changed. Called by the preference
+    /// itself (EditorPreferences.swift), not by a view observation: turning
+    /// Vim off while no editor is alive to observe used to leave
+    /// `Status.shared` at `-- NORMAL --` for the rest of the process, so the
+    /// next editor opened showed a phantom status row with Vim off.
+    ///
+    /// Applied in both directions, so the preference reaches views whether
+    /// or not a coordinator happens to be observing it. Views that pin Vim
+    /// per-view are deliberately left alone, and the status line is
+    /// re-derived from whatever is on afterwards — a render gate on the
+    /// preference inside `VimStatusLine` would have been the obvious fix and
+    /// would break every test that uses `vimEnabledOverride`.
+    static func preferenceDidChange(to on: Bool) {
+        for mode in liveModes.allObjects where mode.followsPreference {
+            (mode.textView as? CompletingTextView)?.applyVimPreference(on)
+        }
+        refreshSharedStatus()
+    }
+
+    /// Re-derives `Status.shared` from the views that still have Vim on;
+    /// with none left the status line goes away entirely.
+    static func refreshSharedStatus() {
+        if let mode = liveModes.allObjects.first(where: { $0.isOn }) {
+            mode.publish()
+        } else {
+            Status.shared.indicator = nil
+            Status.shared.commandLine = nil
+        }
+    }
+
     weak var textView: NSTextView?
     var exCommandHandler: ((ExCommand) -> String?)?
     /// Called after every handled key (mode changes, caret shape, status).
@@ -163,7 +210,10 @@ final class VimMode {
     /// > 0 while a key is being handled: selection changes then are Vim's own.
     private var applying = 0
 
-    init(textView: NSTextView) { self.textView = textView }
+    init(textView: NSTextView) {
+        self.textView = textView
+        Self.liveModes.add(self)
+    }
 
     var wantsBlockCaret: Bool { mode != .insert }
     var isCommandLineActive: Bool { commandLine != nil }
@@ -199,13 +249,17 @@ final class VimMode {
         mode = .normal
         resetPending()
         commandLine = nil
+        isOn = true
         if let tv = textView, tv.selectedRange().length == 0 { clampNormalCaret() }
         publish()
     }
 
     func deactivate() {
-        Status.shared.indicator = nil
-        Status.shared.commandLine = nil
+        isOn = false
+        // Another editor may still have Vim on (its own override, or this
+        // view simply closing): the status line follows what is left, and
+        // only goes away when nothing is on.
+        Self.refreshSharedStatus()
         onStateChange?()
     }
 
@@ -225,7 +279,7 @@ final class VimMode {
         }
     }
 
-    private func publish() {
+    fileprivate func publish() {
         Status.shared.indicator = mode.indicator + pendingIndicator
         if let commandLine {
             Status.shared.commandLine = String(commandLine.prefix) + commandLine.text

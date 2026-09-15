@@ -268,6 +268,36 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertEqual(try disk(url), original, "loading a fixture never touches the real file on disk")
     }
 
+    // MARK: the entry document keeps the opened file's real name
+
+    /// Opening a file not named `main.tex` must not read as `main.tex`:
+    /// the entry document (and so the compile request's `entry_path`, every
+    /// tab/diagnostic path, and the helper's rooted project) carries the
+    /// opened file's actual name. Restoring a discarded buffer keeps its
+    /// name too.
+    func testOpenedFileKeepsItsRealNameAsTheEntryDocument() throws {
+        let dir = try tempDir("entry-name")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "Hello\n".write(to: url, atomically: true, encoding: .utf8)
+
+        let model = ShellModel()
+        model.files.policy = .disabled(reason: "test: no helper binary")
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        XCTAssertEqual(model.activePath, "paper.tex")
+        XCTAssertEqual(model.documents.map(\.path), ["paper.tex"])
+        XCTAssertEqual(model.project.entryPath, "paper.tex", "the compile request's entry_path uses the real name")
+
+        // A discarded buffer restored later comes back under its own name.
+        model.updateActiveText("Hello edited\n")
+        let other = dir.appendingPathComponent("other.tex")
+        try "Other\n".write(to: other, atomically: true, encoding: .utf8)
+        XCTAssertEqual(model.openTex(at: other, dirty: .discard), .opened)
+        XCTAssertEqual(model.activePath, "other.tex")
+        XCTAssertTrue(model.restoreDiscardedBuffer())
+        XCTAssertEqual(model.activePath, "paper.tex")
+        XCTAssertEqual(model.activeText, "Hello edited\n")
+    }
+
     // MARK: lost and late replies (fake helper)
 
     func testHangingHelperKeepsTheDirtyBufferAndIsRestartedNextTime() throws {

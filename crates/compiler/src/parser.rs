@@ -1321,6 +1321,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "RaggedRight",
     "raggedleft",
     "RaggedLeft",
+    "obeylines",
     "noindent",
     "indent",
     "tiny",
@@ -2058,6 +2059,9 @@ pub fn parse_project_with(
         declared_alignment: None,
         alignment_stack: Vec::new(),
         env_alignments: Vec::new(),
+        obeylines: false,
+        obeylines_stack: Vec::new(),
+        env_obeylines: Vec::new(),
         list_spacing: HashMap::new(),
         theorems: HashMap::new(),
         theorem_style: TheoremStyle::default(),
@@ -2323,6 +2327,13 @@ struct P<'a> {
     declared_alignment: Option<ParagraphStyle>,
     alignment_stack: Vec<Option<ParagraphStyle>>,
     env_alignments: Vec<Option<ParagraphStyle>>,
+    /// `\\obeylines` in force: every source newline ends the current line.
+    /// Like TeX's paragraph parameters it is read when a newline is met,
+    /// and it is saved on `{`/`\\begin` and restored on the matching
+    /// `}`/`\\end` — the same scoping template as `declared_alignment`.
+    obeylines: bool,
+    obeylines_stack: Vec<bool>,
+    env_obeylines: Vec<bool>,
     /// `\setlist` overrides, keyed by environment name ("itemize" /
     /// "enumerate"). A list resolves its spacing from here when `\begin`
     /// runs, so a later `\setlist` does not retroactively change an
@@ -2476,6 +2487,16 @@ impl P<'_> {
         preceded_by_space(&self.t, index)
     }
 
+    /// Whether the source bytes behind `span` hold a newline. The lexer folds
+    /// a lone newline into `TokenKind::Space`, so under `\\obeylines` this is
+    /// how a line-ending gap is told apart from an ordinary space.
+    fn source_has_newline(&self, span: Span) -> bool {
+        self.documents
+            .get(span.document.0)
+            .and_then(|doc| doc.text.get(span.start..span.end))
+            .is_some_and(|text| text.contains('\n'))
+    }
+
     fn document(&mut self) -> Vec<Block> {
         let mut blocks = Vec::new();
         let mut para = Vec::new();
@@ -2558,7 +2579,35 @@ impl P<'_> {
                         }
                     }
                 }
-                TokenKind::Space | TokenKind::Comment => self.i += 1,
+                TokenKind::Space => {
+                    self.i += 1;
+                    // `\\obeylines`: a source newline ends the line, exactly
+                    // like `\\\\` (an `Inline::LineBreak` with no skip). The
+                    // lexer folds a lone newline into `Space`, so the newline
+                    // is recovered from the token's own source bytes; a blank
+                    // line is already a `ParBreak` and still ends the
+                    // paragraph, and the spaces around the newline vanish
+                    // with the break (keeping them is `\\obeyspaces`' job,
+                    // out of scope here). Replacement-text spaces
+                    // (`maps_to_invocation`) were tokenised before
+                    // `\\obeylines` could apply, so they stay spaces — as in
+                    // TeX, where only newly scanned `^^M`s obey. An empty
+                    // paragraph takes no break: with nothing open the break
+                    // is a no-op, and after `\\item` it would orphan a
+                    // break-only block away from its label.
+                    if render
+                        && self.obeylines
+                        && !para.is_empty()
+                        && !input.maps_to_invocation
+                        && self.source_has_newline(tok.span)
+                    {
+                        para.push(Inline::LineBreak {
+                            span: tok.span,
+                            skip_pt: None,
+                        });
+                    }
+                }
+                TokenKind::Comment => self.i += 1,
                 TokenKind::Word(word)
                     if render
                         && self.tabbing_active()
@@ -2680,6 +2729,9 @@ impl P<'_> {
                             self.declared_alignment = alignment;
                         }
                         self.restore_length_scope();
+                        if let Some(obeylines) = self.obeylines_stack.pop() {
+                            self.obeylines = obeylines;
+                        }
                     }
                 }
                 TokenKind::MathShift if render => self.dollar_math(tok.span, para),
@@ -2870,6 +2922,14 @@ impl P<'_> {
             }
             "raggedleft" | "RaggedLeft" => {
                 self.declared_alignment = Some(ParagraphStyle::FlushRight)
+            }
+            // `\\obeylines` (LaTeX2e kernel): every source newline ends the
+            // line, like `\\\\`, for the rest of the group. Handled before
+            // the preamble guard like the alignment declarations above: a
+            // preamble-level assignment is ordinary LaTeX and stays in
+            // force for the body.
+            "obeylines" => {
+                self.obeylines = true;
             }
             // `\title`/`\author`/`\date` are ordinarily preamble commands but
             // real LaTeX also accepts them in the body before `\maketitle`;
@@ -5891,6 +5951,7 @@ impl P<'_> {
                     | "Huge"
             );
         self.env_alignments.push(self.declared_alignment);
+        self.env_obeylines.push(self.obeylines);
         self.parameter_scopes.push(Vec::new());
         if environment == "document" && self.has_document {
             self.in_body = true;
@@ -6215,6 +6276,9 @@ impl P<'_> {
                 } else {
                     self.close_parameter_scope(span);
                 }
+            }
+            if let Some(obeylines) = self.env_obeylines.pop() {
+                self.obeylines = obeylines;
             }
             if let Some(style) = self.env_styles.pop() {
                 self.style = style;
@@ -8182,6 +8246,7 @@ impl P<'_> {
         self.style_stack.push(self.style);
         self.alignment_stack.push(self.declared_alignment);
         self.length_scopes.push(self.length_state());
+        self.obeylines_stack.push(self.obeylines);
     }
 
     /// The NFSS inputs `em`/`ex` depend on (see [`crate::font_units`]).

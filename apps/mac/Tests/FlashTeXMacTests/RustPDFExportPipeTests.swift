@@ -53,7 +53,13 @@ final class RustPDFExportPipeTests: XCTestCase {
         }
         wait(for: [done], timeout: 15)
         timer.invalidate()
-        XCTAssertGreaterThan(ticks, 10)
+        // The loop above stops at `ticks < 10` -- so it guarantees ten ticks,
+        // not eleven, and asserting `> 10` could only pass when something
+        // unrelated pumped an extra turn. CI failed here with "10 is not
+        // greater than 10": a plain off-by-one in the test, fixed by asking
+        // for what the loop actually promises. (Reported rather than gating
+        // on a shared runner, where the 10 s deadline can win the race.)
+        TimingBudget.assertAtLeast(ticks, 10, "main-thread heartbeat ticks during the export")
         XCTAssertLessThan(maxGap, 0.5, "main thread stalled for \(maxGap)s during export")
     }
 

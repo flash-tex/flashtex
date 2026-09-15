@@ -616,7 +616,7 @@ final class ShellModel {
             // built compiler at launch when FLASHTEX_AUTOATTACH=1 (opt-in so tests
             // that construct ShellModel stay fixture-backed).
             if let seed = env["FLASHTEX_SEED_FILE"], let text = try? String(contentsOfFile: seed, encoding: .utf8) {
-                replaceProject(entryText: text)
+                replaceProject(entryText: text, named: URL(fileURLWithPath: seed).lastPathComponent)
                 documentURL = URL(fileURLWithPath: seed)
                 savedText = text
             }
@@ -766,9 +766,14 @@ final class ShellModel {
     // MARK: editing
 
     /// Replaces the whole project with one entry document (File > Open).
-    func replaceProject(entryText text: String) {
-        documents = [.init(path: "main.tex", text: text)]
-        activePath = "main.tex"
+    /// `entryName` is the opened file's actual name: the compile request's
+    /// `entry_path`, every tab/diagnostic/caret path, and the helper's rooted
+    /// project all key off it, so opening `paper.tex` must not read as
+    /// `main.tex`. The default covers unsaved buffers with no file behind them.
+    func replaceProject(entryText text: String, named entryName: String = "main.tex") {
+        let entryName = entryName.isEmpty ? "main.tex" : entryName
+        documents = [.init(path: entryName, text: text)]
+        activePath = entryName
         compiledDocuments = [:]
         result = nil
         resultID = nil
