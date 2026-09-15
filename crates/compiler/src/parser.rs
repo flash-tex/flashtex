@@ -7415,6 +7415,13 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // `\uline` and `\sout` are implemented; `\emph` is not redefined
         // (ulem's default `ULforem`) and `\uuline` stays unsupported if used.
         "ulem" => options.iter().all(|option| *option == "normalem"),
+        // `\cancel`, `\bcancel` and `\xcancel` are implemented (the
+        // diagonals are drawn by the render pipeline), so loading the
+        // package is silent. Parsing itself stays unconditional, like the
+        // rest of the `Frame` family: the package load only controls this
+        // warning. cancel.sty's `makeroom` and `thicklines` options change
+        // the layout and are not implemented, so they keep the warning.
+        "cancel" => options.is_empty(),
         _ => false,
     }
 }
@@ -9850,6 +9857,75 @@ mod tests {
             assert!(
                 parsed.diagnostics.iter().any(|d| d.message.contains("hyperref are recognised")),
                 "hyperref{options} adds bibliography text and must keep warning: {:?}",
+                parsed.diagnostics
+            );
+        }
+    }
+
+    /// `\usepackage{cancel}` is silent: `\cancel`, `\bcancel` and `\xcancel`
+    /// are implemented (the diagonals are drawn by the render pipeline), so
+    /// the correct document must not warn "recognised but not implemented".
+    /// Parsing itself stays unconditional, like the rest of the `Frame`
+    /// family, so the same math with no package still parses. cancel.sty's
+    /// `makeroom` and `thicklines` options change the layout and are not
+    /// implemented, so they keep the warning.
+    #[test]
+    fn cancel_package_load_is_silent_but_makeroom_and_thicklines_warn() {
+        let doc = |preamble: &str| {
+            format!(
+                "\\documentclass{{article}}{preamble}\
+                 \\begin{{document}}$\\cancel{{x}}$\\end{{document}}"
+            )
+        };
+        let parsed = parse(&doc("\\usepackage{cancel}"));
+        assert!(
+            !parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("cancel are recognised")),
+            "\\usepackage{{cancel}} must not warn: {:?}",
+            parsed.diagnostics
+        );
+        // No package: still parses (unconditional, as scoped) with no
+        // diagnostic at all, and the math is really a cancel frame.
+        let parsed = parse(&doc(""));
+        assert!(
+            parsed.diagnostics.is_empty(),
+            "cancel without the package must still parse silently: {:?}",
+            parsed.diagnostics
+        );
+        let math = parsed
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Paragraph(content) => content.iter().find_map(|inline| match inline {
+                    Inline::Math { list, .. } => Some(list),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(math.len(), 1, "one inline formula: {:?}", parsed.blocks);
+        assert_eq!(math[0].atoms.len(), 1, "{:?}", math[0].atoms);
+        assert!(
+            matches!(
+                &math[0].atoms[0].nucleus,
+                crate::math::Nucleus::Framed {
+                    frame: crate::math::Frame::Cancel,
+                    ..
+                }
+            ),
+            "{:?}",
+            math[0].atoms[0].nucleus
+        );
+        for options in ["[makeroom]", "[thicklines]", "[makeroom,thicklines]"] {
+            let parsed = parse(&doc(&format!("\\usepackage{options}{{cancel}}")));
+            assert!(
+                parsed
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.message.contains("cancel are recognised")),
+                "cancel{options} changes the layout and must keep warning: {:?}",
                 parsed.diagnostics
             );
         }

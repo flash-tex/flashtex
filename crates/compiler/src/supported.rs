@@ -950,6 +950,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "normalem",
         "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined",
     ),
+    (
+        "cancel",
+        "",
+        "\\cancel, \\bcancel and \\xcancel draw diagonal strikes over the body (the diagonals are set by the render pipeline); the makeroom and thicklines options change the layout and keep warning",
+    ),
 ];
 
 /// The vendored coverage denominator.

@@ -5626,21 +5626,25 @@ mod accent_tests {
     #[test]
     fn cancel_draws_no_horizontal_rule_in_compiler_layout() {
         // The diagonals are the render pipeline's job (it sees the `Frame`);
-        // the compiler's own layout keeps the `Framed` box model (same rule
-        // headroom as `\overline`) with no horizontal rule in it.
+        // the compiler's own layout keeps the `Framed` box model with no
+        // horizontal rule in it. The extents are deliberately NOT tied to
+        // `\overline`'s: real cancel.sty only overlaps the body and adds no
+        // overline-style headroom of its own (pdflatex sets `$xy+z$` and
+        // `$\cancel{xy+z}$` at the same width; the diagonal overshoot past a
+        // short body is the render pipeline's real geometry, not something
+        // the compiler's layout fakes).
         let size = 10.0;
-        let (framed, d0) = laid_out(r"\overline{x}", size);
+        let (plain, d0) = laid_out("x", size);
         assert!(d0.is_empty(), "{d0:?}");
         for source in [r"\cancel{x}", r"\bcancel{x}", r"\xcancel{x}"] {
             let (b, d) = laid_out(source, size);
             assert!(d.is_empty(), "{source}: {d:?}");
-            assert!(
-                b.items.iter().all(|i| i.rule.is_none()),
-                "{source}: {b:?}"
-            );
-            assert_eq!(b.width, framed.width, "{source}");
-            assert_eq!(b.ascent, framed.ascent, "{source}");
-            assert_eq!(b.descent, framed.descent, "{source}");
+            assert!(b.items.iter().all(|i| i.rule.is_none()), "{source}: {b:?}");
+            // Only overlaps the body: the width is the body's own width.
+            assert_eq!(b.width, plain.width, "{source}");
+            // Keeps the `Framed` box model, never smaller than the body.
+            assert!(b.ascent >= plain.ascent, "{source}: {b:?}");
+            assert!(b.descent >= plain.descent, "{source}: {b:?}");
         }
     }
 }
