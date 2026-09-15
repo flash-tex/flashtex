@@ -3963,40 +3963,293 @@ fn table_length_limitations(texts: &[&str], span: Span, size: u32, out: &mut Vec
 /// then ignores that assignment, and the caller reports it.
 fn length_at_checked(source: &str, name: &str, size: u32, at: usize, base: f64) -> (Option<f64>, bool) {
     let at = at.min(source.len());
+    // Within an adapt call each length is indexed once per document and
+    // every table looks its value up (#623): a scan of the source before
+    // each table made a document of 800 tables spend 1.6 s here.
+    if !source.is_char_boundary(at) || splits_a_control_word(source, at) {
+        return length_at_scan(source, name, size, at, base);
+    }
+    let key = (source.as_ptr() as usize, source.len());
+    let index_key = (name.to_string(), size, base.to_bits());
+    let lookup = |index_key: &(String, u32, u64)| {
+        MACRO_DEFS.with(|scope| {
+            let scope = scope.borrow();
+            let entry = scope.iter().find(|e| (e.ptr, e.len) == key)?;
+            Some(entry.lengths.by_name.get(index_key).map(|index| index.as_ref().map(|index| index.at(at))))
+        })
+    };
+    let found = match lookup(&index_key) {
+        // Not in an adapt call: nothing is indexed.
+        None => return length_at_scan(source, name, size, at, base),
+        Some(Some(found)) => found,
+        Some(None) => {
+            // `macro_length_assignments` reads the definition index, so the
+            // assignments are collected before the scope is borrowed.
+            let assignments = length_assignments(source, name, source.len());
+            MACRO_DEFS.with(|scope| {
+                let mut scope = scope.borrow_mut();
+                let entry = scope.iter_mut().find(|e| (e.ptr, e.len) == key)?;
+                let lengths = &mut entry.lengths;
+                let groups = lengths.groups.get_or_insert_with(|| GroupTokens::new(source));
+                let index = LengthIndex::new(assignments, groups, size, base);
+                let found = index.as_ref().map(|index| index.at(at));
+                lengths.by_name.insert(index_key, index);
+                Some(found)
+            })
+            .flatten()
+        }
+    };
+    found.unwrap_or_else(|| length_at_scan(source, name, size, at, base))
+}
+
+/// [`length_at_checked`] by scanning the source before `at`: the reference
+/// [`LengthIndex`] reproduces, and what is used outside an adapt call.
+fn length_at_scan(source: &str, name: &str, size: u32, at: usize, base: f64) -> (Option<f64>, bool) {
     let mut value = None;
     let mut unresolved = false;
-    let mut scan = CmdScan::new(&source[..at]);
+    for (assignments, end) in length_assignments(source, name, at) {
+        if end > at || !group_open_between(source, end, at) {
+            continue;
+        }
+        apply_length_assignments(assignments, size, base, &mut value, &mut unresolved);
+    }
+    (value, unresolved)
+}
+
+/// The assignments to `\<name>` made by the control words of
+/// `source[..until]`, in source order, each with the byte after its
+/// arguments: a `\setlength`/`\addtolength` of it, TeX's `\<name>=v`, or an
+/// invocation of a macro that assigns it ([`macro_length_assignments`]).
+/// The definitions of macros are skipped.
+#[allow(clippy::type_complexity)]
+fn length_assignments(source: &str, name: &str, until: usize) -> Vec<(Vec<Option<(String, bool)>>, usize)> {
+    let mut out = Vec::new();
+    let mut scan = CmdScan::new(&source[..until]);
     while let Some((cmd_at, cmd, _)) = scan.next() {
         let after_name = cmd_at + 1 + cmd.len();
         if matches!(cmd, "newcommand" | "renewcommand" | "providecommand" | "def" | "gdef" | "edef" | "xdef") {
             scan.skip_to(skip_macro_definition(source, cmd, after_name));
             continue;
         }
-        let (assignments, end) = if cmd == "setlength" || cmd == "addtolength" {
+        if cmd == "setlength" || cmd == "addtolength" {
             let Some((target, raw, end)) = setlength_args_end(source, after_name) else { continue };
-            if target != name {
-                continue;
+            if target == name {
+                out.push((vec![Some((raw, cmd == "addtolength"))], end));
             }
-            (vec![Some((raw, cmd == "addtolength"))], end)
         } else if cmd == name {
-            let Some((raw, end)) = read_assignment_dimen_end(source, after_name) else { continue };
-            (vec![Some((raw, false))], end)
-        } else if let Some(found) = macro_length_assignments(source, cmd, cmd_at, after_name, name, 0) {
-            found
-        } else {
-            continue;
-        };
-        if end > at || !group_open_between(source, end, at) {
-            continue;
-        }
-        for assignment in assignments {
-            match assignment.and_then(|(raw, add)| Some((parse_dimen_in(raw.trim().trim_start_matches('='), size, None)?, add))) {
-                Some((v, add)) => value = Some(if add { value.unwrap_or(base) + v } else { v }),
-                None => unresolved = true,
+            if let Some((raw, end)) = read_assignment_dimen_end(source, after_name) {
+                out.push((vec![Some((raw, false))], end));
             }
+        } else if let Some(found) = macro_length_assignments(source, cmd, cmd_at, after_name, name, 0) {
+            out.push(found);
         }
     }
-    (value, unresolved)
+    out
+}
+
+/// Applies one command's assignments ([`length_assignments`]) to the value
+/// before it; one that does not parse leaves the value and is reported.
+fn apply_length_assignments(assignments: Vec<Option<(String, bool)>>, size: u32, base: f64, value: &mut Option<f64>, unresolved: &mut bool) {
+    for assignment in assignments {
+        match assignment.and_then(|(raw, add)| Some((parse_dimen_in(raw.trim().trim_start_matches('='), size, None)?, add))) {
+            Some((v, add)) => *value = Some(if add { value.unwrap_or(base) + v } else { v }),
+            None => *unresolved = true,
+        }
+    }
+}
+
+/// Whether byte `at` falls inside a control word or right after a `\`,
+/// where [`length_at_scan`] lexes the command cut short at `at` and the
+/// index, which lexes whole commands, could differ. A table's offset is the
+/// `\` of its `\begin`, never one of these.
+fn splits_a_control_word(source: &str, at: usize) -> bool {
+    let b = source.as_bytes();
+    if at == 0 || at >= b.len() {
+        return false;
+    }
+    if b[at - 1] == b'\\' {
+        return true;
+    }
+    b[at].is_ascii_alphabetic() && b[..at].iter().rposition(|c| !c.is_ascii_alphabetic()).is_some_and(|s| b[s] == b'\\')
+}
+
+/// The tokens [`group_open_between`] counts, lexed once from byte 0: where
+/// each `{`, `}`, `\begin`, `\begingroup`, `\end` and `\endgroup` is and the
+/// depth around it. Lexing from any byte the lexer from 0 also reaches
+/// yields the same tokens after it, so `group_open_between(from, to)` is
+/// whether no token from `from` on and before `to` takes the depth below
+/// the depth at `from`.
+struct GroupTokens {
+    /// The byte of each token, in order.
+    at: Vec<usize>,
+    /// `closes[k]`: the byte of the first token from the `k`-th on that
+    /// leaves the depth below the depth before the `k`-th (`usize::MAX` for
+    /// none); `k` runs to `at.len()` inclusive.
+    closes: Vec<usize>,
+    /// Bytes the lexer from 0 steps over inside a token and a lexer started
+    /// there would read differently, as sorted ranges: comment bodies and
+    /// the byte an escaping `\` takes.
+    unsynced: Vec<(usize, usize)>,
+}
+
+impl GroupTokens {
+    fn new(source: &str) -> GroupTokens {
+        // `group_open_between(source, 0, source.len())`'s lexing.
+        let b = source.as_bytes();
+        let (mut at, mut deltas, mut unsynced) = (Vec::new(), Vec::new(), Vec::new());
+        let mut i = 0;
+        while i < b.len() {
+            match b[i] {
+                b'%' => {
+                    let start = i;
+                    while i < b.len() && b[i] != b'\n' {
+                        i += 1;
+                    }
+                    if i > start + 1 {
+                        unsynced.push((start + 1, i));
+                    }
+                }
+                b'{' => {
+                    at.push(i);
+                    deltas.push(1);
+                }
+                b'}' => {
+                    at.push(i);
+                    deltas.push(-1);
+                }
+                b'\\' => {
+                    let name_end = source[i + 1..].find(|c: char| !c.is_ascii_alphabetic()).map_or(b.len(), |n| i + 1 + n);
+                    match &source[i + 1..name_end] {
+                        "begin" | "begingroup" => {
+                            at.push(i);
+                            deltas.push(1);
+                        }
+                        "end" | "endgroup" => {
+                            at.push(i);
+                            deltas.push(-1);
+                        }
+                        "" => {
+                            unsynced.push((i + 1, i + 2));
+                            i += 1;
+                        }
+                        _ => {}
+                    }
+                    i = name_end.max(i + 1);
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        // `depth[k]`: the depth before the `k`-th token. The first later
+        // depth below it, by a stack of indexes of non-decreasing depth.
+        let mut depth = Vec::with_capacity(deltas.len() + 1);
+        depth.push(0i64);
+        for d in &deltas {
+            depth.push(depth[depth.len() - 1] + d);
+        }
+        let mut closes = vec![usize::MAX; depth.len()];
+        let mut stack: Vec<usize> = Vec::new();
+        for (k, &d) in depth.iter().enumerate() {
+            while stack.last().is_some_and(|&top| depth[top] > d) {
+                // `depth[k]` is the depth after token `k - 1`.
+                closes[stack.pop().unwrap_or_default()] = at[k - 1];
+            }
+            stack.push(k);
+        }
+        GroupTokens { at, closes, unsynced }
+    }
+
+    /// Whether a lexer started at `byte` reads what the lexer from 0 reads.
+    fn synced(&self, byte: usize) -> bool {
+        let k = self.unsynced.partition_point(|r| r.0 <= byte);
+        k == 0 || byte >= self.unsynced[k - 1].1
+    }
+
+    /// The byte of the first token from `from` on that closes the group
+    /// open at `from` (`usize::MAX` for none): `group_open_between(from, to)`
+    /// is `to <= group_close(from)` for a synced `from`.
+    fn group_close(&self, from: usize) -> usize {
+        self.closes[self.at.partition_point(|&p| p < from)]
+    }
+}
+
+/// The value [`length_at_scan`] gives one length at every byte, from its
+/// assignments read once ([`length_assignments`] of the whole source).
+///
+/// The assignments still in force at a byte are a chain: an assignment is
+/// in force where no group closes between its end and the byte, so when one
+/// is, every earlier one in force at the byte is also in force at its end.
+/// Each assignment keeps the latest earlier one in force at its end
+/// (`parent`) and the value and `unresolved` flag of the chain up to it; a
+/// lookup takes the last assignment ending by the byte and walks the chain
+/// back past those whose group has closed.
+struct LengthIndex {
+    /// The byte after each assignment's arguments, never decreasing.
+    ends: Vec<usize>,
+    /// Where each assignment's group closes ([`GroupTokens::group_close`]).
+    closes: Vec<usize>,
+    parent: Vec<Option<usize>>,
+    value: Vec<Option<f64>>,
+    unresolved: Vec<bool>,
+}
+
+impl LengthIndex {
+    /// `None` when the assignments cannot be read as a chain: one ends before
+    /// an earlier one (an assigning macro in another's argument) or ends where
+    /// lexing from its end differs from lexing from 0. The table then scans.
+    #[allow(clippy::type_complexity)]
+    fn new(assignments: Vec<(Vec<Option<(String, bool)>>, usize)>, groups: &GroupTokens, size: u32, base: f64) -> Option<LengthIndex> {
+        let n = assignments.len();
+        let mut index = LengthIndex {
+            ends: Vec::with_capacity(n),
+            closes: Vec::with_capacity(n),
+            parent: Vec::with_capacity(n),
+            value: Vec::with_capacity(n),
+            unresolved: Vec::with_capacity(n),
+        };
+        for (assigned, end) in assignments {
+            if index.ends.last().is_some_and(|&last| end < last) || !groups.synced(end) {
+                return None;
+            }
+            let parent = index.in_force(index.ends.len().checked_sub(1), end);
+            let (mut value, mut unresolved) = parent.map_or((None, false), |p| (index.value[p], index.unresolved[p]));
+            apply_length_assignments(assigned, size, base, &mut value, &mut unresolved);
+            index.ends.push(end);
+            index.closes.push(groups.group_close(end));
+            index.parent.push(parent);
+            index.value.push(value);
+            index.unresolved.push(unresolved);
+        }
+        Some(index)
+    }
+
+    /// The last assignment from `from` back along the chain still in force
+    /// at byte `at`.
+    fn in_force(&self, mut from: Option<usize>, at: usize) -> Option<usize> {
+        while let Some(k) = from {
+            if self.closes[k] >= at {
+                break;
+            }
+            from = self.parent[k];
+        }
+        from
+    }
+
+    /// [`length_at_scan`] at byte `at`.
+    fn at(&self, at: usize) -> (Option<f64>, bool) {
+        let last = self.ends.partition_point(|&end| end <= at).checked_sub(1);
+        self.in_force(last, at).map_or((None, false), |k| (self.value[k], self.unresolved[k]))
+    }
+}
+
+/// [`length_at_checked`]'s indexes of one document within an adapt call.
+#[derive(Default)]
+struct LengthIndexes {
+    groups: Option<GroupTokens>,
+    /// By length name, class size and the bits of the value before any
+    /// assignment; `None` for a document the index cannot read.
+    by_name: HashMap<(String, u32, u64), Option<LengthIndex>>,
 }
 
 /// The assignments to `\<name>` the user macro `\<cmd>` makes when invoked
@@ -5485,6 +5738,8 @@ struct MacroDef {
 struct MacroDefsEntry {
     ptr: usize,
     len: usize,
+    /// [`length_at_checked`]'s table-length indexes.
+    lengths: LengthIndexes,
     index: Option<HashMap<String, Vec<MacroDef>>>,
 }
 
@@ -5504,6 +5759,7 @@ impl MacroDefsScope {
             .map(|t| MacroDefsEntry {
                 ptr: t.as_ptr() as usize,
                 len: t.len(),
+                lengths: LengthIndexes::default(),
                 index: None,
             })
             .collect();
@@ -8025,6 +8281,119 @@ mod tests {
         table_length_limitations(&[src], Span::new(at("@5"), at("@5") + 2), 10, &mut out);
         assert_eq!(out.len(), 1);
         assert!(out[0].2.contains("\\tabcolsep"), "{}", out[0].2);
+    }
+
+    /// The indexed lookup of an adapt call answers exactly what the scan of
+    /// the source before the byte answers, at every byte: grouped, escaped
+    /// and commented braces, environments, macros with and without
+    /// arguments, an assigning macro inside another's argument, unclosed
+    /// groups and non-ASCII text.
+    #[test]
+    fn table_length_index_matches_the_prefix_scan() {
+        let sources = [
+            "",
+            "\\tabcolsep",
+            "\\documentclass{article}\\setlength{\\tabcolsep}{3pt}\\begin{document}{\\setlength{\\tabcolsep}{4pt}A}B\\begin{center}\\setlength{\\tabcolsep}{5pt}C\\end{center}D\\begingroup\\setlength{\\tabcolsep}{7pt}\\{E\\endgroup F % \\setlength{\\tabcolsep}{9pt}\nG\\end{document}",
+            "\\begin{document}\\setlength\\tabcolsep{2pt}A\\addtolength{\\tabcolsep}{3pt}B{\\tabcolsep=1pt C}{\\tabcolsep 1.5pt D}\\newcommand{\\tight}{\\setlength{\\tabcolsep}{0pt}}E\\addtolength\\tabcolsep{1pt}\\end{document}",
+            concat!(
+                "\\newcommand{\\tight}{\\setlength{\\tabcolsep}{0pt}}",
+                "\\newcommand{\\widen}[1]{\\addtolength{\\tabcolsep}{#1}}",
+                "\\newcommand{\\nested}{\\tight\\widen{2pt}}",
+                "\\newcommand{\\scoped}{{\\setlength{\\tabcolsep}{20pt}}}",
+                "\\newcommand{\\opt}[1][3pt]{\\setlength{\\tabcolsep}{#1}}",
+                "\\begin{document}{\\tight @1}{\\widen{4pt}@2}{\\nested @3}{\\scoped @4}{\\tight\\opt[1pt]@5}",
+                "\\widen{bad}z\\end{document}"
+            ),
+            "\\newcommand{\\tight}{\\setlength{\\tabcolsep}{0pt}}\\newcommand{\\widen}[1]{\\addtolength{\\tabcolsep}{#1}}\\widen{\\tight}x\\setlength{\\tabcolsep}{\\tight}y{\\widen{1pt}}z",
+            "\\addtolength{\\tabcolsep}{3pt}X{\\addtolength{\\tabcolsep}{1pt}{\\addtolength{\\tabcolsep}{1pt}}\\addtolength{\\tabcolsep}{-1pt}}}}\\tabcolsep=2pt{{{\\tabcolsep 1pt",
+            "é\\setlength{\\tabcolsep}{2pt}% } ü {\n\\{\\setlength{\\tabcolsep}{3pt}\\}}\\\\{\\setlength{\\arrayrulewidth}{1pt}\\end{x}\\setlength{\\tabcolsep}{4pt}\\beginx{\\endgroupx}\\%{\\tabcolsep=5pt%\n}",
+        ];
+        // And documents strung together from the same pieces at random.
+        let pieces = [
+            "{", "}", "\\{", "\\}", "\\\\", "%", "\n", " ", "x", "é", "\\begin{center}", "\\end{center}", "\\begingroup", "\\endgroup",
+            "\\setlength{\\tabcolsep}{2pt}", "\\addtolength\\tabcolsep{1pt}", "\\tabcolsep=3pt", "\\tabcolsep", "\\tight", "\\widen{1pt}", "\\widen{",
+            "\\newcommand{\\tight}{\\setlength{\\tabcolsep}{0pt}}", "\\newcommand{\\widen}[1]{{\\addtolength{\\tabcolsep}{#1}}\\addtolength{\\tabcolsep}{#1}}",
+        ];
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let generated: Vec<String> = (0..300)
+            .map(|_| {
+                (0..24)
+                    .map(|_| {
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        pieces[(state % pieces.len() as u64) as usize]
+                    })
+                    .collect()
+            })
+            .collect();
+        for source in sources.iter().copied().chain(generated.iter().map(String::as_str)) {
+            let _scope = MacroDefsScope::enter(&[source]);
+            for (name, base) in [("tabcolsep", 6.0), ("arrayrulewidth", 0.4), ("LTpre", 0.0)] {
+                for at in (0..=source.len()).filter(|&at| source.is_char_boundary(at)) {
+                    assert_eq!(length_at_checked(source, name, 10, at, base), length_at_scan(source, name, 10, at, base), "{name} at {at} of {source:?}");
+                }
+            }
+            if sources.contains(&source) {
+                // Only an assigning macro in another's argument is left to the scan.
+                let scanned = MACRO_DEFS.with(|scope| scope.borrow()[0].lengths.by_name.values().filter(|i| i.is_none()).count());
+                assert_eq!(scanned, usize::from(source.contains("\\widen{\\tight}")), "{source:?}");
+            }
+        }
+    }
+
+    /// A document of `tables` tables in the forms `length_at` reads: a
+    /// preamble assignment, a macro, top-level `\addtolength`s, grouped and
+    /// environment-scoped `\setlength`s, and `\tabcolsep=` inside a group.
+    fn many_tables_source(tables: usize) -> (String, Vec<usize>) {
+        let mut src = String::from("\\documentclass{article}\\setlength{\\tabcolsep}{3pt}\n\\newcommand{\\tight}{\\setlength{\\tabcolsep}{1pt}}\n\\begin{document}\n");
+        let mut at = Vec::new();
+        for k in 0..tables {
+            src.push_str(&format!("\\section{{S{k}}} Some text % a comment {{\n\n"));
+            let table = "\\begin{tabular}{|l|l|}\\hline a & b \\\\ \\hline\\end{tabular}\n\n";
+            match k % 5 {
+                0 => src.push_str(&format!("{{\\setlength{{\\tabcolsep}}{{{}pt}}", k % 7)),
+                1 => src.push_str("\\begin{center}\\tight "),
+                2 => src.push_str("\\addtolength{\\arrayrulewidth}{0.01pt}{"),
+                3 => src.push_str("\\begingroup\\tabcolsep=2pt "),
+                _ => src.push_str("{"),
+            }
+            at.push(src.len());
+            src.push_str(table);
+            src.push_str(match k % 5 {
+                1 => "\\end{center}\n",
+                3 => "\\endgroup\n",
+                _ => "}\n",
+            });
+        }
+        src.push_str("\\end{document}\n");
+        (src, at)
+    }
+
+    /// Every table reads its lengths in one adapt call without rescanning the
+    /// source before it: doubling the number of tables about doubles the
+    /// time (a prefix scan per table grew it fourfold, #525/#623).
+    #[test]
+    fn table_lengths_scale_linearly_with_the_number_of_tables() {
+        let resolve = |tables: usize| {
+            let (src, at) = many_tables_source(tables);
+            let mut best = std::time::Duration::MAX;
+            let mut lengths = Vec::new();
+            for _ in 0..5 {
+                let t0 = std::time::Instant::now();
+                let _scope = MacroDefsScope::enter(&[&src]);
+                lengths = at.iter().map(|&a| crate::table::TableLengths::read(|name, base| length_at(&src, name, 10, a, base)).tabcolsep).collect::<Vec<_>>();
+                best = best.min(t0.elapsed());
+            }
+            (best, lengths)
+        };
+        let (t200, l200) = resolve(200);
+        let (t400, _) = resolve(400);
+        let (t800, l800) = resolve(800);
+        eprintln!("table lengths: 200 tables {t200:?}, 400 tables {t400:?}, 800 tables {t800:?}");
+        assert_eq!(&l800[..200], &l200[..]);
+        assert_eq!(&l200[..5], &[0.0, 1.0, 3.0, 2.0, 3.0]);
+        assert!(t800 < t200 * 8, "800 tables took {t800:?}, 200 took {t200:?}: not linear");
     }
 
     #[test]
