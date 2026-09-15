@@ -461,6 +461,13 @@ pub enum Block {
     /// book.cls `\frontmatter`/`\mainmatter`/`\backmatter` (lines 284-298):
     /// the next material starts a new page (an odd one when two-sided).
     ClearPage { double: bool, span: Span },
+    /// `\@starttoc`'s `\@nobreakfalse` (latex.ltx), at the end of every
+    /// `\tableofcontents`/`\listoffigures`/`\listoftables`: the heading
+    /// the list opened with no longer governs what follows. A sectioning
+    /// command right after an empty list therefore takes `\@startsection`'s
+    /// `\addpenalty`/`\addvspace` branch, not the `\if@nobreak` one that
+    /// drops its before-skip under another heading. It sets nothing.
+    NoBreakFalse { span: Span },
     /// A page-style or mark command in the body, attached to the material
     /// that follows it.
     Chrome { event: ChromeEvent, span: Span },
@@ -8620,6 +8627,7 @@ mod tests {
                 Block::Chrome { .. } => "M".to_string(),
                 Block::Title { .. } => "T".to_string(),
                 Block::ClearPage { .. } => "N".to_string(),
+                Block::NoBreakFalse { .. } => "B".to_string(),
                 Block::TocEntry(..) => "E".to_string(),
                 Block::LongTable { .. } => "L".to_string(),
             })

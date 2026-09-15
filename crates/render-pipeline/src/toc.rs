@@ -768,5 +768,8 @@ pub fn list_blocks(
             _ => {}
         }
     }
+    // `\@starttoc`: `\@input{\jobname.<ext>}` then `\@nobreakfalse`, which
+    // outlasts even `\l@part`'s `\global\@nobreaktrue` in the last entry.
+    out.push(Block::NoBreakFalse { span });
     out
 }
