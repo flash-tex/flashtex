@@ -1,0 +1,81 @@
+# Re-record the DesignSnapshots reference PNGs on a CI runner, on demand.
+#
+# A window-server capture is not portable: the references committed in
+# #471/#476 are @2x, recorded on the owner's Retina Mac, and a GitHub runner
+# composites onto a virtual display at @1x with a different OS build. The mac
+# suite therefore skips the pixel comparison (loudly) when the machine does
+# not match `__Snapshots__/environment.json`.
+#
+# This workflow exists so that re-recording is a button rather than a
+# hand-edit. Run it whenever a design pass invalidates the references, or to
+# produce a reference set for a runner image. It records the PNGs *and* the
+# environment manifest in the same run, and uploads them together; download
+# the artifact, copy it over `apps/mac/Tests/DesignSnapshots/__Snapshots__/`,
+# and commit. It never pushes anything itself.
+name: Record design snapshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or SHA to record from (defaults to the branch this is run on)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    name: record DesignSnapshots references
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      CI: "1"
+      FLASHTEX_NO_ACTIVATE: "1"
+      FLASHTEX_KEYCHAIN_OFF: "1"
+      FLASHTEX_REVIEW_HISTORY_DIR: "off"
+      RECORD_SNAPSHOTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Select the newest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - run: swift --version && xcodebuild -version && sw_vers
+      - name: Record the references and the environment they came from
+        working-directory: apps/mac
+        # `RECORD_SNAPSHOTS=1` makes every assertion rewrite its PNG instead of
+        # comparing, and SnapshotRecordingTests rewrites environment.json in
+        # the same run so the two can never drift apart.
+        # The log goes to RUNNER_TEMP, not the checkout: recording must leave
+        # the tree containing exactly the references it recorded and nothing
+        # else, so `git status` below is a clean read of what changed.
+        run: |
+          set -o pipefail
+          swift test --filter DesignSnapshots 2>&1 | tee "$RUNNER_TEMP/snapshot-record.log" | tail -n 200
+      - name: What was recorded
+        if: always()
+        working-directory: apps/mac
+        run: |
+          cat Tests/DesignSnapshots/__Snapshots__/environment.json || true
+          find Tests/DesignSnapshots/__Snapshots__ -name '*.png' | sort
+          git -C "$GITHUB_WORKSPACE" status --porcelain -- apps/mac/Tests/DesignSnapshots/__Snapshots__
+      - name: Upload the recorded references
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: design-snapshot-references
+          path: apps/mac/Tests/DesignSnapshots/__Snapshots__
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload the recording log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: design-snapshot-record-log
+          path: ${{ runner.temp }}/snapshot-record.log
+          if-no-files-found: ignore
+          retention-days: 14

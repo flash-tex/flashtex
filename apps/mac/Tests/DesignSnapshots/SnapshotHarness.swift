@@ -17,7 +17,11 @@
 //
 //  Recording: set `RECORD_SNAPSHOTS=1` to (re)write the reference PNGs instead
 //  of comparing against them. Do that deliberately, never to make a red test
-//  green.
+//  green. A capture is not portable between machines, so recording also
+//  rewrites `__Snapshots__/environment.json` (SnapshotEnvironment.swift) with
+//  the machine it ran on; a machine that does not match that manifest skips
+//  the comparison loudly instead of reporting a hardware difference as a
+//  design regression.
 
 import AppKit
 import HostedWindows
@@ -48,17 +52,60 @@ private let cgWindowListCreateImage: WindowListCreateImage? = {
     return unsafeBitCast(sym, to: WindowListCreateImage.self)
 }()
 
-/// The window-server composite of `window`, at backing-store resolution:
-/// what the user would actually see, glass materials included.
+/// The window-server composite of `window`, at backing-store resolution, as
+/// pixels. `SnapshotEnvironment` divides these by the window's point size to
+/// measure what this machine actually renders at.
 @MainActor
-private func windowServerImage(of window: NSWindow) -> NSImage? {
+func windowServerCapture(of window: NSWindow) -> CGImage? {
     window.displayIfNeeded()
     let options: CGWindowListOption = [.optionIncludingWindow]
     let imageOptions: CGWindowImageOption = [.boundsIgnoreFraming, .bestResolution]
-    guard let cg = cgWindowListCreateImage?(
+    return cgWindowListCreateImage?(
         .null, options.rawValue, CGWindowID(window.windowNumber), imageOptions.rawValue
-    )?.takeRetainedValue() else { return nil }
+    )?.takeRetainedValue()
+}
+
+/// The same capture as an `NSImage` sized in points: what the user would
+/// actually see, glass materials included.
+@MainActor
+private func windowServerImage(of window: NSWindow) -> NSImage? {
+    guard let cg = windowServerCapture(of: window) else { return nil }
     return NSImage(cgImage: cg, size: window.frame.size)
+}
+
+/// Hosts `view` in a window off every display, lets SwiftUI settle, and
+/// returns the window-server capture together with its pixel size -- which is
+/// `size` times this machine's backing scale, and is why the capture is not
+/// portable (SnapshotEnvironment.swift).
+@MainActor
+func hostAndCapture<V: View>(
+    _ view: V,
+    size: CGSize,
+    styleMask: NSWindow.StyleMask,
+    appearance: Appearance,
+    settle: TimeInterval
+) -> (image: NSImage, pixels: CGSize)? {
+    let window = HostedWindowSupport.window(
+        contentRect: NSRect(origin: .zero, size: size), styleMask: styleMask)
+    window.appearance = appearance.nsAppearance
+    window.colorSpace = .sRGB
+    let controller = NSHostingController(rootView: view)
+    // Keep the window at `size`: with sizing options on, assigning the
+    // controller momentarily resizes the window to SwiftUI's preferred size,
+    // and NavigationSplitView collapses its sidebar during that dip.
+    controller.sizingOptions = []
+    controller.view.frame = CGRect(origin: .zero, size: size)
+    window.contentViewController = controller
+    window.setContentSize(size)
+    window.makeKeyAndOrderFront(nil)
+    // Real run-loop turns: List/NSTableView rows only populate in a window,
+    // `.toolbar` installs asynchronously, and `.task`s need to run.
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: settle))
+    window.layoutIfNeeded()
+    defer { window.orderOut(nil) }
+    guard let cg = windowServerCapture(of: window) else { return nil }
+    return (NSImage(cgImage: cg, size: window.frame.size),
+            CGSize(width: cg.width, height: cg.height))
 }
 
 /// Hosts `view` in a window (off every display), lets SwiftUI settle, and
@@ -81,27 +128,12 @@ private func assertHostedSurface<V: View>(
     testName: String,
     line: UInt
 ) {
-    let window = HostedWindowSupport.window(
-        contentRect: NSRect(origin: .zero, size: size), styleMask: styleMask)
-    window.appearance = appearance.nsAppearance
-    window.colorSpace = .sRGB
-    let controller = NSHostingController(rootView: view)
-    // Keep the window at `size`: with sizing options on, assigning the
-    // controller momentarily resizes the window to SwiftUI's preferred size,
-    // and NavigationSplitView collapses its sidebar during that dip.
-    controller.sizingOptions = []
-    controller.view.frame = CGRect(origin: .zero, size: size)
-    window.contentViewController = controller
-    window.setContentSize(size)
-    window.makeKeyAndOrderFront(nil)
-    // Real run-loop turns: List/NSTableView rows only populate in a window,
-    // `.toolbar` installs asynchronously, and `.task`s need to run.
-    RunLoop.main.run(until: Date(timeIntervalSinceNow: settle))
-    window.layoutIfNeeded()
-    guard let image = windowServerImage(of: window) else {
+    guard let capture = hostAndCapture(view, size: size, styleMask: styleMask,
+                                       appearance: appearance, settle: settle) else {
         XCTFail("window-server capture returned nil", file: file, line: line)
         return
     }
+    let image = capture.image
     withSnapshotTesting(record: recording ? .all : .missing) {
         assertSnapshot(
             of: image,
@@ -112,7 +144,6 @@ private func assertHostedSurface<V: View>(
             line: line
         )
     }
-    window.orderOut(nil)
 }
 
 /// An existing AppKit window (a popup panel, a floating chrome piece),
