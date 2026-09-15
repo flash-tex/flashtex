@@ -591,11 +591,11 @@ fn decompose(docs: &[SourceDocument<'_>], case: &Case, fonts: &FontSet, options:
 
     let diagnostics = ctx.take_diagnostics();
     let t = Instant::now();
-    let v2 = typeset::assemble("perfbench", 3, docs, &doc.style, fonts, laid, diagnostics, Some(&cache));
+    let v2 = typeset::assemble("perfbench", 3, docs, &doc.style, fonts, laid, diagnostics, Some(&cache), doc.page_color, doc.default_color);
     let assemble_ms = ms(t);
 
     let t = Instant::now();
-    let payload = v1::fallback(&v2, Capabilities { rules: true, font_hints: true, display_list: false, images: false }, Some(vec![]));
+    let payload = v1::fallback(&v2, Capabilities { rules: true, font_hints: true, display_list: false, images: false, device_color: false, delta: false, v2_only: false }, Some(vec![]));
     let v1_ms = ms(t);
 
     let t = Instant::now();
