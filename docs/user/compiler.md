@@ -874,6 +874,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `Vmatrix` | math | math grid, centred cells in ‖ ‖ |
 | `cases` | math | math grid, left-aligned cells with a left { |
 | `dcases` | math | math grid, left-aligned cells with a left { |
+| `rcases` | math | math grid, left-aligned cells with a right } (mathtools mirror of `cases`) |
 | `aligned` | math | math grid, centred cells |
 | `alignedat` | math | math grid, centred cells |
 | `split` | math | math grid, centred cells |
