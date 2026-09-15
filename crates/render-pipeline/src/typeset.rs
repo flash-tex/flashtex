@@ -205,8 +205,11 @@ pub struct MathRec {
     /// face's glyph ids.
     pub metrics: MathProvider,
     /// `\text{...}` runs of this formula (`mathtext`), addressed by the
-    /// placed glyphs' `font_id` above `RUN_FONT_BASE`.
-    pub text_runs: Vec<crate::mathtext::TextRun>,
+    /// placed glyphs' `font_id` above `RUN_FONT_BASE`. Shared by the
+    /// pieces `math_pieces` cuts: each piece used to clone every run, so a
+    /// formula with `b` break points and `n` runs held `b x n` of them
+    /// (1 000 `x+` around 1 000 nested `\textbf` passed 3 GB).
+    pub text_runs: Rc<[crate::mathtext::TextRun]>,
     /// The formula's colour (`adapter::Doc::math_colors`).
     pub color: Option<flashtex_compiler::color::DeviceColor>,
     /// Baseline shift upward in points (`\LaTeXe`'s subscript `ε`).
@@ -1352,7 +1355,7 @@ impl<'a> Context<'a> {
             span,
             face: fonts.otf().face().clone(),
             metrics: fonts.clone(),
-            text_runs,
+            text_runs: text_runs.into(),
             color: self.math_colors.get(&(span.document.0, span.start, span.end)).copied(),
             raise: 0.0,
             inline_breaks,
@@ -5194,7 +5197,7 @@ impl<'a> Context<'a> {
                     empty.subscript = None;
                     list.atoms.insert(0, empty);
                 }
-                let cspan = list.atoms.iter().map(|a| a.span).reduce(Span::merge).unwrap_or(row.span);
+                let cspan = merge_spans_in(row.span, list.atoms.iter().map(|a| a.span));
                 let run = self.math_box(&list, cspan, true, self.style.body_size_pt).map(|rec| {
                     let BoxRec::Math(mi) = &self.recs[rec] else { unreachable!() };
                     (math_run(&self.maths[*mi].root, size, cspan), rec)
@@ -6704,6 +6707,33 @@ pub fn convert_math_classed(
     ml::MathList::new(atoms)
 }
 
+/// `spans` merged into one, keeping only those in `within`'s document, or
+/// `within` itself when none is. An `\include` inside a construct puts
+/// some of its atoms in another document, and `Span::merge` requires one
+/// (fuzz finding: `\begin{align}e\include{sub}` with `sub.tex` holding
+/// `x\input{sub}` panicked `cannot merge spans from different documents`
+/// in `rows_block` once the compiler's own merge was fixed, #577).
+fn merge_spans_in(within: Span, spans: impl IntoIterator<Item = Span>) -> Span {
+    spans.into_iter().filter(|s| s.document == within.document).reduce(Span::merge).unwrap_or(within)
+}
+
+#[cfg(test)]
+mod merge_spans_in_tests {
+    use super::merge_spans_in;
+    use flashtex_compiler::{DocumentId, Span};
+
+    #[test]
+    fn spans_from_another_document_are_left_out() {
+        let main = |a, b| Span::in_document(DocumentId(0), a, b);
+        let sub = Span::in_document(DocumentId(1), 0, 12);
+        // Before: `Span::merge` panicked (debug) or silently merged offsets
+        // of two different files (release).
+        assert_eq!(merge_spans_in(main(0, 30), [main(14, 15), sub, main(20, 22)]), main(14, 22));
+        assert_eq!(merge_spans_in(main(0, 30), [sub]), main(0, 30));
+        assert_eq!(merge_spans_in(main(0, 30), []), main(0, 30));
+    }
+}
+
 /// A matched `\left...\right` pair as math-layout's `Delimited` atom; with
 /// `math-glyph-spans` each delimiter maps to its own command and the atom
 /// to the whole pair.
@@ -6711,7 +6741,7 @@ fn fenced(left: Option<char>, right: Option<char>, body: Vec<ml::Atom>, left_spa
     let atom = ml::Atom::left_right(left, right, ml::MathList::new(body));
     #[cfg(feature = "math-glyph-spans")]
     let atom = atom
-        .with_tag(math_tag(left_span.merge(right_span)))
+        .with_tag(math_tag(merge_spans_in(left_span, [right_span])))
         .with_delimiter_tags(math_tag(left_span), math_tag(right_span));
     #[cfg(not(feature = "math-glyph-spans"))]
     let _ = (left_span, right_span);

@@ -262,7 +262,9 @@ pub fn scan(text: &str) -> Scan {
         let at = i + rel;
         let name_end = at + 1 + text[at + 1..].find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(text.len() - at - 1);
         let name = &text[at + 1..name_end];
-        i = name_end.max(at + 2);
+        // Past a control symbol too: the character after the backslash
+        // may be multi-byte (`\é`) or absent (a trailing `\`).
+        i = name_end.max(at + 1 + text[at + 1..].chars().next().map_or(0, char::len_utf8));
         if name.is_empty() || is_commented(text, at) {
             continue;
         }

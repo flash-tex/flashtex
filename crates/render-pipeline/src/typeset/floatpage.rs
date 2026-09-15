@@ -699,18 +699,19 @@ impl Placer<'_> {
                     let Some(resource) = resource else { continue };
                     let m = gbox.matrix;
                     let k = BP_PER_PT;
-                    self.images.push((
-                        page,
-                        display::Item::Image(display::Image {
-                            x: Tick::from_tex_pt(left),
-                            top: Tick::from_tex_pt(base - gbox.height),
-                            width: Tick::from_tex_pt(gbox.width),
-                            height: Tick::from_tex_pt(gbox.height + gbox.depth),
-                            transform: [m[0] * k, -m[1] * k, m[2] * k, -m[3] * k, (left + m[4]) * k, (base - m[5]) * k],
-                            resource: resource.clone(),
-                            provenance: provenance.clone(),
-                        }),
-                    ));
+                    let image = display::Image {
+                        x: Tick::from_tex_pt(left),
+                        top: Tick::from_tex_pt(base - gbox.height),
+                        width: Tick::from_tex_pt(gbox.width),
+                        height: Tick::from_tex_pt(gbox.height + gbox.depth),
+                        transform: [m[0] * k, -m[1] * k, m[2] * k, -m[3] * k, (left + m[4]) * k, (base - m[5]) * k],
+                        resource: resource.clone(),
+                        provenance: provenance.clone(),
+                    };
+                    // The box keeps its space either way.
+                    if image.is_paintable() {
+                        self.images.push((page, display::Item::Image(image)));
+                    }
                 }
             }
         }
