@@ -1,7 +1,8 @@
 # flashtex-project-files
 
-Original Rust project file layer for FlashTeX. Zero external crates, edition
-2024. Owner: `mac-project-files` (Claude Code subagent, parent `mac-claude-a`).
+Original Rust project file layer for FlashTeX. Edition 2024; its only
+dependencies are `unicode-normalization` and `libc` (the rooted file
+operations' C bindings). Owner: `mac-project-files` (Claude Code subagent, parent `mac-claude-a`).
 
 It answers four questions the single-file Mac shell cannot today: *which files
 make up this project*, *what exactly is in them* (content identity), *how do I
@@ -354,7 +355,7 @@ with its `check()` result.
 - `.flashtex/` (lock file and journal) lives inside the project root and is
   not hidden from other tools; the native app should add it to VCS ignore
   rules if desired.
-- Targets other than macOS and Linux x86_64/aarch64 have no rooted file
+- Targets other than macOS and Linux (glibc or musl) have no rooted file
   operations (`Refused::Unsupported`); the crate itself is Unix-only.
 
 ### JSON Lines helper (`src/bin/flashtex-project-files.rs`)
