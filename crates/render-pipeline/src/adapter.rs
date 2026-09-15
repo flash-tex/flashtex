@@ -5418,7 +5418,127 @@ fn environment_name(source: &str, at: usize) -> Option<(&str, usize)> {
     Some((&source[i + 1..close], close + 1))
 }
 
+/// The font intervals of `source`: its own brace groups and font commands
+/// ([`source_style_intervals`]) plus the declarations user macros wrap
+/// around their arguments ([`macro_argument_intervals`]).
 fn style_intervals(source: &str) -> Vec<StyleInterval> {
+    let mut out = source_style_intervals(source);
+    out.extend(macro_argument_intervals(source));
+    // Stable: at one start byte the invocation site's intervals stay before
+    // the ones the definition adds, and those before an argument's own.
+    out.sort_by_key(|(start, _, _, _)| *start);
+    out
+}
+
+/// The font declarations a user macro's definition wraps around each of its
+/// parameters, laid over that argument's bytes at every invocation.
+///
+/// The compiler gives an argument's tokens their own source span, so the
+/// style lookup (`Styles::at`) reads the argument's bytes — which sit outside
+/// every group the *definition* opened. For
+/// `\newcommand{\note}[1]{{\small\bfseries #1}}`, `\note{words}` set `words`
+/// medium where pdfLaTeX sets them in `SFBX0900`: the size came through (the
+/// compiler scopes sizes) and the series did not. Here the definition body's
+/// own intervals that contain `#k` are re-applied to argument `k`, in body
+/// order, between the invocation site's style and the argument's own
+/// commands — the order TeX applies them in.
+///
+/// Definitions with a default optional argument (`[n][default]`) are skipped,
+/// because their `#1` is the bracketed argument and not a brace group; so is
+/// an undelimited (unbraced) argument.
+fn macro_argument_intervals(source: &str) -> Vec<StyleInterval> {
+    let bytes = source.as_bytes();
+    let defs = macro_definitions(source);
+    let mut out = Vec::new();
+    for (index, def) in defs.iter().enumerate() {
+        let name = &source[def.name.clone()];
+        // A later definition of the same name takes over from its position.
+        let until = defs[index + 1..].iter().find(|d| source[d.name.clone()] == *name).map_or(bytes.len(), |d| d.at);
+        let header = &source[def.name.end..def.body.start - 1];
+        if header.matches('[').count() > 1 {
+            continue;
+        }
+        let body = &source[def.body.clone()];
+        let body_intervals = source_style_intervals(body);
+        // For each parameter the body uses, the body intervals around it:
+        // the command, whether its group closes right after `#k` (italic
+        // correction), and whether it is outside every group of the body,
+        // so that it stays in force after the invocation too.
+        let mut params: Vec<(usize, Vec<(crate::nfss::Command, bool, bool)>)> = Vec::new();
+        for k in 1..=9usize {
+            let Some(p) = body.find(&format!("#{k}")) else { continue };
+            let chain: Vec<_> = body_intervals.iter().filter(|(s, e, _, _)| *s <= p && p < *e).map(|(_, e, c, _)| (*c, *e == p + 2, *e >= body.len())).collect();
+            if !chain.is_empty() {
+                params.push((k, chain));
+            }
+        }
+        let Some(arity) = params.iter().map(|(k, _)| *k).max() else { continue };
+        let mut from = def.body.end;
+        // (A redefinition nested inside this body ends the range before it
+        // starts.)
+        while from < until {
+            let Some(at) = find_command(&source[from..until], name) else { break };
+            let inv = from + at;
+            from = inv + 1 + name.len();
+            // The argument bytes of this invocation, brace groups only.
+            let mut i = from;
+            let mut args = Vec::new();
+            while args.len() < arity {
+                while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+                    i += 1;
+                }
+                if bytes.get(i) != Some(&b'{') {
+                    break;
+                }
+                let Some(close) = matching_brace(bytes, i) else { break };
+                args.push((i + 1, close));
+                i = close + 1;
+            }
+            for (k, chain) in &params {
+                if let Some(&(start, end)) = args.get(k - 1) {
+                    for &(c, correction, leaks) in chain {
+                        if leaks {
+                            // As an ungrouped declaration written at the call
+                            // site: to the end of the enclosing group, or to
+                            // the next `\end` outside any.
+                            let to = enclosing_group_end(source, inv).unwrap_or_else(|| find_command(&source[i..], "end").map_or(bytes.len(), |e| i + e));
+                            out.push((start, to, c, false));
+                        } else {
+                            out.push((start, end, c, correction));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The closing brace of the innermost brace group containing byte `at`
+/// (escaped `\{`/`\}` are not groups), or `None` at the top level.
+fn enclosing_group_end(source: &str, at: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let escaped = |j: usize| j > 0 && bytes[j - 1] == b'\\';
+    let mut depth = 0usize;
+    let mut j = at;
+    while j > 0 {
+        j -= 1;
+        match bytes[j] {
+            b'}' if !escaped(j) => depth += 1,
+            b'{' if !escaped(j) => {
+                if depth == 0 {
+                    return matching_brace(bytes, j);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The font intervals spelled in `source` itself (see [`style_intervals`]).
+fn source_style_intervals(source: &str) -> Vec<StyleInterval> {
     let mut out = Vec::new();
     let bytes = source.as_bytes();
     let literal = literal_spans(source);
@@ -6839,6 +6959,10 @@ fn items_cached(
                 0u8.hash(&mut h);
                 text.hash(&mut h);
                 style.color.hash(&mut h);
+                // A macro argument's font comes from the definition, which
+                // may sit outside the hashed slice (`macro_argument_intervals`).
+                let here = st.at(s.start);
+                (here.bold, here.italic, here.slanted, here.caps, here.family, here.undefined).hash(&mut h);
             }
             Inline::LineBreak { .. } => 1u8.hash(&mut h),
             Inline::Math { list, display, number, color, .. } => {
@@ -7770,6 +7894,15 @@ fn space_style(
     let no_styles = Styles::default();
     let intervals = styles.get(span.document.0).unwrap_or(&no_styles);
     let Some(gap) = src.get(pe..span.start) else { return fallback };
+    // After a replacement token of a user macro (whose span is the `\name`
+    // of the invocation) the bytes up to an argument are the call's earlier
+    // arguments, not what TeX read: `\pair{\textit{a b}}{c}`'s body space
+    // before `#2` is not in `a b`'s italic. Read the call site's font.
+    if let Some(bs) = src[..pe].rfind('\\') {
+        if is_invocation_span(src, Span { document: span.document, start: bs, end: pe }) {
+            return style_at(intervals, bs);
+        }
+    }
     match gap.find(|c: char| c.is_whitespace()) {
         Some(off) => style_at(intervals, pe + off),
         None => style_at(intervals, pe),
@@ -8502,6 +8635,20 @@ mod tests {
         // The text after the URL is outside it.
         assert_eq!(Styles::new(src, intervals, crate::nfss::Scheme::LmT1).at(src.find('y').unwrap()).family,
                    crate::nfss::FamilyKind::Rm);
+    }
+
+    /// A macro body's declarations around `#k` cover argument `k` at each
+    /// call (`macro_argument_intervals`), and a redefinition nested inside
+    /// the body (whose position is before the body's end) does not panic.
+    #[test]
+    fn a_macro_body_declaration_covers_its_argument() {
+        let src = "\\newcommand{\\note}[1]{{\\bfseries #1}}\nA \\note{bold} C";
+        let st = Styles::new(src, style_intervals(src), crate::nfss::Scheme::LmT1);
+        assert!(st.at(src.find("bold").unwrap()).bold);
+        assert!(!st.at(src.find('C').unwrap()).bold);
+        assert!(!st.at(src.find('A').unwrap()).bold);
+        let nested = "\\newcommand{\\a}[1]{\\def\\a{x}{\\bfseries #1}}\n\\a{y} z";
+        let _ = style_intervals(nested);
     }
 
     /// `\verb`, the `verbatim` environment and `lstlisting` are set in the
