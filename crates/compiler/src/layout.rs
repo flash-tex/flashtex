@@ -2644,6 +2644,10 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 text,
                 space_before,
             } => c.footnote(number, *span, *mark, text.as_deref(), *space_before),
+            // `\marginpar` has no mark, and this layout has no margin
+            // model (the render pipeline sets the note in the right
+            // margin): skip it rather than leaking it into the prose.
+            Inline::Marginpar { .. } => {}
             Inline::Tabular(table) => {
                 let table_size = table.style.size.map_or(size, |level| {
                     size_declaration_pt(level, c.constraints.font_size_pt)

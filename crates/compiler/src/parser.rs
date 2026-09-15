@@ -204,6 +204,16 @@ pub enum Inline {
         /// See `Inline::Text::space_before`.
         space_before: bool,
     },
+    /// `\marginpar[<left>]{<right>}`. The render pipeline always sets the
+    /// one-sided `<right>` note in the right margin at `\footnotesize`
+    /// (see `render-pipeline`'s `typeset::marginpar`), so the running text
+    /// carries no mark. `span` is the command token.
+    Marginpar {
+        text: Vec<Inline>,
+        span: Span,
+        /// See `Inline::Text::space_before`.
+        space_before: bool,
+    },
     /// `\TeX`, `\LaTeX`, `\LaTeXe`: the kernel logo construction (kerns,
     /// a lowered `E`, a raised script-size `A`; see
     /// `text_builtins::layout_logo`), laid out against each layout's own
@@ -930,6 +940,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "footnote",
     "footnotemark",
     "footnotetext",
+    "marginpar",
     "normalfont",
     "bfseries",
     "mdseries",
@@ -2597,6 +2608,7 @@ impl P<'_> {
             "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule }),
             "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots }),
             "footnote" | "footnotemark" | "footnotetext" => self.footnote(name, span, para),
+            "marginpar" => self.marginpar(span, para),
             // `\linebreak[n]`/`\nolinebreak[n]`: real TeX's 0-4 priority only
             // ever hints a badness-based line-breaking algorithm this greedy
             // layout does not have. An absent bracket or an explicit `4` is
@@ -6509,6 +6521,30 @@ impl P<'_> {
         self.argument_inlines(tokens, span, TextStyle::default())
     }
 
+    /// `\marginpar[<left>]{<right>}` (latex.ltx `\@marginpar`): the
+    /// optional argument is the note for even pages of a two-sided
+    /// document, the required one the note everywhere else. This compiler
+    /// always sets the note in the right margin (the one-sided default),
+    /// so a present `[<left>]` is consumed and reported rather than set.
+    /// Margin placement breaks pages, so incremental block reuse is
+    /// disabled (the same conservative rule `\label`/`\ref` use).
+    fn marginpar(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        self.document_global_state = true;
+        if let Some((_, raw_span)) = self.optional_bracket_argument() {
+            self.diags.push(Diagnostic::warning(
+                "\\marginpar's optional [left] argument is ignored: the note is always set in the right margin",
+                Some(raw_span),
+                Some("used the required {right} argument instead".into()),
+            ));
+        }
+        // Like `\@footnotetext`, the argument is `\long`: a blank line
+        // inside it is a paragraph break in the note, not its end.
+        let (tokens, _) = self.required_group_bounded("marginpar", span, true);
+        let text = self.argument_inlines(tokens, span, TextStyle::default());
+        para.push(Inline::Marginpar { text, span, space_before });
+    }
+
     /// Parses an argument with the ordinary dispatch starting in `style`
     /// (see [`P::footnote_inlines`]); paragraph breaks become line breaks
     /// attributed to `span`.
@@ -10233,5 +10269,45 @@ mod tests {
         assert!(parsed.diagnostics[0]
             .message
             .contains("\\bibitem is only supported"));
+    }
+
+    #[test]
+    fn marginpar_parses_to_a_margin_note_without_diagnostics() {
+        let (parsed, _items) = items(r"Text\marginpar{note}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(parsed.document_global_state);
+        let mut notes = Vec::new();
+        for block in &parsed.blocks {
+            if let Block::Paragraph(content) = block {
+                for inline in content {
+                    if let Inline::Marginpar { text, .. } = inline {
+                        notes.push(text.clone());
+                    }
+                }
+            }
+        }
+        assert_eq!(notes.len(), 1, "{:?}", parsed.blocks);
+        let words: Vec<String> = notes[0]
+            .iter()
+            .filter_map(|i| match i {
+                Inline::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(words, vec!["note".to_string()]);
+        // The note text stays out of the running prose: the Core 14 layout
+        // has no margin model and skips it (the render pipeline places it).
+        let prose: String = _items.iter().map(|item| item.text.as_str()).collect();
+        assert!(!prose.contains("note"), "{prose:?}");
+    }
+
+    #[test]
+    fn marginpar_optional_left_argument_is_reported_and_ignored() {
+        let (parsed, _items) = items(r"Text\marginpar{left}{right}");
+        // Two braced groups: the second is ordinary prose after the note.
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let parsed = parse(r"Text\marginpar[left]{right}");
+        assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+        assert!(parsed.diagnostics[0].message.contains("[left]"));
     }
 }

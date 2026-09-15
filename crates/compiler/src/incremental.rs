@@ -620,6 +620,10 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                     shift_inlines(text, changes, deltas)?;
                 }
             }
+            Inline::Marginpar { text, span, space_before: _ } => {
+                map_span(span, changes, deltas)?;
+                shift_inlines(text, changes, deltas)?;
+            }
             Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => {
                 map_span(span, changes, deltas)?
             }
@@ -844,6 +848,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::HFill { span, .. } => *span,
         Inline::HSpace { span, .. } => *span,
         Inline::Footnote { span, .. } => *span,
+        Inline::Marginpar { span, .. } => *span,
         Inline::Tabular(table) => table.span,
         Inline::Verbatim { span, .. } => *span,
         Inline::ColorBox(b) => b.span,
