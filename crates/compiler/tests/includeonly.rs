@@ -1,8 +1,8 @@
 //! `\includeonly{file1,file2,...}`: the kernel's preamble companion to
 //! `\include`. A recorded, non-empty list selects which `\include`d files
-//! are read; every other `\include` is a no-op (this compiler's `\include`
-//! has no page-break side effect of its own, so a skipped file leaves no
-//! break behind). With no `\includeonly`, every `\include` reads as before.
+//! are read; every other `\include` leaves only the `\clearpage` that
+//! latex.ltx's `\@include` runs before testing the list. With no
+//! `\includeonly`, every `\include` reads as before.
 use flashtex_compiler::diagnostics::Severity;
 use flashtex_compiler::parser::{parse_project, Block, Inline, SourceDocument};
 
@@ -68,9 +68,10 @@ fn includeonly_skips_unlisted_files_without_a_trace() {
         "unlisted file must not be typeset: {text:?}"
     );
     assert!(text.contains("Before.") && text.contains("After."));
-    // A skipped `\include` is a pure no-op: `\include` itself emits no page
-    // break in this compiler, so none appears where `b` was.
-    assert_eq!(page_breaks(&parsed.blocks), 0, "{:?}", parsed.blocks);
+    // `\@include`: `\clearpage` before and after the read file `a`, and
+    // only the one before for the skipped `b` (pdflatex: `Before.` /
+    // `Alpha content.` / `After.` on three pages).
+    assert_eq!(page_breaks(&parsed.blocks), 3, "{:?}", parsed.blocks);
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
 }
 
@@ -230,4 +231,39 @@ fn includeonly_after_begin_document_is_ignored() {
         "{:?}",
         parsed.diagnostics
     );
+}
+
+/// latex.ltx `\@include`: `\clearpage`, the file, `\clearpage`. pdflatex
+/// (TeX Live 2026, two runs) sets `Before.\include{a}After.` on three
+/// pages, `Before.`, `Alpha content.` and `After.`; `\input{a}` on one.
+#[test]
+fn include_clears_the_page_before_and_after_its_file() {
+    let order = |blocks: &[Block]| -> Vec<String> {
+        blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::PageBreak => Some("|".to_string()),
+                Block::Paragraph(_) => Some(paragraph_text(std::slice::from_ref(b))),
+                _ => None,
+            })
+            .collect()
+    };
+    let main = main_with("", "Before.\n\\include{a}\nAfter.\n");
+    let parsed = parse_project(&project(&main), "main.tex");
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(
+        order(&parsed.blocks),
+        ["Before.", "|", "Alpha content.", "|", "After."]
+    );
+    // In a paragraph the first `\clearpage` ends it.
+    let main = main_with("", "Before \\include{a} after.\n");
+    let parsed = parse_project(&project(&main), "main.tex");
+    assert_eq!(
+        order(&parsed.blocks),
+        ["Before", "|", "Alpha content.", "|", "after."]
+    );
+    // `\input` has no page break.
+    let main = main_with("", "Before.\n\\input{a}\nAfter.\n");
+    let parsed = parse_project(&project(&main), "main.tex");
+    assert_eq!(page_breaks(&parsed.blocks), 0, "{:?}", parsed.blocks);
 }

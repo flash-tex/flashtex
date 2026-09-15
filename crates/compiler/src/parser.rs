@@ -567,7 +567,8 @@ pub enum Block {
     PageBreak,
     /// A penalty in the vertical list between paragraphs (latex.ltx):
     /// `\penalty<n>` and `\nobreak` (10000) in vertical mode, `\pagebreak[n]`
-    /// with a priority below 4 (`-\@getpen{n}`), `\nopagebreak[n]`
+    /// (`-\@getpen{n}`; -10000 at the default priority 4, which unlike
+    /// `\newpage` puts no `\vfil` before it), `\nopagebreak[n]`
     /// (`\@getpen{n}`), `\goodbreak` (`\par\penalty-500`) and `\filbreak`
     /// (`\par\vfil\penalty-200\vfilneg`, reported with `fil` set: the
     /// penalty sits between `\vfil` and `\vfilneg`, so a page broken there
@@ -1095,6 +1096,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "goodbreak",
     "filbreak",
     "discretionary",
+    "nobreakdash",
     "tolerance",
     "pretolerance",
     "looseness",
@@ -2893,6 +2895,47 @@ impl P<'_> {
                     });
                 }
             }
+            // amsmath `\nobreakdash`: the hyphens right after it are set in
+            // an `\hbox`, where TeX appends no discretionary after a hyphen
+            // (§1039 does so only in unrestricted horizontal mode), and
+            // unboxed before a `\nobreak`: `\nobreakdash-`, `--` and `---`
+            // cannot end a line. Blanks after the control word are no tokens
+            // to `\futurelet`.
+            "nobreakdash" => {
+                self.skip_spaces();
+                let dashes = match self.peek().map(|token| &token.kind) {
+                    Some(TokenKind::Word(word)) => word.len() - word.trim_start_matches('-').len(),
+                    _ => 0,
+                };
+                if dashes > 0 {
+                    let token = self.t[self.i].token.span;
+                    let length = match &self.t[self.i].token.kind {
+                        TokenKind::Word(word) => word.len(),
+                        _ => 0,
+                    };
+                    let dash_span = if token.end - token.start == length {
+                        Span::in_document(token.document, token.start, token.start + dashes)
+                    } else {
+                        token
+                    };
+                    para.push(Inline::Text {
+                        text: apply_text_ligatures(&"-".repeat(dashes)),
+                        span: dash_span,
+                        style: self.style,
+                        space_before: false,
+                    });
+                    if dashes == length {
+                        self.i += 1;
+                    } else {
+                        self.trim_word_front(dashes);
+                    }
+                }
+                para.push(Inline::Penalty {
+                    value: INF_PENALTY,
+                    span,
+                    unskip: false,
+                });
+            }
             // latex.ltx `\discretionary` is TeX's primitive; `\-` is
             // `\discretionary{\char\hyphenchar\font}{}{}`.
             "-" => para.push(Inline::Discretionary {
@@ -3033,7 +3076,10 @@ impl P<'_> {
             // `\penalty -\@getpen{n}`/`\penalty \@getpen{n}` in vertical mode,
             // `\vadjust{\penalty ...}` in a paragraph, which is not broken:
             // the penalty lands after the line the command is set on. A
-            // vertical-mode `\pagebreak` with priority 4 keeps its own block.
+            // vertical-mode `\pagebreak` with priority 4 is a bare
+            // `\penalty-10000`, not `\newpage`: there is no `\vfil` before
+            // it, so a `\flushbottom` page it ends is stretched to
+            // `\textheight`.
             "pagebreak" | "nopagebreak" => {
                 let (priority, bracket) = self.break_priority_penalty();
                 let span = bracket.map_or(span, |bracket| span.merge(bracket));
@@ -3044,9 +3090,6 @@ impl P<'_> {
                 };
                 if !para.is_empty() {
                     para.push(Inline::PagePenalty { value, span });
-                } else if value <= EJECT_PENALTY {
-                    blocks.push(Block::PageBreak);
-                    self.finish_block_dependencies();
                 } else {
                     blocks.push(Block::Penalty {
                         value,
@@ -8946,6 +8989,63 @@ mod tests {
             assert!(pages[0].items.iter().any(|item| item.text == "First"));
             assert!(pages[1].items.iter().any(|item| item.text == "Second"));
         }
+    }
+
+    /// pdflatex (TeX Live 2026, `\flushbottom`, 30 one-line paragraphs):
+    /// after `\pagebreak` the page is stretched to `\textheight` (the last
+    /// baseline moves 13 bp down, `Underfull \vbox`), after `\newpage` its
+    /// glue stays natural. latex.ltx: `\pagebreak` is `\penalty-\@M`,
+    /// `\newpage` puts `\vfil` in front of it.
+    #[test]
+    fn vertical_pagebreak_is_a_bare_penalty_newpage_is_not() {
+        let parsed = parse("One.\n\n\\pagebreak\n\nTwo.\n\n\\newpage\n\nThree.");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(
+            matches!(
+                parsed.blocks.as_slice(),
+                [
+                    Block::Paragraph(_),
+                    Block::Penalty {
+                        value: -10000,
+                        fil: false,
+                        ..
+                    },
+                    Block::Paragraph(_),
+                    Block::PageBreak,
+                    Block::Paragraph(_)
+                ]
+            ),
+            "{:?}",
+            parsed.blocks
+        );
+    }
+
+    /// amsmath `\nobreakdash`: `\setboxz@h{--\nobreak}\unhbox\z@`. pdflatex:
+    /// with `pages 113--213` breaking after `113–` in a control paragraph,
+    /// `113\nobreakdash--213` never ends a line with the dash.
+    #[test]
+    fn nobreakdash_sets_its_dashes_and_then_nobreak() {
+        let parsed =
+            parse("pages 1\\nobreakdash--10, well\\nobreakdash- known, x\\nobreakdash---y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let Some(Block::Paragraph(inlines)) = parsed.blocks.first() else {
+            panic!("{:?}", parsed.blocks)
+        };
+        let seq: Vec<String> = inlines
+            .iter()
+            .map(|i| match i {
+                Inline::Text { text, .. } => text.clone(),
+                Inline::Penalty { value, .. } => format!("<{value}>"),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            seq,
+            [
+                "pages", "1", "\u{2013}", "<10000>", "10,", "well", "-", "<10000>", "known,", "x",
+                "\u{2014}", "<10000>", "y"
+            ]
+        );
     }
 
     #[test]
