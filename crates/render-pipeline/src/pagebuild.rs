@@ -149,6 +149,14 @@ pub struct VBlock {
     /// `if disc_break then pen:=pen+broken_penalty`. Entries past the end
     /// are 0; an empty vector means no line was broken that way.
     pub broken_penalty: Vec<i32>,
+    /// `\vadjust{\penalty<n>}` after line `i` (`\pagebreak[n]`/
+    /// `\nopagebreak[n]` inside a paragraph, TeX §888 adjust material):
+    /// appended right after that line and its `vskip_after`, before the
+    /// interline penalty. An index at or past the last line puts it after
+    /// the last line.
+    pub vadjust_penalty: Vec<(usize, i32)>,
+    /// `penalty_before` is `\filbreak`'s: `\vfil \penalty<n> \vfilneg`.
+    pub fil_break: bool,
     /// Glue appended after `penalty_after` and before `space_after`, so
     /// `space_after` stays the list's `\lastskip` (`\@maketitle`'s
     /// `\@endparenv` `\topsep` before its closing `\vskip 1.5em`).
@@ -236,7 +244,13 @@ pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
         if let Some(pen) = b.penalty_before {
             // \addpenalty: skipped at the very top of the list (\if@nobreak).
             if !out.is_empty() {
+                if b.fil_break {
+                    out.push(VItem::Glue { width: 0.0, stretch: 1.0, shrink: 0.0, fil: true });
+                }
                 out.push(VItem::Penalty(pen));
+                if b.fil_break {
+                    out.push(VItem::Glue { width: 0.0, stretch: -1.0, shrink: 0.0, fil: true });
+                }
             }
         }
         if let Some(s) = b.space_before {
@@ -264,6 +278,9 @@ pub fn vlist(p: &PageParams, blocks: &[VBlock]) -> Vec<VItem> {
                 if v != 0.0 {
                     out.push(glue((v, 0.0, 0.0)));
                 }
+            }
+            for (_, pen) in b.vadjust_penalty.iter().filter(|(i, _)| *i == li || (li + 1 == n && *i >= n)) {
+                out.push(VItem::Penalty(*pen));
             }
             if li + 1 < n && b.line_penalty.is_empty() {
                 let mut pen = b.interline_penalty;
@@ -1544,6 +1561,8 @@ mod tests {
             baselineskip: None,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
@@ -1698,6 +1717,8 @@ mod tests {
             no_interline_after: false,
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,

@@ -289,6 +289,8 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
         env_open: Some(EnvOpen { vmode: true, skips: None }),
         env_close: true,
         eject_before: false,
+        penalty_before: None,
+        breaking: Default::default(),
         vspace_before: 0.0,
         addvspace_before: 0.0,
         addvspace_flex: (0.0, 0.0),
