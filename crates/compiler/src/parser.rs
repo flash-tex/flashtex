@@ -1852,10 +1852,25 @@ impl P<'_> {
                     }
                 }
                 TokenKind::Space | TokenKind::Comment => self.i += 1,
-                TokenKind::Word(word) if control_symbol_kern(&word, tok.span, self.math_packages.amsmath).is_some() => {
+                TokenKind::Word(word)
+                    if control_symbol_kern(
+                        &word,
+                        input.maps_to_invocation,
+                        input.definition,
+                        tok.span,
+                        self.math_packages.amsmath,
+                    )
+                    .is_some() =>
+                {
                     self.i += 1;
                     if render {
-                        if let Some(amount) = control_symbol_kern(&word, tok.span, self.math_packages.amsmath) {
+                        if let Some(amount) = control_symbol_kern(
+                            &word,
+                            input.maps_to_invocation,
+                            input.definition,
+                            tok.span,
+                            self.math_packages.amsmath,
+                        ) {
                             para.push(Inline::Kern {
                                 amount,
                                 span: tok.span,
@@ -6009,8 +6024,23 @@ impl P<'_> {
                         style = previous;
                     }
                 }
-                TokenKind::Word(text) if control_symbol_kern(text, input.token.span, self.math_packages.amsmath).is_some() => {
-                    if let Some(amount) = control_symbol_kern(text, input.token.span, self.math_packages.amsmath) {
+                TokenKind::Word(text)
+                    if control_symbol_kern(
+                        text,
+                        input.maps_to_invocation,
+                        input.definition,
+                        input.token.span,
+                        self.math_packages.amsmath,
+                    )
+                    .is_some() =>
+                {
+                    if let Some(amount) = control_symbol_kern(
+                        text,
+                        input.maps_to_invocation,
+                        input.definition,
+                        input.token.span,
+                        self.math_packages.amsmath,
+                    ) {
                         content.push(Inline::Kern {
                             amount,
                             span: input.token.span,
@@ -7670,7 +7700,23 @@ fn preamble_source(text: &str, has_document: bool, tokens: &[InputToken]) -> Str
 
 /// The kern a control-symbol token (`\,` lexed as the word `,` with a
 /// two-byte span, the same test `math.rs` uses) stands for in text mode.
-fn control_symbol_kern(word: &str, span: Span, amsmath: bool) -> Option<TextDimen> {
+///
+/// The width is measured on the token's own source bytes: text expanded
+/// from a macro body carries the invocation's span, so a plain `,` inside
+/// `\newcommand{\w}{...}` looks two bytes wide (the `\w`) and must be
+/// measured by its definition bytes instead, or it is mistaken for `\,`
+/// and swallowed as an invisible kern.
+fn control_symbol_kern(
+    word: &str,
+    maps_to_invocation: bool,
+    definition: Option<Span>,
+    span: Span,
+    amsmath: bool,
+) -> Option<TextDimen> {
+    // Expanded text without definition bytes (synthesised by the engine)
+    // cannot prove it spells a control symbol; typeset it rather than risk
+    // swallowing real punctuation as a kern.
+    let span = if maps_to_invocation { definition? } else { span };
     let mut chars = word.chars();
     match (chars.next(), chars.next()) {
         (Some(c), None)
