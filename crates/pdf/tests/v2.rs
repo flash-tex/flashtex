@@ -413,9 +413,24 @@ fn unsupported_envelope_content_is_refused_not_approximated() {
         let e = v2::from_v2(&base.replace("ITEM", item), &V2Options::default()).unwrap_err();
         assert!(e.contains(expect), "{item}: {e}");
     }
-    let e = v2::from_v2(&base.replace("ITEM", r#"{"kind":"rule","x":0,"top":0,"width":5,"height":5,"paint":{"r":0.1,"g":0,"b":0,"a":1}}"#), &V2Options::default())
-        .unwrap_err();
-    assert!(e.contains("0.1"), "non-terminating colour is refused: {e}");
+    // A colour component that is not a short binary fraction is rounded to
+    // xcolor's five decimals, not refused (corpus `tikz-clipping-patterns`:
+    // `blue!20` is 0.8).
+    let (doc, _) = v2::from_v2(&base.replace("ITEM", r#"{"kind":"rule","x":0,"top":0,"width":5,"height":5,"paint":{"r":0.1,"g":0.8,"b":0.0784313725490196,"a":1}}"#), &V2Options::default())
+        .unwrap();
+    let text = String::from_utf8(exact::serialize(page_ops(&doc))).unwrap();
+    assert!(text.contains("0.1 0.8 0.07843 rg\n"), "{text}");
+    // Path items are refused when malformed, with the item named.
+    for (item, expect) in [
+        (r#"{"kind":"path_stroke","path":[["m",0,0],["l",5,5]],"paint":{"r":0,"g":0,"b":0,"a":1}}"#, "path_stroke without a stroke"),
+        (r#"{"kind":"path_fill","fill_rule":"nonzero","path":[["q",0,0]],"paint":{"r":0,"g":0,"b":0,"a":1}}"#, "unknown path operator"),
+        (r#"{"kind":"path_fill","fill_rule":"nonzero","path":[["l",0]],"paint":{"r":0,"g":0,"b":0,"a":1}}"#, "l takes 2 numbers"),
+        (r#"{"kind":"path_fill","fill_rule":"winding","path":[["m",0,0]],"paint":{"r":0,"g":0,"b":0,"a":1}}"#, "fill_rule"),
+        (r#"{"kind":"path_stroke","path":[["m",0,0],["l",5,5]],"paint":{"r":0,"g":0,"b":0,"a":1},"stroke":{"cap":"butt","join":"miter","miter_limit":10,"width":-1}}"#, "negative"),
+    ] {
+        let e = v2::from_v2(&base.replace("ITEM", item), &V2Options::default()).unwrap_err();
+        assert!(e.contains("items[0]") && e.contains(expect), "{item}: {e}");
+    }
     // A missing font is a named error, not a fallback.
     let with_font = r#"{"protocol_version":2,"id":"t","type":"display_list","payload":{"render_format":"display-list-v2","coordinate_unit":"bp_2pow20","color_space":"srgb","fonts":[{"font_id":"0000000000000000000000000000000000000000000000000000000000000000","sha256":"0000000000000000000000000000000000000000000000000000000000000000","byte_length":7,"format":"opentype-cff","face_index":0,"units_per_em":1000,"glyph_count":10,"postscript_name":"Nope"}],"pages":[{"number":1,"width":1048576,"height":1048576,"items":[{"kind":"glyph_run","font_id":"0000000000000000000000000000000000000000000000000000000000000000","font_size":100,"text":"a","paint":{"r":0,"g":0,"b":0,"a":1},"glyphs":[{"gid":3,"origin_x":0,"baseline_y":0,"advance_x":0,"advance_y":0,"cluster":0}],"clusters":[{"text_start_byte":0,"text_end_byte":1}]}]}],"diagnostics":[]}}"#;
     let e = v2::from_v2(
@@ -586,4 +601,53 @@ fn searchable_text_word_gaps_are_the_producers_and_are_counted() {
     let content = ops_text(&out.bytes, 5);
     let ops = exact::parse(content.as_bytes()).unwrap();
     assert_positions_round_trip(&ops, &doc, mixed);
+}
+
+fn page_ops(doc: &exact::ExactDocument) -> &[Op] {
+    match &doc.pages[0].content {
+        exact::Content::Ops(ops) => ops,
+        other => panic!("expected operators, got {other:?}"),
+    }
+}
+
+/// A TikZ `\draw[red,line width=5pt,dashed,line cap=round,line join=bevel,
+/// miter limit=4.5] (0,0)--(1,1);` and a `\fill[blue!20]` rectangle under a
+/// circle-ish clip, as the pipeline writes them: the exact route paints them
+/// with pgf's pdfTeX operators (measured with pdflatex: `1 0 0 rg 1 0 0 RG`,
+/// `w`, `M`, `d`, `J`, `j`, path, `S`) instead of refusing the build.
+#[test]
+fn tikz_path_items_are_stroked_and_filled_with_pdftex_operators() {
+    let t = |bp: i64| bp << 20;
+    let envelope = format!(
+        r#"{{"protocol_version":2,"id":"t","type":"display_list","payload":{{"render_format":"display-list-v2","coordinate_unit":"bp_2pow20","color_space":"srgb","fonts":[],"pages":[{{"number":1,"width":{pw},"height":{ph},"items":[
+          {{"kind":"path_stroke","paint":{{"a":1,"b":0,"g":0,"r":1}},"path":[["m",{x0},{y0}],["l",{x1},{y1}]],"stroke":{{"cap":"round","dash":{{"array":[{d},{d}],"phase":0}},"join":"bevel","miter_limit":4.5,"width":{w}}}}},
+          {{"kind":"path_stroke","paint":{{"a":1,"b":0,"g":0,"r":0}},"path":[["m",{x0},{y0}],["c",{x0},{y1},{x1},{y1},{x1},{y0}],["z"]],"stroke":{{"cap":"butt","join":"miter","miter_limit":10,"width":{thin}}}}},
+          {{"clips":[{{"fill_rule":"nonzero","kind":"path","path":[["m",{x0},{y0}],["l",{x1},{y0}],["l",{x1},{y1}],["z"]]}}],"fill_rule":"evenodd","kind":"path_fill","paint":{{"a":1,"b":1,"g":0.8,"r":0.8}},"path":[["m",{x0},{y0}],["l",{x1},{y0}],["l",{x1},{y1}],["l",{x0},{y1}],["z"]]}},
+          {{"fill_rule":"nonzero","kind":"path_fill","paint":{{"a":1,"b":0,"g":0,"r":0}},"path":[]}}
+        ]}}],"diagnostics":[]}}}}"#,
+        pw = t(200),
+        ph = t(100),
+        x0 = t(10),
+        y0 = t(90),
+        x1 = t(38),
+        y1 = t(62),
+        w = t(5),
+        d = t(3),
+        thin = 1 << 19,
+    );
+    let (doc, report) = v2::from_v2(&envelope, &V2Options::default()).unwrap();
+    assert_eq!(report.paths, 3, "the empty path paints nothing and is skipped");
+    let text = String::from_utf8(exact::serialize(page_ops(&doc))).unwrap();
+    assert_eq!(
+        text,
+        "q\n1 0 0 rg\n1 0 0 RG\n5 w\n4.5 M\n[3 3] 0 d\n1 J\n2 j\n10 10 m\n38 38 l\nS\nQ\n\
+         q\n0.5 w\n10 10 m\n10 38 38 38 38 10 c\nh\nS\nQ\n\
+         q\n0.8 0.8 1 rg\n0.8 0.8 1 RG\n10 10 m\n38 10 l\n38 38 l\nh\nW\nn\n10 10 m\n38 10 l\n38 38 l\n10 38 l\nh\nf*\nQ\n"
+    );
+    // The whole document passes the exact writer's operator validation and
+    // the structural self-check, and the content stream round-trips.
+    let out = exact::render_exact(&doc).unwrap();
+    verify::check_structure(&out.bytes).unwrap();
+    assert_eq!(exact::parse(text.as_bytes()).unwrap(), page_ops(&doc));
+    assert_eq!(exact::render_exact(&doc).unwrap().bytes, out.bytes, "deterministic");
 }

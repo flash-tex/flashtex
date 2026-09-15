@@ -5404,6 +5404,20 @@ fn base_state(tex_only: bool) -> State {
     }
 }
 
+/// Counters every standard class allocates with `\newcounter`: `article`'s
+/// sectioning and body counters, plus `chapter` for `report`/`book` (mirrors
+/// the compiler's `Counters::article()` / `Counters::report()`).
+const KERNEL_COUNTERS: &[&str] = &[
+    "chapter",
+    "section",
+    "subsection",
+    "subsubsection",
+    "equation",
+    "figure",
+    "table",
+    "parentequation",
+];
+
 /// Build the state every document starts from: primitives bound, then the
 /// LaTeX-kernel prelude (`prelude.rs`) executed once.
 fn build_initial_state() -> State {
@@ -5423,5 +5437,19 @@ fn build_initial_state() -> State {
     let stray: Vec<&Token> = out.iter().filter(|t| !matches!(t.kind, TokenKind::Char(' ', CatCode::Space))).collect();
     debug_assert!(stray.is_empty(), "prelude produced output tokens: {:?}", stray);
     debug_assert!(engine.diagnostics.is_empty(), "prelude produced diagnostics: {:?}", engine.diagnostics);
+    // The class counters above: real classes allocate them with
+    // `\newcounter`, so `[within]` parents (and `\setcounter` et al.) must
+    // resolve them here. Only the `c@<name>` register is created;
+    // `\the<name>` stays undefined so the numbering the typesetter owns
+    // still passes through to it.
+    for name in KERNEL_COUNTERS {
+        let idx = engine.alloc_register();
+        engine.st.scopes.assign_cs(
+            &format!("c@{name}"),
+            Meaning::RegisterAlias(RegisterKind::Count, idx),
+            true,
+        );
+        engine.st.scopes.set_count(idx, 0, true);
+    }
     engine.st
 }

@@ -82,7 +82,9 @@ pub enum DiagnosticKind {
     },
     /// The referenced name is not a valid project-relative path.
     InvalidPath { target: String, error: PathError },
-    /// The referenced name is a symlink resolving outside the root.
+    /// The referenced name is, or lies under, a symbolic link (refused
+    /// wherever the link points: project files are read without following
+    /// symlinks), or a walked directory no longer leads back to the root.
     EscapesRootViaSymlink { target: ProjectPath },
     /// The reference closes a cycle; `chain` runs from the first repeated
     /// file to the referencing file, and the target is `chain[0]`.
@@ -232,10 +234,10 @@ impl ProjectGraph {
             Resolution::Other(Loaded::Error(e)) => {
                 return Err(DiscoverError::EntryUnreadable(entry.clone(), e));
             }
-            Resolution::Escapes => {
+            Resolution::Escapes(escape) => {
                 return Err(DiscoverError::EntryUnreadable(
                     entry.clone(),
-                    io::Error::other("entry file is a symlink; refusing to follow it"),
+                    io::Error::other(escape.describe(entry)),
                 ));
             }
         }
@@ -357,7 +359,32 @@ enum Resolution {
     /// The rooted walk refused a symlink component (the file itself or an
     /// ancestor directory) or detected a walked directory's `..` no longer
     /// matching the handle it was opened from.
-    Escapes,
+    Escapes(Escape),
+}
+
+/// Why a rooted access was refused as an escape. Neither case follows the
+/// link, so where a symlink points (inside or outside the root) is unknown.
+enum Escape {
+    /// `component` (the file itself or an ancestor directory) is a symlink.
+    Symlink(String),
+    /// Directory `component`'s `..` is not the directory it was reached from.
+    LeavesRoot(String),
+}
+
+impl Escape {
+    fn describe(&self, target: &ProjectPath) -> String {
+        match self {
+            Escape::Symlink(c) if c == target.as_str() => format!(
+                "{target} is a symbolic link; project files are read without following symlinks"
+            ),
+            Escape::Symlink(c) => format!(
+                "{target}: `{c}` is a symbolic link; project files are read without following symlinks"
+            ),
+            Escape::LeavesRoot(c) => format!(
+                "{target}: directory `{c}` does not lead back to the project root; refusing to read through it"
+            ),
+        }
+    }
 }
 
 /// Maps a rooted-access refusal to how discovery should treat it. Only a
@@ -366,7 +393,8 @@ enum Resolution {
 /// silently ignored).
 fn classify_refusal(refused: Refused) -> Resolution {
     match refused {
-        Refused::SymlinkComponent { .. } | Refused::EscapesRoot { .. } => Resolution::Escapes,
+        Refused::SymlinkComponent { component } => Resolution::Escapes(Escape::Symlink(component)),
+        Refused::EscapesRoot { component } => Resolution::Escapes(Escape::LeavesRoot(component)),
         // A directory component turned out not to be a directory: treat
         // like "the candidate doesn't actually exist", matching how a
         // plain ENOENT is handled.
@@ -635,15 +663,16 @@ impl Discovery<'_> {
         // (issue #45 finding 1). The result is reused below rather than
         // touching disk a second time.
         let loaded = match self.load(&target, kind) {
-            Resolution::Escapes => {
+            Resolution::Escapes(escape) => {
                 self.diag(
                     from,
                     r,
                     Severity::Error,
                     format!(
-                        "\\{}{{{}}}: {target} is a symlink outside the project root",
+                        "\\{}{{{}}}: {}",
                         r.kind.command(),
-                        r.argument
+                        r.argument,
+                        escape.describe(&target)
                     ),
                     DiagnosticKind::EscapesRootViaSymlink { target },
                 );
@@ -853,7 +882,9 @@ mod tests {
         let nfd_candidate = ProjectPath::normalize(&format!("{nfd_stem}.tex")).unwrap();
         let resolved = discovery
             .resolve_via_directory_listing(&nfd_candidate)
-            .expect("directory listing must find the on-disk NFC file for an NFD-spelled candidate");
+            .expect(
+                "directory listing must find the on-disk NFC file for an NFD-spelled candidate",
+            );
         assert_eq!(
             resolved.as_str(),
             format!("{nfc_stem}.tex"),

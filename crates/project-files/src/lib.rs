@@ -1,4 +1,5 @@
-//! FlashTeX project file layer (original Rust, no external crates).
+//! FlashTeX project file layer (original Rust; its only dependencies are
+//! `unicode-normalization` and the `libc` bindings used by [`sys`]).
 //!
 //! - [`graph`]: normalized project graph from an entry file, following
 //!   `\input`, `\include`, `\bibliography`, `\addbibresource` and
@@ -47,5 +48,6 @@ pub use sha256::{
     Digest, Sha256, hex as sha256_to_hex, parse_hex as sha256_from_hex, sha256, sha256_hex,
 };
 pub use watch::{
-    ChangeKind, Conflict, ConflictKind, Diff, ExternalChange, FileState, Poller, Snapshot,
+    ChangeKind, Conflict, ConflictKind, Diff, ExternalChange, FileState, Poller, RootReplaced,
+    Snapshot,
 };
