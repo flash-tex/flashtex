@@ -84,15 +84,40 @@ the compiler:
 
 - `adapter::Labels::from_parsed` takes the reference numbers from the parse, so
   there is no `??` pass for numbers.
-- `lower_inline` turns each `\ref`/`\pageref` into plain text *before* the
-  block is hashed. The `RenderCache` key is a hash of the block's content, with
-  source offsets relative to the block, and not its geometry. So only blocks
-  whose resolved text changed miss the cache. `Labels::toc_pages` is kept
-  separate "so the paragraph cache key is unaffected".
+- `lower_inline` turns each `\ref`/`\pageref` into plain text when a block is
+  adapted. `RenderCache` (`incremental.rs`) holds three maps, and they are
+  keyed differently:
+  - **`adapted`** holds each block's inline → item conversion, keyed in
+    `adapter.rs` `items_cached`. That key hashes the block's source slice, its
+    inlines and the style at its start. It **also hashes `labels_fp`**, which
+    `adapt_cached` computes once per adapter pass from the **entire**
+    `labels.values` and `labels.pages` maps (`adapter.rs` ~1219–1229). It
+    mixes that into every block's key unconditionally, before the per-inline
+    `match`. So when any one label's value or page changes anywhere in the
+    document, **every** block misses `adapted` and is re-adapted
+    (`items_from_inlines_styled`), including blocks with no references at all.
+    Invalidation is whole-document whenever the label table changes. It is not
+    limited to the blocks whose resolved text changed.
+  - **`blocks`** (line breaking and box records, `typeset.rs` `block_key`)
+    and **`assembled`** (display items, keyed by the same block key) hash the
+    *adapted items*, `style_fingerprint` and the block flags, not `labels_fp`.
+    A block whose re-adapted items come out identical still hits these two
+    maps. So below the adapter the reuse is content-keyed and selective. The
+    adapter pass itself, plus hashing every block's items, is paid for the
+    whole document.
+  - `Labels::toc_pages` is kept out of `labels_fp` "so the paragraph cache key
+    is unaffected". Label pages are not.
+  - `RenderCache::stats()` counts hits and misses on `blocks` only, so it does
+    not show `adapted` misses.
 - Page numbers still start **empty on every request**. `render_cached` runs up
   to `MAX_LABEL_PASSES = 3` passes, each a full page build plus assembly,
   whenever `needs_pages` is true or the document has contents lists. Within a
-  pass, blocks come from the cache.
+  pass, blocks come from the cache. Label pages are empty in pass 1 and
+  filled in later passes, so each pass has its own `labels_fp`. An edit that
+  moves any label to another page misses `adapted` for every block in the
+  later passes. An edit that changes any label number (inserting a section or
+  an equation before a label, the common case) misses it for every block in
+  every pass.
 
 **The 0-of-5 912 finding therefore belongs to the compiler worker, not to the
 render pipeline.** Nobody has yet measured #535's 302-page document through
@@ -110,22 +135,29 @@ what neither worker has yet: page values carried over between revisions.
    `Labels::from_parsed`. The resolved reference *text* of each block goes
    into its comparison key, so a changed `\ref` value recomputes exactly its
    referrers. This needs no new read-tracking for numbers.
-2. **Page reads are recorded.** A `CachedBlock` gains
+2. **Key each block only on the labels it reads.** Do **not** copy the render
+   pipeline's `labels_fp` (§2.2). A block's key includes `(key, value)` for
+   each label it references, and nothing from the rest of the table. A
+   whole-table fingerprint would make every edit that changes any label
+   number miss every block. That edit would fall back to a full layout, which
+   defeats step 1. Every label lookup made while building a block must go
+   through the recording accessor of risk (b), so the key cannot omit a read.
+3. **Page reads are recorded.** A `CachedBlock` gains
    `label_writes: [(key, page)]` and `toc_writes`, so a reused block still
    contributes them; its page index is guaranteed equal by `same_geometry`. It
    also gains `page_reads: [(key, observed page)]`, plus a TOC fingerprint for
    `Block::TableOfContents`. The reuse condition becomes: today's condition
    **and** every page read equals the current table.
-3. **The fixpoint is the existing reuse loop run again.** Pass 1 starts from
+4. **The fixpoint is the existing reuse loop run again.** Pass 1 starts from
    the previous revision's *final* page table instead of an empty one. If the
    collected pages or TOC differ from the table the pass consumed, the loop
    runs again. The previous "revision" is then the last pass, with no byte
    changes, so a clean block with an unchanged read is reused. It keeps the
    same limit and the same oscillation detection. **When it oscillates or hits
    the limit, it falls back to today's clean `layout_converged` path.**
-4. **Narrow the flag site by site,** each site with a warm == fresh proof test:
+5. **Narrow the flag site by site,** each site with a warm == fresh proof test:
    - cites, `\bibitem`, `series`/`resume` (the value is already in the block);
-   - labels, refs and the TOC (items 1–3 above);
+   - labels, refs and the TOC (items 1–4 above);
    - footnotes, which need `FootnoteState` inside `FlowState`;
    - every unaudited site keeps the flag.
 
@@ -147,7 +179,11 @@ Counters add no new risk; they stay in the parser.
 
 *Expected latency.*
 - **About 30–40 ms** under load for the 302-page document, down from 265: a
-  parse plus a reuse walk, in line with the 500 KB figure.
+  parse plus a reuse walk, in line with the 500 KB figure. **This depends on
+  step 2.** With a whole-table label key, an edit that renumbers anything
+  (e.g. inserting a section before a label) misses every block. It then costs
+  a full layout, roughly the 203 ms cold figure. Only edits that change no
+  label value would get the 30–40 ms.
 - **Up to one full layout** when an edit changes a line count early in the
   document, or changes the height of the contents list. That is still below
   today's two or more.
@@ -256,10 +292,18 @@ tables differ.
     them, so they are best merged first or rebased onto A.
   - #535 changes `layout.rs` (`inline_box` lends `resolved_labels`) and should
     merge before A starts.
-- **The render pipeline already has A's numbers-from-parse and content-keyed
-  reuse.** What it lacks is page values seeded from the previous revision, the
-  same step 3. That is a small, separate change with the same fixpoint-start
-  risk (a). The vendored compiler copy picks up A only when it is next synced.
+- **The render pipeline already has A's numbers-from-parse, and content-keyed
+  reuse below the adapter.** It lacks two things:
+  - **A's step 2.** Its `adapted` key mixes in the whole-document `labels_fp`
+    (§2.2). Any label value or page change re-adapts every block, even though
+    `blocks`/`assembled` still hit for unchanged items. So its existing reuse
+    is weaker evidence for A than "only referrers miss" would be.
+  - **A's step 4:** page values seeded from the previous revision.
+
+  Both are small, separate changes in `adapter.rs`/`lib.rs`. Seeding carries
+  the same fixpoint-start risk (a). Narrowing `labels_fp` carries risk (b):
+  every label read in `items_from_inlines_styled` must be in the block's key.
+  The vendored compiler copy picks up A only when it is next synced.
 
 ## 5. Recommendation
 
@@ -267,20 +311,32 @@ tables differ.
 reserve, and leave Option B to FT-070's parse work.**
 
 0. **Measure** #535's 302-page document through `flashtex-render`, both a cold
-   compile and a warm one-character edit, and record the number of label passes
-   and the cache hits and misses. If the IDE path is already fast, A becomes a
-   fix for the fallback worker and drops in priority. If it isn't, seeding the
-   page table in the render pipeline is the cheapest first win.
+   compile and warm edits, and record the number of label passes and the cache
+   hits and misses per map. `RenderCache::stats()` counts `blocks` only, so
+   add an `adapted` counter for the measurement. Measure three warm edits:
+   - a one-character edit that changes no label;
+   - an edit that renumbers labels, e.g. inserting a `\section` early;
+   - an edit that moves one label to another page.
+
+   The last two miss `adapted` for every block today (§2.2). If the IDE path
+   is already fast on all three, A becomes a fix for the fallback worker and
+   drops in priority. If it isn't, the cheapest first wins are in the render
+   pipeline: first narrow `labels_fp` to each block's own label reads (A's
+   step 2), then seed the page table (A's step 4).
 1. **Flag audit.** A small PR that stops setting the flag where the value is
    provably in the block (cites, `\bibitem`, likely `series`/`resume`), each
    with a warm == fresh test. Bibliography-only documents then get block reuse
    immediately.
 2. **A, phase 1:** numbers resolved from the parse into the comparison key,
-   page read/write sets, a page table seeded from the previous revision, and a
-   dirty-key fixpoint that falls back to the clean path. **Acceptance** on
-   #535's 302-page document:
+   **with each block keyed only on the labels it reads (no whole-table
+   fingerprint)**, page read/write sets, a page table seeded from the previous
+   revision, and a dirty-key fixpoint that falls back to the clean path.
+   **Acceptance** on #535's 302-page document:
    - a one-character edit gives `full_recompile == false` and at least 99%
      `blocks_reused`;
+   - inserting a `\section` before a referenced label recomputes only the
+     changed headings, the referrers and the blocks whose geometry moved. It
+     must not recompute every block;
    - p50 is within 1.5× of the 500 KB document without references;
    - warm == fresh byte for byte across the fixture corpus and the random
      edit-script test.
@@ -292,8 +348,9 @@ reserve, and leave Option B to FT-070's parse work.**
 Why A: it is the only option that **keeps FT-070's byte-identity gate on every
 reply** and still brings documents with cross-references down to
 no-reference latency. It needs no protocol or client change. It reuses the
-existing reuse loop as its fixpoint engine and copies a pattern the render
-pipeline has already proven, so no new mechanism is invented.
+existing reuse loop as its fixpoint engine and copies the render pipeline's
+resolve-before-hash pattern, so no new mechanism is invented. It deliberately
+does not copy that pipeline's whole-table `labels_fp` key (Option A, step 2).
 
 ## 6. Open questions for the Commander
 
@@ -305,8 +362,9 @@ pipeline has already proven, so no new mechanism is invented.
    fuzz warm convergence against the clean compile, and does that test block
    merging?
 3. **Which worker matters.** Is `flashtex-compiler` (Core 14) still a product
-   latency target, or only a fallback? That decides whether step 2 is worth
-   doing before or after the render-pipeline page seeding.
+   latency target, or only a fallback? That decides whether §5 step 2 (A, phase 1) is
+   worth doing before or after the render-pipeline `labels_fp` narrowing and
+   page seeding.
 4. **Ownership.** Should A run as an FT-070 lane (kabir-claude owns
    `crates/compiler`), or as a Daniel lane with FT-070's review? Who syncs the
    vendored compiler?
