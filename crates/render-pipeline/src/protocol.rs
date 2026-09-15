@@ -414,25 +414,50 @@ fn handle_line_inner(line: &str, fonts: &FontSet, options: &RenderOptions, cache
         drop_cap(&mut v1, crate::v1::CAP_V2_ONLY);
     }
     let accepted = v1.accepted.clone();
-    let line = v1.write_envelope(&id);
-    if line.len() > limit {
-        let pages = rendered.v2.pages.len();
-        return Reply {
-            line: json::write(&failed(
-                &id,
-                &project_id,
-                revision,
-                &format!(
-                    "compile_result would be {} bytes for {pages} pages, over the {limit}-byte reply limit; split the project or compile fewer pages",
-                    line.len(),
-                ),
-                accepted.map(|a| a.into_iter().filter(|c| c != crate::v1::CAP_DISPLAY_LIST).collect()),
-            )),
-            extra_lines: Vec::new(),
-            rendered: Some(rendered),
-            id,
-        };
-    }
+    // Size first, as the display_list branch above: when the envelope cannot
+    // fit the reply limit, refuse it without serialising the 16+ MB line the
+    // refusal replaces. `envelope_len` is the exact length `write_envelope`
+    // would produce, so the refusal message carries the same byte count it
+    // always did, and a line that fits is written exactly as before. The
+    // pre-check runs only when the item-count heuristic says the limit is in
+    // reach; small replies skip both passes.
+    let line_len = {
+        let approx = 64 + 96 * v1.pages.iter().map(|p| p.items.len()).sum::<usize>();
+        if approx > limit / 4 {
+            Some(v1.envelope_len(&id))
+        } else {
+            None
+        }
+    };
+    let line = match line_len {
+        Some(len) if len > limit => None,
+        _ => {
+            let line = v1.write_envelope(&id);
+            debug_assert!(line_len.is_none_or(|len| len == line.len()), "envelope_len {line_len:?} != write_envelope {}", line.len());
+            Some(line)
+        }
+    };
+    let line = match line.filter(|l| l.len() <= limit) {
+        Some(line) => line,
+        None => {
+            let len = line_len.unwrap_or_else(|| v1.envelope_len(&id));
+            let pages = rendered.v2.pages.len();
+            return Reply {
+                line: json::write(&failed(
+                    &id,
+                    &project_id,
+                    revision,
+                    &format!(
+                        "compile_result would be {len} bytes for {pages} pages, over the {limit}-byte reply limit; split the project or compile fewer pages",
+                    ),
+                    accepted.map(|a| a.into_iter().filter(|c| c != crate::v1::CAP_DISPLAY_LIST).collect()),
+                )),
+                extra_lines: Vec::new(),
+                rendered: Some(rendered),
+                id,
+            };
+        }
+    };
     Reply {
         line,
         extra_lines,

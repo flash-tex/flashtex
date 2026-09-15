@@ -224,6 +224,55 @@ fn display_list_v2_is_a_sibling_line_only_when_negotiated() {
     assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("recovered"));
 }
 
+/// The `compile_result` oversize refusal (`protocol::handle_line`): when the
+/// envelope cannot fit the reply limit it is refused *without being
+/// serialised*, and the refusal still names the exact byte count the line
+/// would have had -- the count a permissive run actually produces.
+#[test]
+fn oversize_compile_result_refusal_names_the_exact_line_length() {
+    if !lm_available() {
+        eprintln!("skipping: Latin Modern not installed");
+        return;
+    }
+    let mut text = String::from("\\begin{document}\n");
+    for i in 0..40 {
+        text.push_str(&format!("Paragraph number {i} with enough ordinary words to produce several items on the page.\n\n"));
+    }
+    text.push_str("\\end{document}\n");
+
+    // The permissive run: the exact line the tiny-limit run must refuse.
+    let raw = {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-render"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn flashtex-render");
+        child.stdin.take().unwrap().write_all(compile_line("big", &text, None).as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let line = raw.lines().next().expect("one compile_result line");
+    let ok = json::parse(line).unwrap();
+    let pages = ok.get("payload").unwrap().get("pages").and_then(|v| v.as_arr()).map(Vec::len).unwrap();
+    assert!(pages > 0, "the permissive run renders pages");
+    let full_len = line.len();
+    let limit = 2000;
+    assert!(full_len > limit, "the document must overflow the tiny limit (got {full_len} bytes)");
+
+    let (replies, _) = run_env(&[], &compile_line("big", &text, None), &[("FLASHTEX_MAX_REPLY_BYTES", "2000")]);
+    assert_eq!(replies.len(), 1);
+    let p = replies[0].get("payload").unwrap();
+    assert_eq!(p.get("status").and_then(|v| v.as_str()), Some("failed"));
+    let diags = p.get("diagnostics").and_then(|v| v.as_arr()).unwrap();
+    let expected = format!("compile_result would be {full_len} bytes for {pages} pages, over the {limit}-byte reply limit; split the project or compile fewer pages");
+    assert!(
+        diags.iter().any(|d| d.get("message").and_then(|v| v.as_str()) == Some(expected.as_str())),
+        "expected {expected:?} in {diags:?}"
+    );
+}
+
 /// `--tex FILE` convenience mode: no JSON on either side. The file's basename
 /// is the project path, `--pdf`/`--v2` are written, diagnostics reach stderr
 /// as `severity[code] message (line:col)`, and the exit code follows the
