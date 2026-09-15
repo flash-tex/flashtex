@@ -7300,7 +7300,7 @@ fn symbol_atoms(c: char, width_em: Option<f64>) -> Vec<ml::Atom> {
         // are those of U+22C5.
         '\u{00B7}' => vec![ml::Atom::symbol('\u{22C5}')],
         '\u{2260}' => vec![ml::Atom::rel(crate::mathtex::NOT_SLASH), ml::Atom::symbol('=')],
-        '\u{2209}' => vec![ml::Atom::rel(crate::mathtex::NOT_SLASH), ml::Atom::symbol('\u{2208}')],
+        '\u{2209}' => vec![ml::Atom::rel(crate::mathfont::NOT_IN_SLASH), ml::Atom::symbol('\u{2208}')],
         // `\varnothing`: same U+2205 as `\emptyset`, but forced to msbm10's
         // width. A sentinel keeps the two apart for the metrics providers
         // (`TexMathMetrics`/`MathFonts`), which paint both from cmsy10's
@@ -9584,7 +9584,10 @@ fn math_items(
             None if g.ch == crate::mathfont::VARNOTHING_SENTINEL => r.text.push('\u{2205}'),
             // An amssymb sentinel stands for its table text.
             None if ams.is_some() => r.text.push_str(ams.expect("checked").text),
-            None => r.text.push(g.ch),
+            None => match crate::mathfont::MathFonts::extraction_text(g.ch) {
+                Some(text) => r.text.push_str(text),
+                None => r.text.push(g.ch),
+            },
         }
         let ci = r.clusters.len() as u32;
         let top = Tick::from_tex_pt(baseline_y - h);

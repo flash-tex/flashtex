@@ -127,7 +127,7 @@ fn cdots_is_three_punct_centred_dots_3mu_apart() {
         eprintln!("skipped: Latin Modern not available");
         return;
     }
-    let (_, dots, b) = xs("$a\\cdots b$", "\u{22C5}");
+    let (_, dots, b) = xs("$a\\cdots b$", "\u{00B7}");
     close("`\\cdots`: dot to dot", dots[1] - dots[0], bp(CDOTP + THIN));
     close("`\\cdots`: dot to dot", dots[2] - dots[1], bp(CDOTP + THIN));
     close("`\\cdots`: last dot to `b`", b - dots[2], bp(CDOTP + THIN));
@@ -170,7 +170,7 @@ fn dots_and_dotsb_follow_the_compilers_own_grouping() {
     }
     let (_, low, _) = xs("$a\\dots b$", ".");
     close("`\\dots` is the low dots", low[1] - low[0], bp(LDOTP + THIN));
-    let (_, mid, _) = xs("$a\\dotsb b$", "\u{22C5}");
+    let (_, mid, _) = xs("$a\\dotsb b$", "\u{00B7}");
     close("`\\dotsb` is the centred dots", mid[1] - mid[0], bp(CDOTP + THIN));
 }
 

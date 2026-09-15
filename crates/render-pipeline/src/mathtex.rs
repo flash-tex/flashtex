@@ -856,7 +856,7 @@ const VARNOTHING_MSBM_EM: f64 = 0.777781;
 
 fn extra_symbol_slot(ch: char) -> Option<u8> {
     match ch {
-        NOT_SLASH => Some(0x36),
+        NOT_SLASH | crate::mathfont::NOT_IN_SLASH => Some(0x36),
         '\u{22A5}' => Some(0x3F),
         // `\varnothing`'s box is still cmsy10's `\emptyset` slot 0x3B (the
         // compiler forces only the advance, `MathAtom.width_em`; see

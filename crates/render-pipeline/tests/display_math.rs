@@ -47,8 +47,8 @@ fn bracket_display_uses_display_style_and_inline_stays_text_style() {
     let display = math_glyphs("Before.\n\n\\[ \\sum_{i=1}^{n} \\frac{a_i}{b} = \\int_0^1 f(x)\\,dx \\]");
     eprintln!("inline:  {inline:?}");
     eprintln!("display: {display:?}");
-    let sum_t = find(&inline, "\u{2211}", 0);
-    let sum_d = find(&display, "\u{2211}", 0);
+    let sum_t = find(&inline, "P", 0);
+    let sum_d = find(&display, "P", 0);
     // Rule 13: the display variant is a different (taller) glyph.
     assert_ne!(sum_t.1, sum_d.1, "display \\sum must use the large operator variant");
     // Rule 13a: limits above and below in display style; the subscript
@@ -76,7 +76,7 @@ fn bracket_display_uses_display_style_and_inline_stays_text_style() {
     // The display fraction's numerator is text size; inline it is script size.
     assert!(a_d.4 > a_t.4 + 1.0, "display numerator font size {} vs inline {}", a_d.4, a_t.4);
     // \int is \nolimits: its scripts stay at the corners even in display.
-    let int_d = find(&display, "\u{222B}", 0);
+    let int_d = find(&display, "R", 0);
     let one_d = find(&display, "1", 1);
     assert!(one_d.2 > int_d.2 + 4.0, "\\int limits at the corners");
 }
