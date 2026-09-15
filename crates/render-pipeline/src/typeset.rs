@@ -6381,6 +6381,22 @@ pub fn convert_math_classed(
             // (`math_text_keeps_italic`), and it decides the italic
             // correction of the run's last character: `$\lim$` and
             // `$\mathrm{lim}$` are 16.3773 pt, `$\text{lim}$` 16.31999 pt.
+            // `\mathrm{K}`: a group holding one ordinary character is that
+            // math character of family 0 (TeX §1186), so `make_ord` joins it
+            // to a neighbouring one (`\mathrm{f}\mathrm{i}` is the fi
+            // ligature, `\mathrm{A}\mathrm{V}` kerned) and its scripts sit
+            // as on a character; the provider boxes it from the roman TFM.
+            // Only letters and digits: they are the variable-family math
+            // codes `\mathrm` moves to family 0.
+            #[cfg(feature = "math-font-kerns")]
+            N::Text(text)
+                if text_italic(&a.span)
+                    && op_limits(&a.span).is_none()
+                    && text_split(&a.span).is_none()
+                    && matches!(text.as_bytes(), [c] if c.is_ascii_alphanumeric()) =>
+            {
+                vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::TextChar(char::from(text.as_bytes()[0])))]
+            }
             N::Text(text) => {
                 // `\limsup`/`\liminf` are `lim\,sup` and `lim\,inf`: one
                 // operator whose nucleus is a list of two math-character runs
