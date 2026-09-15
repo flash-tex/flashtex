@@ -41,7 +41,7 @@ fn vspace(source: &str) -> f64 {
         .blocks
         .iter()
         .find_map(|block| match block {
-            Block::VSpace { pt } => Some(*pt),
+            Block::VSpace { pt, .. } => Some(*pt),
             _ => None,
         })
         .expect("the document has no vspace")

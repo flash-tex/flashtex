@@ -116,6 +116,18 @@ pub struct Expansion {
 /// host command the converter maps back, so the parser sees the original
 /// name with its argument still a control sequence, not consumed as a
 /// skip assignment, which would yield `\\addtolength{\\}`.
+///
+/// `\\AtBeginDocument` keeps the kernel queuing behavior, but wraps each
+/// queued chunk in `\\flashtexatbeginstart...\\flashtexatbeginend` markers
+/// (left undefined, so the engine passes them through): the converter holds
+/// marked output back and re-emits it after `\\begin{document}` closes, so
+/// the hook typesets ahead of the body instead of being dropped as
+/// preamble. Like the kernel's `\\g@addto@macro`, the append routes through
+/// the `\\toks@` register so the chunk is stored unexpanded and only
+/// resolves when the hook runs at `\\begin{document}` (a bare `\\xdef` would
+/// bake preamble definitions in eagerly). Calls after `\\begin{document}`
+/// bypass the wrapper entirely (`\\AtBeginDocument` is `\\let` to
+/// `\\@firstofone` by then) and run in the body, as in LaTeX.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
@@ -130,6 +142,8 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\tabular{\\flashtexbegintabular\\expandafter{\\arraystretch}}%
 \\expandafter\\def\\csname tabular*\\endcsname{\\flashtexbegintabularstar\\expandafter{\\arraystretch}}%
 \\def\\array{\\flashtexbeginarray\\expandafter{\\arraystretch}}%
+\\long\\def\\flashtexaddtobeginhook#1#2{\\begingroup\\csname toks@\\endcsname\\expandafter{#1\\flashtexatbeginstart#2\\flashtexatbeginend}\\xdef#1{\\the\\csname toks@\\endcsname}\\endgroup}%
+\\long\\def\\AtBeginDocument#1{\\expandafter\\flashtexaddtobeginhook\\csname @begindocumenthook\\endcsname{#1}}%
 \\makeatletter
 \\let\\flashtexrealrefstepcounter\\refstepcounter
 \\def\\refstepcounter#1{\\flashtexrealrefstepcounter{#1}\\flashtexcurrentlabelmarker\\expandafter{\\@currentlabel}}%
@@ -454,6 +468,18 @@ struct Converter<'d> {
     /// Every `\arraystretch` record in production order, with its marker's
     /// engine token index (what the incremental cache keeps and splices).
     stretch_log: Vec<(usize, (usize, usize), String)>,
+    /// While true, converted tokens are `\AtBeginDocument` hook output that
+    /// must typeset after `\begin{document}`: they accumulate in
+    /// `atbegin_buffer` instead of `out`. Set by the
+    /// `\flashtexatbeginstart` marker the host prelude wraps each queued
+    /// hook chunk in; cleared by its end marker, and forcibly by the real
+    /// `\begin{document}` re-emission (the end marker can be swallowed when
+    /// a hook chunk ends in an argument-taking macro).
+    atbegin_capturing: bool,
+    /// Hook output held back while `atbegin_capturing` (possibly across
+    /// several `\AtBeginDocument` chunks), flushed into `out` right after
+    /// the real `\begin{document}` closes.
+    atbegin_buffer: Vec<ExpandedToken>,
     /// Every `\@currentlabel` record in production order, with its marker's
     /// engine token index (kept and spliced like `stretch_log`).
     current_label_log: Vec<(usize, (usize, usize), String)>,
@@ -523,11 +549,36 @@ impl<'d> Converter<'d> {
 
     fn flush_word(&mut self) {
         if let Some(word) = self.word.take() {
-            self.out.push(ExpandedToken {
+            self.emit(ExpandedToken {
                 token: Token { kind: TokenKind::Word(word.text), span: word.span },
                 definition: word.definition,
                 maps_to_invocation: word.maps,
             });
+        }
+    }
+
+    /// Push one finished token to the active sink: the held-back hook buffer
+    /// while capturing `\AtBeginDocument` output, the parser stream
+    /// otherwise.
+    fn emit(&mut self, token: ExpandedToken) {
+        if self.atbegin_capturing {
+            self.atbegin_buffer.push(token);
+        } else {
+            self.out.push(token);
+        }
+    }
+
+    /// End of the `\AtBeginDocument` window (the real `\begin{document}`
+    /// close, or end of input as a safety net): re-emit the held-back hook
+    /// run after the marker, so it typesets ahead of the body. The pending
+    /// word is flushed first so it keeps engine order — it belongs to the
+    /// hook when capture is still on, to the stream once it is off.
+    fn drain_atbegin(&mut self) {
+        self.flush_word();
+        self.atbegin_capturing = false;
+        if !self.atbegin_buffer.is_empty() {
+            let buffered = std::mem::take(&mut self.atbegin_buffer);
+            self.out.extend(buffered);
         }
     }
 
@@ -557,16 +608,23 @@ impl<'d> Converter<'d> {
         self.last_span = at.span;
         // Whitespace runs collapse the way the parser's own tokenizer
         // produces them: one `Space`, or one `ParBreak` if the run holds a
-        // paragraph break.
-        match (&kind, self.out.last().map(|t| &t.token.kind)) {
+        // paragraph break. While capturing `\AtBeginDocument` output the
+        // run collapses against the held-back buffer, never the frozen
+        // stream behind it.
+        let sink = if self.atbegin_capturing {
+            &mut self.atbegin_buffer
+        } else {
+            &mut self.out
+        };
+        match (&kind, sink.last().map(|t| &t.token.kind)) {
             (TokenKind::Space, Some(TokenKind::Space | TokenKind::ParBreak)) => return,
             (TokenKind::ParBreak, Some(TokenKind::ParBreak)) => return,
             (TokenKind::ParBreak, Some(TokenKind::Space)) => {
-                self.out.pop();
+                sink.pop();
             }
             _ => {}
         }
-        self.out.push(ExpandedToken {
+        sink.push(ExpandedToken {
             token: Token { kind, span: at.span },
             definition: at.definition,
             maps_to_invocation: at.maps,
@@ -650,7 +708,7 @@ impl<'d> Converter<'d> {
         self.push(TokenKind::Command(command.to_string()), command_at);
         self.push(TokenKind::LBrace, open_at);
         self.flush_word();
-        self.out.push(ExpandedToken {
+        self.emit(ExpandedToken {
             token: Token { kind: TokenKind::Word(name.to_string()), span: word_at.span },
             definition: word_at.definition,
             maps_to_invocation: word_at.maps,
@@ -782,8 +840,15 @@ fn has_includes(text: &str) -> bool {
     text.contains("\\input") || text.contains("\\include")
 }
 
+/// The engine stopped on a resource limit: the step limit, or TeX's
+/// "capacity exceeded" (input stack, main memory). The rest of the document
+/// is then typeset unexpanded from where the engine stood.
 fn step_limit_hit(diagnostics: &[tex::Diagnostic]) -> bool {
-    diagnostics.iter().any(|d| d.message.contains("expansion step limit exceeded"))
+    diagnostics.iter().any(|d| is_stop_limit(&d.message))
+}
+
+pub(crate) fn is_stop_limit(message: &str) -> bool {
+    message.contains("expansion step limit exceeded") || message.starts_with("TeX capacity exceeded, sorry [")
 }
 
 /// What the caller must do after one converted token.
@@ -810,6 +875,8 @@ impl<'d> Converter<'d> {
             arraystretch: HashMap::new(),
             word: None,
             last_span: Span::in_document(DocumentId(entry), 0, 0),
+            atbegin_capturing: false,
+            atbegin_buffer: Vec::new(),
             stretch: None,
             current_label: None,
             current_label_by_marker: HashMap::new(),
@@ -821,10 +888,17 @@ impl<'d> Converter<'d> {
         }
     }
 
-    /// No partially built word, `\arraystretch` capture or `\@currentlabel`
-    /// capture: the output so far does not depend on tokens still to come.
+    /// No partially built word, `\arraystretch` capture, `\@currentlabel`
+    /// capture, or held-back `\AtBeginDocument` output: the output so far
+    /// does not depend on tokens still to come. (The incremental cache only
+    /// records marks and splices while clean, so a capture window is always
+    /// re-converted from an earlier mark with a fresh converter.)
     fn clean(&self) -> bool {
-        self.word.is_none() && self.stretch.is_none() && self.current_label.is_none()
+        self.word.is_none()
+            && self.stretch.is_none()
+            && self.current_label.is_none()
+            && !self.atbegin_capturing
+            && self.atbegin_buffer.is_empty()
     }
 
     fn convert_token(&mut self, prepared: &[Prepared<'_>], token: &tex::Token, origin: Option<tex::Span>) -> Flow {
@@ -940,6 +1014,22 @@ impl<'d> Converter<'d> {
                         conv.stretch = Some(((begin.span.document.0, begin.span.start), 0, String::new()));
                         conv.push_environment("begin", env, begin);
                     }
+                    // `\AtBeginDocument` hook output: the host prelude wraps
+                    // every chunk queued before `\begin{document}` in these
+                    // markers. The engine runs the hook ahead of the real
+                    // `\begin{document}` re-emission, while the parser still
+                    // drops pre-marker content as preamble — so hold the
+                    // marked tokens back and re-emit them once the real
+                    // `\begin{document}` closes (see the `document` arm
+                    // below). The markers themselves are invisible.
+                    "flashtexatbeginstart" => {
+                        conv.flush_word();
+                        conv.atbegin_capturing = true;
+                    }
+                    "flashtexatbeginend" => {
+                        conv.flush_word();
+                        conv.atbegin_capturing = false;
+                    }
                     // The `{<\@currentlabel>}` group after this marker is
                     // captured above and re-emitted as a literal
                     // `flashtexcurrentlabel` token carrying no output of its
@@ -987,6 +1077,9 @@ impl<'d> Converter<'d> {
                     "includeonly" if origin.is_none() && real_text == "\\includeonly" => {
                         return Flow::IncludeOnly(at);
                     }
+                    // `\-` (the discretionary hyphen) stays a command: it is
+                    // not the character it looks like.
+                    "-" => conv.push(TokenKind::Command(name.clone()), at),
                     _ if name.chars().count() == 1 && !name.chars().all(char::is_alphabetic) => {
                         conv.flush_word();
                         conv.push(TokenKind::Word(name.clone()), at);
@@ -1007,7 +1100,25 @@ impl<'d> Converter<'d> {
                         );
                     }
                     _ if real_text == "\\begin" && name != "begin" => {
-                        conv.push_environment("begin", name, at);
+                        if name == "document" {
+                            // The engine's real `\begin{document}`: the
+                            // user's literal never reaches the converter
+                            // (the engine intercepts it), so this frozen
+                            // `\document` re-emission carrying the source
+                            // `\begin` span is the one true marker. Anything
+                            // captured above ran ahead of it as hook output;
+                            // the pending word belongs to the hook too while
+                            // capture is still on (a swallowed end marker),
+                            // so flush before releasing the capture, then
+                            // re-emit the held-back run right after the
+                            // marker closes, ahead of the body.
+                            conv.flush_word();
+                            conv.atbegin_capturing = false;
+                            conv.push_environment("begin", name, at);
+                            conv.drain_atbegin();
+                        } else {
+                            conv.push_environment("begin", name, at);
+                        }
                     }
                     _ if real_text == "\\end" && name.len() > 3 && name.starts_with("end") => {
                         conv.push_environment("end", &name[3..], at);
@@ -1030,7 +1141,7 @@ impl<'d> Converter<'d> {
         }
         for token in tokenize_document(&text[offset..], DocumentId(document)) {
             let span = Span::in_document(DocumentId(document), token.span.start + offset, token.span.end + offset);
-            self.out.push(ExpandedToken {
+            self.emit(ExpandedToken {
                 token: Token { kind: token.kind, span },
                 definition: None,
                 maps_to_invocation: false,
@@ -1100,7 +1211,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
             }
         }
     }
-    conv.flush_word();
+    conv.drain_atbegin();
 
     if step_limit_hit(engine.diagnostics()) {
         if let Some((source, offset)) = engine.input_position() {
@@ -1144,10 +1255,9 @@ pub struct ExpansionCache {
     old_engine_tokens: usize,
     /// The class size and font packages change the engine's `em`/`ex`.
     fonts: DocumentFonts,
-    /// The last revision ran into the step limit: re-expand from scratch
-    /// until it no longer does (an incremental run would hit the same limit
-    /// and still need the full run for its recovery).
-    halted: bool,
+    /// Tokens at the end of `out` typeset unexpanded after the engine
+    /// stopped (see [`Converter::resume_unexpanded`]); no marks cover them.
+    recovered: usize,
     /// `out` is lent to a parser ([`lend_cached_tokens`]). A cache whose
     /// stream never came back is rebuilt instead of reused.
     lent: bool,
@@ -1240,15 +1350,11 @@ pub fn expand_project_with_cache(
         .enumerate()
         .map(|(index, d)| if index == entry { prepare(d.text, DocumentId(index)) } else { Prepared::plain(d.text) })
         .collect();
-    if cache.as_ref().is_some_and(|c| c.halted && c.entry_path == document.path) {
-        let full = expand_project(documents, entry);
-        if full.diagnostics.iter().any(|d| d.message.contains("expansion step limit exceeded")) {
-            return full;
-        }
-        *cache = None;
-    }
     let masked: &str = prepared[entry].text.as_ref();
     let fonts = document_fonts(documents);
+    // The same limits as `expand_project`, which the expander applies to
+    // every edit (`IncrementalExpander::edit_with_limits`).
+    let limits = limits_for(documents.iter().map(|d| d.text.len()).sum());
     let reusable = cache.as_ref().is_some_and(|c| {
         !c.lent
             && c.entry_path == document.path
@@ -1256,36 +1362,37 @@ pub fn expand_project_with_cache(
             && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
     });
     let expansion = if reusable {
-        update_cache(cache.as_mut().expect("checked"), documents, entry, &prepared)
+        update_cache(cache.as_mut().expect("checked"), documents, entry, &prepared, limits)
     } else {
-        let (fresh, expansion) = build_cache(documents, entry, &prepared);
+        let (fresh, expansion) = build_cache(documents, entry, &prepared, limits);
         *cache = Some(fresh);
         expansion
     };
-    match expansion {
-        Some(expansion) => expansion,
-        None => {
-            // Runaway expansion: the full path's recovery reads the engine's
-            // own stop position, which the cache does not keep.
-            if let Some(cache) = cache.as_mut() {
-                cache.halted = true;
-            }
-            expand_project(documents, entry)
-        }
+    // The incremental expander equals a full run across stops, so the
+    // unexpanded recovery after one is the full path's too. Debug builds
+    // check that on every stopped run.
+    #[cfg(debug_assertions)]
+    if step_limit_hit(cache.as_ref().expect("cache kept").expander.diagnostics()) {
+        let full = expand_project(documents, entry);
+        debug_assert!(
+            *full.tokens == *expansion.tokens && full.diagnostics == expansion.diagnostics && full.arraystretch == expansion.arraystretch,
+            "cached expansion of a stopped run differs from a full expansion"
+        );
     }
+    expansion
 }
 
-fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepared<'_>]) -> (ExpansionCache, Option<Expansion>) {
+fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepared<'_>], limits: Limits) -> (ExpansionCache, Expansion) {
     let masked: &str = prepared[entry].text.as_ref();
     let fonts = document_fonts(documents);
     let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
         configure_with_fonts(engine, fonts);
     });
-    let expander = IncrementalExpander::with_host(masked, limits_for(masked.len()), CHECKPOINT_INTERVAL, init);
+    let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
     let mut marks = vec![Mark { index: 0, out_len: 0, last_span: conv.last_span }];
     convert_range(&mut conv, prepared, &expander, 0, &mut marks, None);
-    conv.flush_word();
+    conv.drain_atbegin();
     let mut cache = ExpansionCache {
         entry_path: documents[entry].path.to_string(),
         masked: masked.to_string(),
@@ -1298,7 +1405,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         last_span: conv.last_span,
         old_engine_tokens: 0,
         fonts,
-        halted: false,
+        recovered: 0,
         lent: false,
     };
     let expansion = finish(&mut cache, conv);
@@ -1396,27 +1503,33 @@ fn update_cache(
     documents: &[SourceDocument<'_>],
     entry: usize,
     prepared: &[Prepared<'_>],
-) -> Option<Expansion> {
+    limits: Limits,
+) -> Expansion {
     let masked: &str = prepared[entry].text.as_ref();
-    let changes = crate::incremental::changed_bytes(&cache.masked, masked);
+    let mut changes = crate::incremental::changed_bytes(&cache.masked, masked);
     if changes.old.is_empty() && changes.new.is_empty() && cache.masked.len() == masked.len() {
-        let mut conv = Converter::new(documents, entry);
-        conv.out = Vec::new();
-        conv.last_span = cache.last_span;
-        conv.stretch_log = cache.stretch_log.clone();
-        conv.arraystretch = stretch_map(&conv.stretch_log);
-        conv.current_label_log = cache.current_label_log.clone();
-        conv.current_label_by_marker = stretch_map(&conv.current_label_log);
-        let tokens = cache.out.clone();
-        let mut expansion = finish_diagnostics(cache, conv)?;
-        expansion.tokens = tokens;
-        return Some(expansion);
+        if cache.expander.limits() == limits {
+            let mut conv = Converter::new(documents, entry);
+            conv.out = Vec::new();
+            conv.last_span = cache.last_span;
+            conv.stretch_log = cache.stretch_log.clone();
+            conv.arraystretch = stretch_map(&conv.stretch_log);
+            conv.current_label_log = cache.current_label_log.clone();
+            conv.current_label_by_marker = stretch_map(&conv.current_label_log);
+            let tokens = cache.out.clone();
+            let mut expansion = finish_diagnostics(cache, conv);
+            expansion.tokens = tokens;
+            return expansion;
+        }
+        // Only the limits changed (another project document's size): an
+        // empty edit at the end re-runs as little as they allow.
+        changes.old = masked.len()..masked.len();
+        changes.new = masked.len()..masked.len();
     }
-    let stats = cache.expander.edit(&Edit {
-        start: changes.old.start,
-        end: changes.old.end,
-        replacement: masked[changes.new.clone()].to_string(),
-    });
+    let stats = cache.expander.edit_with_limits(
+        &Edit { start: changes.old.start, end: changes.old.end, replacement: masked[changes.new.clone()].to_string() },
+        limits,
+    );
     let delta = masked.len() as isize - cache.masked.len() as isize;
     cache.masked.clear();
     cache.masked.push_str(masked);
@@ -1428,6 +1541,7 @@ fn update_cache(
     let restart_at = old_marks.partition_point(|mark| mark.index <= prefix).saturating_sub(1);
     let restart = old_marks[restart_at];
     let mut out = Rc::try_unwrap(std::mem::replace(&mut cache.out, Rc::new(Vec::new()))).unwrap_or_else(|shared| (*shared).clone());
+    out.truncate(out.len() - std::mem::take(&mut cache.recovered));
     let mut old_tail = out.split_off(restart.out_len);
     let old_log = std::mem::take(&mut cache.stretch_log);
     let old_label_log = std::mem::take(&mut cache.current_label_log);
@@ -1490,7 +1604,7 @@ fn update_cache(
             }
             conv.last_span = shift(cache.last_span);
         }
-        None => conv.flush_word(),
+        None => conv.drain_atbegin(),
     }
     cache.marks = marks;
     cache.last_span = conv.last_span;
@@ -1508,9 +1622,19 @@ impl ExpansionCache {
 }
 
 /// Store the converted stream in the cache and map the engine diagnostics.
-/// `None` when expansion ran away (the caller falls back to the full path).
-fn finish(cache: &mut ExpansionCache, conv: Converter<'_>) -> Option<Expansion> {
+/// After a stop the rest of the entry is typeset unexpanded, as
+/// [`expand_project`] does.
+fn finish(cache: &mut ExpansionCache, conv: Converter<'_>) -> Expansion {
     let mut conv = conv;
+    if step_limit_hit(cache.expander.diagnostics()) {
+        if let Some((source, offset)) = cache.expander.input_position() {
+            if let Some(Some(document)) = conv.source_documents.get(&source).copied() {
+                let before = conv.out.len();
+                conv.resume_unexpanded(document, offset);
+                cache.recovered = conv.out.len() - before;
+            }
+        }
+    }
     let out = std::mem::take(&mut conv.out);
     cache.stretch_log = conv.stretch_log.clone();
     cache.current_label_log = conv.current_label_log.clone();
@@ -1518,27 +1642,24 @@ fn finish(cache: &mut ExpansionCache, conv: Converter<'_>) -> Option<Expansion> 
     cache.old_engine_tokens = cache.expander.tokens().len();
     let tokens = Rc::new(out);
     cache.out = tokens.clone();
-    let mut expansion = finish_diagnostics(cache, conv)?;
+    let mut expansion = finish_diagnostics(cache, conv);
     expansion.tokens = tokens;
-    Some(expansion)
+    expansion
 }
 
 fn stretch_map(log: &[(usize, (usize, usize), String)]) -> HashMap<(usize, usize), String> {
     log.iter().map(|(_, key, text)| (*key, text.clone())).collect()
 }
 
-fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Option<Expansion> {
-    if step_limit_hit(cache.expander.diagnostics()) {
-        return None;
-    }
+fn finish_diagnostics(cache: &ExpansionCache, mut conv: Converter<'_>) -> Expansion {
     conv.last_span = cache.last_span;
     conv.map_diagnostics(cache.expander.diagnostics());
-    Some(Expansion {
+    Expansion {
         tokens: Rc::new(Vec::new()),
         diagnostics: conv.diagnostics,
         arraystretch: conv.arraystretch,
         current_label_by_marker: conv.current_label_by_marker,
-    })
+    }
 }
 
 fn recovery_for(message: &str) -> &'static str {
@@ -1546,7 +1667,7 @@ fn recovery_for(message: &str) -> &'static str {
         "kept the existing command definition"
     } else if message.contains("LaTeX Error: Command") && message.contains("undefined") {
         "defined the command anyway"
-    } else if message.contains("limit exceeded") {
+    } else if message.contains("limit exceeded") || is_stop_limit(message) {
         "stopped expanding; the rest of the document was typeset without macro expansion"
     } else {
         "continued expanding after the problem"

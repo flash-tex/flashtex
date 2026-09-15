@@ -47,7 +47,7 @@ pub struct DocumentId(pub usize);
 ///
 /// Invariant: `start <= end`, both land on UTF-8 character boundaries of the
 /// document they refer to, so `&text[start..end]` never panics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     pub document: DocumentId,
     pub start: usize,
