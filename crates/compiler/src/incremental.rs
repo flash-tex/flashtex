@@ -649,6 +649,16 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 map_span(&mut u.span, changes, deltas)?;
                 shift_inlines(&mut u.content, changes, deltas)?;
             }
+            Inline::Phantom {
+                content,
+                horizontal: _,
+                vertical: _,
+                span,
+                space_before: _,
+            } => {
+                map_span(span, changes, deltas)?;
+                shift_inlines(content, changes, deltas)?;
+            }
             Inline::Graphic(graphic) => map_span(&mut graphic.span, changes, deltas)?,
             Inline::Transform(transform) => {
                 let shifted = transform.try_map_spans(
@@ -851,6 +861,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::Graphic(graphic) => graphic.span,
         Inline::Transform(transform) => transform.span,
         Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => *span,
+        Inline::Phantom { span, .. } => *span,
     };
     let first = inlines.first().map(span_of);
     let last = inlines.last().map(span_of);
