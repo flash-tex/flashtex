@@ -2519,6 +2519,8 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
     // `tikzpicture` environments per document, and those already emitted.
     let pictures: Vec<Vec<flashtex_vector_graphics::tikz::PictureSource>> = texts.iter().map(|t| flashtex_vector_graphics::tikz::find_pictures(t)).collect();
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
+    // List and theorem nesting per document, read at each block's offset.
+    let indexes = SourceIndexes::new(texts, &theorem_envs);
     for (block, par_leading) in blocks {
         let par_leading = *par_leading;
         match block {
@@ -2614,15 +2616,15 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
         if prev_list && !is_heading {
             if let Some(gap) = first.and_then(gap_before) {
                 if let Some(env) = gap_has_list_end(gap) {
-                    let src = texts.get(prev_end.map_or(0, |p| p.document.0)).copied().unwrap_or("");
-                    let stack = prev_end.map(|p| list_stack_at(src, p.end)).unwrap_or_default();
+                    let index = indexes.get(prev_end.map_or(0, |p| p.document.0));
+                    let stack = prev_end.map_or(&[][..], |p| index.list_stack(p.end));
                     let begin_keys = stack.last().map_or("", |(e, keys)| if *e == env && *e != "thebibliography" { keys } else { "" });
-                    let seps = list_seps_with(src, env, 1, size, style, begin_keys);
+                    let seps = list_seps_from(&index.setlist, env, 1, size, style, begin_keys);
                     addvspace_before += seps.topsep + if list_vmode { seps.partopsep } else { 0.0 };
                     addvspace_flex.0 += seps.topsep_skip.stretch + if list_vmode { seps.partopsep_skip.stretch } else { 0.0 };
                     addvspace_flex.1 += seps.topsep_skip.shrink + if list_vmode { seps.partopsep_skip.shrink } else { 0.0 };
                     if let Some(p) = prev_end {
-                        endlist_adjust = list_end_adjust(src, p.end, gap, size, style);
+                        endlist_adjust = list_end_adjust(index, p.end, gap, size, style);
                     }
                 }
             }
@@ -2631,14 +2633,14 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
         if let CBlock::ListItem { level, label, .. } = block {
             let anchor = label.as_ref().map(|(_, span)| *span).or(first);
             if let Some(at) = anchor {
-                let src = texts.get(at.document.0).copied().unwrap_or("");
-                let stack = list_stack_at(src, at.start);
+                let index = indexes.get(at.document.0);
+                let stack = index.list_stack(at.start);
                 let (env, begin_keys) = stack.last().map_or(("enumerate", ""), |(env, keys)| (env, if *env == "thebibliography" { "" } else { keys }));
-                let seps = list_seps_with(src, env, stack.len().max(1), size, style, begin_keys);
+                let seps = list_seps_from(&index.setlist, env, stack.len().max(1), size, style, begin_keys);
                 // `\@outerparskip`: the `\parskip` in force when `\begin`
                 // was read — the enclosing list's `\parsep` when nested.
                 let outer_parskip_skip = match stack.len() {
-                    n if n > 1 => list_seps(src, stack[n - 2].0, n - 1, size, style).parsep_skip,
+                    n if n > 1 => list_seps_from(&index.setlist, stack[n - 2].0, n - 1, size, style, "").parsep_skip,
                     _ => style.parskip,
                 };
                 let outer_parskip = outer_parskip_skip.natural;
@@ -2698,11 +2700,11 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                 // entries keeps the class's label-width geometry, so this
                 // never draws a `[1]` on top of the hanging indent.
                 let natbib_bib = env == "thebibliography"
-                    && natbib_author_year(src)
+                    && index.natbib_author_year
                     && label.as_ref().is_none_or(|(text, _)| text.is_empty());
                 list = Some(ListGeom {
                     level: *level,
-                    margins: list_margins(src, at.start, size, natbib_bib),
+                    margins: list_margins(index, at.start, size, natbib_bib),
                     label: label.clone(),
                     description: env == "description",
                     parsep: seps.parsep_skip,
@@ -2778,7 +2780,7 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
             })
         });
         let in_theorem = theorem_item
-            || first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| in_theorem_environment(t, f.start, &theorem_envs)));
+            || first.is_some_and(|f| texts.get(f.document.0).is_some_and(|t| indexes.get(f.document.0).in_theorem(t.is_char_boundary(f.start), f.start)));
         // `\paragraph{...}`/`\subparagraph{...}`: the compiler set the title
         // as body text at the front of this very paragraph, so the head is
         // recognised from the bytes immediately before its first word.
@@ -3998,6 +4000,11 @@ fn list_seps(source: &str, env: &str, depth: usize, size: u32, style: &Styleshee
 /// zeroes `topsep`/`partopsep`/`itemsep`/`parsep`, `noitemsep` zeroes
 /// `itemsep`/`parsep`).
 fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Stylesheet, begin_keys: &str) -> ListSeps {
+    list_seps_from(&setlist_calls(source), env, depth, size, style, begin_keys)
+}
+
+/// [`list_seps_with`] given the source's [`setlist_calls`].
+fn list_seps_from(calls: &[(&str, &str)], env: &str, depth: usize, size: u32, style: &Stylesheet, begin_keys: &str) -> ListSeps {
     let base = match size {
         12 => flashtex_document_style::BaseSize::Pt12,
         11 => flashtex_document_style::BaseSize::Pt11,
@@ -4027,7 +4034,6 @@ fn list_seps_with(source: &str, env: &str, depth: usize, size: u32, style: &Styl
         seps.itemsep_skip = style.parsep;
         seps.itemsep = style.parsep.natural;
     }
-    let calls = setlist_calls(source);
     let all_keys = calls.iter().filter(|(envs, _)| setlist_names(envs, env)).map(|(_, keys)| *keys).chain(std::iter::once(begin_keys));
     for keys in all_keys {
         for (key, value) in list_keys(keys) {
@@ -4097,7 +4103,7 @@ fn list_env_after_begin(rest: &str) -> bool {
 /// \parskip - \@outerparskip` — the closing list's `\parsep` less the
 /// `\parskip` outside it (the enclosing list's `\parsep`, or the
 /// document's). The summed change, in points.
-fn list_end_adjust(source: &str, gap_start: usize, gap: &str, size: u32, style: &Stylesheet) -> f64 {
+fn list_end_adjust(index: &SourceIndex, gap_start: usize, gap: &str, size: u32, style: &Stylesheet) -> f64 {
     let mut adjust = 0.0;
     let mut from = 0;
     while let Some(at) = find_command(&gap[from..], "end") {
@@ -4107,11 +4113,11 @@ fn list_end_adjust(source: &str, gap_start: usize, gap: &str, size: u32, style: 
         if !LIST_ENVS.iter().any(|env| rest.starts_with(&format!("{{{env}}}"))) {
             continue;
         }
-        let stack = list_stack_at(source, gap_start + abs);
+        let stack = index.list_stack(gap_start + abs);
         let Some(&(env, _)) = stack.last() else { continue };
         let depth = stack.len();
-        let parsep = list_seps(source, env, depth, size, style).parsep;
-        let outer = if depth > 1 { list_seps(source, stack[depth - 2].0, depth - 1, size, style).parsep } else { style.parskip.natural };
+        let parsep = list_seps_from(&index.setlist, env, depth, size, style, "").parsep;
+        let outer = if depth > 1 { list_seps_from(&index.setlist, stack[depth - 2].0, depth - 1, size, style, "").parsep } else { style.parskip.natural };
         adjust += parsep - outer;
     }
     adjust
@@ -4247,6 +4253,167 @@ fn list_stack_at(source: &str, at: usize) -> Vec<(&str, &str)> {
         }
     }
     stack
+}
+
+/// Every `\begin` and `\end` control word of `source` outside comments, in
+/// order: `(byte offset, is_begin)`. The lexing is [`find_command`]'s, so
+/// this is exactly what repeated `find_command` calls restarted one byte
+/// past each match report.
+fn begin_end_commands(source: &str) -> Vec<(usize, bool)> {
+    let bytes = source.as_bytes();
+    let word = |i: usize, needle: &str| bytes[i..].starts_with(needle.as_bytes()) && bytes.get(i + needle.len()).is_none_or(|b| !b.is_ascii_alphabetic());
+    let mut out = Vec::new();
+    let (mut i, mut in_comment) = (0, false);
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\n' if in_comment => in_comment = false,
+            _ if in_comment => {}
+            b'%' => in_comment = true,
+            b'\\' => {
+                if word(i, "\\begin") {
+                    out.push((i, true));
+                } else if word(i, "\\end") {
+                    out.push((i, false));
+                }
+                i += 2;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
+/// What [`split_at_page_breaks`] reads from one source document for every
+/// block, computed in one forward pass per call.
+///
+/// [`list_stack_at`] and `in_theorem_environment` rescan the source from
+/// byte 0 each time, and [`setlist_calls`] and [`natbib_author_year`] scan
+/// all of it, so asking them once per block made the split quadratic in the
+/// document's length (#613: 16 s of adapt time at 450 sections). The index
+/// answers the same questions from prefix snapshots with a binary search,
+/// and returns what those functions return at every byte offset
+/// (`source_index_matches_prefix_scans` checks this).
+struct SourceIndex<'t> {
+    /// [`setlist_calls`] of the source.
+    setlist: Vec<(&'t str, &'t str)>,
+    /// [`natbib_author_year`] of the source.
+    natbib_author_year: bool,
+    /// For each `\begin`/`\end` of a [`LIST_ENVS`] environment, in source
+    /// order, the byte just past its control word: [`list_stack_at`] reads
+    /// the command at offset `at` when this is `<= at`.
+    list_marks: Vec<usize>,
+    /// `list_stacks[k]`: the list stack after the first `k` list marks.
+    list_stacks: Vec<Vec<(&'t str, &'t str)>>,
+    /// For each named `\begin{..}`/`\end{..}`, in source order, the byte of
+    /// the `}` closing its name: `in_theorem_environment` matches the
+    /// command at offset `at` only when the name is complete before `at`.
+    /// The marks never decrease.
+    theorem_marks: Vec<usize>,
+    /// `in_theorem[k]`: a theorem-like environment is open after the first
+    /// `k` named commands.
+    in_theorem: Vec<bool>,
+}
+
+impl<'t> SourceIndex<'t> {
+    fn new(source: &'t str, theorem_envs: &std::collections::HashSet<String>) -> Self {
+        let commands = begin_end_commands(source);
+        // `list_stack_at`: the environment name must follow the command
+        // directly (after blanks), and the `\begin` options come after it.
+        let mut stack: Vec<(&str, &str)> = Vec::new();
+        let (mut list_marks, mut list_stacks) = (Vec::new(), vec![Vec::new()]);
+        for &(pos, is_begin) in &commands {
+            let len = if is_begin { "\\begin".len() } else { "\\end".len() };
+            let rest = source[pos + len..].trim_start();
+            let Some(inner) = rest.strip_prefix('{') else { continue };
+            let Some(close) = inner.find('}') else { continue };
+            let env = inner[..close].trim();
+            if !LIST_ENVS.contains(&env) {
+                continue;
+            }
+            if is_begin {
+                let after = inner[close + 1..].trim_start();
+                let options = match (env, after.strip_prefix('['), after.strip_prefix('{')) {
+                    ("thebibliography", _, Some(o)) => o.find('}').map_or("", |c| &o[..c]),
+                    ("thebibliography", _, None) => "",
+                    (_, Some(o), _) => o.find(']').map_or("", |c| &o[..c]),
+                    _ => "",
+                };
+                stack.push((env, options));
+            } else if stack.last().is_some_and(|(open, _)| *open == env) {
+                stack.pop();
+            }
+            list_marks.push(pos + len);
+            list_stacks.push(stack.clone());
+        }
+        // `in_theorem_environment`: the name is between the first `{` after
+        // the command and the first `}` after that, wherever they are.
+        let mut open: Vec<&str> = Vec::new();
+        let mut theorems_open = 0usize;
+        let (mut theorem_marks, mut in_theorem) = (Vec::new(), vec![false]);
+        for &(pos, is_begin) in &commands {
+            let Some(brace) = source[pos..].find('{').map(|b| pos + b) else { break };
+            let Some(close) = source[brace + 1..].find('}').map(|c| brace + 1 + c) else { break };
+            let name = source[brace + 1..close].trim();
+            if is_begin {
+                open.push(name);
+                theorems_open += usize::from(theorem_envs.contains(name));
+            } else if open.last() == Some(&name) {
+                open.pop();
+                theorems_open -= usize::from(theorem_envs.contains(name));
+            }
+            theorem_marks.push(close);
+            in_theorem.push(theorems_open > 0);
+        }
+        SourceIndex {
+            setlist: setlist_calls(source),
+            natbib_author_year: natbib_author_year(source),
+            list_marks,
+            list_stacks,
+            theorem_marks,
+            in_theorem,
+        }
+    }
+
+    /// [`list_stack_at`]`(source, at)`.
+    fn list_stack(&self, at: usize) -> &[(&'t str, &'t str)] {
+        &self.list_stacks[self.list_marks.partition_point(|&mark| mark <= at)]
+    }
+
+    /// `in_theorem_environment(source, at, theorem_envs)`, given
+    /// whether `at` is a char boundary within the source.
+    fn in_theorem(&self, at_in_bounds: bool, at: usize) -> bool {
+        at_in_bounds && self.in_theorem[self.theorem_marks.partition_point(|&mark| mark < at)]
+    }
+}
+
+/// One lazily built [`SourceIndex`] per document of a `split_at_page_breaks`
+/// call; a document index past `texts` reads as the empty source, as the
+/// per-block code did.
+struct SourceIndexes<'a, 't> {
+    texts: &'a [&'t str],
+    theorem_envs: &'a std::collections::HashSet<String>,
+    cells: Vec<std::cell::OnceCell<SourceIndex<'t>>>,
+    empty: std::cell::OnceCell<SourceIndex<'t>>,
+}
+
+impl<'a, 't> SourceIndexes<'a, 't> {
+    fn new(texts: &'a [&'t str], theorem_envs: &'a std::collections::HashSet<String>) -> Self {
+        SourceIndexes {
+            texts,
+            theorem_envs,
+            cells: texts.iter().map(|_| std::cell::OnceCell::new()).collect(),
+            empty: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn get(&self, document: usize) -> &SourceIndex<'t> {
+        match self.texts.get(document) {
+            Some(text) => self.cells[document].get_or_init(|| SourceIndex::new(text, self.theorem_envs)),
+            None => self.empty.get_or_init(|| SourceIndex::new("", self.theorem_envs)),
+        }
+    }
 }
 
 /// Whether the text at `span` was generated by a `\cite`-family command
@@ -4394,10 +4561,11 @@ fn widest_label(env: &str, depth: usize, label_key: Option<&str>, template: Opti
 /// class's `\leftmargin<i>` unless a `\setlist` naming the environment or
 /// the `\begin` options set enumitem's `leftmargin` (`*` = the widest
 /// label's width plus `\labelsep`; a `<dimen>` as given).
-fn list_margins(source: &str, at: usize, size: u32, natbib_bib: bool) -> Vec<ListMargin> {
-    let calls = setlist_calls(source);
+fn list_margins(index: &SourceIndex, at: usize, size: u32, natbib_bib: bool) -> Vec<ListMargin> {
+    let calls = &index.setlist;
     let class_margin = |depth: usize| ListMargin::Fixed(parse_dimen(&format!("{}em", article_leftmargin_em(depth)), size).unwrap_or(0.0));
-    list_stack_at(source, at)
+    index
+        .list_stack(at)
         .iter()
         .enumerate()
         .map(|(i, (env, options))| {
@@ -4607,6 +4775,8 @@ fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &std
 /// not written in the source at the head's span, so the weights of a
 /// theorem's words come from the compiler's scoping instead of the source's
 /// own brace groups.
+// The per-offset reference that [`SourceIndex::in_theorem`] reproduces.
+#[cfg_attr(not(test), allow(dead_code))]
 fn in_theorem_environment(text: &str, at: usize, envs: &std::collections::HashSet<String>) -> bool {
     if at > text.len() || !text.is_char_boundary(at) {
         return false;
@@ -7207,6 +7377,36 @@ mod tests {
             },
             Block::Heading { items, .. } => items.clone(),
             _ => panic!("a rule, picture, chapter or page-style block holds no items"),
+        }
+    }
+
+    /// [`SourceIndex`] answers exactly what the prefix scans it replaces
+    /// (`list_stack_at`, `in_theorem_environment`) answer, at every byte
+    /// offset, including offsets inside control words and names, comments,
+    /// escaped `\%`, unclosed braces and mismatched `\end`s.
+    #[test]
+    fn source_index_matches_prefix_scans() {
+        let envs: std::collections::HashSet<String> = ["proof", "theorem", "lemma"].iter().map(|s| s.to_string()).collect();
+        let sources = [
+            "",
+            "\\begin{itemize}\\item a\\end{itemize}",
+            "\\newtheorem{theorem}{Theorem}\n\\begin{document}\n\\begin{theorem}[Name] text \\begin{itemize}[nosep, leftmargin=*]\n\\item x\n\\begin{enumerate}[(a)]\\item y\\end{enumerate}\\end{itemize}\n\\end{theorem}\n\\begin{proof}p\\end{proof}\\end{document}",
+            "% \\begin{theorem}\n\\begin {lemma} a \\% \\begin{proof} b\\end{lemma}\\beginning{x}\\endgroup \\begin{description}\\item[k] v\\end{itemize}\\end{description}",
+            "\\begin{thebibliography}{99}\\bibitem{a} A\\end{thebibliography}\\begin{theorem} \\end{lemma} \\end{theorem}",
+            "\\begin{theorem} unclosed \\begin{itemize \\item \\end{itemize",
+            "\\begin[x]{theorem} é \\\\begin{proof} \\begin{enumerate}\\item ü\\end{enumerate} \\begin",
+        ];
+        for source in sources {
+            let index = SourceIndex::new(source, &envs);
+            for at in 0..=source.len() {
+                let boundary = source.is_char_boundary(at);
+                assert_eq!(index.in_theorem(boundary, at), in_theorem_environment(source, at, &envs), "in_theorem at {at} of {source:?}");
+                if boundary {
+                    assert_eq!(index.list_stack(at), &list_stack_at(source, at)[..], "list stack at {at} of {source:?}");
+                }
+            }
+            assert_eq!(index.setlist, setlist_calls(source));
+            assert_eq!(index.natbib_author_year, natbib_author_year(source));
         }
     }
 
