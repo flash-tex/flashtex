@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/tag-placement-pipeline",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/585",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-15T07:54:31Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-441-TAG-PLACEMENT-PIPELINE",
-  "updated_utc": "2026-09-15T08:20:30Z"
+  "updated_utc": "2026-09-15T08:21:21Z"
 }
