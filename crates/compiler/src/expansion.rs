@@ -116,6 +116,18 @@ pub struct Expansion {
 /// host command the converter maps back, so the parser sees the original
 /// name with its argument still a control sequence, not consumed as a
 /// skip assignment, which would yield `\\addtolength{\\}`.
+///
+/// `\\AtBeginDocument` keeps the kernel queuing behavior, but wraps each
+/// queued chunk in `\\flashtexatbeginstart...\\flashtexatbeginend` markers
+/// (left undefined, so the engine passes them through): the converter holds
+/// marked output back and re-emits it after `\\begin{document}` closes, so
+/// the hook typesets ahead of the body instead of being dropped as
+/// preamble. Like the kernel's `\\g@addto@macro`, the append routes through
+/// the `\\toks@` register so the chunk is stored unexpanded and only
+/// resolves when the hook runs at `\\begin{document}` (a bare `\\xdef` would
+/// bake preamble definitions in eagerly). Calls after `\\begin{document}`
+/// bypass the wrapper entirely (`\\AtBeginDocument` is `\\let` to
+/// `\\@firstofone` by then) and run in the body, as in LaTeX.
 pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\verb\\flashtexundefined
 \\let\\:\\flashtexundefined
@@ -130,6 +142,8 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\def\\tabular{\\flashtexbegintabular\\expandafter{\\arraystretch}}%
 \\expandafter\\def\\csname tabular*\\endcsname{\\flashtexbegintabularstar\\expandafter{\\arraystretch}}%
 \\def\\array{\\flashtexbeginarray\\expandafter{\\arraystretch}}%
+\\long\\def\\flashtexaddtobeginhook#1#2{\\begingroup\\csname toks@\\endcsname\\expandafter{#1\\flashtexatbeginstart#2\\flashtexatbeginend}\\xdef#1{\\the\\csname toks@\\endcsname}\\endgroup}%
+\\long\\def\\AtBeginDocument#1{\\expandafter\\flashtexaddtobeginhook\\csname @begindocumenthook\\endcsname{#1}}%
 \\makeatletter
 \\let\\flashtexrealrefstepcounter\\refstepcounter
 \\def\\refstepcounter#1{\\flashtexrealrefstepcounter{#1}\\flashtexcurrentlabelmarker\\expandafter{\\@currentlabel}}%
@@ -454,6 +468,18 @@ struct Converter<'d> {
     /// Every `\arraystretch` record in production order, with its marker's
     /// engine token index (what the incremental cache keeps and splices).
     stretch_log: Vec<(usize, (usize, usize), String)>,
+    /// While true, converted tokens are `\AtBeginDocument` hook output that
+    /// must typeset after `\begin{document}`: they accumulate in
+    /// `atbegin_buffer` instead of `out`. Set by the
+    /// `\flashtexatbeginstart` marker the host prelude wraps each queued
+    /// hook chunk in; cleared by its end marker, and forcibly by the real
+    /// `\begin{document}` re-emission (the end marker can be swallowed when
+    /// a hook chunk ends in an argument-taking macro).
+    atbegin_capturing: bool,
+    /// Hook output held back while `atbegin_capturing` (possibly across
+    /// several `\AtBeginDocument` chunks), flushed into `out` right after
+    /// the real `\begin{document}` closes.
+    atbegin_buffer: Vec<ExpandedToken>,
     /// Every `\@currentlabel` record in production order, with its marker's
     /// engine token index (kept and spliced like `stretch_log`).
     current_label_log: Vec<(usize, (usize, usize), String)>,
@@ -523,11 +549,36 @@ impl<'d> Converter<'d> {
 
     fn flush_word(&mut self) {
         if let Some(word) = self.word.take() {
-            self.out.push(ExpandedToken {
+            self.emit(ExpandedToken {
                 token: Token { kind: TokenKind::Word(word.text), span: word.span },
                 definition: word.definition,
                 maps_to_invocation: word.maps,
             });
+        }
+    }
+
+    /// Push one finished token to the active sink: the held-back hook buffer
+    /// while capturing `\AtBeginDocument` output, the parser stream
+    /// otherwise.
+    fn emit(&mut self, token: ExpandedToken) {
+        if self.atbegin_capturing {
+            self.atbegin_buffer.push(token);
+        } else {
+            self.out.push(token);
+        }
+    }
+
+    /// End of the `\AtBeginDocument` window (the real `\begin{document}`
+    /// close, or end of input as a safety net): re-emit the held-back hook
+    /// run after the marker, so it typesets ahead of the body. The pending
+    /// word is flushed first so it keeps engine order — it belongs to the
+    /// hook when capture is still on, to the stream once it is off.
+    fn drain_atbegin(&mut self) {
+        self.flush_word();
+        self.atbegin_capturing = false;
+        if !self.atbegin_buffer.is_empty() {
+            let buffered = std::mem::take(&mut self.atbegin_buffer);
+            self.out.extend(buffered);
         }
     }
 
@@ -557,16 +608,23 @@ impl<'d> Converter<'d> {
         self.last_span = at.span;
         // Whitespace runs collapse the way the parser's own tokenizer
         // produces them: one `Space`, or one `ParBreak` if the run holds a
-        // paragraph break.
-        match (&kind, self.out.last().map(|t| &t.token.kind)) {
+        // paragraph break. While capturing `\AtBeginDocument` output the
+        // run collapses against the held-back buffer, never the frozen
+        // stream behind it.
+        let sink = if self.atbegin_capturing {
+            &mut self.atbegin_buffer
+        } else {
+            &mut self.out
+        };
+        match (&kind, sink.last().map(|t| &t.token.kind)) {
             (TokenKind::Space, Some(TokenKind::Space | TokenKind::ParBreak)) => return,
             (TokenKind::ParBreak, Some(TokenKind::ParBreak)) => return,
             (TokenKind::ParBreak, Some(TokenKind::Space)) => {
-                self.out.pop();
+                sink.pop();
             }
             _ => {}
         }
-        self.out.push(ExpandedToken {
+        sink.push(ExpandedToken {
             token: Token { kind, span: at.span },
             definition: at.definition,
             maps_to_invocation: at.maps,
@@ -650,7 +708,7 @@ impl<'d> Converter<'d> {
         self.push(TokenKind::Command(command.to_string()), command_at);
         self.push(TokenKind::LBrace, open_at);
         self.flush_word();
-        self.out.push(ExpandedToken {
+        self.emit(ExpandedToken {
             token: Token { kind: TokenKind::Word(name.to_string()), span: word_at.span },
             definition: word_at.definition,
             maps_to_invocation: word_at.maps,
@@ -683,8 +741,99 @@ fn configure(engine: &mut Engine) {
         engine.declare_host_command(name);
     }
     engine.declare_host_command("include");
-    engine.declare_host_command("flashtexsetlength");
-    engine.declare_host_command("flashtexaddtolength");
+    // `\global\setlength{\parskip}{..}` is valid LaTeX: `\setlength` is a
+    // macro, so TeX applies the prefix to the register assignment.
+    engine.declare_host_assignment("flashtexsetlength");
+    engine.declare_host_assignment("flashtexaddtolength");
+}
+
+/// The expansion engine's `em`/`ex` come from the text font its tracked font
+/// commands select ([`crate::font_units`]).
+fn configure_with_fonts(engine: &mut Engine, fonts: DocumentFonts) {
+    configure(engine);
+    for (name, switch) in crate::font_units::font_switches() {
+        engine.declare_font_switch(name, switch);
+    }
+    engine.set_font_metrics(Rc::new(crate::font_units::EngineFontMetrics {
+        setup: fonts.setup,
+        preamble_latin_modern: fonts.preamble_latin_modern,
+    }));
+}
+
+/// The document-wide font inputs the engine needs before it executes any
+/// `\setlength`: the class size option, `fontenc` and `lmodern`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DocumentFonts {
+    setup: crate::font_units::FontSetup,
+    /// `lmodern` was loaded before `\usepackage[T1]{fontenc}`, whose
+    /// `\selectfont` then switches the preamble to Latin Modern already.
+    preamble_latin_modern: bool,
+}
+
+/// The words of `tokens` from `index` up to the next `{`, and the words of
+/// that brace group.
+fn option_and_group_words(tokens: &[Token], index: usize) -> (String, String) {
+    let mut options = String::new();
+    let mut group = String::new();
+    let mut in_group = false;
+    for token in &tokens[index..] {
+        match &token.kind {
+            TokenKind::LBrace if !in_group => in_group = true,
+            TokenKind::RBrace if in_group => break,
+            TokenKind::Word(word) if in_group => group.push_str(word),
+            TokenKind::Word(word) => options.push_str(word),
+            TokenKind::Space => {}
+            _ if in_group => break,
+            _ => {}
+        }
+    }
+    (options.trim_matches(|c| matches!(c, '[' | ']')).to_string(), group)
+}
+
+fn document_fonts(documents: &[SourceDocument<'_>]) -> DocumentFonts {
+    let mut class_pt = None;
+    let mut t1 = false;
+    let mut latin_modern = false;
+    let mut preamble_latin_modern = false;
+    for (document_index, document) in documents.iter().enumerate() {
+        let tokens = tokenize_document(document.text, DocumentId(document_index));
+        for (index, token) in tokens.iter().enumerate() {
+            let TokenKind::Command(name) = &token.kind else {
+                continue;
+            };
+            match name.as_str() {
+                "documentclass" if class_pt.is_none() => {
+                    let (options, _) = option_and_group_words(&tokens, index + 1);
+                    class_pt = options.split(',').find_map(|option| match option.trim() {
+                        "10pt" => Some(10.0),
+                        "11pt" => Some(11.0),
+                        "12pt" => Some(12.0),
+                        _ => None,
+                    });
+                }
+                "usepackage" => {
+                    let (options, group) = option_and_group_words(&tokens, index + 1);
+                    for package in group.split(',').map(str::trim) {
+                        match package {
+                            "lmodern" => latin_modern = true,
+                            "fontenc" => {
+                                if let Some(encoding) = crate::text_builtins::fontenc_encoding(&options) {
+                                    t1 = encoding == flashtex_tex_text_encoding::encoding::Encoding::T1;
+                                    preamble_latin_modern = latin_modern;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    DocumentFonts {
+        setup: crate::font_units::FontSetup::new(class_pt, t1, latin_modern),
+        preamble_latin_modern: preamble_latin_modern && t1,
+    }
 }
 
 fn has_includes(text: &str) -> bool {
@@ -726,6 +875,8 @@ impl<'d> Converter<'d> {
             arraystretch: HashMap::new(),
             word: None,
             last_span: Span::in_document(DocumentId(entry), 0, 0),
+            atbegin_capturing: false,
+            atbegin_buffer: Vec::new(),
             stretch: None,
             current_label: None,
             current_label_by_marker: HashMap::new(),
@@ -737,10 +888,17 @@ impl<'d> Converter<'d> {
         }
     }
 
-    /// No partially built word, `\arraystretch` capture or `\@currentlabel`
-    /// capture: the output so far does not depend on tokens still to come.
+    /// No partially built word, `\arraystretch` capture, `\@currentlabel`
+    /// capture, or held-back `\AtBeginDocument` output: the output so far
+    /// does not depend on tokens still to come. (The incremental cache only
+    /// records marks and splices while clean, so a capture window is always
+    /// re-converted from an earlier mark with a fresh converter.)
     fn clean(&self) -> bool {
-        self.word.is_none() && self.stretch.is_none() && self.current_label.is_none()
+        self.word.is_none()
+            && self.stretch.is_none()
+            && self.current_label.is_none()
+            && !self.atbegin_capturing
+            && self.atbegin_buffer.is_empty()
     }
 
     fn convert_token(&mut self, prepared: &[Prepared<'_>], token: &tex::Token, origin: Option<tex::Span>) -> Flow {
@@ -856,6 +1014,22 @@ impl<'d> Converter<'d> {
                         conv.stretch = Some(((begin.span.document.0, begin.span.start), 0, String::new()));
                         conv.push_environment("begin", env, begin);
                     }
+                    // `\AtBeginDocument` hook output: the host prelude wraps
+                    // every chunk queued before `\begin{document}` in these
+                    // markers. The engine runs the hook ahead of the real
+                    // `\begin{document}` re-emission, while the parser still
+                    // drops pre-marker content as preamble — so hold the
+                    // marked tokens back and re-emit them once the real
+                    // `\begin{document}` closes (see the `document` arm
+                    // below). The markers themselves are invisible.
+                    "flashtexatbeginstart" => {
+                        conv.flush_word();
+                        conv.atbegin_capturing = true;
+                    }
+                    "flashtexatbeginend" => {
+                        conv.flush_word();
+                        conv.atbegin_capturing = false;
+                    }
                     // The `{<\@currentlabel>}` group after this marker is
                     // captured above and re-emitted as a literal
                     // `flashtexcurrentlabel` token carrying no output of its
@@ -926,7 +1100,25 @@ impl<'d> Converter<'d> {
                         );
                     }
                     _ if real_text == "\\begin" && name != "begin" => {
-                        conv.push_environment("begin", name, at);
+                        if name == "document" {
+                            // The engine's real `\begin{document}`: the
+                            // user's literal never reaches the converter
+                            // (the engine intercepts it), so this frozen
+                            // `\document` re-emission carrying the source
+                            // `\begin` span is the one true marker. Anything
+                            // captured above ran ahead of it as hook output;
+                            // the pending word belongs to the hook too while
+                            // capture is still on (a swallowed end marker),
+                            // so flush before releasing the capture, then
+                            // re-emit the held-back run right after the
+                            // marker closes, ahead of the body.
+                            conv.flush_word();
+                            conv.atbegin_capturing = false;
+                            conv.push_environment("begin", name, at);
+                            conv.drain_atbegin();
+                        } else {
+                            conv.push_environment("begin", name, at);
+                        }
                     }
                     _ if real_text == "\\end" && name.len() > 3 && name.starts_with("end") => {
                         conv.push_environment("end", &name[3..], at);
@@ -949,7 +1141,7 @@ impl<'d> Converter<'d> {
         }
         for token in tokenize_document(&text[offset..], DocumentId(document)) {
             let span = Span::in_document(DocumentId(document), token.span.start + offset, token.span.end + offset);
-            self.out.push(ExpandedToken {
+            self.emit(ExpandedToken {
                 token: Token { kind: token.kind, span },
                 definition: None,
                 maps_to_invocation: false,
@@ -986,7 +1178,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     let total_bytes: usize = documents.iter().map(|d| d.text.len()).sum();
     let entry_text: &str = prepared.get(entry).map_or("", |p| p.text.as_ref());
     let mut engine = Engine::with_limits(entry_text, limits_for(total_bytes));
-    configure(&mut engine);
+    configure_with_fonts(&mut engine, document_fonts(documents));
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
@@ -1019,7 +1211,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
             }
         }
     }
-    conv.flush_word();
+    conv.drain_atbegin();
 
     if step_limit_hit(engine.diagnostics()) {
         if let Some((source, offset)) = engine.input_position() {
@@ -1061,6 +1253,8 @@ pub struct ExpansionCache {
     last_span: Span,
     /// Engine tokens the previous run produced.
     old_engine_tokens: usize,
+    /// The class size and font packages change the engine's `em`/`ex`.
+    fonts: DocumentFonts,
     /// Tokens at the end of `out` typeset unexpanded after the engine
     /// stopped (see [`Converter::resume_unexpanded`]); no marks cover them.
     recovered: usize,
@@ -1157,11 +1351,15 @@ pub fn expand_project_with_cache(
         .map(|(index, d)| if index == entry { prepare(d.text, DocumentId(index)) } else { Prepared::plain(d.text) })
         .collect();
     let masked: &str = prepared[entry].text.as_ref();
+    let fonts = document_fonts(documents);
     // The same limits as `expand_project`, which the expander applies to
     // every edit (`IncrementalExpander::edit_with_limits`).
     let limits = limits_for(documents.iter().map(|d| d.text.len()).sum());
     let reusable = cache.as_ref().is_some_and(|c| {
-        !c.lent && c.entry_path == document.path && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
+        !c.lent
+            && c.entry_path == document.path
+            && c.fonts == fonts
+            && masked.len() <= 2 * c.created_bytes.max(INCREMENTAL_MIN_BYTES)
     });
     let expansion = if reusable {
         update_cache(cache.as_mut().expect("checked"), documents, entry, &prepared, limits)
@@ -1186,12 +1384,15 @@ pub fn expand_project_with_cache(
 
 fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepared<'_>], limits: Limits) -> (ExpansionCache, Expansion) {
     let masked: &str = prepared[entry].text.as_ref();
-    let init: Rc<dyn Fn(&mut Engine)> = Rc::new(configure);
+    let fonts = document_fonts(documents);
+    let init: Rc<dyn Fn(&mut Engine)> = Rc::new(move |engine| {
+        configure_with_fonts(engine, fonts);
+    });
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
     let mut marks = vec![Mark { index: 0, out_len: 0, last_span: conv.last_span }];
     convert_range(&mut conv, prepared, &expander, 0, &mut marks, None);
-    conv.flush_word();
+    conv.drain_atbegin();
     let mut cache = ExpansionCache {
         entry_path: documents[entry].path.to_string(),
         masked: masked.to_string(),
@@ -1203,6 +1404,7 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
         current_label_log: Vec::new(),
         last_span: conv.last_span,
         old_engine_tokens: 0,
+        fonts,
         recovered: 0,
         lent: false,
     };
@@ -1402,7 +1604,7 @@ fn update_cache(
             }
             conv.last_span = shift(cache.last_span);
         }
-        None => conv.flush_word(),
+        None => conv.drain_atbegin(),
     }
     cache.marks = marks;
     cache.last_span = conv.last_span;

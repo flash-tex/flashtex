@@ -24,6 +24,7 @@ use crate::theorems::{self, TheoremDef, TheoremStyle};
 use crate::vocabulary;
 use crate::{DocumentId, Span};
 use flashtex_tex_text_encoding::encoding::Encoding;
+use crate::font_units::FontSetup;
 
 mod colors;
 mod lists;
@@ -201,6 +202,11 @@ pub enum Inline {
     /// start, so both forms behave identically here.
     HSpace {
         pt: f64,
+        /// Inter-word glue immediately before/after the command. It is
+        /// resolved while parsing, when the active font is known; the layout
+        /// cursor otherwise cannot recover the command's local style.
+        space_before_pt: f64,
+        space_after_pt: f64,
         span: Span,
     },
     /// `\footnote[<n>]{..}`, `\footnotemark[<n>]` or `\footnotetext[<n>]{..}`.
@@ -580,9 +586,16 @@ pub enum Block {
         /// later paragraph of the same item).
         item: Option<ItemLabel>,
     },
-    /// `\vspace{<dimen>}`: additional vertical glue, in points.
+    /// `\vspace{<glue>}` (and `\smallskip`/`\medskip`/`\bigskip`): additional
+    /// vertical glue, in points. `pt` is the natural length; `stretch_pt` /
+    /// `shrink_pt` are the finite `plus` / `minus` components (`0.0` when the
+    /// source specifies none, matching real TeX: a bare `\vspace{1in}` has no
+    /// rubber length). Infinite (`fil`/`fill`/`filll`) stretch is not
+    /// represented — see `parse_glue_pt_current`.
     VSpace {
         pt: f64,
+        stretch_pt: f64,
+        shrink_pt: f64,
     },
     /// `\hrule`: a full-measure-width rule at the current line.
     Rule {
@@ -592,7 +605,8 @@ pub enum Block {
     PageBreak,
     /// A penalty in the vertical list between paragraphs (latex.ltx):
     /// `\penalty<n>` and `\nobreak` (10000) in vertical mode, `\pagebreak[n]`
-    /// with a priority below 4 (`-\@getpen{n}`), `\nopagebreak[n]`
+    /// (`-\@getpen{n}`; -10000 at the default priority 4, which unlike
+    /// `\newpage` puts no `\vfil` before it), `\nopagebreak[n]`
     /// (`\@getpen{n}`), `\goodbreak` (`\par\penalty-500`) and `\filbreak`
     /// (`\par\vfil\penalty-200\vfilneg`, reported with `fil` set: the
     /// penalty sits between `\vfil` and `\vfilneg`, so a page broken there
@@ -1121,6 +1135,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "goodbreak",
     "filbreak",
     "discretionary",
+    "nobreakdash",
     "tolerance",
     "pretolerance",
     "looseness",
@@ -1286,12 +1301,12 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "sout",
 ];
 
-/// Parses a LaTeX dimension (`12pt`, `1.5em`, `0.5in`, `2cm`, `10mm`, `2ex`,
-/// `12bp`) to points. `em`/`ex` are relative to the compiler's fixed body size
-/// because the layout does not yet carry a current font size into dimension
-/// parsing. Physical units follow TeX `scan_dimen` §458 (`1bp` = 72.27/72 pt,
-/// not 1pt). `ex` uses [`CMR_EX_PER_EM`] (cmr x-height/em, the same constant
-/// as ulem `\sout`); this crate has no TFM, unlike the pipeline's `ec_em_ex`.
+/// Parses a LaTeX dimension using the legacy body-size context (`em` is the
+/// compiler's body size, `ex` [`CMR_EX_PER_EM`] of it, the same constant as
+/// ulem `\sout`). The command paths that know the active text style use
+/// `parse_dimen_pt_current`, whose `em`/`ex` are the selected TFM's
+/// (`crate::font_units`). Physical units follow TeX `scan_dimen` §458
+/// (`1bp` = 72.27/72 pt, not 1pt).
 pub(crate) fn parse_dimen_pt(text: &str) -> Option<f64> {
     parse_dimen_pt_at(text, crate::layout::BODY_SIZE_PT)
 }
@@ -1369,6 +1384,36 @@ fn length_reference_parts(raw: &str) -> Option<(f64, &str)> {
 /// looked up here: the render pipeline applies real page geometry from the
 /// source; a zero is enough for the compiler to accept the assignment.
 pub(crate) fn parse_dimen_pt_at(text: &str, body_pt: f64) -> Option<f64> {
+    parse_dimen_pt_with_units(text, body_pt, body_pt * CMR_EX_PER_EM)
+}
+
+/// Parse a dimension with `em`/`ex` of the active text font (`(em, ex)` in
+/// scaled points, from [`FontSetup::em_ex_sp`]). A font unit scales exactly as
+/// TeX's `scan_dimen` does (§455), so `0.65em` in ecrm1095 is pdflatex's
+/// 7.07704pt rather than a floating-point product.
+fn parse_dimen_pt_current(text: &str, (em_sp, ex_sp): (i64, i64)) -> Option<f64> {
+    let pt = parse_dimen_pt_with_units(text, em_sp as f64 / 65536.0, ex_sp as f64 / 65536.0)?;
+    let text = text.trim().trim_start_matches('=').trim();
+    let unit_sp = if text.ends_with("em") {
+        em_sp
+    } else if text.ends_with("ex") {
+        ex_sp
+    } else {
+        return Some(pt);
+    };
+    let number = text[..text.len() - 2].trim();
+    let digits = number.trim_start_matches(['+', '-']);
+    let negative = number[..number.len() - digits.len()].matches('-').count() % 2 == 1;
+    let (int, frac) = digits.split_once(['.', ',']).unwrap_or((digits, ""));
+    if !int.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit()) {
+        return Some(pt);
+    }
+    let int = if int.is_empty() { 0 } else { int.parse().ok()? };
+    let sp = flashtex_tex_expansion::scale_internal_dimen(int, frac, unit_sp);
+    Some((if negative { -sp } else { sp }) as f64 / 65536.0)
+}
+
+fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> {
     let text = text.trim().trim_start_matches('=').trim();
     if text.is_empty() {
         return None;
@@ -1411,11 +1456,57 @@ pub(crate) fn parse_dimen_pt_at(text: &str, body_pt: f64) -> Option<f64> {
         "dd" => 1238.0 / 1157.0,
         "cc" => 14856.0 / 1157.0,
         "sp" => 1.0 / 65536.0,
-        "em" => body_pt,
-        "ex" => body_pt * CMR_EX_PER_EM,
+        "em" => em_pt,
+        "ex" => ex_pt,
         _ => return None,
     };
     Some(value * per_pt)
+}
+
+/// Parses TeX glue (`<dimen> plus <dimen> minus <dimen>`) to
+/// `(natural, stretch, shrink)` points, with `em`/`ex` of the active text
+/// font (see [`parse_dimen_pt_current`]).
+///
+/// `plus` and `minus` are each optional and may appear in either order after
+/// the natural dimension; a bare dimension gives zero stretch and shrink
+/// (real TeX: a bare `\vspace{1in}` has no rubber length). Only finite
+/// dimensions are accepted: infinite (`fil`/`fill`/`filll`) stretch is an
+/// explicit non-goal and is rejected (`None`), like any other unrecognised
+/// component. A repeated keyword or trailing garbage is likewise rejected.
+fn parse_glue_pt_current(text: &str, units: (i64, i64)) -> Option<(f64, f64, f64)> {
+    let mut tokens = text.split_whitespace();
+    let natural = parse_dimen_pt_current(tokens.next()?.trim(), units)?;
+    let mut stretch_pt = 0.0;
+    let mut shrink_pt = 0.0;
+    let mut seen_plus = false;
+    let mut seen_minus = false;
+    while let Some(token) = tokens.next() {
+        let (keyword, attached) = if let Some(rest) = token.strip_prefix("plus") {
+            ("plus", rest)
+        } else if let Some(rest) = token.strip_prefix("minus") {
+            ("minus", rest)
+        } else {
+            return None;
+        };
+        let dimen_text = if attached.is_empty() {
+            tokens.next()?.trim()
+        } else {
+            attached.trim()
+        };
+        let dimen = parse_dimen_pt_current(dimen_text, units)?;
+        match keyword {
+            "plus" if !seen_plus => {
+                seen_plus = true;
+                stretch_pt = dimen;
+            }
+            "minus" if !seen_minus => {
+                seen_minus = true;
+                shrink_pt = dimen;
+            }
+            _ => return None,
+        }
+    }
+    Some((natural, stretch_pt, shrink_pt))
 }
 
 /// True when `content` (already trimmed) is safe for the unsupported-command
@@ -1434,13 +1525,19 @@ fn looks_like_recoverable_argument(content: &str) -> bool {
 }
 
 /// Plain TeX's conventional `\smallskipamount`/`\medskipamount`/
-/// `\bigskipamount`, in points. Real TeX also gives each a `plus`/`minus`
-/// stretch component; this layout model has no rubber lengths (see
-/// `Block::VSpace`, which `\vspace` already feeds a flat point value), so
-/// these are the flat amounts with the stretch/shrink honestly dropped.
+/// `\bigskipamount`: 3pt plus 1pt minus 1pt, 6pt plus 2pt minus 2pt, and 12pt
+/// plus 4pt minus 4pt. The rubber lengths are carried on [`Block::VSpace`]
+/// (this layout sets only the natural length; threading stretch/shrink into
+/// page breaking is the render pipeline's job).
 const SMALL_SKIP_PT: f64 = 3.0;
+const SMALL_SKIP_STRETCH_PT: f64 = 1.0;
+const SMALL_SKIP_SHRINK_PT: f64 = 1.0;
 const MEDIUM_SKIP_PT: f64 = 6.0;
+const MEDIUM_SKIP_STRETCH_PT: f64 = 2.0;
+const MEDIUM_SKIP_SHRINK_PT: f64 = 2.0;
 const BIG_SKIP_PT: f64 = 12.0;
+const BIG_SKIP_STRETCH_PT: f64 = 4.0;
+const BIG_SKIP_SHRINK_PT: f64 = 4.0;
 
 /// Project-relative paths only: no absolute paths or parent traversal.
 pub(crate) fn path_is_safe(path: &str) -> bool {
@@ -1791,6 +1888,10 @@ pub fn parse_project_with(
         page_color: None,
         fboxsep_pt: 3.0,
         fboxrule_pt: 0.4,
+        length_scopes: Vec::new(),
+        pending_global: false,
+        latin_modern: false,
+        preamble_latin_modern: false,
         parameters: Vec::new(),
         parameter_scopes: Vec::new(),
         hyphenation: Vec::new(),
@@ -1853,6 +1954,13 @@ fn gap_is_blank(documents: &[SourceDocument<'_>], a: Span, b: Span) -> bool {
         .is_some_and(|gap| gap.chars().all(char::is_whitespace))
 }
 
+#[derive(Clone, Copy)]
+struct LengthScope {
+    parskip_pt: Option<f64>,
+    fboxsep_pt: f64,
+    fboxrule_pt: f64,
+}
+
 struct P<'a> {
     /// Nesting of [`P::parse_stream`] (see [`STREAM_DEPTH_LIMIT`]).
     stream_depth: usize,
@@ -1908,6 +2016,15 @@ struct P<'a> {
     /// `\fboxsep`/`\fboxrule` in TeX points (latex.ltx: 3pt, 0.4pt).
     fboxsep_pt: f64,
     fboxrule_pt: f64,
+    /// Length values saved at `{`/`}` and environment boundaries.
+    length_scopes: Vec<LengthScope>,
+    /// A pass-through `\global` waiting for a parser-owned length assignment.
+    pending_global: bool,
+    /// `\usepackage{lmodern}` selects Latin Modern from `\begin{document}`;
+    /// a later `\usepackage[T1]{fontenc}` (`\selectfont`) already in the
+    /// preamble.
+    latin_modern: bool,
+    preamble_latin_modern: bool,
     /// The current text font encoding: OT1 unless `fontenc` selected another
     /// (`text_builtins::fontenc_encoding`).
     font_encoding: Encoding,
@@ -2181,10 +2298,25 @@ impl P<'_> {
                     }
                 }
                 TokenKind::Space | TokenKind::Comment => self.i += 1,
-                TokenKind::Word(word) if control_symbol_kern(&word, tok.span, self.math_packages.amsmath).is_some() => {
+                TokenKind::Word(word)
+                    if control_symbol_kern(
+                        &word,
+                        input.maps_to_invocation,
+                        input.definition,
+                        tok.span,
+                        self.math_packages.amsmath,
+                    )
+                    .is_some() =>
+                {
                     self.i += 1;
                     if render {
-                        if let Some(amount) = control_symbol_kern(&word, tok.span, self.math_packages.amsmath) {
+                        if let Some(amount) = control_symbol_kern(
+                            &word,
+                            input.maps_to_invocation,
+                            input.definition,
+                            tok.span,
+                            self.math_packages.amsmath,
+                        ) {
                             para.push(Inline::Kern {
                                 amount,
                                 span: tok.span,
@@ -2269,6 +2401,7 @@ impl P<'_> {
                         if let Some(alignment) = self.alignment_stack.pop() {
                             self.declared_alignment = alignment;
                         }
+                        self.restore_length_scope();
                     }
                 }
                 TokenKind::MathShift if render => self.dollar_math(tok.span, para),
@@ -2363,8 +2496,16 @@ impl P<'_> {
             return;
         }
 
+        if name == "global" {
+            self.pending_global = true;
+            return;
+        }
+
         match name {
             "documentclass" => self.document_class(span),
+            // The expansion engine already consumes `\global` for registers,
+            // `\advance`, `\let` and definitions. Undefined length names are
+            // deliberately passed through so this parser can consume them.
             "setlength" => self.set_length(span),
             "addtolength" => self.add_to_length(span),
             "usepackage" => self.use_package(span),
@@ -2667,11 +2808,24 @@ impl P<'_> {
                 }
             }
             _ if self.has_document && !self.in_body && is_preamble_length(name) => {
-                self.length_assignment(name, span)
+                let global = std::mem::take(&mut self.pending_global);
+                self.length_assignment(name, span, global);
+            }
+            // The TeX assignment form of the lengths this parser keeps
+            // (`\fboxsep=2pt`) anywhere, and of `\parskip` in the body, where
+            // it reports the same "not implemented" warning as `\setlength`.
+            _ if (is_table_length(name) || matches!(name, "fboxsep" | "fboxrule" | "parskip"))
+                && self.dimension_follows() =>
+            {
+                let global = std::mem::take(&mut self.pending_global);
+                self.length_assignment(name, span, global);
             }
             // `\tabcolsep=2pt`, in the preamble or the body (see
             // `TABLE_LENGTHS`).
-            _ if is_table_length(name) => self.length_assignment(name, span),
+            _ if is_table_length(name) => {
+                let global = std::mem::take(&mut self.pending_global);
+                self.length_assignment(name, span, global);
+            }
             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
             "num" | "qty" | "unit" | "si" | "SI" | "numlist" | "numrange" | "qtylist"
             | "qtyrange" | "SIlist" | "SIrange" | "ang" => self.siunitx(name, span, para),
@@ -3083,6 +3237,47 @@ impl P<'_> {
                     });
                 }
             }
+            // amsmath `\nobreakdash`: the hyphens right after it are set in
+            // an `\hbox`, where TeX appends no discretionary after a hyphen
+            // (§1039 does so only in unrestricted horizontal mode), and
+            // unboxed before a `\nobreak`: `\nobreakdash-`, `--` and `---`
+            // cannot end a line. Blanks after the control word are no tokens
+            // to `\futurelet`.
+            "nobreakdash" => {
+                self.skip_spaces();
+                let dashes = match self.peek().map(|token| &token.kind) {
+                    Some(TokenKind::Word(word)) => word.len() - word.trim_start_matches('-').len(),
+                    _ => 0,
+                };
+                if dashes > 0 {
+                    let token = self.t[self.i].token.span;
+                    let length = match &self.t[self.i].token.kind {
+                        TokenKind::Word(word) => word.len(),
+                        _ => 0,
+                    };
+                    let dash_span = if token.end - token.start == length {
+                        Span::in_document(token.document, token.start, token.start + dashes)
+                    } else {
+                        token
+                    };
+                    para.push(Inline::Text {
+                        text: apply_text_ligatures(&"-".repeat(dashes)),
+                        span: dash_span,
+                        style: self.style,
+                        space_before: false,
+                    });
+                    if dashes == length {
+                        self.i += 1;
+                    } else {
+                        self.trim_word_front(dashes);
+                    }
+                }
+                para.push(Inline::Penalty {
+                    value: INF_PENALTY,
+                    span,
+                    unskip: false,
+                });
+            }
             // latex.ltx `\discretionary` is TeX's primitive; `\-` is
             // `\discretionary{\char\hyphenchar\font}{}{}`.
             "-" => para.push(Inline::Discretionary {
@@ -3116,13 +3311,34 @@ impl P<'_> {
                 // never does anyway (see the `Inline::HSpace` comment), so
                 // both forms are parsed identically.
                 let _starred = self.take_optional_star();
+                // A source space starts an interword gap only when this is
+                // not the first item in the current horizontal run. Spaces
+                // after row/line commands are otherwise mistaken for glue
+                // before the first cell item.
+                let space_before = !para.is_empty() && self.space_precedes(self.i - 1);
                 let (tokens, argument_span) = self.required_group(name, span);
                 let raw = token_text(&tokens);
-                match parse_dimen_pt(&raw) {
-                    Some(pt) => para.push(Inline::HSpace {
-                        pt,
-                        span: span.merge(argument_span),
-                    }),
+                let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+                match parse_dimen_pt_current(&raw, self.font_setup().em_ex_sp(self.style)) {
+                    Some(pt) => {
+                        let space_after = matches!(
+                            self.t.get(self.i).map(|input| &input.token.kind),
+                            Some(TokenKind::Space)
+                        );
+                        let size = self.style.size.map_or(body, |level| {
+                            crate::layout::size_declaration_pt(level, body)
+                        });
+                        let word_space = crate::layout::word_space(
+                            size,
+                            crate::layout::style_font(self.style),
+                        );
+                        para.push(Inline::HSpace {
+                            pt,
+                            space_before_pt: if space_before { word_space } else { 0.0 },
+                            space_after_pt: if space_after { word_space } else { 0.0 },
+                            span: span.merge(argument_span),
+                        });
+                    }
                     None => self.diags.push(Diagnostic::error(
                         format!(
                             "\\hspace requires a recognised dimension, got '{}'",
@@ -3160,13 +3376,25 @@ impl P<'_> {
             }),
             "par" => self.flush_paragraph(blocks, para),
             "bigskip" | "medskip" | "smallskip" => {
-                let pt = match name {
-                    "bigskip" => BIG_SKIP_PT,
-                    "medskip" => MEDIUM_SKIP_PT,
-                    _ => SMALL_SKIP_PT,
+                let (pt, stretch_pt, shrink_pt) = match name {
+                    "bigskip" => (BIG_SKIP_PT, BIG_SKIP_STRETCH_PT, BIG_SKIP_SHRINK_PT),
+                    "medskip" => (
+                        MEDIUM_SKIP_PT,
+                        MEDIUM_SKIP_STRETCH_PT,
+                        MEDIUM_SKIP_SHRINK_PT,
+                    ),
+                    _ => (
+                        SMALL_SKIP_PT,
+                        SMALL_SKIP_STRETCH_PT,
+                        SMALL_SKIP_SHRINK_PT,
+                    ),
                 };
                 self.flush_paragraph(blocks, para);
-                blocks.push(Block::VSpace { pt });
+                blocks.push(Block::VSpace {
+                    pt,
+                    stretch_pt,
+                    shrink_pt,
+                });
                 self.finish_block_dependencies();
             }
             "vspace" => {
@@ -3180,11 +3408,15 @@ impl P<'_> {
                 let _starred = self.take_optional_star();
                 let (tokens, argument_span) = self.required_group(name, span);
                 let raw = token_text(&tokens);
-                let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-                match parse_dimen_pt_at(&raw, body) {
-                    Some(pt) => {
+                let units = self.font_setup().em_ex_sp(self.style);
+                match parse_glue_pt_current(&raw, units) {
+                    Some((pt, stretch_pt, shrink_pt)) => {
                         self.flush_paragraph(blocks, para);
-                        blocks.push(Block::VSpace { pt });
+                        blocks.push(Block::VSpace {
+                            pt,
+                            stretch_pt,
+                            shrink_pt,
+                        });
                         self.finish_block_dependencies();
                     }
                     None => self.diags.push(Diagnostic::error(
@@ -3223,7 +3455,10 @@ impl P<'_> {
             // `\penalty -\@getpen{n}`/`\penalty \@getpen{n}` in vertical mode,
             // `\vadjust{\penalty ...}` in a paragraph, which is not broken:
             // the penalty lands after the line the command is set on. A
-            // vertical-mode `\pagebreak` with priority 4 keeps its own block.
+            // vertical-mode `\pagebreak` with priority 4 is a bare
+            // `\penalty-10000`, not `\newpage`: there is no `\vfil` before
+            // it, so a `\flushbottom` page it ends is stretched to
+            // `\textheight`.
             "pagebreak" | "nopagebreak" => {
                 let (priority, bracket) = self.break_priority_penalty();
                 let span = bracket.map_or(span, |bracket| span.merge(bracket));
@@ -3234,9 +3469,6 @@ impl P<'_> {
                 };
                 if !para.is_empty() {
                     para.push(Inline::PagePenalty { value, span });
-                } else if value <= EJECT_PENALTY {
-                    blocks.push(Block::PageBreak);
-                    self.finish_block_dependencies();
                 } else {
                     blocks.push(Block::Penalty {
                         value,
@@ -3336,6 +3568,7 @@ impl P<'_> {
             .with_label(span, "this command", true)),
             other => self.unsupported(other, span),
         }
+        self.pending_global = false;
     }
 
     /// `\xspace` (xspace.sty) in running text: a word space unless the token
@@ -3516,8 +3749,9 @@ impl P<'_> {
     }
 
     /// `\setlength{\parskip}{..}` and `\setlength{\parindent}{..}` in the
-    /// preamble. `em`/`ex` resolve against the class body size. This engine
-    /// never indents paragraphs, so only a zero `\parindent` is exact.
+    /// preamble. `em`/`ex` resolve against the active style's compiler font
+    /// metrics. This engine never indents paragraphs, so only a zero
+    /// `\parindent` is exact.
     /// Page-geometry lengths (`\textwidth`, `\oddsidemargin`, ...) are
     /// accepted in the preamble without a diagnostic; the render pipeline
     /// applies them from the source.
@@ -3530,6 +3764,9 @@ impl P<'_> {
     }
 
     fn length_command(&mut self, command: &str, span: Span, add: bool) {
+        // `\global\setlength{\x}{..}`: `\setlength` is a macro, so TeX
+        // applies the prefix to the register assignment it expands to.
+        let global = std::mem::take(&mut self.pending_global);
         let (target_tokens, _) = self.required_group(command, span);
         let (value_tokens, value_span) = self.required_group(command, span);
         let span = span.merge(value_span);
@@ -3538,12 +3775,12 @@ impl P<'_> {
             .trim_start_matches('\\')
             .to_string();
         let raw = dimen_source(&value_tokens);
-        self.apply_length_value(command, &target, &raw, span, add);
+        self.apply_length_value(command, &target, &raw, span, add, global);
     }
 
     /// A TeX assignment `\textwidth=6in` / `\textwidth 6in` in the preamble.
-    fn length_assignment(&mut self, name: &str, span: Span) {
-        let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+    fn length_assignment(&mut self, name: &str, span: Span, global: bool) {
+        let units = self.font_setup().em_ex_sp(self.style);
         let mut raw = String::new();
         let mut end = span;
         loop {
@@ -3557,7 +3794,7 @@ impl P<'_> {
                     raw.push_str(word);
                     end = end.merge(tok.span);
                     self.i += 1;
-                    if parse_dimen_pt_at(&raw, body).is_some() {
+                    if parse_dimen_pt_current(&raw, units).is_some() {
                         break;
                     }
                 }
@@ -3569,7 +3806,7 @@ impl P<'_> {
                     raw.push_str(cmd);
                     end = end.merge(tok.span);
                     self.i += 1;
-                    if parse_dimen_pt_at(&raw, body).is_some() {
+                    if parse_dimen_pt_current(&raw, units).is_some() {
                         break;
                     }
                 }
@@ -3579,7 +3816,7 @@ impl P<'_> {
                 break;
             }
         }
-        self.apply_length_value("", name, &raw, end, false);
+        self.apply_length_value("", name, &raw, end, false, global);
     }
 
     fn resolve_known_length_ref(&self, raw: &str) -> Option<f64> {
@@ -3593,9 +3830,16 @@ impl P<'_> {
         Some(scale * base)
     }
 
-    fn apply_length_value(&mut self, command: &str, target: &str, raw: &str, span: Span, add: bool) {
-        let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-        let Some(pt) = parse_dimen_pt_at(raw, body) else {
+    fn apply_length_value(
+        &mut self,
+        command: &str,
+        target: &str,
+        raw: &str,
+        span: Span,
+        add: bool,
+        global: bool,
+    ) {
+        let Some(pt) = parse_dimen_pt_current(raw, self.font_setup().em_ex_sp(self.style)) else {
             let who = if command.is_empty() {
                 format!("\\{target}")
             } else {
@@ -3628,7 +3872,7 @@ impl P<'_> {
             pt
         };
         match target {
-            // Read by `\colorbox`/`\fcolorbox` (not group-scoped here).
+            // Read by `\colorbox`/`\fcolorbox`; scoped by `length_scopes`.
             "fboxsep" => {
                 self.fboxsep_pt = if add { self.fboxsep_pt + pt } else { pt };
             }
@@ -3662,12 +3906,17 @@ impl P<'_> {
             name if in_preamble && is_preamble_length(name) => {}
             name if is_table_length(name) => {}
             _ => self.diags.push(Diagnostic::warning(
-                format!(
-                    "\\{command}{{\\{target}}} is recognised but not implemented here"
-                ),
+                if command.is_empty() {
+                    format!("\\{target} assignment is recognised but not implemented here")
+                } else {
+                    format!("\\{command}{{\\{target}}} is recognised but not implemented here")
+                },
                 Some(span),
                 Some("ignored the length assignment".into()),
             )),
+        }
+        if global {
+            self.globalize_length(target);
         }
     }
 
@@ -4020,9 +4269,13 @@ impl P<'_> {
                 Some("multicols is set inside the page column".into()),
             ));
         }
+        if packages.iter().any(|package| package == "lmodern") {
+            self.latin_modern = true;
+        }
         if packages.iter().any(|package| package == "fontenc") {
             if let Some(encoding) = text_builtins::fontenc_encoding(&options) {
                 self.font_encoding = encoding;
+                self.preamble_latin_modern = self.latin_modern;
             }
         }
         if let Some(raw) = raw_options.filter(|_| packages.iter().any(|p| p == "siunitx")) {
@@ -4875,6 +5128,7 @@ impl P<'_> {
             self.env_stack
                 .push((environment.clone(), span.merge(argument_span)));
             self.env_styles.push(self.style);
+            self.length_scopes.push(self.length_state());
             if self.in_body {
                 if let Some(theorem) = self.theorems.get(&environment).cloned() {
                     self.begin_theorem(&theorem, &environment, span, para);
@@ -5051,6 +5305,7 @@ impl P<'_> {
             if let Some(style) = self.env_styles.pop() {
                 self.style = style;
             }
+            self.restore_length_scope();
         }
     }
 
@@ -6734,6 +6989,49 @@ impl P<'_> {
         self.parameter_scopes.push(Vec::new());
         self.style_stack.push(self.style);
         self.alignment_stack.push(self.declared_alignment);
+        self.length_scopes.push(self.length_state());
+    }
+
+    /// The NFSS inputs `em`/`ex` depend on (see [`crate::font_units`]).
+    fn font_setup(&self) -> FontSetup {
+        let in_preamble = self.has_document && !self.in_body;
+        FontSetup::new(
+            self.class_size_pt,
+            self.font_encoding == Encoding::T1,
+            if in_preamble {
+                self.preamble_latin_modern
+            } else {
+                self.latin_modern
+            },
+        )
+    }
+
+    fn length_state(&self) -> LengthScope {
+        LengthScope {
+            parskip_pt: self.parskip_pt,
+            fboxsep_pt: self.fboxsep_pt,
+            fboxrule_pt: self.fboxrule_pt,
+        }
+    }
+
+    fn restore_length_scope(&mut self) {
+        if let Some(scope) = self.length_scopes.pop() {
+            self.parskip_pt = scope.parskip_pt;
+            self.fboxsep_pt = scope.fboxsep_pt;
+            self.fboxrule_pt = scope.fboxrule_pt;
+        }
+    }
+
+    fn globalize_length(&mut self, target: &str) {
+        let current = self.length_state();
+        for scope in &mut self.length_scopes {
+            match target {
+                "parskip" => scope.parskip_pt = current.parskip_pt,
+                "fboxsep" => scope.fboxsep_pt = current.fboxsep_pt,
+                "fboxrule" => scope.fboxrule_pt = current.fboxrule_pt,
+                _ => {}
+            }
+        }
     }
 
     fn inlines_from_tokens(&mut self, mut tokens: Vec<InputToken>, base: TextStyle) -> Vec<Inline> {
@@ -6855,8 +7153,23 @@ impl P<'_> {
                         style = previous;
                     }
                 }
-                TokenKind::Word(text) if control_symbol_kern(text, input.token.span, self.math_packages.amsmath).is_some() => {
-                    if let Some(amount) = control_symbol_kern(text, input.token.span, self.math_packages.amsmath) {
+                TokenKind::Word(text)
+                    if control_symbol_kern(
+                        text,
+                        input.maps_to_invocation,
+                        input.definition,
+                        input.token.span,
+                        self.math_packages.amsmath,
+                    )
+                    .is_some() =>
+                {
+                    if let Some(amount) = control_symbol_kern(
+                        text,
+                        input.maps_to_invocation,
+                        input.definition,
+                        input.token.span,
+                        self.math_packages.amsmath,
+                    ) {
                         content.push(Inline::Kern {
                             amount,
                             span: input.token.span,
@@ -6887,6 +7200,49 @@ impl P<'_> {
                     span: input.token.span,
                     skip_pt: None,
                 }),
+                TokenKind::Command(name) if name == "hspace" => {
+                    let mut next = index + 1;
+                    if matches!(
+                        expanded.get(next).map(|input| &input.token.kind),
+                        Some(TokenKind::Word(word)) if word == "*"
+                    ) {
+                        next += 1;
+                    }
+                    if let Some((raw, argument_span, after)) = siunitx_group_at(&expanded, next) {
+                        skip_until = after;
+                        let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
+                        if let Some(pt) = parse_dimen_pt_current(&raw, self.font_setup().em_ex_sp(style)) {
+                            let space_after = matches!(
+                                expanded.get(after).map(|input| &input.token.kind),
+                                Some(TokenKind::Space)
+                            );
+                            let size = style
+                                .size
+                                .map_or(body, |level| crate::layout::size_declaration_pt(level, body));
+                            let word_space =
+                                crate::layout::word_space(size, crate::layout::style_font(style));
+                            content.push(Inline::HSpace {
+                                pt,
+                                space_before_pt: if !content.is_empty() && space_before {
+                                    word_space
+                                } else {
+                                    0.0
+                                },
+                                space_after_pt: if space_after { word_space } else { 0.0 },
+                                span: input.token.span.merge(argument_span),
+                            });
+                        } else {
+                            self.diags.push(Diagnostic::error(
+                                format!(
+                                    "\\hspace requires a recognised dimension, got '{}'",
+                                    raw.trim()
+                                ),
+                                Some(input.token.span.merge(argument_span)),
+                                Some("ignored the malformed \\hspace argument".into()),
+                            ));
+                        }
+                    }
+                }
                 // `\hfill`/`\hfil` take no argument, so — unlike `\hspace`,
                 // which needs a following brace group this flat,
                 // one-token-at-a-time pass has no way to consume — they fit
@@ -7961,6 +8317,18 @@ impl P<'_> {
         self.push_list_frame(kind, effective, begin_span);
     }
 
+    /// The next non-space token starts a `<dimen>` (`=2pt`, `2pt`, `-.5em`):
+    /// a length command is being assigned rather than read.
+    fn dimension_follows(&self) -> bool {
+        self.t[self.i..]
+            .iter()
+            .find(|input| !matches!(input.token.kind, TokenKind::Space | TokenKind::Comment))
+            .is_some_and(|input| {
+                matches!(&input.token.kind, TokenKind::Word(word)
+                    if word.starts_with(|c: char| c == '=' || c == '.' || c == '-' || c == '+' || c.is_ascii_digit()))
+            })
+    }
+
     fn skip_spaces(&mut self) {
         while matches!(
             self.peek().map(|token| &token.kind),
@@ -8606,7 +8974,23 @@ fn preamble_source(text: &str, has_document: bool, tokens: &[InputToken]) -> Str
 
 /// The kern a control-symbol token (`\,` lexed as the word `,` with a
 /// two-byte span, the same test `math.rs` uses) stands for in text mode.
-fn control_symbol_kern(word: &str, span: Span, amsmath: bool) -> Option<TextDimen> {
+///
+/// The width is measured on the token's own source bytes: text expanded
+/// from a macro body carries the invocation's span, so a plain `,` inside
+/// `\newcommand{\w}{...}` looks two bytes wide (the `\w`) and must be
+/// measured by its definition bytes instead, or it is mistaken for `\,`
+/// and swallowed as an invisible kern.
+fn control_symbol_kern(
+    word: &str,
+    maps_to_invocation: bool,
+    definition: Option<Span>,
+    span: Span,
+    amsmath: bool,
+) -> Option<TextDimen> {
+    // Expanded text without definition bytes (synthesised by the engine)
+    // cannot prove it spells a control symbol; typeset it rather than risk
+    // swallowing real punctuation as a kern.
+    let span = if maps_to_invocation { definition? } else { span };
     let mut chars = word.chars();
     match (chars.next(), chars.next()) {
         (Some(c), None)
@@ -9358,6 +9742,63 @@ mod tests {
         }
     }
 
+    /// pdflatex (TeX Live 2026, `\flushbottom`, 30 one-line paragraphs):
+    /// after `\pagebreak` the page is stretched to `\textheight` (the last
+    /// baseline moves 13 bp down, `Underfull \vbox`), after `\newpage` its
+    /// glue stays natural. latex.ltx: `\pagebreak` is `\penalty-\@M`,
+    /// `\newpage` puts `\vfil` in front of it.
+    #[test]
+    fn vertical_pagebreak_is_a_bare_penalty_newpage_is_not() {
+        let parsed = parse("One.\n\n\\pagebreak\n\nTwo.\n\n\\newpage\n\nThree.");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert!(
+            matches!(
+                parsed.blocks.as_slice(),
+                [
+                    Block::Paragraph(_),
+                    Block::Penalty {
+                        value: -10000,
+                        fil: false,
+                        ..
+                    },
+                    Block::Paragraph(_),
+                    Block::PageBreak,
+                    Block::Paragraph(_)
+                ]
+            ),
+            "{:?}",
+            parsed.blocks
+        );
+    }
+
+    /// amsmath `\nobreakdash`: `\setboxz@h{--\nobreak}\unhbox\z@`. pdflatex:
+    /// with `pages 113--213` breaking after `113–` in a control paragraph,
+    /// `113\nobreakdash--213` never ends a line with the dash.
+    #[test]
+    fn nobreakdash_sets_its_dashes_and_then_nobreak() {
+        let parsed =
+            parse("pages 1\\nobreakdash--10, well\\nobreakdash- known, x\\nobreakdash---y");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let Some(Block::Paragraph(inlines)) = parsed.blocks.first() else {
+            panic!("{:?}", parsed.blocks)
+        };
+        let seq: Vec<String> = inlines
+            .iter()
+            .map(|i| match i {
+                Inline::Text { text, .. } => text.clone(),
+                Inline::Penalty { value, .. } => format!("<{value}>"),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            seq,
+            [
+                "pages", "1", "\u{2013}", "<10000>", "10,", "well", "-", "<10000>", "known,", "x",
+                "\u{2014}", "<10000>", "y"
+            ]
+        );
+    }
+
     #[test]
     fn pagebreak_inside_a_paragraph_ends_the_page_after_its_line_not_the_paragraph() {
         for command in [r"\pagebreak", r"\pagebreak[4]"] {
@@ -9754,6 +10195,72 @@ mod tests {
             positions(&starred),
             "\\vspace* must lay out identically to \\vspace on this non-breaking layout"
         );
+    }
+
+    /// The single `Block::VSpace` a source with one vertical skip parses to,
+    /// as its `(pt, stretch_pt, shrink_pt)` triple.
+    fn single_vspace_pt(source: &str) -> (Parsed, (f64, f64, f64)) {
+        let parsed = parse(source);
+        let triple = parsed
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::VSpace {
+                    pt,
+                    stretch_pt,
+                    shrink_pt,
+                } => Some((*pt, *stretch_pt, *shrink_pt)),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected one Block::VSpace, got {:?}", parsed.blocks));
+        (parsed, triple)
+    }
+
+    /// `\bigskip`/`\medskip`/`\smallskip` carry real LaTeX's rubber lengths:
+    /// 12pt plus 4pt minus 4pt, 6pt plus 2pt minus 2pt, 3pt plus 1pt minus 1pt.
+    #[test]
+    fn skips_carry_their_plus_minus_rubber_lengths() {
+        for (command, want) in [
+            (r"\bigskip", (12.0, 4.0, 4.0)),
+            (r"\medskip", (6.0, 2.0, 2.0)),
+            (r"\smallskip", (3.0, 1.0, 1.0)),
+        ] {
+            let (parsed, got) = single_vspace_pt(&format!(r"One{command} Two"));
+            assert!(parsed.diagnostics.is_empty(), "{command}: {:?}", parsed.diagnostics);
+            assert_eq!(got, want, "{command} must carry its real LaTeX glue triple");
+        }
+    }
+
+    /// `\vspace{<dimen> plus <dimen> minus <dimen>}` reads all three glue
+    /// components; `plus`/`minus` are each optional and may come in either
+    /// order. (`1em` is the active font's quad — with no document class the
+    /// default cmr10's `\fontdimen6`, 10.00002pt — see
+    /// `parse_dimen_pt_current`.)
+    #[test]
+    fn vspace_reads_plus_and_minus_in_either_order() {
+        let em = 655_361.0 / 65_536.0;
+        for (argument, want) in [
+            ("1em plus 1pt minus 2pt", (em, 1.0, 2.0)),
+            ("1em minus 2pt plus 1pt", (em, 1.0, 2.0)),
+            ("1em plus 1pt", (em, 1.0, 0.0)),
+            ("1em minus 2pt", (em, 0.0, 2.0)),
+        ] {
+            let (parsed, got) = single_vspace_pt(&format!(r"One\vspace{{{argument}}}Two"));
+            assert!(parsed.diagnostics.is_empty(), "{argument}: {:?}", parsed.diagnostics);
+            assert!(
+                (got.0 - want.0).abs() < 1e-9 && got.1 == want.1 && got.2 == want.2,
+                "\\vspace{{{argument}}} must parse every glue component: {got:?} vs {want:?}"
+            );
+        }
+    }
+
+    /// A bare `\vspace{1in}` has no rubber length: real TeX gives stretch and
+    /// shrink only when `plus`/`minus` are written.
+    #[test]
+    fn bare_vspace_has_no_rubber_length() {
+        let (parsed, got) = single_vspace_pt(r"One\vspace{1in}Two");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(got, (72.27, 0.0, 0.0), "a bare dimension must not invent stretch/shrink");
     }
 
     #[test]

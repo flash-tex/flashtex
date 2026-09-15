@@ -305,10 +305,11 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
             }
             Item::ItalicCorrection => 6u8.hash(h),
             Item::NoteParBreak => 200u8.hash(h),
-            Item::HFill { fill, leader } => {
+            Item::HFill { fill, leader, style } => {
                 7u8.hash(h);
                 fill.hash(h);
                 leader.hash(h);
+                style.hash(h);
             }
             Item::HSpace { pt, stretch_pt, shrink_pt } => {
                 8u8.hash(h);

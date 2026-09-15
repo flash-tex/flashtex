@@ -501,7 +501,7 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             }
             shift_inlines(content, changes, deltas)
         }
-        Block::VSpace { pt: _ } => Some(()),
+        Block::VSpace { .. } => Some(()),
         Block::Rule { span } => map_span(span, changes, deltas),
         Block::PageBreak => Some(()),
         Block::Verbatim { lines, span } => {
@@ -615,7 +615,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             } => map_span(span, changes, deltas)?,
             Inline::CleverReference { span, .. } => map_span(span, changes, deltas)?,
             Inline::HFill { span, .. } => map_span(span, changes, deltas)?,
-            Inline::HSpace { pt: _, span } => map_span(span, changes, deltas)?,
+            Inline::HSpace { span, .. } => map_span(span, changes, deltas)?,
             Inline::Footnote {
                 number: _,
                 span,
