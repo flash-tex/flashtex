@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""FlashTeX message inbox and thread view over the Beads ledger.
+
+Messages are ordinary `task` beads with labels. Do not use `-t message` or
+--ephemeral: bd 1.2.2 routes those to the local, dolt-ignored wisps table and
+they never reach other machines.
+
+A message:  msg, to:<agent> | to:all | to:machine:<alias>, from:<agent>, thread:<root-id>
+A reply:    a new message bead with the same thread:<root-id> label, linked to
+            the message it answers: bd dep add <reply> <parent> --type relates-to
+Ack:        bd close <id> -r read   (then push; the sync loop also pushes)
+
+Usage:
+  scripts/beads/inbox --agent <id> [--machine <alias>] [--all] [--json]
+      open messages to <id>, to:all and to:machine:<alias>
+  scripts/beads/inbox --thread <root-id> [--json]
+      the root plus every bead labelled thread:<root-id>, oldest first
+
+Output states the ledger freshness from scripts/beads/ledger-status when a
+sync loop status exists.
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+BD = os.path.join(HERE, "bd")
+
+
+def bd_json(args):
+    p = subprocess.run([BD] + args + ["--json"], capture_output=True, text=True)
+    if p.returncode != 0:
+        raise SystemExit(f"inbox: bd {' '.join(args)} failed: {(p.stderr or p.stdout).strip()[-300:]}")
+    out = p.stdout.strip()
+    return json.loads(out) if out else []
+
+
+def freshness():
+    p = subprocess.run([os.path.join(HERE, "ledger-status")], capture_output=True, text=True)
+    return (p.stdout.strip().splitlines() or ["ledger freshness UNKNOWN (no sync-loop status)"])[0]
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--agent")
+    ap.add_argument("--machine", default=os.environ.get("FLASHTEX_MACHINE"))
+    ap.add_argument("--thread")
+    ap.add_argument("--all", action="store_true", help="include closed (acknowledged) messages")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    if not a.machine:
+        try:
+            a.machine = open(os.path.expanduser("~/.config/flashtex/machine")).read().strip()
+        except OSError:
+            a.machine = None
+    if a.thread:
+        root = bd_json(["show", a.thread])
+        root = root[0] if isinstance(root, list) else root
+        rest = bd_json(["list", "-l", f"thread:{a.thread}", "--all", "-n", "0", "--flat"])
+        items = [root] + [i for i in rest if i["id"] != a.thread]
+        items.sort(key=lambda i: i.get("created_at") or "")
+    elif a.agent:
+        targets = [f"to:{a.agent}", "to:all"] + ([f"to:machine:{a.machine}"] if a.machine else [])
+        args = ["list", "-l", "msg", "--label-any", ",".join(targets), "-n", "0", "--flat"]
+        args += ["--all"] if a.all else ["--status", "open,in_progress"]
+        items = bd_json(args)
+        items.sort(key=lambda i: i.get("created_at") or "")
+    else:
+        ap.error("--agent or --thread required")
+    if a.json:
+        print(json.dumps(items, indent=2))
+        return 0
+    print(freshness())
+    for i in items:
+        labels = i.get("labels") or []
+        frm = next((l[5:] for l in labels if l.startswith("from:")), "?")
+        to = ",".join(l[3:] for l in labels if l.startswith("to:"))
+        print(f"{i['id']}  [{i.get('status')}]  {i.get('created_at')}  from={frm} to={to}  {i.get('title')}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

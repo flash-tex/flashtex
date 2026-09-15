@@ -1,0 +1,27 @@
+# FlashTeX Beads machine sync loop (systemd --user unit, Linux/NixOS).
+# Manual install without sudo:
+#   mkdir -p ~/.config/systemd/user
+#   sed "s#@REPO@#/abs/path/to/main/clone#g" scripts/beads/service/flashtex-beads-sync.service \
+#     > ~/.config/systemd/user/flashtex-beads-sync.service
+#   systemctl --user daemon-reload && systemctl --user enable --now flashtex-beads-sync
+# To run while logged out, lingering is needed: `loginctl enable-linger $USER`
+# (may require polkit/sudo), or services.* in the system config.
+# Restart policy: restarts on failure (network exits), but exit 2 (needs_operator)
+# is listed in RestartPreventExitStatus, so an operator must clear
+# ~/.local/state/flashtex-beads/HOLD and restart.
+[Unit]
+Description=FlashTeX Beads ledger sync loop
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+Environment=FLASHTEX_BEADS_STATE=%h/.local/state/flashtex-beads
+Environment=PATH=%h/.local/share/flashtex-beads/bin:%h/.nix-profile/bin:/run/current-system/sw/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env python3 @REPO@/scripts/beads/sync-loop --repo @REPO@ --max-backoff 60
+Restart=on-failure
+RestartSec=30
+RestartPreventExitStatus=2 75
+
+[Install]
+WantedBy=default.target

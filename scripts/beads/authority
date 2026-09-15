@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""FlashTeX Commander authority record in Beads (bead $FLASHTEX_AUTHORITY_BEAD, default ft-authority).
+
+The record lives in the bead's metadata:
+  commander_id, machine, authority_state (active|handoff|vacant), epoch,
+  claim_mode, claim_evidence, designated_successor, updated_utc, heartbeat_utc,
+  bd_pin, dolt_pin, upgrade_state
+
+scripts/beads/bd reads `machine` and `authority_state` to decide whether
+migrations are allowed on this machine.
+
+Subcommands:
+  show
+      print the record and the heartbeat age
+  heartbeat --actor ID
+      Commander only: refresh heartbeat_utc, then push
+  handoff --actor ID --to ID
+      Commander only: set authority_state=handoff and designated_successor
+  claim --actor ID --machine ALIAS --mode MODE --evidence TEXT
+      MODE is handoff, verified-termination or user-directed. Steps:
+        1. pull and read
+        2. check eligibility
+        3. write epoch+1, commander_id, machine and authority_state=active
+        4. push, never --force
+        5. pull again, re-read, and confirm this actor holds the new epoch
+      A rejected push or a lost collision means another claimant won. The
+      tool re-reads and stands down (exit 1).
+
+Eligibility (AGENTS.md gates, unchanged):
+  * handoff: the record must say authority_state=handoff with
+    designated_successor=<actor>.
+  * verified-termination and user-directed: the tool cannot verify these
+    itself. --evidence must describe the independent verification (exact
+    session/process terminated and publishers stopped) or quote the user
+    instruction. It is recorded verbatim.
+A stale heartbeat is NEVER sufficient on its own. `show` reports its age only
+as a prompt to investigate.
+
+Exit codes: 0 ok, 1 not eligible / lost / stood down, 3 transport error (NOT counted).
+"""
+import argparse
+import datetime as dt
+import json
+import os
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+BD = os.path.join(HERE, "bd")
+BEAD = os.environ.get("FLASHTEX_AUTHORITY_BEAD", "ft-authority")
+
+
+def now():
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def bd(args):
+    p = subprocess.run([BD] + args, capture_output=True, text=True)
+    return p.returncode, p.stdout + p.stderr
+
+
+def read():
+    rc, out = bd(["show", BEAD, "--json"])
+    if rc != 0:
+        raise SystemExit(f"authority: cannot read {BEAD}: {out.strip()[-200:]}")
+    d = json.loads(out[out.index("["):] if "[" in out else out)
+    d = d[0] if isinstance(d, list) else d
+    m = d.get("metadata") or {}
+    return json.loads(m) if isinstance(m, str) else m
+
+
+def pull():
+    rc, out = bd(["dolt", "pull"])
+    if rc != 0 and "require operator resolution" in out:
+        return "wedged"
+    return "ok" if rc == 0 else "error: " + out.strip()[-200:]
+
+
+def push_with_retry(attempts=6):
+    for i in range(1, attempts + 1):
+        rc, out = bd(["dolt", "push"])
+        if rc == 0:
+            return "ok"
+        if "rejected" not in out and "non-fast-forward" not in out and "Integrate the remote" not in out:
+            return "error: " + out.strip()[-200:]
+        p = pull()
+        if p != "ok":
+            return p
+        time.sleep(0.5 * i)
+    return "rejected"
+
+
+def set_meta(pairs):
+    args = ["update", BEAD]
+    for k, v in pairs.items():
+        args += ["--set-metadata", f"{k}={v}"]
+    rc, out = bd(args)
+    if rc != 0:
+        raise SystemExit(f"authority: update failed: {out.strip()[-300:]}")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("show")
+    h = sub.add_parser("heartbeat"); h.add_argument("--actor", required=True)
+    o = sub.add_parser("handoff"); o.add_argument("--actor", required=True); o.add_argument("--to", required=True)
+    c = sub.add_parser("claim")
+    c.add_argument("--actor", required=True)
+    c.add_argument("--machine", required=True)
+    c.add_argument("--mode", required=True, choices=["handoff", "verified-termination", "user-directed"])
+    c.add_argument("--evidence", required=True)
+    c.add_argument("--no-pull", action="store_true", help="drill only: skip the initial pull")
+    a = ap.parse_args()
+
+    if a.cmd == "show":
+        p = pull()
+        m = read()
+        age = None
+        if m.get("heartbeat_utc"):
+            age = int(time.time() - dt.datetime.strptime(m["heartbeat_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc).timestamp())
+        print(json.dumps(dict(m, pull=p, heartbeat_age_seconds=age,
+                              note="a stale heartbeat is only a prompt to investigate, never grounds to claim"), indent=2))
+        return 0
+
+    if a.cmd in ("heartbeat", "handoff"):
+        if pull() != "ok":
+            print("authority: pull failed; not writing", file=sys.stderr)
+            return 3
+        m = read()
+        if m.get("commander_id") != a.actor or m.get("authority_state") not in ("active", "handoff"):
+            print(f"authority: {a.actor} is not the Commander (record: {m.get('commander_id')}, {m.get('authority_state')})", file=sys.stderr)
+            return 1
+        if a.cmd == "heartbeat":
+            set_meta({"heartbeat_utc": now()})
+        else:
+            set_meta({"authority_state": "handoff", "designated_successor": a.to, "updated_utc": now()})
+        r = push_with_retry()
+        print(json.dumps({"cmd": a.cmd, "push": r}))
+        return 0 if r == "ok" else 3
+
+    # claim
+    if not a.no_pull:
+        p = pull()
+        if p != "ok":
+            print(json.dumps({"result": "NOT_COUNTED_pull", "pull": p}))
+            return 3
+    m = read()
+    old_epoch = int(m.get("epoch") or 0)
+    if a.mode == "handoff" and not (m.get("authority_state") == "handoff" and m.get("designated_successor") == a.actor):
+        print(json.dumps({"result": "NOT_ELIGIBLE", "reason": "no handoff naming this actor", "record": m}))
+        return 1
+    if a.mode != "handoff" and len(a.evidence.strip()) < 20:
+        print(json.dumps({"result": "NOT_ELIGIBLE", "reason": "evidence too thin; describe the verification or quote the instruction"}))
+        return 1
+    new_epoch = old_epoch + 1
+    ts = now()
+    set_meta({"epoch": new_epoch, "commander_id": a.actor, "machine": a.machine, "authority_state": "active",
+              "claim_mode": a.mode, "claim_evidence": a.evidence, "designated_successor": "",
+              "previous_commander_id": m.get("commander_id", ""), "updated_utc": ts, "heartbeat_utc": ts})
+    r = push_with_retry()
+    if r == "wedged":
+        print(json.dumps({"result": "LOST_collision_stand_down", "note": "sync loop recovers (remote wins); re-read after recovery"}))
+        return 1
+    if r != "ok":
+        print(json.dumps({"result": "NOT_COUNTED_push", "push": r}))
+        return 3
+    if pull() != "ok":
+        print(json.dumps({"result": "NOT_COUNTED_reread_pull_failed"}))
+        return 3
+    after = read()
+    if after.get("commander_id") == a.actor and int(after.get("epoch") or 0) == new_epoch and after.get("machine") == a.machine:
+        print(json.dumps({"result": "CLAIMED", "epoch": new_epoch, "previous": m.get("commander_id"), "mode": a.mode}))
+        return 0
+    print(json.dumps({"result": "STOOD_DOWN", "record_commander": after.get("commander_id"), "record_epoch": after.get("epoch")}))
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

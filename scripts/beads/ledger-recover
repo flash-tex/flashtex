@@ -1,0 +1,477 @@
+#!/usr/bin/env python3
+"""FlashTeX Beads ledger collision recovery (bd 1.2.2, embedded mode).
+
+THE WEDGE. Two machines write the same bead cell offline (typically both claim
+it). The first to push wins. The other machine's pull then fails, every time:
+  bd dolt pull -> "merge conflicts in issues require operator resolution;
+                   merge aborted and working set restored"   (exit 1)
+Its pushes keep being rejected (non-fast-forward), so the whole machine's
+ledger is stuck.
+
+WHY A TOOL. bd 1.2.2 has no embedded-mode fix (verified on the trial repo):
+  * `bd doctor` and `bd sql` say "not yet supported in embedded mode".
+  * `bd vc merge origin/main --strategy theirs` fails: "Merge conflict
+    detected, @autocommit transaction rolled back".
+  * Plain `dolt conflicts resolve --theirs issues` settles the claim, but it
+    also drops the loser's unrelated edits to the same row (e.g. appended notes).
+  * Moving .beads/embeddeddolt aside and re-bootstrapping discards every
+    unpushed write on the machine. Keep it only as a last resort.
+
+WHAT IT DOES. The dolt CLI never runs against the live database:
+  1. Take <state>/ledger-write.lock (shared with scripts/beads/claim, so no
+     check-then-write can straddle the restore), then the live DB's own storage
+     lock (.dolt/noms/LOCK), and hold both for the
+     whole recovery. bd processes on the machine block on it, and nothing can
+     write in between (soak run 2 showed that writes landing mid-recovery
+     re-conflict). Copy the DB twice: a pristine backup and a work copy.
+  2. In the work copy, with the pinned dolt CLI, repeat up to --push-rounds times:
+     a. commit any pending working set
+     b. fetch origin, then merge origin/main
+     c. settle each conflicted `issues` row column by column (rules below)
+     d. commit, then `dolt push origin main`, which is non-force
+  3. Still holding the lock, restore the settled .dolt into the live DB file by
+     file, keeping the live LOCK and config.json. Release the lock.
+  4. Through bd: `bd dolt pull` (a no-op check), then `bd recompute-blocked`,
+     a claim-lost / close-reverted message bead to the local assignee of every
+     row whose claim columns were overridden, and `bd dolt push`.
+
+SETTLEMENT RULES, per column of a conflicted row:
+  * Only one side changed it: that change is kept, so the loser's unrelated
+    edits survive.
+  * `notes`, where both sides appended: the winner's notes, then the loser's
+    appended suffix.
+  * `updated_at` / `last_activity`: the later value.
+  * `metadata`: disjoint key edits merge; if any key was changed differently on
+    both sides, the remote object wins WHOLE (coupled keys, e.g. authority).
+  * Any other column both changed (assignee, status, started_at, closed_at, ...):
+    REMOTE WINS. The remote is the first successful pusher, which is the FlashTeX
+    claim rule. The loser's value is kept verbatim in the recovery record and
+    sent to the loser as a message bead.
+
+Lossless: every unpushed local row and cell is either still in the ledger, or
+it contradicts the winner's claim and is recorded in
+<state>/recoveries/<utc>.json. A pristine DB copy is kept in
+<state>/backups/<utc>/.
+
+REFUSALS (exit 2, needs_operator; the live DB is left untouched):
+  * conflicts in a table other than `issues`
+  * schema conflicts or constraint violations
+  * delete-versus-modify rows
+
+EXIT CODES:
+  0  recovered, or nothing to do
+  2  needs operator
+  3  usage/environment error
+  4  lost a race: the remote kept moving for --push-rounds rounds, or the
+     live DB changed meanwhile. Retry.
+
+Normally invoked by scripts/beads/sync-loop, which serialises it per machine.
+"""
+import argparse
+import datetime as dt
+import fcntl
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+PREFIX = os.environ.get("FLASHTEX_BEADS_PREFIX", os.path.expanduser("~/.local/share/flashtex-beads"))
+DOLT = os.path.join(PREFIX, "bin", "dolt")
+HERE = os.path.dirname(os.path.abspath(__file__))
+BD = os.path.join(HERE, "bd")
+STATE = os.environ.get("FLASHTEX_BEADS_STATE", os.path.expanduser("~/.local/state/flashtex-beads"))
+KEEP_BACKUPS = int(os.environ.get("FLASHTEX_BEADS_KEEP_BACKUPS", "20"))
+
+APPEND_COLS = {"notes"}
+MAX_COLS = {"updated_at", "last_activity"}
+JSON_COLS = {"metadata"}
+SKIP_COLS = {"id"}
+
+
+class NeedsOperator(Exception):
+    pass
+
+
+class LostRace(Exception):
+    pass
+
+
+def utcnow():
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def run(cmd, cwd=None, check=True, env=None):
+    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=env)
+    if check and p.returncode != 0:
+        raise RuntimeError(f"{' '.join(cmd)} -> exit {p.returncode}: {(p.stderr or p.stdout).strip()[-400:]}")
+    return p
+
+
+def sql(dbdir, q):
+    out = run([DOLT, "sql", "-r", "json", "-q", q], cwd=dbdir).stdout.strip()
+    if not out:
+        return []
+    return json.loads(out.splitlines()[-1]).get("rows", [])
+
+
+def lit(v):
+    if v is None:
+        return "NULL"
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, (dict, list)):
+        v = json.dumps(v, separators=(",", ":"), sort_keys=True)
+    return "'" + str(v).replace("\\", "\\\\").replace("'", "''") + "'"
+
+
+def find_db(repo):
+    beads = os.path.join(repo, ".beads")
+    try:
+        with open(os.path.join(beads, "metadata.json")) as f:
+            name = json.load(f).get("dolt_database")
+    except OSError:
+        name = None
+    root = os.path.join(beads, "embeddeddolt")
+    if name and os.path.isdir(os.path.join(root, name, ".dolt")):
+        return os.path.join(root, name)
+    cands = [d for d in sorted(os.listdir(root)) if os.path.isdir(os.path.join(root, d, ".dolt"))] if os.path.isdir(root) else []
+    if len(cands) != 1:
+        raise SystemExit(f"ledger-recover: cannot identify the embedded database under {root}: {cands}")
+    return os.path.join(root, cands[0])
+
+
+class LiveLock:
+    """Hold the live DB's storage lock (.dolt/noms/LOCK) for the whole recovery.
+
+    bd processes block on this lock (verified: a bd write waited the full hold
+    time and then succeeded), so nothing can write to the live ledger between
+    the snapshot and the restore of the settled history.
+    """
+
+    def __init__(self, dbdir, timeout=300):
+        self.path = os.path.join(dbdir, ".dolt", "noms", "LOCK")
+        self.timeout = timeout
+
+    def __enter__(self):
+        self.f = open(self.path, "a+")
+        deadline = time.time() + self.timeout
+        while True:
+            try:
+                fcntl.flock(self.f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except BlockingIOError:
+                if time.time() > deadline:
+                    self.f.close()
+                    raise RuntimeError(f"timed out waiting for {self.path}")
+                time.sleep(0.2)
+
+    def __exit__(self, *exc):
+        fcntl.flock(self.f, fcntl.LOCK_UN)
+        self.f.close()
+
+
+class LedgerMutex:
+    """<state>/ledger-write.lock, shared with scripts/beads/claim: see claim's LedgerMutex."""
+
+    def __init__(self, timeout=900):
+        self.path = os.path.join(STATE, "ledger-write.lock")
+        self.timeout = timeout
+
+    def __enter__(self):
+        self.f = open(self.path, "a+")
+        deadline = time.time() + self.timeout
+        while True:
+            try:
+                fcntl.flock(self.f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except BlockingIOError:
+                if time.time() > deadline:
+                    self.f.close()
+                    raise RuntimeError(f"timed out waiting for {self.path}")
+                time.sleep(0.2)
+
+    def __exit__(self, *exc):
+        fcntl.flock(self.f, fcntl.LOCK_UN)
+        self.f.close()
+
+
+RESTORE_SKIP = {os.path.join("noms", "LOCK"), "config.json"}
+
+
+def restore_into(src_db, dst_db):
+    """Make dst_db/.dolt identical to src_db/.dolt (except LOCK and local config).
+
+    Called only while LiveLock is held. Files are replaced atomically one by one
+    (copy to a temp name, then os.replace); stale files are removed afterwards.
+    """
+    src, dst = os.path.join(src_db, ".dolt"), os.path.join(dst_db, ".dolt")
+    keep = set()
+    for root, dirs, files in os.walk(src):
+        rel_root = os.path.relpath(root, src)
+        os.makedirs(os.path.join(dst, rel_root), exist_ok=True)
+        for fn in files:
+            rel = os.path.normpath(os.path.join(rel_root, fn))
+            keep.add(rel)
+            if rel in RESTORE_SKIP:
+                continue
+            tmp = os.path.join(dst, rel) + ".flashtex-restore.tmp"
+            shutil.copy2(os.path.join(src, rel), tmp)
+            os.replace(tmp, os.path.join(dst, rel))
+    for root, dirs, files in os.walk(dst):
+        for fn in files:
+            rel = os.path.normpath(os.path.join(os.path.relpath(root, dst), fn))
+            if rel not in keep and rel not in RESTORE_SKIP:
+                os.remove(os.path.join(dst, rel))
+
+
+def merge_row(cols, base, ours, theirs):
+    """Return (merged, overridden_local_values) for one conflicted issues row."""
+    merged, overridden = {}, {}
+    for c in cols:
+        if c in SKIP_COLS:
+            continue
+        b, o, t = base.get(c), ours.get(c), theirs.get(c)
+        if o == t or o == b:
+            merged[c] = t
+        elif t == b:
+            merged[c] = o
+        elif c in APPEND_COLS and (o or "").startswith(b or "") and (t or "").startswith(b or ""):
+            suffix = (o or "")[len(b or ""):]
+            joined = t or ""
+            if joined and suffix and not joined.endswith("\n") and not suffix.startswith("\n"):
+                joined += "\n"
+            merged[c] = joined + suffix
+        elif c in MAX_COLS:
+            merged[c] = max(x for x in (o, t) if x is not None)
+        elif c in JSON_COLS:
+            # Metadata keys are often coupled (the authority record's
+            # commander_id/machine/epoch). A key-wise merge produced
+            # commander_id=commander-B2 with machine=mac-m5pro-kabir in the
+            # failover drill. So: if ANY key was changed differently on both
+            # sides, the remote object wins whole. Otherwise merge key-wise
+            # (disjoint edits are safe).
+            def load(x):
+                if x in (None, ""):
+                    return {}
+                return x if isinstance(x, dict) else json.loads(x)
+            bj, oj, tj = load(b), load(o), load(t)
+            keys = set(bj) | set(oj) | set(tj)
+            both = [k for k in keys if oj.get(k) != bj.get(k) and tj.get(k) != bj.get(k) and oj.get(k) != tj.get(k)]
+            if both:
+                merged[c] = tj
+                overridden[c] = {"local": oj, "remote": tj, "base": bj, "conflicting_keys": sorted(both)}
+            else:
+                mj = dict(tj)
+                for k in keys:
+                    if oj.get(k) != bj.get(k):
+                        if k in oj:
+                            mj[k] = oj[k]
+                        else:
+                            mj.pop(k, None)
+                merged[c] = mj
+        else:
+            merged[c] = t
+            overridden[c] = {"local": o, "remote": t, "base": b}
+    return merged, overridden
+
+
+def prune(dirpath, keep):
+    try:
+        entries = sorted(os.listdir(dirpath))
+    except OSError:
+        return
+    for e in entries[:-keep] if keep > 0 else []:
+        shutil.rmtree(os.path.join(dirpath, e), ignore_errors=True)
+
+
+def settle_in_copy(work, record, dry_run):
+    """Merge origin/main into the work copy and settle. Returns True if a merge commit is ready to push."""
+    # The dolt CLI refuses to merge or commit without an identity (seen on a
+    # fresh NixOS account: "add name to config: dolt config ... user.name").
+    # Set it in the disposable work copy only; the live DB and global config
+    # are untouched.
+    run([DOLT, "config", "--local", "--add", "user.name", os.environ.get("FLASHTEX_BEADS_RECOVER_NAME", "flashtex-ledger-recover")], cwd=work, check=False)
+    run([DOLT, "config", "--local", "--add", "user.email", os.environ.get("FLASHTEX_BEADS_RECOVER_EMAIL", "ledger-recover@flashtex.invalid")], cwd=work, check=False)
+    if sql(work, "select table_name from dolt_status"):
+        run([DOLT, "add", "-A"], cwd=work)
+        run([DOLT, "commit", "-m", "flashtex-beads recovery: commit pending working set"], cwd=work)
+    run([DOLT, "fetch", "origin"], cwd=work)
+    ahead = int(sql(work, "select count(*) as n from dolt_log('origin/main..main')")[0]["n"])
+    behind = int(sql(work, "select count(*) as n from dolt_log('main..origin/main')")[0]["n"])
+    record["work_ahead_behind"] = [ahead, behind]
+    if behind == 0:
+        return ahead > 0  # nothing to merge; push whatever the copy has that the remote lacks
+    m = run([DOLT, "merge", "origin/main"], cwd=work, check=False)
+    record["merge_output"] = (m.stdout + m.stderr).strip().splitlines()[-3:]
+    conflicts = sql(work, "select `table`, num_conflicts from dolt_conflicts")
+    schema_c = int(sql(work, "select count(*) as n from dolt_schema_conflicts")[0]["n"])
+    viol = int(sql(work, "select count(*) as n from dolt_constraint_violations")[0]["n"])
+    record["conflict_tables"] = conflicts
+    if schema_c or viol:
+        raise NeedsOperator(f"schema_conflicts={schema_c} constraint_violations={viol}")
+    other = [c["table"] for c in conflicts if c["table"] != "issues"]
+    if other:
+        raise NeedsOperator(f"conflicts outside issues: {other}")
+    if m.returncode != 0 and not conflicts:
+        raise RuntimeError(f"dolt merge failed without conflicts: {record['merge_output']}")
+    cols = [r["Field"] for r in sql(work, "describe issues")]
+    rows = sql(work, "select * from dolt_conflicts_issues") if conflicts else []
+    updates = []
+    for r in rows:
+        if r.get("our_diff_type") != "modified" or r.get("their_diff_type") != "modified":
+            raise NeedsOperator(f"row {r.get('our_id') or r.get('their_id')}: diff types "
+                                f"{r.get('our_diff_type')}/{r.get('their_diff_type')}")
+        base = {c: r.get("base_" + c) for c in cols}
+        ours = {c: r.get("our_" + c) for c in cols}
+        theirs = {c: r.get("their_" + c) for c in cols}
+        merged, overridden = merge_row(cols, base, ours, theirs)
+        changed = {c: v for c, v in merged.items() if v != ours.get(c)}
+        record["rows"].append({"id": ours["id"], "base": base, "local": ours, "remote": theirs,
+                               "merged": merged, "overridden_local_values": overridden})
+        if changed:
+            updates.append("update issues set " + ", ".join(f"`{c}` = {lit(v)}" for c, v in changed.items())
+                           + f" where id = {lit(ours['id'])}")
+    if dry_run:
+        raise NeedsOperator("dry run")
+    if rows:
+        run([DOLT, "conflicts", "resolve", "--ours", "issues"], cwd=work)
+        if updates:
+            run([DOLT, "sql", "-q", "; ".join(updates) + ";"], cwd=work)
+    if int(sql(work, "select count(*) as n from dolt_conflicts")[0]["n"]):
+        raise NeedsOperator("conflicts remain after settle")
+    run([DOLT, "add", "-A"], cwd=work)
+    # A conflict-free merge (typical in later push rounds) is committed by
+    # `dolt merge` itself; only commit when something is actually staged.
+    if sql(work, "select table_name from dolt_status"):
+        ids = ",".join(x["id"] for x in record["rows"]) or "-"
+        c = run([DOLT, "commit", "-m", f"flashtex-beads recovery {record['utc']}: merged origin/main; settled [{ids}]; remote wins contested cells"], cwd=work, check=False)
+        if c.returncode != 0:
+            raise RuntimeError(f"dolt commit failed: {(c.stdout + c.stderr).strip()[-300:]}")
+    return int(sql(work, "select count(*) as n from dolt_log('origin/main..main')")[0]["n"]) > 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--repo", default=os.getcwd(), help="clone containing .beads (default: cwd)")
+    ap.add_argument("--dry-run", action="store_true", help="plan the settlement in a copy; change nothing")
+    ap.add_argument("--no-notify", action="store_true", help="do not create claim-lost message beads")
+    ap.add_argument("--skip-pull-check", action="store_true", help="do not first confirm the wedge with bd dolt pull")
+    ap.add_argument("--push-rounds", type=int, default=12, help="fetch/merge/push rounds in the work copy before giving up (exit 4)")
+    args = ap.parse_args()
+
+    for p in (DOLT, BD):
+        if not os.access(p, os.X_OK):
+            print(f"ledger-recover: missing {p}", file=sys.stderr)
+            return 3
+    repo = os.path.abspath(args.repo)
+    dbdir = find_db(repo)
+    ts = utcnow()
+    for sub in ("recoveries", "backups", "work"):
+        os.makedirs(os.path.join(STATE, sub), exist_ok=True)
+    record = {"utc": ts, "repo": repo, "db": dbdir, "result": None, "rows": []}
+    rec_path = os.path.join(STATE, "recoveries", f"{ts}.json")
+
+    def finish(result, code, **extra):
+        # Summary keys must not clobber the detailed record (run 3 lost the
+        # base/local/remote rows because rows= overwrote them).
+        record["result"] = result
+        for k, v in extra.items():
+            record["summary_" + k if k in ("rows", "overridden") else k] = v
+        with open(rec_path, "w") as f:
+            json.dump(record, f, indent=2, default=str)
+        summary = {"result": result, "record": rec_path}
+        summary.update({k: v for k, v in extra.items() if k in ("reason", "rows", "overridden", "notified", "pushed")})
+        print(json.dumps(summary, default=str), file=sys.stdout if code == 0 else sys.stderr)
+        return code
+
+    if not args.skip_pull_check:
+        pull = run([BD, "dolt", "pull"], cwd=repo, check=False)
+        out = (pull.stdout + pull.stderr)
+        if pull.returncode == 0:
+            return finish("clean_pull_no_recovery_needed", 0)
+        if "require operator resolution" not in out:
+            return finish("pull_failed_not_a_conflict", 3, reason=out.strip()[-300:])
+
+    backup = os.path.join(STATE, "backups", ts)
+    work = os.path.join(STATE, "work", ts)
+    record["backup"] = backup
+    try:
+        with LedgerMutex(), LiveLock(dbdir):
+            lock_t0 = time.time()
+            shutil.copytree(dbdir, backup, symlinks=True)
+            shutil.copytree(dbdir, work, symlinks=True)
+            # Remote keeps moving under load: re-fetch/merge/push in the SAME
+            # work copy for up to --push-rounds rounds (bounded lock hold).
+            record["copy_push_rounds"] = []
+            pushed = False
+            for rnd in range(1, args.push_rounds + 1):
+                ready = settle_in_copy(work, record, args.dry_run)
+                if not ready:
+                    break
+                p = run([DOLT, "push", "origin", "main"], cwd=work, check=False)
+                tail_lines = [x for x in (p.stdout + p.stderr).strip().splitlines() if "Uploading" not in x][-2:]
+                record["copy_push_rounds"].append({"round": rnd, "exit": p.returncode, "tail": tail_lines})
+                if p.returncode == 0:
+                    pushed = True
+                    break
+                if rnd == args.push_rounds:
+                    raise LostRace(f"remote moved during recovery ({rnd} copy push rounds rejected)")
+                time.sleep(0.2 + 0.3 * rnd)
+            if os.environ.get("FLASHTEX_BEADS_TEST_DELAY_BEFORE_RESTORE"):  # test-only: widen the race window
+                time.sleep(float(os.environ["FLASHTEX_BEADS_TEST_DELAY_BEFORE_RESTORE"]))
+            restore_into(work, dbdir)
+            record["lock_held_seconds"] = round(time.time() - lock_t0, 1)
+            record["restored_into_live"] = True
+            record["copy_pushed"] = pushed
+    except NeedsOperator as e:
+        shutil.rmtree(work, ignore_errors=True)
+        if str(e) == "dry run":
+            return finish("dry_run", 0, reason="dry run", rows=[r["id"] for r in record["rows"]],
+                          overridden={r["id"]: sorted(r["overridden_local_values"]) for r in record["rows"]})
+        return finish("needs_operator", 2, reason=str(e))
+    except LostRace as e:
+        shutil.rmtree(work, ignore_errors=True)
+        return finish("lost_race_retry", 4, reason=str(e))
+    except Exception as e:
+        shutil.rmtree(work, ignore_errors=True)
+        return finish("error_live_untouched", 2, reason=str(e))
+    shutil.rmtree(work, ignore_errors=True)
+    prune(os.path.join(STATE, "backups"), KEEP_BACKUPS)
+
+    # Live DB now holds exactly the settled, pushed history.
+    chk = run([BD, "dolt", "pull"], cwd=repo, check=False)
+    record["live_pull_after_restore"] = [x for x in (chk.stdout + chk.stderr).strip().splitlines() if "chunks" not in x][-1:]
+    run([BD, "recompute-blocked"], cwd=repo, check=False)
+    notified = []
+    claim_cols = ("assignee", "status", "started_at", "closed_at", "close_reason")
+    if not args.no_notify:
+        for row in record["rows"]:
+            ov = row["overridden_local_values"]
+            hit = [c for c in claim_cols if c in ov]
+            local_owner = row["local"].get("assignee")
+            if not hit or not local_owner:
+                continue
+            remote = row["remote"]
+            if row["local"].get("status") == "closed" and remote.get("status") != "closed":
+                title = f"close reverted: {row['id']} is {remote.get('status')} / {remote.get('assignee') or 'unassigned'} on the remote"
+            else:
+                title = f"claim lost: {row['id']} is held by {remote.get('assignee') or '(unassigned)'}"
+            p = run([BD, "create", title, "-t", "task", "--assignee", local_owner,
+                     "-l", f"msg,to:{local_owner},from:ledger-recover,thread:{row['id']},claim-lost",
+                     "--description",
+                     f"Collision settled by ledger-recover at {ts}; the remote (first pusher) won columns {hit}. "
+                     f"Your overridden local values: {json.dumps({c: ov[c] for c in hit}, default=str)}. Record: {rec_path}",
+                     "--silent"], cwd=repo, check=False)
+            notified.append({"to": local_owner, "bead": p.stdout.strip(), "exit": p.returncode, "columns": hit})
+    p = run([BD, "dolt", "push"], cwd=repo, check=False)
+    return finish("recovered", 0, rows=[r["id"] for r in record["rows"]],
+                  overridden={r["id"]: sorted(r["overridden_local_values"]) for r in record["rows"]},
+                  notified=notified, pushed=p.returncode == 0)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

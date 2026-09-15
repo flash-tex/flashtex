@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Print how fresh this machine's Beads ledger is.
+
+Reads <state>/status.json, which scripts/beads/sync-loop writes. Lag is
+recomputed live as now minus the last successful pull. Any decision made
+from the ledger should quote the "ledger as of" time.
+
+Exit codes:
+  0  fresh
+  1  stale: lag above --max-lag (default 180 s), degraded, or no loop running
+  2  needs_operator (HOLD present)
+
+Usage: scripts/beads/ledger-status [--json] [--max-lag SECONDS]
+"""
+import argparse
+import datetime as dt
+import fcntl
+import json
+import os
+import sys
+
+ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument("--json", action="store_true")
+ap.add_argument("--max-lag", type=int, default=180)
+ap.add_argument("--state-dir", default=os.environ.get("FLASHTEX_BEADS_STATE", os.path.expanduser("~/.local/state/flashtex-beads")))
+a = ap.parse_args()
+
+try:
+    s = json.load(open(os.path.join(a.state_dir, "status.json")))
+except (OSError, ValueError) as e:
+    print(f"ledger-status: no sync-loop status in {a.state_dir} ({e}); ledger freshness UNKNOWN", file=sys.stderr)
+    sys.exit(1)
+
+running = False
+try:
+    with open(os.path.join(a.state_dir, "sync-loop.lock"), "a+") as lf:
+        try:
+            fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lf, fcntl.LOCK_UN)
+        except BlockingIOError:
+            running = True
+except OSError:
+    pass
+
+now = dt.datetime.now(dt.timezone.utc)
+lag = None
+if s.get("last_pull_ok_utc"):
+    lag = int((now - dt.datetime.strptime(s["last_pull_ok_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)).total_seconds())
+hold = os.path.exists(os.path.join(a.state_dir, "HOLD"))
+state = s.get("state")
+if hold or state == "needs_operator":
+    verdict, code = "NEEDS_OPERATOR", 2
+elif not running:
+    verdict, code = "STALE (sync-loop not running)", 1
+elif lag is None or lag > a.max_lag or state != "ok":
+    verdict, code = "STALE", 1
+else:
+    verdict, code = "FRESH", 0
+
+out = dict(s, lag_seconds_now=lag, loop_running=running, hold=hold, verdict=verdict)
+if a.json:
+    print(json.dumps(out, indent=2))
+else:
+    print(f"ledger as of {s.get('last_pull_ok_utc')} (lag {lag}s) on {s.get('machine')}: {verdict}")
+    print(f"  state={state} loop_running={running} unpushed_commits={s.get('unpushed_commits')} "
+          f"last_push_ok={s.get('last_push_ok_utc')} failures={s.get('consecutive_failures')} "
+          f"recoveries={s.get('recoveries')} push_rejections={s.get('push_rejections')}")
+    if s.get("last_error"):
+        print(f"  last_error: {s['last_error']}")
+sys.exit(code)

@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "note": "Registry only: entries point at existing files; no files were moved. See contracts/README.md.",
+  "contracts": [
+    {
+      "id": "runtime-v1",
+      "status": "accepted",
+      "canonical": "docs/contracts/runtime-v1.md",
+      "fixtures": ["protocol/fixtures/compile-request.json", "protocol/fixtures/compile-result.json", "protocol/fixtures/capture-submission.json"],
+      "consumers": ["crates/pdf", "crates/bridge", "tools/typing-bench", "tools/native-validation/mac-live"],
+      "owner": "Commander (FT-001)",
+      "negotiation": null
+    },
+    {
+      "id": "runtime-v1-layout-capabilities",
+      "status": "accepted",
+      "canonical": "docs/contracts/runtime-v1-layout-capabilities.md",
+      "consumers": ["crates/pdf"],
+      "owner": null,
+      "negotiation": null
+    },
+    {
+      "id": "runtime-v1-display-list-v2",
+      "status": "accepted",
+      "canonical": "docs/contracts/runtime-v1-display-list-v2.md",
+      "owner": null,
+      "negotiation": null,
+      "open_items": ["FT-063 image item contract (agreed only in issue #2 assignment comment)"]
+    },
+    {
+      "id": "transfer-v1",
+      "status": "accepted",
+      "canonical": "docs/contracts/transfer-v1.md",
+      "consumers": ["crates/bridge", "apps/mac"],
+      "owner": null,
+      "negotiation": null,
+      "open_items": ["FT-066 additive provider_evidence on capture_proposal/capture_status (branch agent/kabir-claude/conversion-provider, not on main)"]
+    },
+    {
+      "id": "rendering-v2",
+      "status": "proposal",
+      "canonical": "docs/contracts/rendering-v2-proposal.md",
+      "schemas": ["protocol/rendering-v2.schema.json"],
+      "fixtures": ["protocol/rendering-v2.requirements.txt"],
+      "consumers": ["crates/rendering-core", "crates/pdf"],
+      "owner": null,
+      "negotiation": null
+    },
+    {
+      "id": "display-list-v2-page-delta",
+      "status": "proposal",
+      "canonical": "docs/proposals/display-list-v2-delta.md",
+      "owner": null,
+      "negotiation": null,
+      "open_items": ["review rulings r3-r5 recorded only as issue #2 comments 5646362851, 5646611117, 5646664026"]
+    },
+    { "id": "contract-draft-review-ad922ea", "status": "review", "canonical": "docs/proposals/contract-draft-review-ad922ea.md", "owner": null, "negotiation": null },
+    { "id": "rendering-abi", "status": "proposal", "canonical": "docs/proposals/rendering-abi.md", "owner": null, "negotiation": null },
+    { "id": "pdf-searchable-text", "status": "proposal", "canonical": "docs/proposals/pdf-searchable-text.md", "owner": null, "negotiation": null },
+    { "id": "nearby-v1", "status": "proposal", "canonical": "apps/mac/docs/nearby-v1-proposal.md", "owner": null, "negotiation": null },
+    {
+      "id": "project-index-plans",
+      "status": "accepted",
+      "canonical": "crates/project-index/replacement-plan.schema.json",
+      "schemas": ["crates/project-index/replacement-plan.schema.json", "crates/project-index/citation-rename-plan.schema.json"],
+      "owner": null,
+      "negotiation": null
+    },
+    {
+      "id": "visual-corpus-manifest",
+      "status": "accepted",
+      "canonical": "tests/visual-corpus/manifest.schema.json",
+      "schemas": ["tests/visual-corpus/manifest.schema.json"],
+      "consumers": ["tests/test_visual_manifest.py"],
+      "owner": null,
+      "negotiation": null
+    },
+    { "id": "assistant-context-bounds", "status": "accepted", "canonical": "crates/assistant-context/README.md", "owner": null, "negotiation": null },
+    {
+      "id": "font-resources-ttc-peer",
+      "status": "accepted",
+      "canonical": "crates/font-resources/fixtures/ttc-peer-contract.json",
+      "fixtures": ["crates/font-resources/fixtures/ttc-peer-contract.json"],
+      "consumers": ["crates/font-resources/tools/ttc_peer_contract.rs"],
+      "owner": null,
+      "negotiation": null
+    },
+    { "id": "font-resources-type1-lm-context", "status": "proposal", "canonical": "crates/font-resources/handoffs/type1-lm-context-contract.md", "owner": null, "negotiation": null },
+    { "id": "document-runtime-producer-size", "status": "proposal", "canonical": "crates/document-runtime/docs/producer-size-contract.md", "owner": null, "negotiation": null },
+    { "id": "document-runtime-helper-source-review", "status": "review", "canonical": "crates/document-runtime/docs/helper-source-contract-review.md", "owner": null, "negotiation": null },
+    { "id": "preview-controller-completed-snapshot", "status": "proposal", "canonical": "crates/preview-controller/docs/completed-snapshot-proposal.md", "owner": null, "negotiation": null },
+    { "id": "preview-controller-hw1-text", "status": "proposal", "canonical": "crates/preview-controller/docs/handoffs/hw1-text-contract.md", "owner": null, "negotiation": null },
+    { "id": "rendering-core-actualtext-consumer", "status": "proposal", "canonical": "crates/rendering-core/docs/actualtext-consumer-proposal.md", "owner": null, "negotiation": null },
+    { "id": "bibliography-adapter", "status": "proposal", "canonical": "crates/bibliography/ADAPTER-PROPOSAL.md", "owner": null, "negotiation": null }
+  ]
+}
