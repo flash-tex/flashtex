@@ -151,11 +151,6 @@ fn incremental_matches_full_with_repeated_diagnostics_and_nesting_limits() {
             let mut e = flashtex_tex_expansion::Engine::with_limits(inc.source(), limits);
             let tokens = e.run();
             let full_diagnostics = e.take_diagnostics();
-            if full_diagnostics.iter().any(|d| d.message.contains("limit exceeded (")) {
-                // A stop depends on where the run started; hosts re-expand
-                // from scratch after one (as `flashtex-compiler` does).
-                continue;
-            }
             let ctx = || format!("seed {seed} edit #{i} {edit:?}");
             assert_eq!(inc.tokens(), &tokens[..], "tokens differ -- {}", ctx());
             let inc_diags: Vec<_> = inc.diagnostics().iter().map(|d| (d.message.clone(), d.span)).collect();
