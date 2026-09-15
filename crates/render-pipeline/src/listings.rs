@@ -250,7 +250,12 @@ pub struct Keys {
     pub xrightmargin_pt: f64,
     pub aboveskip: Skip,
     pub belowskip: Skip,
+    /// `caption={[<short>]<long>}`: the `<long>` range (the whole value
+    /// without a `[...]`), and the `<short>` one the `.lol` gets.
     pub caption: Option<(usize, usize)>,
+    pub short_caption: Option<(usize, usize)>,
+    /// `nolol`: no `\addcontentsline{lol}` for a caption.
+    pub nolol: bool,
     pub label: Option<String>,
     pub language: Option<String>,
     pub showstringspaces: bool,
@@ -279,6 +284,8 @@ impl Default for Keys {
             aboveskip: MEDSKIP,
             belowskip: MEDSKIP,
             caption: None,
+            short_caption: None,
+            nolol: false,
             label: None,
             language: None,
             showstringspaces: true,
@@ -334,7 +341,35 @@ impl Keys {
             "xrightmargin" => self.xrightmargin_pt = dimen_pt(v).unwrap_or(0.0),
             "aboveskip" => self.aboveskip = dimen_pt(v).map_or(MEDSKIP, Skip::fixed),
             "belowskip" => self.belowskip = dimen_pt(v).map_or(MEDSKIP, Skip::fixed),
-            "caption" => self.caption = value_range,
+            "caption" => {
+                // listings.sty `\lst@Key{caption}`: `\lst@DefArg` splits an
+                // optional `[<short>]` off the front.
+                self.caption = value_range;
+                self.short_caption = None;
+                if let (Some(value), Some((from, to))) = (value, value_range) {
+                    let lead = value.len() - value.trim_start().len();
+                    let rest = &value[lead..];
+                    if rest.starts_with('[') {
+                        let mut depth = 0i32;
+                        let close = rest.char_indices().find(|&(_, c)| {
+                            match c {
+                                '[' | '{' => depth += 1,
+                                ']' | '}' => depth -= 1,
+                                _ => {}
+                            }
+                            depth == 0
+                        });
+                        if let Some((close, _)) = close {
+                            let open = from + lead;
+                            self.short_caption = Some((open + 1, open + close));
+                            let after = &rest[close + 1..];
+                            let long = open + close + 1 + (after.len() - after.trim_start().len());
+                            self.caption = Some((long.min(to), to));
+                        }
+                    }
+                }
+            }
+            "nolol" => self.nolol = flag(value),
             "label" => self.label = Some(v.to_string()),
             "language" => self.language = Some(v.to_string()),
             "showstringspaces" => self.showstringspaces = flag(value),
@@ -368,9 +403,10 @@ pub struct Listing {
     /// The body between the two commands.
     pub body: (usize, usize),
     pub keys: Keys,
-    /// `\thelstlisting`: every displayed listing steps the counter, whether
-    /// or not it has a caption (`\lst@MakeCaption t` calls
-    /// `\lst@HRefStepCounter` in the uncaptioned case).
+    /// `\c@lstlisting` after this listing: only a non-empty caption
+    /// `\refstepcounter`s it; `\lst@MakeCaption t` gives an uncaptioned
+    /// listing `\lst@HRefStepCounter`, which counts `\lst@neglisting`
+    /// instead. Not reset by `\chapter`; see [`numbers`].
     pub number: u32,
 }
 
@@ -460,7 +496,9 @@ pub fn scan(texts: &[&str]) -> (Vec<Listing>, Vec<InlineListing>) {
                         Some(p) => (content + p, content + p + end_tag.len()),
                         None => (text.len(), text.len()),
                     };
-                    counter += 1;
+                    if keys.caption.is_some_and(|(s, e)| s < e) {
+                        counter += 1;
+                    }
                     let body_end = body_end.saturating_sub(usize::from(text[content..body_end].ends_with('\n')));
                     out.push(Listing {
                         document,
@@ -540,6 +578,18 @@ fn lstset_ranges(texts: &[&str]) -> Vec<(usize, usize, usize)> {
     out
 }
 
+/// `\thelstlisting` of every listing of `found` (meaningful for the
+/// captioned ones): listings.sty `\newcounter{lstlisting}[chapter]` and
+/// `\ifnum \c@chapter>\z@ \thechapter.\fi \@arabic\c@lstlisting`.
+pub fn numbers(found: &[Listing], chapter_starts: &[(usize, String)]) -> Vec<String> {
+    let captioned: Vec<usize> = found.iter().filter(|l| l.keys.caption.is_some_and(|(s, e)| s < e)).map(|l| l.begin.0).collect();
+    let mut numbered = crate::toc::chapter_numbers(&captioned, chapter_starts, false).into_iter();
+    found
+        .iter()
+        .map(|l| if l.keys.caption.is_some_and(|(s, e)| s < e) { numbered.next().unwrap_or_default() } else { l.number.to_string() })
+        .collect()
+}
+
 /// Every `lstlisting` of every document (see [`scan`]).
 pub fn listings(texts: &[&str]) -> Vec<Listing> {
     scan(texts).0
@@ -614,10 +664,12 @@ pub fn apply(
     blocks: &mut Vec<Block>,
     style: &Stylesheet,
     labels: &Labels,
+    chapter_starts: &[(usize, String)],
 ) -> (Vec<Span>, Vec<(&'static str, Span, String)>) {
     let mut superseded = Vec::new();
     let mut limitations = Vec::new();
     let (found, inlines) = scan(texts);
+    let numbers = numbers(&found, chapter_starts);
     // `\lstinline` is `\lst@Init` in text style: its characters are set in
     // the `basicstyle` face too, which is why the reference's
     // `\lstinline|ftxc build --watch|` is `SFTT1000` (10 pt) inside a
@@ -675,7 +727,7 @@ pub fn apply(
         });
     }
     // Last first, so an inserted caption never moves a range not yet done.
-    for listing in found.iter().rev() {
+    for (index, listing) in found.iter().enumerate().rev() {
         let document = listing.document;
         let span = Span::in_document(DocumentId(document), listing.begin.0, listing.begin.1);
         let inside = |b: &Block| -> bool {
@@ -751,7 +803,7 @@ pub fn apply(
         let caption_items = listing
             .keys
             .caption
-            .map(|(s, e)| caption_block(texts, labels, listing, s, e, style));
+            .map(|(s, e)| caption_block(texts, labels, listing, &numbers[index], crate::toc::listing_key(index), s, e, style));
         let pre = if caption_items.is_some() { CAPTIONSKIP } else { listing.keys.aboveskip };
         if let Some(Block::Paragraph { vspace_before, vspace_flex, .. }) = blocks.get_mut(first) {
             *vspace_before += pre.natural + frame_gap;
@@ -861,7 +913,8 @@ fn limitation(keys: &Keys, lines: usize, columns: bool, body: &str) -> String {
 
 /// `\lst@MakeCaption t`: `\@makecaption{\lstlistingname~\thelstlisting}{...}`
 /// at `\normalsize\normalfont`, centred at the full measure.
-fn caption_block(texts: &[&str], labels: &Labels, listing: &Listing, s: usize, e: usize, style: &Stylesheet) -> Block {
+#[allow(clippy::too_many_arguments)]
+fn caption_block(texts: &[&str], labels: &Labels, listing: &Listing, number: &str, key: String, s: usize, e: usize, style: &Stylesheet) -> Block {
     let document = DocumentId(listing.document);
     let source = texts.get(listing.document).copied().unwrap_or("");
     let src = CharSrc { document, start: s, end: e };
@@ -878,12 +931,16 @@ fn caption_block(texts: &[&str], labels: &Labels, listing: &Listing, s: usize, e
         word(LISTING_NAME),
         // `~`: an ordinary interword space that may not break.
         Item::Space { style: TextStyle::default(), factor: 1000, no_break: true },
-        word(&format!("{}:", listing.number)),
+        word(&format!("{number}:")),
         // pdfTeX's space factor after `:` is 2000 (`\sfcode`), which the
         // probe's caption line shows as `\glue 4.83946 plus 3.62674
         // minus 0.60446` where an ordinary space is `3.63054 plus 1.81337`.
         Item::Space { style: TextStyle::default(), factor: 2000, no_break: false },
     ];
+    // The `.lol` line's `\addcontentsline` comes just before the caption.
+    if labels.floats.iter().any(|f| f.key == key) {
+        items.insert(0, Item::Label { key });
+    }
     items.extend(
         labels
             .entry_items
@@ -1331,6 +1388,32 @@ mod tests {
         assert_eq!(k.numberstyle.family, None, "`\\color` is not a family");
     }
 
+    /// `caption={[<short>]<long>}`: the caption line shows `<long>`, the
+    /// `.lol` gets `<short>`; `nolol` is a flag.
+    #[test]
+    fn short_caption_and_nolol() {
+        let list = "caption={[Short name] A long caption},nolol";
+        let k = keys(list);
+        assert_eq!(k.short_caption.map(|(s, e)| &list[s..e]), Some("Short name"));
+        assert_eq!(k.caption.map(|(s, e)| &list[s..e]), Some("A long caption"));
+        assert!(k.nolol);
+        let k = keys("caption={Plain}");
+        assert_eq!(k.short_caption, None);
+        assert!(!k.nolol);
+    }
+
+    /// Only a captioned listing steps `\c@lstlisting`; report numbers restart
+    /// at each chapter (`\thechapter.` once one has started).
+    #[test]
+    fn only_captioned_listings_are_numbered() {
+        let text = "\\begin{lstlisting}[caption={A}]\na\n\\end{lstlisting}\n\\chapter{One}\n\\begin{lstlisting}\nb\n\\end{lstlisting}\n\\begin{lstlisting}[caption={C}]\nc\n\\end{lstlisting}\n";
+        let found = listings(&[text]);
+        let chapter = text.find("\\chapter").unwrap();
+        let n = numbers(&found, &[(chapter, "1".to_string())]);
+        assert_eq!((n[0].as_str(), n[2].as_str()), ("1", "1.1"));
+        assert_eq!(numbers(&found, &[]).into_iter().step_by(2).collect::<Vec<_>>(), ["1", "2"]);
+    }
+
     /// Values may be braced and hold commas and `=`; a bare key is true, and
     /// `key=false` is false.
     #[test]
@@ -1357,8 +1440,9 @@ mod tests {
     }
 
     /// `\lstset` is global from its point of use; the environment's `[...]`
-    /// is that listing's alone, and every displayed listing steps the
-    /// counter whether or not it has a caption.
+    /// is that listing's alone, and an uncaptioned listing does not step
+    /// `\c@lstlisting` (pdflatex's `.lol` numbers a captioned listing after
+    /// uncaptioned ones `1`).
     #[test]
     fn lstset_is_global_and_environment_keys_are_local() {
         let text = concat!(
@@ -1375,7 +1459,7 @@ mod tests {
         assert_eq!(found[1].keys.numbers, Numbers::None, "the `[...]` applies here");
         assert_eq!(found[2].keys.numbers, Numbers::Left, "and only here");
         assert!(!found[2].keys.frame.any(), "the second `\\lstset` reached the third listing");
-        assert_eq!([found[0].number, found[1].number, found[2].number], [1, 2, 3]);
+        assert_eq!([found[0].number, found[1].number, found[2].number], [0, 0, 0]);
         for (i, expected) in ["A", "B", "C"].iter().enumerate() {
             assert_eq!(&text[found[i].body.0..found[i].body.1], *expected);
         }
