@@ -88,6 +88,34 @@ fn text_glued_after_bracket_argument_is_kept() {
 }
 
 #[test]
+fn text_glued_after_line_break_length_is_kept() {
+    // `\\[<length>]` never reaches `optional_bracket_argument`: the
+    // `LineBreak` arm calls `skip_line_break_length`, which has its own
+    // tail-rewrite for `[2pt]TEXT`-style glued text. This pins that
+    // behavior alongside the `optional_bracket_argument` case above, so
+    // future readers see every `]`-glued caller covered in one place.
+    let out = compile(&format!(
+        "\\documentclass{{article}}\n\\begin{{document}}\nA\\\\[2pt]TEXT\n\\end{{document}}\n"
+    ));
+    assert!(
+        out.diagnostics.is_empty(),
+        "no diagnostics: {:?}",
+        out.diagnostics
+    );
+    let seen = words(&out);
+    assert!(
+        seen.iter().any(|word| word.contains("TEXT")),
+        "text glued after `]` is still typeset: {:?}",
+        seen
+    );
+    assert!(
+        !seen.iter().any(|word| word.contains("2pt")),
+        "the length itself is still consumed: {:?}",
+        seen
+    );
+}
+
+#[test]
 fn missing_required_argument_is_a_parse_error() {
     for command in [
         "NeedsTeXFormat",
