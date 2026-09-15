@@ -660,6 +660,10 @@ pub(crate) fn is_stop_limit(message: &str) -> bool {
     message.contains("expansion step limit exceeded") || message.starts_with("TeX capacity exceeded, sorry [")
 }
 
+/// The incremental expander's diagnostic when a run goes past
+/// `max_output_tokens`, which [`expand_project`] reports the same way.
+const OUTPUT_LIMIT: &str = "output token limit exceeded";
+
 /// What the caller must do after one converted token.
 enum Flow {
     Next,
@@ -889,15 +893,27 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
         .collect();
     let total_bytes: usize = documents.iter().map(|d| d.text.len()).sum();
     let entry_text: &str = prepared.get(entry).map_or("", |p| p.text.as_ref());
-    let mut engine = Engine::with_limits(entry_text, limits_for(total_bytes));
+    let limits = limits_for(total_bytes);
+    let mut engine = Engine::with_limits(entry_text, limits);
     configure(&mut engine);
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
+    // Engine tokens taken so far. The output token limit is the incremental
+    // expander's (`IncrementalExpander`'s run loop): the token that goes past
+    // it is still converted, then the run stops with the same diagnostic.
+    let mut pulled: u64 = 0;
     loop {
         let next = match lookahead.pop_front() {
             Some(t) => Some(t),
-            None => engine.next_content_token_with_origin(),
+            None if pulled > limits.max_output_tokens => {
+                engine.push_diagnostic(tex::Diagnostic::error(OUTPUT_LIMIT, tex::Span::synthetic()));
+                break;
+            }
+            None => {
+                pulled += 1;
+                engine.next_content_token_with_origin()
+            }
         };
         let Some((token, origin)) = next else { break };
         match conv.convert_token(&prepared, &token, origin) {
@@ -905,6 +921,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
             Flow::Include(name, at) => {
                 // Read the braced path through the engine.
                 let (taken, path, ok) = read_braced_argument(&mut engine);
+                pulled += taken.len() as u64;
                 if !ok {
                     conv.push(TokenKind::Command(name), at);
                     lookahead.extend(taken);
@@ -914,6 +931,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
             }
             Flow::IncludeOnly(at) => {
                 let (taken, path, ok) = read_braced_argument(&mut engine);
+                pulled += taken.len() as u64;
                 if !ok {
                     conv.push(TokenKind::Command("includeonly".to_string()), at);
                     lookahead.extend(taken);
@@ -1074,10 +1092,11 @@ pub fn expand_project_with_cache(
         expansion
     };
     // The incremental expander equals a full run across stops, so the
-    // unexpanded recovery after one is the full path's too. Debug builds
-    // check that on every stopped run.
+    // unexpanded recovery after one is the full path's too, and so is a
+    // stop on the output token limit. Debug builds check that on every
+    // stopped run.
     #[cfg(debug_assertions)]
-    if step_limit_hit(cache.as_ref().expect("cache kept").expander.diagnostics()) {
+    if cache.as_ref().expect("cache kept").expander.diagnostics().iter().any(|d| is_stop_limit(&d.message) || d.message == OUTPUT_LIMIT) {
         let full = expand_project(documents, entry);
         debug_assert!(
             *full.tokens == *expansion.tokens && full.diagnostics == expansion.diagnostics && full.arraystretch == expansion.arraystretch,
@@ -1093,6 +1112,13 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
     let mut marks = vec![Mark { index: 0, out_len: 0, last_span: conv.last_span }];
+    // One allocation for the converted stream: growing it by doubling frees
+    // a chain of blocks as large as the stream (hundreds of MB on a runaway
+    // document), which the allocator keeps resident through the rest of the
+    // compile. The stream is rarely longer than the engine's tokens plus the
+    // bytes of the unexpanded rest; `finish` trims what is left over.
+    let rest = expander.input_position().map_or(0, |(_, offset)| masked.len().saturating_sub(offset));
+    conv.out.reserve_exact(expander.tokens().len() + rest);
     convert_range(&mut conv, prepared, &expander, 0, &mut marks, None);
     conv.flush_word();
     let mut cache = ExpansionCache {
@@ -1317,7 +1343,12 @@ fn finish(cache: &mut ExpansionCache, conv: Converter<'_>) -> Expansion {
             }
         }
     }
-    let out = std::mem::take(&mut conv.out);
+    let mut out = std::mem::take(&mut conv.out);
+    // The cache keeps the stream between revisions: at most an eighth of it
+    // spare, so an edit that adds a few tokens still extends it in place.
+    if out.capacity() > out.len() + out.len() / 4 {
+        out.shrink_to(out.len() + out.len() / 8);
+    }
     cache.stretch_log = conv.stretch_log.clone();
     cache.last_span = conv.last_span;
     cache.old_engine_tokens = cache.expander.tokens().len();
