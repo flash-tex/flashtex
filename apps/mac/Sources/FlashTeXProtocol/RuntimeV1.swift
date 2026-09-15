@@ -403,9 +403,11 @@ public enum RuntimeV1 {
         }
 
         /// Mechanical edit for Fix…. Offsets are UTF-8, zero-based,
-        /// end-exclusive. `path` is optional on the wire (defaults to the
-        /// diagnostic's `source.path`); a nested `source` object is also
-        /// accepted for the path only.
+        /// end-exclusive. The compiler emits them nested in a `source` object
+        /// (the same shape as `labels[].source`), so that is the shape to
+        /// expect; a flat `start_byte`/`end_byte` pair is also accepted and
+        /// wins when both are present. `path` is optional on the wire and
+        /// falls back to `source.path`, then to the diagnostic's own source.
         public struct Replacement: Codable, Equatable {
             public var startByte: Int
             public var endByte: Int
@@ -419,15 +421,26 @@ public enum RuntimeV1 {
             }
             public init(from decoder: Decoder) throws {
                 let c = try decoder.container(keyedBy: CodingKeys.self)
-                startByte = try c.decode(Int.self, forKey: .startByte)
-                endByte = try c.decode(Int.self, forKey: .endByte)
+                let src = try c.decodeIfPresent(SourceRange.self, forKey: .source)
+                // The compiler nests the range in `source`; a flat pair is also
+                // accepted and wins when both are present.
+                guard let s = try c.decodeIfPresent(Int.self, forKey: .startByte) ?? src?.startByte else {
+                    throw DecodingError.keyNotFound(CodingKeys.startByte, .init(
+                        codingPath: c.codingPath,
+                        debugDescription: "replacement has neither start_byte nor source.start_byte"))
+                }
+                guard let e = try c.decodeIfPresent(Int.self, forKey: .endByte) ?? src?.endByte else {
+                    throw DecodingError.keyNotFound(CodingKeys.endByte, .init(
+                        codingPath: c.codingPath,
+                        debugDescription: "replacement has neither end_byte nor source.end_byte"))
+                }
+                startByte = s
+                endByte = e
                 text = try c.decode(String.self, forKey: .text)
                 if let p = try c.decodeIfPresent(String.self, forKey: .path), !p.isEmpty {
                     path = p
-                } else if let src = try c.decodeIfPresent(SourceRange.self, forKey: .source) {
-                    path = src.path
                 } else {
-                    path = nil
+                    path = src?.path
                 }
             }
             public func encode(to encoder: Encoder) throws {
