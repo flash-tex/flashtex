@@ -462,6 +462,157 @@ fn watch_rebuilds_when_an_included_file_changes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+fn alpah_source() -> &'static str {
+    "\\documentclass{article}\n\\begin{document}\nHello $\\alpah$ world.\n\\end{document}\n"
+}
+
+/// #444: `\igl` is one edit from both `\Bigl` and `\bigl`; a unique closest
+/// match is required before `suggestion` becomes a mechanical `--fix`.
+fn igl_source() -> &'static str {
+    "\\documentclass{article}\n\\begin{document}\nHello $\\igl$ world.\n\\end{document}\n"
+}
+
+fn write_tex(dir: &Path, rel: &str, text: &str) {
+    let p = dir.join(rel);
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(p, text).unwrap();
+}
+
+fn check(dir: &Path, extra: &[&str]) -> Output {
+    let fonts = fonts_dir();
+    let main = dir.join("main.tex");
+    let mut args = vec!["check", main.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--color=never"];
+    args.extend_from_slice(extra);
+    run(&args)
+}
+
+/// GH-277: `\alpah` must print a rustc-style help block (full) and a
+/// parenthetical (short). The pipeline already carries suggestion `\alpha`.
+#[test]
+fn typo_alpah_full_output_has_a_help_block() {
+    let dir = tmp("alpah-help");
+    write_tex(&dir, "main.tex", alpah_source());
+    let full = stderr(&check(&dir, &["--diagnostics=full"]));
+    assert!(full.contains("error[unknown_command]"), "{full}");
+    assert!(full.contains("= help: did you mean `\\alpha`?"), "{full}");
+    assert!(full.contains("Hello $\\alpah$ world."), "{full}");
+    assert!(full.contains("Hello $\\alpha$ world."), "{full}");
+    assert!(full.lines().any(|l| l.contains("++++++")), "{full}");
+    let short = stderr(&check(&dir, &["--diagnostics=short"]));
+    assert!(short.contains("(did you mean \\alpha?)"), "{short}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn typo_alpah_json_includes_suggestion() {
+    let dir = tmp("alpah-json");
+    write_tex(&dir, "main.tex", alpah_source());
+    let o = check(&dir, &["--json"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let r = json(&stdout(&o));
+    let diags = r.get("diagnostics").unwrap().as_arr().unwrap();
+    let alpah = diags
+        .iter()
+        .find(|d| d.get("message").and_then(|m| m.as_str()).map_or(false, |m| m.contains("\\alpah")))
+        .unwrap_or_else(|| panic!("alpah diagnostic: {}", stdout(&o)));
+    assert_eq!(alpah.get("suggestion").and_then(|v| v.as_str()), Some("\\alpha"), "{}", stdout(&o));
+    let profile = diags.iter().find(|d| d.get("code").and_then(|c| c.as_str()) == Some("math_resource_profile"));
+    if let Some(p) = profile {
+        assert!(p.get("suggestion").is_none(), "omitted when None: {}", stdout(&o));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_fix_rewrites_alpah_to_alpha() {
+    let dir = tmp("alpah-fix");
+    write_tex(&dir, "main.tex", alpah_source());
+    let o = check(&dir, &["--fix"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    let text = std::fs::read_to_string(dir.join("main.tex")).unwrap();
+    assert!(text.contains("Hello $\\alpha$ world."), "{text}");
+    assert!(!text.contains("\\alpah"), "{text}");
+    assert!(err.contains("fixed 1 issue(s) in 1 file(s); 0 skipped"), "{err}");
+    let last_summary = err.lines().rev().find(|l| l.starts_with("flashtex: main.tex:")).expect(&err);
+    assert!(last_summary.contains("0 error"), "re-check summary:\n{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_fix_dry_run_writes_nothing_and_prints_a_diff() {
+    let dir = tmp("alpah-dry");
+    write_tex(&dir, "main.tex", alpah_source());
+    let before = std::fs::read(dir.join("main.tex")).unwrap();
+    let o = check(&dir, &["--fix", "--dry-run"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert_eq!(std::fs::read(dir.join("main.tex")).unwrap(), before, "dry-run must not write");
+    assert!(err.contains("--- main.tex") && err.contains("+++ main.tex"), "{err}");
+    assert!(err.lines().any(|l| l.starts_with('-') && l.contains("\\alpah")), "{err}");
+    assert!(err.lines().any(|l| l.starts_with('+') && l.contains("\\alpha") && !l.contains("\\alpah")), "{err}");
+    assert!(err.contains("fixed 1 issue(s) in 1 file(s); 0 skipped"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_fix_applies_a_suggestion_in_an_input_file() {
+    let dir = tmp("alpah-input");
+    write_tex(&dir, "main.tex", "\\documentclass{article}\n\\begin{document}\n\\input{part}\n\\end{document}\n");
+    write_tex(&dir, "part.tex", "Hello $\\alpah$ world.\n");
+    let o = check(&dir, &["--fix"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert_eq!(std::fs::read_to_string(dir.join("main.tex")).unwrap(), "\\documentclass{article}\n\\begin{document}\n\\input{part}\n\\end{document}\n");
+    let part = std::fs::read_to_string(dir.join("part.tex")).unwrap();
+    assert_eq!(part, "Hello $\\alpha$ world.\n");
+    assert!(err.contains("fixed 1 issue(s) in 1 file(s); 0 skipped"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_help_mentions_fix_and_dry_run() {
+    let help = stdout(&run(&["--help"]));
+    assert!(help.contains("--fix"), "{help}");
+    assert!(help.contains("--dry-run"), "{help}");
+}
+
+/// #444: an ambiguous typo whose closest matches tie (`\igl` → `\Bigl`/`\bigl`)
+/// carries no `suggestion` and `--fix` writes nothing; `\alpah` is unique and is
+/// still rewritten.
+#[test]
+#[ignore = "needs vendor/compiler re-pinned past #444 (unique-closest-match suggestions); #451 pins faa7d484, which predates it"]
+fn check_fix_skips_an_ambiguous_typo_and_still_fixes_alpah() {
+    let ambiguous = tmp("igl-ambiguous");
+    write_tex(&ambiguous, "main.tex", igl_source());
+    let before = std::fs::read(ambiguous.join("main.tex")).unwrap();
+    let j = check(&ambiguous, &["--json"]);
+    assert_eq!(j.status.code(), Some(0), "{}", stderr(&j));
+    let r = json(&stdout(&j));
+    let diags = r.get("diagnostics").unwrap().as_arr().unwrap();
+    let igl = diags
+        .iter()
+        .find(|d| d.get("message").and_then(|m| m.as_str()).map_or(false, |m| m.contains("\\igl")))
+        .unwrap_or_else(|| panic!("igl diagnostic: {}", stdout(&j)));
+    assert!(igl.get("suggestion").is_none(), "ambiguous typo must not carry suggestion: {}", stdout(&j));
+    let fixed = check(&ambiguous, &["--fix"]);
+    assert_eq!(fixed.status.code(), Some(0), "{}", stderr(&fixed));
+    assert_eq!(std::fs::read(ambiguous.join("main.tex")).unwrap(), before, "--fix must not rewrite a tie");
+    let _ = std::fs::remove_dir_all(&ambiguous);
+
+    let unique = tmp("alpah-unique");
+    write_tex(&unique, "main.tex", alpah_source());
+    let o = check(&unique, &["--fix"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    let text = std::fs::read_to_string(unique.join("main.tex")).unwrap();
+    assert!(text.contains("Hello $\\alpha$ world."), "{text}");
+    assert!(!text.contains("\\alpah"), "{text}");
+    let _ = std::fs::remove_dir_all(&unique);
+}
+
 /// `--color never` keeps the full excerpt-and-carets shape but strips every
 /// ANSI escape — even after an explicit `always` (the last `--color` wins:
 /// each occurrence overwrites the previous one in `parse_common`) — while

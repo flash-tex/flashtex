@@ -1172,6 +1172,7 @@ pub fn inventory() -> Inventory {
         let fences = match (left, right) {
             ("", "") => String::new(),
             (l, "") => format!(" with a left {l}"),
+            ("", r) => format!(" with a right {r}"),
             (l, r) => format!(" in {l} {r}"),
         };
         let align = match align {
@@ -1562,4 +1563,29 @@ pub fn render_markdown(inventory: &Inventory) -> String {
     out.push_str(DOC_END);
     out.push('\n');
     out
+}
+
+#[cfg(test)]
+mod fence_description_tests {
+    use super::*;
+
+    /// A grid environment with no left delimiter and a real right one
+    /// (`rcases`'s exact shape, `("rcases", 'l', "", "}")`) must describe
+    /// only the right fence, not fall through to the two-sided `"in {l} {r}"`
+    /// arm with an empty `{l}` (which produced the malformed
+    /// `"...cells in  }"`, a stray double space before a lone brace).
+    #[test]
+    fn a_right_only_fence_describes_only_the_right_delimiter() {
+        let inventory = inventory();
+        let rcases = inventory
+            .environments
+            .iter()
+            .find(|e| e.name == "rcases")
+            .expect("rcases is in the inventory");
+        assert_eq!(
+            rcases.description,
+            "math grid, left-aligned cells with a right }"
+        );
+        assert!(!rcases.description.contains("  "), "{}", rcases.description);
+    }
 }
