@@ -1,150 +1,62 @@
-//! Minimal direct bindings to the C library for directory-relative file
-//! operations (`openat`, `renameat`, `unlinkat`, `mkdirat`, `flock`).
+//! Directory-relative file operations (`openat`, `renameat`, `unlinkat`,
+//! `mkdirat`, `fstatat`, `flock`) through the [`libc`] crate.
 //!
 //! Rust `std` exposes no `openat` family, so a path-string API cannot pin a
 //! walked directory handle: every `std::fs` call re-resolves the whole path
 //! string, and a prefix swapped for a symlink between `symlink_metadata` and
-//! `open` is followed. Rather than approximate, this module declares the
-//! handful of POSIX symbols it needs; `std` already links the platform C
-//! library, so this adds no external crate. Flag values are only known for
-//! macOS and Linux x86_64/aarch64; every other target gets an
-//! `io::ErrorKind::Unsupported` error, which the save layer surfaces as
-//! [`Refused::Unsupported`](crate::save::Refused::Unsupported).
+//! `open` is followed. Every symbol, flag, errno value and struct layout used
+//! here comes from `libc`, which maintains them per target (including the
+//! macOS `mode_t` width, the `$INODE64` symbol variants and each Linux
+//! architecture's `struct stat`); nothing is declared by hand. Rooted
+//! operations are enabled on macOS and on Linux with glibc or musl; every
+//! other target gets an `io::ErrorKind::Unsupported` error, which the save
+//! layer surfaces as [`Refused::Unsupported`](crate::save::Refused::Unsupported).
 
 use std::fs::File;
 use std::io;
 
 #[cfg(any(
     target_os = "macos",
-    all(
-        target_os = "linux",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
+    all(target_os = "linux", any(target_env = "gnu", target_env = "musl"))
 ))]
 mod imp {
     use std::ffi::CString;
     use std::fs::File;
     use std::io;
+    use std::mem::MaybeUninit;
     use std::os::fd::{AsRawFd, FromRawFd};
-    use std::os::raw::{c_char, c_int, c_uint};
-
-    unsafe extern "C" {
-        fn openat(dirfd: c_int, path: *const c_char, flags: c_int, ...) -> c_int;
-        fn renameat(
-            olddirfd: c_int,
-            old: *const c_char,
-            newdirfd: c_int,
-            new: *const c_char,
-        ) -> c_int;
-        fn unlinkat(dirfd: c_int, path: *const c_char, flags: c_int) -> c_int;
-        fn mkdirat(dirfd: c_int, path: *const c_char, mode: c_uint) -> c_int;
-        fn flock(fd: c_int, operation: c_int) -> c_int;
-        // `buf` is a `struct stat`; only the fields decoded in `flags::decode_stat`
-        // are read, from a zeroed buffer larger than any supported layout.
-        #[cfg_attr(
-            all(target_os = "macos", target_arch = "x86_64"),
-            link_name = "fstatat$INODE64"
-        )]
-        fn fstatat(dirfd: c_int, path: *const c_char, buf: *mut u8, flags: c_int) -> c_int;
-    }
+    use std::os::raw::c_int;
 
     pub const SUPPORTED: bool = true;
-    pub const O_RDONLY: c_int = 0;
-    pub const O_WRONLY: c_int = 1;
-    pub const O_RDWR: c_int = 2;
-
-    #[cfg(target_os = "macos")]
-    mod flags {
-        use std::os::raw::c_int;
-        pub const O_CREAT: c_int = 0x0200;
-        pub const O_EXCL: c_int = 0x0800;
-        pub const O_NOFOLLOW: c_int = 0x0100;
-        pub const O_DIRECTORY: c_int = 0x0010_0000;
-        pub const O_CLOEXEC: c_int = 0x0100_0000;
-        pub const O_NONBLOCK: c_int = 0x0004;
-        pub const AT_SYMLINK_NOFOLLOW: c_int = 0x0020;
-        pub const ELOOP: i32 = 62;
-        pub const EWOULDBLOCK: i32 = 35;
-
-        /// `struct stat` (64-bit inode): `st_dev: i32` at 0, `st_mode: u16`
-        /// at 4, `st_ino: u64` at 8.
-        pub(super) fn decode_stat(b: &[u8]) -> super::super::EntryStat {
-            super::super::EntryStat {
-                dev: i32::from_ne_bytes(b[0..4].try_into().unwrap()) as u64,
-                mode: u16::from_ne_bytes(b[4..6].try_into().unwrap()) as u32,
-                ino: u64::from_ne_bytes(b[8..16].try_into().unwrap()),
-            }
-        }
-    }
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    mod flags {
-        use std::os::raw::c_int;
-        pub const O_CREAT: c_int = 0o100;
-        pub const O_EXCL: c_int = 0o200;
-        pub const O_NOFOLLOW: c_int = 0o400000;
-        pub const O_DIRECTORY: c_int = 0o200000;
-        pub const O_CLOEXEC: c_int = 0o2000000;
-        pub const O_NONBLOCK: c_int = 0o4000;
-        pub const AT_SYMLINK_NOFOLLOW: c_int = 0x100;
-        pub const ELOOP: i32 = 40;
-        pub const EWOULDBLOCK: i32 = 11;
-
-        /// `struct stat`: `st_dev: u64` at 0, `st_ino: u64` at 8,
-        /// `st_nlink: u64` at 16, `st_mode: u32` at 24.
-        pub(super) fn decode_stat(b: &[u8]) -> super::super::EntryStat {
-            super::super::EntryStat {
-                dev: u64::from_ne_bytes(b[0..8].try_into().unwrap()),
-                ino: u64::from_ne_bytes(b[8..16].try_into().unwrap()),
-                mode: u32::from_ne_bytes(b[24..28].try_into().unwrap()),
-            }
-        }
-    }
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-    mod flags {
-        use std::os::raw::c_int;
-        pub const O_CREAT: c_int = 0o100;
-        pub const O_EXCL: c_int = 0o200;
-        pub const O_NOFOLLOW: c_int = 0o100000;
-        pub const O_DIRECTORY: c_int = 0o40000;
-        pub const O_CLOEXEC: c_int = 0o2000000;
-        pub const O_NONBLOCK: c_int = 0o4000;
-        pub const AT_SYMLINK_NOFOLLOW: c_int = 0x100;
-        pub const ELOOP: i32 = 40;
-        pub const EWOULDBLOCK: i32 = 11;
-
-        /// Generic `struct stat`: `st_dev: u64` at 0, `st_ino: u64` at 8,
-        /// `st_mode: u32` at 16.
-        pub(super) fn decode_stat(b: &[u8]) -> super::super::EntryStat {
-            super::super::EntryStat {
-                dev: u64::from_ne_bytes(b[0..8].try_into().unwrap()),
-                ino: u64::from_ne_bytes(b[8..16].try_into().unwrap()),
-                mode: u32::from_ne_bytes(b[16..20].try_into().unwrap()),
-            }
-        }
-    }
-    pub use flags::*;
-
-    pub const ENOENT: i32 = 2;
-    pub const EEXIST: i32 = 17;
-    pub const ENOTDIR: i32 = 20;
-    const LOCK_EX: c_int = 2;
-    const LOCK_NB: c_int = 4;
-    const LOCK_UN: c_int = 8;
+    pub use libc::{
+        EEXIST, ELOOP, ENOENT, ENOTDIR, O_CREAT, O_DIRECTORY, O_EXCL, O_NOFOLLOW, O_NONBLOCK,
+        O_RDONLY, O_RDWR, O_WRONLY,
+    };
 
     fn cstr(name: impl AsRef<[u8]>) -> io::Result<CString> {
         CString::new(name.as_ref())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in path component"))
     }
 
+    fn check(rc: c_int) -> io::Result<()> {
+        if rc != 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
     /// `openat(dirfd, name, flags | O_CLOEXEC | O_NONBLOCK, mode)`.
     ///
     /// `O_NONBLOCK` is always added so that opening a name which is (or was
-    /// swapped to) a FIFO or a device returns at once instead of blocking
-    /// until a writer or carrier appears. It has no effect on reads or writes
-    /// of regular files or on directories. It is a backstop, not the check:
-    /// callers first classify an existing name with [`stat_at_nofollow`] and
-    /// open only a regular file, then `fstat` the descriptor and refuse
-    /// anything but a regular file (the name can change between the two).
+    /// swapped to) a FIFO returns at once instead of blocking until a writer
+    /// appears. It has no effect on reads or writes of regular files or on
+    /// directories. For a device node it is best-effort only: whether a
+    /// driver's open honours it, and what the open itself does, is up to the
+    /// driver. It is a backstop, not the check: callers first classify an
+    /// existing name with [`stat_at_nofollow`] and open only a regular file,
+    /// then `fstat` the descriptor and refuse anything but a regular file
+    /// (the name can change between the two).
     pub fn open_at(dir: &File, name: &str, flags: c_int, mode: u32) -> io::Result<File> {
         open_at_bytes(dir, name.as_bytes(), flags, mode)
     }
@@ -153,91 +65,77 @@ mod imp {
     pub fn open_at_bytes(dir: &File, name: &[u8], flags: c_int, mode: u32) -> io::Result<File> {
         let c = cstr(name)?;
         // SAFETY: `c` is a valid NUL-terminated string that outlives the call
-        // and `dir` is an open descriptor; the returned fd is owned by exactly
-        // one `File`.
+        // and `dir` is an open descriptor; the variadic mode is passed as the
+        // promoted `c_uint`. The returned fd is owned by exactly one `File`.
         let fd = unsafe {
-            openat(
+            libc::openat(
                 dir.as_raw_fd(),
                 c.as_ptr(),
-                flags | O_CLOEXEC | O_NONBLOCK,
-                mode as c_uint,
+                flags | libc::O_CLOEXEC | libc::O_NONBLOCK,
+                mode as libc::c_uint,
             )
         };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
+        // SAFETY: `fd` is a freshly opened descriptor nothing else owns.
         Ok(unsafe { File::from_raw_fd(fd) })
     }
 
     pub fn rename_at(dir: &File, old: &str, new: &str) -> io::Result<()> {
         let (o, n) = (cstr(old)?, cstr(new)?);
         // SAFETY: valid C strings and an open directory descriptor.
-        let rc = unsafe { renameat(dir.as_raw_fd(), o.as_ptr(), dir.as_raw_fd(), n.as_ptr()) };
-        if rc != 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
+        check(unsafe { libc::renameat(dir.as_raw_fd(), o.as_ptr(), dir.as_raw_fd(), n.as_ptr()) })
     }
 
     pub fn unlink_at(dir: &File, name: &str) -> io::Result<()> {
         let c = cstr(name)?;
         // SAFETY: valid C string and an open directory descriptor.
-        let rc = unsafe { unlinkat(dir.as_raw_fd(), c.as_ptr(), 0) };
-        if rc != 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
+        check(unsafe { libc::unlinkat(dir.as_raw_fd(), c.as_ptr(), 0) })
     }
 
     pub fn mkdir_at(dir: &File, name: &str, mode: u32) -> io::Result<()> {
         let c = cstr(name)?;
         // SAFETY: valid C string and an open directory descriptor.
-        let rc = unsafe { mkdirat(dir.as_raw_fd(), c.as_ptr(), mode as c_uint) };
-        if rc != 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
+        check(unsafe { libc::mkdirat(dir.as_raw_fd(), c.as_ptr(), mode as libc::mode_t) })
     }
 
     /// `fstatat(dirfd, name, AT_SYMLINK_NOFOLLOW)`: classifies the entry
     /// `name` of the open directory `dir` without following a symlink and
     /// without opening it (so a device's open side effects never run).
+    #[allow(clippy::unnecessary_cast)] // field widths differ per target
     pub fn stat_at_nofollow(dir: &File, name: &[u8]) -> io::Result<super::EntryStat> {
         let c = cstr(name)?;
-        // Zeroed and larger than `struct stat` on every supported target
-        // (144 bytes on macOS and Linux x86_64, 128 on Linux aarch64), and
-        // 8-byte aligned like the struct.
-        let mut buf = [0u64; 32];
+        let mut st = MaybeUninit::<libc::stat>::uninit();
         // SAFETY: valid C string, an open directory descriptor, and a
-        // writable buffer at least as large as `struct stat`.
-        let rc = unsafe {
-            fstatat(
+        // `libc::stat` buffer of the target's own layout.
+        check(unsafe {
+            libc::fstatat(
                 dir.as_raw_fd(),
                 c.as_ptr(),
-                buf.as_mut_ptr().cast::<u8>(),
-                AT_SYMLINK_NOFOLLOW,
+                st.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
             )
-        };
-        if rc != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let bytes: Vec<u8> = buf.iter().flat_map(|w| w.to_ne_bytes()).collect();
-        Ok(flags::decode_stat(&bytes))
+        })?;
+        // SAFETY: `fstatat` returned 0, so it filled the whole struct.
+        let st = unsafe { st.assume_init() };
+        Ok(super::EntryStat {
+            dev: st.st_dev as u64,
+            ino: st.st_ino as u64,
+            mode: st.st_mode as u32,
+        })
     }
 
     /// Advisory exclusive lock; `Ok(false)` when another open file
     /// description (any process, or another handle in this one) holds it.
     pub fn try_lock_exclusive(file: &File) -> io::Result<bool> {
         // SAFETY: `file` is an open descriptor.
-        let rc = unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) };
+        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
         if rc == 0 {
             return Ok(true);
         }
         let err = io::Error::last_os_error();
-        if err.raw_os_error() == Some(EWOULDBLOCK) {
+        if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
             Ok(false)
         } else {
             Err(err)
@@ -247,17 +145,14 @@ mod imp {
     pub fn unlock(file: &File) {
         // SAFETY: `file` is an open descriptor; failure is irrelevant at drop.
         unsafe {
-            flock(file.as_raw_fd(), LOCK_UN);
+            libc::flock(file.as_raw_fd(), libc::LOCK_UN);
         }
     }
 }
 
 #[cfg(not(any(
     target_os = "macos",
-    all(
-        target_os = "linux",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
+    all(target_os = "linux", any(target_env = "gnu", target_env = "musl"))
 )))]
 mod imp {
     use std::fs::File;
@@ -265,6 +160,9 @@ mod imp {
     use std::os::raw::c_int;
 
     pub const SUPPORTED: bool = false;
+    // Inert placeholders so the rest of the crate type-checks: nothing on
+    // this target reaches the OS with them, because `ProjectRoot::open`
+    // refuses with `Refused::Unsupported` before any rooted call is made.
     pub const O_RDONLY: c_int = 0;
     pub const O_WRONLY: c_int = 0;
     pub const O_RDWR: c_int = 0;
@@ -315,13 +213,23 @@ pub fn errno_is(err: &io::Error, code: i32) -> bool {
 }
 
 /// Opens `path` itself as a directory without following a final symlink.
+///
+/// **Symlinks above the root are followed, deliberately.** Only the final
+/// component is opened with `O_NOFOLLOW`; its parent is opened by path string
+/// with ordinary resolution, so a symlink among the root's *ancestors*
+/// (`/Users/me/link/project` with `link -> /Volumes/work`) is followed and
+/// the directory it leads to becomes the pinned root. The caller chose that
+/// path, and symlinked home directories, checkouts and volume mounts are
+/// common; refusing them would reject real projects without protecting
+/// anything the caller did not already select. The refuse-all-symlinks
+/// policy applies *inside* the root: once the root descriptor is pinned,
+/// every project path is walked from it with `O_NOFOLLOW` at each component,
+/// and a later change to the ancestors does not move the pinned root.
 pub fn open_dir_nofollow(path: &std::path::Path) -> io::Result<File> {
-    // Walk from the filesystem root is unnecessary here: the caller chooses
-    // the root; only its final component must not be a symlink. `std` has no
-    // O_NOFOLLOW knob, so open the parent with std and the last component
-    // with `openat`. The name is passed as raw bytes: a root whose final
-    // component is not valid UTF-8 gets the same `O_NOFOLLOW` open, never a
-    // symlink-following fallback.
+    // `std` has no O_NOFOLLOW knob, so open the parent with std and the last
+    // component with `openat`. The name is passed as raw bytes: a root whose
+    // final component is not valid UTF-8 gets the same `O_NOFOLLOW` open,
+    // never a symlink-following fallback.
     use std::os::unix::ffi::OsStrExt;
     let (parent, name) = match (path.parent(), path.file_name()) {
         (Some(p), Some(n)) if !n.is_empty() => (p, n),
@@ -374,11 +282,16 @@ fn open_dir_at_nofollow_bytes(dir: &File, name: &[u8]) -> io::Result<File> {
     }
 }
 
-/// File type bits of `st_mode` (identical on every supported target).
-pub const S_IFMT: u32 = 0o170000;
-pub const S_IFREG: u32 = 0o100000;
-pub const S_IFDIR: u32 = 0o040000;
-pub const S_IFLNK: u32 = 0o120000;
+/// File type bits of `st_mode`, from `libc` (`mode_t` is 16 bits on macOS
+/// and 32 on Linux; the values are widened, never truncated).
+#[allow(clippy::unnecessary_cast)]
+pub const S_IFMT: u32 = libc::S_IFMT as u32;
+#[allow(clippy::unnecessary_cast)]
+pub const S_IFREG: u32 = libc::S_IFREG as u32;
+#[allow(clippy::unnecessary_cast)]
+pub const S_IFDIR: u32 = libc::S_IFDIR as u32;
+#[allow(clippy::unnecessary_cast)]
+pub const S_IFLNK: u32 = libc::S_IFLNK as u32;
 
 /// What [`stat_at_nofollow`] reports about one directory entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -407,8 +320,8 @@ mod tests {
     use super::*;
     use std::os::unix::fs::MetadataExt;
 
-    /// The hand-decoded `struct stat` fields must agree with `std`'s own
-    /// `lstat` for every file type this crate distinguishes.
+    /// The `fstatat` fields must agree with `std`'s own `lstat` for every
+    /// file type this crate distinguishes.
     #[test]
     fn stat_at_nofollow_matches_std_symlink_metadata() {
         if !SUPPORTED {

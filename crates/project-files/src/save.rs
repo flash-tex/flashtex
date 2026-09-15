@@ -223,8 +223,10 @@ struct Observation {
 
 impl ProjectRoot {
     /// Opens `path` as the project root. The final component must be a real
-    /// directory (not a symlink); components above it are the caller's
-    /// choice and are not inspected.
+    /// directory (not a symlink). Components *above* it are the caller's
+    /// choice: a symlinked ancestor is followed on purpose (see
+    /// [`sys::open_dir_nofollow`]), and the directory it leads to is pinned.
+    /// Symlinks are refused only inside the root.
     pub fn open(path: &Path) -> Result<ProjectRoot, SaveError> {
         if !sys::SUPPORTED {
             return Err(refused(Refused::Unsupported));
@@ -245,6 +247,22 @@ impl ProjectRoot {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Whether the directory at [`Self::path`] is still the one this handle
+    /// pinned (same device and inode, not a symlink). `Ok(false)` when the
+    /// path is gone or now names something else: the root was renamed,
+    /// removed or replaced after it was opened. Ancestors of the path are
+    /// resolved normally, as in [`Self::open`].
+    pub fn is_still_at_path(&self) -> io::Result<bool> {
+        let pinned = identity(&self.dir.metadata()?);
+        match std::fs::symlink_metadata(&self.path) {
+            Ok(meta) => Ok(meta.is_dir() && identity(&meta) == pinned),
+            Err(e) if e.kind() == io::ErrorKind::NotFound || sys::errno_is(&e, sys::ENOTDIR) => {
+                Ok(false)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Walks to the directory containing `path`, refusing symlinks and
@@ -309,17 +327,25 @@ impl ProjectRoot {
     ///
     /// The entry is classified with [`Self::stat_regular`] on the directory
     /// descriptor *before* it is opened, so a symlink, FIFO, socket or device
-    /// is refused without ever being opened. The name can still be swapped
-    /// between that `fstatat` and the `openat`; the open therefore keeps
-    /// `O_NOFOLLOW` (a symlink is still refused), is non-blocking (a FIFO or
-    /// most devices cannot hang it, see [`sys::open_at`]), and the descriptor
-    /// is `fstat`ed and refused unless it is a regular file. What remains in
-    /// that narrow window is a device-specific side effect of the open
-    /// itself, before the `fstat` rejects it; nothing is read from it.
+    /// that is already there is refused without ever being opened. The name
+    /// can still be swapped between that `fstatat` and the `openat`, and
+    /// POSIX has no way to close that window. For a swap in the window:
+    ///
+    /// - a symlink is refused by `O_NOFOLLOW` and never followed;
+    /// - a FIFO open returns at once because of `O_NONBLOCK`, and the
+    ///   post-open `fstat` refuses it;
+    /// - a device node is opened (with `O_NONBLOCK`) and then refused by the
+    ///   post-open `fstat`; nothing is read from it. Not hanging and not
+    ///   having an open side effect are **best-effort** here: both depend on
+    ///   the driver honouring `O_NONBLOCK`, which POSIX does not require.
+    ///   (Getting a device node into the directory at all needs either the
+    ///   privilege to create one or an existing node on the same filesystem
+    ///   to rename or hard-link.)
     fn open_target(dir: &File, name: &str) -> Result<Option<(File, std::fs::Metadata)>, SaveError> {
         if Self::stat_regular(dir, name)?.is_none() {
             return Ok(None);
         }
+        race_hook::fire(race_hook::Window::BeforeOpen, name);
         let file = match sys::open_at(dir, name, sys::O_RDONLY | sys::O_NOFOLLOW, 0) {
             Ok(f) => f,
             Err(e) if sys::errno_is(&e, sys::ENOENT) => return Ok(None),
@@ -554,6 +580,63 @@ impl ProjectRoot {
 }
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Deterministic race-test support. **Not API**: hidden from the docs, no
+/// stability promise, and inert unless a test installs a hook.
+///
+/// Every check-then-use pair in this module that POSIX cannot make atomic
+/// calls [`fire`] in the exact window between the check and the syscall it
+/// guards. A test installs a callback for its own thread, swaps the entry
+/// from inside the callback, and then asserts what the operation did, so
+/// the security property is tested at the worst interleaving every run
+/// instead of by timing. The hook is thread-local: a hook installed by one
+/// test never fires in another thread's operation.
+#[doc(hidden)]
+pub mod race_hook {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// The window a hook fires in.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Window {
+        /// An existing entry was classified as a regular file with
+        /// `fstatat(AT_SYMLINK_NOFOLLOW)`; `openat` is next.
+        BeforeOpen,
+    }
+
+    type Hook = Rc<dyn Fn(Window, &str)>;
+
+    thread_local! {
+        static HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    /// Restores the previously installed hook (usually none) on drop.
+    #[must_use = "the hook is removed when the guard is dropped"]
+    pub struct Guard(Option<Hook>);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            HOOK.with(|h| *h.borrow_mut() = previous);
+        }
+    }
+
+    /// Installs `hook` for the current thread until the guard drops. It is
+    /// called with the window and the entry name (the last path component,
+    /// relative to its pinned directory).
+    pub fn install(hook: impl Fn(Window, &str) + 'static) -> Guard {
+        let previous = HOOK.with(|h| h.borrow_mut().replace(Rc::new(hook)));
+        Guard(previous)
+    }
+
+    pub(crate) fn fire(window: Window, name: &str) {
+        // Cloned out first, so a hook may itself call into this crate.
+        let hook = HOOK.with(|h| h.borrow().clone());
+        if let Some(hook) = hook {
+            hook(window, name);
+        }
+    }
+}
 
 /// Injection points for tests; production uses [`Hooks::default`].
 pub(crate) struct Hooks<'h> {

@@ -126,21 +126,29 @@ pub const DEFAULT_READ_LIMIT: u64 = 64 MiB;
 ```
 
 **Path binding.** `ProjectRoot::open` opens the root directory itself with
-`O_DIRECTORY|O_NOFOLLOW` (a symlinked root is refused; components *above*
-the root are the caller's choice and not inspected). Every read, save and
+`O_DIRECTORY|O_NOFOLLOW`, so a root whose final component is a symlink is
+refused. **Symlinks among the root's ancestors are followed, by design:**
+the parent of the root is opened by path with ordinary resolution, so for
+`/Users/me/link/project` with `link -> /Volumes/work` the pinned root is
+`/Volumes/work/project`. The caller chose that path, and symlinked home
+directories, checkouts and mounts are common. The refuse-all-symlinks policy
+applies *inside* the root, from the pinned descriptor onward; changing an
+ancestor later does not move a root that is already open. Every read, save and
 remove then walks the normalized `ProjectPath` one component at a time with
 `openat(dirfd, component, O_DIRECTORY|O_NOFOLLOW)` from that handle, and
 opens the final file with `openat(dirfd, name, O_NOFOLLOW)`. Any symlink —
 parent directory or the file — is `Refused::SymlinkComponent`, with `force`
 or without. Each walked directory's `..` is opened and its device/inode
 compared with the handle it was reached from (`Refused::EscapesRoot` on
-mismatch). Because `std` has no `openat` family, `sys.rs` declares
-`openat`/`renameat`/`unlinkat`/`mkdirat`/`flock` directly against the C
-library `std` already links (no external crate). Flag values are known for
-macOS and Linux x86_64/aarch64; other targets get `Refused::Unsupported`
-before anything is attempted. On macOS a symlink-to-directory opened this way
-reports `ENOTDIR`; `sys::open_dir_at_nofollow` probes once more without
-`O_DIRECTORY` so the refusal is classified as a symlink on both platforms.
+mismatch). Because `std` has no `openat` family, `sys.rs` calls
+`openat`/`fstatat`/`renameat`/`unlinkat`/`mkdirat`/`flock` through the
+`libc` crate, which supplies every symbol, flag, errno value and struct
+layout per target; nothing is declared by hand. Rooted operations are enabled
+on macOS and on Linux (glibc or musl); other targets get
+`Refused::Unsupported` before anything is attempted. On macOS a symlink-to-directory opened this way
+reports `ENOTDIR`; `sys::open_dir_at_nofollow` then classifies the entry with
+`fstatat(AT_SYMLINK_NOFOLLOW)` (never a second open) so the refusal is
+classified as a symlink on both platforms.
 
 **Reads** are bounded: `read(path, limit)` refuses files larger than `limit`
 (`Refused::TooLarge`) and non-regular files, and returns the bytes, hash,
@@ -219,6 +227,7 @@ passes it around.
 let snap = Snapshot::take(root, graph.text_paths())?;   // hashes every path
 let diff = snap.diff()?;                                  // rehash only if mtime/size moved
 diff.changes  // ExternalChange { path, kind: Created|Modified|Deleted, before, after }
+diff.root_replaced  // the root path no longer names the directory `take` pinned
 diff.conflicts(&dirty_paths)  // Conflict { path, kind, local_dirty, before, after }
 snap.record_own_write(&receipt.path, receipt.bytes, receipt.mtime, receipt.sha256);
 ```
@@ -230,7 +239,19 @@ the three-way case). Creations are changes but not conflicts. A file rewritten
 with identical bytes is not reported. Missing paths (e.g. a not-yet-created
 include) are tracked so their creation is reported.
 
-`Poller` wraps a snapshot: `poll()` returns changes and advances;
+**Pinned root.** `Snapshot::take` opens the root once and keeps that
+descriptor (clones and the snapshot a `Diff` carries forward share it).
+`track` and `diff` read through it and never re-resolve the root path, so a
+directory renamed into the root's place is never stat'ed or hashed. `diff`
+compares the pinned descriptor's device/inode with whatever the path names
+now; if the root was renamed, removed or replaced (by a directory or a
+symlink) it sets `root_replaced`, while `changes` keep describing the pinned
+directory. A root that did not exist at `take` is opened and pinned the
+first time it exists.
+
+`Poller` wraps a snapshot: `poll()` returns changes and advances (a replaced
+root is an `io::Error` wrapping `RootReplaced`, and the poll does not
+advance);
 `run(interval, deadline, |result| keep_going)` loops on the calling thread.
 There is deliberately no FSEvents dependency: the native app can call
 `Snapshot::diff` from an FSEvents callback later and keep the same conflict
@@ -301,12 +322,27 @@ with its `check()` result.
   strings. `Snapshot` stats and hashes every tracked file through the rooted
   reader: a symlinked or non-regular tracked path is reported as absent and
   never opened.
+- **Symlinks above the root are followed.** Only the root's own final
+  component and everything inside it are refused as symlinks (see *Path
+  binding*). Choosing a path through a symlinked ancestor chooses the
+  directory it leads to.
 - **Special files are classified before they are opened, not atomically.**
   An entry is `fstatat(AT_SYMLINK_NOFOLLOW)`-classified on the pinned
-  directory descriptor and opened only if it is a regular file. A swap in
-  the window between the two is still refused (`O_NOFOLLOW`, `O_NONBLOCK`,
-  and an `fstat` of the opened descriptor), but a device's own open side
-  effect in that window is not prevented.
+  directory descriptor and opened only if it is a regular file. POSIX cannot
+  make the classification and the open one step, so the entry can be swapped
+  in between. A symlink swapped in is still refused by `O_NOFOLLOW` and never
+  followed. A FIFO swapped in does not block the open, because of
+  `O_NONBLOCK`, and the `fstat` of the opened descriptor refuses it. A
+  device node swapped in is opened non-blocking and then refused by that
+  `fstat`, and nothing is read from it. Not hanging and not triggering a
+  driver's open side effect are **best-effort** for devices: they rest on
+  `O_NONBLOCK`, the pre-open `fstatat` and the post-open `fstat`, and
+  whether the driver honours `O_NONBLOCK` is up to the driver.
+- **Race tests.** Each check-then-use window in `save.rs` calls a hidden,
+  thread-local test hook (`save::race_hook`, not API). The tests swap the
+  entry from inside the hook, so the worst interleaving is exercised
+  deterministically on every run. The older timing-based stress tests are
+  kept as extra coverage.
 - **Not the compiler.** The scanner does no macro expansion, no catcode
   changes, no `\import`/`\subfile`/`\InputIfFileExists`, and does not follow
   references inside `\newcommand` bodies or conditionals. Arguments containing

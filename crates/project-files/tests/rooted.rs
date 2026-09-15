@@ -12,9 +12,10 @@ use std::thread;
 use std::time::Duration;
 
 use common::{TempDir, pp};
+use flashtex_project_files::save::race_hook::{self, Window};
 use flashtex_project_files::{
-    ChangeKind, DiagnosticKind, DiscoverError, Expected, ProjectGraph, ProjectRoot, Refused,
-    SaveConflictKind, SaveError, Snapshot, save_atomic, sha256,
+    ChangeKind, DiagnosticKind, DiscoverError, Expected, Poller, ProjectGraph, ProjectRoot,
+    Refused, RootReplaced, SaveConflictKind, SaveError, Snapshot, save_atomic, sha256,
 };
 
 fn is_refused_symlink(err: &SaveError, component: &str) -> bool {
@@ -300,20 +301,11 @@ fn racing_symlink_swap_never_reaches_the_outside_file() {
     eprintln!("racing outcomes ok/refused/conflict = {outcomes:?}, racer flips = {flips}");
 }
 
-#[cfg(target_os = "macos")]
-type ModeT = u16;
-#[cfg(not(target_os = "macos"))]
-type ModeT = u32;
-
-unsafe extern "C" {
-    fn mkfifo(path: *const std::os::raw::c_char, mode: ModeT) -> std::os::raw::c_int;
-}
-
 fn make_fifo(path: &std::path::Path) {
     use std::os::unix::ffi::OsStrExt;
     let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
     // SAFETY: `c` is a valid NUL-terminated path that outlives the call.
-    let rc = unsafe { mkfifo(c.as_ptr(), 0o644) };
+    let rc = unsafe { libc::mkfifo(c.as_ptr(), 0o644) };
     assert_eq!(
         rc,
         0,
@@ -397,12 +389,206 @@ fn fifo_is_refused_without_blocking() {
     );
 }
 
+/// Replaces `name` in `dir` atomically with a hard link to `keep` (so the
+/// swap has no "missing" window of its own).
+fn swap_in(dir: &std::path::Path, keep: &str, name: &str) {
+    let tmp = dir.join(format!("{name}.swap-tmp"));
+    let _ = fs::remove_file(&tmp);
+    fs::hard_link(dir.join(keep), &tmp).unwrap();
+    fs::rename(&tmp, dir.join(name)).unwrap();
+}
+
+/// Installs a hook that runs `swap` exactly once, the first time `window`
+/// fires for the entry `name`, and returns the guard plus a fired counter.
+fn swap_once_at(
+    window: Window,
+    name: &'static str,
+    swap: impl Fn() + 'static,
+) -> (race_hook::Guard, std::rc::Rc<std::cell::Cell<u32>>) {
+    let fired = std::rc::Rc::new(std::cell::Cell::new(0u32));
+    let count = fired.clone();
+    let guard = race_hook::install(move |w, n| {
+        if w == window && n == name {
+            if count.get() == 0 {
+                swap();
+            }
+            count.set(count.get() + 1);
+        }
+    });
+    (guard, fired)
+}
+
+/// Finding 7 (deterministic): the entry is a regular file when it is
+/// classified and a FIFO when it is opened — the exact worst interleaving,
+/// every run. The rooted read and discovery both return at once and refuse
+/// it as not a regular file.
+#[test]
+fn fifo_swapped_in_between_classify_and_open_is_refused_without_blocking() {
+    let t = TempDir::new("fifo-window");
+    t.write("main.tex", "\\input{pipe}\n");
+    t.write("keep-regular", "Regular.");
+    make_fifo(&t.root().join("keep-fifo"));
+    swap_in(t.root(), "keep-regular", "pipe.tex");
+
+    let root = t.root().to_path_buf();
+    let (err, fired) = within(HANG_LIMIT, "ProjectRoot::read in the window", move || {
+        let dir = root.clone();
+        let (_guard, fired) = swap_once_at(Window::BeforeOpen, "pipe.tex", move || {
+            swap_in(&dir, "keep-fifo", "pipe.tex")
+        });
+        let err = ProjectRoot::open(&root)
+            .unwrap()
+            .read(&pp("pipe.tex"), 1024)
+            .map(|_| ())
+            .unwrap_err();
+        (err, fired.get())
+    });
+    assert_eq!(fired, 1, "the hook must have swapped in the window");
+    assert!(
+        matches!(&err, SaveError::Refused(Refused::NotARegularFile { component }) if component == "pipe.tex"),
+        "{err:?}"
+    );
+
+    swap_in(t.root(), "keep-regular", "pipe.tex");
+    let root = t.root().to_path_buf();
+    let (diagnostics, fired) = within(
+        HANG_LIMIT,
+        "ProjectGraph::discover in the window",
+        move || {
+            let dir = root.clone();
+            let (_guard, fired) = swap_once_at(Window::BeforeOpen, "pipe.tex", move || {
+                swap_in(&dir, "keep-fifo", "pipe.tex")
+            });
+            let graph = ProjectGraph::discover(&root, &pp("main.tex")).unwrap();
+            (graph.diagnostics().to_vec(), fired.get())
+        },
+    );
+    assert_eq!(fired, 1, "the hook must have swapped in the window");
+    assert!(
+        diagnostics.iter().any(
+            |d| matches!(&d.kind, DiagnosticKind::ReadError { path, message }
+            if path.as_str() == "pipe.tex" && message.contains("not a regular file"))
+        ),
+        "{diagnostics:?}"
+    );
+}
+
+/// Finding 7 (deterministic): a tracked file swapped for a symlink between
+/// classification and open is reported deleted, and the outside file it
+/// points to is never hashed.
+#[test]
+fn watcher_symlink_swapped_in_between_classify_and_open_is_not_hashed() {
+    let outside = TempDir::new("watch-window-outside");
+    let victim = outside.write("victim.tex", "external secret");
+    let t = TempDir::new("watch-window");
+    t.write("a.tex", "inside");
+    let snap = Snapshot::take(t.root(), &[pp("a.tex")]).unwrap();
+    fs::write(t.root().join("a.tex"), "inside, but longer now").unwrap();
+
+    let target = t.root().join("a.tex");
+    let (_guard, fired) = swap_once_at(Window::BeforeOpen, "a.tex", move || {
+        fs::remove_file(&target).unwrap();
+        symlink(&victim, &target).unwrap();
+    });
+    let diff = snap.diff().unwrap();
+    assert_eq!(fired.get(), 1, "the hook must have swapped in the window");
+    assert_eq!(diff.changes.len(), 1, "{:?}", diff.changes);
+    assert_eq!(diff.changes[0].kind, ChangeKind::Deleted);
+    assert_eq!(diff.changes[0].after, None);
+}
+
+/// Finding 2: `Snapshot` keeps the root descriptor it pinned. A directory
+/// renamed into the root's place afterwards is never read: `diff` reports
+/// `root_replaced`, the changes describe the pinned directory, and `track`
+/// reads through the pinned directory too. `Poller::poll` refuses to advance.
+#[test]
+fn snapshot_reads_the_pinned_root_and_reports_a_replaced_root() {
+    let base = TempDir::new("snap-root-replace");
+    let root = base.root().join("project");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("a.tex"), "original").unwrap();
+    let snap = Snapshot::take(&root, &[pp("a.tex")]).unwrap();
+    let diff = snap.diff().unwrap();
+    assert!(!diff.root_replaced && diff.changes.is_empty());
+    let mut poller = Poller::new(snap.clone());
+
+    // Move the real root away and put a different directory in its place.
+    fs::rename(&root, base.root().join("moved")).unwrap();
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("a.tex"), "REPLACEMENT").unwrap();
+    fs::write(root.join("b.tex"), "only in the replacement").unwrap();
+
+    let diff = snap.diff().unwrap();
+    assert!(diff.root_replaced);
+    assert!(diff.changes.is_empty(), "{:?}", diff.changes);
+    let mut snap2 = diff.snapshot.clone();
+    assert_eq!(
+        snap2.state(&pp("a.tex")).unwrap().sha256,
+        sha256(b"original"),
+        "hashes come from the pinned directory, not the replacement"
+    );
+    snap2.track(&pp("b.tex")).unwrap();
+    assert_eq!(
+        snap2.state(&pp("b.tex")),
+        None,
+        "track reads the pinned root"
+    );
+
+    // A change inside the pinned (moved) directory is still seen.
+    fs::write(base.root().join("moved/a.tex"), "edited after the move").unwrap();
+    let diff = snap2.diff().unwrap();
+    assert!(diff.root_replaced);
+    assert_eq!(diff.changes.len(), 1);
+    assert_eq!(
+        diff.changes[0].after.unwrap().sha256,
+        sha256(b"edited after the move")
+    );
+
+    let err = poller.poll().unwrap_err();
+    assert!(
+        err.get_ref().is_some_and(|e| e.is::<RootReplaced>()),
+        "{err:?}"
+    );
+    assert_eq!(poller.snapshot(), &snap, "a refused poll does not advance");
+
+    // Replaced by a symlink back to the pinned directory: still replaced.
+    fs::remove_dir_all(&root).unwrap();
+    symlink(base.root().join("moved"), &root).unwrap();
+    assert!(snap.diff().unwrap().root_replaced);
+    // Removed outright: replaced as well.
+    fs::remove_file(&root).unwrap();
+    assert!(snap.diff().unwrap().root_replaced);
+    // Renamed back: the same directory again.
+    fs::rename(base.root().join("moved"), &root).unwrap();
+    assert!(!snap.diff().unwrap().root_replaced);
+}
+
+/// A root that did not exist at `take` is opened and pinned once it does.
+#[test]
+fn snapshot_of_a_missing_root_pins_it_once_created() {
+    let base = TempDir::new("snap-root-missing");
+    let root = base.root().join("later");
+    let snap = Snapshot::take(&root, &[pp("a.tex")]).unwrap();
+    assert!(snap.diff().unwrap().changes.is_empty());
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("a.tex"), "created").unwrap();
+    let diff = snap.diff().unwrap();
+    assert!(!diff.root_replaced);
+    assert_eq!(diff.changes.len(), 1);
+    assert_eq!(diff.changes[0].kind, ChangeKind::Created);
+    fs::rename(&root, base.root().join("moved")).unwrap();
+    fs::create_dir(&root).unwrap();
+    assert!(diff.snapshot.diff().unwrap().root_replaced);
+}
+
 /// `\input{pipe}` whose target is swapped between a regular file and a FIFO
 /// while discovery runs. The property under test is only that no discovery
 /// hangs, whichever interleaving occurs: a fixed number of runs, each bounded
 /// by a generous per-call limit (a blocked open never returns, so the limit
 /// only has to exceed a slow runner's scheduling delay). Which diagnostic a
-/// run produces depends on the interleaving and is not asserted.
+/// run produces depends on the interleaving and is not asserted. This is
+/// extra stress coverage; the worst interleaving is pinned deterministically
+/// by `fifo_swapped_in_between_classify_and_open_is_refused_without_blocking`.
 #[test]
 fn input_swapped_to_fifo_after_probe_does_not_hang_discovery() {
     let t = TempDir::new("fifo-swap");
