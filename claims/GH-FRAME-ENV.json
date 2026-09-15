@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead-2",
   "branch": "agent/daniel-muse-lead-2/frame-env",
-  "gh_ref": null,
+  "gh_ref": "544",
   "machine": "Overpriced-Hardware",
   "note": null,
   "started_utc": "2026-09-15T06:27:02Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-FRAME-ENV",
-  "updated_utc": "2026-09-15T06:27:02Z"
+  "updated_utc": "2026-09-15T07:08:30Z"
 }
