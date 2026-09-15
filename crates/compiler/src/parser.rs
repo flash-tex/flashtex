@@ -8794,6 +8794,12 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
         // array.sty's preamble builder, column types and row strut are
         // implemented (parser/tabular.rs, crate::tabular); no options.
         "array" => options.is_empty(),
+        // ifthen's conditionals (`\ifthenelse` with its tests, `\newif`
+        // switches with `\newboolean`/`\setboolean`) run in the expansion
+        // pass, so loading the package is silent. The one gap reports
+        // itself where it is used instead: `\whiledo` is not implemented
+        // and is diagnosed as an unknown command at its own span.
+        "ifthen" => options.is_empty(),
         // natbib citation commands (crate::natbib) with the delimiter,
         // separator and citation-style options that decide the characters
         // they set. `sort`/`compress`/`super`/`longnamesfirst` are parsed but

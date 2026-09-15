@@ -58,7 +58,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "def", "edef", "gdef", "let", "providecommand", "newenvironment", "renewenvironment",
     "newtheorem", "newcounter", "setcounter", "addtocounter", "stepcounter", "refstepcounter",
     "value", "arabic", "roman", "Roman", "alph", "Alph", "fnsymbol", "the", "makeatletter",
-    "makeatother", "ifthenelse", "newif", "relax", "expandafter", "csname", "endcsname",
+    "makeatother", "newif", "relax", "expandafter", "csname", "endcsname",
     "newlength", "settowidth", "DeclareMathOperator", "ensuremath", "protect",
     "verb", "graphicspath", "allowdisplaybreaks", "geometry", "hypersetup", "lstset", "RequirePackage",
     "PassOptionsToPackage", "AtBeginDocument",
@@ -112,7 +112,7 @@ const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "description", "table", "table*", "figure*", "tabular", "tabular*", "tabularx", "longtable",
     "verbatim", "verbatim*", "verse", "abstract", "minipage", "titlepage", "thebibliography",
     "list", "trivlist", "picture", "math", "eqnarray", "eqnarray*", "gathered", "multlined",
-    "subequations", "dcases", "rcases", "proof", "tikzpicture", "lstlisting", "minted",
+    "subequations", "proof", "tikzpicture", "lstlisting", "minted",
     "wrapfigure", "subfigure", "comment", "landscape", "filecontents",
     "tabbing", "small", "footnotesize",
 ];
