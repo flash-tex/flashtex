@@ -25,7 +25,7 @@ struct ProblemsPanel: View {
         let (errors, warnings, gaps) = EditorDiagnostics.counts(diags)
         VStack(spacing: 0) {
             HStack(spacing: DS.Space.m) {
-                Label("Problems", systemImage: "exclamationmark.triangle").font(DS.Fonts.header)
+                Text("Problems").font(DS.Fonts.base.weight(.semibold)).foregroundStyle(DS.Colors.textPrimary)
                 if errors > 0 { Label("\(errors)", systemImage: "xmark.octagon.fill").foregroundStyle(DS.Colors.severityError).font(DS.Fonts.secondary) }
                 if warnings > 0 { Label("\(warnings)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(DS.Colors.severityWarning).font(DS.Fonts.secondary) }
                 if gaps > 0 {
@@ -38,13 +38,15 @@ struct ProblemsPanel: View {
                         .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning).lineLimit(1)
                 }
                 Spacer()
-                Picker("Show", selection: $model.problemsSeverityFilter) {
-                    Text("All").tag(RuntimeV1.Severity?.none)
-                    Text("Errors").tag(RuntimeV1.Severity?.some(.error))
-                    Text("Warnings").tag(RuntimeV1.Severity?.some(.warning))
+                // JetBrains-style quiet filter chips, not a stock segmented
+                // control (custom-style rule, brief §10).
+                HStack(spacing: DS.Space.xxs) {
+                    FilterChip(title: "All", selected: model.problemsSeverityFilter == nil) { model.problemsSeverityFilter = nil }
+                    FilterChip(title: "Errors", selected: model.problemsSeverityFilter == .error) { model.problemsSeverityFilter = .error }
+                    FilterChip(title: "Warnings", selected: model.problemsSeverityFilter == .warning) { model.problemsSeverityFilter = .warning }
                 }
-                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
                 .help("Filter the list by severity; counts above are for every diagnostic")
+                .accessibilityElement(children: .contain)
                 .accessibilityLabel("Problems severity filter")
                 Button {
                     model.problemsVisible = false
@@ -53,9 +55,9 @@ struct ProblemsPanel: View {
                     .help("Hide the Problems panel (⌘⇧M shows it again)")
                     .accessibilityLabel("Hide Problems")
             }
-            .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
-            .background(.bar)
-            Divider()
+            .padding(.horizontal, DS.Space.l)
+            .frame(height: DS.Row.toolWindowHeader)
+            .background(DS.Colors.surfacePrimary)
             if diags.isEmpty {
                 ContentUnavailableView {
                     Label("No problems", systemImage: "checkmark.circle")
@@ -67,6 +69,7 @@ struct ProblemsPanel: View {
                 problemsList(diags)
             }
         }
+        .background(DS.Colors.surfacePrimary)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Problems")
         .accessibilityIdentifier(Self.identifier)

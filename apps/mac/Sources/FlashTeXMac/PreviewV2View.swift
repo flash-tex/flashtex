@@ -954,7 +954,7 @@ private struct V2PaneHeader: View {
             }
         }
         .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
-        .background(.bar)
+        .background(DS.Colors.surfaceSecondary)
     }
 }
 

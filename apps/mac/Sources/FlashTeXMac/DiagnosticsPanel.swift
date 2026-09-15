@@ -281,7 +281,15 @@ struct DiagnosticsListView: View {
             }
             List(groups, selection: $panel.selection) { g in
                 row(g, in: diags, status: status)
+                    .listRowSeparator(.hidden)
             }
+            // Small and bounded, so `List` stays (brief §2) with the density
+            // levers: plain style, hidden scroll ground, 24pt rows on the
+            // panel surface.
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(DS.Colors.surfacePrimary)
+            .environment(\.defaultMinListRowHeight, DS.Row.problem)
             .accessibilityIdentifier(Self.listIdentifier)
             .frame(minHeight: DS.Layout.diagnosticsListMinHeight, maxHeight: maxHeight)
             .onKeyPress(.return) { model.goToSelectedOccurrence(panel: panel); return .handled }
