@@ -7703,6 +7703,19 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
                     if after_heading {
                         b.vertical.penalty_before = None;
                     }
+                    // report/book `\@chapter`'s `\addvspace{10\p@}` ahead of
+                    // the entry's own `\vskip`: `\vskip-\lastskip \vskip
+                    // 10pt` unless the previous skip is already as large.
+                    if entry.addvspace_pt > 0.0 {
+                        let prev_after = blocks.last().and_then(|p| p.vertical.space_after).map_or(0.0, |k| k.0);
+                        if prev_after < entry.addvspace_pt {
+                            if let Some(prev) = blocks.last_mut() {
+                                prev.vertical.space_after = None;
+                            }
+                            let own = b.vertical.space_before.unwrap_or((0.0, 0.0, 0.0));
+                            b.vertical.space_before = Some((own.0 + entry.addvspace_pt, own.1, own.2));
+                        }
+                    }
                     // `\addvspace`: only the excess over the previous skip.
                     if entry.style.addvspace {
                         if let (Some(before), Some(prev)) = (b.vertical.space_before, blocks.last_mut()) {

@@ -208,6 +208,9 @@ pub fn render_cached(
     let has_class = adapter::class_options(entry_text).is_some();
     labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>(), &float_numbers);
     labels.reading_order = reading_order;
+    if has_lists && listings::present(&texts) {
+        labels.floats.extend(toc::listing_entries(&texts));
+    }
     // Entry titles from source bytes (`\addcontentsline`, `\chapter`,
     // `\part`, captions) are set as body text: one parse per document.
     // A `listings` caption may hold any body command

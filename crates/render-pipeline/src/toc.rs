@@ -1,4 +1,5 @@
-//! Contents lists: `\tableofcontents`, `\listoffigures`, `\listoftables`.
+//! Contents lists: `\tableofcontents`, `\listoffigures`, `\listoftables`,
+//! and listings.sty's `\lstlistoflistings`.
 //!
 //! LaTeX writes one `\contentsline{<level>}{<entry>}{<page>}{}` per
 //! numbered heading, `\addcontentsline` and float caption to `.toc`/`.lof`/
@@ -27,6 +28,8 @@ pub enum ListKind {
     Toc,
     Lof,
     Lot,
+    /// listings.sty `.lol`.
+    Lol,
 }
 
 impl ListKind {
@@ -36,6 +39,7 @@ impl ListKind {
             "toc" => Some(ListKind::Toc),
             "lof" => Some(ListKind::Lof),
             "lot" => Some(ListKind::Lot),
+            "lol" => Some(ListKind::Lol),
             _ => None,
         }
     }
@@ -46,6 +50,8 @@ impl ListKind {
             ListKind::Toc => ("contentsname", "Contents"),
             ListKind::Lof => ("listfigurename", "List of Figures"),
             ListKind::Lot => ("listtablename", "List of Tables"),
+            // `\lst@UserCommand\lstlistlistingname{Listings}`.
+            ListKind::Lol => ("lstlistlistingname", "Listings"),
         }
     }
 }
@@ -56,7 +62,7 @@ pub fn level_of(name: &str) -> Option<i8> {
         // `\l@part`: `\ifnum \c@tocdepth >-2`.
         "part" => -1,
         "chapter" => 0,
-        "section" | "figure" | "table" => 1,
+        "section" | "figure" | "table" | "lstlisting" => 1,
         "subsection" => 2,
         "subsubsection" => 3,
         "paragraph" => 4,
@@ -84,6 +90,11 @@ pub fn float_key(document: usize, index: usize) -> String {
     format!("{KEY_PREFIX}float:{document}:{index}")
 }
 
+/// The label key of `lstlisting` `index` (in `listings::scan` order).
+pub fn listing_key(index: usize) -> String {
+    format!("{KEY_PREFIX}lst:{index}")
+}
+
 /// One `\contentsline` record.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Record {
@@ -95,7 +106,8 @@ pub struct Record {
     pub key: String,
 }
 
-/// A captioned float: a `\listoffigures`/`\listoftables` entry.
+/// A captioned float or listing: a `\listoffigures`/`\listoftables`/
+/// `\lstlistoflistings` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloatEntry {
     pub list: ListKind,
@@ -110,6 +122,9 @@ pub struct FloatEntry {
     /// gives the float's `\label` too.
     pub number: String,
     pub key: String,
+    /// Writes its line: false for a `nolol` listing, which still steps
+    /// `\c@lstlisting`.
+    pub listed: bool,
 }
 
 /// Every captioned float in source order; `texts` are the documents before
@@ -141,10 +156,66 @@ pub fn float_entries(envs: &[Vec<FloatEnv>], texts: &[&str], numbers: &[Vec<Opti
                 text: source.get(caption.start..caption.end).unwrap_or("").to_string(),
                 number,
                 key: float_key(d, i),
+                listed: true,
             });
         }
     }
     out
+}
+
+/// Every captioned `lstlisting` in source order (listings.sty
+/// `\lst@MakeCaption`: only a non-empty caption `\refstepcounter`s and
+/// writes `\addcontentsline{lol}{lstlisting}{\protect\numberline
+/// {\thelstlisting}<short caption>}`, unless `nolol`).
+pub fn listing_entries(texts: &[&str]) -> Vec<FloatEntry> {
+    crate::listings::listings(texts)
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            let (s, e) = l.keys.caption.filter(|(s, e)| s < e)?;
+            let (s, e) = l.keys.short_caption.unwrap_or((s, e));
+            let source = texts.get(l.document).copied().unwrap_or("");
+            let caption = Span::in_document(DocumentId(l.document), s, e);
+            Some(FloatEntry {
+                list: ListKind::Lol,
+                at: l.begin.0,
+                caption,
+                text: source.get(s..e).unwrap_or("").to_string(),
+                // `\thelstlisting` is counted in `list_blocks`.
+                number: String::new(),
+                key: listing_key(i),
+                listed: !l.keys.nolol,
+            })
+        })
+        .collect()
+}
+
+/// `\the<counter>` of counters reset by `\chapter` (`\@addtoreset`), for
+/// items at the source offsets `ats` (in order): `<chapter>.<n>` after a
+/// numbered chapter; before any, `0.<n>` with `zero_chapter` (`\thefigure`
+/// in report/book) or `<n>` (listings.sty `\ifnum\c@chapter>\z@`).
+pub fn chapter_numbers(ats: &[usize], chapter_starts: &[(usize, String)], zero_chapter: bool) -> Vec<String> {
+    let mut per_chapter: Vec<(Option<usize>, u32)> = Vec::new();
+    ats.iter()
+        .map(|at| {
+            let chapter = chapter_starts.iter().rposition(|(start, _)| start < at);
+            let n = match per_chapter.iter_mut().find(|(c, _)| *c == chapter) {
+                Some((_, n)) => {
+                    *n += 1;
+                    *n
+                }
+                None => {
+                    per_chapter.push((chapter, 1));
+                    1
+                }
+            };
+            match chapter {
+                Some(c) => format!("{}.{n}", chapter_starts[c].1),
+                None if zero_chapter => format!("0.{n}"),
+                None => n.to_string(),
+            }
+        })
+        .collect()
 }
 
 /// How one `\l@<level>` sets its entry. Lengths in `em` are the body
@@ -268,6 +339,9 @@ pub struct TocEntry {
     pub page: String,
     /// The list command: the bytes of the leader dots and page numbers.
     pub list_span: Span,
+    /// report/book `\@chapter`'s `\addtocontents{lof}{\protect\addvspace
+    /// {10\p@}}` (and `lot`) between the previous entry and this one, pt.
+    pub addvspace_pt: f64,
     /// Set across the full `\textwidth` of a two-column document: report/
     /// book `\tableofcontents` (etc.) run `\onecolumn` around the list.
     pub wide: bool,
@@ -278,7 +352,7 @@ pub struct TocEntry {
 pub struct Settings {
     pub chapters: bool,
     pub tocdepth: i8,
-    pub names: [String; 3],
+    pub names: [String; 4],
     /// `\pagestyle{headings}`: `\@mkboth` sets both marks.
     pub marks: bool,
     /// report.cls/book.cls lists in a `twocolumn` document: `\if@twocolumn
@@ -305,7 +379,7 @@ impl Settings {
             chapters,
             // article.cls `\setcounter{tocdepth}{3}`, report/book `{2}`.
             tocdepth: signed_counter(source, "tocdepth").unwrap_or(if chapters { 2 } else { 3 }),
-            names: [name(ListKind::Toc), name(ListKind::Lof), name(ListKind::Lot)],
+            names: [name(ListKind::Toc), name(ListKind::Lof), name(ListKind::Lot), name(ListKind::Lol)],
             marks: source.contains("\\pagestyle{headings}"),
         }
     }
@@ -381,7 +455,7 @@ pub fn superseded_commands(source: &str) -> Vec<usize> {
         .filter(|c| matches!(c.kind, adapter::BodyKind::ContentsList(_) | adapter::BodyKind::AddContentsLine { .. } | adapter::BodyKind::Appendix | adapter::BodyKind::Part { .. }))
         .map(|c| c.start)
         .collect();
-    for name in ["contentsname", "listfigurename", "listtablename"] {
+    for name in ["contentsname", "listfigurename", "listtablename", "lstlistlistingname"] {
         for opener in ["\\renewcommand{\\", "\\renewcommand\\", "\\renewcommand*{\\", "\\renewcommand*\\"] {
             let pattern = format!("{opener}{name}");
             out.extend(source.match_indices(&pattern).map(|(i, _)| i));
@@ -502,7 +576,22 @@ pub fn entry_items(documents: &[SourceDocument<'_>], entry_index: usize, texts: 
             by_doc.entry(s.document.0).or_default().push(*s);
         }
     }
+    // Ranges are parsed in batches of ranges at least two bytes apart, so
+    // each can end in a paragraph break: `caption={[<short>]<long>}` has
+    // both ranges one `]` apart.
+    let mut batches: Vec<(usize, Vec<Span>)> = Vec::new();
     for (d, doc_spans) in by_doc {
+        let mut mine: Vec<Vec<Span>> = Vec::new();
+        for s in doc_spans {
+            let clear = |o: &Span| s.start >= o.end + 2 || o.start >= s.end + 2 || (s.start == o.start && s.end == o.end);
+            match mine.iter_mut().find(|batch| batch.iter().all(clear)) {
+                Some(batch) => batch.push(s),
+                None => mine.push(vec![s]),
+            }
+        }
+        batches.extend(mine.into_iter().map(|batch| (d, batch)));
+    }
+    for (d, doc_spans) in batches {
         let Some(document) = documents.get(d) else { continue };
         let text = document.text;
         let body = text.find("\\begin{document}").map_or(0, |p| p + "\\begin{document}".len());
@@ -565,7 +654,10 @@ pub fn entry_items(documents: &[SourceDocument<'_>], entry_index: usize, texts: 
 /// The blocks of one list: its heading (`\section*` in article,
 /// `\chapter*` in report/book, `\@mkboth` under `headings`) and every entry
 /// within `tocdepth`, figures and tables numbered `\thefigure` /
-/// `\thetable` (`<chapter>.<n>` with chapters).
+/// `\thetable` (`<chapter>.<n>` with chapters), listings `\thelstlisting`.
+/// `chapter_gaps`: the offsets of every unstarred `\chapter`, whose
+/// `\@chapter` writes an `\addvspace{10\p@}` into the `.lof` and `.lot`.
+#[allow(clippy::too_many_arguments)]
 pub fn list_blocks(
     kind: ListKind,
     span: Span,
@@ -573,6 +665,8 @@ pub fn list_blocks(
     settings: &Settings,
     records: &[Record],
     labels: &Labels,
+    chapter_starts: &[(usize, String)],
+    chapter_gaps: &[usize],
 ) -> Vec<Block> {
     let name = settings.name_of(kind).to_string();
     let mut out = Vec::new();
@@ -606,7 +700,8 @@ pub fn list_blocks(
         });
     }
     let page = |key: &str| labels.toc_pages.get(key).cloned().unwrap_or_default();
-    let mut push = |level: i8, number: Option<(String, Span)>, title: Vec<Item>, key: &str| {
+    let mut addvspace_pt = 0.0;
+    let mut push = |level: i8, number: Option<(String, Span)>, title: Vec<Item>, key: &str, addvspace_pt: &mut f64| {
         if level > settings.tocdepth {
             return;
         }
@@ -617,6 +712,7 @@ pub fn list_blocks(
             title,
             page: page(key),
             list_span: span,
+            addvspace_pt: std::mem::take(addvspace_pt),
             wide: settings.onecolumn_lists,
         })));
     };
@@ -631,27 +727,45 @@ pub fn list_blocks(
             _ => None,
         })).map_or(0, position)
     };
-    let mut floats: Vec<(usize, Option<&FloatEntry>, Option<&Record>)> = Vec::new();
+    let mut floats: Vec<(usize, Option<(usize, &FloatEntry)>, Option<&Record>)> = Vec::new();
     for r in records.iter().filter(|r| r.list == kind) {
         floats.push((record_at(r), None, Some(r)));
     }
+    let mut numbers: Vec<String> = Vec::new();
     if kind != ListKind::Toc {
-        for f in labels.floats.iter().filter(|f| f.list == kind) {
-            floats.push((position(Span::in_document(f.caption.document, f.at, f.at)), Some(f), None));
+        let mine: Vec<&FloatEntry> = labels.floats.iter().filter(|f| f.list == kind).collect();
+        let ats: Vec<usize> = mine.iter().map(|f| position(Span::in_document(f.caption.document, f.at, f.at))).collect();
+        // Figures and tables carry `\thefigure`/`\thetable` (#537/#578);
+        // `\thelstlisting` is counted here (#543): `\thechapter.` once a
+        // chapter has started, no `0.` before.
+        if kind == ListKind::Lol {
+            numbers = chapter_numbers(&ats, chapter_starts, false);
+        }
+        for (i, f) in mine.into_iter().enumerate() {
+            floats.push((ats[i], Some((i, f)), None));
         }
         floats.sort_by_key(|(at, ..)| *at);
     }
-    for (_, float, record) in floats {
+    let gaps: &[usize] = if settings.chapters && matches!(kind, ListKind::Lof | ListKind::Lot) { chapter_gaps } else { &[] };
+    let mut last_at = 0usize;
+    for (at, float, record) in floats {
+        // `\addvspace` after `\addvspace` adds only the excess: one gap for
+        // any number of chapters in a row.
+        if gaps.iter().any(|g| (last_at..at).contains(g)) {
+            addvspace_pt = 10.0;
+        }
+        last_at = at;
         match (float, record) {
-            (_, Some(r)) => push(r.level, r.number.clone(), r.title.clone(), &r.key),
-            (Some(f), None) => {
+            (_, Some(r)) => push(r.level, r.number.clone(), r.title.clone(), &r.key, &mut addvspace_pt),
+            (Some((i, f)), None) if f.listed => {
                 let doc = f.caption.document;
                 // `\addcontentsline{lof}{figure}{\protect\numberline{\thefigure}..}`:
                 // the number the caption and `\ref` show.
                 let title = labels.entry_items.get(doc, f.caption.start, f.caption.end).unwrap_or_else(|| adapter::words_at(&f.text, doc, f.caption.start));
-                push(1, Some((f.number.clone(), f.caption)), title, &f.key);
+                let number = if f.list == ListKind::Lol { numbers[i].clone() } else { f.number.clone() };
+                push(1, Some((number, f.caption)), title, &f.key, &mut addvspace_pt);
             }
-            (None, None) => {}
+            _ => {}
         }
     }
     out
