@@ -649,20 +649,18 @@ fn has_includes(text: &str) -> bool {
     text.contains("\\input") || text.contains("\\include")
 }
 
-/// The engine stopped on a resource limit: the step limit, or TeX's
-/// "capacity exceeded" (input stack, main memory). The rest of the document
-/// is then typeset unexpanded from where the engine stood.
+/// The engine stopped on the step limit or on TeX's "capacity exceeded"
+/// (input stack, main memory): the rest of the document is then typeset
+/// unexpanded from where the engine stood. A stop on the output token limit
+/// is not resumed (see [`tex::output_limit_message`]).
 fn step_limit_hit(diagnostics: &[tex::Diagnostic]) -> bool {
-    diagnostics.iter().any(|d| is_stop_limit(&d.message))
+    diagnostics.iter().any(|d| is_stop_limit(&d.message) && !tex::is_output_limit(&d.message))
 }
 
+/// Any stop on a resource limit, the output token limit included.
 pub(crate) fn is_stop_limit(message: &str) -> bool {
     message.contains("expansion step limit exceeded") || message.starts_with("TeX capacity exceeded, sorry [")
 }
-
-/// The incremental expander's diagnostic when a run goes past
-/// `max_output_tokens`, which [`expand_project`] reports the same way.
-const OUTPUT_LIMIT: &str = "output token limit exceeded";
 
 /// What the caller must do after one converted token.
 enum Flow {
@@ -901,13 +899,15 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
     // Engine tokens taken so far. The output token limit is the incremental
     // expander's (`IncrementalExpander`'s run loop): the token that goes past
-    // it is still converted, then the run stops with the same diagnostic.
+    // it is still converted, then the run stops with the same diagnostic and
+    // nothing after it is typeset.
     let mut pulled: u64 = 0;
     loop {
         let next = match lookahead.pop_front() {
             Some(t) => Some(t),
             None if pulled > limits.max_output_tokens => {
-                engine.push_diagnostic(tex::Diagnostic::error(OUTPUT_LIMIT, tex::Span::synthetic()));
+                let message = tex::output_limit_message(limits.max_output_tokens);
+                engine.push_diagnostic(tex::Diagnostic::error(message, tex::Span::synthetic()));
                 break;
             }
             None => {
@@ -1096,7 +1096,7 @@ pub fn expand_project_with_cache(
     // stop on the output token limit. Debug builds check that on every
     // stopped run.
     #[cfg(debug_assertions)]
-    if cache.as_ref().expect("cache kept").expander.diagnostics().iter().any(|d| is_stop_limit(&d.message) || d.message == OUTPUT_LIMIT) {
+    if cache.as_ref().expect("cache kept").expander.diagnostics().iter().any(|d| is_stop_limit(&d.message)) {
         let full = expand_project(documents, entry);
         debug_assert!(
             *full.tokens == *expansion.tokens && full.diagnostics == expansion.diagnostics && full.arraystretch == expansion.arraystretch,
@@ -1374,6 +1374,8 @@ fn recovery_for(message: &str) -> &'static str {
         "kept the existing command definition"
     } else if message.contains("LaTeX Error: Command") && message.contains("undefined") {
         "defined the command anyway"
+    } else if tex::is_output_limit(message) {
+        "stopped expanding; the rest of the document was not typeset"
     } else if message.contains("limit exceeded") || is_stop_limit(message) {
         "stopped expanding; the rest of the document was typeset without macro expansion"
     } else {

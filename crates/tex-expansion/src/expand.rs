@@ -1116,7 +1116,7 @@ impl Engine {
         while let Some(tok) = self.next_content_token() {
             out.push(tok);
             if out.len() as u64 > self.limits.max_output_tokens {
-                self.err("output token limit exceeded", Span::synthetic());
+                self.err(crate::error::output_limit_message(self.limits.max_output_tokens), Span::synthetic());
                 break;
             }
         }

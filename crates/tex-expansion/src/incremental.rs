@@ -275,7 +275,10 @@ impl IncrementalExpander {
             self.tokens.push(tok);
             self.origins.push(origin);
             if self.tokens.len() as u64 > self.limits.max_output_tokens {
-                engine.push_diagnostic(Diagnostic::error("output token limit exceeded", Span::synthetic()));
+                engine.push_diagnostic(Diagnostic::error(
+                    crate::error::output_limit_message(self.limits.max_output_tokens),
+                    Span::synthetic(),
+                ));
                 return Err(());
             }
             if let Some(pos) = engine.safe_point() {

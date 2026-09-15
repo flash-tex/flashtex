@@ -22,6 +22,22 @@ impl Diagnostic {
     }
 }
 
+/// The diagnostic for a run that goes past `Limits::max_output_tokens`,
+/// in TeX's capacity wording. Unlike TeX's other capacity stops, nothing
+/// typesets the rest of the document afterwards, and the message says so.
+pub fn output_limit_message(limit: u64) -> String {
+    format!(
+        "{OUTPUT_LIMIT_PREFIX}{limit}]; expansion stopped here and the rest of the document was not typeset."
+    )
+}
+
+const OUTPUT_LIMIT_PREFIX: &str = "TeX capacity exceeded, sorry [output token limit=";
+
+/// `message` is [`output_limit_message`]'s.
+pub fn is_output_limit(message: &str) -> bool {
+    message.starts_with(OUTPUT_LIMIT_PREFIX)
+}
+
 /// Resource limits so a mid-edit infinite macro loop (very common while
 /// typing) degrades to a diagnostic instead of hanging or OOMing the IDE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -92,7 +92,7 @@ fn check_project(docs: &[SourceDocument<'_>], cache: &mut Option<ExpansionCache>
     }
     full.diagnostics
         .iter()
-        .any(|d| d.message.contains("expansion step limit exceeded") || d.message == "output token limit exceeded")
+        .any(|d| d.message.contains("expansion step limit exceeded") || d.message.starts_with("TeX capacity exceeded, sorry [output token limit="))
 }
 
 fn boundary(text: &str, rng: &mut Rng) -> usize {
@@ -261,8 +261,23 @@ fn an_output_heavy_loop_stops_both_paths_at_the_output_token_limit() {
     let mut text = document();
     text.insert_str(text.find("\\section{Part 20}").expect("section"), "\\def\\o{xyzw xyzw xyzw\\o}\\o ");
     let full = expand_project(&[SourceDocument { path: "main.tex", text: &text }], 0);
-    let stops: Vec<&str> = full.diagnostics.iter().map(|d| d.message.as_str()).filter(|m| m.contains("limit exceeded")).collect();
-    assert_eq!(stops, ["output token limit exceeded"]);
+    let stops: Vec<(&str, Option<&str>)> = full
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("limit exceeded") || d.message.starts_with("TeX capacity exceeded"))
+        .map(|d| (d.message.as_str(), d.recovery.as_deref()))
+        .collect();
+    let limit = 2_000_000 + 8 * text.len();
+    assert_eq!(
+        stops,
+        [(
+            format!("TeX capacity exceeded, sorry [output token limit={limit}]; expansion stopped here and the rest of the document was not typeset.").as_str(),
+            Some("stopped expanding; the rest of the document was not typeset")
+        )]
+    );
+    // As the message says, nothing after the loop is typeset.
+    let after_loop = text.find("\\section{Part 20}").expect("section");
+    assert!(full.tokens.iter().all(|t| t.token.span.start < after_loop));
     let mut cache = None;
     assert!(check(&text, &mut cache, 0, "output-heavy loop"));
     let at = text.find("\\section{Part 3}").expect("section");
