@@ -25,7 +25,7 @@ final class VimModeTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        tv.vimEnabledOverride = false
+        tv?.vimEnabledOverride = false
         window.orderOut(nil)
     }
 
@@ -664,5 +664,61 @@ final class VimModeTests: XCTestCase {
         type("i")
         key("\t", code: 48)
         XCTAssertNotEqual(text, "ab", "insert-mode Tab must keep taking the editor's path")
+    }
+
+    // MARK: shared status-line lifecycle
+
+    /// The status line is a singleton (`VimMode.Status.shared`) but the truth
+    /// behind it is per-view. Turning the preference off used to reach
+    /// `deactivate()` only through an observation held weakly by a live
+    /// editor's coordinator, so switching Vim off from the menu or the
+    /// command palette with no editor alive left the singleton at
+    /// `-- NORMAL --` — and the next editor opened showed a phantom status
+    /// row with Vim off.
+    func testPreferenceOffClearsTheStatusLineWithNoLiveEditor() {
+        let was = EditorPreferences.shared.vimKeybindings
+        defer { EditorPreferences.shared.vimKeybindings = was }
+        tv.vimEnabledOverride = nil // this view follows the preference, like the app's
+        EditorPreferences.shared.vimKeybindings = true
+        XCTAssertEqual(VimMode.Status.shared.indicator, "-- NORMAL --")
+
+        // Every editor goes away, then the preference is switched off with
+        // nothing left observing it.
+        window.contentView?.subviews.forEach { $0.removeFromSuperview() }
+        tv = nil
+        EditorPreferences.shared.vimKeybindings = false
+        XCTAssertNil(VimMode.Status.shared.indicator, "no editor may leave a phantom status row behind")
+        XCTAssertNil(VimMode.Status.shared.commandLine)
+    }
+
+    /// The clear must be driven by the preference *transition*, not by a
+    /// render gate on the preference: `vimEnabledOverride` pins Vim per-view
+    /// independently of it, and that must keep showing its status line.
+    func testPerViewOverrideKeepsItsStatusLineWhenThePreferenceGoesOff() {
+        let was = EditorPreferences.shared.vimKeybindings
+        defer { EditorPreferences.shared.vimKeybindings = was }
+        EditorPreferences.shared.vimKeybindings = true
+        tv.vimEnabledOverride = true // pinned on, regardless of the preference
+        load("abc")
+        XCTAssertEqual(VimMode.Status.shared.indicator, "-- NORMAL --")
+        EditorPreferences.shared.vimKeybindings = false
+        XCTAssertEqual(VimMode.Status.shared.indicator, "-- NORMAL --", "a pinned view still owns the status line")
+        type("i")
+        XCTAssertEqual(VimMode.Status.shared.indicator, "-- INSERT --", "and keeps driving it")
+        type("<Esc>")
+    }
+
+    /// Turning the preference off is synchronous — the old path scheduled a
+    /// `Task { @MainActor }` that lost the race against coordinator teardown
+    /// on a loaded machine, which is what made this flaky in CI rather than
+    /// always broken.
+    func testPreferenceOffClearsTheStatusLineWithoutWaitingForATask() {
+        let was = EditorPreferences.shared.vimKeybindings
+        defer { EditorPreferences.shared.vimKeybindings = was }
+        tv.vimEnabledOverride = nil
+        EditorPreferences.shared.vimKeybindings = true
+        XCTAssertNotNil(VimMode.Status.shared.indicator)
+        EditorPreferences.shared.vimKeybindings = false
+        XCTAssertNil(VimMode.Status.shared.indicator, "cleared on the setter, not on a later run-loop turn")
     }
 }

@@ -191,9 +191,21 @@ final class EditorPreferences {
     }
 
     /// Modal Vim keybindings in the source editor (VimMode.swift); off by default.
+    ///
+    /// The change is pushed to `VimMode` here rather than being left to the
+    /// per-view observation in `observeApplying(to:)`: that observation is
+    /// held weakly by a live editor's coordinator, so switching Vim off from
+    /// the menu or the command palette with no editor alive (or while one is
+    /// being torn down) never reached `deactivate()`, and the shared status
+    /// line stayed at `-- NORMAL --` for the rest of the process. Views keep
+    /// getting `apply(to:)` through the observation as before.
     var vimKeybindings: Bool {
         get { access(keyPath: \.vimKeybindings); return storage.vimKeybindings }
-        set { update(\.vimKeybindings, \.vimKeybindings, newValue, key: .vimKeybindings) }
+        set {
+            let changed = storage.vimKeybindings != newValue
+            update(\.vimKeybindings, \.vimKeybindings, newValue, key: .vimKeybindings)
+            if changed { VimMode.preferenceDidChange(to: newValue) }
+        }
     }
 
     /// Whether the preview scrolls to the caret as you edit (CaretFollow.swift).
