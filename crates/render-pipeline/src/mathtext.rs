@@ -151,12 +151,50 @@ pub struct GridCells {
 
 /// A `\boxed` body converted to a math-layout list. It is always laid out in
 /// display style, as amsmath defines `\boxed{#1}` through `\fbox{...$\displaystyle#1$}`.
+/// A `\cancel`/`\bcancel`/`\xcancel` body (`cancel` is `Some`) shares the seam:
+/// it is laid out in its ambient style (`cancel.sty` reaches it through
+/// `\mathpalette`) and wrapped by [`cancel_math_box`] instead of
+/// [`framed_math_box`].
 #[derive(Debug, Clone)]
 pub(crate) struct FrameBoxSpec {
     /// Index of the handle character (as for [`GridCells`]).
     handle: usize,
     body: ml::MathList,
     tag: ml::SourceTag,
+    /// Which diagonal the body is struck through with (`None`: a `\boxed`
+    /// frame).
+    cancel: Option<flashtex_compiler::math::Frame>,
+}
+
+/// `SourceTag` attributes marking the invisible full-body rule
+/// [`cancel_math_box`] overlays on a cancel body (`'CANC'` + 0/1/2 for
+/// `\cancel`/`\bcancel`/`\xcancel`). Nothing else in the pipeline sets
+/// `attr` — math-layout only carries it onto the leaf — so these values are
+/// unambiguous, and `typeset::math_items` turns a rule carrying one back
+/// into stroked diagonals instead of an `Item::Rule`.
+const CANCEL_ATTR_BASE: u32 = 0x4341_4E43;
+
+/// The marker attribute for a cancel frame (`None` for any other frame).
+pub(crate) fn cancel_attr(frame: flashtex_compiler::math::Frame) -> Option<u32> {
+    use flashtex_compiler::math::Frame as F;
+    match frame {
+        F::Cancel => Some(CANCEL_ATTR_BASE),
+        F::BCancel => Some(CANCEL_ATTR_BASE + 1),
+        F::XCancel => Some(CANCEL_ATTR_BASE + 2),
+        _ => None,
+    }
+}
+
+/// The cancel frame a marker attribute names (`None` when the rule is an
+/// ordinary rule).
+pub(crate) fn cancel_frame(attr: Option<u32>) -> Option<flashtex_compiler::math::Frame> {
+    use flashtex_compiler::math::Frame as F;
+    match attr {
+        Some(a) if a == CANCEL_ATTR_BASE => Some(F::Cancel),
+        Some(a) if a == CANCEL_ATTR_BASE + 1 => Some(F::BCancel),
+        Some(a) if a == CANCEL_ATTR_BASE + 2 => Some(F::XCancel),
+        _ => None,
+    }
 }
 
 /// A [`GridCells`] with its environment spec resolved from the source.
@@ -231,7 +269,7 @@ impl TextSink {
         let index = self.texts.len();
         match handle_char(index) {
             Some(handle) => {
-                self.frames.push(FrameBoxSpec { handle: index, body, tag });
+                self.frames.push(FrameBoxSpec { handle: index, body, tag, cancel: None });
                 self.texts.push(String::new());
                 self.keys.push(None);
                 // A `\boxed` frame is an hbox, not a run of math characters.
@@ -240,6 +278,39 @@ impl TextSink {
             }
             None => {
                 self.refused.push("\\boxed{...}".to_string());
+                ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Empty)
+            }
+        }
+    }
+
+    /// An `Ord` atom for a `\cancel`/`\bcancel`/`\xcancel` body; the diagonal
+    /// is struck after its body is laid out in ambient style through the same
+    /// placeholder seam as [`Self::frame_atom`].
+    pub(crate) fn cancel_atom(
+        &mut self,
+        body: ml::MathList,
+        tag: ml::SourceTag,
+        frame: flashtex_compiler::math::Frame,
+    ) -> ml::Atom {
+        let index = self.texts.len();
+        match handle_char(index) {
+            Some(handle) => {
+                self.frames.push(FrameBoxSpec { handle: index, body, tag, cancel: Some(frame) });
+                self.texts.push(String::new());
+                self.keys.push(None);
+                // A cancel strike is an hbox, not a run of math characters.
+                self.italics.push(false);
+                ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Text(handle.to_string()))
+            }
+            None => {
+                use flashtex_compiler::math::Frame as F;
+                let name = match frame {
+                    F::Cancel => "\\cancel{...}",
+                    F::BCancel => "\\bcancel{...}",
+                    F::XCancel => "\\xcancel{...}",
+                    _ => "\\cancel{...}",
+                };
+                self.refused.push(name.to_string());
                 ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Empty)
             }
         }
@@ -452,7 +523,7 @@ impl<'a> TextRunMetrics<'a> {
     }
 
     /// The framed boxes laid out so far and limitations met inside their
-    /// display-style bodies.
+    /// bodies (display-style for `\boxed`, ambient-style for `\cancel`).
     pub(crate) fn take_frames(&self) -> (Vec<FrameBox>, Vec<ml::Limitation>) {
         (self.frame_boxes.take(), self.frame_limitations.take())
     }
@@ -529,15 +600,41 @@ impl<'a> TextRunMetrics<'a> {
     }
 
     /// Lays out a `\boxed` body in display style and wraps it in the standard
-    /// `\fbox` frame. The result is cached per placeholder and parent size.
+    /// `\fbox` frame; lays out a cancel body in its ambient style and strikes
+    /// it (see [`cancel_math_box`]). The result is cached per placeholder
+    /// and parent size.
     fn frame_box(&self, frame: &FrameBoxSpec, ch: char, size: SizeClass) -> (f64, f64, f64) {
         let p = self.inner.params(size);
         if let Some(b) = self.frame_boxes.borrow().iter().find(|b| b.ch == ch && b.size == p.size) {
             return (b.hbox.width, b.hbox.height, b.hbox.depth);
         }
-        let laid = ml::layout_with_report(&frame.body, ml::Style::DISPLAY, self);
+        // `\boxed` forces display style (amsmath defines it through
+        // `$\displaystyle...$`); a `\cancel` body keeps the ambient style
+        // (`cancel.sty` reaches it through `\mathpalette`), so it is laid
+        // out in the style the placeholder sits in. The metrics seam only
+        // carries the size class — display and text share one — so both map
+        // to TEXT (as the fenced-grid delimiters above do); script sizes are
+        // exact. A display-math cancel body with style-sensitive content
+        // (large operators, fractions) is therefore laid out text-style; see
+        // the slice-2 checkin.
+        let style = match (&frame.cancel, size) {
+            (Some(_), SizeClass::Text) => ml::Style::TEXT,
+            (Some(_), SizeClass::Script) => ml::Style::SCRIPT,
+            (Some(_), SizeClass::ScriptScript) => ml::Style::SCRIPT_SCRIPT,
+            (None, _) => ml::Style::DISPLAY,
+        };
+        let laid = ml::layout_with_report(&frame.body, style, self);
         self.frame_limitations.borrow_mut().extend(laid.limitations);
-        let hbox = framed_math_box(laid.root, frame.tag);
+        let hbox = match frame.cancel {
+            None => framed_math_box(laid.root, frame.tag),
+            Some(kind) => {
+                // The slash is centred on the math axis (`\vcenter` in
+                // `\@can@slash`), whose formula-size text value does not
+                // depend on the ambient style.
+                let axis = self.inner.params(SizeClass::Text).axis_height;
+                cancel_math_box(laid.root, kind, frame.tag, axis)
+            }
+        };
         let dims = (hbox.width, hbox.height, hbox.depth);
         self.frame_boxes.borrow_mut().push(FrameBox { ch, size: p.size, hbox });
         dims
@@ -726,6 +823,110 @@ fn framed_math_box(body: ml::MathBox, tag: ml::SourceTag) -> ml::MathBox {
         width,
         height,
         depth,
+        tag: ml::SourceTag::NONE,
+    }
+}
+
+/// The drawn extent of a `\cancel` slash: its horizontal run and vertical
+/// rise in points, transcribed from `cancel.sty` v2.2's `\@can@slash`.
+///
+/// The inputs are the body width and total height (`height + depth`), in
+/// points. Both are clamped first — width to at least 2pt, total height to
+/// at least 6pt (`\@min@pt`, so a degenerate body still draws a slash) —
+/// and the wide/tall branch is taken on the clamped values.
+///
+/// Wide (`total < width`): the slope is quantized to (6,1), (4,1), (2,1),
+/// (4,3) or (1,1) by `k = floor(5 * total / max(width, 8pt))` (TeX count
+/// arithmetic on scaled points), and the run is `max(width, 8pt) + 2pt`,
+/// sticking out 1pt past each side once centred.
+///
+/// Tall: the vertical extent is `max(total, 8pt) + 2pt`, the slope is the
+/// vertical mirror (1,6), (1,4), (1,2), (3,4) or (1,1) by
+/// `k = floor(5 * width / extent)`, and the run is 0.16/0.25/0.5/0.75/1 of
+/// the extent, so the rise comes back out to the extent (0.96 of it for the
+/// (1,6) row).
+///
+/// `\bcancel` negates the slope and `\xcancel` draws both; the rect is the
+/// same either way, so the kind is not an input here.
+struct CancelStrike {
+    run: f64,
+    rise: f64,
+}
+
+fn cancel_strike(width: f64, total: f64) -> CancelStrike {
+    /// TeX's `\@tempcnta * 5 / <dimen>`: the operands are exact multiples of
+    /// a scaled point (they come from TFM metrics through `tfm::scale`,
+    /// then `max` with exact point values), so the round trip through
+    /// scaled points is exact and the truncating division matches `\divide`.
+    fn branch_index(num_pt: f64, den_pt: f64) -> usize {
+        let num = (num_pt * 65536.0).round() as i64;
+        let den = (den_pt * 65536.0).round() as i64;
+        ((5 * num) / den) as usize
+    }
+    const WIDE_SLOPES: [(f64, f64); 5] =
+        [(6.0, 1.0), (4.0, 1.0), (2.0, 1.0), (4.0, 3.0), (1.0, 1.0)];
+    const TALL_SLOPES: [(f64, f64); 5] =
+        [(1.0, 6.0), (1.0, 4.0), (1.0, 2.0), (3.0, 4.0), (1.0, 1.0)];
+    const TALL_RUN: [f64; 5] = [0.16, 0.25, 0.5, 0.75, 1.0];
+    let clamped_w = width.max(2.0);
+    let clamped_t = total.max(6.0);
+    let (run, (dx, dy)) = if clamped_t < clamped_w {
+        let level = clamped_w.max(8.0);
+        let k = branch_index(clamped_t, level).min(4);
+        (level + 2.0, WIDE_SLOPES[k])
+    } else {
+        let extent = clamped_t.max(8.0) + 2.0;
+        let k = branch_index(clamped_w, extent).min(4);
+        (TALL_RUN[k] * extent, TALL_SLOPES[k])
+    };
+    CancelStrike { run, rise: run * dy / dx }
+}
+
+/// A `\cancel`/`\bcancel`/`\xcancel` body with its strike: the body unchanged
+/// in width (a cancel never affects horizontal spacing — the slash is
+/// zero-width, `\hidewidth`-centred in `cancel.sty`), grown vertically to
+/// the drawn slash when the slash sticks out past it, plus an invisible
+/// marker rule covering exactly the slash's box. math-layout has no diagonal
+/// primitive, so the marker carries the slash rect through layout as an
+/// ordinary rule; `typeset::math_items` turns a rule with a [`cancel_attr`]
+/// marker back into stroked diagonal(s) instead of an `Item::Rule`.
+///
+/// `axis` is the formula-size text math axis: both the slash
+/// (`$\vcenter{\hbox{\line...}}$` in fresh text style) and the body are
+/// `\vcenter`ed, so the slash sits centred on the axis above the body's own
+/// baseline, and the marker rect is centred horizontally on the body. The
+/// marker's `span` keeps the formula's colour/provenance mapping; both tag
+/// fields are set, so later `inherit_tag` fills leave it alone.
+fn cancel_math_box(
+    body: ml::MathBox,
+    kind: flashtex_compiler::math::Frame,
+    tag: ml::SourceTag,
+    axis: f64,
+) -> ml::MathBox {
+    let (width, height, depth) = (body.width, body.height, body.depth);
+    let strike = cancel_strike(width, height + depth);
+    let top = axis + strike.rise / 2.0;
+    let bottom = strike.rise / 2.0 - axis;
+    let marker = ml::MathBox::rule(strike.run, top, bottom).with_tag(ml::SourceTag {
+        span: tag.span,
+        attr: Some(cancel_attr(kind).expect("cancel_math_box with a cancel frame")),
+    });
+    ml::MathBox {
+        kind: ml::BoxKind::HBox(vec![
+            ml::Child {
+                dx: 0.0,
+                dy: 0.0,
+                content: body,
+            },
+            ml::Child {
+                dx: (width - strike.run) / 2.0,
+                dy: 0.0,
+                content: marker,
+            },
+        ]),
+        width,
+        height: height.max(top),
+        depth: depth.max(bottom),
         tag: ml::SourceTag::NONE,
     }
 }

@@ -6685,23 +6685,20 @@ pub fn convert_math_classed(
             }
             // `\overline`/`\underline` are Appendix G Rules 9/10 atoms;
             // `\boxed` uses the pipeline's existing framed-box placeholder
-            // and rule substitution path.
+            // and rule substitution path, as do `\cancel`/`\bcancel`/`\xcancel`
+            // (a marker rule over the body, stroked diagonal at paint time).
             N::Framed { body, frame } => {
                 use flashtex_compiler::math::Frame;
                 let body = sub(body, sink);
+                #[cfg(feature = "math-glyph-spans")]
+                let tag = math_tag(a.span);
+                #[cfg(not(feature = "math-glyph-spans"))]
+                let tag = ml::SourceTag::NONE;
                 vec![match frame {
                     Frame::Over => ml::Atom::overline(body),
                     Frame::Under => ml::Atom::underline(body),
-                    Frame::Box => sink.frame_atom(body, {
-                        #[cfg(feature = "math-glyph-spans")]
-                        {
-                            math_tag(a.span)
-                        }
-                        #[cfg(not(feature = "math-glyph-spans"))]
-                        {
-                            ml::SourceTag::NONE
-                        }
-                    }),
+                    Frame::Box => sink.frame_atom(body, tag),
+                    Frame::Cancel | Frame::BCancel | Frame::XCancel => sink.cancel_atom(body, tag, *frame),
                     // `\mathop{..}\limits` (`fontmath.ltx` 430-437): the
                     // compiler's scripts attach below as limits.
                     Frame::OverBrace => ml::Atom::brace(body, false),
@@ -9824,14 +9821,23 @@ fn math_items(
     flush(&mut current, items);
     items.extend(tail);
     for rule in &flat.rules {
-        if rule.w <= 0.0 || rule.h <= 0.0 {
-            continue;
-        }
         #[cfg(feature = "math-glyph-spans")]
         let (paint, rule_src) = (m.paint_of(rule.tag), leaf_src(rule.tag));
         // See the matching glyph-run fallback above.
         #[cfg(not(feature = "math-glyph-spans"))]
         let (paint, rule_src) = (Paint::of(m.color), src.clone());
+        // A `\cancel`/`\bcancel`/`\xcancel` marker: the invisible rule
+        // `cancel_math_box` overlaid covering exactly the slash's box,
+        // stroked as diagonal(s) instead of painted as a rectangle. The
+        // marker is never degenerate (`cancel.sty` clamps the body to at
+        // least 2pt by 6pt before drawing), so even `\cancel{}` strikes.
+        if let Some(kind) = crate::mathtext::cancel_frame(rule.tag.attr) {
+            items.push(cancel_item(rule, kind, paint, rule_src));
+            continue;
+        }
+        if rule.w <= 0.0 || rule.h <= 0.0 {
+            continue;
+        }
         items.push(display::Item::Rule(Rule {
             x: Tick::from_tex_pt(rule.x),
             top: Tick::from_tex_pt(rule.y),
@@ -9841,6 +9847,50 @@ fn math_items(
             provenance: Provenance::Source(rule_src),
         }));
     }
+}
+
+/// A `\cancel`/`\bcancel`/`\xcancel` strike: `rule` is the invisible marker
+/// covering exactly the slash's box (centred on the body's centre and the
+/// math axis by `mathtext::cancel_math_box`), so the stroke runs corner-to-corner of
+/// the marker (`\cancel` bottom-left to top-right, `\bcancel` the mirror,
+/// `\xcancel` both). Thickness is a fixed 0.4pt in every style: `cancel.sty`
+/// draws with `\unitlength 1pt` and `\thinlines` (the `thicklines` option's
+/// 0.8pt is out of scope).
+fn cancel_item(
+    rule: &ml::PositionedRule,
+    kind: flashtex_compiler::math::Frame,
+    paint: Paint,
+    rule_src: SourceRange,
+) -> display::Item {
+    use flashtex_compiler::math::Frame as F;
+    let x0 = Tick::from_tex_pt(rule.x);
+    let x1 = Tick::from_tex_pt(rule.x + rule.w);
+    let y0 = Tick::from_tex_pt(rule.y);
+    let y1 = Tick::from_tex_pt(rule.y + rule.h);
+    let mut commands = Vec::new();
+    if matches!(kind, F::Cancel | F::XCancel) {
+        commands.push(display::PathCmd::Move(x0, y1));
+        commands.push(display::PathCmd::Line(x1, y0));
+    }
+    if matches!(kind, F::BCancel | F::XCancel) {
+        commands.push(display::PathCmd::Move(x0, y0));
+        commands.push(display::PathCmd::Line(x1, y1));
+    }
+    let width = Tick::from_tex_pt(0.4).max(Tick(1));
+    display::Item::Path(display::PathItem {
+        op: display::PathPaintOp::Stroke(display::Stroke {
+            width,
+            cap: display::LineCap::Butt,
+            join: display::LineJoin::Miter,
+            miter_limit: 10.0,
+            dash: Vec::new(),
+            dash_phase: Tick(0),
+        }),
+        commands,
+        clips: Vec::new(),
+        paint,
+        provenance: Provenance::Source(rule_src),
+    })
 }
 
 impl Tick {
