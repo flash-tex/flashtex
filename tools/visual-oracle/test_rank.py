@@ -109,11 +109,14 @@ class RankTests(unittest.TestCase):
         items = []
         for text, x, y, src in words:
             glyphs, clusters = [], []
+            at = 0  # cluster ranges are UTF-8 byte offsets
             for i, ch in enumerate(text):
+                n = len(ch.encode("utf-8"))
                 glyphs.append({"gid": 1, "origin_x": int((x + 5 * i) * Q), "baseline_y": int(y * Q),
                                "advance_x": 5 * Q, "advance_y": 0, "cluster": i})
-                clusters.append({"text_start_byte": i, "text_end_byte": i + 1,
+                clusters.append({"text_start_byte": at, "text_end_byte": at + n,
                                  "sources": [{"path": "main.tex", "start_byte": src + i, "end_byte": src + i + 1}]})
+                at += n
             items.append({"kind": "glyph_run", "font_id": "f", "font_size": 10 * Q, "text": text,
                           "glyphs": glyphs, "clusters": clusters})
         return {"payload": {"coordinate_unit": "bp_2pow20", "fonts": [{"font_id": "f", "postscript_name": "LMRoman10-Regular"}],
@@ -137,6 +140,10 @@ class RankTests(unittest.TestCase):
         self.assertEqual(g["within_0_01"], 2)
         self.assertEqual(g["reflowed"], 0)
 
+    def test_v2_word_text_after_a_multibyte_character(self):
+        cand = rank.v2_words(self._v2([("x−y∈K", 72, 100, 0), ("ok", 110, 100, 10)]))
+        self.assertEqual([w["text"] for w in cand[0]["words"]], ["x−y∈K", "ok"])
+
     def test_owner_prefers_overlapping_diagnostic_then_math_then_shift(self):
         w = {"source": {"path": "main.tex", "start_byte": 10, "end_byte": 15}, "math": False}
         d = [{"code": "compiler", "message": "\\foo is not supported", "severity": "error",
@@ -157,6 +164,12 @@ class RankTests(unittest.TestCase):
         ]
         order = [fid for fid, _ in sorted(pages, key=lambda fp: rank.rank_key(fp[1]))]
         self.assertEqual(order, ["c", "d", "e", "b", "a"])
+
+    def test_minus_sign_aligns_with_hyphen_minus(self):
+        ref = [{"text": t} for t in ["ad", "-", "bc"]]
+        cand = [{"text": t} for t in ["ad", "−", "bc"]]
+        self.assertEqual(rank.align_words(ref, cand), ([(0, 0), (1, 1), (2, 2)], 0, 0))
+        self.assertNotEqual(rank.norm("−"), rank.norm("="))
 
 
 class ThumbTests(unittest.TestCase):
