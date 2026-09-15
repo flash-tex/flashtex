@@ -1598,7 +1598,11 @@ impl<'a> Context<'a> {
     /// after the fragment it ends so a letter–hyphen kern is included. A
     /// point inside a ligature (`of-fice`) needs the pre/post/no-break
     /// reconstitution and is skipped.
-    fn word_items(&mut self, seg: &adapter::Segment, size: f64, hyphenate: bool) -> Vec<(pl::Item, Option<usize>)> {
+    ///
+    /// `boxed_dashes`: the word ends in `\nobreakdash`'s dashes, which carry
+    /// no discretionary (see [`adapter::Item::Penalty`]); when they are its
+    /// only dashes, the letters before them get automatic points.
+    fn word_items(&mut self, seg: &adapter::Segment, size: f64, hyphenate: bool, boxed_dashes: bool) -> Vec<(pl::Item, Option<usize>)> {
         if !hyphenate {
             return self.whole_word(seg, size);
         }
@@ -1608,7 +1612,21 @@ impl<'a> Context<'a> {
         // T1 ligatures end in the hyphen char, so TeX appends the empty
         // discretionary after them too (a break after an em dash).
         let is_dash = |c: char| matches!(c, '-' | '\u{2013}' | '\u{2014}');
-        if text.chars().any(is_dash) {
+        let letters = text.trim_end_matches(is_dash);
+        if boxed_dashes && !letters.chars().any(is_dash) {
+            // latex.ltx sets `\lccode`\-=`\-`, so TeX's hyphenation word runs
+            // on through the hyphens (`--` is two), which count towards
+            // `\righthyphenmin` and match no pattern: a letter no pattern
+            // holds stands in for each.
+            let hyphens: usize = text[letters.len()..].chars().map(|c| match c {
+                '\u{2013}' => 2,
+                '\u{2014}' => 3,
+                _ => 1,
+            }).sum();
+            let word = format!("{letters}{}", "\u{df}".repeat(hyphens));
+            let hyphenator = self.hyphenator.as_ref().unwrap_or_else(|| english_hyphenator());
+            points.extend(hyphenator.hyphenate(&word).into_iter().filter(|p| p.offset < letters.len()).map(|p| (p.offset, true)));
+        } else if text.chars().any(is_dash) {
             let mut prev_dash = false;
             for (i, c) in text.char_indices() {
                 if prev_dash && !is_dash(c) {
@@ -1998,6 +2016,7 @@ impl<'a> Context<'a> {
                         && !joined
                         && w.segments.len() == 1
                         && merge_style(base, w.segments[0].style).family != crate::nfss::FamilyKind::Tt;
+                    let boxed_dashes = matches!(items.get(idx + 1), Some(AItem::Penalty { boxed_dashes: true, .. }));
                     for seg in &w.segments {
                         let seg = adapter::Segment {
                             text: seg.text.clone(),
@@ -2007,7 +2026,7 @@ impl<'a> Context<'a> {
                         // A size declaration in force (`{\Large ...}`) sets
                         // this segment at its own size.
                         let seg_size = seg.style.size_or(size);
-                        for (item, rec) in self.word_items(&seg, seg_size, hyphenate) {
+                        for (item, rec) in self.word_items(&seg, seg_size, hyphenate, boxed_dashes) {
                             push(&mut out, &mut recs, item, rec);
                         }
                     }
@@ -2094,7 +2113,7 @@ impl<'a> Context<'a> {
                     };
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(self.recs.len() - 1));
                 }
-                AItem::Penalty { value } => {
+                AItem::Penalty { value, .. } => {
                     push(&mut out, &mut recs, pl::Item::penalty(*value), None);
                 }
                 AItem::PagePenalty { value } => {
@@ -2111,7 +2130,7 @@ impl<'a> Context<'a> {
                         depth: 0.0,
                         source: 0..0,
                     };
-                    self.vadjusts.push((out.len(), *value));
+                    self.vadjusts.push((out.len(), pagebuild::bare_penalty(*value)));
                     push(&mut out, &mut recs, pl::Item::Box(run), Some(self.recs.len() - 1));
                 }
                 AItem::Discretionary { pre } => {
@@ -3449,7 +3468,7 @@ impl<'a> Context<'a> {
         // a page-break command before it already put a forced one there.
         if let (Some((value, fil)), Some(b)) = (penalty_before, blocks.get_mut(first_built)) {
             if b.vertical.penalty_before.is_none() {
-                b.vertical.penalty_before = Some(*value);
+                b.vertical.penalty_before = Some(pagebuild::bare_penalty(*value));
                 b.vertical.fil_break = *fil;
             }
         }
@@ -4651,7 +4670,7 @@ impl<'a> Context<'a> {
                             text: w,
                             style,
                         };
-                        for (item, rec) in self.word_items(&seg, size, false) {
+                        for (item, rec) in self.word_items(&seg, size, false, false) {
                             match (item, rec) {
                                 (pl::Item::Box(run), Some(rec)) => {
                                     let advance = run.width;
@@ -7595,6 +7614,40 @@ const DBLTEXTFLOATSEP_PT: f64 = 20.0;
 
 /// Reports a `\twocolumn[<material>]` case `\@topnewpage` handles and this
 /// page builder does not, against the title block's first source span.
+/// Where a built block's line `li` starts in the source: its first text or
+/// rule box.
+fn line_source(recs: &[BoxRec], b: &BuiltBlock, li: usize) -> Option<Span> {
+    let line = b.block.lines.lines.get(li)?;
+    line.items.clone().find_map(|i| match recs.get(b.recs.get(i).copied().flatten()?)? {
+        BoxRec::Text { clusters, .. } => clusters.first().map(|c| c.span),
+        BoxRec::Rule { span, .. } => Some(*span).filter(|s| s.end > s.start),
+        _ => None,
+    })
+}
+
+/// `\enlargethispage`'s insertion in the vertical list (`list`, whose
+/// block `i` begins at `starts[i]`): before the first line set from the
+/// source after the command. A command inside a paragraph is `\insert`ed
+/// in horizontal mode and migrates out of the line holding it (§655), so it
+/// follows that line; one between paragraphs precedes the next block.
+fn enlarge_marks(ctx: &Context, blocks: &[BuiltBlock], list: &[pagebuild::VItem], starts: &[usize]) -> Vec<pagebuild::Enlarge> {
+    let mut out = Vec::new();
+    for &(span, pt) in &ctx.style.enlarge_this_page {
+        let after = |s: &Span| s.document == span.document && s.start >= span.end;
+        let found = blocks.iter().enumerate().find_map(|(bi, b)| (0..b.block.lines.lines.len()).find(|&li| line_source(&ctx.recs, b, li).is_some_and(|s| after(&s))).map(|li| (bi, li)));
+        let at = match found {
+            Some((bi, 0)) => starts.get(bi).copied(),
+            Some((bi, li)) => list.iter().position(|v| matches!(v, pagebuild::VItem::Box { payload, .. } if *payload == (bi, li - 1))).map(|i| i + 1),
+            None => None,
+        };
+        if let Some(at) = at {
+            out.push(pagebuild::Enlarge { at, pt });
+        }
+    }
+    out.sort_by_key(|e| e.at);
+    out
+}
+
 fn top_title_warning(ctx: &mut Context, blocks: &[BuiltBlock], first: usize, message: &str) {
     let span = blocks.get(first).and_then(|b| b.recs.iter().flatten().next().copied()).and_then(|r| match &ctx.recs[r] {
         BoxRec::Text { clusters, .. } => clusters.first().map(|c| c.span),
@@ -7964,7 +8017,8 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
     let s = style;
     let params = page_params(s);
     let vblocks: Vec<VBlock> = blocks.iter().map(|b| b.vertical.clone()).collect();
-    let list = pagebuild::vlist(&params, &vblocks);
+    let (list, block_starts) = pagebuild::vlist_starts(&params, &vblocks);
+    let enlarge = enlarge_marks(ctx, &blocks, &list, &block_starts);
     // Footnote blocks are appended after the body's (not in `vblocks`).
     let body_blocks = blocks.len();
     let insertions = footnotes::prepare(ctx, &mut blocks, &params);
@@ -8021,6 +8075,10 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
             }
         }
     };
+    // Blocks a body `\clearpage`/`\cleardoublepage` starts a page for.
+    let mut clear_starts: Vec<usize> = page_start_blocks.iter().chain(&clears).copied().collect();
+    clear_starts.sort_unstable();
+    clear_starts.dedup();
     let (mut built, mut images, float_labels) = if let Some(b) = multicol::paginate(ctx, doc, &mut blocks, &params) {
         (b, Vec::new(), Vec::new())
     } else if floats.is_empty() {
@@ -8028,19 +8086,19 @@ pub fn build_with_floats(ctx: &mut Context, doc: &Doc, cache: Option<&RenderCach
         match &insertions {
             Some(ins) => {
                 let regions = pagebuild::resolve_regions(&list, &longtables);
-                let (mut pages, areas) = pagebuild::break_pages_inserts_regions(&params, &list, short_pages, short, ins, &regions);
+                let (mut pages, areas) = pagebuild::break_pages_inserts_regions(&params, &list, short_pages, short, ins, &regions, &enlarge);
                 footnotes::place(ctx, &mut blocks, &mut pages, areas);
                 (pages, Vec::new(), Vec::new())
             }
             None => {
                 let regions = pagebuild::resolve_regions(&list, &longtables);
-                (pagebuild::break_pages_regions(&params, &list, short_pages, short, &regions), Vec::new(), Vec::new())
+                (pagebuild::break_pages_regions(&params, &list, short_pages, short, &regions, &enlarge), Vec::new(), Vec::new())
             }
         }
     } else {
         let regions = pagebuild::resolve_regions(&list, &longtables);
         let (mut pages, images, labels, areas) =
-            floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref(), short_cols, short, columns);
+            floatpage::paginate(ctx, &mut blocks, &params, &list, floats, &regions, body_blocks, insertions.as_ref(), short_cols, short, columns, &clear_starts);
         if insertions.is_some() {
             footnotes::place(ctx, &mut blocks, &mut pages, areas);
         }

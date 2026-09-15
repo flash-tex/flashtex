@@ -231,7 +231,7 @@ pub fn hash_items(items: &[Item], base: usize, h: &mut DefaultHasher) {
                 3u8.hash(h);
                 skip_pt.to_bits().hash(h);
             }
-            Item::Penalty { value } => (40u8, value).hash(h),
+            Item::Penalty { value, boxed_dashes } => (40u8, value, boxed_dashes).hash(h),
             Item::PagePenalty { value } => (41u8, value).hash(h),
             Item::Discretionary { pre } => {
                 42u8.hash(h);

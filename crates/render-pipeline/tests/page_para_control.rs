@@ -283,3 +283,114 @@ fn cleardoublepage_starts_an_odd_page_when_two_sided() {
         assert_eq!(r.v2.pages.len(), pages, "{class}");
     }
 }
+
+/// latex.ltx `\clearpage` -> `\@doclearpage`: every deferred float goes
+/// out on float pages before the text after it. pdflatex: a `[p]` figure
+/// written before `\clearpage` is page 2, `Second.` page 3 (with
+/// `\newpage` the figure waits for the document's end). Three 8cm `[t]`
+/// figures after `Line 30.`: page 2 `Figure 1`/`Figure 2`, page 3
+/// `Figure 3`, page 4 `Line 34.`-`Line 36.` (before: `Line 34.` went on
+/// page 2 and the figures after it).
+#[test]
+fn clearpage_flushes_deferred_floats_onto_float_pages() {
+    if !lm_available() {
+        return;
+    }
+    let figure = |place: &str, height: &str, caption: &str| {
+        format!("\\begin{{figure}}[{place}]\\centering\\rule{{1cm}}{{{height}}}\\caption{{{caption}}}\\end{{figure}}\n")
+    };
+    let first_lines = |body: &str| {
+        let r = render_one(&doc("", body));
+        let mut seen = std::collections::BTreeMap::new();
+        for (p, l) in lines(&r) {
+            seen.entry(p).or_insert(l);
+        }
+        seen.into_values().collect::<Vec<_>>()
+    };
+    let p = format!("\\noindent First.\n{}\\clearpage\n\\noindent Second.", figure("p", "3cm", "Pfloat"));
+    assert_eq!(first_lines(&p), ["First.", "Figure 1: Pfloat", "Second."]);
+    assert_eq!(first_lines(&p.replace("\\clearpage", "\\newpage")), ["First.", "Second.", "Figure 1: Pfloat"]);
+    let t = format!(
+        "{}{}{}{}{}\\clearpage\n{}",
+        filler(1, 30),
+        figure("t", "8cm", "Tone"),
+        figure("t", "8cm", "Ttwo"),
+        figure("t", "8cm", "Tthree"),
+        filler(31, 33),
+        filler(34, 36)
+    );
+    assert_eq!(first_lines(&t), ["Line 1.", "Figure 1: Tone", "Figure 3: Tthree", "Line 34."]);
+}
+
+/// `\enlargethispage{<dimen>}` (and `*`): `\insert\@kludgeins{\vskip
+/// -<dimen>}` makes `\pagegoal` that much larger on the page the insertion
+/// is contributed to. pdflatex, one-line paragraphs (46 fit a page): 48 on
+/// page 1 after `\enlargethispage{2\baselineskip}` or `{30pt}`, 41 after
+/// `{-5\baselineskip}`, and written after `Line 50.` it is page 2 that
+/// holds 49.
+#[test]
+fn enlargethispage_changes_the_goal_of_its_own_page() {
+    if !lm_available() {
+        return;
+    }
+    let per_page = |body: &str| {
+        let r = render_one(&doc("", body));
+        let mut counts = vec![0usize; r.v2.pages.len()];
+        for (p, _) in lines(&r) {
+            counts[(p - r.v2.pages[0].number) as usize] += 1;
+        }
+        counts
+    };
+    for command in ["\\enlargethispage{2\\baselineskip}", "\\enlargethispage*{2\\baselineskip}"] {
+        assert_eq!(per_page(&format!("{command}{}", filler(1, 50))), [48, 2], "{command}");
+    }
+    assert_eq!(per_page(&format!("{}\\enlargethispage{{30pt}}{}", filler(1, 10), filler(11, 50))), [48, 2]);
+    assert_eq!(per_page(&format!("{}\\enlargethispage{{-5\\baselineskip}}{}", filler(1, 10), filler(11, 50))), [41, 9]);
+    assert_eq!(per_page(&format!("{}\\enlargethispage{{3\\baselineskip}}{}", filler(1, 50), filler(51, 100))), [46, 49, 5]);
+}
+
+/// amsmath `\nobreakdash`: the dashes are boxed, so no discretionary
+/// follows them, and `\nobreak` after them. pdflatex: the control
+/// paragraph ends a line with `113–`; with `\nobreakdash--` no line ends in
+/// a dash. `strongly\nobreakdash-minded` is hyphenated `strong-ly-` (the
+/// hyphen is a letter to TeX's hyphenation, `\lccode`\-=`\-`).
+#[test]
+fn nobreakdash_forbids_the_break_after_its_dashes() {
+    if !lm_available() {
+        return;
+    }
+    let amsmath = |body: &str| lines(&render_one(&doc("\\usepackage{amsmath}\n", &format!("\\noindent {body}")))).into_iter().map(|(_, l)| l).collect::<Vec<_>>();
+    let pages: String = (0..40).map(|i| format!("pages 1{i}--2{i} and ")).collect();
+    let control = amsmath(pages.trim_end());
+    assert_eq!(control[2], "19–29 and pages 110–210 and pages 111–211 and pages 112–212 and pages 113–");
+    let boxed = amsmath(pages.replace("--", "\\nobreakdash--").trim_end());
+    assert_eq!(boxed[2], "19–29 and pages 110–210 and pages 111–211 and pages 112–212 and pages");
+    assert_eq!(boxed[3], "113–213 and pages 114–214 and pages 115–215 and pages 116–216 and pages");
+    let words = "strongly\\nobreakdash-minded quite\\nobreakdash-well pre\\nobreakdash-war ".repeat(12);
+    let hyphen = amsmath(words.trim_end());
+    assert_eq!(hyphen.len(), 6, "{hyphen:#?}");
+    assert!(hyphen[0].ends_with("pre-war strong-"), "{hyphen:#?}");
+    assert!(hyphen[1].starts_with("ly-minded quite-well"), "{hyphen:#?}");
+}
+
+/// latex.ltx `\pagebreak` is `\penalty-\@M` with no `\vfil`: under
+/// `\flushbottom` the page it ends is `\vbox to\textheight`, stretched.
+/// pdflatex, 30 one-line paragraphs: page 1's last baseline is at 675
+/// after `\pagebreak` and `\penalty-10000`, 484 after `\newpage`.
+#[test]
+fn flushbottom_stretches_a_page_ended_by_pagebreak_not_newpage() {
+    if !lm_available() {
+        return;
+    }
+    let last_baseline = |command: &str| {
+        let r = render_one(&doc("\\flushbottom\n", &format!("{}{command}\n{}", filler(1, 30), filler(31, 32))));
+        let words = words_of(&r);
+        let page = words.iter().map(|w| w.page).min().unwrap();
+        words.iter().filter(|w| w.page == page).map(|w| w.baseline).fold(f64::MIN, f64::max)
+    };
+    let newpage = last_baseline("\\newpage");
+    for command in ["\\pagebreak", "\\penalty-10000"] {
+        let stretched = last_baseline(command);
+        assert!(((stretched - newpage) - (675.0 - 484.0)).abs() < 1.5, "{command}: {newpage} -> {stretched}");
+    }
+}
