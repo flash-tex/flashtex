@@ -152,7 +152,11 @@ fn main() {
     let mut edited = base.clone();
     edited.insert(offset, 'x');
 
+    // The first compile in a process also pays for one-time initialisation
+    // (faces, lookup indexes, the per-thread shaping memo).
+    let started = Instant::now();
     let probe = compile_full_project(&documents(&base), "main.tex", constraints);
+    let first_ms = ms(started.elapsed());
     println!(
         "large document: {} bytes, {} sections, {} blocks, {} pages, {} diagnostics, profile={}",
         base.len(),
@@ -214,6 +218,7 @@ fn main() {
             digest.extend_from_slice(reply.as_bytes());
         }
     }
+    println!("first compile in process: {first_ms:.1} ms");
     println!("median of {runs} runs, ms:");
     println!("  cold session   {:>10.1}", median(cold_session));
     println!("  cold protocol  {:>10.1}", median(cold_protocol));
