@@ -86,6 +86,10 @@ const SHOWTHE: &[(&str, &[(&str, &str, &str)])] = &[
             ("small", "9.24994pt", "3.87498pt"),
             ("normalsize", "10.00002pt", "4.30554pt"),
             ("large", "11.74988pt", "5.16667pt"),
+            ("slshape", "10.00002pt", "4.30554pt"),
+            ("scshape", "11.05545pt", "4.30554pt"),
+            // pdflatex warns OT1/cmr/bx/sc is undefined and falls back to bx/n.
+            ("bfseries\\scshape", "11.49994pt", "4.44444pt"),
             ("bfseries", "11.49994pt", "4.44444pt"),
             ("sffamily", "10.00002pt", "4.44444pt"),
             ("ttfamily", "10.4999pt", "4.30554pt"),
@@ -97,6 +101,9 @@ const SHOWTHE: &[(&str, &[(&str, &str, &str)])] = &[
             ("small", "10.00002pt", "4.30554pt"),
             ("normalsize", "10.95003pt", "4.71457pt"),
             ("large", "11.74988pt", "5.16667pt"),
+            ("slshape", "10.95003pt", "4.71457pt"),
+            ("scshape", "12.10571pt", "4.71457pt"),
+            ("bfseries\\scshape", "12.59242pt", "4.86665pt"),
             ("bfseries", "12.59242pt", "4.86665pt"),
             ("sffamily", "10.95003pt", "4.86665pt"),
             ("ttfamily", "11.49739pt", "4.71457pt"),
@@ -108,6 +115,9 @@ const SHOWTHE: &[(&str, &[(&str, &str, &str)])] = &[
             ("small", "10.95003pt", "4.71457pt"),
             ("normalsize", "11.74988pt", "5.16667pt"),
             ("large", "14.09984pt", "6.2pt"),
+            ("slshape", "11.74988pt", "5.16667pt"),
+            ("scshape", "13.26654pt", "5.16666pt"),
+            ("bfseries\\scshape", "13.5pt", "5.33331pt"),
             ("bfseries", "13.5pt", "5.33331pt"),
             ("sffamily", "11.74988pt", "5.33331pt"),
             ("ttfamily", "12.35pt", "5.16667pt"),
@@ -200,6 +210,22 @@ fn em_follows_shape_argument_commands_and_font_packages() {
         ),
         "11.49994pt,10.00002pt"
     );
+    assert_eq!(
+        the_x(
+            "",
+            r"\textsl{\setlength{\x}{1em}\the\x,\setlength{\x}{1ex}\the\x}"
+        ),
+        "10.00002pt,4.30554pt"
+    );
+    assert_eq!(
+        the_x(
+            "",
+            r"\textsc{\setlength{\x}{1em}\the\x,\setlength{\x}{1ex}\the\x}"
+        ),
+        "11.05545pt,4.30554pt"
+    );
+    assert!((hspace(&document("10", r"\textsl{\hspace{1em}} ")).0 - 10.00002).abs() < 1e-5);
+    assert!((hspace(&document("10", r"\textsc{\hspace{1em}} ")).0 - 11.05545).abs() < 1e-5);
     // `\normalfont` keeps the size: cmr9.
     assert_eq!(
         the_x("", r"{\small\bfseries\normalfont\setlength{\x}{1em}\the\x}"),

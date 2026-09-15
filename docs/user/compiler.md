@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 330 text-mode and 551 math-mode command entries, 52 environments and 22 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 330 text-mode and 554 math-mode command entries, 52 environments and 22 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -713,6 +713,9 @@ Canonical sources:
 | `\phantom` | `{x}` | empty box with the width and/or height and depth of the argument |
 | `\hphantom` | `{x}` | empty box with the width and/or height and depth of the argument |
 | `\vphantom` | `{x}` | empty box with the width and/or height and depth of the argument |
+| `\mathllap` | `{x}` | mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\llap/\rlap/\clap); needs mathtools |
+| `\mathrlap` | `{x}` | mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\llap/\rlap/\clap); needs mathtools |
+| `\mathclap` | `{x}` | mathtools zero-width box: the argument is painted but advances nothing, hanging left, right, or centred (\llap/\rlap/\clap); needs mathtools |
 | `\xrightarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
 | `\xleftarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |
 | `\xleftrightarrow` | `[below]{above}` | amsmath/mathtools extensible arrow stretched to its labels (\ext@arrow) |

@@ -42,6 +42,8 @@ fn plain_texts(source: &str) -> Vec<String> {
 const ITALIC: TextStyle = TextStyle {
     bold: false,
     italic: true,
+    slanted: false,
+    small_caps: false,
     family: flashtex_compiler::parser::TextFamily::Roman,
     size: None,
     color: None,
