@@ -562,7 +562,7 @@ public enum PanelFocusOrder {
                 Control(name: "Next Match", sourceMarker: "Button(\"Next Match\")", when: "matches"),
                 Control(name: "Search scope", sourceMarker: "Picker(\"Scope\""),
                 Control(name: "Max matches", sourceMarker: "Stepper(\"Max matches"),
-                Control(name: "Search results, n matches (list)", sourceMarker: "List(selection: $client.selectedID)", when: "after a search"),
+                Control(name: "Search results, n matches (table)", sourceMarker: "SearchResultsTable(matches: results.matches", when: "after a search"),
                 Control(name: "Replacement text", sourceMarker: "TextField(\"Replace with"),
                 Control(name: "Plan Replacement", sourceMarker: "Button(\"Plan Replacement\")", when: "complete search with matches"),
                 Control(name: "Apply n replacements", sourceMarker: "Button(\"Apply \\(plan.summary)\")", when: "a planned proposal"),
