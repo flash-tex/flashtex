@@ -97,8 +97,10 @@ pub struct Expansion {
 ///
 /// Kernel definitions that would intercept a command the parser typesets
 /// itself (`\\label`, `\\verb`, whose argument the pass has already hidden,
-/// and `\\:`, which latex.ltx only uses while building `\\@ifnextchar`
-/// before redefining it as a math space) are removed, so they pass through.
+/// `\\:`, which latex.ltx only uses while building `\\@ifnextchar`
+/// before redefining it as a math space, and `\\fnsymbol`, whose counter
+/// the parser resolves against its own `footnote`/`mpfootnote` counters
+/// that the engine never defines) are removed, so they pass through.
 ///
 /// `\\setlength`/`\\addtolength` keep the kernel meaning when `#1` is already
 /// defined (a `\\newlength` skip, so `\\the` can read it back). An undefined
@@ -111,6 +113,7 @@ pub const HOST_PRELUDE: &str = "\\let\\label\\flashtexundefined
 \\let\\:\\flashtexundefined
 \\let\\counterwithin\\flashtexundefined
 \\let\\counterwithout\\flashtexundefined
+\\let\\fnsymbol\\flashtexundefined
 \\def\\setlength#1#2{\\ifdefined#1#1 #2\\relax\\else\\flashtexsetlength{#1}{#2}\\fi}%
 \\def\\addtolength#1#2{\\ifdefined#1\\advance#1 #2\\relax\\else\\flashtexaddtolength{#1}{#2}\\fi}%
 \\long\\def\\flashtexdeclaremathop#1#2#3{\\newcommand#2{\\operatorname#1{#3}}}%

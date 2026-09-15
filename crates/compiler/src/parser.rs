@@ -930,6 +930,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "footnote",
     "footnotemark",
     "footnotetext",
+    "fnsymbol",
     "normalfont",
     "bfseries",
     "mdseries",
@@ -2597,6 +2598,7 @@ impl P<'_> {
             "hrulefill" => para.push(Inline::HFill { span, leader: FillLeader::Rule }),
             "dotfill" => para.push(Inline::HFill { span, leader: FillLeader::Dots }),
             "footnote" | "footnotemark" | "footnotetext" => self.footnote(name, span, para),
+            "fnsymbol" => self.fnsymbol_command(span, para),
             // `\linebreak[n]`/`\nolinebreak[n]`: real TeX's 0-4 priority only
             // ever hints a badness-based line-breaking algorithm this greedy
             // layout does not have. An absent bracket or an explicit `4` is
@@ -6498,6 +6500,51 @@ impl P<'_> {
             text,
             space_before,
         });
+    }
+
+    /// `\fnsymbol{counter}` (ltcounts.dtx `\@fnsymbol`): the counter's
+    /// value rendered as one of the nine footnote symbols, exactly like
+    /// the `\thanks` marks above. The expansion engine implements
+    /// `\fnsymbol` itself, but its counter table never defines `footnote`
+    /// (or `mpfootnote`): the host prelude passes the command through
+    /// (see `HOST_PRELUDE`) so it is resolved here, where those counters
+    /// live. Any other counter table entry resolves the same way; an
+    /// unknown name is LaTeX's "No counter defined" error and a value
+    /// outside 1-9 is its "Counter too large" (`\@ctrerr`), which prints
+    /// nothing.
+    fn fnsymbol_command(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let (tokens, argument_span) = self.required_group("fnsymbol", span);
+        let name = token_text(&tokens).trim().to_string();
+        let whole = span.merge(argument_span);
+        let value = if name == "footnote" {
+            Some(self.footnote_counter)
+        } else if name == "mpfootnote" {
+            Some(self.mpfootnote_counter)
+        } else {
+            self.counters.value(&name)
+        };
+        let Some(value) = value else {
+            self.diags.push(Diagnostic::error(
+                format!("No counter '{name}' defined"),
+                Some(whole),
+                Some("ignored the \\fnsymbol".into()),
+            ));
+            return;
+        };
+        match fnsymbol(value) {
+            Some(symbol) => para.push(Inline::Text {
+                text: symbol.to_string(),
+                span: whole,
+                style: self.style,
+                space_before,
+            }),
+            None => self.diags.push(Diagnostic::error(
+                format!("\\fnsymbol{{{name}}} value {value} is outside \\@fnsymbol's nine symbols"),
+                Some(whole),
+                Some("printed nothing for the out-of-range value".into()),
+            )),
+        }
     }
 
     /// Parses a footnote argument with the ordinary dispatch, so math, style
