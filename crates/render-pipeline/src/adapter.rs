@@ -1338,14 +1338,31 @@ pub fn adapt_cached(
     // Last source span of the previous paragraph block (None after a
     // heading or rule), for rejoining a display with its paragraph.
     let mut prev_para_end: Option<Span> = None;
-    for unit in split_at_page_breaks(texts, &lowered, size, &style) {
+    // The documents an entry `\input`/`\include` command reads (nested reads
+    // included), from the reading order: a file whose body is only floats
+    // has no unit to lay its `\chapter` out before.
+    let read_by = |cmd: &BodyCommand| -> Vec<usize> {
+        let order = &labels.reading_order;
+        let Some(i) = order.iter().position(|s| s.document == entry_doc && s.end == cmd.start) else {
+            return Vec::new();
+        };
+        let mut docs: Vec<usize> = Vec::new();
+        for s in order[i + 1..].iter().take_while(|s| s.document != entry_doc) {
+            if !docs.contains(&s.document.0) {
+                docs.push(s.document.0);
+            }
+        }
+        docs
+    };
+    // One pass per unit, then one (`None`) for the commands after the last.
+    for mut next in split_at_page_breaks(texts, &lowered, size, &style).into_iter().map(Some).chain([None]) {
         // Does this unit continue the theorem-like environment that the
         // previous block left open? Only a paragraph inside it that is not
         // itself a fresh `\item` does.
-        let continues_theorem = matches!(
+        let continues_theorem = next.as_ref().is_some_and(|unit| matches!(
             unit.kind,
             UnitKind::Paragraph { in_theorem: true, theorem_item: false, .. }
-        );
+        ));
         if !continues_theorem {
             if let Some(at) = open_theorem.take() {
                 if let Some(Block::Paragraph { env_close, .. }) = blocks.get_mut(at) {
@@ -1353,15 +1370,18 @@ pub fn adapt_cached(
                 }
             }
         }
-        let mut eject_before = unit.eject_before;
-        let vspace_before = unit.vspace_before;
-        limitations.extend(unit.limitations);
-        let unit_start = match &unit.kind {
+        let mut eject_before = next.as_ref().is_some_and(|unit| unit.eject_before);
+        let vspace_before = next.as_ref().map_or(0.0, |unit| unit.vspace_before);
+        if let Some(unit) = &mut next {
+            limitations.append(&mut unit.limitations);
+        }
+        let unit_start = next.as_ref().and_then(|unit| match &unit.kind {
             UnitKind::Heading { number_span, .. } => Some(*number_span),
             UnitKind::Paragraph { inlines, .. } => inlines.iter().map(inline_span).next(),
             UnitKind::Rule { span } => Some(*span),
             UnitKind::Picture { document, picture, .. } => Some(Span::in_document(*document, picture.start, picture.end)),
-        };
+        });
+        let at_end = next.is_none();
         // Entry-document commands are laid out before the first unit that
         // follows them in the entry source. A unit of an `\input`/`\include`d
         // document follows the `\input` command that read it, so everything
@@ -1375,15 +1395,25 @@ pub fn adapt_cached(
             }
             Some(at) if input_doc != Some(at.document) => {
                 input_doc = Some(at.document);
-                commands[next_command..].iter().find(|c| matches!(c.kind, BodyKind::Input)).map(|c| c.start)
+                // The command that reads this document, not merely the next
+                // one: an earlier `\include` may read a file with no units. A
+                // file read by a command already spent (nested) flushes none.
+                let mut inputs = commands[next_command..].iter().filter(|c| matches!(c.kind, BodyKind::Input));
+                if labels.reading_order.iter().any(|s| s.document == at.document) {
+                    inputs.find(|c| read_by(c).contains(&at.document.0)).map(|c| c.start)
+                } else {
+                    inputs.next().map(|c| c.start)
+                }
             }
+            None if at_end => Some(usize::MAX),
             _ => None,
         };
         // `(document, command)` to lay out before this unit, in order.
         let mut pending: Vec<(DocumentId, &BodyCommand)> = Vec::new();
-        // The entry document resumes: the included documents read so far are
-        // finished, so their commands after their last unit come first.
-        if unit_start.is_some_and(|at| at.document == entry_doc) {
+        // The entry document resumes, or the next file is read: the included
+        // documents read so far are finished, so their commands after their
+        // last unit come first.
+        if let Some(at) = flush_before {
             for (d, cmds) in included_commands.iter().enumerate() {
                 if seen_included[d] {
                     pending.extend(cmds[next_included[d]..].iter().map(|c| (DocumentId(d), c)));
@@ -1391,13 +1421,25 @@ pub fn adapt_cached(
                 }
             }
             pending.extend(open_include.take().map(|cmd| (entry_doc, cmd)));
-        }
-        if let Some(at) = flush_before {
-            // The next file is read straight after an `\include`d one.
-            pending.extend(open_include.take().map(|cmd| (entry_doc, cmd)));
             while let Some(cmd) = commands.get(next_command).filter(|c| c.start < at) {
                 next_command += 1;
                 pending.push((entry_doc, cmd));
+                if !matches!(cmd.kind, BodyKind::Input) {
+                    continue;
+                }
+                // A file read here without a unit of its own (its body is
+                // floats only): its commands, then `\include`'s closing
+                // `\clearpage`, in place.
+                for d in read_by(cmd) {
+                    if let Some(cmds) = included_commands.get(d).filter(|_| !seen_included[d]) {
+                        seen_included[d] = true;
+                        pending.extend(cmds[next_included[d]..].iter().map(|c| (DocumentId(d), c)));
+                        next_included[d] = cmds.len();
+                    }
+                }
+                if is_include(source, cmd) {
+                    pending.push((entry_doc, cmd));
+                }
             }
             // The `\input` command that read this unit's document is spent.
             if let Some(cmd) = commands.get(next_command).filter(|c| input_doc.is_some() && c.start == at && matches!(c.kind, BodyKind::Input)) {
@@ -1595,6 +1637,7 @@ pub fn adapt_cached(
                 }
             }
         }
+        let Some(unit) = next else { break };
         match unit.kind {
             UnitKind::Heading {
                 level,
@@ -2038,26 +2081,6 @@ pub fn adapt_cached(
     superseded.extend(listing_superseded);
     superseded.extend(crate::listings::lstset_spans(texts));
     limitations.extend(listing_limitations);
-    // Page-style and mark commands (and a `\maketitle`) after the last
-    // material.
-    for cmd in &commands[next_command..] {
-        let span = Span::in_document(entry_doc, cmd.start, cmd.end);
-        match &cmd.kind {
-            BodyKind::Event(event) => blocks.push(Block::Chrome { event: event.clone(), span }),
-            BodyKind::MakeTitle => {
-                if maketitle_plain {
-                    blocks.push(Block::Chrome {
-                        event: ChromeEvent::ThisPageStyle(PageStyle::Plain),
-                        span,
-                    });
-                }
-                if let Some(t) = stashed.next() {
-                    blocks.push(title_of(t, span));
-                }
-            }
-            _ => {}
-        }
-    }
     let page_starts = clear_page_blocks(texts, &blocks);
     Doc {
         style,
