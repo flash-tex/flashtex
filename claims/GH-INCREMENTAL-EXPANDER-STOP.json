@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/incremental-expander-stop",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/601",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-15T09:04:11Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-INCREMENTAL-EXPANDER-STOP",
-  "updated_utc": "2026-09-15T09:31:09Z"
+  "updated_utc": "2026-09-15T09:35:09Z"
 }
