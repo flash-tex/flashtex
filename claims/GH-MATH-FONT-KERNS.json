@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-parent",
+  "branch": "agent/daniel-parent/math-font-kerns",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": null,
+  "started_utc": "2026-09-15T07:11:07Z",
+  "state": "claimed",
+  "task_id": "GH-MATH-FONT-KERNS",
+  "updated_utc": "2026-09-15T07:11:07Z"
+}
