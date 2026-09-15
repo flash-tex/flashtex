@@ -22,6 +22,16 @@ final class ShellSnapshotTests: XCTestCase {
                                            size: CGSize(width: 1440, height: 900))
     }
 
+    /// A healthy live preview at rest: the pages carry no chrome at all —
+    /// the page/zoom HUD is transient (hover, scroll, zoom) and the state
+    /// badge appears only when the pages are not the worker's current
+    /// result. The fixture shot above is the pinned-HUD counterpart.
+    func testMainWindowLivePreview() {
+        let model = DesignFixtures.liveProject()
+        assertWindowSurfaceBothAppearances(ContentView().environment(model).environmentObject(DesignFixtures.nearby()), named: "shell-live",
+                                           size: CGSize(width: 1440, height: 900))
+    }
+
     /// The minimum supported width: three columns must still be usable.
     func testMainWindowNarrow() {
         let model = DesignFixtures.project()

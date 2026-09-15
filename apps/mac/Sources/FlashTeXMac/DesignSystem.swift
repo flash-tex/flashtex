@@ -312,6 +312,11 @@ enum DS {
         static let restingControlOpacity: Double = 0.35
         /// Badge fills behind tinted badge text (severity, source chips).
         static let badgeFillOpacity: Double = 0.18
+        /// The fill of a default (primary) JetBrains button, and the wash a
+        /// secondary one carries at rest.
+        static let buttonSecondaryFillOpacity: Double = 0.04
+        /// Disabled controls keep their shape and lose their contrast.
+        static let disabledOpacity: Double = 0.4
     }
 
     // MARK: iconography and fixed part sizes
@@ -344,8 +349,18 @@ enum DS {
         /// Minimum width of the zoom percentage readout, so 100% → 1000%
         /// never shifts its neighbours.
         static let zoomReadoutMinWidth: CGFloat = 40
-        /// Title-bar toolbar buttons (IDEToolbar.swift): square hit target.
-        static let toolbarButton: CGFloat = 28
+        /// Title-bar buttons (TitleBar.swift): square hit target, sized to
+        /// the 28pt band with a hairline of breathing room.
+        static let toolbarButton: CGFloat = 24
+        /// Text buttons (IDEButtonStyle), measured off the OK / Cancel pair
+        /// in `references/M1_intellij_settings.jpg`: a JetBrains button is
+        /// taller, softer-cornered and much wider for the same label than
+        /// the macOS one — a two-letter label still fills ~110px there. The
+        /// style guide's row-height table does not cover buttons; these come
+        /// from the reference.
+        static let buttonHeight: CGFloat = 28
+        static let buttonHorizontalPadding: CGFloat = 18
+        static let buttonMinWidth: CGFloat = 76
         /// The split button's chevron click region (visibly its own zone).
         static let toolbarChevronWidth: CGFloat = 18
         /// The vertical separator inside a split button.
@@ -357,11 +372,15 @@ enum DS {
     enum Layout {
         /// The left icon rail (tool-window stripe): 48 (VS Code activity bar).
         static let railWidth: CGFloat = 48
-        /// The custom title-bar row (TitleBar.swift): matches the height
-        /// AppKit gives a unified-compact title bar with a hidden title, so
-        /// the row occupies exactly the region the traffic lights are
-        /// centred in (measured 40 on macOS 26; contentLayoutRect confirms).
-        static let titleBarHeight: CGFloat = 40
+        /// The custom title-bar row (TitleBar.swift) is exactly the band
+        /// AppKit lays the traffic lights out in for a title bar with no
+        /// toolbar, so the row's controls and the lights share one centre
+        /// line without moving AppKit's buttons (owner: the icons are not
+        /// aligned with each other). Installing an NSToolbar to buy a taller
+        /// band is what the previous pass did; it also changes
+        /// `contentLayoutRect` asynchronously, which made every whole-window
+        /// capture differ run to run.
+        static let titleBarHeight: CGFloat = 28
         /// Leading clearance past the traffic lights for the first control.
         static let trafficLightClearance: CGFloat = 78
         /// The window itself: usable from ~900pt wide (design-principles §4).
@@ -476,6 +495,57 @@ enum DS {
 }
 
 // MARK: - Interaction
+
+/// Text buttons in the JetBrains / Android Studio manner (owner on #653:
+/// reproduce that design, not Apple's Liquid Glass capsules): a 4pt rounded
+/// rectangle with a 1px component border and a barely-there fill, the
+/// default action filled in the accent with white text, hover lightening
+/// the fill and press darkening it. No bezel, no gloss, no capsule.
+///
+/// Apply with `.buttonStyle(IDEButtonStyle())`, or `.ideDefault()` /
+/// `.ideSecondary()` on a Button. Destructive roles keep the secondary
+/// shape and take the error colour for their label, which is what IntelliJ
+/// does — a red *fill* would shout louder than the action deserves.
+struct IDEButtonStyle: ButtonStyle {
+    /// The default action of its surface: accent fill, white label.
+    var prominent = false
+    var destructive = false
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed
+        configuration.label
+            .font(DS.Fonts.base)
+            .foregroundStyle(prominent ? Color.white
+                             : destructive ? DS.Colors.severityError : DS.Colors.textPrimary)
+            .padding(.horizontal, DS.Size.buttonHorizontalPadding)
+            .frame(minWidth: DS.Size.buttonMinWidth, minHeight: DS.Size.buttonHeight)
+            .background {
+                let shape = RoundedRectangle(cornerRadius: DS.Radius.tab)
+                if prominent {
+                    shape.fill(DS.Colors.accentSelection)
+                        .overlay { if pressed || hovering { shape.fill(.black.opacity(pressed ? DS.State.pressedOpacity : DS.State.hoverOpacity)) } }
+                } else {
+                    shape.fill(DS.Colors.textPrimary.opacity(
+                        pressed ? DS.State.pressedOpacity
+                        : hovering ? DS.State.hoverOpacity
+                        : DS.State.buttonSecondaryFillOpacity))
+                        .overlay { shape.strokeBorder(DS.Colors.componentBorder, lineWidth: DS.Size.hairline) }
+                }
+            }
+            .opacity(isEnabled ? 1 : DS.State.disabledOpacity)
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 && isEnabled }
+    }
+}
+
+extension View {
+    /// The default action of its surface (JetBrains' filled primary).
+    func ideDefault() -> some View { buttonStyle(IDEButtonStyle(prominent: true)) }
+    /// A secondary action: bordered, quiet fill.
+    func ideSecondary(destructive: Bool = false) -> some View { buttonStyle(IDEButtonStyle(destructive: destructive)) }
+}
 
 /// Button style for custom rows, tabs and rail icons: a pressed wash over
 /// whatever background the label draws, so every interactive element has a

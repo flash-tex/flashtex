@@ -225,7 +225,7 @@ private struct CaptureBar: View {
     var body: some View {
         HStack(spacing: DS.Space.m) {
             Button("Pin insertion point") { model.pinAnchorAtCaret() }
-                .controlSize(.small)
+                .ideSecondary()
                 .help("Use the caret as the destination for capture proposals (⌘⌥P)")
             if let a = model.anchor {
                 Text("anchor \(a.id) · \(a.path) byte \(a.byteOffset) @ rev \(a.revision)")
@@ -238,7 +238,7 @@ private struct CaptureBar: View {
                 Button("Review \(model.proposals.count) proposal\(model.proposals.count == 1 ? "" : "s")") {
                     model.reviewing = model.proposals.first
                 }
-                .controlSize(.small)
+                .ideDefault()
             }
         }
         .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
@@ -271,7 +271,7 @@ private struct BridgeBar: View {
                     .help(c.note)
             }
             if model.latestConvertibleCapture?.state == .received {
-                Button("Convert") { model.convertLatestCapture() }.controlSize(.small)
+                Button("Convert") { model.convertLatestCapture() }.ideSecondary()
                     .help("capture_convert for the latest received capture (Edit > Convert Capture)")
             }
         }
@@ -347,8 +347,8 @@ struct PreviewPane: View {
                         .font(.caption2).foregroundStyle(.tertiary)
                     HStack {
                         Spacer()
-                        Button("Cancel") { model.quickFix = nil }.keyboardShortcut(.cancelAction)
-                        Button("Apply") { model.applyQuickFix() }.keyboardShortcut(.defaultAction)
+                        Button("Cancel") { model.quickFix = nil }.keyboardShortcut(.cancelAction).ideSecondary()
+                        Button("Apply") { model.applyQuickFix() }.keyboardShortcut(.defaultAction).ideDefault()
                     }
                 }
                 .padding(DS.Space.xl).frame(minWidth: DS.Layout.sheetMinWidth)
@@ -436,14 +436,24 @@ private struct PreviewHUD: View {
         .help(chrome.previewSource == .fixture
               ? "Fixture\(chrome.fixtureName.map { ": " + $0 } ?? "") — not a real compile. Layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))"
               : model.producerSummary + " — layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))")
+        // The linger timer is a real pending Task for as long as it runs;
+        // under XCTest that outlives the surface being captured and makes
+        // both this shot and the next one depend on when it fires, so
+        // snapshots see the hover tier only (same reasoning as
+        // ThinSplitViewController.autosaveEnabled).
         .task(id: activity) {
-            guard activity > 0 else { return }
+            guard activity > 0, !PreviewHUD.lingerSuppressed else { return }
             activityVisible = true
             try? await Task.sleep(for: .seconds(DS.Motion.hudLinger))
             guard !Task.isCancelled else { return }
             activityVisible = false
         }
     }
+
+    /// True under XCTest: the linger timer never runs, so a captured
+    /// surface does not depend on when it happens to fire.
+    static let lingerSuppressed = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
 
     /// Quiet state badge: shown only when the pages are *not* the worker's
     /// current result — FIXTURE (not a real compile) or HISTORICAL (an older
@@ -546,7 +556,7 @@ struct StatusBar: View {
                 Text("Exporting exact PDF (flashtex-pdf-exact pid \(pid))…")
                     .foregroundStyle(.secondary).lineLimit(1)
                 Button("Cancel") { model.cancelExactExport() }
-                    .controlSize(.small)
+                    .ideSecondary()
                     .help("Terminate flashtex-pdf-exact; nothing is written to the destination")
                     .accessibilityIdentifier("export.cancel")
             } else if let note = chrome.captureNote {
@@ -687,11 +697,13 @@ private struct ProposalReviewSheet: View {
             }
             HStack {
                 Button("Reject", role: .destructive) { model.rejectProposal(proposal); dismiss() }
+                    .ideSecondary(destructive: true)
                 // Non-destructive exit: the sheet blocks the whole window, so
                 // without this the Captures inspector's Insert is unreachable
                 // for exactly the proposals it could act on.
                 Button("Close") { model.dismissReviewWithoutDeciding() }
                     .keyboardShortcut(.cancelAction)
+                    .ideSecondary()
                     .accessibilityIdentifier("review.close")
                 Spacer()
                 ProposalApproveWarning(preview: preview)
@@ -706,6 +718,7 @@ private struct ProposalReviewSheet: View {
                     else { failure = model.captureNote ?? "The insertion was refused." }
                 }
                 .keyboardShortcut(.defaultAction)
+                .ideDefault()
                 .disabled((model.anchor == nil && !model.isBridgeCapture(proposal.captureId)) || latex.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }

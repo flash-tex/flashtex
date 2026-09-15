@@ -35,6 +35,11 @@ struct WindowChromeConfigurator: NSViewRepresentable {
                                                        object: window, queue: .main) { _ in
                     MainActor.assumeIsolated { Self.apply(to: window) }
                 },
+                // AppKit re-lays the standard buttons out on resize.
+                NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification,
+                                                       object: window, queue: .main) { _ in
+                    MainActor.assumeIsolated { Self.apply(to: window) }
+                },
             ]
         }
 
@@ -46,12 +51,11 @@ struct WindowChromeConfigurator: NSViewRepresentable {
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
             window.titlebarSeparatorStyle = .none
-            window.toolbarStyle = .unifiedCompact
-            // Height-only toolbar: no delegate, no items — TitleBarRow in the
-            // content draws the controls (TitleBar.swift).
-            if window.toolbar?.identifier != "FlashTeX.titlebar-height" {
-                window.toolbar = NSToolbar(identifier: "FlashTeX.titlebar-height")
-            }
+            // No toolbar at all: an NSToolbar installs asynchronously and
+            // changes `contentLayoutRect` while the content is already laying
+            // out (snapshot captures differed run to run by the 4pt that
+            // costs). TitleBarRow reserves the title-bar region itself.
+            window.toolbar = nil
             window.backgroundColor = DS.NSColors.windowChrome
         }
     }

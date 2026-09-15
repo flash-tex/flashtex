@@ -65,6 +65,17 @@ enum DesignFixtures {
         return model
     }
 
+    /// `project()` presented as a healthy live worker result rather than a
+    /// fixture: the resting preview the design calls for — no header rows,
+    /// no badge, no page/zoom readout over the pages until the reader hovers
+    /// or scrolls (design-principles §8, owner feedback on #653).
+    static func liveProject() -> ShellModel {
+        let model = project()
+        model.previewSource = .worker("flashtex-compiler")
+        model.flushChrome()
+        return model
+    }
+
     /// A fresh project with no compile result: the empty states — the
     /// preview's "No preview yet" guidance and a quiet Problems story.
     static func emptyProject() -> ShellModel {
