@@ -840,13 +840,15 @@ fn has_includes(text: &str) -> bool {
     text.contains("\\input") || text.contains("\\include")
 }
 
-/// The engine stopped on a resource limit: the step limit, or TeX's
-/// "capacity exceeded" (input stack, main memory). The rest of the document
-/// is then typeset unexpanded from where the engine stood.
+/// The engine stopped on the step limit or on TeX's "capacity exceeded"
+/// (input stack, main memory): the rest of the document is then typeset
+/// unexpanded from where the engine stood. A stop on the output token limit
+/// is not resumed (see [`tex::output_limit_message`]).
 fn step_limit_hit(diagnostics: &[tex::Diagnostic]) -> bool {
-    diagnostics.iter().any(|d| is_stop_limit(&d.message))
+    diagnostics.iter().any(|d| is_stop_limit(&d.message) && !tex::is_output_limit(&d.message))
 }
 
+/// Any stop on a resource limit, the output token limit included.
 pub(crate) fn is_stop_limit(message: &str) -> bool {
     message.contains("expansion step limit exceeded") || message.starts_with("TeX capacity exceeded, sorry [")
 }
@@ -1177,15 +1179,29 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
         .collect();
     let total_bytes: usize = documents.iter().map(|d| d.text.len()).sum();
     let entry_text: &str = prepared.get(entry).map_or("", |p| p.text.as_ref());
-    let mut engine = Engine::with_limits(entry_text, limits_for(total_bytes));
+    let limits = limits_for(total_bytes);
+    let mut engine = Engine::with_limits(entry_text, limits);
     configure_with_fonts(&mut engine, document_fonts(documents));
 
     let mut conv = Converter::new(documents, entry);
     let mut lookahead: VecDeque<(tex::Token, Option<tex::Span>)> = VecDeque::new();
+    // Engine tokens taken so far. The output token limit is the incremental
+    // expander's (`IncrementalExpander`'s run loop): the token that goes past
+    // it is still converted, then the run stops with the same diagnostic and
+    // nothing after it is typeset.
+    let mut pulled: u64 = 0;
     loop {
         let next = match lookahead.pop_front() {
             Some(t) => Some(t),
-            None => engine.next_content_token_with_origin(),
+            None if pulled > limits.max_output_tokens => {
+                let message = tex::output_limit_message(limits.max_output_tokens);
+                engine.push_diagnostic(tex::Diagnostic::error(message, tex::Span::synthetic()));
+                break;
+            }
+            None => {
+                pulled += 1;
+                engine.next_content_token_with_origin()
+            }
         };
         let Some((token, origin)) = next else { break };
         match conv.convert_token(&prepared, &token, origin) {
@@ -1193,6 +1209,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
             Flow::Include(name, at) => {
                 // Read the braced path through the engine.
                 let (taken, path, ok) = read_braced_argument(&mut engine);
+                pulled += taken.len() as u64;
                 if !ok {
                     conv.push(TokenKind::Command(name), at);
                     lookahead.extend(taken);
@@ -1202,6 +1219,7 @@ pub fn expand_project(documents: &[SourceDocument<'_>], entry: usize) -> Expansi
             }
             Flow::IncludeOnly(at) => {
                 let (taken, path, ok) = read_braced_argument(&mut engine);
+                pulled += taken.len() as u64;
                 if !ok {
                     conv.push(TokenKind::Command("includeonly".to_string()), at);
                     lookahead.extend(taken);
@@ -1369,10 +1387,11 @@ pub fn expand_project_with_cache(
         expansion
     };
     // The incremental expander equals a full run across stops, so the
-    // unexpanded recovery after one is the full path's too. Debug builds
-    // check that on every stopped run.
+    // unexpanded recovery after one is the full path's too, and so is a
+    // stop on the output token limit. Debug builds check that on every
+    // stopped run.
     #[cfg(debug_assertions)]
-    if step_limit_hit(cache.as_ref().expect("cache kept").expander.diagnostics()) {
+    if cache.as_ref().expect("cache kept").expander.diagnostics().iter().any(|d| is_stop_limit(&d.message)) {
         let full = expand_project(documents, entry);
         debug_assert!(
             *full.tokens == *expansion.tokens && full.diagnostics == expansion.diagnostics && full.arraystretch == expansion.arraystretch,
@@ -1391,6 +1410,13 @@ fn build_cache(documents: &[SourceDocument<'_>], entry: usize, prepared: &[Prepa
     let expander = IncrementalExpander::with_host(masked, limits, CHECKPOINT_INTERVAL, init);
     let mut conv = Converter::new(documents, entry);
     let mut marks = vec![Mark { index: 0, out_len: 0, last_span: conv.last_span }];
+    // One allocation for the converted stream: growing it by doubling frees
+    // a chain of blocks as large as the stream (hundreds of MB on a runaway
+    // document), which the allocator keeps resident through the rest of the
+    // compile. The stream is rarely longer than the engine's tokens plus the
+    // bytes of the unexpanded rest; `finish` trims what is left over.
+    let rest = expander.input_position().map_or(0, |(_, offset)| masked.len().saturating_sub(offset));
+    conv.out.reserve_exact(expander.tokens().len() + rest);
     convert_range(&mut conv, prepared, &expander, 0, &mut marks, None);
     conv.drain_atbegin();
     let mut cache = ExpansionCache {
@@ -1635,7 +1661,12 @@ fn finish(cache: &mut ExpansionCache, conv: Converter<'_>) -> Expansion {
             }
         }
     }
-    let out = std::mem::take(&mut conv.out);
+    let mut out = std::mem::take(&mut conv.out);
+    // The cache keeps the stream between revisions: at most an eighth of it
+    // spare, so an edit that adds a few tokens still extends it in place.
+    if out.capacity() > out.len() + out.len() / 4 {
+        out.shrink_to(out.len() + out.len() / 8);
+    }
     cache.stretch_log = conv.stretch_log.clone();
     cache.current_label_log = conv.current_label_log.clone();
     cache.last_span = conv.last_span;
@@ -1667,7 +1698,15 @@ fn recovery_for(message: &str) -> &'static str {
         "kept the existing command definition"
     } else if message.contains("LaTeX Error: Command") && message.contains("undefined") {
         "defined the command anyway"
-    } else if message.contains("limit exceeded") || is_stop_limit(message) {
+    } else if tex::is_output_limit(message) {
+        "stopped expanding; the rest of the document was not typeset"
+    } else if message == "group nesting limit exceeded" {
+        // The engine drops the `{` without opening a group and goes on.
+        "the extra group was ignored and expansion continued"
+    } else if message == "conditional nesting limit exceeded" {
+        // The engine drops the `\if...` token; its test is read as text.
+        "the extra conditional was ignored without evaluating its test, and expansion continued"
+    } else if is_stop_limit(message) {
         "stopped expanding; the rest of the document was typeset without macro expansion"
     } else {
         "continued expanding after the problem"

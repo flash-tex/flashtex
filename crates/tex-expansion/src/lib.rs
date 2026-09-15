@@ -35,7 +35,7 @@ mod span;
 mod token;
 
 pub use catcode::{CatCode, CatCodeTable};
-pub use error::{Diagnostic, Limits, Severity};
+pub use error::{is_output_limit, output_limit_message, Diagnostic, Limits, Severity};
 pub use expand::{is_group_token, to_fnsymbol, BoxMeasurer, Checkpoint, DefaultBoxMeasurer, Engine, LabelRecord, Mode};
 pub use incremental::{Edit, EditStats, IncrementalExpander};
 pub use registers::{scale_internal_dimen, DefaultFontMetrics, FontMetrics, FontSwitch, Glue};

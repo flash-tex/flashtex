@@ -44,7 +44,7 @@ fn document() -> String {
 }
 
 /// Compare cached and full expansion; returns whether the full expansion ran
-/// into the step limit.
+/// into the step limit or the output token limit.
 fn check(text: &str, cache: &mut Option<ExpansionCache>, step: usize, what: &str) -> bool {
     check_project(&[SourceDocument { path: "main.tex", text }], cache, step, what)
 }
@@ -90,7 +90,9 @@ fn check_project(docs: &[SourceDocument<'_>], cache: &mut Option<ExpansionCache>
         only_full.sort();
         panic!("step {step} ({what}): arraystretch differs\n  cached only: {only_cached:?}\n  full only:   {only_full:?}");
     }
-    full.diagnostics.iter().any(|d| d.message.contains("expansion step limit exceeded"))
+    full.diagnostics
+        .iter()
+        .any(|d| d.message.contains("expansion step limit exceeded") || d.message.starts_with("TeX capacity exceeded, sorry [output token limit="))
 }
 
 fn boundary(text: &str, rng: &mut Rng) -> usize {
@@ -249,4 +251,102 @@ fn a_runaway_entry_follows_the_size_of_other_project_documents() {
         let docs = [SourceDocument { path: "main.tex", text: &main }, SourceDocument { path: "other.tex", text: &other }];
         assert!(check_project(&docs, &mut cache, step, &format!("other.tex {bytes} bytes")));
     }
+}
+
+/// The full path stops on the output token limit exactly where the
+/// incremental expander does: a loop that emits text runs into that limit
+/// before the step limit.
+#[test]
+fn an_output_heavy_loop_stops_both_paths_at_the_output_token_limit() {
+    let mut text = document();
+    text.insert_str(text.find("\\section{Part 20}").expect("section"), "\\def\\o{xyzw xyzw xyzw\\o}\\o ");
+    let full = expand_project(&[SourceDocument { path: "main.tex", text: &text }], 0);
+    let stops: Vec<(&str, Option<&str>)> = full
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("limit exceeded") || d.message.starts_with("TeX capacity exceeded"))
+        .map(|d| (d.message.as_str(), d.recovery.as_deref()))
+        .collect();
+    let limit = 2_000_000 + 8 * text.len();
+    assert_eq!(
+        stops,
+        [(
+            format!("TeX capacity exceeded, sorry [output token limit={limit}]; expansion stopped here and the rest of the document was not typeset.").as_str(),
+            Some("stopped expanding; the rest of the document was not typeset")
+        )]
+    );
+    // As the message says, nothing after the loop is typeset.
+    let after_loop = text.find("\\section{Part 20}").expect("section");
+    assert!(full.tokens.iter().all(|t| t.token.span.start < after_loop));
+    let mut cache = None;
+    assert!(check(&text, &mut cache, 0, "output-heavy loop"));
+    let at = text.find("\\section{Part 3}").expect("section");
+    text.insert_str(at, "typed ");
+    assert!(check(&text, &mut cache, 1, "typing before the loop"));
+}
+
+/// [`cached_expansion_matches_full_expansion_under_random_edits`] with loops
+/// that fill the output: each loop revision is checked, edited once more
+/// (while it runs away, unless the loop landed in a comment, a verbatim
+/// block or an argument), then undone.
+#[test]
+fn output_heavy_runaway_loops_match_full_expansion_under_random_edits() {
+    const PIECES: &[&str] = &["a", " ", "\n", "\n\n", "{", "}", "\\proj", "\\def\\y{Y}", "$x$", "%"];
+    const LOOPS: &[&str] = &[
+        "\\def\\o{xyzw xyzw xyzw\\o}\\o ",
+        "\\def\\o{ab\\o}\\o ",
+        "\\def\\o{{x}$y$\\o}\\o ",
+        "\\newcommand{\\oo}{\\proj{} and \\oo}\\oo ",
+        "\\def\\o#1{#1#1\\o{#1}}\\o{q}",
+        "\\def\\o{\\begin{note}n\\end{note}\\o}\\o ",
+    ];
+    let mut text = document();
+    let mut cache = None;
+    let mut rng = Rng(0x5EED_0070_7B75_0001);
+    check(&text, &mut cache, 0, "initial");
+    let mut runaways = 0;
+    for step in 1..=32 {
+        let at = boundary(&text, &mut rng);
+        if rng.below(2) == 0 {
+            let piece = PIECES[rng.below(PIECES.len())];
+            text.insert_str(at, piece);
+            check(&text, &mut cache, step, &format!("insert {piece:?} at {at}"));
+            continue;
+        }
+        let before = text.clone();
+        let piece = LOOPS[rng.below(LOOPS.len())];
+        text.insert_str(at, piece);
+        let what = format!("insert {piece:?} at {at}");
+        runaways += check(&text, &mut cache, step, &what) as usize;
+        let at = boundary(&text, &mut rng);
+        let typed = PIECES[rng.below(PIECES.len())];
+        text.insert_str(at, typed);
+        check(&text, &mut cache, step, &format!("{what}, then insert {typed:?} at {at}"));
+        text = before;
+        check(&text, &mut cache, step, "undo the loop");
+    }
+    assert!(runaways >= 6, "only {runaways} runaway revisions");
+}
+
+/// Each expansion limit's recovery note says what the engine does: past a
+/// nesting limit it drops the extra `{` or conditional and goes on; after a
+/// step-limit stop the rest is typeset unexpanded.
+#[test]
+fn expansion_limit_notes_describe_what_happens() {
+    let note = |text: &str, message: &str| -> Option<String> {
+        let expansion = expand_project(&[SourceDocument { path: "main.tex", text }], 0);
+        let found = expansion.diagnostics.iter().find(|d| d.message.starts_with(message));
+        found.unwrap_or_else(|| panic!("no {message:?} in {:?}", expansion.diagnostics)).recovery.clone()
+    };
+    let groups = format!("{}x{} after", "{".repeat(10_010), "}".repeat(10_010));
+    assert_eq!(note(&groups, "group nesting limit exceeded").as_deref(), Some("the extra group was ignored and expansion continued"));
+    let conditionals = format!("{}x{} after", "\\iftrue ".repeat(10_010), "\\fi ".repeat(10_010));
+    assert_eq!(
+        note(&conditionals, "conditional nesting limit exceeded").as_deref(),
+        Some("the extra conditional was ignored without evaluating its test, and expansion continued")
+    );
+    assert_eq!(
+        note("\\def\\r{x\\r}\\r after", "expansion step limit exceeded").as_deref(),
+        Some("stopped expanding; the rest of the document was typeset without macro expansion")
+    );
 }
