@@ -2114,7 +2114,6 @@ impl P<'_> {
             "ps" | "startbreaks" | "stopbreaks" | "stopletter" => {
                 if self.letter_command_available(name, span) && name == "ps" {
                     self.flush_paragraph(blocks, para);
-                    self.finish_block_dependencies();
                 }
             }
             // `\makelabels` (letter.cls 165-173) writes an address-label

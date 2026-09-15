@@ -175,6 +175,37 @@ fn every_block_kind_gets_exactly_one_entry() {
     );
 }
 
+#[test]
+fn an_underline_argument_does_not_add_a_block_leading() {
+    let source = "\\documentclass{article}\n\\begin{document}\n\\underline{under}\n\\end{document}\n";
+    let parsed = parse(source);
+    assert_eq!(parsed.blocks.len(), 1);
+    assert_eq!(parsed.block_par_leading.len(), 1);
+}
+
+#[test]
+fn a_sout_argument_does_not_add_a_block_leading() {
+    let source = "\\documentclass{article}\n\\usepackage{ulem}\n\\begin{document}\n\\sout{struck}\n\\end{document}\n";
+    let parsed = parse(source);
+    assert_eq!(parsed.blocks.len(), 1);
+    assert_eq!(parsed.block_par_leading.len(), 1);
+}
+
+#[test]
+fn a_uline_argument_does_not_add_a_block_leading() {
+    let source = "\\documentclass{article}\n\\usepackage{ulem}\n\\begin{document}\n\\uline{underlined}\n\\end{document}\n";
+    let parsed = parse(source);
+    assert_eq!(parsed.blocks.len(), 1);
+    assert_eq!(parsed.block_par_leading.len(), 1);
+}
+
+#[test]
+fn the_letter_fixture_has_one_leading_per_block() {
+    let parsed = parse(include_str!("../../../fixtures/real-world/letter/main.tex"));
+    assert_eq!(parsed.blocks.len(), 13);
+    assert_eq!(parsed.block_par_leading.len(), 13);
+}
+
 fn block_kind(block: &flashtex_compiler::parser::Block) -> &'static str {
     use flashtex_compiler::parser::Block as B;
     match block {
