@@ -8874,6 +8874,53 @@ mod tests {
     }
 
     #[test]
+    fn aboxed_rows_keep_the_relation_at_the_shared_alignment_point() {
+        // GitHub #567: each `\Aboxed{<lhs> <rel> <rhs>}` row boxes its full
+        // expression while keeping the relation symbol at the same structural
+        // position in every row, so the align grid can share one alignment
+        // point across the boxed rows. (Pixel coincidence of asymmetric rows
+        // is downstream layout work: the rows stay single-cell here because
+        // row-splitting runs before math parsing ever sees `\Aboxed`.)
+        let parsed = parse("\\begin{align}\\Aboxed{a = b}\\\\\\Aboxed{c = dd}\\end{align}");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let rows = parsed
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .flatten()
+            .find_map(|i| match i {
+                Inline::MathRows { rows, .. } => Some(rows),
+                _ => None,
+            })
+            .expect("align rows");
+        assert_eq!(rows.len(), 2);
+        for row in rows {
+            assert_eq!(row.cells.len(), 1, "{row:?}");
+            assert_eq!(row.cells[0].atoms.len(), 1, "{row:?}");
+            let crate::math::Nucleus::Framed { body, frame } = &row.cells[0].atoms[0].nucleus
+            else {
+                panic!("expected a framed box, got {:?}", row.cells[0].atoms[0].nucleus);
+            };
+            assert_eq!(*frame, crate::math::Frame::Box, "{row:?}");
+            let texts: Vec<_> = body
+                .atoms
+                .iter()
+                .filter_map(|atom| match &atom.nucleus {
+                    crate::math::Nucleus::Symbol(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                texts.len() >= 3 && texts[1] == "=",
+                "relation stays the second body atom in {row:?}"
+            );
+        }
+    }
+
+    #[test]
     fn intertext_is_set_between_align_rows() {
         let source = "\\begin{align} a &= b \\\\ \\intertext{so that} c &= d \\shortintertext{and} e &= f \\end{align}";
         let parsed = parse(source);
