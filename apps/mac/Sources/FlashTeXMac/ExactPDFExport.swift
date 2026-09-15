@@ -87,6 +87,12 @@ extension ShellModel {
             captureNote = displayListV2?.isLoading == true ? "Nothing to export yet: a display list is still loading." : "Nothing to export: no v2 display list loaded (File > Open Display List (v2)…)."
             return
         }
+        if let window = frame.list.window {
+            // display-list-v2-window §4.1: a windowed reply is an incomplete
+            // view and never the source of a PDF export.
+            captureNote = "Cannot export: the loaded display list is a page window (pages \(window.firstPage)–\(window.firstPage + window.pageCount - 1) of \(window.documentPageCount)); export needs a complete display list."
+            return
+        }
         let listURL: URL
         do { listURL = try source.listFileURL() } catch { // a live frame's line is written to a temporary file (V2Source)
             captureNote = "Exact export: could not write the live display list to a file: \(error.localizedDescription)"

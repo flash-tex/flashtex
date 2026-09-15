@@ -170,6 +170,7 @@ public struct RenderingV2Fast {
         var documents: [RenderingV2.DocumentResource]?, fonts: [RenderingV2.FontResource]?
         var pages: [RenderingV2.Page]?, diagnostics: [RenderingV2.Diagnostic]?
         var navigation: RenderingV2.Navigation?
+        var window: RenderingV2.Window?
         try object { key, p in
             switch key {
             case "render_format": renderFormat = try p.string()
@@ -190,6 +191,9 @@ public struct RenderingV2Fast {
             case "navigation":
                 p.ws()
                 if try p.literalNull() { navigation = nil } else { navigation = try p.navigation() }
+            case "window":
+                p.ws()
+                if try p.literalNull() { window = nil } else { window = try p.window() }
             default: try p.skip(depth: 2)
             }
         }
@@ -197,7 +201,22 @@ public struct RenderingV2Fast {
               let features, let documents, let fonts, let pages, let diagnostics else { throw err("missing display_list field") }
         return RenderingV2.DisplayList(renderFormat: renderFormat, coordinateUnit: unit, colorSpace: colorSpace, textExtraction: extraction,
                                        projectId: projectId, revision: revision, requiredFeatures: features, documents: documents,
-                                       fonts: fonts, pages: pages, diagnostics: diagnostics, navigation: navigation)
+                                       fonts: fonts, pages: pages, diagnostics: diagnostics, navigation: navigation, window: window)
+    }
+
+    /// Top-level `window` object of a windowed reply (window proposal §4).
+    private mutating func window() throws -> RenderingV2.Window {
+        var first: Int?, count: Int?, total: Int?
+        try object { key, p in
+            switch key {
+            case "first_page": first = try p.int()
+            case "page_count": count = try p.int()
+            case "document_page_count": total = try p.int()
+            default: try p.skip(depth: 3)
+            }
+        }
+        guard let first, let count, let total else { throw err("missing window field") }
+        return RenderingV2.Window(firstPage: first, pageCount: count, documentPageCount: total)
     }
 
     private mutating func document() throws -> RenderingV2.DocumentResource {
@@ -254,17 +273,25 @@ public struct RenderingV2Fast {
     }
 
     private mutating func page() throws -> RenderingV2.Page {
-        var number: Int?, width: Int64?, height: Int64?, items: [RenderingV2.Item]?
+        var number: Int?, width: Int64?, height: Int64?, items: [RenderingV2.Item]?, resident: Bool?
         try object { key, p in
             switch key {
             case "number": number = try p.int()
             case "width": width = try p.int64()
             case "height": height = try p.int64()
             case "items": items = try p.array { try $0.item() }
+            case "resident": resident = try p.bool()
             default: try p.skip(depth: 3)
             }
         }
-        guard let number, let width, let height, let items else { throw err("missing page field") }
+        guard let number, let width, let height else { throw err("missing page field") }
+        // Window proposal §4: a non-resident page has no `items` key at all;
+        // one that carries both is refused (same rule as the slow decoder).
+        if resident == false {
+            guard items == nil else { throw err("page \(number) is marked resident: false but carries an items key") }
+            return RenderingV2.Page(number: number, width: width, height: height, items: [], resident: false)
+        }
+        guard let items else { throw err("missing page field") }
         return RenderingV2.Page(number: number, width: width, height: height, items: items)
     }
 

@@ -195,6 +195,10 @@ enum V2Loader {
     static func preraster(_ frame: V2Frame, pixelsPerPoint: Double, dark: Bool, skipping cached: Set<String> = []) -> Prerastered {
         var images: [(token: String, image: CGImage)] = []
         for (index, page) in frame.prepared.enumerated() {
+            // display-list-v2-window: an elided page has no items and paints a
+            // placeholder, never a bitmap (a 1000-page window would otherwise
+            // rasterize 1000 blanks).
+            if index < frame.list.pages.count, !frame.list.pages[index].resident { continue }
             let token = frame.pageToken(at: index)
             if cached.contains(token) { continue }
             if let image = GlyphRunRenderer.rasterize(page, scale: pixelsPerPoint, dark: dark) { images.append((token, image)) }
@@ -430,7 +434,8 @@ extension ShellModel {
             // Installation (proposal r5 §6.1): only a published live frame is a base.
             if source.isLive { deltaInstalled = frame.installedBase } else { deltaInstalled = nil }
             if TypingBench.isBenchActive { FlashTeXLog.write("preview-v2: published \(source.label) revision \(frame.list.revision) at \(MonotonicClock.nowNs())") }
-            captureNote = "\(source.isLive ? "Live display list" : "Loaded display list") \(source.label): \(frame.list.pages.count) page(s), \(frame.fonts.count) font(s) resolved by content hash, \(frame.prepared.reduce(0) { $0 + $1.glyphCount }) glyphs prepared"
+            let windowNote = frame.list.window.map { " — window: pages \($0.firstPage)–\($0.firstPage + $0.pageCount - 1) resident, \($0.documentPageCount - $0.pageCount) elided" } ?? ""
+            captureNote = "\(source.isLive ? "Live display list" : "Loaded display list") \(source.label): \(frame.list.pages.count) page(s)\(windowNote), \(frame.fonts.count) font(s) resolved by content hash, \(frame.prepared.reduce(0) { $0 + $1.glyphCount }) glyphs prepared"
             V2ParityEvidence.runIfRequested(frame: frame, source: source)
         case .failed(let error):
             if source.isLive { deltaInstalled = nil } // full resync on the next request
@@ -542,6 +547,12 @@ extension ShellModel {
     func exportPDFV2() {
         guard case .loaded(let frame, _)? = displayListV2 else {
             captureNote = displayListV2?.isLoading == true ? "Nothing to export yet: a display list is still loading." : "Nothing to export: no display list loaded."
+            return
+        }
+        if let window = frame.list.window {
+            // Window proposal §4.1: a windowed reply is never the source of a
+            // PDF export — only \(window.pageCount) of its pages exist.
+            captureNote = "Cannot export: the loaded display list is a page window (pages \(window.firstPage)–\(window.firstPage + window.pageCount - 1) of \(window.documentPageCount)); export needs a complete list."
             return
         }
         let panel = NSSavePanel()
@@ -711,6 +722,12 @@ final class V2PageRasterizer {
 enum V2ParityEvidence {
     static func runIfRequested(frame: V2Frame, source: V2Source) {
         guard let dir = ProcessInfo.processInfo.environment["FLASHTEX_V2_PARITY_OUT"], !dir.isEmpty else { return }
+        if let window = frame.list.window {
+            // A windowed frame is an incomplete view (window proposal §4.1):
+            // exporting/comparing it would write blank pages as evidence.
+            FlashTeXLog.write("preview-v2: parity skipped for \(source.label) — windowed frame (\(window.pageCount) of \(window.documentPageCount) pages resident)")
+            return
+        }
         let scale = Double(ProcessInfo.processInfo.environment["FLASHTEX_V2_PARITY_SCALE"] ?? "") ?? 2
         V2Loader.queue.async {
             var out = URL(fileURLWithPath: dir)
@@ -844,6 +861,7 @@ struct PreviewV2Pane: View {
                       // "the pdf moves to where the changes are happening" (CaretFollow.swift)
                       follow: model.caretFollow.request, reveal: model.previewReveal,
                       onUserScroll: { model.caretFollow.userDidScrollPreview() },
+                      onVisiblePage: { model.v2WindowSawVisiblePage($0) },
                       navigation: DisplayListLinks.effective(frame.list.navigation, accepted: model.acceptedLayoutCapabilities,
                                                             live: model.displayListV2?.source.isLive == true),
                       onLink: { model.activatePreviewLink($0, in: frame.list) }) { hit in
@@ -948,7 +966,8 @@ private struct V2PaneHeader: View {
             }
             if model.previewDebugStatus, let frame = model.displayListV2?.frame {
                 let fonts = frame.fonts.values.map { "\($0.resource.postscriptName) \($0.resource.sha256.prefix(8))" }.sorted().joined(separator: ", ")
-                Text("\(model.displayListV2?.source.label ?? "") · id \(frame.id) · project \(frame.list.projectId) · revision \(frame.list.revision) · \(frame.list.pages.count) page(s) · fonts by hash: \(fonts)")
+                let windowNote = frame.list.window.map { " · window \($0.firstPage)–\($0.firstPage + $0.pageCount - 1) of \($0.documentPageCount)" } ?? ""
+                Text("\(model.displayListV2?.source.label ?? "") · id \(frame.id) · project \(frame.list.projectId) · revision \(frame.list.revision) · \(frame.list.pages.count) page(s)\(windowNote) · fonts by hash: \(fonts)")
                     .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary).lineLimit(1).truncationMode(.middle)
                     .help(frame.fonts.values.map { "\($0.resource.postscriptName): \($0.resource.sha256) → \($0.file.url.lastPathComponent)" }.sorted().joined(separator: "\n"))
             }
@@ -974,6 +993,9 @@ struct PreviewV2View: View {
     var reveal: CaretFollowController.Request? = nil
     /// Reported when the reader scrolls this pane by hand.
     var onUserScroll: (() -> Void)? = nil
+    /// Page under the viewport's top edge (PreviewAnchorProbe); drives the
+    /// header's page indicator and the display-list-v2-window consumer.
+    var onVisiblePage: ((Int) -> Void)? = nil
     /// Active `navigation` after capability gating (nil → no link behaviour).
     var navigation: RenderingV2.Navigation? = nil
     var onLink: ((RenderingV2.Navigation.Link) -> Void)? = nil
@@ -1010,7 +1032,7 @@ struct PreviewV2View: View {
                     }
                 }
                 .padding(DS.Preview.pageSpacing)
-                .background(PreviewAnchorKeeper(layout: layout, follow: follow, reveal: reveal, onUserScroll: onUserScroll))
+                .background(PreviewAnchorKeeper(layout: layout, follow: follow, reveal: reveal, onUserScroll: onUserScroll, onVisiblePage: onVisiblePage))
             }
             .onChange(of: fit, initial: true) { _, f in onFitScale?(f) }
         }
@@ -1092,6 +1114,28 @@ private struct PageV2View: View, Equatable {
     }
 
     var body: some View {
+        if page.resident { resident } else { placeholder }
+    }
+
+    /// Elided page of a windowed frame (window proposal §4): geometry only.
+    /// It keeps the document's scroll extent — scrolling toward it moves the
+    /// anchor, which re-requests the window (V2PageWindow.swift) — with no
+    /// bitmap machinery, no hover/tap geometry and no navigation (§4.1: a
+    /// windowed reply never authorises a source action outside its coverage).
+    private var placeholder: some View {
+        let size = CGSize(width: page.widthPt * scale, height: page.heightPt * scale)
+        let labelColor: Color = dark ? DS.Preview.darkLabel : DS.Preview.lightLabel
+        let pageBackground: Color = dark ? DS.Preview.darkPage : .white
+        return Rectangle().fill(pageBackground)
+            .frame(width: size.width, height: size.height)
+            .shadow(radius: DS.Preview.pageShadowRadius)
+            .overlay(alignment: .bottomTrailing) {
+                Text("page \(page.number) · not loaded").font(DS.Fonts.secondary).foregroundStyle(labelColor).padding(DS.Space.xs)
+            }
+            .accessibilityIdentifier("v2-page-elided")
+    }
+
+    @ViewBuilder private var resident: some View {
         let size = CGSize(width: page.widthPt * scale, height: page.heightPt * scale)
         // Reading the slot through `image(for:)` subscribes this page to its bitmap's arrival.
         let bitmap = V2PageRasterizer.shared.image(for: prepared, pageToken: pageToken, pixelsPerPoint: Double(scale * displayScale), dark: dark)
