@@ -201,7 +201,10 @@ pub enum Nucleus {
     },
     /// `\big`/`\Big`/`\bigg`/`\Bigg`, sized by whichever of the two
     /// definitions is in force ([`BigSizing`]). `None` is `\big.`.
-    BigDelimiter { delim: Option<char>, sizing: BigSizing },
+    BigDelimiter {
+        delim: Option<char>,
+        sizing: BigSizing,
+    },
     /// `\phantom`/`\hphantom`/`\vphantom` (`latex.ltx` `\ph@nt`/`\finph@nt`):
     /// an empty box with the width (`horizontal`) and/or height and depth
     /// (`vertical`) of `body` set in the current (uncramped) style.
@@ -319,6 +322,16 @@ pub enum Nucleus {
     Empty,
 }
 
+/// The left-hand script pair of amsmath's `\sideset` (`#1` of
+/// `\sideset{#1}{#2}{#3}`), carried by [`Atom::left_scripts`]. Either script
+/// may be absent; both absent is `\sideset{}{..}`, which still changes the
+/// operator's layout.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LeftScripts {
+    pub superscript: Option<MathList>,
+    pub subscript: Option<MathList>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Atom {
     pub class: AtomClass,
@@ -333,6 +346,31 @@ pub struct Atom {
     /// `\right`) or of a delimited [`Nucleus::Fraction`], when they came
     /// from their own commands; an unset field inherits [`Atom::tag`].
     pub delimiter_tags: [SourceTag; 2],
+    /// amsmath `\sideset{#1}{#2}{#3}` (`amsmath.sty` 921-929) when set: this
+    /// atom is `#3` (normally an `Op`), [`Atom::superscript`] and
+    /// [`Atom::subscript`] are the right-hand pair `#2`, and this is `#1`.
+    ///
+    /// The atom is laid out as amsmath's `\mathop{\box4\box6}`, whatever
+    /// the current style:
+    ///
+    /// * box 0 is `#3` alone in `\displaystyle` (the display-size glyph of
+    ///   a large operator, centred on the axis), measured for its height and
+    ///   depth only;
+    /// * box 4 is an empty `\vbox` with box 0's height and depth carrying
+    ///   `#1` in `\displaystyle`, so both left scripts start at its left
+    ///   edge and Rule 18a shifts them from the operator's height and depth;
+    /// * box 6 is `#3\nolimits#2` in `\displaystyle` ([`Atom::limits`] is
+    ///   ignored).
+    ///
+    /// amsmath also puts an `\hbox to\dimen@{}` (an ordinary atom) in front
+    /// of the `\mathop` and starts the `\mathop` with `\kern-\dimen@`. The
+    /// two cancel, so this slot omits both; the builder of the math list
+    /// supplies the ordinary atom (an empty [`Nucleus::Empty`] one is enough)
+    /// so the thin `Ord`-`Op` space and the neighbours' spacing come out as
+    /// TeX's. Scripts written after `#3` belong to the enclosing `\mathop`:
+    /// put this atom alone in the [`Nucleus::List`] of an `Op` atom that
+    /// carries them.
+    pub left_scripts: Option<LeftScripts>,
 }
 
 impl Atom {
@@ -345,6 +383,7 @@ impl Atom {
             limits: Limits::default(),
             tag: SourceTag::NONE,
             delimiter_tags: [SourceTag::NONE; 2],
+            left_scripts: None,
         }
     }
 
@@ -629,6 +668,20 @@ impl Atom {
 
     pub fn with_sub(mut self, sub: MathList) -> Atom {
         self.subscript = Some(sub);
+        self
+    }
+
+    /// This atom with amsmath `\sideset` left scripts (see
+    /// [`Atom::left_scripts`]).
+    pub fn with_left_scripts(
+        mut self,
+        superscript: Option<MathList>,
+        subscript: Option<MathList>,
+    ) -> Atom {
+        self.left_scripts = Some(LeftScripts {
+            superscript,
+            subscript,
+        });
         self
     }
 
