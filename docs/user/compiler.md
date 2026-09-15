@@ -9,8 +9,6 @@ writer are all original Rust code, linked into one binary.
 flashtex build main.tex                 # main.pdf next to it; \input/\include resolved from its folder
 flashtex build main.tex -o out.pdf --timing
 flashtex check main.tex --json          # diagnostics only, machine-readable
-flashtex check main.tex --fix           # apply did-you-mean suggestions, then re-check
-flashtex check main.tex --fix --dry-run # print a unified diff; write nothing
 flashtex watch main.tex                 # rebuild on every change; Ctrl-C stops
 flashtex supported                      # what LaTeX is implemented, with coverage
 flashtex fonts                          # which fonts/metrics this binary resolves
@@ -56,7 +54,7 @@ Any editor or CI can drive that same JSON Lines protocol directly — see
 ```
 flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
                [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
-flashtex check <main.tex> [--json] [--strict] [--fix] [--dry-run] [--project-root DIR] [--font-dir DIR]...
+flashtex check <main.tex> [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
 flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
 flashtex supported [--json|--md|--coverage]
 flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json] [--pdf out.pdf] [--timing]
@@ -101,22 +99,6 @@ output as *File › Export PDF* in the app. The file is written atomically
 `build` without output files: the same discovery, parse and layout (page
 count and every diagnostic depend on layout), diagnostics on stderr and,
 with `--json`, the report on stdout. `-o`/`--v2` are rejected.
-
-`--fix` applies every diagnostic that carries a `suggestion` and a source
-span: the span's bytes are replaced with the suggestion. Edits in one file
-are applied back-to-front so later offsets stay valid; overlapping spans are
-skipped (and reported); a file whose bytes changed between compile and apply
-is refused; files outside the project root and symlinks are never written.
-Writes are atomic (sibling temp file + rename) and keep the original mode.
-After applying, `check` is re-run and the new summary (and exit status)
-reflect that second pass. `--dry-run` (only with `--fix`) prints a unified
-diff per file and writes nothing. Either way a line
-
-```
-fixed N issue(s) in M file(s); K skipped
-```
-
-is printed.
 
 ### `watch`
 
@@ -167,23 +149,13 @@ replace an unrelated file and explains when the directory needs `sudo`.
 
 ## Diagnostics and exit status
 
-On a terminal, each diagnostic is rustc-style: a header, the source line with
-a caret underline, optional `= recovery:` and, when the compiler offered a
-replacement, a help block:
+Every diagnostic is one stderr line:
 
 ```
-= help: did you mean `\alpha`?
+file:line:col: severity[code] message (recovery: what was rendered instead)
 ```
 
-followed by the suggested line with a `+` gutter. Piped stderr (and
-`--diagnostics=short`) stays one line:
-
-```
-file:line:col: severity[code] message (recovery: what was rendered instead) (did you mean \alpha?)
-```
-
-The parenthetical suggestion is omitted when there is none. `file` is
-project-relative (`sections/intro.tex`); `line:col` are 1-based
+`file` is project-relative (`sections/intro.tex`); `line:col` are 1-based
 (column in characters) and are omitted when a diagnostic has no source
 position (font resource notes, unstable labels). A summary line follows:
 
@@ -230,9 +202,7 @@ The codes (`compiler`, `overfull_hbox`, `math_limitation`, `missing_file`,
 ```
 
 `line`, `column`, `start_byte`, `end_byte` and `recovery` are `null` when
-absent; `suggestion` is the replacement text and is omitted (not `null`) when
-there is none; `severity` is `error` or `warning`; `outputs` is empty for
-`check`. With `--fix`, the report is the re-check after edits are applied.
+absent; `severity` is `error` or `warning`; `outputs` is empty for `check`.
 
 ## Multi-file projects
 
@@ -330,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 331 text-mode and 554 math-mode command entries, 52 environments and 23 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 332 text-mode and 554 math-mode command entries, 52 environments and 22 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -338,7 +308,7 @@ Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test
 
 | Canonical set | Commands supported | Environments supported |
 | --- | ---: | ---: |
-| kernel | 190/410 (46.3%) | 18/30 (60.0%) |
+| kernel | 191/410 (46.6%) | 18/30 (60.0%) |
 | amsmath | 42/102 (41.2%) | 17/21 (81.0%) |
 | amssymb | 225/229 (98.3%) | none defined |
 | enumitem | 1/17 (5.9%) | none defined |
@@ -348,7 +318,7 @@ Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test
 | tikz | 0/43 (0.0%) | 0/2 (0.0%) |
 | xcolor | 14/71 (19.7%) | none defined |
 | siunitx | 18/240 (7.5%) | none defined |
-| **total** | **534/1314 (40.6%)** | |
+| **total** | **535/1314 (40.7%)** | |
 
 Generated by `flashtex-compiler --supported coverage` against `crates/compiler/supported/canonical-latex.tsv` (LaTeX2e reference-manual index and package sources, each name confirmed by pdfLaTeX; TeX Live 2026). The total row counts commands and environments together. Supported means handled without an unsupported diagnostic, not typographic parity.
 
@@ -392,6 +362,8 @@ Canonical sources:
 | `\paragraph` | `{...}` | run-in heading: bold, flush, set into the first line of the paragraph that follows it |
 | `\subparagraph` | `{...}` | run-in heading indented by \parindent, set into the first line of the paragraph that follows it |
 | `\tableofcontents` |  | article contents list from the previous layout pass |
+| `\index` | `{entry}` | makeidx index entry (\|modifier, @sort key and !subentry live inside the braces): accepted, never typeset (no indexing backend) |
+| `\glossary` | `{entry}` | glossary entry: accepted, never typeset (no glossary backend) |
 | `\textbf` | `{...}` | bold text |
 | `\textmd` | `{...}` | medium-weight text |
 | `\emph` | `{...}` | emphasis: toggles italic |
@@ -707,7 +679,6 @@ Canonical sources:
 | `\space` |  | expands to one space |
 | `\ignorespaces` |  | skips the spaces that follow |
 | `\jobname` |  | expands to texput |
-| `\ifthenelse` | `{test}{true}{false}` | the ifthen package's conditional: \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests select one branch at expansion time |
 
 ### Math structures
 
@@ -965,7 +936,6 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `natbib` | `numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak` | \citet/\citep/\citealt/\citealp/\citeauthor/\citeyear/\citeyearpar/\citenum/\citetext and the \cite it redefines, with [Author(Year)] \bibitem labels; sort, compress, super and openbib are diagnosed |
 | `ulem` | `normalem` | \uline: 0.4pt rule under the argument (single-line); \sout: 0.4pt strike at 0.55ex; \emph is not redefined |
 | `xspace` | `` | \xspace inserts a word space unless the next token is }, , . ' / ? ; : ! ~ - ), or a short suppressing-command list (\footnote, \footnotemark, \bgroup, \egroup, control space) |
-| `ifthen` | `` | \ifthenelse with \equal, \NOT, \AND, \OR, \isodd, \isundefined, \lengthtest and \boolean tests, and \newif conditionals with \newboolean/\setboolean; \whiledo loops are diagnosed where they are used |
 
 Any other package, or these packages with other options, is recorded and reported as recognised but not implemented.
 <!-- END GENERATED supported-latex -->
