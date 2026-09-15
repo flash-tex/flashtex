@@ -440,3 +440,27 @@ fn an_argument_that_doubles_every_call_exceeds_capacity() {
     );
     assert!(started.elapsed().as_secs() < 60, "{:?}", started.elapsed());
 }
+
+/// Fuzz finding (36 GB resident): a self-invocation that is not a tail call
+/// (`\csname a` re-enters `\a` before the rest of its body is read) adds an
+/// input level holding the whole remaining body on every call.
+#[test]
+fn a_non_tail_self_call_exceeds_capacity_instead_of_memory() {
+    let body = format!("{}x{}", "[".repeat(10_000), "]".repeat(10_000));
+    let src = format!(r"\def\a{{\csname a\endcsname {body}}}\a");
+    let started = std::time::Instant::now();
+    let r = expand_str(&src);
+    assert!(
+        r.diagnostics.iter().any(|d| d.message.starts_with("TeX capacity exceeded, sorry [")),
+        "{:?}",
+        &r.diagnostics[..r.diagnostics.len().min(3)]
+    );
+    assert!(started.elapsed().as_secs() < 60, "{:?}", started.elapsed());
+    // A plain non-tail recursion with a short body stops at the input stack.
+    let r = expand_str(r"\def\b{\b x}\b");
+    assert!(
+        r.diagnostics.iter().any(|d| d.message == "TeX capacity exceeded, sorry [input stack size=10000]."),
+        "{:?}",
+        &r.diagnostics[..r.diagnostics.len().min(3)]
+    );
+}

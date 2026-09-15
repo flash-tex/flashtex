@@ -348,6 +348,8 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
 /// Name of the private sentinel control sequence used to bound nested
 /// full expansions (`\settowidth`, `\label`).
 const SENTINEL: &str = "flashtex@sentinel";
+/// TeX Live's `stack_size`: the deepest input stack (macro bodies being read).
+const TEX_INPUT_STACK_SIZE: usize = 10_000;
 /// tex.web `infinity`: the largest integer TeX's scanner accepts (§445).
 const TEX_INFINITY: i64 = 0x7FFF_FFFF;
 /// tex.web `max_dimen` (§421): 16383.99998pt.
@@ -672,6 +674,9 @@ impl Engine {
             return;
         }
         self.prune_exhausted();
+        if self.input_capacity_exceeded() {
+            return;
+        }
         let pend = toks.into_iter().map(|tok| Pending { tok, frozen: false, origin }).collect();
         self.sources.push(Input::Toks(pend, 0));
     }
@@ -686,6 +691,9 @@ impl Engine {
             }
         }
         self.prune_exhausted();
+        if self.input_capacity_exceeded() {
+            return;
+        }
         self.sources.push(Input::Toks(toks, 0));
     }
 
@@ -693,6 +701,37 @@ impl Engine {
         self.prune_exhausted();
         let origin = self.last_origin;
         self.sources.push(Input::Toks(vec![Pending { tok, frozen: true, origin }], 0));
+    }
+
+    /// TeX's input stack and main memory limits for pending token lists. A
+    /// macro that re-invokes itself before the end of its own body (so it
+    /// is not a tail call) adds an input level per call: with a long body,
+    /// `\def\a{\csname a\endcsname [[[...]]]}\a` grew past 30 GB before the
+    /// step limit. TeX stops with "TeX capacity exceeded"; so does this.
+    fn input_capacity_exceeded(&mut self) -> bool {
+        let levels = self.sources.len();
+        let message = if levels >= TEX_INPUT_STACK_SIZE {
+            "TeX capacity exceeded, sorry [input stack size=10000]."
+        } else if levels % 64 == 0 && self.pending_token_count() > self.limits.max_output_tokens {
+            "TeX capacity exceeded, sorry [main memory size=5000000]."
+        } else {
+            return false;
+        };
+        let at = self.last_origin.unwrap_or(Span::synthetic());
+        self.err(message, at);
+        self.stopped = true;
+        true
+    }
+
+    /// Tokens still to be read from every token-list input level.
+    fn pending_token_count(&self) -> u64 {
+        self.sources
+            .iter()
+            .map(|input| match input {
+                Input::Toks(toks, pos) => toks.len().saturating_sub(*pos) as u64,
+                Input::Text(_) => 0,
+            })
+            .sum()
     }
 
     /// Pop exhausted token-list inputs off the top of the stack (they are
