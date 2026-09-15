@@ -393,5 +393,9 @@ fn quotation_reports_a_quote_block_and_indents() {
     assert!(run_text(styled[0].1).contains("Hi"));
     let output = compile(r"\begin{quotation}Hi\end{quotation}");
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    assert!(item(&output, "Hi").x_pt > MARGIN_PT, "both margins indented");
+    // Only the left indent is checked here: "Hi" is too short to wrap, so
+    // its right edge reflects the glyph width, not the block's right
+    // margin -- observing the right indent needs a line long enough to
+    // wrap, which is out of scope for this test.
+    assert!(item(&output, "Hi").x_pt > MARGIN_PT, "left margin indented");
 }
