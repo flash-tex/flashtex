@@ -520,17 +520,42 @@ impl CompilerValidator {
         input.seek(SeekFrom::Start(0))?;
         let mut output = tempfile::tempfile()?;
         let error = tempfile::tempfile()?;
-        let mut child = Command::new(&self.executable)
-            .stdin(Stdio::from(input))
-            .stdout(Stdio::from(output.try_clone()?))
-            .stderr(Stdio::from(error.try_clone()?))
-            .spawn()
-            .map_err(|_| {
-                BridgeError::new(
-                    "validation_launch",
-                    "Could not launch the configured FlashTeX compiler",
-                )
-            })?;
+        let mut child = {
+            let mut attempts = 0;
+            loop {
+                let spawned = Command::new(&self.executable)
+                    .stdin(Stdio::from(input.try_clone()?))
+                    .stdout(Stdio::from(output.try_clone()?))
+                    .stderr(Stdio::from(error.try_clone()?))
+                    .spawn();
+                match spawned {
+                    Ok(child) => break child,
+                    // Transient fork/exec race: when another thread of this
+                    // process forks while a freshly written executable is still
+                    // open for writing, the forked child inherits that write fd
+                    // until its own exec, so exec'ing the file here can fail
+                    // with ETXTBSY even though the writer already closed it.
+                    // The condition clears as soon as that child execs; retry
+                    // briefly instead of failing the validation.
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::ExecutableFileBusy
+                            && attempts < 20 =>
+                    {
+                        attempts += 1;
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(e) => {
+                        return Err(BridgeError::new(
+                            "validation_launch",
+                            format!(
+                                "Could not launch the configured FlashTeX compiler {}: {e}",
+                                self.executable.display()
+                            ),
+                        ));
+                    }
+                }
+            }
+        };
         let deadline = Instant::now() + self.timeout;
         let execution = (|| -> Result<()> {
             loop {
