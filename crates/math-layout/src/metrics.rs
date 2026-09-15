@@ -7,6 +7,8 @@
 //! tables shipped in [`crate::cm`], or by the Times approximation in
 //! [`crate::times`].
 
+use crate::mathlist::TextStyle;
+
 /// Opaque font identity assigned by the metrics provider.
 ///
 /// The provider maps it to a concrete font (a TFM name for the Computer Modern
@@ -150,6 +152,22 @@ pub trait MathFontMetrics {
     /// text font at this size. Defaults to [`MathFontMetrics::glyph`].
     fn text_glyph(&self, ch: char, size: SizeClass) -> Option<Glyph> {
         self.glyph(ch, size)
+    }
+
+    /// A literal text glyph with the face selected by a mixed text run.
+    /// Providers that only expose one upright text family can keep the default.
+    fn text_glyph_with_style(
+        &self,
+        ch: char,
+        size: SizeClass,
+        _style: TextStyle,
+    ) -> Option<Glyph> {
+        self.text_glyph(ch, size)
+    }
+
+    /// The inter-word space of the text font at this size.
+    fn text_space(&self, size: SizeClass) -> f64 {
+        self.text_glyph(' ', size).map_or(0.0, |glyph| glyph.width)
     }
 
     /// Slot `code` of the math extension font (family 3, `largesymbols`) at
