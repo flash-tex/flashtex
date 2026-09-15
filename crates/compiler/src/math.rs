@@ -3991,6 +3991,12 @@ fn takes_display_limits(nucleus: &Nucleus) -> bool {
             "lim" | "liminf" | "limsup" | "max" | "min" | "sup" | "inf" | "det" | "gcd" | "Pr"
         ),
         Nucleus::Symbol(glyph) => matches!(glyph.as_str(), "∑" | "∏"),
+        // amsmath's `\sideset` is a `\mathop`, so scripts after `#3` are
+        // display limits exactly when the inner operator's would be.
+        Nucleus::SideSet { operator, .. } => operator
+            .atoms
+            .last()
+            .is_some_and(|a| takes_display_limits(&a.nucleus)),
         _ => false,
     }
 }
@@ -7771,5 +7777,45 @@ mod sideset_tests {
         };
         assert!(x("a") < x("∑") && x("b") < x("∑") && x("∑") < x("c"));
         assert!((x("a") - x("b")).abs() < 1e-9, "left scripts share a left edge");
+    }
+
+    #[test]
+    fn sideset_trailing_script_is_a_display_limit_like_its_operator() {
+        // pdflatex `\showbox` of `\sideset{_a^b}{}\sum_{i}` (amsmath, 10pt):
+        // inline, `i` is a corner script after the operator (x=20.95,
+        // shifted down 6.50); in `\displaystyle` it is a limit centred under
+        // `∑` (x=10.65, baseline 13.30 below). So display moves it left and
+        // down relative to inline.
+        let place = |source: &str, display: bool| {
+            let (list, diagnostics) = parse(source, AMSMATH);
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            let mut diagnostics = Vec::new();
+            let laid = if display {
+                layout_display(&list, 10.0, &mut diagnostics)
+            } else {
+                layout(&list, 10.0, &mut diagnostics)
+            };
+            let at = |text: &str| {
+                laid.items
+                    .iter()
+                    .find(|item| item.text == text)
+                    .map(|item| (item.x, item.baseline))
+                    .unwrap_or_else(|| panic!("{text} in {:?}", laid.items))
+            };
+            (at("i"), at("∑"))
+        };
+        let source = "\\sideset{_a^b}{}\\sum_{i}";
+        let ((inline_x, inline_y), (inline_sum_x, _)) = place(source, false);
+        let ((display_x, display_y), (display_sum_x, _)) = place(source, true);
+        assert!(inline_x > inline_sum_x, "inline: a corner script after ∑");
+        assert!(display_x < inline_x, "{display_x} vs inline {inline_x}");
+        assert!(display_y > inline_y, "{display_y} vs inline {inline_y}");
+        assert!(display_x < display_sum_x + 10.0, "under ∑, not after it");
+
+        // Same geometry as the bare operator's own limit placement.
+        let ((sum_display_x, sum_display_y), _) = place("\\sum_{i}", true);
+        let ((sum_inline_x, sum_inline_y), _) = place("\\sum_{i}", false);
+        assert!(sum_display_x < sum_inline_x + 1e-9 && sum_display_y > sum_inline_y);
+        assert!((display_y - sum_display_y).abs() < 1e-9);
     }
 }
