@@ -425,7 +425,10 @@ pub fn mask(text: &str, floats: &[FloatEnv]) -> String {
         let blank = |s: &[u8]| s.iter().all(|b| b.is_ascii_whitespace());
         let rest = &bytes[end..line_end];
         let rest_is_empty = blank(rest) || rest.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'%');
-        if start < end && blank(&bytes[line_start..start]) && rest_is_empty {
+        // float.sty's `[H]` is no float: `\float@endH` ends the paragraph
+        // with `\par`, so its blank line stays.
+        let here_box = !f.starred && f.placement.as_deref() == Some("H");
+        if start < end && !here_box && blank(&bytes[line_start..start]) && rest_is_empty {
             bytes[start] = b'%';
         }
     }
@@ -944,6 +947,9 @@ mod tests {
         // Blank lines around the float are the document's own: still there.
         let src = format!("\\begin{{document}}\nFirst.\n\n{fig}\n\nSecond.\n");
         assert!(masked(&src).contains("First.\n\n%"));
+        // float.sty's `[H]` ends the paragraph in pdflatex: no `%`.
+        let src = format!("\\begin{{document}}\nFirst.\n{}\nSecond.\n", fig.replace("[h]", "[H]"));
+        assert!(!masked(&src).contains('%'));
         // Two floats in a row inside a paragraph are both horizontal mode;
         // after a blank line, both vertical.
         let two = scan(&format!("\\begin{{document}}\nFirst.\n{fig}\n{fig}\nSecond.\n"), DocumentId(0));
