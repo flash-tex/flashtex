@@ -38,6 +38,41 @@ in `scripts/ci/` that also run locally.
 
 Every job has a `timeout-minutes`; pull-request runs cancel superseded runs.
 
+### Why a main run must never be superseded
+
+A run on `main` gets a concurrency group of its own (the key includes
+`github.run_id`); only PR and branch runs share a key and collapse onto the
+newest push. This is deliberate, and it was learned the hard way.
+
+GitHub holds at most one in-progress and one *pending* run per concurrency
+group, and cancels the pending one whenever a newer run joins the group.
+`cancel-in-progress` never entered into it — it already evaluates to false for
+a push. But with a mac job that queues for hours on the shared macOS pool and
+a merge cadence measured in minutes, every push to main cancelled the run
+queued behind the one in progress. **37 of the 40 runs on main before this
+changed ended `cancelled`; exactly one completed.** Main's mac health was not
+red-and-ignored, it was never measured.
+
+That was the third distinct way this gate reported success it had not earned.
+The full list, so nobody has to re-derive it:
+
+1. **Swallowed failures.** `swift test` piped into `tail`, so the step's exit
+   status came from `tail`: no number of failing tests could fail the job.
+   Fixed by `set -o pipefail` (#490) — which immediately exposed 35 failures
+   across 19 test cases that had been invisible.
+2. **Truncated logs.** What the step prints is filtered and tailed to 400
+   lines, so a failure could scroll out of the visible log entirely. The whole
+   output is the `mac-swift-test-log` artifact; read that, not the step.
+3. **Cancelled runs.** The above — most runs on main never reported at all.
+
+The cost of the fix is real: runs on main no longer supersede each other, so a
+burst of merges means a burst of concurrent macOS jobs on a pool that has
+already been starved once (76 queued runs stalled a release for an hour). If
+the pool becomes the binding constraint, the lever to reach for is the nine
+`rust <crate> (macos-15)` cells — they duplicate the `ubuntu-latest` cells and
+are ~9 of the 11 macOS jobs each run asks for — not restoring the
+cancellation, which buys runner time by discarding the signal.
+
 ## `release.yml`
 
 1. **`version`** resolves the tag (`v0.2.0` from the pushed tag, or the
