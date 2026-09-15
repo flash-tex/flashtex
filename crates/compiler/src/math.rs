@@ -87,6 +87,9 @@ pub enum Nucleus {
         em: f64,
         font_em: bool,
     },
+    /// A plain-TeX infix fraction (`\over`/`\atop`) or LaTeX `\frac`.
+    /// The parser marks `\frac` as `Ord` because its outer group wraps the
+    /// infix `\over`; the ungrouped infix forms remain `Inner`.
     Fraction {
         numerator: MathList,
         denominator: MathList,
@@ -137,7 +140,8 @@ pub enum Nucleus {
     /// (parentheses, zero thickness). `thickness_pt` `None` is the default
     /// rule; empty `left`/`right` are null delimiters; `style` `None` keeps
     /// the current style. amsmath wraps the result in a group (an ordinary
-    /// atom), unlike the plain `\frac`'s inner [`Nucleus::Fraction`].
+    /// atom), matching LaTeX's outer group around `\frac`; bare infix
+    /// `\over`/`\atop` fractions remain [`AtomClass::Inner`].
     GenFraction {
         numerator: MathList,
         denominator: MathList,
@@ -1466,7 +1470,7 @@ impl MathParser<'_> {
                     span,
                     superscript: None,
                     subscript: None,
-                    class_override: None,
+                    class_override: Some(AtomClass::Ord),
                     width_em: None,
                     ams_symbol: None,
                 }
@@ -5655,6 +5659,33 @@ mod spacing_tests {
         let b = laid_out("a+b", SIZE);
         close(x(&b, "+"), width("a", SIZE) + 4.0);
         close(x(&b, "b"), x(&b, "+") + width("+", SIZE) + 4.0);
+    }
+
+    /// pdfLaTeX (TeX Live 2026, 10pt) measures `$a\frac12b$` as the exact
+    /// sum of the standalone `a`, `\frac12`, and `b` boxes: 15.96367pt.
+    /// The outer group in LaTeX's `\frac` macro therefore contributes no
+    /// inter-atom spacing, unlike a bare infix `\over` fraction.
+    #[test]
+    fn frac_is_ordinary_around_neighbors_like_pdflatex() {
+        let b = laid_out(r"a\frac12b", SIZE);
+        let fraction = laid_out(r"\frac12", SIZE);
+        close(x(&b, "b"), width("a", SIZE) + fraction.width);
+        close(
+            b.width,
+            width("a", SIZE) + fraction.width + width("b", SIZE),
+        );
+
+        let (infix, diagnostics) = {
+            let mut diagnostics = Vec::new();
+            let list = parse_tokens(
+                &crate::lexer::tokenize(r"{1\over2}"),
+                MathPackages::KERNEL,
+                &mut diagnostics,
+            );
+            (list, diagnostics)
+        };
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(atom_class(&infix.atoms[0]), Some(AtomClass::Inner));
     }
 
     #[test]
