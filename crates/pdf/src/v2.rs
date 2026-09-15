@@ -58,7 +58,12 @@
 //! - Cluster ActualText is reduced to a per-glyph ToUnicode entry (the
 //!   cluster's text); a glyph seen with two different texts keeps the first
 //!   and the report says so. Marked-content `/ActualText` is outside the
-//!   bounded operator set.
+//!   bounded operator set. Only a cluster of *one* glyph names that glyph's
+//!   text: the three periods of an ellipsis share the cluster `…`, and
+//!   mapping the period glyph to `…` would make every period of the document
+//!   extract as `…` (and the ellipsis as `………`). A glyph seen only in
+//!   clusters of several glyphs takes the character the font's own `cmap`
+//!   maps to it (`.`, as pdfTeX's `. . .` extracts), else the cluster text.
 //! - `image` items (`display-list-v2-images`,
 //!   `protocol/proposals/display-list-v2-image.md`) need
 //!   a project root ([`from_v2_rooted`]): the file is read under it without following
@@ -529,6 +534,10 @@ pub fn from_v2_rooted(
     struct Used {
         gids: BTreeSet<u16>,
         to_unicode: BTreeMap<u16, String>,
+        /// The first text of a cluster of several glyphs each glyph was
+        /// seen in; used only for glyphs with no one-glyph cluster and no
+        /// `cmap` character.
+        shared: BTreeMap<u16, String>,
         conflicts: usize,
         /// Observed `advance_x` per glyph as a reduced ratio in 1000/em
         /// (`advance_x * 1000 / font_size`), with occurrence counts. The
@@ -601,14 +610,21 @@ pub fn from_v2_rooted(
                     let u = used.entry(font_id.to_string()).or_insert_with(|| Used {
                         gids: BTreeSet::new(),
                         to_unicode: BTreeMap::new(),
+                        shared: BTreeMap::new(),
                         conflicts: 0,
                         advances: BTreeMap::new(),
                     });
                     let mut glyphs = Vec::new();
-                    for (gi, gv) in arr(iv.get("glyphs"), &format!("{iw}.glyphs"))?
-                        .iter()
-                        .enumerate()
-                    {
+                    let glyph_values = arr(iv.get("glyphs"), &format!("{iw}.glyphs"))?;
+                    // Glyphs per cluster index (out-of-range indices are
+                    // refused below, glyph by glyph).
+                    let mut cluster_glyphs: BTreeMap<usize, usize> = BTreeMap::new();
+                    for gv in glyph_values.iter() {
+                        if let Some(c) = gv.get("cluster").and_then(|c| c.as_f64()) {
+                            *cluster_glyphs.entry(c as usize).or_default() += 1;
+                        }
+                    }
+                    for (gi, gv) in glyph_values.iter().enumerate() {
                         let gw = format!("{iw}.glyphs[{gi}]");
                         let gid = f(gv.get("gid"), &format!("{gw}.gid"))?;
                         if gid.fract() != 0.0 || !(0.0..=65535.0).contains(&gid) {
@@ -638,11 +654,15 @@ pub fn from_v2_rooted(
                         let b = f(cv.get("text_end_byte"), "cluster.text_end_byte")? as usize;
                         let cluster_text = text.get(a..b).unwrap_or("").to_string();
                         if let Some(t) = text.get(a..b) {
-                            match u.to_unicode.get(&gid) {
-                                Some(prev) if prev != t => u.conflicts += 1,
-                                Some(_) => {}
-                                None => {
-                                    u.to_unicode.insert(gid, t.to_string());
+                            if cluster_glyphs.get(&cluster).copied().unwrap_or(0) > 1 {
+                                u.shared.entry(gid).or_insert_with(|| t.to_string());
+                            } else {
+                                match u.to_unicode.get(&gid) {
+                                    Some(prev) if prev != t => u.conflicts += 1,
+                                    Some(_) => {}
+                                    None => {
+                                        u.to_unicode.insert(gid, t.to_string());
+                                    }
                                 }
                             }
                         }
@@ -934,8 +954,14 @@ pub fn from_v2_rooted(
                 entry.postscript_name, entry.format
             ));
         }
+        let mut to_unicode = u.to_unicode.clone();
+        for (gid, text) in &u.shared {
+            to_unicode
+                .entry(*gid)
+                .or_insert_with(|| font.char_for_glyph(*gid).map_or_else(|| text.clone(), String::from));
+        }
         let (mut exact, outcome, note) =
-            ExactFont::cid_from_opentype(&font, &u.gids, u.to_unicode.clone())
+            ExactFont::cid_from_opentype(&font, &u.gids, to_unicode)
                 .map_err(|e| e.to_string())?;
         let replaced = apply_display_widths(&mut exact, &u.advances);
         if replaced > 0 {
