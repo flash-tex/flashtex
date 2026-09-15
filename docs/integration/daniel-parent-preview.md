@@ -123,3 +123,38 @@ These PRs change crates that are mirrored there. Their pipeline effect appears o
 | `vendor/pdf` | #527, #533, #546 | none |
 | `vendor/project-files` | #518, #539 | none |
 | bibliography | none; no merged PR touches `crates/bibliography` (#558's biblatex is in `crates/compiler`) | none |
+
+**Correction (GH-REPIN-READINESS):** `vendor/bibliography` *is* needed. #558 (`5ba97777`) gave `crates/compiler`
+a `flashtex-bibliography = { path = "../bibliography" }` dependency, so a vendored compiler past #558 needs a sibling
+`vendor/bibliography`. The crate itself is unchanged; only the new mirror directory is required.
+See `docs/integration/repin-runbook.md`.
+
+## Re-pin readiness branch (GH-REPIN-READINESS)
+
+Branch `agent/daniel-parent/repin-readiness-2`: this preview plus the five re-pin-blocked drafts. They were merged with
+`git merge --no-ff` in dependency order: #569 → #584 → #599 (a stack), then #582, then #585.
+`agent/daniel-parent/repin-readiness` already existed on origin from the closed #402, hence the `-2`.
+The branch also merges the preview's later `da03ac94` (oracle tooling and notes only).
+
+**This branch builds only with the re-pin applied.** #569/#584/#599's page-control code is not feature-gated.
+Against the committed vendor/, `cargo check --release --locked --tests` fails with 23 errors, all of them the new
+compiler API: `Inline::{Penalty,PagePenalty,Discretionary}`, `Block::Penalty`, `Parsed::{parameters,hyphenation}`, `BreakParameter`, `ParameterAssignment`.
+Follow `docs/integration/repin-runbook.md`.
+
+| Already merged | Incoming PR | File | Resolution |
+|---|---|---|---|
+| preview (`aaaac958`, float-only chapters) | #569 | crates/render-pipeline/src/adapter.rs | The preview moved the trailing page-style/mark command loop into the unit loop (`let Some(unit) = next else { break }`). Kept that move and took #569's `let (page_starts, double_page_starts) = clear_page_blocks(..)`. |
+| preview (`Item::Quad { em, style }`) | #569 | crates/render-pipeline/src/incremental.rs | `hash_items`: #569's `Penalty`/`PagePenalty`/`Discretionary` arms, then the preview's `Quad` arm with its style hash. |
+| preview (`Stylesheet::input`) | #569 | crates/render-pipeline/src/style.rs | Both fields kept (`input`, then `hyphenation`); the initialiser auto-merged. |
+| preview (`next: Option<Unit>`) | #584 | crates/render-pipeline/src/adapter.rs | Ported #584's "a forced penalty before a non-paragraph unit ejects" check onto the preview's option shape (`next.as_ref().is_some_and(..)`). |
+| — | #599, #582 | — | No conflicts. |
+| #582 (`amsmath-sideset`) | #585 | crates/render-pipeline/Cargo.toml | Kept the preview's `math-font-kerns` feature and #585's `compiler-text-run`. |
+| #582 | #585 | crates/render-pipeline/src/{incremental.rs,typeset.rs} | `hash_math`, `shift_math`, `math_grids`, `math_glue_em`, `math_approximations`: #582's `SideSet` arm, then #585's `TextRun` arm. The hash tags are 17 and 18, as #585 anticipated. |
+| preview (17 and 20 pass) | #585 | crates/render-pipeline/tests/display_placement.rs | Module doc only: kept the preview's text and appended #585's `compiler-text-run` paragraph. |
+
+#585 also brings its compiler commit `1b6f03f2` (a `\tag` in an `align`/`gather`/`multline` row replaces that row's
+number). That commit is in no other queued PR, so `vendor/compiler` must be copied from a revision that contains it.
+
+One pipeline fix on top of the merges, needed by the queued compiler (`58118db5`): `adapter.rs` matches
+`Inline::HSpace { pt, span, .. }`. The new `space_before_pt`/`space_after_pt` fields (`d67be8c5`) feed the compiler's own
+layout. The pipeline reads the gaps around `\hspace` from the source, as it does every other interword gap.
