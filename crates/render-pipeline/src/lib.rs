@@ -176,7 +176,13 @@ pub fn render_cached(
     );
     #[cfg(not(feature = "request-date"))]
     let parsed = flashtex_compiler::parser::parse_project(&parse_docs, entry_path);
-    let (float_numbers, float_label_values) = floats::number(&float_envs);
+    // report/book number floats within the chapter (`floats::number`).
+    let float_chapters = texts.get(documents.iter().position(|d| d.path == entry_path).unwrap_or(0)).and_then(|t| flashtex_class_geometry::DocumentSetup::from_preamble(t)).and_then(|s| match s.class {
+        flashtex_class_geometry::ClassKind::Report => Some(false),
+        flashtex_class_geometry::ClassKind::Book => Some(true),
+        _ => None,
+    });
+    let (float_numbers, float_label_values) = floats::number(&float_envs, &texts, float_chapters);
     let mut image_cache = floats::ImageCache::default();
     let paths: Vec<&str> = documents.iter().map(|d| d.path).collect();
     let entry_index = documents.iter().position(|d| d.path == entry_path).unwrap_or(0);
@@ -198,6 +204,9 @@ pub fn render_cached(
     let has_lists = toc::has_lists(entry_text);
     let has_class = adapter::class_options(entry_text).is_some();
     labels.floats = toc::float_entries(&float_envs, &documents.iter().map(|d| d.text).collect::<Vec<_>>());
+    if has_lists && listings::present(&texts) {
+        labels.floats.extend(toc::listing_entries(&texts));
+    }
     // Entry titles from source bytes (`\addcontentsline`, `\chapter`,
     // `\part`, captions) are set as body text: one parse per document.
     // A `listings` caption may hold any body command
@@ -221,6 +230,9 @@ pub fn render_cached(
     let mut passes = 0;
     loop {
         passes += 1;
+        if let Some(c) = cache {
+            c.note_label_pass();
+        }
         let doc = adapter::adapt_cached(&texts, entry_index, &parsed, options, &labels, cache);
         let mut diagnostics: Vec<display::Diagnostic> = parsed
             .diagnostics

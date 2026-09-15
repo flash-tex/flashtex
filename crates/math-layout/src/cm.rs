@@ -19,7 +19,8 @@
 
 use crate::cm_tfm::*;
 use crate::metrics::{Extensible, FontId, Glyph, MathFontMetrics, MathParams, SizeClass};
-use crate::tfm::{TfmChar, TfmFont, scale};
+use crate::metrics::{MathChar, OrdPair};
+use crate::tfm::{LigKern, TfmChar, TfmFont, scale};
 
 /// Family 0: roman (`cmr`), 1: math italic (`cmmi`), 2: symbols (`cmsy`),
 /// 3: extension (`cmex`).
@@ -696,6 +697,11 @@ impl MathFontMetrics for CmMathMetrics {
         self.make_glyph(Family::Roman, code, ch, size)
     }
 
+    fn text_space(&self, size: SizeClass) -> f64 {
+        let (font, _, at) = self.font(Family::Roman, size);
+        font.fontdimen(2, at)
+    }
+
     fn accent_sizes(&self, ch: char, size: SizeClass) -> Vec<Glyph> {
         let mut out = Vec::new();
         // \widehat and \widetilde live in cmex and grow with the base.
@@ -718,6 +724,26 @@ impl MathFontMetrics for CmMathMetrics {
             }
         }
         out
+    }
+
+    fn ord_pair(&self, left: MathChar, right: MathChar, size: SizeClass) -> Option<OrdPair> {
+        let slot = |c: MathChar| match c {
+            MathChar::Symbol(ch) => symbol_slot(ch),
+            MathChar::Text(ch) => ch.is_ascii().then_some((Family::Roman, ch as u8)),
+        };
+        let ((family, l), (right_family, r)) = (slot(left)?, slot(right)?);
+        if family != right_family {
+            return None;
+        }
+        let (font, _, at) = self.font(family, size);
+        let kern = match font.lig_kern(l, r) {
+            Some(LigKern::Kern(fixword)) => scale(fixword, at),
+            _ => 0.0,
+        };
+        Some(OrdPair {
+            kern,
+            text_font: font.params.get(1).is_some_and(|&space| space != 0),
+        })
     }
 }
 

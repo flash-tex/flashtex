@@ -3,7 +3,9 @@
 //! Only what the layout rules consume is kept: per-character box dimensions,
 //! italic correction, the kern against the font's skew character (used for
 //! accent placement), the `next_larger` chain used to pick delimiter and big
-//! operator sizes, and the extensible recipe (recorded but not built yet).
+//! operator sizes, the extensible recipe (recorded but not built yet), and the
+//! ligature/kern program that TeX's `make_ord` consults between adjacent math
+//! characters (tex.web §752).
 //!
 //! Dimensions are stored as raw TFM fixwords and scaled with [`scale`], a
 //! transcription of TeX's integer algorithm (tex.web §571–572), so the
@@ -62,6 +64,25 @@ pub struct TfmFont {
     /// is a pure number that TeX never scales).
     pub params: &'static [i32],
     pub chars: &'static [TfmChar],
+    /// `(code << 16) | index`: the first instruction in `lig_kern` of every
+    /// character that has a lig/kern program, sorted by code. A program whose
+    /// first word is a far restart (tex.web §545) is already resolved.
+    pub lig_kern_starts: &'static [u32],
+    /// The TFM lig/kern program, one instruction per word: skip byte, next
+    /// character, op byte, remainder (tex.web §545).
+    pub lig_kern: &'static [u32],
+    /// The TFM kern table as fixwords, indexed by kern instructions.
+    pub kerns: &'static [i32],
+}
+
+/// The instruction a font's lig/kern program gives for a character pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LigKern {
+    /// Insert a kern of this many fixwords between the two characters.
+    Kern(i32),
+    /// A ligature: `op` is the TFM op byte (0 is `=:`, tex.web §545) and
+    /// `rem` the ligature character.
+    Ligature { op: u8, rem: u8 },
 }
 
 /// Scales a fixword to points at font size `at_pt`, exactly as TeX does
@@ -117,6 +138,33 @@ impl TfmFont {
 
     pub fn is_extensible(&self, ch: &TfmChar) -> bool {
         ch.extensible[3] != u8::MAX
+    }
+
+    /// The first instruction of `left`'s lig/kern program whose next
+    /// character is `right`, as TeX's program walk finds it (tex.web §752,
+    /// §909): a pair has at most one effective instruction, and a ligature
+    /// earlier in the program shadows any later kern for the same pair.
+    pub fn lig_kern(&self, left: u8, right: u8) -> Option<LigKern> {
+        let i = self
+            .lig_kern_starts
+            .binary_search_by_key(&left, |w| (w >> 16) as u8)
+            .ok()?;
+        let mut a = (self.lig_kern_starts[i] & 0xFFFF) as usize;
+        loop {
+            let w = *self.lig_kern.get(a)?;
+            let (skip, next, op, rem) = ((w >> 24) as u8, (w >> 16) as u8, (w >> 8) as u8, w as u8);
+            if next == right && skip <= 128 {
+                return Some(if op >= 128 {
+                    LigKern::Kern(*self.kerns.get(256 * (op as usize - 128) + rem as usize)?)
+                } else {
+                    LigKern::Ligature { op, rem }
+                });
+            }
+            if skip >= 128 {
+                return None;
+            }
+            a += skip as usize + 1;
+        }
     }
 }
 
