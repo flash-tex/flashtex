@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 307 text-mode and 551 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 308 text-mode and 551 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -584,6 +584,7 @@ Canonical sources:
 | `\pounds` |  | text symbol \textsterling: OT1 £, T1 £ (tex-text-encoding; unavailable is a LaTeX error) |
 | `\dots` |  | text symbol \textellipsis: OT1 …, T1 … (tex-text-encoding; unavailable is a LaTeX error) |
 | `\ldots` |  | text symbol \textellipsis: OT1 …, T1 … (tex-text-encoding; unavailable is a LaTeX error) |
+| `\enquote` | `{text}` | csquotes quotation: the argument wrapped in the ``...'' double-quote marks |
 | `\textsection` |  | text symbol \textsection: OT1 §, T1 § (tex-text-encoding; unavailable is a LaTeX error) |
 | `\textparagraph` |  | text symbol \textparagraph: OT1 ¶, T1 ¶ (tex-text-encoding; unavailable is a LaTeX error) |
 | `\textdagger` |  | text symbol \textdagger: OT1 †, T1 † (tex-text-encoding; unavailable is a LaTeX error) |

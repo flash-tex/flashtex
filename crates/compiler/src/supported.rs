@@ -220,6 +220,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("textrm", "{...}", "roman text"),
     ("textsf", "{...}", "sans-serif text"),
     ("textnormal", "{...}", "normal text face"),
+    ("enquote", "{text}", "csquotes quotation: the argument wrapped in the ``...'' double-quote marks"),
     ("bfseries", "", "switches to bold"),
     ("mdseries", "", "switches to medium weight"),
     ("itshape", "", "switches to italic"),
