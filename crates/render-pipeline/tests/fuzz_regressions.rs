@@ -98,3 +98,42 @@ fn an_ordinary_image_is_still_embedded() {
     let without = export_figure("zero", "[scale=0]{images/red-72.png}").expect("export");
     assert!(with > without, "the painted image adds bytes: {with} vs {without}");
 }
+
+/// Wall time of `adapter::adapt` alone for `text`.
+fn adapt_time(text: &str) -> std::time::Duration {
+    let docs = [SourceDocument { path: "main.tex", text }];
+    let parsed = flashtex_compiler::parser::parse_project(&docs, "main.tex");
+    let labels = flashtex_render_pipeline::adapter::Labels::from_parsed(&parsed);
+    let started = std::time::Instant::now();
+    std::hint::black_box(flashtex_render_pipeline::adapter::adapt(&[text], 0, &parsed, &RenderOptions::default(), &labels));
+    started.elapsed()
+}
+
+#[test]
+fn a_long_list_is_adapted_without_rescanning_the_source_per_item() {
+    // Before: every `\item` re-read the source up to itself for the list
+    // stack (rescanning to the item after each `\begin`), the `\setlist`
+    // calls and the theorem environments, so 10 000 items took 3.3 s in
+    // `split_at_page_breaks` (release) and a 5 000-paragraph article with a
+    // `center` per paragraph 8 s. After: 14 ms and 1.1 s.
+    let items = "\\item x\n".repeat(10_000);
+    let text = format!("\\documentclass{{article}}\\begin{{document}}\n\\begin{{itemize}}{items}\\end{{itemize}}\n\\end{{document}}\n");
+    let took = adapt_time(&text);
+    assert!(took < std::time::Duration::from_secs(10), "10 000 list items took {took:?} to adapt");
+}
+
+#[test]
+fn list_items_inside_many_open_environments_are_adapted_in_linear_time() {
+    // Before: for each `\item`, every `\begin` before it restarted a search
+    // for the next `\end` that ran to the item, so 300 items inside 1 000
+    // open `center`s rendered in 7.4 s (release; 400 nested `itemize` took
+    // 1.1 s). After: 25 ms, byte-identical PDF.
+    let text = format!(
+        "\\documentclass{{article}}\\begin{{document}}\n{}\\begin{{itemize}}{}\\end{{itemize}}{}\\end{{document}}\n",
+        "\\begin{center}\n".repeat(1000),
+        "\\item x\n".repeat(300),
+        "\\end{center}\n".repeat(1000)
+    );
+    let took = adapt_time(&text);
+    assert!(took < std::time::Duration::from_secs(10), "took {took:?} to adapt");
+}
