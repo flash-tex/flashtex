@@ -2891,7 +2891,7 @@ impl<'a> Context<'a> {
             inner_margin_pt = inner;
             if let Some((text, span)) = geom.label.as_ref().filter(|_| starts_paragraph) {
                 if let Some(nb) = self.label_box(text, *span, size, geom.description || geom.label_bold, geom.label_symbol) {
-                    let labelsep = self.style.labelsep_pt;
+                    let labelsep = geom.labelsep_pt.unwrap_or(self.style.labelsep_pt);
                     let protrude = self.item_left_protrusion(&list, &recs);
                     let box_width = if geom.llap { nb.width } else { nb.width.min(labelwidth) };
                     let mut lead = vec![(pl::Item::kern(-(labelsep + box_width)), None)];
@@ -2935,8 +2935,8 @@ impl<'a> Context<'a> {
         // `\hskip\itemindent`, so that line alone starts `\leftmargin +
         // \itemindent` in. Only natbib's author-year bibliography sets it
         // (to `-\bibhang`), and only the line the `\item` starts.
-        if let Some(geom) = list_geom.filter(|g| g.itemindent_em != 0.0 && starts_paragraph) {
-            params.parindent += geom.itemindent_em * self.text_params(TextStyle::default(), size).quad;
+        if let Some(geom) = list_geom.filter(|g| (g.itemindent_em != 0.0 || g.itemindent_pt != 0.0) && starts_paragraph) {
+            params.parindent += geom.itemindent_em * self.text_params(TextStyle::default(), size).quad + geom.itemindent_pt;
         }
         // `description`: `\itemindent-\leftmargin`, so the item's first line
         // is flush at the text margin and only its continuation lines hang
@@ -3130,6 +3130,12 @@ impl<'a> Context<'a> {
                         ListMargin::Fixed(pt) => pt.to_bits().hash(&mut h),
                         ListMargin::Widest(text) => text.hash(&mut h),
                         ListMargin::Em(em) => em.to_bits().hash(&mut h),
+                        ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                            label.hash(&mut h);
+                            labelsep_pt.map(f64::to_bits).hash(&mut h);
+                            itemindent_pt.to_bits().hash(&mut h);
+                        }
+                        ListMargin::TextWidth(text) => text.hash(&mut h),
                     }
                 }
                 if let Some((text, span)) = &g.label {
@@ -3137,6 +3143,8 @@ impl<'a> Context<'a> {
                     (span.end - span.start).hash(&mut h);
                 }
                 g.parsep.natural.to_bits().hash(&mut h);
+                g.labelsep_pt.map(f64::to_bits).hash(&mut h);
+                g.itemindent_pt.to_bits().hash(&mut h);
                 h.finish()
             });
             for part in parts {
@@ -3495,6 +3503,14 @@ impl<'a> Context<'a> {
                     let w = self.text_width(text, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
                     (w + labelsep, w)
                 }
+                ListMargin::WidestSep { label, labelsep_pt, itemindent_pt } => {
+                    let w = self.text_width(label, size, geom.label.as_ref().map_or(Span::new(0, 0), |(_, span)| *span));
+                    (w + labelsep_pt.unwrap_or(labelsep) - itemindent_pt, w)
+                }
+                ListMargin::TextWidth(text) => {
+                    let w = self.text_width(text, size, Span::new(0, 0));
+                    (w, (w - labelsep).max(0.0))
+                }
             };
             hang += m;
             inner = m;
@@ -3649,8 +3665,8 @@ impl<'a> Context<'a> {
                     // list's `\leftmargin`, so this is `hang + \itemindent`.
                     hang - inner
                 } else {
-                    hang
-                        - s.labelsep_pt
+                    hang + list_geom.map_or(0.0, |g| g.itemindent_pt)
+                        - list_geom.and_then(|g| g.labelsep_pt).unwrap_or(s.labelsep_pt)
                         - if list_geom.is_some_and(|g| g.llap) {
                             nb.width
                         } else {

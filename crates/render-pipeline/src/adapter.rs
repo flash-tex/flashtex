@@ -571,6 +571,14 @@ pub struct ListGeom {
     pub label_bold: bool,
     /// Whether the list uses the kernel's left-extending label box.
     pub llap: bool,
+    /// The innermost itemize/enumerate's enumitem `labelsep=`, in points;
+    /// `None` keeps the class's `\labelsep`. `\@item` ends the label box
+    /// `\labelsep` before the first line's text.
+    pub labelsep_pt: Option<f64>,
+    /// The innermost itemize/enumerate's enumitem `itemindent=`, in points
+    /// (added to [`Self::itemindent_em`]): the item's first line, and its
+    /// label, start this much further in.
+    pub itemindent_pt: f64,
 }
 
 /// One list level's `\leftmargin`.
@@ -591,6 +599,15 @@ pub enum ListMargin {
     /// `\fontdimen6` at typeset time (cmr10 at 11 pt: 10.95003 pt), which is
     /// what `\setlength{\bibhang}{1em}` measured.
     Em(f64),
+    /// enumitem `leftmargin=*` together with a `labelsep=` or `itemindent=`
+    /// key on the same level: `\enit@calcleft` gives `\leftmargin =
+    /// \labelwidth + \labelsep - \itemindent` (`\labelindent` 0), with
+    /// `\labelwidth` the width of `label` and `\labelsep` the class's when
+    /// `labelsep_pt` is `None`. Points.
+    WidestSep { label: String, labelsep_pt: Option<f64>, itemindent_pt: f64 },
+    /// A `leftmargin=\len` whose register was set by `\settowidth{\len}
+    /// {<text>}`: the width of `<text>` in the body font.
+    TextWidth(String),
 }
 
 /// Body commands that decide the header and footer (latex.ltx
@@ -2711,9 +2728,10 @@ fn split_at_page_breaks<'p>(
                 let natbib_bib = env == "thebibliography"
                     && natbib_author_year(src)
                     && label.as_ref().is_none_or(|(text, _)| text.is_empty());
+                let (margins, labelsep_pt, itemindent_pt) = list_margins(src, at.start, size, natbib_bib, style.family);
                 list = Some(ListGeom {
                     level: *level,
-                    margins: list_margins(src, at.start, size, natbib_bib, style.family),
+                    margins,
                     label: label.clone(),
                     description: env == "description",
                     label_symbol: matches!(item, Some(ItemLabel::Symbol { .. })),
@@ -2724,6 +2742,8 @@ fn split_at_page_breaks<'p>(
                     // entry's first line is flush at the margin and the rest
                     // of the entry hangs `\bibhang` in.
                     itemindent_em: if natbib_bib { -1.0 } else { 0.0 },
+                    labelsep_pt,
+                    itemindent_pt,
                 });
             }
         }
@@ -4367,11 +4387,20 @@ fn article_leftmargin_em(depth: usize) -> f64 {
 /// a `label=` key (its `\alph*`-style counter replaced by `m`/`M`/
 /// `viii`/`VIII`/`0`), a shortlabels template (`(a)` -> `(m)`), or the
 /// class's own label for this depth.
-fn widest_label(env: &str, depth: usize, label_key: Option<&str>, template: Option<&str>) -> String {
+///
+/// A `widest=<text>` key replaces that assumption (`\enit@calcwidth`): an
+/// enumerate's counter is set as `<text>` itself inside the label
+/// (`widest=iii` with `label=\roman*.` measures `iii.`), and an itemize
+/// measures `<text>` alone.
+fn widest_label(env: &str, depth: usize, label_key: Option<&str>, template: Option<&str>, widest: Option<&str>) -> String {
+    if let (Some(text), "itemize") = (widest, env) {
+        return text.to_string();
+    }
+    let counter = |default: &'static str| widest.unwrap_or(default).to_string();
     if let Some(label) = label_key {
         return [("\\alph*", "m"), ("\\Alph*", "M"), ("\\roman*", "viii"), ("\\Roman*", "VIII"), ("\\arabic*", "0")]
             .iter()
-            .fold(label.to_string(), |text, (command, widest)| text.replace(command, widest));
+            .fold(label.to_string(), |text, (command, default)| text.replace(command, &counter(default)));
     }
     if env == "itemize" {
         return match depth {
@@ -4384,39 +4413,96 @@ fn widest_label(env: &str, depth: usize, label_key: Option<&str>, template: Opti
     }
     if let Some(template) = template {
         if let Some((index, style)) = template.char_indices().find(|(_, c)| "aAiI1".contains(*c)) {
-            let widest = match style {
+            let widest = counter(match style {
                 'a' => "m",
                 'A' => "M",
                 'i' => "viii",
                 'I' => "VIII",
                 _ => "0",
-            };
+            });
             return format!("{}{}{}", &template[..index], widest, &template[index + 1..]);
         }
         return template.to_string();
     }
     match depth {
-        1 => "0.",
-        2 => "(m)",
-        3 => "viii.",
-        _ => "M.",
+        1 => format!("{}.", counter("0")),
+        2 => format!("({})", counter("m")),
+        3 => format!("{}.", counter("viii")),
+        _ => format!("{}.", counter("M")),
     }
-    .to_string()
+}
+
+/// The value of a length register the preamble set before byte `at`, for
+/// an enumitem key given as `\name`: the last `\setlength{\name}{<dimen>}`
+/// (as a [`ListMargin::Fixed`]) or `\settowidth{\name}{<text>}` (as a
+/// [`ListMargin::TextWidth`], measured by the typesetter; plain text only).
+fn length_register(source: &str, at: usize, name: &str, size: u32, em_ex: Option<(f64, f64)>) -> Option<ListMargin> {
+    let mut found: Option<(usize, ListMargin)> = None;
+    let head = source.get(..at).unwrap_or(source);
+    for (command, width) in [("setlength", false), ("settowidth", true)] {
+        let mut from = 0;
+        while let Some(pos) = find_command(&head[from..], command).map(|i| from + i) {
+            from = pos + command.len() + 1;
+            let rest = head[from..].trim_start();
+            let (register, rest) = match rest.strip_prefix('{') {
+                Some(inner) => match inner.find('}') {
+                    Some(close) => (inner[..close].trim(), &inner[close + 1..]),
+                    None => continue,
+                },
+                None if rest.starts_with('\\') => {
+                    let end = rest[1..].find(|c: char| !c.is_ascii_alphabetic()).map_or(rest.len(), |e| e + 1);
+                    (&rest[..end], &rest[end..])
+                }
+                None => continue,
+            };
+            if register != name {
+                continue;
+            }
+            let rest = rest.trim_start();
+            if !rest.starts_with('{') {
+                continue;
+            }
+            let Some(close) = matching_brace(rest.as_bytes(), 0) else { continue };
+            let arg = rest[1..close].trim();
+            let value = if width {
+                (!arg.contains('\\')).then(|| ListMargin::TextWidth(arg.to_string()))
+            } else {
+                parse_dimen_in(arg, size, em_ex).map(ListMargin::Fixed)
+            };
+            if let Some(value) = value.filter(|_| found.as_ref().is_none_or(|(at, _)| *at < pos)) {
+                found = Some((pos, value));
+            }
+        }
+    }
+    found.map(|(_, value)| value)
 }
 
 /// `\leftmargin` of every list open at byte `at` (outermost first): the
 /// class's `\leftmargin<i>` unless a `\setlist` naming the environment or
 /// the `\begin` options set enumitem's `leftmargin` (`*` = the widest
-/// label's width plus `\labelsep`; a `<dimen>` as given).
-fn list_margins(source: &str, at: usize, size: u32, natbib_bib: bool, family: crate::fonts::Family) -> Vec<ListMargin> {
+/// label's width plus `\labelsep`; a `<dimen>` or a `\settowidth`/
+/// `\setlength` register as given).
+///
+/// Also returns the innermost itemize/enumerate's enumitem `labelsep=` (if
+/// set) and `itemindent=` (points, zero if unset). With `leftmargin=*`
+/// enumitem's `\enit@calcleft` solves `\leftmargin + \itemindent =
+/// \labelindent + \labelwidth + \labelsep` for `\leftmargin`, so both keys
+/// move the item text of that level ([`ListMargin::WidestSep`]); with any
+/// other `leftmargin` it solves for `\labelindent`, and `labelsep` only moves
+/// the label while `itemindent` moves the first line and its label.
+fn list_margins(source: &str, at: usize, size: u32, natbib_bib: bool, family: crate::fonts::Family) -> (Vec<ListMargin>, Option<f64>, f64) {
     let calls = setlist_calls(source);
     let em_ex = list_em_ex(size, family);
     let class_margin = |depth: usize| ListMargin::Fixed(parse_dimen_in(&format!("{}em", article_leftmargin_em(depth)), size, em_ex).unwrap_or(0.0));
-    list_stack_at(source, at)
+    let (mut labelsep_pt, mut itemindent_pt) = (None, 0.0);
+    let margins = list_stack_at(source, at)
         .iter()
         .enumerate()
         .map(|(i, (env, options))| {
             let depth = i + 1;
+            // `\list` resets `\itemindent` but not `\labelsep`, so a
+            // `labelsep=` stays in force in the lists nested inside.
+            itemindent_pt = 0.0;
             if *env == "thebibliography" {
                 // natbib's author-year `\@bibsetup` (`\NAT@bibsetup`,
                 // natbib.sty line 642) replaces the class's label-width
@@ -4433,29 +4519,43 @@ fn list_margins(source: &str, at: usize, size: u32, natbib_bib: bool, family: cr
             }
             let mut leftmargin: Option<&str> = None;
             let mut label_key: Option<&str> = None;
+            let mut widest: Option<&str> = None;
             let begin_keys = options.contains('=');
             let all_keys = calls
                 .iter()
                 .filter(|(envs, _)| setlist_names(envs, env))
                 .map(|(_, keys)| *keys)
                 .chain(begin_keys.then_some(*options));
+            let item_list = matches!(*env, "itemize" | "enumerate");
             for keys in all_keys {
                 for (key, value) in list_keys(keys) {
                     match key {
                         "leftmargin" => leftmargin = Some(value),
                         "label" => label_key = Some(value),
+                        "widest" => widest = (!value.is_empty()).then_some(value),
+                        "labelsep" if item_list => labelsep_pt = parse_dimen_in(value, size, em_ex).or(labelsep_pt),
+                        "itemindent" if item_list => itemindent_pt = parse_dimen_in(value, size, em_ex).unwrap_or(itemindent_pt),
                         _ => {}
                     }
                 }
             }
             let template = (!begin_keys && !options.is_empty()).then_some(*options);
             match leftmargin {
-                Some("*") => ListMargin::Widest(widest_label(env, depth, label_key, template)),
+                Some("*") => {
+                    let label = widest_label(env, depth, label_key, template, widest);
+                    if labelsep_pt.is_none() && itemindent_pt == 0.0 {
+                        ListMargin::Widest(label)
+                    } else {
+                        ListMargin::WidestSep { label, labelsep_pt, itemindent_pt }
+                    }
+                }
+                Some(register) if register.starts_with('\\') => length_register(source, at, register, size, em_ex).unwrap_or_else(|| class_margin(depth)),
                 Some(dimen) => parse_dimen_in(dimen, size, em_ex).map_or_else(|| class_margin(depth), ListMargin::Fixed),
                 None => class_margin(depth),
             }
         })
-        .collect()
+        .collect();
+    (margins, labelsep_pt, itemindent_pt)
 }
 
 fn list_em_ex(size: u32, family: crate::fonts::Family) -> Option<(f64, f64)> {
