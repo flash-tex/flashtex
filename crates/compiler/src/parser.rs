@@ -370,6 +370,19 @@ pub struct MathRow {
     /// `\intertext`/`\shortintertext` paragraphs set between the previous
     /// row and this one, in order.
     pub intertext: Vec<Intertext>,
+    /// A `multline` row-alignment override: `\shoveleft` sets the row flush
+    /// left, `\shoveright` flush right. Only the `multline` family sets this;
+    /// every other display leaves it `None` and keeps its own placement.
+    pub shove: Option<ShoveDirection>,
+}
+
+/// The direction of a `multline` row-alignment override (`\shoveleft` or
+/// `\shoveright`): that single row is set flush against one margin instead
+/// of taking the display's default placement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShoveDirection {
+    Left,
+    Right,
 }
 
 /// amsmath `\intertext{..}` (`amsmath.sty` 1186-1199 `\intertext@`) or
@@ -4876,6 +4889,35 @@ impl P<'_> {
         self.flush_paragraph(blocks, para);
     }
 
+    /// Lift a `multline` row-alignment override off a row's first cell: the
+    /// first top-level `\shoveleft`/`\shoveright` token is removed and its
+    /// direction returned. The override's braced content stays in place as an
+    /// ordinary group, so it still typesets; without the lift `math` would
+    /// report the command as unknown. A second override on the same row is
+    /// left for `math` to diagnose, keeping the first one authoritative.
+    /// Returns `None` when the row carries no override.
+    fn take_row_shove(cells: &mut [Vec<Token>]) -> Option<ShoveDirection> {
+        let first = cells.first_mut()?;
+        let mut depth = 0usize;
+        for index in 0..first.len() {
+            match &first[index].kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => depth = depth.saturating_sub(1),
+                TokenKind::Command(command) if depth == 0 => {
+                    let direction = match command.as_str() {
+                        "shoveleft" => ShoveDirection::Left,
+                        "shoveright" => ShoveDirection::Right,
+                        _ => continue,
+                    };
+                    first.remove(index);
+                    return Some(direction);
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// amsmath `gather`/`align` (and starred forms): rows split on top-level
     /// `\\`, `align` cells split on top-level `&`. Numbered forms number every
     /// row except those carrying `\nonumber`/`\notag`.
@@ -5048,7 +5090,8 @@ impl P<'_> {
 
         let mut math_rows = Vec::new();
         let mut labels = Vec::new();
-        for (cells, unnumbered, row_labels, intertext) in rows {
+        let is_multline = name.starts_with("multline");
+        for (mut cells, unnumbered, row_labels, intertext) in rows {
             let span = cells
                 .iter()
                 .flatten()
@@ -5078,6 +5121,13 @@ impl P<'_> {
                     span: label_span,
                 });
             }
+            // A `\shoveleft`/`\shoveright` at the top level of a `multline`
+            // row's first cell directs the whole row, so it is lifted before
+            // the cells are parsed and recorded for layout; in any other
+            // display the tokens stay, and `math` diagnoses them as before.
+            let shove = is_multline
+                .then(|| Self::take_row_shove(&mut cells))
+                .flatten();
             let packages = self.math_packages;
             let cells = cells
                 .iter()
@@ -5088,6 +5138,7 @@ impl P<'_> {
                 number,
                 span,
                 intertext,
+                shove,
             });
         }
         para.push(Inline::MathRows {

@@ -1227,7 +1227,9 @@ impl LayoutCursor {
 
     /// Multi-row display (`gather`/`align`). `gather` rows are centred one by
     /// one; `align` cells alternate right/left alignment against column widths
-    /// shared by every row, and the whole block is centred.
+    /// shared by every row, and the whole block is centred. `multline` rows
+    /// centre like `gather` unless the row carries a `\shoveleft`/
+    /// `\shoveright` override, which sets that one row flush left/right.
     fn display_rows(&mut self, rows: &[MathRow], aligned: bool, size: f64) {
         // Displays centre themselves; line alignment must not move them again.
         let style = self.style.take();
@@ -1283,7 +1285,16 @@ impl LayoutCursor {
                 }
             } else {
                 let width: f64 = cells.iter().map(|b| b.width).sum();
-                self.x = MARGIN_PT + (measure - width).max(0.0) / 2.0;
+                // Only `multline` rows carry `shove` (see
+                // `parser::take_row_shove`); every other centred display
+                // keeps the midpoint below.
+                self.x = match row.shove {
+                    Some(crate::parser::ShoveDirection::Left) => MARGIN_PT,
+                    Some(crate::parser::ShoveDirection::Right) => {
+                        MARGIN_PT + (measure - width).max(0.0)
+                    }
+                    None => MARGIN_PT + (measure - width).max(0.0) / 2.0,
+                };
                 for b in cells {
                     let next = self.x + b.width;
                     self.place_math(b, size, true);

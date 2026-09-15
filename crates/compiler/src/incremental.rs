@@ -579,6 +579,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                     number: _,
                     span,
                     intertext,
+                    shove: _,
                 } in rows
                 {
                     for cell in cells {
