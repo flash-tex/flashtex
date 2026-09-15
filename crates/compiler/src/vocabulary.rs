@@ -106,6 +106,7 @@ const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "alignat", "alignat*", "flalign", "flalign*", "multline", "multline*",
     "tiny", "scriptsize", "footnotesize", "small", "normalsize",
     "large", "Large", "LARGE", "huge", "Huge",
+    "tabbing",
 ];
 
 /// Real LaTeX2e / amsmath / common-package environments not implemented.
@@ -116,7 +117,7 @@ const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "list", "trivlist", "picture", "math", "eqnarray", "eqnarray*", "gathered", "multlined",
     "subequations", "proof", "tikzpicture", "lstlisting", "minted",
     "wrapfigure", "subfigure", "comment", "landscape", "filecontents",
-    "frame", "tabbing",
+    "frame",
 ];
 
 fn implemented_commands() -> impl Iterator<Item = &'static str> {

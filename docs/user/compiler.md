@@ -9,6 +9,8 @@ writer are all original Rust code, linked into one binary.
 flashtex build main.tex                 # main.pdf next to it; \input/\include resolved from its folder
 flashtex build main.tex -o out.pdf --timing
 flashtex check main.tex --json          # diagnostics only, machine-readable
+flashtex check main.tex --fix           # apply did-you-mean suggestions, then re-check
+flashtex check main.tex --fix --dry-run # print a unified diff; write nothing
 flashtex watch main.tex                 # rebuild on every change; Ctrl-C stops
 flashtex supported                      # what LaTeX is implemented, with coverage
 flashtex fonts                          # which fonts/metrics this binary resolves
@@ -54,7 +56,7 @@ Any editor or CI can drive that same JSON Lines protocol directly — see
 ```
 flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
                [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
-flashtex check <main.tex> [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
+flashtex check <main.tex> [--json] [--strict] [--fix] [--dry-run] [--project-root DIR] [--font-dir DIR]...
 flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
 flashtex supported [--json|--md|--coverage]
 flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json] [--pdf out.pdf] [--timing]
@@ -99,6 +101,22 @@ output as *File › Export PDF* in the app. The file is written atomically
 `build` without output files: the same discovery, parse and layout (page
 count and every diagnostic depend on layout), diagnostics on stderr and,
 with `--json`, the report on stdout. `-o`/`--v2` are rejected.
+
+`--fix` applies every diagnostic that carries a `suggestion` and a source
+span: the span's bytes are replaced with the suggestion. Edits in one file
+are applied back-to-front so later offsets stay valid; overlapping spans are
+skipped (and reported); a file whose bytes changed between compile and apply
+is refused; files outside the project root and symlinks are never written.
+Writes are atomic (sibling temp file + rename) and keep the original mode.
+After applying, `check` is re-run and the new summary (and exit status)
+reflect that second pass. `--dry-run` (only with `--fix`) prints a unified
+diff per file and writes nothing. Either way a line
+
+```
+fixed N issue(s) in M file(s); K skipped
+```
+
+is printed.
 
 ### `watch`
 
@@ -149,13 +167,23 @@ replace an unrelated file and explains when the directory needs `sudo`.
 
 ## Diagnostics and exit status
 
-Every diagnostic is one stderr line:
+On a terminal, each diagnostic is rustc-style: a header, the source line with
+a caret underline, optional `= recovery:` and, when the compiler offered a
+replacement, a help block:
 
 ```
-file:line:col: severity[code] message (recovery: what was rendered instead)
+= help: did you mean `\alpha`?
 ```
 
-`file` is project-relative (`sections/intro.tex`); `line:col` are 1-based
+followed by the suggested line with a `+` gutter. Piped stderr (and
+`--diagnostics=short`) stays one line:
+
+```
+file:line:col: severity[code] message (recovery: what was rendered instead) (did you mean \alpha?)
+```
+
+The parenthetical suggestion is omitted when there is none. `file` is
+project-relative (`sections/intro.tex`); `line:col` are 1-based
 (column in characters) and are omitted when a diagnostic has no source
 position (font resource notes, unstable labels). A summary line follows:
 
@@ -202,7 +230,9 @@ The codes (`compiler`, `overfull_hbox`, `math_limitation`, `missing_file`,
 ```
 
 `line`, `column`, `start_byte`, `end_byte` and `recovery` are `null` when
-absent; `severity` is `error` or `warning`; `outputs` is empty for `check`.
+absent; `suggestion` is the replacement text and is omitted (not `null`) when
+there is none; `severity` is `error` or `warning`; `outputs` is empty for
+`check`. With `--fix`, the report is the re-check after edits are applied.
 
 ## Multi-file projects
 
@@ -300,7 +330,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 333 text-mode and 555 math-mode command entries, 62 environments and 23 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 333 text-mode and 555 math-mode command entries, 64 environments and 23 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -308,7 +338,7 @@ Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test
 
 | Canonical set | Commands supported | Environments supported |
 | --- | ---: | ---: |
-| kernel | 191/410 (46.6%) | 18/30 (60.0%) |
+| kernel | 191/410 (46.6%) | 19/30 (63.3%) |
 | amsmath | 42/102 (41.2%) | 17/21 (81.0%) |
 | amssymb | 225/229 (98.3%) | none defined |
 | enumitem | 1/17 (5.9%) | none defined |
@@ -318,7 +348,7 @@ Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test
 | tikz | 0/43 (0.0%) | 0/2 (0.0%) |
 | xcolor | 14/71 (19.7%) | none defined |
 | siunitx | 18/240 (7.5%) | none defined |
-| **total** | **535/1314 (40.7%)** | |
+| **total** | **536/1314 (40.8%)** | |
 
 Generated by `flashtex-compiler --supported coverage` against `crates/compiler/supported/canonical-latex.tsv` (LaTeX2e reference-manual index and package sources, each name confirmed by pdfLaTeX; TeX Live 2026). The total row counts commands and environments together. Supported means handled without an unsupported diagnostic, not typographic parity.
 
@@ -894,6 +924,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `huge` | text | the huge size for the environment body |
 | `Huge` | text | the Huge size for the environment body |
 | `verse` | text | indented lines; each \\ ends a line |
+| `tabbing` | text | tab stops: \= sets a stop, \> jumps right, \\ ends a row, \kill ends a row silently (\<, \+ and \- warn and are ignored) |
 | `itemize` | text | bulleted list; article labels per depth, \item[label] |
 | `enumerate` | text | numbered list; article labels per depth, enumitem label/label*/shortlabels, start and resume |
 | `description` | text | list of bold \item[term] labels |
@@ -902,6 +933,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `verbatim` | text | literal monospaced lines |
 | `verbatim*` | text | literal monospaced lines with visible spaces |
 | `lstlisting` | text | literal monospaced lines (basic listings) |
+| `comment` | text | body discarded unread, even invalid commands inside (comment package) |
 | `proof` | text | amsthm proof with a closing square |
 | `thebibliography` | text | References section with numbered \bibitem entries |
 | `multicols` | text | multicol {n}[preface][premulticols]: balanced columns, laid out by the render pipeline |

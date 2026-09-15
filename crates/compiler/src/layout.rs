@@ -565,6 +565,70 @@ pub struct PlacedItem {
     pub item: TextItem,
 }
 
+/// Cursor line state saved before a killed (`\kill`) `tabbing` row is
+/// laid out, so the row can register its `\=` stops and then be rewound
+/// to an un-typeset line: no items, no cursor movement, no labels, no
+/// queued footnote text. The stops and any diagnostics live outside the
+/// cursor and survive.
+struct TabbingUndo {
+    pages_len: usize,
+    items_len: usize,
+    x: f64,
+    y: f64,
+    line_ascent: f64,
+    line_descent: f64,
+    line_start: usize,
+    content_end: f64,
+    line_fills_len: usize,
+    line_spaces_len: usize,
+    closed_line_skip: Option<f64>,
+    collected_labels: BTreeMap<String, ReferenceValue>,
+    footnotes: (usize, usize),
+}
+
+impl TabbingUndo {
+    fn capture(c: &LayoutCursor) -> Self {
+        Self {
+            pages_len: c.pages.len(),
+            items_len: c.pages.last().expect("at least one page").items.len(),
+            x: c.x,
+            y: c.y,
+            line_ascent: c.line_ascent,
+            line_descent: c.line_descent,
+            line_start: c.line_start,
+            content_end: c.content_end,
+            line_fills_len: c.line_fills.len(),
+            line_spaces_len: c.line_spaces.len(),
+            closed_line_skip: c.closed_line_skip,
+            collected_labels: c.collected_labels.clone(),
+            footnotes: c.footnotes.undo_point(),
+        }
+    }
+
+    fn restore(self, c: &mut LayoutCursor) {
+        // Pages the killed row opened (it wrapped past the page bottom)
+        // go away with their items; the surviving last page is the
+        // captured one, truncated back to its captured items.
+        c.pages.truncate(self.pages_len);
+        c.pages
+            .last_mut()
+            .expect("at least one page")
+            .items
+            .truncate(self.items_len);
+        c.x = self.x;
+        c.y = self.y;
+        c.line_ascent = self.line_ascent;
+        c.line_descent = self.line_descent;
+        c.line_start = self.line_start;
+        c.content_end = self.content_end;
+        c.line_fills.truncate(self.line_fills_len);
+        c.line_spaces.truncate(self.line_spaces_len);
+        c.closed_line_skip = self.closed_line_skip;
+        c.collected_labels = self.collected_labels;
+        c.footnotes.rollback(self.footnotes);
+    }
+}
+
 /// Resumable layout cursor shared by clean and incremental compilation.
 pub struct LayoutCursor {
     pages: Vec<Page>,
@@ -1436,13 +1500,14 @@ impl LayoutCursor {
         };
         match block {
             Block::Paragraph(_)
+            | Block::Tabbing { .. }
             | Block::FigureCaption { .. }
             | Block::Styled { .. }
             | Block::Rule { .. }
                 if closed.is_some() =>
             {
                 let gap = match block {
-                    Block::Paragraph(_) => parskip,
+                    Block::Paragraph(_) | Block::Tabbing { .. } => parskip,
                     // A `\\` that ended a centred paragraph is `\@centercr`,
                     // which cancels the next paragraph's `\parskip`.
                     Block::Styled { .. } if closed == Some(0.0) => 0.0,
@@ -1468,7 +1533,7 @@ impl LayoutCursor {
                         + parskip,
                 );
             }
-            Block::Paragraph(_) => {
+            Block::Paragraph(_) | Block::Tabbing { .. } => {
                 if !self.first_block {
                     self.newline(body_size);
                     self.vertical_gap(parskip);
@@ -1652,6 +1717,78 @@ impl LayoutCursor {
                     self.newline(body_size);
                     self.vertical_gap(*gap_after_pt);
                     self.closed_line_skip = Some(*gap_after_pt);
+                }
+            }
+            // `tabbing`: rows align at dynamically recorded stops, not at
+            // columns from a spec. Stops persist across the rows in source
+            // order: every `\=` (on live and `\kill`ed rows alike) records
+            // the current row position, and every `\>` jumps right to the
+            // next recorded stop. Like `LetterBlock`, rows break where the
+            // source's `\\` (or `\kill`, or a blank line) puts them; an
+            // overlong row still wraps on overflow through `place`'s usual
+            // check, exactly as a `LetterBlock` row does.
+            Block::Tabbing { lines, .. } => {
+                self.justify = false;
+                let mut stops: Vec<f64> = Vec::new();
+                for (index, line) in lines.iter().enumerate() {
+                    // A row starts where the previous one left off only
+                    // when that row was killed (it took no space);
+                    // otherwise the previous row's line is still open and
+                    // must close first.
+                    if index > 0 && !lines[index - 1].killed {
+                        self.newline(body_size);
+                    }
+                    let undo = TabbingUndo::capture(self);
+                    for inline in &line.content {
+                        match inline {
+                            Inline::TabStop { .. } => {
+                                let x = self.content_end;
+                                if !stops.iter().any(|stop| (stop - x).abs() < 1e-6) {
+                                    stops.push(x);
+                                    stops.sort_by(|a, b| {
+                                        a.partial_cmp(b).expect("finite stops")
+                                    });
+                                }
+                            }
+                            Inline::TabJump { span } => {
+                                if let Some(stop) = stops
+                                    .iter()
+                                    .find(|stop| **stop > self.content_end + 1e-6)
+                                {
+                                    let delta = stop - self.content_end;
+                                    self.hspace(delta, 0.0, 0.0);
+                                } else {
+                                    self.diagnostics.push(Diagnostic::warning(
+                                        "\\> has no tab stop to its right; stayed in place",
+                                        Some(*span),
+                                        Some(
+                                            "set one with \\= first, usually on a \\kill setup row"
+                                                .into(),
+                                        ),
+                                    ));
+                                }
+                            }
+                            _ => emit(
+                                self,
+                                std::slice::from_ref(inline),
+                                body_size,
+                                Font::TimesRoman,
+                            ),
+                        }
+                    }
+                    if line.killed {
+                        // The row registers its stops but takes no space
+                        // and leaves no items: rewind to the capture. The
+                        // stops and diagnostics live outside the cursor, so
+                        // they survive the rewind.
+                        undo.restore(self);
+                    }
+                }
+                if lines.last().is_some_and(|line| line.killed) {
+                    // The cursor sits on a fresh, still-empty line (as after
+                    // a `center` row's trailing `\\`): report it so the next
+                    // block does not open a second line of its own.
+                    self.closed_line_skip = Some(0.0);
                 }
             }
             Block::Styled { style, content, .. } => {
@@ -2377,6 +2514,11 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
                     visit_inline_references(line, visitor);
                 }
             }
+            Block::Tabbing { lines, .. } => {
+                for line in lines {
+                    visit_inline_references(&line.content, visitor);
+                }
+            }
             Block::VSpace { .. }
             | Block::Rule { .. }
             | Block::PageBreak
@@ -2792,6 +2934,10 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 space_after_pt,
                 ..
             } => c.hspace(*pt, *space_before_pt, *space_after_pt),
+            // `tabbing` markers only occur inside `Block::Tabbing` rows,
+            // which `render_prepared_block` lays out through its own arm
+            // below; the generic path never sees them, so it ignores them.
+            Inline::TabStop { .. } | Inline::TabJump { .. } => {}
             Inline::Footnote {
                 number,
                 span,
