@@ -44,7 +44,8 @@ Skipped (drafts blocked on a vendor re-pin): #569, #584 (stacked on #568/#569), 
 | #583 (merged, regenerated) | #558 | docs/user/compiler.md | Generated section only; regenerated with the script. |
 | #581 | #560 | crates/math-layout/src/layout.rs | `Engine::atom`: took #560's signature (new `text_font_pair` argument, doc comment) and kept #581's `left_scripts` early return to `make_sideset` at the top. All call sites already pass four arguments. `cargo check --tests` passes. |
 | #537 + #578 | #543 | crates/render-pipeline/src/{toc.rs,lib.rs,adapter.rs}, plus a follow-on edit in listings.rs | This is the one semantic conflict. #537/#578 give each figure/table entry its own `number` (`floats::number`) and merge list entries in reading order (`Labels::reading_order`), and they dropped the adapter's `chapter_starts`. #543 numbers LoF/LoT/LoL entries inside `list_blocks` from `chapter_starts`, adds listing entries (`listed`, `nolol`) and adds `\addvspace` chapter gaps. Resolution: `FloatEntry` keeps both `number` and `listed`. `lib.rs` keeps #578's numbering and reading order, then extends with #543's `listing_entries`. `adapter.rs` keeps #543's `chapter_starts`/`chapter_gaps` and its `list_blocks` call, but now pushes them as reading positions (`reading_position(cmd_doc, cmd.start)`), because chapters can come from `\include`d documents after #538/#578. In `list_blocks`, figures and tables use `f.number` (#578); only LoL entries are counted with `chapter_numbers` (#543), over reading positions; the chapter-gap check compares reading positions. `listings::numbers` takes the reading order so `\thelstlisting` agrees with the LoL; its two unit tests pass `&[]`, where the offset fallback applies. `cargo check --tests` passes. |
-| #556 | #596 | crates/render-pipeline/src/adapter.rs | Adjacent edits. #556 dropped `font_declaration`'s italic-correction flag (declaration groups add no `\/`); #596 inserted `text_command_argument_at` (`| #536 | #597 | crates/render-pipeline/tests/math_symbols.rs | Same test assertions. Kept #536's `\Longrightarrow` join assertion (`=` then `⇒y`) and #597's semantic U+2212 minus run text. |
+| #556 | #596 | crates/render-pipeline/src/adapter.rs | Adjacent edits. #556 dropped `font_declaration`'s italic-correction flag (declaration groups add no `\/`); #596 inserted `text_command_argument_at` just above it. Kept both. |
+| #536 | #597 | crates/render-pipeline/tests/math_symbols.rs | Same test assertions. Kept #536's `\Longrightarrow` join assertion (`=` then `⇒y`) and #597's semantic U+2212 minus run text. |
 | main (`watch --timing`) | #362 | docs/user/compiler.md (hand-written CLI synopsis, outside the generated section) | Union: `check` gains #362's `--fix` and `--dry-run`, and `watch` keeps main's `--timing`. The generated section was re-rendered with the script. |
 | main (structured labels/notes/help folding in `from_compiler`) | #358 (43 commits behind main) | crates/render-pipeline/src/display.rs | #358's side had no change in either hunk; it predates main's folding. Kept main's `sources`/`message` folding. #358's v2-diagnostics capability code auto-merged around it. `cargo check --tests` passes. |
 
@@ -86,6 +87,28 @@ render-pipeline used `cargo test --release --locked --no-fail-fast`.
      - The exact PDF route writes one ToUnicode entry per glyph id, first use wins. A prototype that put `⟹`/`⟶` on the join extracted `x ⟹⇒y ⟶⟶z and a ⟹b ⇒c ⟶d ⟶e` from `$x\Longrightarrow y \longrightarrow z$ and $a=b\Rightarrow c - d \to e$`, so every later real `=`, `−` and `→` extracted as the arrow.
 
 No other failures.
+
+## Corpus sweep 2 regressions (GH-PREVIEW-REGRESSIONS)
+
+Sweep 2 compared this preview (`5d1eb06c`) with main (`36fe7ec3`) and found four regressions. To find the cause, `flashtex-render` was rebuilt at every first-parent merge that touches `crates/render-pipeline`, in a detached worktree with its own target dir. Each build ran `tools/visual-oracle/rank.py` with the same `flashtex-pdf-exact`. Evidence is against pdflatex's own PDFs.
+
+| Regression | Cause | Verdict | Fix |
+|---|---|---|---|
+| amsmath oracle 59/59 → 57/59 (`19-vmatrix`, `28-xrightarrow`) | #597 | **Oracle bug.** pdflatex's PDF extracts math minus as U+2212 (PyMuPDF: `= ad −bc`, `f−→B`), as #597 does. The pinned refs read `-` only because `pdftext`'s glyph-name table maps `minus` to `-`. | On #597: `b2835879` (`rank.norm` folds U+2212 into `-`; amsmath `regroup` orders coincident glyphs with the same fold) and `d9991088` (`rank.v2_words` sliced cluster *byte* ranges out of a Python str, so after any `∈`/`−` later glyphs got their neighbours' text; this caused sweep 2's "identical pixels" alignment drops on inline-math, math-sheet, hw1, conf-paper, ps-calculus p2/p3, twelvept-plain and lecture-notes). |
+| `enumitem-worksheet` p2 +14710 px (p3 −2872 px) | #596 | **Closer to pdflatex.** Part B on its own: main is +3.98 bp from `2. Let Q(n)` down; #596 is 0.00 on every line. Rank still scores it worse because the fixture's `description[style=nextline]` is not implemented (3 fewer lines on p2), so one more checklist item fits on p2. With `style=nextline` removed from the source, #596 matches pdflatex's p2/p3 break and every baseline (dy 0.00). Main is up to +39.93 bp off and breaks the page elsewhere. | None. Remaining gap: enumitem `style=nextline`. |
+| `enumitem-worksheet` p1 +1164 px (≤0.5 bp 51 → 44) | #536 | **Closer to pdflatex.** In `\implies`, the `=`→`⇒` offset is 7.11 bp (pdflatex 7.12) and `⇒`→`P` is 18.60 (18.59). Main's single `⟹` glyph was 1.65 bp short. That shortfall hid a line-wide +1.17 bp shift, which is still there: the level-2 item text offset. | None. Remaining gap: list label/indent (#611's area, not in this preview). |
+| `ps-calculus` p1 +747 px (≤0.5 bp 210 → 197) | #536 (#596 −420 px) | **Closer to pdflatex.** `\longrightarrow`'s `−`→`→` is 6.67 bp (6.66), and `−` to the `2/5` fraction is 21.80 (21.80). Main's glyph was 1.61 bp short. The re-centred display now shows a pre-existing +1.81 bp excess in the `\frac{2}{5} \quad \text{as }` gap (19.31 vs 17.50 bp, identical on main). | None. Remaining gap: that quad/text gap. |
+| `cv` p1 +1350 px | #547 | **Closer to pdflatex.** All 19 x-shifted words (main off by up to −37.44 bp) are now at dx 0.00. The only y change makes the `Spoken`→`Awards` gap exact (23.28 bp). Pixels rise because every `\cvsection` still adds +5.98 bp of y error: `\\[-6pt]` in a `\newcommand` body, which #479 fixed on main and which needs the `vendor/compiler` re-pin. | None. |
+
+Oracles on this preview after merging #597's two fixes (render-pipeline unchanged by the merge, same `flashtex-render` as `5d1eb06c`):
+
+- amsmath `TOTAL 59/59 within 0.5 bp`; amssymb `TOTAL 38/39 within 0.5 bp` (32-braces-narrow, same on main); tabular `TOTAL 128/128 (words 0.5 bp, rules 0.1 bp)`; display-placement `TOTAL 35/36 within 0.5 bp` (15-align-tag-notag-eqref, same on main); `tools/visual-oracle` unit tests `Ran 15 tests`, `OK`.
+- rank.py real-world, aligned words over all pages: main 15285 → 15330 and preview 15253 → 15326 with the fixed `rank.py`.
+- Page counts that still differ between main and preview:
+  - cv p1, enumitem-worksheet p1–p3 and ps-calculus p1 (the table above);
+  - improvements on hw1 p2/p3, hw2 p1–p3 and thesis-chapter p2–p4;
+  - pixel-only changes under 100 px on lecture-notes p1, math-sheet p1, lmodern-report p1 and listings-manual p1/p2;
+  - pixel-only improvements on listings-manual p3, ps-calculus p3 and siunitx-tables p1.
 
 ## Vendor re-pins needed after merging
 
