@@ -414,3 +414,15 @@ fn numeric_ranges_follow_tex_instead_of_overflowing() {
     let r = expand_str(&fil);
     assert!(r.diagnostics.iter().any(|d| d.message == "Illegal unit of measure (replaced by filll)."));
 }
+
+/// Fuzz finding: `\loop` whose `\repeat` never comes. The file ends while
+/// its argument is scanned; TeX aborts the call (§339) rather than running
+/// `\iterate` on the partial body, which looped to the step limit and
+/// flooded "Extra \fi." diagnostics.
+#[test]
+fn a_macro_call_cut_off_by_the_end_of_file_is_aborted() {
+    let r = expand_str(r"\loop{x}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["Runaway argument?\n! File ended while scanning use of \\loop."]);
+    assert_eq!(text(&r.tokens).trim(), "");
+}

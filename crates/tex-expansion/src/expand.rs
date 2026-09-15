@@ -825,6 +825,12 @@ impl Engine {
             }
             ScannerStatus::Matching(name) => {
                 self.err(format!("Runaway argument?\n! File ended while scanning use of {name}."), span);
+                // §339: long_state := outer_call, so the inserted \par aborts
+                // the macro call (silently) instead of expanding the body with
+                // a partial argument. Expanding it made `\loop{x}` (no
+                // \repeat) iterate to the step limit.
+                self.st.runaway_par = true;
+                self.st.runaway_par_silent = true;
             }
             ScannerStatus::Absorbing(name) => {
                 self.err(format!("Runaway text?\n! File ended while scanning text of {name}."), span);
