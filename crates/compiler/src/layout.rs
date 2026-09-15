@@ -70,6 +70,11 @@ pub const REFERENCE_ITERATION_LIMIT: usize = 5;
 struct ReferenceValue {
     number: String,
     page: u32,
+    /// The page formatted in the `\pagenumbering` style in force where the
+    /// label fell: what `\pageref` prints. Kept beside the raw page (which
+    /// still orders and detects consecutive cleveref ranges) so a style
+    /// switch changes displayed references without disturbing them.
+    page_text: String,
     kind: String,
 }
 
@@ -594,6 +599,13 @@ pub struct LayoutCursor {
     constraints: LayoutConstraints,
     resolved_labels: BTreeMap<String, ReferenceValue>,
     collected_labels: BTreeMap<String, ReferenceValue>,
+    /// The `\pagenumbering` display style in force at the position being
+    /// set (`\thepage`'s format; latex.ltx's `\thepage` definition).
+    page_style: crate::xref::NumberStyle,
+    /// The displayed number of the current physical page: 1 at the start,
+    /// reset to 1 by every `\pagenumbering` marker, stepped by every page
+    /// shipped after it (latex.ltx's `\c@page`).
+    page_value: u32,
     cleveref: crate::xref::CleverefConfig,
     /// Contents entries from the previous pass, typeset by
     /// `Block::TableOfContents`.
@@ -673,6 +685,8 @@ impl LayoutCursor {
             constraints,
             resolved_labels,
             collected_labels: BTreeMap::new(),
+            page_style: crate::xref::NumberStyle::Arabic,
+            page_value: 1,
             cleveref,
             resolved_toc: Vec::new(),
             collected_toc: Vec::new(),
@@ -2048,6 +2062,11 @@ impl LayoutCursor {
                 height_pt: PAGE_HEIGHT_PT,
                 items: Vec::new(),
             });
+            // Reached only without document-global state (which takes the
+            // full-recompile path instead), so no `\thepage` can observe
+            // this; kept in step anyway so the counter never lies about a
+            // reused fragment's pages.
+            self.page_value += 1;
         }
         for placed_item in placed {
             self.pages[placed_item.page_index]
@@ -2418,6 +2437,7 @@ fn visit_inline_references(inlines: &[Inline], visitor: &mut impl FnMut(&str, Sp
 struct CleverReferenceItem {
     number: String,
     page: u32,
+    page_text: String,
     kind: String,
     raw_kind: String,
 }
@@ -2441,6 +2461,7 @@ fn clever_reference_text(
             Some(value) => items.push(CleverReferenceItem {
                 number: value.number.clone(),
                 page: value.page,
+                page_text: value.page_text.clone(),
                 kind: crate::xref::cleveref_kind(&value.kind).to_string(),
                 raw_kind: value.kind.clone(),
             }),
@@ -2539,9 +2560,9 @@ fn format_page_numbers(items: &[CleverReferenceItem]) -> String {
             end += 1;
         }
         if end - start >= 2 {
-            parts.push(format!("{} to {}", items[start].page, items[end].page));
+            parts.push(format!("{} to {}", items[start].page_text, items[end].page_text));
         } else {
-            parts.extend(items[start..=end].iter().map(|item| item.page.to_string()));
+            parts.extend(items[start..=end].iter().map(|item| item.page_text.clone()));
         }
         start = end + 1;
     }
@@ -2724,9 +2745,29 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                     ReferenceValue {
                         number: value.clone(),
                         page: c.pages.len() as u32,
+                        page_text: c.page_style.format(c.page_value),
                         kind: kind.clone(),
                     },
                 );
+            }
+            Inline::ThePage { span, space_before } => {
+                // Late-bound like `\pageref`: the page is whatever physical
+                // page this inline is being set on, formatted in the
+                // `\pagenumbering` style in force here.
+                c.place(
+                    c.page_style.format(c.page_value),
+                    size,
+                    *span,
+                    font,
+                    *space_before,
+                );
+            }
+            Inline::PageNumbering { style, .. } => {
+                // `\pagenumbering{style}`: reset the displayed page counter
+                // to 1 and switch `\thepage`'s format from here on. The
+                // marker itself sets nothing visible.
+                c.page_style = *style;
+                c.page_value = 1;
             }
             Inline::Reference {
                 key,
@@ -2737,7 +2778,7 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
             } => match c.resolved_labels.get(key) {
                 Some(value) => {
                     let text = if *page {
-                        value.page.to_string()
+                        value.page_text.clone()
                     } else {
                         value.number.clone()
                     };

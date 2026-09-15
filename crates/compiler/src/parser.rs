@@ -187,6 +187,24 @@ pub enum Inline {
         /// See `Inline::Text::space_before`.
         space_before: bool,
     },
+    /// `\thepage`: the current page's formatted number. The page is only
+    /// known once the paragraph is set, so this resolves at layout time
+    /// like `Reference { page: true }`, honouring the `\pagenumbering`
+    /// style in force at this position. `span` is the command token.
+    ThePage {
+        span: Span,
+        /// See `Inline::Text::space_before`.
+        space_before: bool,
+    },
+    /// `\pagenumbering{style}`: a zero-width marker recording a page-number
+    /// style switch (and page-counter reset to 1) at this document
+    /// position. Layout applies markers in order as it sets paragraphs,
+    /// so `\thepage` and `\pageref` after the switch use the new style.
+    /// `span` is the command token.
+    PageNumbering {
+        style: crate::xref::NumberStyle,
+        span: Span,
+    },
     /// `\hfill`/`\hfil`: infinite horizontal stretch. Multiple fills on one
     /// line share the line's leftover width equally, as real TeX glue does;
     /// unlike TeX, `\hfil` and `\hfill` are not distinguished by stretch
@@ -1109,6 +1127,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "label",
     "ref",
     "pageref",
+    "thepage",
     "eqref",
     "cref",
     "Cref",
@@ -2807,16 +2826,21 @@ impl P<'_> {
             "thispagestyle" => {
                 let _ = self.required_group(name, span);
             }
-            // `\pagenumbering{arabic|roman}` resets the page counter and its
-            // display style. With no footer rendering to show a number in
-            // (see `\pagestyle` above) and no separate "displayed page
-            // number" distinct from `Page::number` for `\pageref` to read,
-            // there is nothing observable left for it to change; accepted
-            // with the same honest no-op rather than faking a counter reset
-            // whose only visible effect would be through those two missing
-            // features.
+            // `\pagenumbering{arabic|roman|alph|...}` resets the page
+            // counter to 1 and selects the display style `\thepage` (and
+            // `\pageref`, which prints the labelled page the same way)
+            // uses from here on. The marker is zero-width inside the
+            // paragraph, so a switch between paragraphs — or even
+            // mid-paragraph — moves no glyph; layout applies markers in
+            // document order when the paragraph is set. An unrecognised
+            // style falls back to arabic rather than diagnosing: the
+            // command itself stays accepted, as before.
             "pagenumbering" => {
-                let _ = self.required_group(name, span);
+                let (tokens, _) = self.required_group(name, span);
+                let style = crate::xref::NumberStyle::from_command(&token_text(&tokens))
+                    .unwrap_or(crate::xref::NumberStyle::Arabic);
+                self.document_global_state = true;
+                para.push(Inline::PageNumbering { style, span });
             }
             // `\hypersetup{key=value,...}` (hyperref): the same keys the
             // package options take, settable anywhere. Every key this
@@ -3034,6 +3058,15 @@ impl P<'_> {
                     span: span.merge(argument_span),
                     space_before,
                 });
+            }
+            "thepage" => {
+                // `\thepage`: the current page's formatted number. The
+                // page is only known once pagination completes, so this
+                // resolves at layout time on the same path as `\pageref`,
+                // honouring the `\pagenumbering` style in force here.
+                let space_before = self.space_precedes(self.i - 1);
+                self.document_global_state = true;
+                para.push(Inline::ThePage { span, space_before });
             }
             "cref" | "Cref" | "crefrange" | "Crefrange" | "cpageref" | "Cpageref"
             | "labelcref" => self.clever_reference(name, span, para),
