@@ -400,7 +400,7 @@ Canonical sources:
 | `\arraybackslash` |  | array no-op: \\ already ends the row inside p, m and b entries |
 | `\arrayrulecolor` | `[model]{colour}` | colortbl: colour of later table rules |
 | `\doublerulesepcolor` | `[model]{colour}` | colortbl: colour of the gap between double rules |
-| `\setlist` | `[list]{options}` | enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn |
+| `\setlist` | `*[list]{options}` | enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn; the starred form also forces itemsep=0pt |
 | `\newcommand` | `{\name}[n]{body}` | defines a macro with 0-9 arguments; rejects an existing name |
 | `\renewcommand` | `{\name}[n]{body}` | redefines an existing macro |
 | `\DeclareMathOperator` | `*{\name}{text}` | defines \name as \operatorname{text}; the starred form takes limits |

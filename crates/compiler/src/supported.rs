@@ -180,7 +180,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("fcolorbox", "[model]{frame}{fill}{text}", "\\colorbox inside a \\fboxrule frame"),
     ("setlength", "{\\length}{dimension}", "preamble page geometry and \\parskip; \\parindent of 0pt; other lengths warn"),
     ("addtolength", "{\\length}{dimension}", "preamble page geometry and \\parskip; accumulates onto the current value"),
-    ("setlist", "[list]{options}", "enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn"),
+    ("setlist", "*[list]{options}", "enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn; the starred form also forces itemsep=0pt"),
     ("newcolumntype", "{X}[n]{spec}", "array column type expanded in later tabular specifications"),
     ("arrayrulecolor", "[model]{colour}", "colortbl: colour of later table rules"),
     ("doublerulesepcolor", "[model]{colour}", "colortbl: colour of the gap between double rules"),

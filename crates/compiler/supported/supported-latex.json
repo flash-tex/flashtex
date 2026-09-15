@@ -62,7 +62,7 @@
     {"name": "arraybackslash", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "array no-op: \\\\ already ends the row inside p, m and b entries", "renders": true},
     {"name": "arrayrulecolor", "mode": "text", "origin": "text_dispatch", "arguments": "[model]{colour}", "description": "colortbl: colour of later table rules", "renders": true},
     {"name": "doublerulesepcolor", "mode": "text", "origin": "text_dispatch", "arguments": "[model]{colour}", "description": "colortbl: colour of the gap between double rules", "renders": true},
-    {"name": "setlist", "mode": "text", "origin": "text_dispatch", "arguments": "[list]{options}", "description": "enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn", "renders": true},
+    {"name": "setlist", "mode": "text", "origin": "text_dispatch", "arguments": "*[list]{options}", "description": "enumitem keys recorded on every matching list; itemsep and topsep also set the built-in layout, other keys warn; the starred form also forces itemsep=0pt", "renders": true},
     {"name": "newcommand", "mode": "text", "origin": "text_dispatch", "arguments": "{\\name}[n]{body}", "description": "defines a macro with 0-9 arguments; rejects an existing name", "renders": true},
     {"name": "renewcommand", "mode": "text", "origin": "text_dispatch", "arguments": "{\\name}[n]{body}", "description": "redefines an existing macro", "renders": true},
     {"name": "DeclareMathOperator", "mode": "text", "origin": "text_dispatch", "arguments": "*{\\name}{text}", "description": "defines \\name as \\operatorname{text}; the starred form takes limits", "renders": true},

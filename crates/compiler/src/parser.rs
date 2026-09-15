@@ -4426,26 +4426,33 @@ impl P<'_> {
         }
     }
 
-    /// `\setlist[<env list>]{key=value,...}`: enumitem's list-spacing
+    /// `\setlist[<env list>]{key=value,...}` (and the starred
+    /// `\setlist*[<env list>]{key=value,...}`): enumitem's list-spacing
     /// override. The optional argument names which environments the given
     /// keys apply to (a comma list; omitted means every list). `itemsep`,
     /// `topsep` and `leftmargin` (an explicit dimension, or `*`) change
     /// layout; every other recognised enumitem key (`label`, `parsep`,
     /// `partopsep`, ...) has no equivalent in this layout engine and is
-    /// reported once, by name.
+    /// reported once, by name. The starred form applies the given keys and
+    /// then forces compact spacing (`itemsep=0pt`, as `noitemsep`).
     fn set_list(&mut self, span: Span) {
         // `em` is the document's body size here, as in `\setlength`.
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
         let parse_dimen_pt = |value: &str| parse_dimen_pt_at(value, body);
+        let starred = self.take_star_prefix();
         let environments = self
             .optional_bracket_argument()
             .map(|(options, _)| options)
             .unwrap_or_default();
         let (tokens, argument_span) = self.required_group("setlist", span);
         let full_span = span.merge(argument_span);
+        let mut options = lists::parse_options(&token_source(&tokens), body, false);
+        if starred {
+            options.push(lists::ListOption::NoItemSep);
+        }
         self.setlists.push((
             lists::SetlistTarget::parse(&environments),
-            lists::parse_options(&token_source(&tokens), body, false),
+            options,
         ));
         let envs: Vec<String> = if environments.trim().is_empty() {
             vec![
@@ -4501,6 +4508,10 @@ impl P<'_> {
             let spacing = self.list_spacing.entry(env.clone()).or_default();
             if let Some(pt) = itemsep_pt {
                 spacing.itemsep_pt = pt;
+            }
+            if starred {
+                // `\setlist*`: compact spacing on top of the given keys.
+                spacing.itemsep_pt = 0.0;
             }
             if let Some(pt) = topsep_pt {
                 spacing.topsep_pt = pt;
