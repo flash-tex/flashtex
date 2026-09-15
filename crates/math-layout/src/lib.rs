@@ -32,7 +32,9 @@ pub use boxes::{
 pub use cm::CmMathMetrics;
 pub use layout::{Layout, Limitation, layout, layout_with_report};
 pub use mathlist::{Atom, AtomClass, BigSizing, Limits, MathFlex, MathList, Nucleus};
-pub use metrics::{FontId, Glyph, MathFontMetrics, MathParams, OpenTypeMathConstants, SizeClass};
+pub use metrics::{
+    FontId, Glyph, MathChar, MathFontMetrics, MathParams, OpenTypeMathConstants, OrdPair, SizeClass,
+};
 pub use source::{SourceSpan, SourceTag};
 pub use spacing::{Space, between};
 pub use style::{Style, StyleLevel};
