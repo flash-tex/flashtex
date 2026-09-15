@@ -248,9 +248,10 @@ pub enum Inline {
     },
     /// xcolor `\colorbox`/`\fcolorbox` (see [`ColorBox`]).
     ColorBox(Box<ColorBox>),
-    /// ulem `\uline`/`\sout` or kernel text-mode `\underline`: the argument
-    /// as one fragment with a rule. First step: the fragment does not
-    /// break across lines (ulem's leaders can). Geometry is [`Underline::geom`].
+    /// ulem `\uline`/`\sout` or kernel text-mode `\underline`/`\underbar`:
+    /// the argument as one fragment with a rule. First step: the fragment
+    /// does not break across lines (ulem's leaders can). Geometry is
+    /// [`Underline::geom`].
     Underline(Box<Underline>),
     /// `\includegraphics` in running text: an image box (see
     /// `crate::graphics`). Figures and tables re-derive their graphics from
@@ -1109,6 +1110,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "capitalcedilla",
     "uline",
     "underline",
+    "underbar",
     "sout",
 ];
 
@@ -2781,10 +2783,13 @@ impl P<'_> {
             "TeX" | "LaTeX" | "LaTeXe" => self.text_logo(name, span, para),
             // ulem `\uline`/`\sout` (need the package). Kernel text-mode
             // `\underline` is latex.ltx `$\@@underline{\hbox{#1}}$` (TeXbook
-            // Rule 10); math-mode `\underline` is in `math.rs`.
-            "uline" | "underline" | "sout" => {
+            // Rule 10); math-mode `\underline` is in `math.rs`. Kernel
+            // `\underbar` (latex.ltx `\def\underbar#1{...}`) is the same
+            // Rule 10 construction over an unbreakable hbox, so it reuses
+            // the `\underline` geometry exactly.
+            "uline" | "underline" | "underbar" | "sout" => {
                 let geom = match name {
-                    "underline" => UnderlineGeom::MathUnderline,
+                    "underline" | "underbar" => UnderlineGeom::MathUnderline,
                     "sout" => UnderlineGeom::Strike,
                     _ => UnderlineGeom::UlemDescender,
                 };
@@ -6333,9 +6338,9 @@ impl P<'_> {
         siunitx::raw_text(tokens.iter().map(|t| &t.token))
     }
 
-    /// `\uline`/`\sout` (ulem) or kernel text-mode `\underline`. Without
-    /// ulem, the package commands diagnose and typeset the argument as
-    /// plain text. Kernel `\underline` needs no package.
+    /// `\uline`/`\sout` (ulem) or kernel text-mode `\underline`/`\underbar`.
+    /// Without ulem, the package commands diagnose and typeset the argument
+    /// as plain text. The kernel commands need no package.
     fn text_underline_cmd(
         &mut self,
         name: &str,
