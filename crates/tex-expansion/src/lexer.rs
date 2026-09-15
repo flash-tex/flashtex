@@ -3,6 +3,7 @@
 //! table, the three lexer states (N = new line, M = mid line, S =
 //! skipping blanks), `^^` notation, and comments.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::catcode::{CatCode, CatCodeTable};
@@ -32,18 +33,23 @@ pub struct Lexer {
     pos: usize,
     source_id: u32,
     state: State,
+    /// A byte offset known to hold the first non-space character of the
+    /// current physical line's remaining run of spaces (see
+    /// [`Lexer::rest_of_line_blank`]), so a run of `k` spaces is scanned
+    /// once, not `k` times.
+    nonblank_at: Cell<Option<usize>>,
 }
 
 impl Lexer {
     pub fn new(src: Rc<str>, source_id: u32) -> Self {
-        Lexer { src, pos: 0, source_id, state: State::NewLine }
+        Lexer { src, pos: 0, source_id, state: State::NewLine, nonblank_at: Cell::new(None) }
     }
 
     /// Continue lexing `src` from byte `pos` in lexer state `state` (used
     /// when re-expanding from an incremental checkpoint over an edited
     /// buffer: everything before `pos` is unchanged by construction).
     pub fn resume(src: Rc<str>, source_id: u32, pos: usize, state: State) -> Self {
-        Lexer { src, pos, source_id, state }
+        Lexer { src, pos, source_id, state, nonblank_at: Cell::new(None) }
     }
 
     pub fn state(&self) -> State {
@@ -170,8 +176,25 @@ impl Lexer {
 
     /// Are the bytes from the current position to the end of the physical
     /// line all spaces? (TeX's `input_ln` strips trailing spaces.)
+    ///
+    /// Called at every space, so the answer is remembered: when the scan
+    /// from `pos` stops at a non-space byte `j`, every later position up to
+    /// `j` sees the same spaces and then `j`, and is not blank either.
+    /// Without that, `k` spaces before a non-space cost `k²/2` byte
+    /// compares (a blanked float body in the render pipeline puts a whole
+    /// document's worth of spaces on one line).
     fn rest_of_line_blank(&self) -> bool {
-        self.src.as_bytes()[self.pos..].iter().take_while(|&&b| b != b'\n' && b != b'\r').all(|&b| b == b' ')
+        if self.nonblank_at.get().is_some_and(|j| self.pos <= j) {
+            return false;
+        }
+        let bytes = self.src.as_bytes();
+        match bytes[self.pos..].iter().position(|&b| b != b' ') {
+            Some(offset) if !matches!(bytes[self.pos + offset], b'\n' | b'\r') => {
+                self.nonblank_at.set(Some(self.pos + offset));
+                false
+            }
+            _ => true,
+        }
     }
 
     /// Skip the rest of the physical line including its line break
