@@ -327,3 +327,26 @@ fn output_heavy_runaway_loops_match_full_expansion_under_random_edits() {
     }
     assert!(runaways >= 6, "only {runaways} runaway revisions");
 }
+
+/// Each expansion limit's recovery note says what the engine does: past a
+/// nesting limit it drops the extra `{` or conditional and goes on; after a
+/// step-limit stop the rest is typeset unexpanded.
+#[test]
+fn expansion_limit_notes_describe_what_happens() {
+    let note = |text: &str, message: &str| -> Option<String> {
+        let expansion = expand_project(&[SourceDocument { path: "main.tex", text }], 0);
+        let found = expansion.diagnostics.iter().find(|d| d.message.starts_with(message));
+        found.unwrap_or_else(|| panic!("no {message:?} in {:?}", expansion.diagnostics)).recovery.clone()
+    };
+    let groups = format!("{}x{} after", "{".repeat(10_010), "}".repeat(10_010));
+    assert_eq!(note(&groups, "group nesting limit exceeded").as_deref(), Some("the extra group was ignored and expansion continued"));
+    let conditionals = format!("{}x{} after", "\\iftrue ".repeat(10_010), "\\fi ".repeat(10_010));
+    assert_eq!(
+        note(&conditionals, "conditional nesting limit exceeded").as_deref(),
+        Some("the extra conditional was ignored without evaluating its test, and expansion continued")
+    );
+    assert_eq!(
+        note("\\def\\r{x\\r}\\r after", "expansion step limit exceeded").as_deref(),
+        Some("stopped expanding; the rest of the document was typeset without macro expansion")
+    );
+}

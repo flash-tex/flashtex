@@ -1376,7 +1376,13 @@ fn recovery_for(message: &str) -> &'static str {
         "defined the command anyway"
     } else if tex::is_output_limit(message) {
         "stopped expanding; the rest of the document was not typeset"
-    } else if message.contains("limit exceeded") || is_stop_limit(message) {
+    } else if message == "group nesting limit exceeded" {
+        // The engine drops the `{` without opening a group and goes on.
+        "the extra group was ignored and expansion continued"
+    } else if message == "conditional nesting limit exceeded" {
+        // The engine drops the `\if...` token; its test is read as text.
+        "the extra conditional was ignored without evaluating its test, and expansion continued"
+    } else if is_stop_limit(message) {
         "stopped expanding; the rest of the document was typeset without macro expansion"
     } else {
         "continued expanding after the problem"
