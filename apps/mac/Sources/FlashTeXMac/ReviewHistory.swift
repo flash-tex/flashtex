@@ -239,22 +239,22 @@ struct ReviewHistoryView: View {
     var recorder: ReviewHistoryRecorder
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
             HStack {
                 Text("Review history").font(.caption.bold())
                 Spacer()
                 Text("\(recorder.entries.count) decision\(recorder.entries.count == 1 ? "" : "s")").font(.caption2).foregroundStyle(.secondary)
             }
             if let problem = recorder.persistenceProblem {
-                Text(problem).font(.caption2).foregroundStyle(.orange).lineLimit(2)
+                Text(problem).font(.caption2).foregroundStyle(DS.Colors.severityWarning).lineLimit(2)
             }
             if recorder.entries.isEmpty {
                 Text("No proposals reviewed yet.").font(.caption2).foregroundStyle(.secondary)
             }
             ForEach(recorder.history.newestFirst) { e in
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: DS.Space.s) {
                     Image(systemName: Self.glyph(for: e.outcome)).font(.caption).foregroundStyle(Self.tint(for: e.outcome))
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: DS.Size.hairline) {
                         Text("\(e.captureId) — \(e.outcome.label)" + (e.byteOffset.map { " at byte \($0)" } ?? "") + " (revision \(e.editorRevision))")
                             .font(.caption)
                         Text(e.latex.replacingOccurrences(of: "\n", with: "⏎") + (e.latexClipped ? "…" : ""))

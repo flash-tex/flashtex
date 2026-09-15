@@ -18,7 +18,9 @@ final class ShellModel {
         var token = 0 // bump so the same range re-applies
     }
 
-    var documents: [RuntimeV1.Document] = []
+    var documents: [RuntimeV1.Document] = [] {
+        didSet { refreshDocumentMirror() }
+    }
     var activePath: String = "main.tex"
     var result: RuntimeV1.CompileResult? {
         didSet {
@@ -39,6 +41,12 @@ final class ShellModel {
     // The panel state is shared with the palette so Next/Previous
     // Occurrence work from there too (DiagnosticsPanel.swift).
     var problemsVisible = true
+    /// Below the width where editor and preview both fit, the preview
+    /// collapses to a toggle instead of being crushed (design-principles §4).
+    /// `narrowLayout` mirrors the split's available width; the toggle picks
+    /// which column the narrow window shows.
+    var narrowLayout = false
+    var narrowPreviewShown = false
     var problemsSeverityFilter: RuntimeV1.Severity?
     var commandPaletteShown = false
     /// Rename Symbol / Wrap in Environment / Go to Symbol sheets (ShellModel+EditorNavigation.swift).
@@ -70,6 +78,9 @@ final class ShellModel {
     }
     /// Fit-to-width scale the preview pane last laid out with (written by the pane; drives Actual Size and the percentage).
     var previewFitScale: CGFloat = 1
+    /// Zoom multiplier that fits the tallest page's height to the pane
+    /// (PreviewView reports it with the pane geometry; View > Fit Page).
+    var previewFitPageZoom: CGFloat = 1
     var displayListV2: V2PreviewState? {
         didSet {
             refreshToolbarMirrors()
@@ -146,6 +157,12 @@ final class ShellModel {
     private(set) var toolbarHasResult = false
     private(set) var toolbarHasV2Frame = false
     private(set) var toolbarProblemCount = 0
+    /// `result?.pages.count`, change-only, so File > Print… can refuse a failed
+    /// or empty-page result without the App scene reading `result` per reply.
+    private(set) var toolbarPageCount = 0
+    /// `!documents.isEmpty`, change-only: File > Print Source… must not read
+    /// `documents` from the App scene (a keystroke reassigns the array).
+    private(set) var toolbarHasDocument = false
     /// The producer as attached ("attached: flashtex-render"), not the
     /// per-request status line: tooltips read this instead of `workerStatus`.
     private(set) var producerSummary = "no worker attached"
@@ -191,15 +208,23 @@ final class ShellModel {
     /// Applies pending chrome changes now (tests, and the bench's paint point).
     func flushChrome() { chromeRefreshPending = false; refreshChrome() }
 
+    private func refreshDocumentMirror() {
+        let has = !documents.isEmpty
+        if toolbarHasDocument != has { toolbarHasDocument = has }
+    }
+
     private func refreshToolbarMirrors() {
         let hasResult = result != nil
         if toolbarHasResult != hasResult { toolbarHasResult = hasResult }
+        let pages = result?.pages.count ?? 0
+        if toolbarPageCount != pages { toolbarPageCount = pages }
         let hasFrame = displayListV2?.frame != nil
         if toolbarHasV2Frame != hasFrame { toolbarHasV2Frame = hasFrame }
         let diagnostics = displayedDiagnostics
         if toolbarProblemCount != diagnostics.count { toolbarProblemCount = diagnostics.count }
         if problemsList != diagnostics { problemsList = diagnostics }
         if resultStatus != result?.status { resultStatus = result?.status }
+        refreshDocumentMirror()
         let summary: String
         if controllerAttached { summary = "helper attached: \(controller?.executable.lastPathComponent ?? "flashtex-preview-controller")" }
         else if let worker, worker.isRunning { summary = "attached: \(worker.executable.lastPathComponent)" }

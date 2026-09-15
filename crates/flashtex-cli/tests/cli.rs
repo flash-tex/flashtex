@@ -612,3 +612,219 @@ fn check_fix_skips_an_ambiguous_typo_and_still_fixes_alpah() {
     assert!(!text.contains("\\alpah"), "{text}");
     let _ = std::fs::remove_dir_all(&unique);
 }
+
+/// `--color never` keeps the full excerpt-and-carets shape but strips every
+/// ANSI escape; an explicit `always` wins over `NO_COLOR`. (`auto` is not
+/// covered here: piped stderr is never a tty, so `auto` is uncoloured in
+/// this harness whether or not `NO_COLOR` is set — that assertion could
+/// never fail and was dropped rather than pinning a false claim about
+/// `NO_COLOR` specifically.)
+#[test]
+fn color_never_strips_ansi_and_always_overrides_no_color() {
+    let dir = tmp("color");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{nothere}\nAfter.\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let check = |extra: &[&str], no_color: bool| {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex"));
+        c.env_remove("FLASHTEX_FONT_DIRS").env_remove("FLASHTEX_LM_DIR").env("FLASHTEX_TFM_DIRS", tfm_dir());
+        if no_color {
+            c.env("NO_COLOR", "1");
+        } else {
+            c.env_remove("NO_COLOR");
+        }
+        c.args(["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--diagnostics=full"]);
+        c.args(extra);
+        c.output().expect("flashtex runs")
+    };
+    // Explicit `never`, in both spellings: full shape, no escape codes.
+    for flag in [&["--color=never"][..], &["--color", "never"][..]] {
+        let o = check(flag, false);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{err}");
+        assert!(err.contains(" --> main.tex:4:1\n"), "{err}");
+        assert!(err.contains('^'), "{err}");
+        assert!(!err.contains('\x1b'), "{err}");
+    }
+    // An explicit `always` overrides `NO_COLOR`.
+    let forced = stderr(&check(&["--color=always"], true));
+    assert!(forced.contains("\x1b[1;31merror[missing_file]\x1b[0m"), "{forced}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--diagnostics short` keeps the one-line `file:line:col` form with no
+/// excerpt, carets or `-->` header — the same bytes piped stderr gets by
+/// default — in both the space and `=` spellings.
+#[test]
+fn diagnostics_short_is_one_line_per_diagnostic() {
+    let dir = tmp("diag-short");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{nothere}\nAfter.\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let check = |extra: &[&str]| {
+        let mut args = vec!["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        run(&args)
+    };
+    for flag in [&["--diagnostics=short"][..], &["--diagnostics", "short"][..]] {
+        let o = check(flag);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{err}");
+        assert!(err.lines().any(|l| l.starts_with("main.tex:4:1: error[missing_file]")), "{err}");
+        assert!(!err.contains("-->"), "{err}");
+        assert!(!err.contains(" | "), "{err}");
+    }
+    // Piped stderr already defaults to this same short shape, so the two
+    // assertions above would pass even if `--diagnostics short` were parsed
+    // and ignored. Prove the flag actually does something by diffing against
+    // `--diagnostics full` on the identical input: full must show what short
+    // just proved absent.
+    let full_err = stderr(&check(&["--diagnostics=full"]));
+    assert!(full_err.contains("-->"), "{full_err}");
+    assert!(full_err.contains(" | "), "{full_err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `-j`/`--jobs` is accepted for compatibility and never changes the outcome:
+/// any numeric value (including the `0` edge case) builds as usual, while a
+/// non-numeric or missing value is a usage error (exit 2).
+#[test]
+fn jobs_flag_is_accepted_but_ignored() {
+    let dir = tmp("jobs");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{nothere}\nAfter.\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let check = |extra: &[&str]| {
+        let mut args = vec!["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        run(&args)
+    };
+    for flag in [&["-j", "4"][..], &["--jobs", "8"][..], &["-j", "0"][..], &["--jobs", "1"][..]] {
+        let o = check(flag);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{flag:?}\n{err}");
+        assert!(err.contains("flashtex: main.tex: recovered"), "{flag:?}\n{err}");
+    }
+    for flag in [&["--jobs", "lots"][..], &["-j", "abc"][..]] {
+        let o = check(flag);
+        assert_eq!(o.status.code(), Some(2), "{flag:?}");
+        assert!(stderr(&o).contains("needs a number"), "{flag:?}\n{}", stderr(&o));
+    }
+    let missing = check(&["-j"]);
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(stderr(&missing).contains("needs a value"), "{}", stderr(&missing));
+    // `-j` is documented for `build` too, not just `check` (main.rs's usage
+    // line lists it under `build`'s flags) -- prove it's accepted there.
+    let built = run(&["build", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "-j", "4"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--interval` on `watch`: a non-numeric (or missing) value fails fast with
+/// a usage error instead of entering the polling loop; `0` clamps to the
+/// 20 ms floor, visible in the watch banner.
+#[test]
+fn watch_interval_rejects_bad_values_and_clamps_to_its_floor() {
+    use std::io::Read;
+    let dir = tmp("interval");
+    std::fs::write(dir.join("main.tex"), "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n").unwrap();
+    let src = dir.join("main.tex");
+    let fonts = fonts_dir();
+    // Parse errors exit 2 without ever watching.
+    for flag in [&["--interval", "abc"][..], &["--interval", "12ms"][..]] {
+        let mut args = vec!["watch", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()];
+        args.extend_from_slice(flag);
+        let o = run(&args);
+        assert_eq!(o.status.code(), Some(2), "{flag:?}");
+        assert!(stderr(&o).contains("needs milliseconds"), "{flag:?}\n{}", stderr(&o));
+    }
+    let missing = run(&["watch", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--interval"]);
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(stderr(&missing).contains("needs a value"), "{}", stderr(&missing));
+    // `--interval 0` starts the loop with the banner showing the 20 ms floor.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex"))
+        .env_remove("FLASHTEX_FONT_DIRS")
+        .env("FLASHTEX_TFM_DIRS", tfm_dir())
+        .args(["watch", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--interval", "0"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut err = child.stderr.take().unwrap();
+    // A plain blocking `read()` ignores the deadline entirely if the child
+    // never writes (the `while` condition is only checked BETWEEN reads):
+    // a real hang here would block the whole test run past `cargo test`'s
+    // own timeout, not fail cleanly after 30s. Read on a background thread
+    // and bound the wait with `recv_timeout` instead, so the deadline is
+    // actually enforced regardless of whether the child ever writes.
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 1024];
+        loop {
+            match err.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) if tx.send(String::from_utf8_lossy(&buf[..n]).into_owned()).is_err() => break,
+                Ok(_) => {}
+            }
+        }
+    });
+    let mut seen = String::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !seen.contains("Ctrl-C stops") {
+        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else { break };
+        match rx.recv_timeout(remaining) {
+            Ok(chunk) => seen.push_str(&chunk),
+            Err(_) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(seen.contains("(every 20 ms; Ctrl-C stops)"), "{seen}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A clean document exits 0 with and without `--strict` (for both `check`
+/// and `build`); only a recovered *error* flips `--strict` to exit 1 — that
+/// half is covered by the existing strict assertions on error documents.
+#[test]
+fn strict_leaves_a_clean_document_at_exit_0() {
+    let dir = tmp("strict-clean");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let out = dir.join("main.pdf");
+    for args in [
+        vec!["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()],
+        vec!["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--strict"],
+        vec!["build", src.to_str().unwrap(), "-o", out.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--strict"],
+    ] {
+        let o = run(&args);
+        assert_eq!(o.status.code(), Some(0), "{args:?}\n{}", stderr(&o));
+    }
+    assert!(out.exists(), "strict build still writes its PDF");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--timing` prints the `render … / pdf … / total …` wall-time line on
+/// stderr; without the flag no such line appears. Only labels are asserted —
+/// the millisecond values are nondeterministic.
+#[test]
+fn timing_prints_labeled_wall_times() {
+    let dir = tmp("timing");
+    let src = dir.join("main.tex");
+    std::fs::write(&src, "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n").unwrap();
+    let fonts = fonts_dir();
+    let o = run(&["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap(), "--timing"]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert!(err.contains("flashtex: timing: render "), "{err}");
+    assert!(err.contains("pass"), "{err}");
+    assert!(err.contains("), pdf "), "{err}");
+    assert!(err.contains(", total "), "{err}");
+    assert!(err.contains(" ms"), "{err}");
+    let plain = run(&["check", src.to_str().unwrap(), "--font-dir", fonts.to_str().unwrap()]);
+    assert_eq!(plain.status.code(), Some(0), "{}", stderr(&plain));
+    assert!(!stderr(&plain).contains("flashtex: timing:"), "{}", stderr(&plain));
+    let _ = std::fs::remove_dir_all(&dir);
+}

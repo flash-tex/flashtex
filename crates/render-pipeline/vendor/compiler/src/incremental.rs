@@ -217,8 +217,11 @@ impl Session {
         };
 
         if parsed.document_global_state {
-            let (pages, mut layout_diagnostics) =
-                layout::layout_converged(&parsed.blocks, constraints);
+            let (pages, mut layout_diagnostics) = layout::layout_converged_with_options(
+                &parsed.blocks,
+                constraints,
+                &parsed.cleveref,
+            );
             let mut diagnostics = parsed.diagnostics;
             diagnostics.append(&mut layout_diagnostics);
             stats.full_recompile = true;
@@ -398,7 +401,11 @@ pub fn compile_full_project_with(
 ) -> CompileOutput {
     let parsed = parser::parse_project_with(documents, entry_path, options);
     let constraints = parsed.preamble_constraints(constraints);
-    let (pages, mut layout_diagnostics) = layout::layout_converged(&parsed.blocks, constraints);
+    let (pages, mut layout_diagnostics) = layout::layout_converged_with_options(
+        &parsed.blocks,
+        constraints,
+        &parsed.cleveref,
+    );
     let mut diagnostics = parsed.diagnostics;
     diagnostics.append(&mut layout_diagnostics);
     CompileOutput {
@@ -515,6 +522,20 @@ fn shift_block(block: &mut Block, changes: &[ChangedBytes], deltas: &[isize]) ->
             Some(())
         }
         Block::VFill => Some(()),
+        Block::LetterBlock {
+            part: _,
+            lines,
+            extra_gap_after_pt: _,
+            gap_before_pt: _,
+            gap_after_pt: _,
+            indent_pt: _,
+            span,
+        } => {
+            for line in lines.iter_mut() {
+                shift_inlines(line, changes, deltas)?;
+            }
+            map_span(span, changes, deltas)
+        }
     }
 }
 
@@ -574,6 +595,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::Label {
                 key: _,
                 value: _,
+                kind: _,
                 span,
             } => map_span(span, changes, deltas)?,
             Inline::Reference {
@@ -583,7 +605,8 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
                 span,
                 space_before: _,
             } => map_span(span, changes, deltas)?,
-            Inline::HFill { span } => map_span(span, changes, deltas)?,
+            Inline::CleverReference { span, .. } => map_span(span, changes, deltas)?,
+            Inline::HFill { span, .. } => map_span(span, changes, deltas)?,
             Inline::HSpace { pt: _, span } => map_span(span, changes, deltas)?,
             Inline::Footnote {
                 number: _,
@@ -621,6 +644,10 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::ColorBox(b) => {
                 map_span(&mut b.span, changes, deltas)?;
                 shift_inlines(&mut b.content, changes, deltas)?;
+            }
+            Inline::Underline(u) => {
+                map_span(&mut u.span, changes, deltas)?;
+                shift_inlines(&mut u.content, changes, deltas)?;
             }
             Inline::Graphic(graphic) => map_span(&mut graphic.span, changes, deltas)?,
             Inline::Transform(transform) => {
@@ -755,10 +782,21 @@ fn shift_diagnostics(
         recovery: _,
         code: _,
         suggestion: _,
+        labels,
+        notes: _,
+        help,
     } in diagnostics
     {
         if let Some(span) = span {
             map_span(span, changes, deltas)?;
+        }
+        for label in labels {
+            map_span(&mut label.span, changes, deltas)?;
+        }
+        if let Some(help) = help {
+            if let Some(repl) = &mut help.replacement {
+                map_span(&mut repl.span, changes, deltas)?;
+            }
         }
     }
     Some(())
@@ -784,6 +822,10 @@ fn block_signature(block: &Block) -> BlockSignature {
         | Block::Verbatim { .. }
         | Block::TableOfContents { .. }
         | Block::VFill => &[],
+        // Signature only (see the doc comment above): the first line is
+        // enough to narrow the candidate set, and `shift_block`'s full
+        // equality check still gates every reuse.
+        Block::LetterBlock { lines, .. } => lines.first().map_or(&[][..], |line| &line[..]),
         // Signature only, not identity (see the doc comment above): using
         // just `title` here (never `authors`/`date`) can only widen the
         // candidate set on an author/date-only edit, never produce a wrong
@@ -798,12 +840,14 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::MathRows { span, .. } => *span,
         Inline::Label { span, .. } => *span,
         Inline::Reference { span, .. } => *span,
-        Inline::HFill { span } => *span,
+        Inline::CleverReference { span, .. } => *span,
+        Inline::HFill { span, .. } => *span,
         Inline::HSpace { span, .. } => *span,
         Inline::Footnote { span, .. } => *span,
         Inline::Tabular(table) => table.span,
         Inline::Verbatim { span, .. } => *span,
         Inline::ColorBox(b) => b.span,
+        Inline::Underline(u) => u.span,
         Inline::Graphic(graphic) => graphic.span,
         Inline::Transform(transform) => transform.span,
         Inline::Logo { span, .. } | Inline::Rule { span, .. } | Inline::Kern { span, .. } => *span,
@@ -1040,5 +1084,113 @@ mod tests {
             &format!("First changed words.\n\n{table}\n\nTail."),
         );
         assert!(result.stats.blocks_reused >= 2);
+    }
+
+    fn alpah_diagnostic(output: &CompileOutput) -> &crate::diagnostics::Diagnostic {
+        output
+            .diagnostics
+            .iter()
+            .find(|d| d.message.contains("\\alpah") || d.message.contains("\\alpax"))
+            .expect("unknown-command diagnostic")
+    }
+
+    #[test]
+    fn shift_diagnostics_maps_label_and_replacement_spans() {
+        use crate::diagnostics::Diagnostic;
+        let span = Span::new(20, 26);
+        let mut diagnostics = vec![Diagnostic::error("\\alpah is not supported", Some(span), None)
+            .with_label(span, "this command", true)
+            .with_help("did you mean \\alpha?")
+            .with_replacement(span, "\\alpha")];
+        let before = [ChangedBytes { old: 0..5, new: 0..10 }];
+        assert!(shift_diagnostics(&mut diagnostics, &before, &[5]).is_some());
+        let shifted = Span::new(25, 31);
+        assert_eq!(diagnostics[0].span, Some(shifted));
+        assert_eq!(diagnostics[0].labels[0].span, shifted);
+        assert_eq!(
+            diagnostics[0]
+                .help
+                .as_ref()
+                .unwrap()
+                .replacement
+                .as_ref()
+                .unwrap()
+                .span,
+            shifted
+        );
+
+        let inside = [ChangedBytes { old: 25..31, new: 25..32 }];
+        assert!(shift_diagnostics(&mut diagnostics, &inside, &[1]).is_none());
+    }
+
+    #[test]
+    fn edit_before_a_labelled_help_replacement_shifts_both_spans() {
+        let old = "First paragraph.\n\nLater \\alpah here.";
+        let new = "First changed paragraph.\n\nLater \\alpah here.";
+        let result = compile_edit(old, new);
+        // Parser diagnostics force a full recompile today; output spans must
+        // still match a clean build (compile_edit checks that) and move by the
+        // same delta shift_diagnostics would apply.
+        assert!(result.stats.full_recompile, "{:?}", result.stats);
+        let diag = alpah_diagnostic(&result.output);
+        let span = diag.span.expect("command span");
+        assert_eq!(&new[span.start..span.end], "\\alpah");
+        assert_eq!(diag.labels.len(), 1);
+        assert_eq!(
+            &new[diag.labels[0].span.start..diag.labels[0].span.end],
+            "\\alpah"
+        );
+        let repl = diag
+            .help
+            .as_ref()
+            .and_then(|h| h.replacement.as_ref())
+            .expect("help.replacement");
+        assert_eq!(&new[repl.span.start..repl.span.end], "\\alpah");
+        assert_eq!(repl.text, "\\alpha");
+        let delta = new.len() as isize - old.len() as isize;
+        let old_output = compile_full(old, LayoutConstraints::default());
+        let old_diag = alpah_diagnostic(&old_output);
+        let old_span = old_diag.span.expect("old span");
+        assert_eq!(span.start, (old_span.start as isize + delta) as usize);
+        assert_eq!(
+            diag.labels[0].span.start,
+            (old_diag.labels[0].span.start as isize + delta) as usize
+        );
+        assert_eq!(
+            repl.span.start,
+            (old_diag
+                .help
+                .as_ref()
+                .unwrap()
+                .replacement
+                .as_ref()
+                .unwrap()
+                .span
+                .start as isize
+                + delta) as usize
+        );
+    }
+
+    #[test]
+    fn edit_inside_a_labelled_help_replacement_recomputes() {
+        let old = "First paragraph.\n\nLater \\alpah here.";
+        let new = "First paragraph.\n\nLater \\alpax here.";
+        let result = compile_edit(old, new);
+        assert!(result.stats.full_recompile, "{:?}", result.stats);
+        assert!(result.stats.blocks_recomputed >= 1, "{:?}", result.stats);
+        let diag = alpah_diagnostic(&result.output);
+        let span = diag.span.expect("command span");
+        assert_eq!(&new[span.start..span.end], "\\alpax");
+        assert_eq!(
+            &new[diag.labels[0].span.start..diag.labels[0].span.end],
+            "\\alpax"
+        );
+        let repl = diag
+            .help
+            .as_ref()
+            .and_then(|h| h.replacement.as_ref())
+            .expect("help.replacement");
+        assert_eq!(&new[repl.span.start..repl.span.end], "\\alpax");
+        assert_eq!(repl.text, "\\alpha");
     }
 }
