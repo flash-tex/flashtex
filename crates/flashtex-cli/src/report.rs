@@ -1,8 +1,10 @@
 //! The full (rustc-style) form of a diagnostic on stderr: a header, the
 //! source lines it points at under a line-number gutter, carets under the
-//! span, and `= recovery:` lines. `--diagnostics=short` keeps the one-line
-//! `Diagnostic::line_text` form, which is also the default when stderr is not
-//! a terminal, so piped output and scripts see exactly what they always did.
+//! span, `= recovery:` lines, and when a suggestion is present a `= help:`
+//! block with a `+` gutter over the replacement. `--diagnostics=short` keeps
+//! the one-line `Diagnostic::line_text` form, which is also the default when
+//! stderr is not a terminal, so piped output and scripts see exactly what
+//! they always did.
 //!
 //! ```text
 //! error[compiler]: \tilde is not supported by this compiler version
@@ -93,6 +95,38 @@ pub fn render_full(d: &Diagnostic, source: Option<&str>, color: bool) -> String 
         let indent = gutter + " = recovery: ".len();
         out.push_str(&wrap_text(&label, indent, r));
     }
+    if let (Some(suggestion), Some(start)) = (&d.suggestion, d.start_byte) {
+        if d.recovery.is_none() && !excerpt.is_empty() {
+            out.push_str(&format!("{pad} {bar}\n"));
+        }
+        let help = format!("did you mean `{suggestion}`?");
+        let label = format!("{pad} {} help: ", p.wrap(blue, "="));
+        let indent = gutter + " = help: ".len();
+        out.push_str(&wrap_text(&label, indent, &help));
+        if let Some(text) = source {
+            let end = d.end_byte.unwrap_or(start);
+            let plus = suggestion_excerpt(text, start, end, suggestion);
+            let gutter = plus.iter().filter_map(|l| l.number).max().map_or(gutter, |n| gutter.max(digits(n)));
+            let pad = " ".repeat(gutter);
+            out.push_str(&format!("{pad} {bar}\n"));
+            let green = "1;32";
+            for line in &plus {
+                match line.number {
+                    Some(n) => {
+                        let num = p.wrap(blue, &format!("{n:>gutter$}"));
+                        out.push_str(format!("{num} {bar} {}", line.text).trim_end());
+                        out.push('\n');
+                        let (lead, width) = line.caret;
+                        if width > 0 {
+                            let marks = p.wrap(green, &"+".repeat(width));
+                            out.push_str(&format!("{pad} {bar} {}{marks}\n", " ".repeat(lead)));
+                        }
+                    }
+                    None => out.push_str(&format!("{}\n", p.wrap(blue, &format!("{:>gutter$}", "...")))),
+                }
+            }
+        }
+    }
     out
 }
 
@@ -120,7 +154,7 @@ pub fn collapse_repeats(diags: &[Diagnostic]) -> Vec<Diagnostic> {
         };
         let found = folds.iter_mut().find(|(i, m, _)| {
             let o = &out[*i];
-            *m == masked && o.path == d.path && o.code == d.code && o.error == d.error && o.recovery == d.recovery
+            *m == masked && o.path == d.path && o.code == d.code && o.error == d.error && o.recovery == d.recovery && o.suggestion == d.suggestion
         });
         match found {
             Some((i, m, names)) => {
@@ -135,6 +169,18 @@ pub fn collapse_repeats(diags: &[Diagnostic]) -> Vec<Diagnostic> {
         }
     }
     out
+}
+
+/// The source line(s) with `start..end` replaced by `suggestion`, carets
+/// sized to the replacement so the renderer can draw a `+` gutter.
+fn suggestion_excerpt(text: &str, start: usize, end: usize, suggestion: &str) -> Vec<ExcerptLine> {
+    let start = floor_boundary(text, start.min(text.len()));
+    let end = floor_boundary(text, end.clamp(start, text.len()));
+    let mut replaced = String::with_capacity(text.len() - (end - start) + suggestion.len());
+    replaced.push_str(&text[..start]);
+    replaced.push_str(suggestion);
+    replaced.push_str(&text[end..]);
+    excerpt_lines(&replaced, start, start + suggestion.len())
 }
 
 struct ExcerptLine {
@@ -238,6 +284,7 @@ mod tests {
             code: "compiler".into(),
             message: "\\tilde is not supported by this compiler version".into(),
             recovery: recovery.map(str::to_string),
+            suggestion: None,
         }
     }
 
@@ -252,6 +299,7 @@ mod tests {
             code: "math_resource_profile".into(),
             message: format!("{name}: {rest}"),
             recovery: None,
+            suggestion: None,
         }
     }
 
@@ -364,5 +412,41 @@ mod tests {
         let colored = render_full(&d, Some(text), true);
         assert!(colored.starts_with("\x1b[1;31merror[compiler]\x1b[0m"), "{colored:?}");
         assert!(colored.contains("\x1b[1;31m^\x1b[0m"), "{colored:?}");
+    }
+
+    #[test]
+    fn suggestion_prints_help_and_plus_gutter() {
+        let text = "\\documentclass{article}\n\\begin{document}\nHello $\\alpah$ world.\n\\end{document}\n";
+        let start = text.find("\\alpah").unwrap();
+        let mut d = diag(text, "\\alpah", 6, Some("typeset the command literally and continued"));
+        d.code = "unknown_command".into();
+        d.message = "\\alpah is not supported in math mode".into();
+        d.suggestion = Some("\\alpha".into());
+        assert_eq!(d.start_byte, Some(start));
+        let out = render_full(&d, Some(text), false);
+        assert!(out.contains("= help: did you mean `\\alpha`?\n"), "{out}");
+        assert!(out.contains("3 | Hello $\\alpah$ world.\n  |        ^^^^^^\n"), "{out}");
+        assert!(out.contains("3 | Hello $\\alpha$ world.\n  |        ++++++\n"), "{out}");
+        let short = d.line_text();
+        assert!(short.contains("(did you mean \\alpha?)"), "{short}");
+        let colored = render_full(&d, Some(text), true);
+        assert!(colored.contains("\x1b[1;32m++++++\x1b[0m"), "{colored:?}");
+    }
+
+    #[test]
+    fn no_suggestion_keeps_the_existing_recovery_snapshot() {
+        let text = "\\documentclass{article}\n\\begin{document}\nx \\(\\tilde{c}\\) y\n\\end{document}\n";
+        let d = diag(text, "\\tilde", 6, Some("skipped the command"));
+        assert_eq!(
+            render_full(&d, Some(text), false),
+            "error[compiler]: \\tilde is not supported by this compiler version\n \
+             --> notes.tex:3:5\n  \
+             |\n\
+             3 | x \\(\\tilde{c}\\) y\n  \
+             |     ^^^^^^\n  \
+             |\n  \
+             = recovery: skipped the command\n"
+        );
+        assert!(!d.line_text().contains("did you mean"), "{}", d.line_text());
     }
 }
