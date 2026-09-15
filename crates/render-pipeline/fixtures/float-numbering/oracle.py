@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Float caption numbering oracle (TEST ONLY; never in the product path).
 
-For every `NN-*.tex` fixture, runs MacTeX `pdflatex` twice on a copy whose
+For every `NN-*.tex` fixture, and every `NN-*/` directory (a multi-file
+project whose entry is `main.tex`, the rest `\\include`d/`\\input`), runs MacTeX `pdflatex` twice on a copy whose
 preamble redefines `\\@makecaption` to record, with `\\pdfsavepos` (a
 zero-size whatsit that changes no layout), the page and position of every
 caption box and the expansion of `\\the<captype>`. `\\newlabel` values come
@@ -43,17 +44,25 @@ PROBES = r"""
 
 
 def run(name):
-    tex = open(os.path.join(HERE, name + ".tex")).read()
+    project = os.path.join(HERE, name)
+    multi = os.path.isdir(project)
+    tex = open(os.path.join(project, "main.tex") if multi else project + ".tex").read()
     probed = tex.replace("\\begin{document}", PROBES + "\\begin{document}", 1)
     with tempfile.TemporaryDirectory() as tmp:
         os.symlink(os.path.join(HERE, "images"), os.path.join(tmp, "images"))
+        if multi:
+            # A fresh directory: no `.aux` of an `\\includeonly`-excluded
+            # file, so its counters are never restored (as a first run).
+            for f in os.listdir(project):
+                if f != "main.tex":
+                    shutil.copy(os.path.join(project, f), tmp)
         open(os.path.join(tmp, "doc.tex"), "w").write(probed)
         for _ in range(2):
             r = subprocess.run([PDFLATEX, "-interaction=batchmode", "-halt-on-error", "doc.tex"], cwd=tmp, capture_output=True)
             if r.returncode != 0:
                 sys.exit(f"{name}: pdflatex failed\n" + open(os.path.join(tmp, "doc.log")).read()[-3000:])
         pos = open(os.path.join(tmp, "doc.pos")).read().split("\n")
-        aux = open(os.path.join(tmp, "doc.aux")).read()
+        aux = "".join(open(os.path.join(tmp, f)).read() for f in sorted(os.listdir(tmp)) if f.endswith(".aux"))
         log = open(os.path.join(tmp, "doc.log")).read()
         pages = int(re.search(r"Output written on doc.pdf \((\d+) page", log).group(1))
     captions = []
@@ -80,4 +89,6 @@ def run(name):
 
 if __name__ == "__main__":
     for n in sorted(f[:-4] for f in os.listdir(HERE) if re.match(r"\d\d-.*\.tex$", f)):
+        run(n)
+    for n in sorted(f for f in os.listdir(HERE) if re.match(r"\d\d-", f) and os.path.isdir(os.path.join(HERE, f))):
         run(n)
