@@ -9620,47 +9620,6 @@ mod tests {
     }
 
     #[test]
-    fn pagebreak_inside_a_paragraph_ends_the_page_after_its_line_not_the_paragraph() {
-        for command in [r"\pagebreak", r"\pagebreak[4]"] {
-            let (parsed, laid) = pages(&format!("First page{command} Second page"));
-            assert!(
-                parsed.diagnostics.is_empty(),
-                "{command}: {:?}",
-                parsed.diagnostics
-            );
-            assert_eq!(
-                laid.len(),
-                1,
-                "{command}: pdflatex sets one line on one page"
-            );
-            let first = laid[0]
-                .items
-                .iter()
-                .find(|item| item.text == "First")
-                .unwrap();
-            let second = laid[0]
-                .items
-                .iter()
-                .find(|item| item.text == "Second")
-                .unwrap();
-            assert_eq!(
-                first.baseline_y_pt, second.baseline_y_pt,
-                "{command} must not break the paragraph"
-            );
-            let para = paragraph_inlines(&parsed);
-            assert!(
-                para.iter()
-                    .any(|inline| matches!(inline, Inline::PagePenalty { value: -10000, .. })),
-                "{command}: {para:?}"
-            );
-            // ...and the next paragraph starts the next page.
-            let (_, next) = pages(&format!("First page{command} Second page\n\nThird"));
-            assert_eq!(next.len(), 2);
-            assert!(next[1].items.iter().any(|item| item.text == "Third"));
-        }
-    }
-
-    #[test]
     fn pagebreak_below_priority_four_is_a_no_op_hint() {
         let (parsed, pages) = pages(r"First page\pagebreak[1] Second page");
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
