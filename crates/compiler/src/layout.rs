@@ -2283,6 +2283,7 @@ fn visit_inline_references(inlines: &[Inline], visitor: &mut impl FnMut(&str, Sp
             }
             Inline::Transform(b) => visit_inline_references(&b.content, visitor),
             Inline::Underline(u) => visit_inline_references(&u.content, visitor),
+            Inline::TextScript(t) => visit_inline_references(&t.content, visitor),
             _ => {}
         }
     }
@@ -2750,6 +2751,56 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                                 height_pt: round2(u.thickness_pt),
                             }),
                         });
+                }
+            }
+            Inline::TextScript(t) => {
+                if !t.space_before {
+                    c.x = c.content_end;
+                }
+                // `\@textsuperscript` / `\@textsubscript` set the `\mbox`
+                // at the `\sf@size` of the size in effect where the command
+                // appears (real LaTeX's `\fontsize\sf@size\z@\selectfont`):
+                // a `{\large ...}` group resolves through its own
+                // declaration recorded on the command, exactly like the
+                // surrounding text does — never through the ambient `size`.
+                // Shifts use the same local size: `sup2` (text style) for
+                // superscripts, `max(sub1, h − ⅘·x-height)` for subscripts,
+                // like this layout's own footnote marks.
+                let local = t.style.size.map_or(size, |level| {
+                    size_declaration_pt(level, c.constraints.font_size_pt)
+                });
+                let mark_size = footnotes::script_mark_size(local);
+                let start_page = c.pages.len();
+                let start_item = c.pages.last().map_or(0, |page| page.items.len());
+                emit(c, &t.content, mark_size, font);
+                // Height of the just-laid-out box drives the tall-subscript
+                // branch; measured from the placed items so declarations
+                // inside the argument count too.
+                let mut box_height: f64 = 0.0;
+                for (i, page) in c.pages.iter().enumerate().skip(start_page - 1) {
+                    let from = if i == start_page - 1 {
+                        start_item.min(page.items.len())
+                    } else {
+                        0
+                    };
+                    for item in &page.items[from..] {
+                        box_height = box_height.max(font_extents(item.font, item.font_size_pt).0);
+                    }
+                }
+                let shift = if t.superscript {
+                    footnotes::superscript_raise(local)
+                } else {
+                    -footnotes::subscript_drop(local, box_height)
+                };
+                for (i, page) in c.pages.iter_mut().enumerate().skip(start_page - 1) {
+                    let from = if i == start_page - 1 {
+                        start_item.min(page.items.len())
+                    } else {
+                        0
+                    };
+                    for item in &mut page.items[from..] {
+                        item.baseline_y_pt = round2(item.baseline_y_pt - shift);
+                    }
                 }
             }
         }

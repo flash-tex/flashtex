@@ -252,6 +252,14 @@ pub enum Inline {
     /// as one fragment with a rule. First step: the fragment does not
     /// break across lines (ulem's leaders can). Geometry is [`Underline::geom`].
     Underline(Box<Underline>),
+    /// Kernel text-mode `\textsuperscript{...}` / `\textsubscript{...}`
+    /// (latex.ltx `ltmisc.dtx` `\@textsuperscript` / `\@textsubscript`):
+    /// the argument as one unbreakable fragment (`\mbox`), set at the
+    /// `\sf@size` of the current size and raised (`superscript`) or
+    /// lowered like a math script of an empty nucleus. Consumers apply
+    /// their own raise: the render pipeline mirrors its footnote-mark
+    /// shift, this crate's Core 14 layout its own mark raise.
+    TextScript(Box<TextScript>),
     /// `\includegraphics` in running text: an image box (see
     /// `crate::graphics`). Figures and tables re-derive their graphics from
     /// the source instead.
@@ -341,6 +349,27 @@ pub struct Underline {
     pub span: Span,
     /// See `Inline::Text::space_before`.
     pub space_before: bool,
+}
+
+/// A `\textsuperscript{...}` / `\textsubscript{...}` wrapper
+/// (`Inline::TextScript`). `content` is the braced argument parsed as an
+/// `\hbox` (commands inside work, like `\underline`'s); `superscript`
+/// selects raising over lowering. `style` is the declarations in effect
+/// where the command appears, so layout can resolve the `\sf@size` and the
+/// shifts against the local size (`{\large ...}`), not the body size.
+/// The fragment does not break across lines (real LaTeX boxes it with
+/// `\mbox`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextScript {
+    pub content: Vec<Inline>,
+    pub superscript: bool,
+    /// From the command through the argument's closing brace.
+    pub span: Span,
+    /// See `Inline::Text::space_before`.
+    pub space_before: bool,
+    /// Declarations in effect at the command (only `size` is read, by
+    /// layout's `Inline::TextScript` arm).
+    pub style: TextStyle,
 }
 
 /// `\colorbox[model]{fill}{text}` or `\fcolorbox[model]{frame}{fill}{text}`
@@ -1110,6 +1139,8 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "uline",
     "underline",
     "sout",
+    "textsuperscript",
+    "textsubscript",
 ];
 
 /// Parses a LaTeX dimension (`12pt`, `1.5em`, `0.5in`, `2cm`, `10mm`, `2ex`,
@@ -2789,6 +2820,12 @@ impl P<'_> {
                     _ => UnderlineGeom::UlemDescender,
                 };
                 self.text_underline_cmd(name, span, para, geom);
+            }
+            // Kernel text-mode `\textsuperscript` / `\textsubscript`
+            // (latex.ltx `ltmisc.dtx`): no package needed, unlike ulem's
+            // commands above.
+            "textsuperscript" | "textsubscript" => {
+                self.text_script(name, span, para);
             }
             "thinspace" | "negthinspace" | "medspace" | "negmedspace" | "thickspace"
             | "negthickspace" | "enspace" => {
@@ -6368,6 +6405,36 @@ impl P<'_> {
             geom,
             span: full,
             space_before,
+        })));
+    }
+
+    /// Kernel text-mode `\textsuperscript{...}` / `\textsubscript{...}`
+    /// (latex.ltx `ltmisc.dtx` `\@textsuperscript` / `\@textsubscript`):
+    /// always supported, no package needed. The argument is parsed as an
+    /// `\hbox` so commands inside it work; the size reduction and the
+    /// raise/lower are applied by each consumer (see `Inline::TextScript`).
+    ///
+    /// Real LaTeX opens that box with `\fontsize\sf@size\z@\selectfont`,
+    /// so the outer size declaration must not leak into the argument:
+    /// `{\large a\textsuperscript{b}}` sets `b` at the `\sf@size` of
+    /// `\large`, not at `\large` itself. The declaration is therefore
+    /// cleared (only `size`; family/series/shape/colour still inherit)
+    /// while the argument parses — an explicit declaration *inside* the
+    /// argument still takes effect, exactly like `\mbox` contents.
+    fn text_script(&mut self, name: &str, span: Span, para: &mut Vec<Inline>) {
+        let space_before = self.space_precedes(self.i - 1);
+        let (tokens, argument_span) = self.required_group(name, span);
+        let full = span.merge(argument_span);
+        let style = self.style;
+        let outer_size = std::mem::replace(&mut self.style.size, None);
+        let content = self.box_inlines(tokens);
+        self.style.size = outer_size;
+        para.push(Inline::TextScript(Box::new(TextScript {
+            content,
+            superscript: name == "textsuperscript",
+            span: full,
+            space_before,
+            style,
         })));
     }
 

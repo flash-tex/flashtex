@@ -11,7 +11,7 @@
 //! * `\footnoterule` is `\kern-3pt \hrule width .4\columnwidth \kern2.6pt`
 //!   (0.4pt thick, zero net height);
 //! * marks are `\textsuperscript`: the `\sf@size` of the current size
-//!   (`\DeclareMathSizes`) raised by cmsy's `sup1` (0.412892em).
+//!   (`\DeclareMathSizes`) raised by cmsy's text-style `sup2` (0.362892em).
 //!
 //! Placement mirrors TeX's insertion builder on this compiler's line model.
 //! The line carrying a mark stays on its page; the note's lines follow it
@@ -47,8 +47,62 @@ const TEXT_BOTTOM_PT: f64 = PAGE_HEIGHT_PT - MARGIN_PT;
 const FOOTINS_MAX_PT: f64 = 8.0 * 72.0;
 /// `\@makefntext`'s `\hb@xt@1.8em` mark box.
 const MARK_BOX_EM: f64 = 1.8;
-/// cmsy10 `sup1` (fontdimen 13): the raise of a text-style superscript.
-const MARK_RAISE_EM: f64 = 0.412892;
+/// cmsy10 `sup2` (fontdimen 14): the raise of a TEXT-style superscript.
+/// (`sup1`, fontdimen 13, is the display-style raise; running-text
+/// `\@textsuperscript` is text style, as is `\@makefnmark`, so footnote
+/// marks share this constant.)
+const SUP2_RAISE_EM: f64 = 0.362892;
+/// cmsy10 `sub1` (fontdimen 16): the drop of a TEXT-style subscript with a
+/// short box. Independent of the superscript raise above (TeX defines them
+/// as separate parameters), so subscripts must not mirror it.
+const SUB1_DROP_EM: f64 = 0.15;
+
+/// `\@textsuperscript` / `\@textsubscript` geometry for this layout, shared
+/// with `layout::emit`'s `Inline::TextScript` arm so marks and text scripts
+/// always agree.
+///
+/// `script_mark_size` is the `\sf@size` of `local_pt` — the text size in
+/// effect where the command appears (`fontmath.ltx`'s `\DeclareMathSizes`
+/// rows via `text_builtins::sf_size`, so `{\large ...}` resolves to the
+/// large size's own script size, not the body's). A local size with no table
+/// row (e.g. this compiler's literal-11pt body standing in for
+/// `\f@size` 10.95) snaps to the nearest declared row within 0.06pt; anything
+/// else falls back to `\calculate@math@sizes`' 0.7 ratio, which `sf_size`
+/// already implements.
+pub(super) fn script_mark_size(local_pt: f64) -> f64 {
+    use crate::text_builtins::{pt_to_sp, sf_size, sp_to_pt};
+    const SNAP_PT: f64 = 0.06;
+    // Declared `\f@size` rows of the table above, in pt.
+    const DECLARED_PT: [f64; 12] = [
+        5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 10.95, 12.0, 14.4, 17.28, 20.74, 24.88,
+    ];
+    let snapped = DECLARED_PT
+        .iter()
+        .copied()
+        .find(|declared| (declared - local_pt).abs() <= SNAP_PT)
+        .unwrap_or(local_pt);
+    // The sp round-trip lands a few ulps off the decimal table values
+    // (20.74pt → 14.3999939pt); quantise back onto them — every size in
+    // this layout is an exact decimal.
+    round2(sp_to_pt(sf_size(pt_to_sp(snapped))))
+}
+
+/// Raise of a text-style superscript at `local_pt` (`sup2`, text style).
+pub(super) fn superscript_raise(local_pt: f64) -> f64 {
+    SUP2_RAISE_EM * local_pt
+}
+
+/// Drop of a text-style subscript at `local_pt` whose laid-out box is
+/// `box_height_pt` tall: `max(sub1, h − ⅘·x-height)` (TeXbook Appendix G
+/// rule 18: a tall subscript box pushes itself down past `sub1`). The
+/// x-height is this layout's own text-face metric at the local size; the
+/// height is the content's laid-out ascent (Core 14 has no per-glyph TFM,
+/// so the face ascender stands in, as elsewhere in this layout).
+pub(super) fn subscript_drop(local_pt: f64, box_height_pt: f64) -> f64 {
+    let sub1 = SUB1_DROP_EM * local_pt;
+    let x_height = super::x_height_pt(super::Font::TimesRoman, local_pt);
+    sub1.max(box_height_pt - 0.8 * x_height)
+}
 /// `\footnoterule`: `\kern-3pt` above the notes, then a 0.4pt `\hrule`.
 const RULE_KERN_PT: f64 = 3.0;
 const RULE_THICKNESS_PT: f64 = 0.4;
@@ -205,7 +259,7 @@ impl LayoutCursor {
                 Font::TimesRoman,
                 space_before,
             );
-            let raise = MARK_RAISE_EM * self.constraints.font_size_pt;
+            let raise = SUP2_RAISE_EM * self.constraints.font_size_pt;
             if let Some(item) = self.pages.last_mut().and_then(|page| page.items.last_mut()) {
                 item.baseline_y_pt = round2(item.baseline_y_pt - raise);
             }
@@ -379,7 +433,7 @@ impl LayoutCursor {
                     TextItem {
                         text: number.to_string(),
                         x_pt: round2(indent - width),
-                        baseline_y_pt: -MARK_RAISE_EM * metrics.size,
+                        baseline_y_pt: -SUP2_RAISE_EM * metrics.size,
                         font_size_pt: metrics.note_mark_size,
                         span,
                         font: Font::TimesRoman,
@@ -497,7 +551,7 @@ mod tests {
         assert!((text_mark.x_pt - word_end).abs() < 0.02);
         assert_eq!(
             text_mark.baseline_y_pt,
-            round2(word.baseline_y_pt - MARK_RAISE_EM * 12.0)
+            round2(word.baseline_y_pt - SUP2_RAISE_EM * 12.0)
         );
         let after = find(pages, source, "after.").1;
         assert!(after.x_pt > text_mark.x_pt);
@@ -512,7 +566,7 @@ mod tests {
         assert!((mark_end - note.x_pt).abs() < 0.02);
         assert_eq!(
             note_mark.baseline_y_pt,
-            round2(TEXT_BOTTOM_PT - MARK_RAISE_EM * 10.0)
+            round2(TEXT_BOTTOM_PT - SUP2_RAISE_EM * 10.0)
         );
 
         let rule = items(pages)
@@ -710,6 +764,40 @@ mod tests {
             .diagnostics
             .iter()
             .any(|d| d.message.contains("nested \\footnote")));
+    }
+
+    #[test]
+    fn script_mark_size_follows_declare_math_sizes() {
+        // Class body sizes keep their historic values (the literal-11pt
+        // body snaps to the 10.95 row), and every declaration size hits
+        // its own row — e.g. `\large` at the 12pt class (14.4pt) is 10pt.
+        for (local, want) in [
+            (10.0, 7.0),
+            (11.0, 8.0),
+            (12.0, 8.0),
+            (9.0, 6.0),
+            (14.4, 10.0),
+            (17.28, 12.0),
+            (20.74, 14.4),
+        ] {
+            assert_eq!(script_mark_size(local), want, "sf@size of {local}pt");
+        }
+    }
+
+    #[test]
+    fn text_style_shifts_are_independent_parameters() {
+        // `sup2` and `sub1` are separate fontdimens: the subscript is not
+        // the negated superscript raise.
+        assert_eq!(superscript_raise(12.0), 0.362892 * 12.0);
+        assert_eq!(subscript_drop(12.0, 0.0), 0.15 * 12.0);
+        // Short box: `sub1` governs.
+        assert_eq!(subscript_drop(10.0, 1.0), 1.5);
+        // Tall box: `h − ⅘·x-height` governs (Times x-height is 0.45em).
+        let tall = 0.683 * 12.0 - 0.8 * 0.45 * 10.0;
+        assert!(tall > 1.5);
+        assert!((subscript_drop(10.0, 0.683 * 12.0) - tall).abs() < 1e-9);
+        // Empty argument degrades to `sub1`, never negative.
+        assert_eq!(subscript_drop(10.0, 0.0), 1.5);
     }
 
     #[test]
