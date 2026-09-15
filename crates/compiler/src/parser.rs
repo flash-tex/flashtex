@@ -586,9 +586,16 @@ pub enum Block {
         /// later paragraph of the same item).
         item: Option<ItemLabel>,
     },
-    /// `\vspace{<dimen>}`: additional vertical glue, in points.
+    /// `\vspace{<glue>}` (and `\smallskip`/`\medskip`/`\bigskip`): additional
+    /// vertical glue, in points. `pt` is the natural length; `stretch_pt` /
+    /// `shrink_pt` are the finite `plus` / `minus` components (`0.0` when the
+    /// source specifies none, matching real TeX: a bare `\vspace{1in}` has no
+    /// rubber length). Infinite (`fil`/`fill`/`filll`) stretch is not
+    /// represented — see `parse_glue_pt_current`.
     VSpace {
         pt: f64,
+        stretch_pt: f64,
+        shrink_pt: f64,
     },
     /// `\hrule`: a full-measure-width rule at the current line.
     Rule {
@@ -1454,6 +1461,52 @@ fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> 
     Some(value * per_pt)
 }
 
+/// Parses TeX glue (`<dimen> plus <dimen> minus <dimen>`) to
+/// `(natural, stretch, shrink)` points, with `em`/`ex` of the active text
+/// font (see [`parse_dimen_pt_current`]).
+///
+/// `plus` and `minus` are each optional and may appear in either order after
+/// the natural dimension; a bare dimension gives zero stretch and shrink
+/// (real TeX: a bare `\vspace{1in}` has no rubber length). Only finite
+/// dimensions are accepted: infinite (`fil`/`fill`/`filll`) stretch is an
+/// explicit non-goal and is rejected (`None`), like any other unrecognised
+/// component. A repeated keyword or trailing garbage is likewise rejected.
+fn parse_glue_pt_current(text: &str, units: (i64, i64)) -> Option<(f64, f64, f64)> {
+    let mut tokens = text.split_whitespace();
+    let natural = parse_dimen_pt_current(tokens.next()?.trim(), units)?;
+    let mut stretch_pt = 0.0;
+    let mut shrink_pt = 0.0;
+    let mut seen_plus = false;
+    let mut seen_minus = false;
+    while let Some(token) = tokens.next() {
+        let (keyword, attached) = if let Some(rest) = token.strip_prefix("plus") {
+            ("plus", rest)
+        } else if let Some(rest) = token.strip_prefix("minus") {
+            ("minus", rest)
+        } else {
+            return None;
+        };
+        let dimen_text = if attached.is_empty() {
+            tokens.next()?.trim()
+        } else {
+            attached.trim()
+        };
+        let dimen = parse_dimen_pt_current(dimen_text, units)?;
+        match keyword {
+            "plus" if !seen_plus => {
+                seen_plus = true;
+                stretch_pt = dimen;
+            }
+            "minus" if !seen_minus => {
+                seen_minus = true;
+                shrink_pt = dimen;
+            }
+            _ => return None,
+        }
+    }
+    Some((natural, stretch_pt, shrink_pt))
+}
+
 /// True when `content` (already trimmed) is safe for the unsupported-command
 /// recovery policy to assume is a parameter rather than prose — see the
 /// policy comment on `unsupported` below for the full rationale. A dimension
@@ -1470,13 +1523,19 @@ fn looks_like_recoverable_argument(content: &str) -> bool {
 }
 
 /// Plain TeX's conventional `\smallskipamount`/`\medskipamount`/
-/// `\bigskipamount`, in points. Real TeX also gives each a `plus`/`minus`
-/// stretch component; this layout model has no rubber lengths (see
-/// `Block::VSpace`, which `\vspace` already feeds a flat point value), so
-/// these are the flat amounts with the stretch/shrink honestly dropped.
+/// `\bigskipamount`: 3pt plus 1pt minus 1pt, 6pt plus 2pt minus 2pt, and 12pt
+/// plus 4pt minus 4pt. The rubber lengths are carried on [`Block::VSpace`]
+/// (this layout sets only the natural length; threading stretch/shrink into
+/// page breaking is the render pipeline's job).
 const SMALL_SKIP_PT: f64 = 3.0;
+const SMALL_SKIP_STRETCH_PT: f64 = 1.0;
+const SMALL_SKIP_SHRINK_PT: f64 = 1.0;
 const MEDIUM_SKIP_PT: f64 = 6.0;
+const MEDIUM_SKIP_STRETCH_PT: f64 = 2.0;
+const MEDIUM_SKIP_SHRINK_PT: f64 = 2.0;
 const BIG_SKIP_PT: f64 = 12.0;
+const BIG_SKIP_STRETCH_PT: f64 = 4.0;
+const BIG_SKIP_SHRINK_PT: f64 = 4.0;
 
 /// Project-relative paths only: no absolute paths or parent traversal.
 pub(crate) fn path_is_safe(path: &str) -> bool {
@@ -2237,10 +2296,25 @@ impl P<'_> {
                     }
                 }
                 TokenKind::Space | TokenKind::Comment => self.i += 1,
-                TokenKind::Word(word) if control_symbol_kern(&word, tok.span, self.math_packages.amsmath).is_some() => {
+                TokenKind::Word(word)
+                    if control_symbol_kern(
+                        &word,
+                        input.maps_to_invocation,
+                        input.definition,
+                        tok.span,
+                        self.math_packages.amsmath,
+                    )
+                    .is_some() =>
+                {
                     self.i += 1;
                     if render {
-                        if let Some(amount) = control_symbol_kern(&word, tok.span, self.math_packages.amsmath) {
+                        if let Some(amount) = control_symbol_kern(
+                            &word,
+                            input.maps_to_invocation,
+                            input.definition,
+                            tok.span,
+                            self.math_packages.amsmath,
+                        ) {
                             para.push(Inline::Kern {
                                 amount,
                                 span: tok.span,
@@ -3259,13 +3333,25 @@ impl P<'_> {
             }),
             "par" => self.flush_paragraph(blocks, para),
             "bigskip" | "medskip" | "smallskip" => {
-                let pt = match name {
-                    "bigskip" => BIG_SKIP_PT,
-                    "medskip" => MEDIUM_SKIP_PT,
-                    _ => SMALL_SKIP_PT,
+                let (pt, stretch_pt, shrink_pt) = match name {
+                    "bigskip" => (BIG_SKIP_PT, BIG_SKIP_STRETCH_PT, BIG_SKIP_SHRINK_PT),
+                    "medskip" => (
+                        MEDIUM_SKIP_PT,
+                        MEDIUM_SKIP_STRETCH_PT,
+                        MEDIUM_SKIP_SHRINK_PT,
+                    ),
+                    _ => (
+                        SMALL_SKIP_PT,
+                        SMALL_SKIP_STRETCH_PT,
+                        SMALL_SKIP_SHRINK_PT,
+                    ),
                 };
                 self.flush_paragraph(blocks, para);
-                blocks.push(Block::VSpace { pt });
+                blocks.push(Block::VSpace {
+                    pt,
+                    stretch_pt,
+                    shrink_pt,
+                });
                 self.finish_block_dependencies();
             }
             "vspace" => {
@@ -3279,10 +3365,15 @@ impl P<'_> {
                 let _starred = self.take_optional_star();
                 let (tokens, argument_span) = self.required_group(name, span);
                 let raw = token_text(&tokens);
-                match parse_dimen_pt_current(&raw, self.font_setup().em_ex_sp(self.style)) {
-                    Some(pt) => {
+                let units = self.font_setup().em_ex_sp(self.style);
+                match parse_glue_pt_current(&raw, units) {
+                    Some((pt, stretch_pt, shrink_pt)) => {
                         self.flush_paragraph(blocks, para);
-                        blocks.push(Block::VSpace { pt });
+                        blocks.push(Block::VSpace {
+                            pt,
+                            stretch_pt,
+                            shrink_pt,
+                        });
                         self.finish_block_dependencies();
                     }
                     None => self.diags.push(Diagnostic::error(
@@ -7019,8 +7110,23 @@ impl P<'_> {
                         style = previous;
                     }
                 }
-                TokenKind::Word(text) if control_symbol_kern(text, input.token.span, self.math_packages.amsmath).is_some() => {
-                    if let Some(amount) = control_symbol_kern(text, input.token.span, self.math_packages.amsmath) {
+                TokenKind::Word(text)
+                    if control_symbol_kern(
+                        text,
+                        input.maps_to_invocation,
+                        input.definition,
+                        input.token.span,
+                        self.math_packages.amsmath,
+                    )
+                    .is_some() =>
+                {
+                    if let Some(amount) = control_symbol_kern(
+                        text,
+                        input.maps_to_invocation,
+                        input.definition,
+                        input.token.span,
+                        self.math_packages.amsmath,
+                    ) {
                         content.push(Inline::Kern {
                             amount,
                             span: input.token.span,
@@ -8825,7 +8931,23 @@ fn preamble_source(text: &str, has_document: bool, tokens: &[InputToken]) -> Str
 
 /// The kern a control-symbol token (`\,` lexed as the word `,` with a
 /// two-byte span, the same test `math.rs` uses) stands for in text mode.
-fn control_symbol_kern(word: &str, span: Span, amsmath: bool) -> Option<TextDimen> {
+///
+/// The width is measured on the token's own source bytes: text expanded
+/// from a macro body carries the invocation's span, so a plain `,` inside
+/// `\newcommand{\w}{...}` looks two bytes wide (the `\w`) and must be
+/// measured by its definition bytes instead, or it is mistaken for `\,`
+/// and swallowed as an invisible kern.
+fn control_symbol_kern(
+    word: &str,
+    maps_to_invocation: bool,
+    definition: Option<Span>,
+    span: Span,
+    amsmath: bool,
+) -> Option<TextDimen> {
+    // Expanded text without definition bytes (synthesised by the engine)
+    // cannot prove it spells a control symbol; typeset it rather than risk
+    // swallowing real punctuation as a kern.
+    let span = if maps_to_invocation { definition? } else { span };
     let mut chars = word.chars();
     match (chars.next(), chars.next()) {
         (Some(c), None)
@@ -9973,6 +10095,72 @@ mod tests {
             positions(&starred),
             "\\vspace* must lay out identically to \\vspace on this non-breaking layout"
         );
+    }
+
+    /// The single `Block::VSpace` a source with one vertical skip parses to,
+    /// as its `(pt, stretch_pt, shrink_pt)` triple.
+    fn single_vspace_pt(source: &str) -> (Parsed, (f64, f64, f64)) {
+        let parsed = parse(source);
+        let triple = parsed
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::VSpace {
+                    pt,
+                    stretch_pt,
+                    shrink_pt,
+                } => Some((*pt, *stretch_pt, *shrink_pt)),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected one Block::VSpace, got {:?}", parsed.blocks));
+        (parsed, triple)
+    }
+
+    /// `\bigskip`/`\medskip`/`\smallskip` carry real LaTeX's rubber lengths:
+    /// 12pt plus 4pt minus 4pt, 6pt plus 2pt minus 2pt, 3pt plus 1pt minus 1pt.
+    #[test]
+    fn skips_carry_their_plus_minus_rubber_lengths() {
+        for (command, want) in [
+            (r"\bigskip", (12.0, 4.0, 4.0)),
+            (r"\medskip", (6.0, 2.0, 2.0)),
+            (r"\smallskip", (3.0, 1.0, 1.0)),
+        ] {
+            let (parsed, got) = single_vspace_pt(&format!(r"One{command} Two"));
+            assert!(parsed.diagnostics.is_empty(), "{command}: {:?}", parsed.diagnostics);
+            assert_eq!(got, want, "{command} must carry its real LaTeX glue triple");
+        }
+    }
+
+    /// `\vspace{<dimen> plus <dimen> minus <dimen>}` reads all three glue
+    /// components; `plus`/`minus` are each optional and may come in either
+    /// order. (`1em` is the active font's quad — with no document class the
+    /// default cmr10's `\fontdimen6`, 10.00002pt — see
+    /// `parse_dimen_pt_current`.)
+    #[test]
+    fn vspace_reads_plus_and_minus_in_either_order() {
+        let em = 655_361.0 / 65_536.0;
+        for (argument, want) in [
+            ("1em plus 1pt minus 2pt", (em, 1.0, 2.0)),
+            ("1em minus 2pt plus 1pt", (em, 1.0, 2.0)),
+            ("1em plus 1pt", (em, 1.0, 0.0)),
+            ("1em minus 2pt", (em, 0.0, 2.0)),
+        ] {
+            let (parsed, got) = single_vspace_pt(&format!(r"One\vspace{{{argument}}}Two"));
+            assert!(parsed.diagnostics.is_empty(), "{argument}: {:?}", parsed.diagnostics);
+            assert!(
+                (got.0 - want.0).abs() < 1e-9 && got.1 == want.1 && got.2 == want.2,
+                "\\vspace{{{argument}}} must parse every glue component: {got:?} vs {want:?}"
+            );
+        }
+    }
+
+    /// A bare `\vspace{1in}` has no rubber length: real TeX gives stretch and
+    /// shrink only when `plus`/`minus` are written.
+    #[test]
+    fn bare_vspace_has_no_rubber_length() {
+        let (parsed, got) = single_vspace_pt(r"One\vspace{1in}Two");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(got, (72.27, 0.0, 0.0), "a bare dimension must not invent stretch/shrink");
     }
 
     #[test]
