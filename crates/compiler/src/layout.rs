@@ -540,6 +540,8 @@ pub struct FlowState {
     content_end: f64,
     /// See `LayoutCursor::closed_line_skip`.
     closed_line_skip: Option<f64>,
+    /// See `LayoutCursor::eject_after_line`.
+    eject_after_line: bool,
 }
 
 impl FlowState {
@@ -552,6 +554,7 @@ impl FlowState {
             && self.trailing_line_items == other.trailing_line_items
             && self.content_end.to_bits() == other.content_end.to_bits()
             && self.closed_line_skip.map(f64::to_bits) == other.closed_line_skip.map(f64::to_bits)
+            && self.eject_after_line == other.eject_after_line
     }
 }
 
@@ -616,6 +619,10 @@ pub struct LayoutCursor {
     /// and its own `\addvspace`-style gap only adds what exceeds this skip.
     /// Cleared by `newline`.
     closed_line_skip: Option<f64>,
+    /// A forced `Inline::PagePenalty` (`\pagebreak` inside a paragraph,
+    /// `\vadjust{\penalty-\@M}`) was set on the current line: the page ends
+    /// after that line, when the next one starts.
+    eject_after_line: bool,
 }
 
 impl LayoutCursor {
@@ -676,6 +683,7 @@ impl LayoutCursor {
             list_margin_pt: 0.0,
             footnotes: footnotes::FootnoteState::default(),
             closed_line_skip: None,
+            eject_after_line: false,
         }
     }
 
@@ -781,7 +789,7 @@ impl LayoutCursor {
         self.y += self.line_descent + size;
         self.line_ascent = size;
         self.line_descent = size * (LINE_SPACING - 1.0);
-        if self.y > self.body_bottom() {
+        if self.y > self.body_bottom() || std::mem::take(&mut self.eject_after_line) {
             self.open_next_page(size);
             self.y = MARGIN_PT + size;
         }
@@ -1402,6 +1410,16 @@ impl LayoutCursor {
         {
             return self.state();
         }
+        // A vertical-list penalty. This layout has no page builder to weigh
+        // a finite one, so only a forced break acts, like `Block::PageBreak`;
+        // like any penalty at the top of a page, one before the first block
+        // is discarded (TeX §1000) and leaves the document's start unchanged.
+        if let Block::Penalty { value, .. } = block {
+            if *value <= crate::parser::EJECT_PENALTY && !self.first_block {
+                self.force_page_break();
+            }
+            return self.state();
+        }
         // A display or heading already closed its line (see
         // `closed_line_skip`): start this block on that fresh baseline.
         let closed = self
@@ -1487,10 +1505,11 @@ impl LayoutCursor {
                     self.vertical_gap(PARAGRAPH_GAP_PT);
                 }
             }
-            Block::VSpace { pt } => {
+            Block::VSpace { pt, .. } => {
                 // Only end a line that has content: after a rule or another
                 // vertical block there is no text line to finish, and TeX adds
-                // no interline glue there either.
+                // no interline glue there either. Only the natural length is
+                // set: this layout has no page-stretch model for the rubber.
                 if !self.first_block && self.state().trailing_line_items > 0 {
                     self.newline(body_size);
                 }
@@ -1553,6 +1572,8 @@ impl LayoutCursor {
             // footer to the bottom) exactly, and degrades to a hard bottom
             // clamp — rather than an overlap or a fabricated split — for the
             // rarer multi-`\vfill` case.
+            // Returned before the inter-block spacing, above.
+            Block::Penalty { .. } => {}
             Block::VFill => {
                 if !self.first_block && self.state().trailing_line_items > 0 {
                     self.newline(body_size);
@@ -1751,7 +1772,7 @@ impl LayoutCursor {
                 emit(self, content, body_size, Font::TimesRoman);
                 self.newline(body_size);
             }
-            Block::VSpace { .. } | Block::PageBreak | Block::VFill => {}
+            Block::VSpace { .. } | Block::PageBreak | Block::VFill | Block::Penalty { .. } => {}
             Block::TableOfContents { span } => {
                 self.render_prepared_block(&Block::Heading {
                     level: 1,
@@ -2008,6 +2029,7 @@ impl LayoutCursor {
             trailing_line_items: self.pages[page_index].items.len() - self.line_start,
             content_end: self.content_end,
             closed_line_skip: self.closed_line_skip,
+            eject_after_line: self.eject_after_line,
         }
     }
 
@@ -2035,6 +2057,7 @@ impl LayoutCursor {
         self.x = end.x;
         self.content_end = end.content_end;
         self.closed_line_skip = end.closed_line_skip;
+        self.eject_after_line = end.eject_after_line;
         self.y = end.y;
         self.line_ascent = end.line_ascent;
         self.line_descent = end.line_descent;
@@ -2359,7 +2382,8 @@ fn visit_references(blocks: &[Block], visitor: &mut impl FnMut(&str, Span)) {
             | Block::PageBreak
             | Block::Verbatim { .. }
             | Block::TableOfContents { .. }
-            | Block::VFill => {}
+            | Block::VFill
+            | Block::Penalty { .. } => {}
         }
     }
 }
@@ -2641,6 +2665,30 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 )
             }
             Inline::LineBreak { .. } => c.newline(size),
+            // A forced break at a penalty ends a justified line (`\linebreak`
+            // has no `\hfil`); a finite penalty only weighs a break this
+            // greedy layout never considers.
+            Inline::Penalty { value, .. } => {
+                if *value <= crate::parser::EJECT_PENALTY {
+                    c.wrap_line(size);
+                }
+            }
+            Inline::PagePenalty { value, .. } => {
+                if *value <= crate::parser::EJECT_PENALTY {
+                    c.eject_after_line = true;
+                }
+            }
+            // No hyphenation here: the unbroken text.
+            Inline::Discretionary {
+                nobreak,
+                span,
+                style,
+                ..
+            } => {
+                if !nobreak.is_empty() {
+                    c.place(nobreak.clone(), size, *span, style_font(*style), false);
+                }
+            }
             Inline::TextGlue { em, .. } => c.text_glue(*em, size),
             Inline::Math {
                 list,

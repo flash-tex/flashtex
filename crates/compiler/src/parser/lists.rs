@@ -116,6 +116,15 @@ impl ListFrame {
             _ => None,
         })
     }
+
+    /// The last `style` key (`nextline`, `sameline`, `multiline`,
+    /// `unboxed`, `standard` or `normal`), verbatim.
+    pub fn style(&self) -> Option<&str> {
+        self.options.iter().rev().find_map(|option| match option {
+            ListOption::Style(style) => Some(style.as_str()),
+            _ => None,
+        })
+    }
 }
 
 /// An enumitem horizontal length value (`enumitem.sty` 260-349: `*`, `!`
@@ -176,6 +185,10 @@ pub enum ListOption {
     Align(String),
     /// `widest` / `widest=<text>`.
     Widest(Option<String>),
+    /// `style=standard|normal|sameline|multiline|nextline|unboxed`
+    /// (`enumitem.sty` `\enit@style@...`): kept verbatim; only `nextline`
+    /// changes layout (the label takes a line of its own).
+    Style(String),
     /// Any other enumitem key (`font`, `format`, `ref`, `before`, ...) or a
     /// recognised key whose value could not be read, kept verbatim.
     Other {
@@ -613,6 +626,9 @@ pub(crate) fn parse_options(text: &str, body_pt: f64, allow_short_label: bool) -
                 ListOption::Align(strip_outer_braces(v).to_string())
             }),
             "widest" => ListOption::Widest(name()),
+            "style" => value.map_or_else(other, |v| {
+                ListOption::Style(strip_outer_braces(v).to_string())
+            }),
             _ => other(),
         });
     }

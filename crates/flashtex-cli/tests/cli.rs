@@ -463,11 +463,13 @@ fn watch_rebuilds_when_an_included_file_changes() {
 }
 
 /// `--color never` keeps the full excerpt-and-carets shape but strips every
-/// ANSI escape; an explicit `always` wins over `NO_COLOR`. (`auto` is not
-/// covered here: piped stderr is never a tty, so `auto` is uncoloured in
-/// this harness whether or not `NO_COLOR` is set — that assertion could
-/// never fail and was dropped rather than pinning a false claim about
-/// `NO_COLOR` specifically.)
+/// ANSI escape — even after an explicit `always` (the last `--color` wins:
+/// each occurrence overwrites the previous one in `parse_common`) — while
+/// an explicit `always` wins over `NO_COLOR`. (`auto` is not covered here:
+/// piped stderr is never a tty, so `auto` is uncoloured in this harness
+/// whether or not `NO_COLOR` is set — that assertion could never fail and
+/// was dropped rather than pinning a false claim about `NO_COLOR`
+/// specifically.)
 #[test]
 fn color_never_strips_ansi_and_always_overrides_no_color() {
     let dir = tmp("color");
@@ -495,6 +497,23 @@ fn color_never_strips_ansi_and_always_overrides_no_color() {
         assert!(err.contains('^'), "{err}");
         assert!(!err.contains('\x1b'), "{err}");
     }
+    // Control: piped stderr is uncoloured by default, so `never` alone
+    // proves nothing — only an explicit `always` turns colour on in a pipe
+    // (no CLICOLOR_FORCE/FORCE_COLOR override exists in main.rs).
+    let always = stderr(&check(&["--color=always"], false));
+    assert!(always.contains("\x1b[1;31merror[missing_file]\x1b[0m"), "{always}");
+    // Precedence is positional: `never` after `always` strips every escape,
+    // and `always` after `never` keeps them. With `never`'s effect disabled,
+    // the first loop below would keep `always`'s escapes and fail.
+    for flags in [&["--color=always", "--color=never"][..], &["--color", "always", "--color", "never"][..]] {
+        let o = check(flags, false);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{flags:?}\n{err}");
+        assert!(err.contains(" --> main.tex:4:1\n"), "{flags:?}\n{err}");
+        assert!(!err.contains('\x1b'), "{flags:?}\n{err}");
+    }
+    let flipped = stderr(&check(&["--color=never", "--color=always"], false));
+    assert!(flipped.contains("\x1b[1;31merror[missing_file]\x1b[0m"), "{flipped}");
     // An explicit `always` overrides `NO_COLOR`.
     let forced = stderr(&check(&["--color=always"], true));
     assert!(forced.contains("\x1b[1;31merror[missing_file]\x1b[0m"), "{forced}");
@@ -503,7 +522,10 @@ fn color_never_strips_ansi_and_always_overrides_no_color() {
 
 /// `--diagnostics short` keeps the one-line `file:line:col` form with no
 /// excerpt, carets or `-->` header — the same bytes piped stderr gets by
-/// default — in both the space and `=` spellings.
+/// default — in both the space and `=` spellings. Whether an interactive
+/// terminal (a real PTY) would pick a different default on its own is not
+/// observable through this harness, which only pipes stdio; this test
+/// covers the explicit flag's own behavior, not TTY auto-detection.
 #[test]
 fn diagnostics_short_is_one_line_per_diagnostic() {
     let dir = tmp("diag-short");
