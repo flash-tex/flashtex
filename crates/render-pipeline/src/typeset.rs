@@ -2084,7 +2084,7 @@ impl<'a> Context<'a> {
                     let quad = self.text_params(base, size).quad;
                     push(&mut out, &mut recs, pl::Item::Glue(pl::Glue::fixed(em * quad)), None);
                 }
-                AItem::HFill { fill, leader } => {
+                AItem::HFill { fill, leader, style } => {
                     // `\hfill` is second-order glue: it beats the line's
                     // `\parfillskip` (`\hfil`), as in a `\section` title
                     // set as `Problem 1 \hfill [4 points]`.
@@ -2094,7 +2094,15 @@ impl<'a> Context<'a> {
                     }
                     let (box_width, dot) = match leader {
                         FillLeader::Dots => {
-                            let face = self.face(base, size, Span::new(0, 0));
+                            // TeX sets the leader box (`.44em`) and its dot
+                            // in the font in force at the fill, not the
+                            // paragraph's: `{\Large A\dotfill B}` dots at
+                            // `\Large`. The other leaders read no style (a
+                            // rule leader is a fixed 0.4pt rule, plain
+                            // `\hfill` paints nothing).
+                            let dot_style = merge_base(*style, base);
+                            let dot_size = dot_style.size_or(size);
+                            let face = self.face(dot_style, dot_size, Span::new(0, 0));
                             let shaped = self.shaper.shape(&face, ".");
                             let glyphs = shaped
                                 .clusters
@@ -2107,14 +2115,14 @@ impl<'a> Context<'a> {
                                 .collect::<Vec<_>>();
                             let run = pl::GlyphRun::from_shaped(
                                 face.layout_id(),
-                                size,
+                                dot_size,
                                 shaped.units_per_em as f64,
                                 f64::from(shaped.height_units),
                                 -f64::from(shaped.depth_units),
                                 &glyphs,
                                 0..1,
                             );
-                            (0.44 * self.text_params(base, size).quad, Some((face, run)))
+                            (0.44 * self.text_params(dot_style, dot_size).quad, Some((face, run)))
                         }
                         _ => (0.0, None),
                     };
@@ -2909,6 +2917,19 @@ impl<'a> Context<'a> {
                         lead.push((pl::Item::Box(run), Some(rec)));
                     }
                     lead.push((pl::Item::kern(labelsep), None));
+                    // enumitem `style=nextline` (`\enit@postlabel@i`'s
+                    // `\newline`): the label takes a line of its own, so a
+                    // `\\` follows it and the body starts on the next line
+                    // at the hanging indent (`break_paragraph` indents every
+                    // line after the first by `hang_pt` on its own). Before
+                    // the protrusion kern, which belongs to the body text's
+                    // first character, not to the label's line.
+                    if geom.nextline {
+                        if !matches!(style, ParaStyle::Center | ParaStyle::FlushRight) {
+                            lead.push((pl::Item::Glue(pl::Glue::fil()), None));
+                        }
+                        lead.push((pl::Item::penalty(pl::FORCED_BREAK), None));
+                    }
                     if protrude != 0.0 {
                         lead.push((pl::Item::kern(-protrude), None));
                     }
@@ -8353,6 +8374,26 @@ fn align_columns(built: &mut Vec<pagebuild::BuiltPage>, columns: usize, page_sta
     inserted
 }
 
+/// Span of typesetter-made page furniture (page numbers, header/footer
+/// marks, the column separator rule): the sentinel document id marks
+/// content with no source of its own, so [`provenance_of`] turns it into
+/// [`Provenance::Synthetic`] instead of a real (and wrong) source range.
+const NO_SOURCE_SPAN: Span = Span {
+    document: DocumentId(usize::MAX),
+    start: 0,
+    end: 0,
+};
+
+/// Provenance of `span`: synthetic page chrome when it carries the
+/// no-source sentinel document, the exact source range otherwise.
+fn provenance_of(span: Span, source_of: &dyn Fn(Span) -> SourceRange) -> Provenance {
+    if span.document == NO_SOURCE_SPAN.document {
+        Provenance::Synthetic(display::PAGE_CHROME.into())
+    } else {
+        Provenance::Source(source_of(span))
+    }
+}
+
 /// Header, footer and `\columnseprule` of every page (`\@outputpage`,
 /// `\@outputdblcol`): the page style in force when the page ships
 /// (`\pagestyle` changes before its last material count; `\thispagestyle`
@@ -8380,8 +8421,10 @@ fn page_chrome(ctx: &mut Context, g: &flashtex_class_geometry::ResolvedDocument,
     for (b, e, _) in events {
         by_page[page_of(*b)].push(e);
     }
-    // Page numbers and rules have no source of their own.
-    let span = Span::in_document(DocumentId(0), 0, 0);
+    // Page numbers and rules have no source of their own: the sentinel
+    // document becomes synthetic provenance (`source: null` in runtime-v1)
+    // instead of claiming document 0, byte 0.
+    let span = NO_SOURCE_SPAN;
     let frame = &g.frame;
     let width = frame_pt(frame.text_width);
     let text_x = ctx.style.text_x_pt;
@@ -8943,7 +8986,7 @@ fn assemble_block(
                         width: Tick::from_tex_pt(*width).max(Tick(1)),
                         height: Tick::from_tex_pt(*height).max(Tick(1)),
                         paint: Paint::BLACK,
-                        provenance: Provenance::Source(source_of(*span)),
+                        provenance: provenance_of(*span, source_of),
                     }));
                 }
             }
@@ -9424,7 +9467,7 @@ fn text_item(
                     height: box_height,
                 },
                 carets,
-                provenance: Provenance::Source(source_of(c.span)),
+                provenance: provenance_of(c.span, source_of),
             }
         })
         .collect();
