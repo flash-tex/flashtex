@@ -400,6 +400,8 @@ pub struct Checkpoint {
     /// `Engine::last_origin` at the snapshot. The step limit's diagnostic is
     /// reported there when the very next step is over the limit.
     pub(crate) last_origin: Option<Span>,
+    /// `Engine::peak_memory` at the snapshot.
+    pub(crate) peak_memory: u64,
     /// Number of output tokens / diagnostics / labels produced so far.
     pub out_len: usize,
     pub diag_len: usize,
@@ -421,6 +423,13 @@ pub struct Engine {
     measurer: Rc<dyn BoxMeasurer>,
     /// Set by `\end{document}` or a hard resource limit.
     stopped: bool,
+    /// The largest main-memory size (pending token lists, one macro
+    /// expansion) checked against `max_output_tokens` without stopping.
+    /// With `steps` and the output count it tells whether a run would
+    /// also get this far under other limits (see `incremental.rs`).
+    peak_memory: u64,
+    /// Stopped on the main-memory limit (`max_output_tokens`).
+    memory_stop: bool,
     /// Tokens already decided to be output (a stack, popped first by
     /// `next_content_token`), e.g. prefixes passed through ahead of an
     /// unmodelled control sequence.
@@ -471,6 +480,8 @@ impl Engine {
             metrics: Rc::new(DefaultFontMetrics),
             measurer: Rc::new(DefaultBoxMeasurer),
             stopped: false,
+            peak_memory: 0,
+            memory_stop: false,
             emit_queue: Vec::new(),
             file_reader: None,
             opened_files: Vec::new(),
@@ -769,7 +780,7 @@ impl Engine {
         let levels = self.sources.len();
         let message = if levels >= TEX_INPUT_STACK_SIZE {
             "TeX capacity exceeded, sorry [input stack size=10000]."
-        } else if levels % 64 == 0 && self.pending_token_count() > self.limits.max_output_tokens {
+        } else if levels % 64 == 0 && self.over_main_memory(self.pending_token_count()) {
             "TeX capacity exceeded, sorry [main memory size=5000000]."
         } else {
             return false;
@@ -778,6 +789,18 @@ impl Engine {
         self.err(message, at);
         self.stopped = true;
         true
+    }
+
+    /// `size` is past the main-memory limit. Sizes within it raise
+    /// `peak_memory`.
+    fn over_main_memory(&mut self, size: u64) -> bool {
+        if size > self.limits.max_output_tokens {
+            self.memory_stop = true;
+            true
+        } else {
+            self.peak_memory = self.peak_memory.max(size);
+            false
+        }
     }
 
     /// Tokens still to be read from every token-list input level.
@@ -1140,6 +1163,7 @@ impl Engine {
             state: self.st.clone(),
             steps: self.steps,
             last_origin: self.last_origin,
+            peak_memory: self.peak_memory,
             out_len,
             diag_len: self.diagnostics.len(),
             label_len: self.labels.len(),
@@ -1151,6 +1175,7 @@ impl Engine {
         let mut e = Self::from_parts(src, cp.pos, cp.lex_state, cp.state.clone(), limits);
         e.steps = cp.steps;
         e.last_origin = cp.last_origin;
+        e.peak_memory = cp.peak_memory;
         e
     }
 
@@ -1161,6 +1186,16 @@ impl Engine {
     /// The engine stopped because it ran past `max_expansion_steps`.
     pub(crate) fn hit_step_limit(&self) -> bool {
         self.steps > self.limits.max_expansion_steps
+    }
+
+    /// See the field.
+    pub(crate) fn peak_memory(&self) -> u64 {
+        self.peak_memory
+    }
+
+    /// The engine stopped on the main-memory limit.
+    pub(crate) fn hit_memory_limit(&self) -> bool {
+        self.memory_stop
     }
 
     pub(crate) fn state(&self) -> &State {
@@ -1597,7 +1632,7 @@ impl Engine {
                 BodyPart::Param(n) => args.get(n).map_or(0, |a| a.len() as u64),
             })
             .sum();
-        if size > self.limits.max_output_tokens {
+        if self.over_main_memory(size) {
             self.err("TeX capacity exceeded, sorry [main memory size=5000000].", call_tok.span);
             self.stopped = true;
             return;

@@ -34,6 +34,7 @@ struct Run {
     diagnostics: Vec<Diagnostic>,
     labels: Vec<LabelRecord>,
     steps: u64,
+    input: Option<(u32, usize)>,
 }
 
 /// A from-scratch run, as `Engine::run` does it, keeping origins too.
@@ -49,7 +50,8 @@ fn full(src: &str, limits: Limits) -> Run {
             break;
         }
     }
-    Run { tokens, origins, diagnostics: e.take_diagnostics(), labels: e.take_labels(), steps: e.steps() }
+    let input = e.input_position();
+    Run { tokens, origins, diagnostics: e.take_diagnostics(), labels: e.take_labels(), steps: e.steps(), input }
 }
 
 fn assert_same(inc: &IncrementalExpander, limits: Limits, ctx: &dyn Fn() -> String) {
@@ -68,6 +70,7 @@ fn assert_same(inc: &IncrementalExpander, limits: Limits, ctx: &dyn Fn() -> Stri
     assert!(inc.origins() == &f.origins[..], "origins differ -- {}", ctx());
     assert_eq!(inc.diagnostics(), &f.diagnostics[..], "diagnostics differ -- {}", ctx());
     assert_eq!(inc.labels(), &f.labels[..], "labels differ -- {}", ctx());
+    assert_eq!(inc.input_position(), f.input, "input positions differ -- {}", ctx());
 }
 
 fn lines(n: usize) -> String {
@@ -320,3 +323,110 @@ fn incremental_matches_full_on_fuzz_seeds_with_small_limits() {
     assert!(stops > checked / 10, "too few edits reached a stop ({stops}/{checked})");
     assert!(converged > 0);
 }
+
+/// Limits that change with every edit, as the compiler's do (they grow with
+/// the document): a reused checkpoint must be one the run under the new
+/// limits reaches without stopping, and a reused suffix must end as it would
+/// under them.
+#[test]
+fn edits_with_new_limits_cross_every_stop() {
+    let doc = format!("\\def\\a{{}}\\def\\w#1{{y\\w{{#1#1}}}}\n{}", lines(40));
+    let natural = full(&doc, Limits::default());
+    let base = Limits { max_expansion_steps: natural.steps, max_output_tokens: natural.tokens.len() as u64, ..Limits::default() };
+    let mut inc = IncrementalExpander::with_options(&doc, base, 16);
+    let at = doc.find("line 1 ").unwrap();
+    let edit = Edit { start: at, end: at, replacement: String::new() };
+    // Same source, limits below and above both totals, back and forth.
+    for (steps, out) in [(-3i64, 0i64), (5, 0), (0, -2), (0, 7), (-1, -1), (0, 0), (1, 1)] {
+        let limits = Limits {
+            max_expansion_steps: (base.max_expansion_steps as i64 + steps) as u64,
+            max_output_tokens: (base.max_output_tokens as i64 + out) as u64,
+            ..base
+        };
+        inc.edit_with_limits(&edit, limits);
+        assert_same(&inc, limits, &|| format!("steps {steps:+} output {out:+}"));
+    }
+    // A main-memory stop late in the document, then a larger memory limit.
+    let at = inc.source().find("line 30 ").unwrap();
+    inc.edit_with_limits(&Edit { start: at, end: at, replacement: "\\w x".into() }, Limits { max_output_tokens: 4096, ..base });
+    assert_same(&inc, Limits { max_output_tokens: 4096, ..base }, &|| "memory stop".into());
+    assert!(inc.diagnostics().iter().any(|d| d.message.contains("main memory")));
+    // An edit before the stop that converges, each under another memory
+    // limit: the stop moves to another doubling.
+    for (i, out) in [8192, 2048, 4096, 1024, 5000].into_iter().enumerate() {
+        let limits = Limits { max_output_tokens: out, max_expansion_steps: 1_000_000, ..base };
+        let at = inc.source().find("line 2 ").unwrap();
+        let edit = if i % 2 == 0 { Edit { start: at, end: at, replacement: "q".into() } } else { Edit { start: at - 1, end: at, replacement: String::new() } };
+        inc.edit_with_limits(&edit, limits);
+        assert_same(&inc, limits, &|| format!("memory limit {out}, edit before the stop"));
+    }
+}
+
+/// A macro expansion of 300 tokens early on, with no output before the
+/// checkpoints after it: under a memory limit below 300 a full run stops
+/// there, so no later checkpoint can be restarted from.
+#[test]
+fn a_smaller_memory_limit_invalidates_checkpoints_after_a_large_expansion() {
+    let doc = format!("\\def\\a{{}}\\def\\m#1{{\\def\\n{{#1}}}}%\n\\m{{{}}}%\n{}", "x".repeat(300), "y\n".repeat(60));
+    let mut inc = IncrementalExpander::with_options(&doc, Limits::default(), 16);
+    assert!(inc.checkpoint_count() > 3, "{} checkpoints", inc.checkpoint_count());
+    let limits = Limits { max_output_tokens: 200, ..Limits::default() };
+    let at = doc.len() - 3;
+    inc.edit_with_limits(&Edit { start: at, end: at, replacement: "\\a".into() }, limits);
+    assert_same(&inc, limits, &|| "memory limit 200".into());
+    assert!(inc.diagnostics().iter().any(|d| d.message.contains("main memory")));
+}
+
+/// `incremental_matches_full_on_fuzz_seeds_with_small_limits`, with limits
+/// drawn again around the seed's totals before every edit.
+/// `FLASHTEX_INC_STOP_EDITS` and `FLASHTEX_INC_STOP_SEED` apply.
+#[test]
+fn incremental_matches_full_on_fuzz_seeds_when_limits_change() {
+    let seeds = seeds();
+    let edits = env_u64("FLASHTEX_INC_STOP_EDITS", 6) as usize;
+    let prng = env_u64("FLASHTEX_INC_STOP_SEED", 0x5EED_1A57) ^ 0x1D1D;
+    let (mut stops, mut converged, mut checked) = (0usize, 0usize, 0usize);
+    for (n, (name, text)) in seeds.iter().enumerate() {
+        let mut rng = Rng((prng ^ (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)) | 1);
+        let natural = full(text, Limits { max_expansion_steps: 60_000, max_output_tokens: 60_000, ..Limits::default() });
+        let steps = natural.steps.max(20);
+        let out = natural.tokens.len().max(20) as u64;
+        let mut draw = |rng: &mut Rng| Limits {
+            max_expansion_steps: match rng.below(4) {
+                0 => 60_000,
+                _ => steps * (80 + rng.below(40) as u64) / 100,
+            },
+            max_output_tokens: match rng.below(4) {
+                0 => 60_000,
+                1 => 64 << rng.below(8),
+                _ => out * (80 + rng.below(40) as u64) / 100,
+            },
+            ..Limits::default()
+        };
+        let mut limits = draw(&mut rng);
+        let interval = [8, 32, 128, 512][rng.below(4)];
+        let mut inc = IncrementalExpander::with_options(text, limits, interval);
+        assert_same(&inc, limits, &|| format!("{name}: initial run, {limits:?} interval {interval}"));
+        for i in 0..edits {
+            let edit = random_edit(&mut rng, inc.source());
+            if rng.below(3) != 0 {
+                limits = draw(&mut rng);
+            }
+            let stats = inc.edit_with_limits(&edit, limits);
+            converged += stats.converged_at.is_some() as usize;
+            checked += 1;
+            if inc.diagnostics().iter().any(|d| {
+                d.message.starts_with("expansion step limit exceeded")
+                    || d.message == "output token limit exceeded"
+                    || d.message.starts_with("TeX capacity exceeded")
+            }) {
+                stops += 1;
+            }
+            assert_same(&inc, limits, &|| format!("{name}: edit #{i} {edit:?}, {limits:?} interval {interval}"));
+        }
+    }
+    eprintln!("{} seeds, {checked} edits with changing limits: {stops} ended at a stop, {converged} converged", seeds.len());
+    assert!(stops > checked / 10, "too few edits reached a stop ({stops}/{checked})");
+    assert!(converged > 0);
+}
+
