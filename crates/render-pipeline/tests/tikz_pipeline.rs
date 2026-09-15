@@ -81,3 +81,29 @@ fn tikzpicture_becomes_paths_and_glyph_runs() {
     let json = flashtex_compiler::json::write(&out.v2.to_json("x"));
     assert!(json.contains("\"kind\":\"path_stroke\"") && json.contains("\"clips\""));
 }
+
+#[cfg(feature = "tikz-patterns")]
+#[test]
+fn tikz_pattern_is_emitted_in_the_v2_json_shape() {
+    let fonts = FontSet::with_default_dirs(&[]);
+    if !fonts.latin_modern_available() {
+        eprintln!("SKIP: Latin Modern fonts are not installed");
+        return;
+    }
+    let src = r"\begin{tikzpicture}
+\fill[pattern=grid,pattern color=red!20] (0,0) rectangle (1,1);
+\end{tikzpicture}";
+    let docs = [SourceDocument { path: "pattern.tex", text: src }];
+    let out = render(&docs, "pattern.tex", 1, "patterns", &fonts, &RenderOptions::default());
+    let path = out.v2.pages.iter().flat_map(|p| &p.items).find_map(|item| match item {
+        Item::Path(path) if matches!(path.op, PathPaintOp::Fill { .. }) => Some(path),
+        _ => None,
+    }).expect("pattern fill");
+    let pattern = path.pattern.as_ref().expect("feature-gated pattern");
+    assert_eq!(pattern.name, "grid");
+    assert_eq!(pattern.color, [1.0, 0.8, 0.8]);
+
+    let text = out.v2.write_json("patterns");
+    assert!(text.contains("\"pattern\":{\"color\":{\"b\":0.8,\"g\":0.8,\"r\":1},\"name\":\"grid\"}"), "{text}");
+    assert_eq!(text, flashtex_compiler::json::write(&out.v2.to_json("patterns")));
+}

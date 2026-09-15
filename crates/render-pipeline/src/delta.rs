@@ -88,6 +88,13 @@ impl Canon {
         self.f(p.b);
         self.f(p.a);
     }
+    #[cfg(feature = "tikz-patterns")]
+    fn pattern(&mut self, p: &display::PathPattern) {
+        self.s(&p.name);
+        for c in p.color {
+            self.f(c);
+        }
+    }
     fn commands(&mut self, cmds: &[PathCmd]) {
         self.u(cmds.len());
         for c in cmds {
@@ -231,6 +238,14 @@ pub fn page_digest(p: &Page, wire: Wire) -> [u8; 32] {
                     c.commands(&clip.commands);
                 }
                 c.paint(&p.paint);
+                #[cfg(feature = "tikz-patterns")]
+                match &p.pattern {
+                    Some(pattern) => {
+                        c.0.push(1);
+                        c.pattern(pattern);
+                    }
+                    None => c.0.push(0),
+                }
                 c.provenance(&p.provenance);
             }
         }
@@ -416,7 +431,13 @@ pub fn unchanged_after_relocation(base: &Page, new: &Page, relocs: &[Relocation]
             (Item::Image(x), Item::Image(y)) => {
                 x.x == y.x && x.top == y.top && x.width == y.width && x.height == y.height && x.transform == y.transform && x.resource == y.resource && provenance_matches(&x.provenance, &y.provenance, relocs, &mut width_delta)
             }
-            (Item::Path(x), Item::Path(y)) => x.op == y.op && x.commands == y.commands && x.clips == y.clips && x.paint == y.paint && provenance_matches(&x.provenance, &y.provenance, relocs, &mut width_delta),
+            (Item::Path(x), Item::Path(y)) => {
+                #[cfg(feature = "tikz-patterns")]
+                if x.pattern != y.pattern {
+                    return None;
+                }
+                x.op == y.op && x.commands == y.commands && x.clips == y.clips && x.paint == y.paint && provenance_matches(&x.provenance, &y.provenance, relocs, &mut width_delta)
+            }
             _ => false,
         };
         if !ok {

@@ -9108,11 +9108,24 @@ fn picture_items(
             ),
             _ => return None,
         };
+        #[cfg(feature = "tikz-patterns")]
+        let pattern = match item {
+            vg::Item::PathFill(f) => f.pattern.as_ref().map(|p| display::PathPattern {
+                name: p.name.clone(),
+                color: {
+                    let (r, g, b) = p.color.to_rgb();
+                    [r, g, b]
+                },
+            }),
+            _ => None,
+        };
         Some(display::Item::Path(display::PathItem {
             op,
             commands: conv(path),
             clips: clips.to_vec(),
             paint: paint(pnt),
+            #[cfg(feature = "tikz-patterns")]
+            pattern,
             provenance: Provenance::Source(source.clone()),
         }))
     };

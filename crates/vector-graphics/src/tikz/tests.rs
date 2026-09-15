@@ -138,6 +138,71 @@ fn unsupported_input_is_reported_not_dropped() {
 }
 
 #[test]
+fn all_pgf_patterns_and_pattern_color_attach_to_fills() {
+    let names = [
+        "north east lines",
+        "north west lines",
+        "horizontal lines",
+        "vertical lines",
+        "grid",
+        "crosshatch",
+        "dots",
+        "crosshatch dots",
+    ];
+    let mut body = String::new();
+    for (i, name) in names.iter().enumerate() {
+        body.push_str(&format!(r"\fill[pattern={name},pattern color=red!20] ({i},0) rectangle ({},1);", i + 1));
+    }
+    body.push_str(r"\path[pattern=dots,pattern color=blue] (9,0) rectangle (10,1);");
+    let p = render(&body);
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let f = fills(&p);
+    assert_eq!(f.len(), 9);
+    for (f, name) in f.iter().zip(names.iter()) {
+        let pattern = f.pattern.as_ref().expect("pattern");
+        assert_eq!(pattern.name, *name);
+        assert_eq!(pattern.color, Color::Rgb(1.0, 0.8, 0.8));
+    }
+    assert_eq!(f[8].pattern.as_ref().unwrap().name, "dots");
+    assert_eq!(f[8].pattern.as_ref().unwrap().color, Color::Rgb(0.0, 0.0, 1.0));
+}
+
+#[test]
+fn pattern_styles_and_scope_inheritance_are_preserved() {
+    let mut t = Tikz::new(10.0);
+    let d = t.read_preamble(r"\tikzset{gridfill/.style={pattern=grid,pattern color=blue}}");
+    assert!(d.is_empty(), "{d:?}");
+    let p = t.render_body(
+        "",
+        r"\fill[gridfill] (0,0) rectangle (1,1);
+            \begin{scope}[pattern=north west lines,pattern color=green]
+              \fill (1,0) rectangle (2,1);
+              \begin{scope}[pattern color=red]
+                \fill (2,0) rectangle (3,1);
+              \end{scope}
+            \end{scope}",
+        &ApproxMeasurer,
+    );
+    assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+    let f = fills(&p);
+    assert_eq!(f.len(), 3);
+    assert_eq!(f[0].pattern.as_ref().unwrap().name, "grid");
+    assert_eq!(f[0].pattern.as_ref().unwrap().color, Color::Rgb(0.0, 0.0, 1.0));
+    assert_eq!(f[1].pattern.as_ref().unwrap().name, "north west lines");
+    assert_eq!(f[1].pattern.as_ref().unwrap().color, Color::Rgb(0.0, 1.0, 0.0));
+    assert_eq!(f[2].pattern.as_ref().unwrap().name, "north west lines");
+    assert_eq!(f[2].pattern.as_ref().unwrap().color, Color::Rgb(1.0, 0.0, 0.0));
+}
+
+#[test]
+fn unknown_pattern_warns_and_keeps_the_plain_fill() {
+    let p = render(r"\fill[pattern=not-a-pgf-pattern] (0,0) rectangle (1,1);");
+    assert_eq!(fills(&p).len(), 1);
+    assert!(fills(&p)[0].pattern.is_none());
+    assert!(p.diagnostics.iter().any(|d| d.message.contains("unknown pattern")), "{:?}", p.diagnostics);
+}
+
+#[test]
 fn find_pictures_locates_bodies_and_options() {
     let doc = "a % \\begin{tikzpicture}\n\\begin{tikzpicture}[scale=2]\\draw (0,0)--(1,1);\\end{tikzpicture} b";
     let pics = find_pictures(doc);

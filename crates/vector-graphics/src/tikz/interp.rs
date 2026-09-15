@@ -10,7 +10,7 @@ use super::{Diagnostic, Picture, PictureText, Severity, TextMeasurer, TextStyle,
 use crate::clip::Clip;
 use crate::color::{Color, Paint};
 use crate::geom::{Point, Transform};
-use crate::item::{Group, Item, ItemId, PathFill, PathStroke};
+use crate::item::{Group, Item, ItemId, PathFill, PathStroke, Pattern};
 use crate::path::{Dash, FillRule, LineCap, LineJoin, Path, StrokeStyle};
 
 type V = Point;
@@ -53,6 +53,16 @@ const TO_CONTROL: f64 = 0.3915;
 /// Rounded-corner curves: control points at this fraction of the radius from
 /// the tangent points toward the corner (a quarter circle for 90°).
 const KAPPA: f64 = 0.5523;
+const PGF_PATTERNS: [&str; 8] = [
+    "north east lines",
+    "north west lines",
+    "horizontal lines",
+    "vertical lines",
+    "grid",
+    "crosshatch",
+    "dots",
+    "crosshatch dots",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Tip {
@@ -85,6 +95,8 @@ struct St {
     color: Color,
     draw_color: Option<Color>,
     fill_color: Option<Color>,
+    pattern: Option<String>,
+    pattern_color: Option<Color>,
     text_color: Option<Color>,
     do_draw: bool,
     do_fill: bool,
@@ -143,6 +155,8 @@ impl St {
             color: Color::BLACK,
             draw_color: None,
             fill_color: None,
+            pattern: None,
+            pattern_color: None,
             text_color: None,
             do_draw: false,
             do_fill: false,
@@ -212,6 +226,12 @@ impl St {
     fn fill_paint(&self) -> Paint {
         Paint::new(self.fill_color.unwrap_or(self.color), self.fill_opacity)
     }
+    fn fill_pattern(&self) -> Option<Pattern> {
+        self.pattern.as_ref().map(|name| Pattern {
+            name: name.clone(),
+            color: self.pattern_color.unwrap_or(self.fill_paint().color),
+        })
+    }
     fn stroke_style(&self) -> StrokeStyle {
         let dash = self.dash.as_ref().filter(|d| !d.is_empty()).map(|d| Dash {
             array: d
@@ -240,7 +260,7 @@ impl St {
 
 #[derive(Clone, Debug)]
 enum Raw {
-    Fill { path: Path, even_odd: bool, paint: Paint },
+    Fill { path: Path, even_odd: bool, paint: Paint, pattern: Option<Pattern> },
     Stroke { path: Path, style: StrokeStyle, paint: Paint },
     ClipBegin { path: Path, even_odd: bool },
     ClipEnd,
@@ -1148,6 +1168,19 @@ impl<'a> Interp<'a> {
                     st.text_color = None;
                 }
                 None => self.warn(format!("unknown colour `{val_s}`")),
+            },
+            "pattern" => {
+                let name = val_s.trim();
+                if PGF_PATTERNS.contains(&name) {
+                    st.pattern = Some(name.to_string());
+                    st.do_fill = true;
+                } else {
+                    self.warn(format!("unknown pattern `{name}`; ignored"));
+                }
+            }
+            "pattern color" => match self.palette.parse(val_s) {
+                Some(c) => st.pattern_color = Some(c),
+                None => self.warn(format!("unknown colour `{val_s}` for pattern color")),
             },
             "draw" => self.mode(st, val, true),
             "fill" => self.mode(st, val, false),
@@ -2459,6 +2492,7 @@ impl<'a> Interp<'a> {
                     path: path.clone(),
                     even_odd: ns.even_odd,
                     paint: ns.fill_paint(),
+                    pattern: ns.fill_pattern(),
                 });
             }
             if ns.do_draw {
@@ -2608,6 +2642,7 @@ impl<'a> Interp<'a> {
                     path: to_path(&segs),
                     even_odd: ps.even_odd,
                     paint: ps.fill_paint(),
+                    pattern: ps.fill_pattern(),
                 });
             }
             if ps.do_draw {
@@ -2665,6 +2700,7 @@ impl<'a> Interp<'a> {
                     path: p,
                     even_odd: false,
                     paint: ps.stroke_paint(),
+                    pattern: None,
                 }
             }
             Tip::Latex => {
@@ -2677,6 +2713,7 @@ impl<'a> Interp<'a> {
                     path: p,
                     even_odd: false,
                     paint: ps.stroke_paint(),
+                    pattern: None,
                 }
             }
         };
@@ -2696,11 +2733,12 @@ impl<'a> Interp<'a> {
         for raw in raws {
             id += 1;
             match raw {
-                Raw::Fill { path, even_odd, paint } => stack.last_mut().expect("stack").0.push(Item::PathFill(PathFill {
+                Raw::Fill { path, even_odd, paint, pattern } => stack.last_mut().expect("stack").0.push(Item::PathFill(PathFill {
                     id: ItemId(id),
                     path: path.transformed(&f),
                     rule: if even_odd { FillRule::EvenOdd } else { FillRule::NonZero },
                     paint,
+                    pattern,
                     source: None,
                 })),
                 Raw::Stroke { path, mut style, paint } => {

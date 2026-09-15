@@ -6,7 +6,7 @@
 //! y down, points).
 
 use crate::clip::Clip;
-use crate::color::Paint;
+use crate::color::{Color, Paint};
 use crate::geom::{Rect, Transform};
 use crate::path::{FillRule, Path, StrokeStyle};
 
@@ -42,6 +42,13 @@ pub struct Rule {
     pub source: Option<SourceRange>,
 }
 
+/// A TikZ/PGF tiling pattern and the colour used to paint its cell.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pattern {
+    pub name: String,
+    pub color: Color,
+}
+
 /// A filled path.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PathFill {
@@ -49,6 +56,7 @@ pub struct PathFill {
     pub path: Path,
     pub rule: FillRule,
     pub paint: Paint,
+    pub pattern: Option<Pattern>,
     pub source: Option<SourceRange>,
 }
 
@@ -158,6 +166,7 @@ impl Item {
             path,
             rule: FillRule::NonZero,
             paint,
+            pattern: None,
             source: None,
         })
     }

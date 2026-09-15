@@ -17,7 +17,8 @@
 //!  "items":[
 //!   {"kind":"rule","id":N,"rect":{"x":..,"y":..,"width":..,"height":..},
 //!    "paint":{"color":{"space":"gray","g":0},"alpha":1},"source":SRC|null},
-//!   {"kind":"path_fill","id":N,"path":PATH,"fill_rule":"nonzero"|"evenodd","paint":..,"source":..},
+//!   {"kind":"path_fill","id":N,"path":PATH,"fill_rule":"nonzero"|"evenodd","paint":..,
+//!    "pattern":{"name":NAME,"color":COLOR},"source":..},
 //!   {"kind":"path_stroke","id":N,"path":PATH,
 //!    "stroke":{"width":..,"cap":"butt"|"round"|"square","join":"miter"|"round"|"bevel",
 //!              "miter_limit":..,"dash":null|{"array":[..],"phase":..}},"paint":..,"source":..},
@@ -53,7 +54,7 @@ use crate::clip::{Clip, ClipStack};
 use crate::color::{Color, Paint};
 use crate::display_list::{DeviceItem, DeviceList, DeviceShape, DisplayList, MAX_GROUP_DEPTH};
 use crate::geom::{Point, Rect, Size, Transform};
-use crate::item::{Group, Image, Item, ItemId, PathFill, PathStroke, Rule, SourceRange};
+use crate::item::{Group, Image, Item, ItemId, PathFill, PathStroke, Pattern, Rule, SourceRange};
 use crate::path::{Dash, FillRule, LineCap, LineJoin, Path, PathCommand, StrokeStyle};
 use std::fmt::Write as _;
 
@@ -200,6 +201,10 @@ fn item(it: &Item) -> String {
             field(&mut w, "fill_rule", &string(fill_rule(p.rule)));
             w.push(',');
             field(&mut w, "paint", &paint(p.paint));
+            if let Some(pattern) = &p.pattern {
+                w.push(',');
+                field(&mut w, "pattern", &pattern_json(pattern));
+            }
             w.push(',');
             field(&mut w, "source", &source(p.source.as_ref()));
         }
@@ -312,6 +317,14 @@ fn paint(p: Paint) -> String {
         "{{\"color\":{},\"alpha\":{}}}",
         color(p.color),
         number(p.alpha)
+    )
+}
+
+fn pattern_json(p: &Pattern) -> String {
+    format!(
+        "{{\"name\":{},\"color\":{}}}",
+        string(&p.name),
+        color(p.color)
     )
 }
 
@@ -905,6 +918,7 @@ fn read_item(v: &Value, group_depth: usize) -> Result<Item, JsonError> {
             path: read_path(v.require("path")?)?,
             rule: read_fill_rule(v.require("fill_rule")?)?,
             paint: read_paint(v.require("paint")?)?,
+            pattern: v.get("pattern").map(read_pattern).transpose()?,
             source,
         }),
         "path_stroke" => Item::PathStroke(PathStroke {
@@ -1006,6 +1020,13 @@ fn read_paint(v: &Value) -> Result<Paint, JsonError> {
     Ok(Paint {
         color: read_color(v.require("color")?)?,
         alpha: v.require("alpha")?.as_f64()?,
+    })
+}
+
+fn read_pattern(v: &Value) -> Result<Pattern, JsonError> {
+    Ok(Pattern {
+        name: v.require("name")?.as_str()?.to_string(),
+        color: read_color(v.require("color")?)?,
     })
 }
 

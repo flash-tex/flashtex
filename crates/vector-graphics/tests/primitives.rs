@@ -319,6 +319,7 @@ fn even_odd_fill_hit_has_a_hole() {
         path: p,
         rule: FillRule::EvenOdd,
         paint: Paint::BLACK,
+        pattern: None,
         source: None,
     }));
     assert!(list.hit(Point::new(50.0, 50.0)).is_empty());
@@ -584,6 +585,7 @@ fn pdf_path_operators_and_stroke_state() {
         path: p,
         rule: FillRule::EvenOdd,
         paint: Paint::BLACK,
+        pattern: None,
         source: None,
     }));
     let frag = pdf::content_stream(&list).unwrap();

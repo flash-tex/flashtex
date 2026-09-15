@@ -279,6 +279,13 @@ pub struct ClipPath {
     pub even_odd: bool,
 }
 
+#[cfg(feature = "tikz-patterns")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PathPattern {
+    pub name: String,
+    pub color: [f64; 3],
+}
+
 /// A filled or stroked vector path (TikZ pictures).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathItem {
@@ -286,6 +293,8 @@ pub struct PathItem {
     pub commands: Vec<PathCmd>,
     pub clips: Vec<ClipPath>,
     pub paint: Paint,
+    #[cfg(feature = "tikz-patterns")]
+    pub pattern: Option<PathPattern>,
     pub provenance: Provenance,
 }
 
@@ -566,7 +575,17 @@ impl DisplayList {
                 n += match it {
                     Item::GlyphRun(r) => 220 + 2 * r.text.len() + 120 * r.glyphs.len() + 280 * r.clusters.len(),
                     Item::Rule(_) => 240,
-                    Item::Path(p) => 240 + 64 * (p.commands.len() + p.clips.iter().map(|c| c.commands.len()).sum::<usize>()),
+                    Item::Path(p) => {
+                        #[cfg(feature = "tikz-patterns")]
+                        let pattern_bytes = if matches!(&p.op, PathPaintOp::Fill { .. }) {
+                            p.pattern.as_ref().map_or(0, |pattern| 64 + 2 * pattern.name.len())
+                        } else {
+                            0
+                        };
+                        #[cfg(not(feature = "tikz-patterns"))]
+                        let pattern_bytes = 0;
+                        240 + 64 * (p.commands.len() + p.clips.iter().map(|c| c.commands.len()).sum::<usize>()) + pattern_bytes
+                    },
                     Item::Image(i) => 520 + 2 * i.resource.path.len(),
                 };
             }
@@ -920,6 +939,19 @@ fn write_paint(o: &mut String, p: &Paint, device: bool) {
 }
 
 /// [`path_json`] written directly.
+#[cfg(feature = "tikz-patterns")]
+fn write_pattern(o: &mut String, p: &PathPattern) {
+    o.push_str("{\"color\":{\"b\":");
+    num(o, p.color[2]);
+    o.push_str(",\"g\":");
+    num(o, p.color[1]);
+    o.push_str(",\"r\":");
+    num(o, p.color[0]);
+    o.push_str("},\"name\":");
+    json::write_string_into(&p.name, o);
+    o.push('}');
+}
+
 fn write_path(o: &mut String, cmds: &[PathCmd]) {
     o.push('[');
     for (i, c) in cmds.iter().enumerate() {
@@ -1091,7 +1123,7 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
             }
             Item::Path(p) => {
                 // BTreeMap key order: clips, fill_rule, kind, paint, path,
-                // sources, stroke, synthetic_reason.
+                // pattern, sources, stroke, synthetic_reason.
                 o.push('{');
                 if !p.clips.is_empty() {
                     o.push_str("\"clips\":[");
@@ -1121,6 +1153,13 @@ pub fn write_page(o: &mut String, p: &Page, wire: Wire) {
                 write_paint(o, &p.paint, wire.device_color);
                 o.push_str(",\"path\":");
                 write_path(o, &p.commands);
+                #[cfg(feature = "tikz-patterns")]
+                if matches!(&p.op, PathPaintOp::Fill { .. }) {
+                    if let Some(pattern) = &p.pattern {
+                        o.push_str(",\"pattern\":");
+                        write_pattern(o, pattern);
+                    }
+                }
                 let synthetic = matches!(p.provenance, Provenance::Synthetic(_));
                 if !synthetic {
                     write_provenance(o, &p.provenance);
@@ -1203,6 +1242,18 @@ fn paint_json(p: &Paint, device: bool) -> Value {
 }
 
 /// `[["m",x,y],["l",x,y],["c",x1,y1,x2,y2,x,y],["z"]]` in ticks.
+#[cfg(feature = "tikz-patterns")]
+fn pattern_json(p: &PathPattern) -> Value {
+    let mut color = Value::obj();
+    color.set("r", json::num(p.color[0]));
+    color.set("g", json::num(p.color[1]));
+    color.set("b", json::num(p.color[2]));
+    let mut o = Value::obj();
+    o.set("name", json::str_(p.name.clone()));
+    o.set("color", color);
+    o
+}
+
 fn path_json(cmds: &[PathCmd]) -> Value {
     Value::Arr(
         cmds.iter()
@@ -1352,6 +1403,12 @@ fn page_json(p: &Page, wire: Wire) -> Value {
                             }
                         }
                         o.set("path", path_json(&p.commands));
+                        #[cfg(feature = "tikz-patterns")]
+                        if matches!(&p.op, PathPaintOp::Fill { .. }) {
+                            if let Some(pattern) = &p.pattern {
+                                o.set("pattern", pattern_json(pattern));
+                            }
+                        }
                         if !p.clips.is_empty() {
                             o.set(
                                 "clips",
@@ -1667,6 +1724,8 @@ mod tests {
                 commands: cmds(),
                 clips,
                 paint: Paint { r: 0.5, g: 0.0, b: 1.0, a: 0.25, device: None },
+                #[cfg(feature = "tikz-patterns")]
+                pattern: None,
                 provenance,
             })
         };
