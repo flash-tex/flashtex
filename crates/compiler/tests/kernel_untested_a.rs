@@ -91,7 +91,7 @@ fn page_texts(source: &str) -> Vec<String> {
 /// Expected: `["HOOKABody"]`, mirroring `\AtEndDocument`, whose test below
 /// asserts the hook is appended (`["BodyTAILZ"]`).
 /// Actual: `["Body"]` — the hook text is lost with no diagnostic.
-#[ignore = "bug: AtBeginDocument hook text dropped as preamble; see GH issue (not yet filed): `\\AtBeginDocument{HOOKA}\\begin{document}Body\\end{document}` should typeset [\"HOOKABody\"] but yields [\"Body\"]"]
+#[ignore = "fails: expected [\"HOOKABody\"], got [\"Body\"] at 36fe7ec3"]
 #[test]
 fn at_begin_document_hook_content_is_typeset_before_the_body() {
     let source = "\\AtBeginDocument{HOOKA}\\begin{document}Body\\end{document}";
