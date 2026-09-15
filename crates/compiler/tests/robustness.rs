@@ -321,22 +321,31 @@ fn lists_nested_past_255_levels_are_too_deeply_nested_not_an_overflow() {
     // The per-kind and total list depths were `count() as u8 + 1`: 255
     // enclosing lists overflowed. LaTeX stops at `\@toodeep` long before.
     for env in ["itemize", "enumerate", "quote"] {
-        let text = format!("\\begin{{document}}{}\\item x\n\\end{{document}}\n", format!("\\begin{{{env}}}").repeat(300));
+        let text = format!(
+            "\\begin{{document}}{}\\item x\n\\end{{document}}\n",
+            format!("\\begin{{{env}}}").repeat(300)
+        );
         let messages = compile_messages(&text);
         assert!(
-            messages.iter().any(|m| m == "LaTeX Error: Too deeply nested."),
+            messages
+                .iter()
+                .any(|m| m == "LaTeX Error: Too deeply nested."),
             "{env}: {:?}",
             &messages[..messages.len().min(5)]
         );
     }
     // Within LaTeX's limits (four itemize levels) there is no such error.
     let ok = "\\begin{document}\\begin{itemize}\\item a\\begin{itemize}\\item b\\begin{itemize}\\item c\\begin{itemize}\\item d\\end{itemize}\\end{itemize}\\end{itemize}\\end{itemize}\\end{document}\n";
-    assert!(!compile_messages(ok).iter().any(|m| m.contains("Too deeply nested")));
+    assert!(!compile_messages(ok)
+        .iter()
+        .any(|m| m.contains("Too deeply nested")));
 }
 
 fn compile_project_messages(documents: &[(&str, &str)]) -> Vec<String> {
-    let documents: Vec<parser::SourceDocument<'_>> =
-        documents.iter().map(|&(path, text)| parser::SourceDocument { path, text }).collect();
+    let documents: Vec<parser::SourceDocument<'_>> = documents
+        .iter()
+        .map(|&(path, text)| parser::SourceDocument { path, text })
+        .collect();
     let out = flashtex_compiler::incremental::compile_full_project(
         &documents,
         documents[0].path,
@@ -344,7 +353,11 @@ fn compile_project_messages(documents: &[(&str, &str)]) -> Vec<String> {
     );
     for page in &out.pages {
         for item in &page.items {
-            assert!(item.span.start <= item.span.end, "inverted span {:?}", item.span);
+            assert!(
+                item.span.start <= item.span.end,
+                "inverted span {:?}",
+                item.span
+            );
         }
     }
     out.diagnostics.into_iter().map(|d| d.message).collect()
@@ -363,8 +376,14 @@ fn an_unclosed_math_span_never_inverts() {
 fn an_alignment_that_inputs_another_document_keeps_its_spans_in_one_document() {
     // A row's span merged a token of `sub.tex` with one of `main.tex`
     // ("cannot merge spans from different documents").
-    compile_project_messages(&[("main.tex", "\\begin{align}a\\include{sub}"), ("sub.tex", "x\\input{sub}\n")]);
-    compile_project_messages(&[("main.tex", "\\begin{align}a\\input{sub}"), ("sub.tex", "b\\end{align}\n")]);
+    compile_project_messages(&[
+        ("main.tex", "\\begin{align}a\\include{sub}"),
+        ("sub.tex", "x\\input{sub}\n"),
+    ]);
+    compile_project_messages(&[
+        ("main.tex", "\\begin{align}a\\input{sub}"),
+        ("sub.tex", "b\\end{align}\n"),
+    ]);
 }
 
 #[test]
@@ -392,12 +411,27 @@ fn nested_sub_parses_hit_tex_grouping_capacity_instead_of_the_stack() {
         );
         let started = std::time::Instant::now();
         let messages = compile_messages(&text);
-        assert_eq!(messages.iter().filter(|m| **m == capacity).count(), 1, "{open}: {:?}", &messages[..messages.len().min(4)]);
-        assert!(started.elapsed().as_secs() < 30, "{open}: {:?}", started.elapsed());
+        assert_eq!(
+            messages.iter().filter(|m| **m == capacity).count(),
+            1,
+            "{open}: {:?}",
+            &messages[..messages.len().min(4)]
+        );
+        assert!(
+            started.elapsed().as_secs() < 30,
+            "{open}: {:?}",
+            started.elapsed()
+        );
     }
     // Well inside the limit nothing is reported.
-    let text = format!("\\begin{{document}}{}x{}\\end{{document}}\n", "\\begin{tabular}{c}".repeat(20), "\\end{tabular}".repeat(20));
-    assert!(!compile_messages(&text).iter().any(|m| m.contains("capacity")));
+    let text = format!(
+        "\\begin{{document}}{}x{}\\end{{document}}\n",
+        "\\begin{tabular}{c}".repeat(20),
+        "\\end{tabular}".repeat(20)
+    );
+    assert!(!compile_messages(&text)
+        .iter()
+        .any(|m| m.contains("capacity")));
 }
 
 #[test]
@@ -409,7 +443,9 @@ fn a_runaway_loop_of_unknown_commands_is_diagnosed_in_bounded_time() {
     let started = std::time::Instant::now();
     let messages = compile_messages("\\def\\a{\\n\\a}\\a");
     let elapsed = started.elapsed();
-    assert!(messages.iter().any(|m| m.contains("expansion step limit exceeded")));
+    assert!(messages
+        .iter()
+        .any(|m| m.contains("expansion step limit exceeded")));
     assert!(elapsed.as_secs() < 60, "took {elapsed:?}");
 }
 
@@ -433,11 +469,23 @@ fn deeply_nested_left_right_pairs_hit_a_capacity_limit_in_bounded_time() {
     // Sizing each pair lays out all it encloses: 10k nested pairs took 15 s
     // in release (quadratic).
     let n = 10_000;
-    let text = format!("\\begin{{document}}$${}x{}$$\\end{{document}}\n", "\\left(".repeat(n), "\\right)".repeat(n));
+    let text = format!(
+        "\\begin{{document}}$${}x{}$$\\end{{document}}\n",
+        "\\left(".repeat(n),
+        "\\right)".repeat(n)
+    );
     let started = std::time::Instant::now();
     let messages = compile_messages(&text);
     let elapsed = started.elapsed();
-    let capacity = format!("TeX capacity exceeded, sorry [grouping levels={}].", math::MAX_LEFT_RIGHT_DEPTH);
-    assert_eq!(messages.iter().filter(|m| **m == capacity).count(), 1, "{:?}", &messages[..messages.len().min(4)]);
+    let capacity = format!(
+        "TeX capacity exceeded, sorry [grouping levels={}].",
+        math::MAX_LEFT_RIGHT_DEPTH
+    );
+    assert_eq!(
+        messages.iter().filter(|m| **m == capacity).count(),
+        1,
+        "{:?}",
+        &messages[..messages.len().min(4)]
+    );
     assert!(elapsed.as_secs() < 20, "took {elapsed:?}");
 }

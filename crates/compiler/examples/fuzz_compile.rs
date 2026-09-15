@@ -38,7 +38,9 @@ fn parse_seed(args: &[String]) -> u64 {
 }
 
 fn default_out() -> PathBuf {
-    let base = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let base = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
     base.join("fuzz-findings")
 }
 
@@ -52,7 +54,13 @@ fn load_case_file(path: &Path) -> Case {
 }
 
 /// Runs `--check` on `text` in a child process and returns its signature.
-fn check_in_child(exe: &Path, text: &str, sub: Option<&str>, scratch: &Path, timeout_ms: u64) -> String {
+fn check_in_child(
+    exe: &Path,
+    text: &str,
+    sub: Option<&str>,
+    scratch: &Path,
+    timeout_ms: u64,
+) -> String {
     let file = scratch.join("probe.tex");
     std::fs::write(&file, text).unwrap();
     let sub_file = scratch.join("probe.sub.tex");
@@ -63,7 +71,12 @@ fn check_in_child(exe: &Path, text: &str, sub: Option<&str>, scratch: &Path, tim
         }
     }
     let out = Command::new(exe)
-        .args(["--check", file.to_str().unwrap(), "--timeout-ms", &timeout_ms.to_string()])
+        .args([
+            "--check",
+            file.to_str().unwrap(),
+            "--timeout-ms",
+            &timeout_ms.to_string(),
+        ])
         .output()
         .expect("spawn check");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -81,7 +94,9 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let rng_seed = parse_seed(&args);
     let timeout = Duration::from_millis(arg(&args, "--timeout-ms").unwrap_or(5000));
-    let out_dir: PathBuf = arg::<String>(&args, "--out").map(PathBuf::from).unwrap_or_else(default_out);
+    let out_dir: PathBuf = arg::<String>(&args, "--out")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_out);
 
     if let Some(file) = arg::<String>(&args, "--diagnostics") {
         // Compile in-process (no isolation) and print the diagnostics.
@@ -97,8 +112,17 @@ fn main() {
             ENTRY,
             flashtex_compiler::layout::LayoutConstraints::default(),
         );
-        println!("{} ms, {} pages, {} diagnostics", started.elapsed().as_millis(), out.pages.len(), out.diagnostics.len());
-        for d in out.diagnostics.iter().take(arg(&args, "--limit").unwrap_or(12)) {
+        println!(
+            "{} ms, {} pages, {} diagnostics",
+            started.elapsed().as_millis(),
+            out.pages.len(),
+            out.diagnostics.len()
+        );
+        for d in out
+            .diagnostics
+            .iter()
+            .take(arg(&args, "--limit").unwrap_or(12))
+        {
             println!("  {}", d.message);
         }
         return;
@@ -133,7 +157,12 @@ fn main() {
         });
         let dest = Path::new(&file).with_extension("min.tex");
         std::fs::write(&dest, &min).unwrap();
-        println!("{tries} probes; {} -> {} bytes: {}", case.main().len(), min.len(), dest.display());
+        println!(
+            "{tries} probes; {} -> {} bytes: {}",
+            case.main().len(),
+            min.len(),
+            dest.display()
+        );
         if min.len() < 400 {
             println!("{min:?}");
         }
@@ -141,7 +170,11 @@ fn main() {
     }
 
     let seeds = load_seeds(&repo_root());
-    assert!(!seeds.is_empty(), "no .tex seeds found under {}", repo_root().display());
+    assert!(
+        !seeds.is_empty(),
+        "no .tex seeds found under {}",
+        repo_root().display()
+    );
 
     if let Some(index) = arg::<u64>(&args, "--replay") {
         let case = generate(&seeds, rng_seed, index);
@@ -151,7 +184,12 @@ fn main() {
         if let Some((_, sub)) = case.documents.get(1) {
             std::fs::write(path.with_extension("sub.tex"), sub).unwrap();
         }
-        println!("case {index}: seed {} mutations {:?} -> {}", case.seed_name, case.mutations, path.display());
+        println!(
+            "case {index}: seed {} mutations {:?} -> {}",
+            case.seed_name,
+            case.mutations,
+            path.display()
+        );
         return;
     }
 
@@ -182,7 +220,15 @@ fn main() {
     let seed = config.rng_seed.to_string();
     let command = |start: u64, end: u64| {
         let mut c = Command::new(&exe);
-        c.args(["--worker", &start.to_string(), &end.to_string(), "--seed", &seed, "--timeout-ms", &ms]);
+        c.args([
+            "--worker",
+            &start.to_string(),
+            &end.to_string(),
+            "--seed",
+            &seed,
+            "--timeout-ms",
+            &ms,
+        ]);
         c
     };
     let report = supervise(&seeds, &config, &command);

@@ -17,7 +17,10 @@ use std::time::Duration;
 use fuzz_support::*;
 
 fn env_u64(name: &str, default: u64) -> u64 {
-    std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 #[test]
@@ -48,13 +51,26 @@ fn fuzz_compile_mutations() {
     let exe = std::env::current_exe().unwrap();
     let command = |start: u64, end: u64| {
         let mut c = Command::new(&exe);
-        c.args(["fuzz_compile_mutations", "--exact", "--ignored", "--nocapture", "--test-threads=1"])
-            .env("FLASHTEX_FUZZ_WORKER", format!("{start}..{end}"))
-            .env("FLASHTEX_FUZZ_SEED", config.rng_seed.to_string())
-            .env("FLASHTEX_FUZZ_TIMEOUT_MS", config.timeout.as_millis().to_string());
+        c.args([
+            "fuzz_compile_mutations",
+            "--exact",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("FLASHTEX_FUZZ_WORKER", format!("{start}..{end}"))
+        .env("FLASHTEX_FUZZ_SEED", config.rng_seed.to_string())
+        .env(
+            "FLASHTEX_FUZZ_TIMEOUT_MS",
+            config.timeout.as_millis().to_string(),
+        );
         c
     };
     let report = supervise(&seeds, &config, &command);
     print_report(&report);
-    assert!(report.findings.is_empty(), "the fuzzer found {} unique failures", report.findings.len());
+    assert!(
+        report.findings.is_empty(),
+        "the fuzzer found {} unique failures",
+        report.findings.len()
+    );
 }

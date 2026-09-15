@@ -94,14 +94,20 @@ pub fn load_seeds(root: &Path) -> Vec<Seed> {
         .into_iter()
         .filter_map(|path| {
             let text = std::fs::read_to_string(&path).ok()?;
-            let name = path.strip_prefix(root).unwrap_or(&path).display().to_string();
+            let name = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
             Some(Seed { name, text })
         })
         .collect()
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
@@ -127,7 +133,11 @@ pub struct Case {
 
 impl Case {
     pub fn from_text(text: String) -> Case {
-        Case { documents: vec![(ENTRY.into(), text)], seed_name: "file".into(), mutations: vec![] }
+        Case {
+            documents: vec![(ENTRY.into(), text)],
+            seed_name: "file".into(),
+            mutations: vec![],
+        }
     }
     pub fn main(&self) -> &str {
         &self.documents[0].1
@@ -182,9 +192,23 @@ fn structural_tokens(text: &str) -> Vec<(usize, usize)> {
 }
 
 const CONDITIONALS: &[&str] = &[
-    "\\iftrue ", "\\iffalse ", "\\fi ", "\\else ", "\\ifx\\a\\b ", "\\ifnum1<2 ", "\\ifdim1pt<2pt ",
-    "\\ifcase3 ", "\\or ", "\\ifcat a b", "\\if aa", "\\unless\\ifx ", "\\ifdefined ", "\\newif\\ifq \\ifq ",
-    "\\ifmmode ", "\\ifhmode ", "\\csname iftrue\\endcsname ",
+    "\\iftrue ",
+    "\\iffalse ",
+    "\\fi ",
+    "\\else ",
+    "\\ifx\\a\\b ",
+    "\\ifnum1<2 ",
+    "\\ifdim1pt<2pt ",
+    "\\ifcase3 ",
+    "\\or ",
+    "\\ifcat a b",
+    "\\if aa",
+    "\\unless\\ifx ",
+    "\\ifdefined ",
+    "\\newif\\ifq \\ifq ",
+    "\\ifmmode ",
+    "\\ifhmode ",
+    "\\csname iftrue\\endcsname ",
 ];
 
 const RECURSIONS: &[&str] = &[
@@ -213,16 +237,41 @@ const RECURSIONS: &[&str] = &[
 ];
 
 const CHARS: &[&str] = &[
-    "\\char\"D800 ", "\\char\"DFFF ", "\\char55296 ", "\\char\"110000 ", "\\char-1 ", "\\char\"FFFFFFFF ",
-    "\\char99999999999999999999 ", "\\symbol{\"D800}", "\\symbol{-5}", "^^^^d800", "^^^^^^10ffff",
-    "^^^^^^110000", "\\char`\\", "\\char'777777777 ", "\\char\"", "\\Uchar\"D800 ", "\\mathchar\"FFFFFF ",
-    "\\delimiter\"FFFFFFFFF ", "\\catcode`\\{=12 ", "\\catcode 300=1 ", "\\lccode\"D800=1 ",
-    "$\\char\"D800$", "\\textsuperscript{\\char\"DC00}",
+    "\\char\"D800 ",
+    "\\char\"DFFF ",
+    "\\char55296 ",
+    "\\char\"110000 ",
+    "\\char-1 ",
+    "\\char\"FFFFFFFF ",
+    "\\char99999999999999999999 ",
+    "\\symbol{\"D800}",
+    "\\symbol{-5}",
+    "^^^^d800",
+    "^^^^^^10ffff",
+    "^^^^^^110000",
+    "\\char`\\",
+    "\\char'777777777 ",
+    "\\char\"",
+    "\\Uchar\"D800 ",
+    "\\mathchar\"FFFFFF ",
+    "\\delimiter\"FFFFFFFFF ",
+    "\\catcode`\\{=12 ",
+    "\\catcode 300=1 ",
+    "\\lccode\"D800=1 ",
+    "$\\char\"D800$",
+    "\\textsuperscript{\\char\"DC00}",
 ];
 
 const INPUTS: &[&str] = &[
-    "\\input{main}", "\\input{main.tex}", "\\input main ", "\\include{main}", "\\input{sub}",
-    "\\subfile{main}", "\\include{sub}", "\\InputIfFileExists{main}{}{}", "\\input{./main}",
+    "\\input{main}",
+    "\\input{main.tex}",
+    "\\input main ",
+    "\\include{main}",
+    "\\input{sub}",
+    "\\subfile{main}",
+    "\\include{sub}",
+    "\\InputIfFileExists{main}{}{}",
+    "\\input{./main}",
 ];
 
 const NESTERS: &[(&str, &str)] = &[
@@ -298,7 +347,11 @@ pub fn generate(seeds: &[Seed], rng_seed: u64, index: u64) -> Case {
             4 => {
                 mutations.push("deep-nesting");
                 let (open, close) = *rng.pick(NESTERS);
-                let depth = if rng.chance(50) { 10_000 } else { 50 + rng.below(3000) };
+                let depth = if rng.chance(50) {
+                    10_000
+                } else {
+                    50 + rng.below(3000)
+                };
                 let balanced = rng.chance(60);
                 let mut piece = open.repeat(depth);
                 piece.push('x');
@@ -310,7 +363,11 @@ pub fn generate(seeds: &[Seed], rng_seed: u64, index: u64) -> Case {
             }
             5 => {
                 mutations.push("long-control-sequence");
-                let len = if rng.chance(50) { 100_000 } else { 1 + rng.below(5000) };
+                let len = if rng.chance(50) {
+                    100_000
+                } else {
+                    1 + rng.below(5000)
+                };
                 let letter = (b'a' + rng.below(26) as u8) as char;
                 let mut piece = String::from("\\");
                 piece.extend(std::iter::repeat(letter).take(len));
@@ -353,7 +410,11 @@ pub fn generate(seeds: &[Seed], rng_seed: u64, index: u64) -> Case {
                 let at = random_offset(&mut rng, &text);
                 text.insert_str(at, piece);
                 if documents_extra.is_empty() {
-                    let sub = if rng.chance(50) { "\\input{main}\n" } else { "x\\input{sub}\n" };
+                    let sub = if rng.chance(50) {
+                        "\\input{main}\n"
+                    } else {
+                        "x\\input{sub}\n"
+                    };
                     documents_extra.push(("sub.tex".into(), sub.into()));
                 }
             }
@@ -376,7 +437,11 @@ pub fn generate(seeds: &[Seed], rng_seed: u64, index: u64) -> Case {
     }
     let mut documents = vec![(ENTRY.to_string(), text)];
     documents.extend(documents_extra);
-    Case { documents, seed_name: seed.name.clone(), mutations }
+    Case {
+        documents,
+        seed_name: seed.name.clone(),
+        mutations,
+    }
 }
 
 // ---------------------------------------------------------------- running
@@ -398,7 +463,11 @@ impl Outcome {
         match self {
             Outcome::Ok => "ok".into(),
             Outcome::Panic(loc, msg) => {
-                let msg: String = msg.chars().filter(|c| !c.is_ascii_digit()).take(120).collect();
+                let msg: String = msg
+                    .chars()
+                    .filter(|c| !c.is_ascii_digit())
+                    .take(120)
+                    .collect();
                 format!("panic {loc} {msg}")
             }
             Outcome::Hang => "hang".into(),
@@ -413,7 +482,9 @@ static PANIC_SLOT: OnceLock<Mutex<Option<(String, String)>>> = OnceLock::new();
 pub fn install_quiet_panic_hook() {
     let slot = PANIC_SLOT.get_or_init(|| Mutex::new(None));
     panic::set_hook(Box::new(move |info| {
-        let loc = info.location().map_or("?".into(), |l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
+        let loc = info.location().map_or("?".into(), |l| {
+            format!("{}:{}:{}", l.file(), l.line(), l.column())
+        });
         let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
             s.to_string()
         } else if let Some(s) = info.payload().downcast_ref::<String>() {
@@ -454,17 +525,23 @@ pub fn run_case(case: Case, timeout: Duration) -> Outcome {
         .ok()
         .and_then(|kb| kb.parse::<usize>().ok())
         .map_or(CASE_STACK, |kb| kb * 1024);
-    let spawned = std::thread::Builder::new().stack_size(stack).spawn(move || {
-        let result = panic::catch_unwind(AssertUnwindSafe(|| compile_case(&case)));
-        let _ = tx.send(result.is_ok());
-    });
+    let spawned = std::thread::Builder::new()
+        .stack_size(stack)
+        .spawn(move || {
+            let result = panic::catch_unwind(AssertUnwindSafe(|| compile_case(&case)));
+            let _ = tx.send(result.is_ok());
+        });
     if spawned.is_err() {
         return Outcome::Crash("thread spawn failed".into());
     }
     match rx.recv_timeout(timeout) {
         Ok(true) => Outcome::Ok,
         Ok(false) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-            let (loc, msg) = slot.lock().unwrap().take().unwrap_or(("?".into(), "?".into()));
+            let (loc, msg) = slot
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or(("?".into(), "?".into()));
             Outcome::Panic(loc, msg)
         }
         Err(mpsc::RecvTimeoutError::Timeout) => Outcome::Hang,
@@ -535,7 +612,10 @@ pub fn supervise(
 ) -> Report {
     let chunk = 500u64;
     let next = Arc::new(Mutex::new(0u64));
-    let report = Arc::new(Mutex::new(Report { cases_run: 0, findings: BTreeMap::new() }));
+    let report = Arc::new(Mutex::new(Report {
+        cases_run: 0,
+        findings: BTreeMap::new(),
+    }));
     let _ = std::fs::create_dir_all(&config.out_dir);
     std::thread::scope(|scope| {
         for _ in 0..config.jobs {
@@ -561,7 +641,10 @@ pub fn supervise(
                     let stderr_tail = std::thread::spawn(move || {
                         let mut tail = String::new();
                         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                            if line.contains("overflow") || line.contains("abort") || line.contains("fatal") {
+                            if line.contains("overflow")
+                                || line.contains("abort")
+                                || line.contains("fatal")
+                            {
                                 tail = line;
                             }
                         }
@@ -569,9 +652,14 @@ pub fn supervise(
                     });
                     let mut open: Option<u64> = None;
                     let mut resume = end;
-                    for line in BufReader::new(child.stdout.take().unwrap()).lines().map_while(Result::ok) {
+                    for line in BufReader::new(child.stdout.take().unwrap())
+                        .lines()
+                        .map_while(Result::ok)
+                    {
                         let fields: Vec<&str> = line.splitn(4, '\t').collect();
-                        let Some(index) = fields.get(1).and_then(|s| s.parse::<u64>().ok()) else { continue };
+                        let Some(index) = fields.get(1).and_then(|s| s.parse::<u64>().ok()) else {
+                            continue;
+                        };
                         let outcome = match fields[0] {
                             "START" => {
                                 open = Some(index);
@@ -594,7 +682,9 @@ pub fn supervise(
                     let status = child.wait().expect("wait worker");
                     let tail = stderr_tail.join().unwrap_or_default();
                     if let Some(index) = open {
-                        let what = if tail.contains("stack overflow") || tail.contains("overflowed its stack") {
+                        let what = if tail.contains("stack overflow")
+                            || tail.contains("overflowed its stack")
+                        {
                             "stack overflow".to_string()
                         } else {
                             format!("{status} {tail}")
@@ -602,7 +692,11 @@ pub fn supervise(
                         record(&report, seeds, config, index, &Outcome::Crash(what));
                         resume = index + 1;
                     }
-                    start = if status.success() && open.is_none() && resume == end { end } else { resume };
+                    start = if status.success() && open.is_none() && resume == end {
+                        end
+                    } else {
+                        resume
+                    };
                 }
             });
         }
@@ -617,11 +711,14 @@ fn record(report: &Mutex<Report>, seeds: &[Seed], config: &Config, index: u64, o
         return;
     }
     let signature = outcome.signature();
-    let entry = report.findings.entry(signature.clone()).or_insert_with(|| Finding {
-        signature: signature.clone(),
-        first_case: index,
-        count: 0,
-    });
+    let entry = report
+        .findings
+        .entry(signature.clone())
+        .or_insert_with(|| Finding {
+            signature: signature.clone(),
+            first_case: index,
+            count: 0,
+        });
     entry.count += 1;
     let first = index < entry.first_case || entry.count == 1;
     entry.first_case = entry.first_case.min(index);
@@ -652,9 +749,16 @@ fn record(report: &Mutex<Report>, seeds: &[Seed], config: &Config, index: u64, o
 }
 
 pub fn print_report(report: &Report) {
-    println!("fuzz: {} cases, {} unique findings", report.cases_run, report.findings.len());
+    println!(
+        "fuzz: {} cases, {} unique findings",
+        report.cases_run,
+        report.findings.len()
+    );
     for finding in report.findings.values() {
-        println!("  {:>6}x first case {:>6}: {}", finding.count, finding.first_case, finding.signature);
+        println!(
+            "  {:>6}x first case {:>6}: {}",
+            finding.count, finding.first_case, finding.signature
+        );
     }
 }
 
@@ -677,7 +781,11 @@ fn ddmin(mut items: Vec<String>, interesting: &mut dyn FnMut(&str) -> bool) -> V
         let mut start = 0;
         while start < items.len() {
             let end = (start + chunk).min(items.len());
-            let candidate: Vec<String> = items[..start].iter().chain(&items[end..]).cloned().collect();
+            let candidate: Vec<String> = items[..start]
+                .iter()
+                .chain(&items[end..])
+                .cloned()
+                .collect();
             if !candidate.is_empty() && interesting(&candidate.concat()) {
                 items = candidate;
                 reduced = true;
