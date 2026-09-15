@@ -171,8 +171,11 @@ pub enum Item {
     /// glue; a legal break point that is discarded at a line break. `fill`
     /// is the `\hfill` order (it beats `\parfillskip`'s `fil`); the
     /// compiler does not distinguish the two, so the order is re-read from
-    /// the source bytes (`\hfill` when they are not `\hfil`).
-    HFill { fill: bool, leader: FillLeader },
+    /// the source bytes (`\hfill` when they are not `\hfil`). `style` is
+    /// the font in force at the fill, which `\dotfill` sets its dots in
+    /// (like `Kern`'s); a rule leader paints a fixed 0.4pt rule and plain
+    /// `\hfill` paints nothing, so neither reads it.
+    HFill { fill: bool, leader: FillLeader, style: TextStyle },
     /// Explicit horizontal glue in points: `\hspace{<dimen>}` (compiler
     /// `Inline::HSpace`, rigid) or an amsthm theorem head's own separator
     /// (`\hskip\thm@headsep`, `5pt plus 1pt minus 1pt`; `crate::amsthm`).
@@ -6646,6 +6649,16 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                 // \normalfont[#2 points]`): the compiler gives the glue the
                 // invocation's span, and the next token's gap must start
                 // after the word, not before it.
+                // The font the fill's leader is set in: the family, series
+                // and shape at the fill's own bytes (like `Kern`), with the
+                // size declaration in force at the previous text inline.
+                // `Inline::HFill` carries no compiler style of its own, and
+                // the source scan is family/series/shape only, so there is
+                // no per-position size to resolve with `declared_size`; the
+                // previous text's size is what TeX has in force here whenever
+                // the size was established before the fill, not after it.
+                let mut fill_style = style_at(styles_of(span.document), span.start);
+                fill_style.size_cpt = prev_size_cpt;
                 let (item, word) = match &**inline {
                     Inline::HSpace { pt, .. } => (Item::HSpace { pt: *pt, stretch_pt: 0.0, shrink_pt: 0.0 }, "\\hspace"),
                     Inline::TextGlue { em, .. } => (Item::Quad { em: *em }, if *em >= 2.0 { "\\qquad" } else { "\\quad" }),
@@ -6669,14 +6682,14 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     // vanishes the same way; that is a separate pre-existing
                     // defect, reproducible on the previous pin, not this one.)
                     Inline::HFill { leader: FillLeader::Rule, .. } => {
-                        (Item::HFill { fill: true, leader: FillLeader::Rule }, "\\hrulefill")
+                        (Item::HFill { fill: true, leader: FillLeader::Rule, style: fill_style }, "\\hrulefill")
                     }
                     Inline::HFill { leader: FillLeader::Dots, .. } => {
-                        (Item::HFill { fill: true, leader: FillLeader::Dots }, "\\dotfill")
+                        (Item::HFill { fill: true, leader: FillLeader::Dots, style: fill_style }, "\\dotfill")
                     }
                     Inline::HFill { leader: FillLeader::None, .. } => {
                         let fill = !is_control_word(text_of(span.document), span.start, "hfil");
-                        (Item::HFill { fill, leader: FillLeader::None }, if fill { "\\hfill" } else { "\\hfil" })
+                        (Item::HFill { fill, leader: FillLeader::None, style: fill_style }, if fill { "\\hfill" } else { "\\hfil" })
                     }
                     _ => unreachable!(),
                 };
