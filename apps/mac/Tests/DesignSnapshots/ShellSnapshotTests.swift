@@ -40,7 +40,7 @@ final class ShellSnapshotTests: XCTestCase {
     func testTabBar() {
         let model = DesignFixtures.project()
         assertSurfaceBothAppearances(DocumentTabBar().environment(model), named: "tabbar",
-                                     size: CGSize(width: 900, height: 30))
+                                     size: CGSize(width: 900, height: DS.Row.tab))
     }
 
     func testSidebar() {
@@ -61,7 +61,7 @@ final class ShellSnapshotTests: XCTestCase {
         let model = DesignFixtures.projectWithProblems()
         // Longer settle: the word count and breadcrumb are debounced.
         assertSurfaceBothAppearances(StatusBar().environment(model), named: "statusbar",
-                                     size: CGSize(width: 1440, height: 24), settle: 0.8)
+                                     size: CGSize(width: 1440, height: DS.Row.statusBar), settle: 0.8)
     }
 
     func testSettings() {

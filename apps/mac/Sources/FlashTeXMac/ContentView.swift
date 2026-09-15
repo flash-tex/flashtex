@@ -105,7 +105,7 @@ private struct RailButton: View {
     var body: some View {
         Button { isOn.toggle() } label: {
             Image(systemName: icon)
-                .font(DS.Fonts.base)
+                .font(DS.Fonts.railIcon)
                 .foregroundStyle(isOn ? DS.Colors.accentSelection : DS.Colors.textSecondary)
                 .frame(width: DS.Size.railButton, height: DS.Size.railButton)
                 .background(

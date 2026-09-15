@@ -98,6 +98,10 @@ final class EditorPreferences {
     static let fontSizeRange: ClosedRange<Double> = 8...36
     /// Editor leading: JetBrains ships 1.2 (`FontPreferences.DEFAULT_LINE_SPACING`).
     static let lineHeightMultiple: CGFloat = 1.2
+    /// What the Settings picker calls the nil (default) family.
+    static var defaultFaceLabel: String {
+        EditorFontRegistration.registerIfNeeded() ? "JetBrains Mono (default)" : "System monospaced"
+    }
     static let tabWidthRange: ClosedRange<Int> = 2...8
 
     static let defaultSnapshot = Snapshot(
@@ -579,7 +583,7 @@ struct EditorPreferencesView: View {
         Form {
             Section("Font") {
                 Picker("Family", selection: $prefs.fontFamily) {
-                    Text("System monospaced").tag(String?.none)
+                    Text(EditorPreferences.defaultFaceLabel).tag(String?.none)
                     ForEach(families, id: \.self) { family in Text(family).tag(String?.some(family)) }
                 }
                 .accessibilityLabel("Editor font family")
@@ -598,7 +602,7 @@ struct EditorPreferencesView: View {
                     .font(Font(prefs.font))
                     .lineLimit(1)
                     .accessibilityLabel("Font sample")
-                    .accessibilityValue("\(prefs.fontFamily ?? "System monospaced") at \(Int(prefs.fontSize)) points")
+                    .accessibilityValue("\(prefs.fontFamily ?? EditorPreferences.defaultFaceLabel) at \(Int(prefs.fontSize)) points")
             }
             Section("Layout") {
                 Toggle("Wrap long lines", isOn: $prefs.lineWrapping)
