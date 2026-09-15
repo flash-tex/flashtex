@@ -649,8 +649,16 @@ fn has_includes(text: &str) -> bool {
     text.contains("\\input") || text.contains("\\include")
 }
 
+/// The engine stopped on a resource limit: the step limit, or TeX's
+/// "capacity exceeded" (input stack, main memory). Both stop at a point that
+/// depends on where the run started, so an incremental run cannot match a
+/// full one; both get the full run and its unexpanded recovery.
 fn step_limit_hit(diagnostics: &[tex::Diagnostic]) -> bool {
-    diagnostics.iter().any(|d| d.message.contains("expansion step limit exceeded"))
+    diagnostics.iter().any(|d| is_stop_limit(&d.message))
+}
+
+fn is_stop_limit(message: &str) -> bool {
+    message.contains("expansion step limit exceeded") || message.starts_with("TeX capacity exceeded, sorry [")
 }
 
 /// What the caller must do after one converted token.
@@ -1055,7 +1063,7 @@ pub fn expand_project_with_cache(
         .collect();
     if cache.as_ref().is_some_and(|c| c.halted && c.entry_path == document.path) {
         let full = expand_project(documents, entry);
-        if full.diagnostics.iter().any(|d| d.message.contains("expansion step limit exceeded")) {
+        if full.diagnostics.iter().any(|d| is_stop_limit(&d.message)) {
             return full;
         }
         *cache = None;
@@ -1330,7 +1338,7 @@ fn recovery_for(message: &str) -> &'static str {
         "kept the existing command definition"
     } else if message.contains("LaTeX Error: Command") && message.contains("undefined") {
         "defined the command anyway"
-    } else if message.contains("limit exceeded") {
+    } else if message.contains("limit exceeded") || is_stop_limit(message) {
         "stopped expanding; the rest of the document was typeset without macro expansion"
     } else {
         "continued expanding after the problem"

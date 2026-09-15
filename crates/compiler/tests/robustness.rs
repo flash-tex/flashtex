@@ -342,7 +342,11 @@ fn lists_nested_past_255_levels_are_too_deeply_nested_not_an_overflow() {
     );
     for block in parser::parse(&deep).blocks {
         if let parser::Block::ListItem { lists, .. } | parser::Block::Styled { lists, .. } = block {
-            assert!(lists.len() <= 6, "a block stored {} list frames", lists.len());
+            assert!(
+                lists.len() <= 6,
+                "a block stored {} list frames",
+                lists.len()
+            );
         }
     }
     // Within LaTeX's limits (four itemize levels) there is no such error.
@@ -499,4 +503,34 @@ fn deeply_nested_left_right_pairs_hit_a_capacity_limit_in_bounded_time() {
         &messages[..messages.len().min(4)]
     );
     assert!(elapsed.as_secs() < 20, "took {elapsed:?}");
+}
+
+#[test]
+fn a_capacity_stop_is_recovered_like_the_step_limit() {
+    // "TeX capacity exceeded" stops the expander at a point that depends on
+    // where the run started, so the incremental cache must fall back to a
+    // full expansion (as for the step limit), and the rest of the document
+    // is typeset without expansion.
+    let text = format!(
+        "\\documentclass{{article}}\\begin{{document}}\n{}\\def\\b{{\\b x}}\\b\n\nAfter the loop.\n\\end{{document}}\n",
+        "Filler paragraph text.\n\n".repeat(400)
+    );
+    let parsed = parser::parse(&text);
+    let capacity = parsed
+        .diagnostics
+        .iter()
+        .find(|d| d.message == "TeX capacity exceeded, sorry [input stack size=10000].")
+        .expect("capacity diagnostic");
+    assert_eq!(
+        capacity.recovery.as_deref(),
+        Some("stopped expanding; the rest of the document was typeset without macro expansion")
+    );
+    let items: Vec<String> = layout::layout(&parsed.blocks)
+        .into_iter()
+        .flat_map(|page| page.items.into_iter().map(|item| item.text))
+        .collect();
+    assert!(
+        items.iter().any(|t| t.contains("After")),
+        "the text after the loop was lost"
+    );
 }
