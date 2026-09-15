@@ -303,3 +303,33 @@ fn a_request_is_answered_even_when_the_document_is_pathological() {
         assert_eq!(parsed.get("id").and_then(|v| v.as_str()), Some("p"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Minimised findings of the mutation fuzzer (`examples/fuzz_compile.rs`). Each
+// input panicked, overflowed the stack or hung before its fix.
+
+fn compile_messages(text: &str) -> Vec<String> {
+    flashtex_compiler::incremental::compile_full(text, LayoutConstraints::default())
+        .diagnostics
+        .into_iter()
+        .map(|d| d.message)
+        .collect()
+}
+
+#[test]
+fn lists_nested_past_255_levels_are_too_deeply_nested_not_an_overflow() {
+    // The per-kind and total list depths were `count() as u8 + 1`: 255
+    // enclosing lists overflowed. LaTeX stops at `\@toodeep` long before.
+    for env in ["itemize", "enumerate", "quote"] {
+        let text = format!("\\begin{{document}}{}\\item x\n\\end{{document}}\n", format!("\\begin{{{env}}}").repeat(300));
+        let messages = compile_messages(&text);
+        assert!(
+            messages.iter().any(|m| m == "LaTeX Error: Too deeply nested."),
+            "{env}: {:?}",
+            &messages[..messages.len().min(5)]
+        );
+    }
+    // Within LaTeX's limits (four itemize levels) there is no such error.
+    let ok = "\\begin{document}\\begin{itemize}\\item a\\begin{itemize}\\item b\\begin{itemize}\\item c\\begin{itemize}\\item d\\end{itemize}\\end{itemize}\\end{itemize}\\end{itemize}\\end{document}\n";
+    assert!(!compile_messages(ok).iter().any(|m| m.contains("Too deeply nested")));
+}

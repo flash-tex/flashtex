@@ -6946,13 +6946,32 @@ impl P<'_> {
         }
     }
 
-    fn push_list_frame(&mut self, environment: ListEnvironment, options: Vec<ListOption>, begin_span: Span) {
-        let kind_depth = self
+    /// The 1-based depth a new `environment` frame would have: among frames
+    /// of its own kind, and among all list frames. Saturates at `u8::MAX`
+    /// (LaTeX's `\@toodeep` fires long before; see [`Self::push_list_frame`]).
+    fn next_list_depths(&self, environment: ListEnvironment) -> (u8, u8) {
+        let depth = |n: usize| u8::try_from(n.saturating_add(1)).unwrap_or(u8::MAX);
+        let kind = self
             .list_frames
             .iter()
             .filter(|frame| frame.environment == environment)
-            .count() as u8
-            + 1;
+            .count();
+        (depth(kind), depth(self.list_frames.len()))
+    }
+
+    fn push_list_frame(&mut self, environment: ListEnvironment, options: Vec<ListOption>, begin_span: Span) {
+        let (kind_depth, list_depth) = self.next_list_depths(environment);
+        // latex.ltx `\list`: `\ifnum \@listdepth >5 \@toodeep`; `itemize` and
+        // `enumerate` check their own depth `>\thr@@` first. The list is still
+        // typeset here, at the deepest defined level.
+        let kind_limited = matches!(environment, ListEnvironment::Itemize | ListEnvironment::Enumerate);
+        if list_depth > 6 || (kind_limited && kind_depth > 4) {
+            self.diags.push(Diagnostic::error(
+                "LaTeX Error: Too deeply nested.",
+                Some(begin_span),
+                Some("typeset the list at the deepest supported nesting level".into()),
+            ));
+        }
         self.list_frames.push(ListFrame {
             environment,
             kind_depth,
@@ -6969,13 +6988,7 @@ impl P<'_> {
             return;
         };
         let body = self.class_size_pt.unwrap_or(crate::layout::BODY_SIZE_PT);
-        let kind_depth = self
-            .list_frames
-            .iter()
-            .filter(|frame| frame.environment == kind)
-            .count() as u8
-            + 1;
-        let list_depth = self.list_frames.len() as u8 + 1;
+        let (kind_depth, list_depth) = self.next_list_depths(kind);
         let mut effective: Vec<ListOption> = self
             .setlists
             .iter()
@@ -6988,7 +7001,7 @@ impl P<'_> {
             .unwrap_or_default();
         let start_of = |options: &[ListOption]| {
             options.iter().rev().find_map(|option| match option {
-                ListOption::Start(n) => Some(n - 1),
+                ListOption::Start(n) => Some(n.saturating_sub(1)),
                 _ => None,
             })
         };
