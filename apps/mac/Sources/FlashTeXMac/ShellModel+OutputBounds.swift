@@ -1,25 +1,32 @@
 import Foundation
 
-/// Oversized helper output (lane mac-large-document). Measured with the real
-/// helper + compiler (M1 Max, 2026-09-12): a fully-prose document produces
-/// ≈31.7 bytes of preview JSON per source byte, so 560 KB → 18.2 MB. That
-/// exceeds the runtime's `compiler_max_frame_bytes` (8 MiB default, 15 MiB
-/// opt-in; crates/document-runtime) and the helper answers with ONE small
-/// `update {kind: failed, reason: "compiler output malformed, truncated or
-/// oversized"}` per pending compile (never a partial preview), kills its
-/// compiler session, and acknowledges every later edit durably with
-/// `preview_error: "compiler session failed; …"` until a `restart`. The
-/// helper's own 16 MiB `MAX_OUTPUT_BYTES` (crates/preview-controller) turns a
-/// required reply into `error "response exceeds output limit; …"`; an optional
-/// preview over it is refused silently (not reachable with ≤ 15 MiB compiler
-/// frames: the measured envelope adds 288 bytes).
+/// Oversized producer output (lane mac-large-document). Measured with the
+/// real compiler (2026-09-15, after e26847c1): a fully-prose document
+/// produces ≈45.7 bytes of preview JSON per source byte, but the compiler now
+/// bounds its own reply to its 8 MiB transport frame (`MAX_RESULT_BYTES`,
+/// crates/compiler/src/protocol.rs), dropping trailing pages with an explicit
+/// diagnostic — from ≈180 KB of prose up the reply is a capped ~8.2 MB. So
+/// with DEFAULT limits the real compiler's frames stay admissible; an
+/// oversized frame still comes from a producer that does not self-bound, or
+/// from a helper started with a lower `compiler_max_frame_bytes` (8 MiB
+/// default, 128 B..15 MiB configurable; crates/document-runtime). Then the
+/// helper answers with ONE small `update {kind: failed, reason: "compiler
+/// output malformed, truncated or oversized"}` per pending compile (never a
+/// partial preview), kills its compiler session, and acknowledges every later
+/// edit durably with `preview_error: "compiler session failed; …"` until a
+/// `restart`. The helper's own 16 MiB `MAX_OUTPUT_BYTES`
+/// (crates/preview-controller) turns a required reply into `error "response
+/// exceeds output limit; …"`; an optional preview over it is refused silently
+/// (not reachable with ≤ 15 MiB compiler frames: the measured envelope adds
+/// 288 bytes).
 ///
-/// On the direct worker route the same document is one `compile_result` line
-/// of 18.2 MB, which `WorkerClient` refuses at `RuntimeV1.maxLineBytes`
-/// (protocol violation → worker terminated → relaunch). Without this file the
-/// relaunch re-sends the same document and the loop ends only at the relaunch
-/// budget (3/min); on the helper route the in-flight edit stays HELD under
-/// `holdUntilPreview`, so typing stops being submitted.
+/// On the direct worker route an unbounded producer's oversized
+/// `compile_result` line is refused by `WorkerClient` at
+/// `RuntimeV1.maxLineBytes` (protocol violation → worker terminated →
+/// relaunch). Without this file the relaunch re-sends the same document and
+/// the loop ends only at the relaunch budget (3/min); on the helper route the
+/// in-flight edit stays HELD under `holdUntilPreview`, so typing stops being
+/// submitted.
 ///
 /// None of the limits are changed here. The shell records the overflow as an
 /// `OutputBoundNotice` (status line names the bound and the document size),
