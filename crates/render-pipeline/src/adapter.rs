@@ -7595,7 +7595,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "known limit: \\input'd preambles are not in the adapter source string"]
+    #[ignore = "fails: panics at src/adapter.rs:7602: not implemented: scan \\input'd preambles at ae62d63d"]
     fn preamble_scan_does_not_see_input_files() {
         let src = "\\documentclass{article}\n\\input{layout}\n\\begin{document}x\\end{document}";
         let _ = adapted(src);
@@ -7603,7 +7603,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "known limit: next_command is alphabetic, so \\@setlength is missed"]
     fn preamble_scan_does_not_see_at_setlength() {
         let src = "\\documentclass{article}\n\\makeatletter\n\\@setlength{\\textwidth}{6in}\n\\makeatother\n\\begin{document}x\\end{document}";
         assert!(
