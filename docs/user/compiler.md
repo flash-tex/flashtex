@@ -55,7 +55,7 @@ Any editor or CI can drive that same JSON Lines protocol directly — see
 flashtex build <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]...
                [--v2 out.json] [--timing] [--verbose] [--strict] [--json] [-j N]
 flashtex check <main.tex> [--json] [--strict] [--project-root DIR] [--font-dir DIR]...
-flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS]
+flashtex watch <main.tex> [-o out.pdf] [--project-root DIR] [--font-dir DIR]... [--interval MS] [--timing]
 flashtex supported [--json|--md|--coverage]
 flashtex worker [--font-dir DIR]... [--project-root DIR] [--v2 out.json] [--pdf out.pdf] [--timing]
 flashtex fonts [--font-dir DIR]... [--json]
@@ -114,7 +114,7 @@ because outputs are written atomically nothing is left half-written.
 The implemented-LaTeX inventory of the compiler linked into this binary
 (`flashtex_compiler::supported`), so it cannot drift from what `build`
 accepts. Plain `flashtex supported` prints command/environment counts, the
-coverage of the canonical inventory (46% at the time of writing) and one
+coverage of the canonical inventory (40% at the time of writing) and one
 line per package set; `--json` is the `flashtex-supported-latex/1` document
 (the same as `crates/compiler/supported/supported-latex.json`), `--md` the
 reference page reproduced [below](#supported-latex), `--coverage` the
