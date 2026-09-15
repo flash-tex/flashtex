@@ -249,9 +249,10 @@ pub struct UnderlineItem {
     pub span: Span,
 }
 
-/// Which amsmath display alignment a [`ParaPart::Rows`] is (read from the
+/// Which display alignment a [`ParaPart::Rows`] is (read from the
 /// environment name at the display's first byte; the compiler keeps only
-/// whether cells alternate right/left).
+/// whether cells share tab stops). amsmath's `align`/`gather`/`multline`
+/// family plus LaTeX's own `eqnarray`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RowsEnv {
     /// `align`/`align*`: column pairs spread evenly (`\xatlevel@` 1).
@@ -264,6 +265,9 @@ pub enum RowsEnv {
     Gather,
     /// `multline`/`multline*`: first row left, last row right, others centred.
     Multline,
+    /// `eqnarray`/`eqnarray*`: right/centred/left columns with fixed
+    /// `\tw@\arraycolsep` gaps, the block centred (latex.ltx `\eqnarray`).
+    EqnArray,
 }
 
 impl RowsEnv {
@@ -275,6 +279,7 @@ impl RowsEnv {
             "flalign" => RowsEnv::FlAlign,
             "gather" => RowsEnv::Gather,
             "multline" => RowsEnv::Multline,
+            "eqnarray" => RowsEnv::EqnArray,
             _ => RowsEnv::Align,
         }
     }
@@ -7196,6 +7201,17 @@ fn tex_ligatures(chars: Vec<(char, CharSrc)>) -> Vec<(char, CharSrc)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #520: the environment name at the display's first byte decides
+    /// the alignment, so `eqnarray` (which the compiler lowers like the
+    /// amsmath rows) reaches the kernel-spacing arm, starred or not.
+    #[test]
+    fn rows_env_reads_eqnarray_from_source() {
+        assert_eq!(RowsEnv::at("\\begin{eqnarray} a &=& b \\end{eqnarray}"), RowsEnv::EqnArray);
+        assert_eq!(RowsEnv::at("\\begin{eqnarray*} a &=& b \\end{eqnarray*}"), RowsEnv::EqnArray);
+        assert_eq!(RowsEnv::at("\\begin{align} a &= b \\end{align}"), RowsEnv::Align);
+        assert_eq!(RowsEnv::at("\\begin{gather} a \\\\ b \\end{gather}"), RowsEnv::Gather);
+    }
 
     fn items(src: &str) -> Vec<Item> {
         let parsed = flashtex_compiler::parser::parse(src);
