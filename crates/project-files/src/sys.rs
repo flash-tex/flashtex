@@ -29,8 +29,8 @@ mod imp {
 
     pub const SUPPORTED: bool = true;
     pub use libc::{
-        EEXIST, EINVAL, ELOOP, ENOENT, ENOSYS, ENOTDIR, ENOTSUP, O_CREAT, O_DIRECTORY, O_EXCL,
-        O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_RDWR, O_WRONLY,
+        EEXIST, EINVAL, ELOOP, ENOENT, ENOSYS, ENOTDIR, ENOTSUP, EOPNOTSUPP, EPERM, O_CREAT,
+        O_DIRECTORY, O_EXCL, O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_RDWR, O_WRONLY,
     };
 
     /// The calling thread's `errno` lvalue.
@@ -121,9 +121,29 @@ mod imp {
     }
 
     /// Whether a [`rename_at_noreplace`] failure means the primitive is not
-    /// available here (rather than a real rename failure).
+    /// available here (rather than a real rename failure). Callers must not
+    /// fall back to a plain rename on it; see `save::install_new`.
     pub fn noreplace_unsupported(err: &io::Error) -> bool {
-        [EINVAL, ENOSYS, ENOTSUP]
+        [EINVAL, ENOSYS, ENOTSUP, EOPNOTSUPP]
+            .iter()
+            .any(|&c| err.raw_os_error() == Some(c))
+    }
+
+    /// `linkat(dir, old, dir, new, 0)`: a second name `new` for the entry
+    /// `old` in `dir`. Fails with `EEXIST`, atomically, if `new` exists (of
+    /// any type, including a dangling symlink), so it never replaces an
+    /// entry. Flags are 0, so a symlink at `old` is linked, never followed.
+    pub fn link_at(dir: &File, old: &str, new: &str) -> io::Result<()> {
+        let (o, n) = (cstr(old)?, cstr(new)?);
+        let fd = dir.as_raw_fd();
+        // SAFETY: valid C strings and an open directory descriptor.
+        check(unsafe { libc::linkat(fd, o.as_ptr(), fd, n.as_ptr(), 0) })
+    }
+
+    /// Whether a [`link_at`] failure means the filesystem has no hard links
+    /// (Linux reports `EPERM`, others `ENOTSUP`/`EOPNOTSUPP`/`ENOSYS`).
+    pub fn link_unsupported(err: &io::Error) -> bool {
+        [EPERM, ENOSYS, ENOTSUP, EOPNOTSUPP]
             .iter()
             .any(|&c| err.raw_os_error() == Some(c))
     }
@@ -287,6 +307,12 @@ mod imp {
         Err(unsupported())
     }
     pub fn noreplace_unsupported(_: &io::Error) -> bool {
+        false
+    }
+    pub fn link_at(_: &File, _: &str, _: &str) -> io::Result<()> {
+        Err(unsupported())
+    }
+    pub fn link_unsupported(_: &io::Error) -> bool {
         false
     }
     pub fn list_dir(_: &File) -> io::Result<Vec<Vec<u8>>> {
@@ -488,6 +514,16 @@ mod tests {
             })
             .unwrap();
         assert_eq!(std::fs::read_to_string(dir.join("fresh")).unwrap(), "y");
+
+        // `link_at` never replaces an existing entry, dangling symlinks
+        // included, and links a regular file under a new name.
+        for existing in ["file", "broken"] {
+            let err = link_at(&handle, "fresh", existing).unwrap_err();
+            assert!(errno_is(&err, EEXIST), "{existing}: {err:?}");
+        }
+        assert_eq!(std::fs::read_to_string(dir.join("file")).unwrap(), "x");
+        link_at(&handle, "fresh", "linked").unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("linked")).unwrap(), "y");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
