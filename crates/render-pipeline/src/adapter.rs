@@ -3878,7 +3878,24 @@ fn lone_longtable(parts: &mut Vec<ParaPart>) -> Option<Box<crate::table::TableIt
 }
 
 fn setlength(source: &str, name: &str, size: u32) -> Option<f64> {
-    setlength_in(source, name, size, None)
+    // Within an adapt call each answer is read once per document: every
+    // `tabular` asks for four lengths, and a scan of the whole source per
+    // table made a warm 450-section request spend 0.8 s here (#613).
+    let key = (source.as_ptr() as usize, source.len());
+    let memo = |scope: &mut Vec<MacroDefsEntry>| scope.iter_mut().find(|e| (e.ptr, e.len) == key).map(|e| e.setlengths.get(&(name.to_string(), size)).copied());
+    match MACRO_DEFS.with(|scope| memo(&mut scope.borrow_mut())) {
+        Some(Some(found)) => found,
+        Some(None) => {
+            let found = setlength_in(source, name, size, None);
+            MACRO_DEFS.with(|scope| {
+                if let Some(entry) = scope.borrow_mut().iter_mut().find(|e| (e.ptr, e.len) == key) {
+                    entry.setlengths.insert((name.to_string(), size), found);
+                }
+            });
+            found
+        }
+        None => setlength_in(source, name, size, None),
+    }
 }
 
 /// [`setlength`] with the document's own `em`/`ex` ([`ec_em_ex`]).
@@ -5407,6 +5424,8 @@ struct MacroDefsEntry {
     ptr: usize,
     len: usize,
     index: Option<HashMap<String, Vec<MacroDef>>>,
+    /// [`setlength`] answers already read, by length name and class size.
+    setlengths: HashMap<(String, u32), Option<f64>>,
 }
 
 thread_local! {
@@ -5426,6 +5445,7 @@ impl MacroDefsScope {
                 ptr: t.as_ptr() as usize,
                 len: t.len(),
                 index: None,
+                setlengths: HashMap::new(),
             })
             .collect();
         MacroDefsScope {
