@@ -400,6 +400,9 @@
     {"name": "boxed", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body", "renders": true},
     {"name": "overline", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body", "renders": true},
     {"name": "underline", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "real rule around, over or under the body", "renders": true},
+    {"name": "cancel", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "diagonal rule over the body: bottom-left to top-right, its mirror, or both", "renders": true},
+    {"name": "bcancel", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "diagonal rule over the body: bottom-left to top-right, its mirror, or both", "renders": true},
+    {"name": "xcancel", "mode": "math", "origin": "math_structure", "arguments": "{...}", "description": "diagonal rule over the body: bottom-left to top-right, its mirror, or both", "renders": true},
     {"name": "overbrace", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cmex brace pieces with rule fills over or under a display-style body; scripts are limits", "renders": true},
     {"name": "underbrace", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "cmex brace pieces with rule fills over or under a display-style body; scripts are limits", "renders": true},
     {"name": "overrightarrow", "mode": "math", "origin": "math_structure", "arguments": "{body}", "description": "amsmath \\arrowfill@ as wide as the body, over or under it", "renders": true},
@@ -965,8 +968,8 @@
       {"set": "tikz", "kind": "command", "canonical": 43, "supported": 0, "percent": 0},
       {"set": "tikz", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
-      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 18, "percent": 7.5}
+      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 19, "percent": 7.9}
     ],
-    "total": {"canonical": 1314, "supported": 525, "percent": 40}
+    "total": {"canonical": 1314, "supported": 526, "percent": 40}
   }
 }

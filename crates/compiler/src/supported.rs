@@ -652,6 +652,12 @@ const MATH_STRUCTURES: &[(&[&str], &str, &str, bool)] = &[
         true,
     ),
     (
+        &["cancel", "bcancel", "xcancel"],
+        "{...}",
+        "diagonal rule over the body: bottom-left to top-right, its mirror, or both",
+        true,
+    ),
+    (
         &["overbrace", "underbrace"],
         "{body}",
         "cmex brace pieces with rule fills over or under a display-style body; scripts are limits",
