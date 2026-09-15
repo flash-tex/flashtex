@@ -1,10 +1,58 @@
 //! Atomic metadata checkpoints with explicit, conservative restart authorization.
 use crate::*;
 use std::{
-    fs::File,
+    fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::Path,
 };
+
+/// Opens `path` (a directory) so `sync_all` can fsync it after a rename.
+///
+/// Plain `File::open` cannot open a directory on Windows at all (it fails
+/// with `ERROR_ACCESS_DENIED`, unlike POSIX's `open(2)`); it needs
+/// `FILE_FLAG_BACKUP_SEMANTICS`. A read-only handle isn't enough either:
+/// `sync_all`'s `FlushFileBuffers` itself requires write access on the
+/// handle, or it fails with the same `ERROR_ACCESS_DENIED` (measured). See
+/// `crates/project-files/src/sys.rs`'s `open_dir_std`/`open_at` for the same
+/// two fixes applied there. Local to this file rather than shared with
+/// `bridge_adapter::open_dir_for_sync` because that module is gated behind
+/// the `bridge-integration` feature and this one is not.
+#[cfg(windows)]
+fn open_dir_for_sync(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn open_dir_for_sync(path: &Path) -> std::io::Result<File> {
+    File::open(path)
+}
+
+/// Atomically replaces `destination` with `temporary`, via `std::fs::rename`
+/// rather than `NamedTempFile::persist` — not equivalent on Windows, where
+/// `persist`'s `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` needs `DELETE` access
+/// on the existing file and fails if any other handle to it is open, unlike
+/// `fs::rename`'s POSIX-semantics replace. See `crates/edit-ledger/src/lib.rs`'s
+/// `replace_with_temporary` for the measured failure-rate comparison.
+fn replace_with_temporary(
+    temporary: tempfile::NamedTempFile,
+    destination: &Path,
+) -> std::io::Result<()> {
+    let (file, path) = temporary.keep().map_err(|e| e.error)?;
+    drop(file);
+    match fs::rename(&path, destination) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&path);
+            Err(error)
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecoveryReason {
     QueuedAwaitingAuthorization,
@@ -142,10 +190,8 @@ impl<T: Send + Sync + 'static> Scheduler<T> {
         let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
         temporary.write_all(&bytes)?;
         temporary.as_file().sync_all()?;
-        temporary
-            .persist(path)
-            .map_err(|e| SnapshotError::from(e.error))?;
-        File::open(parent)?.sync_all()?;
+        replace_with_temporary(temporary, path).map_err(SnapshotError::from)?;
+        open_dir_for_sync(parent)?.sync_all()?;
         Ok(())
     }
     pub fn restore_snapshot(

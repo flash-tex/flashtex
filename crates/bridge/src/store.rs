@@ -7,6 +7,56 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Opens `path` (a directory) so `sync_all` can fsync it after a rename.
+///
+/// Plain `File::open` cannot open a directory on Windows at all (it fails
+/// with `ERROR_ACCESS_DENIED`, unlike POSIX's `open(2)`); it needs
+/// `FILE_FLAG_BACKUP_SEMANTICS`. A read-only handle isn't enough either:
+/// `sync_all`'s `FlushFileBuffers` itself requires write access on the
+/// handle, or it fails with the same `ERROR_ACCESS_DENIED` (measured). See
+/// `crates/project-files/src/sys.rs`'s `open_dir_std`/`open_at` for the same
+/// two fixes applied there.
+#[cfg(windows)]
+fn open_dir_for_sync(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn open_dir_for_sync(path: &Path) -> std::io::Result<File> {
+    File::open(path)
+}
+
+/// Atomically replaces `destination` with `temporary`, via `std::fs::rename`
+/// rather than `NamedTempFile::persist`.
+///
+/// Not equivalent on Windows: `persist` calls `MoveFileExW
+/// (MOVEFILE_REPLACE_EXISTING)`, which needs `DELETE` access on the existing
+/// file and fails with `ERROR_ACCESS_DENIED` whenever any other handle to it
+/// is open (a reader, e.g.). `std::fs::rename` asks for `FileRenameInfoEx`
+/// with POSIX semantics instead (Windows 10 1607+, falling back to
+/// `MoveFileExW`), which unlinks the old name and lets existing readers keep
+/// reading their now-nameless handle — ordinary POSIX `rename(2)` behavior.
+/// Measured in `crates/edit-ledger` (same bug, same fix): 300 replacements
+/// against a concurrent reader failed 231/300 via `persist`, 0/300 via
+/// `fs::rename`.
+fn replace_with_temporary(temporary: tempfile::NamedTempFile, destination: &Path) -> Result<()> {
+    let (file, path) = temporary.keep().map_err(|e| BridgeError::from(e.error))?;
+    drop(file);
+    match fs::rename(&path, destination) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&path);
+            Err(BridgeError::from(error))
+        }
+    }
+}
+
 pub struct Store {
     root: PathBuf,
     _lock: File,
@@ -88,13 +138,11 @@ impl Store {
         serde_json::to_writer(&mut temporary, record)?;
         temporary.write_all(b"\n")?;
         temporary.as_file().sync_all()?;
-        temporary
-            .persist(
-                self.root
-                    .join(format!("{}.json", record.capture.capture_id)),
-            )
-            .map_err(|e| BridgeError::from(e.error))?;
-        File::open(&self.root)?.sync_all()?;
+        replace_with_temporary(
+            temporary,
+            &self.root.join(format!("{}.json", record.capture.capture_id)),
+        )?;
+        open_dir_for_sync(&self.root)?.sync_all()?;
         Ok(())
     }
 }

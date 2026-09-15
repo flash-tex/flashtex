@@ -1,0 +1,38 @@
+{
+  "$comment": "Shared UTF-16 <-> UTF-8 byte offset conversion vectors, consumed identically by web/test/byte-offsets.test.ts (TypeScript) and tests/FlashTeX.Protocol.Tests/ByteOffsetsCrossLanguageParityTests.cs (C#). Every rangeVectors entry must round-trip through both ByteOffsets.Utf16RangeForUtf8Bytes/Utf8ByteRangeForUtf16Range (C#) and utf16RangeForUtf8Bytes/utf8ByteRangeForUtf16Range (TS). Every invalidVectors entry must return null from the named direction. Do not hand-edit offsets without recomputing byte/char cumulative sums by hand -- see the generation notes in byte-offsets.test.ts.",
+  "rangeVectors": [
+    { "name": "ascii-full", "text": "hello", "utf16Start": 0, "utf16End": 5, "utf8Start": 0, "utf8End": 5 },
+    { "name": "ascii-substring", "text": "hello", "utf16Start": 1, "utf16End": 4, "utf8Start": 1, "utf8End": 4 },
+    { "name": "ascii-empty-range", "text": "hello", "utf16Start": 2, "utf16End": 2, "utf8Start": 2, "utf8End": 2 },
+    { "name": "empty-string", "text": "", "utf16Start": 0, "utf16End": 0, "utf8Start": 0, "utf8End": 0 },
+
+    { "name": "latin1-accented-full", "text": "café", "utf16Start": 0, "utf16End": 4, "utf8Start": 0, "utf8End": 5 },
+    { "name": "latin1-accented-char-only", "text": "café", "utf16Start": 3, "utf16End": 4, "utf8Start": 3, "utf8End": 5 },
+    { "name": "latin1-accented-ascii-prefix", "text": "café", "utf16Start": 1, "utf16End": 3, "utf8Start": 1, "utf8End": 3 },
+
+    { "name": "cjk-full", "text": "日本語", "utf16Start": 0, "utf16End": 3, "utf8Start": 0, "utf8End": 9 },
+    { "name": "cjk-middle-char", "text": "日本語", "utf16Start": 1, "utf16End": 2, "utf8Start": 3, "utf8End": 6 },
+
+    { "name": "astral-full", "text": "ab😀cd", "utf16Start": 0, "utf16End": 6, "utf8Start": 0, "utf8End": 8 },
+    { "name": "astral-emoji-only", "text": "ab😀cd", "utf16Start": 2, "utf16End": 4, "utf8Start": 2, "utf8End": 6 },
+    { "name": "astral-prefix-with-emoji", "text": "ab😀cd", "utf16Start": 0, "utf16End": 4, "utf8Start": 0, "utf8End": 6 },
+    { "name": "astral-suffix-with-emoji", "text": "ab😀cd", "utf16Start": 2, "utf16End": 6, "utf8Start": 2, "utf8End": 8 },
+
+    { "name": "mixed-script-full", "text": "É日😀x", "utf16Start": 0, "utf16End": 5, "utf8Start": 0, "utf8End": 10 },
+    { "name": "mixed-script-emoji-only", "text": "É日😀x", "utf16Start": 2, "utf16End": 4, "utf8Start": 5, "utf8End": 9 },
+    { "name": "mixed-script-prefix", "text": "É日😀x", "utf16Start": 0, "utf16End": 2, "utf8Start": 0, "utf8End": 5 },
+    { "name": "mixed-script-suffix", "text": "É日😀x", "utf16Start": 2, "utf16End": 5, "utf8Start": 5, "utf8End": 10 }
+  ],
+  "invalidVectors": [
+    { "name": "negative-start-byte", "direction": "utf8ToUtf16", "text": "hello", "startByte": -1, "endByte": 3 },
+    { "name": "reversed-byte-range", "direction": "utf8ToUtf16", "text": "hello", "startByte": 4, "endByte": 2 },
+    { "name": "byte-offset-mid-two-byte-sequence", "direction": "utf8ToUtf16", "text": "café", "startByte": 3, "endByte": 4 },
+    { "name": "byte-offset-mid-four-byte-sequence-end", "direction": "utf8ToUtf16", "text": "ab😀cd", "startByte": 2, "endByte": 4 },
+    { "name": "byte-offset-mid-four-byte-sequence-start", "direction": "utf8ToUtf16", "text": "ab😀cd", "startByte": 4, "endByte": 6 },
+
+    { "name": "negative-utf16-start", "direction": "utf16ToUtf8", "text": "hello", "utf16Start": -1, "utf16End": 2 },
+    { "name": "reversed-utf16-range", "direction": "utf16ToUtf8", "text": "hello", "utf16Start": 4, "utf16End": 2 },
+    { "name": "utf16-end-past-length", "direction": "utf16ToUtf8", "text": "hello", "utf16Start": 0, "utf16End": 6 },
+    { "name": "utf16-splits-surrogate-pair", "direction": "utf16ToUtf8", "text": "ab😀cd", "utf16Start": 3, "utf16End": 4 }
+  ]
+}

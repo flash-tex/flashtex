@@ -8,6 +8,52 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
+/// Opens `path` (a directory) so `sync_all` can fsync it after a rename.
+///
+/// Plain `File::open` cannot open a directory on Windows at all (it fails
+/// with `ERROR_ACCESS_DENIED`, unlike POSIX's `open(2)`); it needs
+/// `FILE_FLAG_BACKUP_SEMANTICS`. A read-only handle isn't enough either:
+/// `sync_all`'s `FlushFileBuffers` itself requires write access on the
+/// handle, or it fails with the same `ERROR_ACCESS_DENIED` (measured). See
+/// `crates/project-files/src/sys.rs`'s `open_dir_std`/`open_at` for the same
+/// two fixes applied there.
+#[cfg(windows)]
+pub(crate) fn open_dir_for_sync(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn open_dir_for_sync(path: &Path) -> std::io::Result<File> {
+    File::open(path)
+}
+
+/// Atomically replaces `destination` with `temporary`, via `std::fs::rename`
+/// rather than `NamedTempFile::persist` — not equivalent on Windows, where
+/// `persist`'s `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` needs `DELETE` access
+/// on the existing file and fails if any other handle to it is open, unlike
+/// `fs::rename`'s POSIX-semantics replace. See `crates/edit-ledger/src/lib.rs`'s
+/// `replace_with_temporary` for the measured failure-rate comparison.
+pub(crate) fn replace_with_temporary(
+    temporary: tempfile::NamedTempFile,
+    destination: &Path,
+) -> std::io::Result<()> {
+    let (file, path) = temporary.keep().map_err(|e| e.error)?;
+    drop(file);
+    match fs::rename(&path, destination) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&path);
+            Err(error)
+        }
+    }
+}
+
 pub type Provider = dyn Fn(CaptureSubmit, Context, CancellationToken) -> std::result::Result<Proposal, Failure>
     + Send
     + Sync
@@ -189,7 +235,7 @@ impl BridgeAdapter {
         let bytes=serde_json::to_vec(&serde_json::json!({"schema_version":1,"capture_id":id,"context":fingerprint,"state":"provider_may_have_started"})).map_err(|_|AdapterError::InvalidState)?;
         file.write_all(&bytes)?;
         file.sync_all()?;
-        File::open(&self.directory)?.sync_all()?;
+        open_dir_for_sync(&self.directory)?.sync_all()?;
         let capture = record.capture.clone();
         let input_context = context.clone();
         let provider = self.provider.clone();
@@ -214,7 +260,7 @@ impl BridgeAdapter {
                 // Rejected submission proves no closure was executed. Remove this
                 // newly created intent so backpressure can be retried explicitly.
                 fs::remove_file(intent)?;
-                File::open(&self.directory)?.sync_all()?;
+                open_dir_for_sync(&self.directory)?.sync_all()?;
                 Err(e.into())
             }
         }

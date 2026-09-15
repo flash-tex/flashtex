@@ -1,0 +1,31 @@
+<!--
+  name: EditorHost.xaml
+  purpose: Hosts the single shared WebView2 control that shows the CodeMirror 6
+    editor (src/FlashTeX.Editor/web) for whichever document is currently active.
+    See EditorHost.xaml.cs for the native<->JS wiring.
+  author: Claude Sonnet 5
+  date: 2026-09-14
+-->
+<UserControl
+    x:Class="FlashTeX.App.EditorHost"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Microsoft.UI.Xaml.Controls"
+    xmlns:local="using:FlashTeX.App">
+
+    <Grid>
+        <controls:WebView2 x:Name="WebView" />
+
+        <!--
+          Shown until the WebView2 runtime/CoreWebView2 finishes initializing (or if
+          it fails to, e.g. the WebView2 Runtime is not installed on this machine) so
+          the pane never just looks blank with no explanation.
+        -->
+        <TextBlock
+            x:Name="StatusText"
+            Margin="12"
+            TextWrapping="Wrap"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            Text="Loading editor…" />
+    </Grid>
+</UserControl>

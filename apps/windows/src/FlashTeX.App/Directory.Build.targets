@@ -1,0 +1,33 @@
+<!--
+  name: Directory.Build.targets
+  purpose: Neutralizes three MSBuild targets from Microsoft.WindowsAppSDK's
+    buildTransitive .targets files that unconditionally call into
+    Microsoft.Build.AppxPackage.dll / Microsoft.Build.Packaging.Pri.Tasks.dll
+    (VS "Windows application development" workload files, not installed on
+    this machine — see the header comment in FlashTeX.App.csproj). MSBuild
+    resolves a Target by its LAST encountered definition; Directory.Build.targets
+    is imported after the .NET SDK's Sdk.targets (which is where NuGet's
+    buildTransitive imports land), so these definitions win.
+
+    `GetMrtPackagingOutputs` is pulled in unconditionally via
+    $(PrepareForRunDependsOn) (MrtCore.PriGen.targets), which runs for any
+    OutputType=Exe/WinExe project regardless of WindowsPackageType — the two
+    `AppxGeneratePriEnabled`/`IncludeCopyLocalFilesOutputGroup` property
+    overrides in FlashTeX.App.csproj were not sufficient on their own, this
+    unconditional PrepareForRun dependency is the real hook.
+
+    Only scoped to this directory (apps/windows/src/FlashTeX.App/), not the
+    whole apps/windows tree, since no other project here references
+    Microsoft.WindowsAppSDK.
+
+    Remove this file once the VS workload is installed, or once producing a
+    real MSIX package (which needs real PRI resource generation) is needed.
+  author: Claude Sonnet 5
+  date: 2026-09-14
+-->
+<Project>
+  <Target Name="GetMrtPackagingOutputs" Returns="@(PackagingOutputs)" />
+  <Target Name="_GenerateProjectPriFile" />
+  <Target Name="CopyLocalFilesOutputGroup" Returns="@(CopyLocalFilesOutputGroupOutput)" />
+  <Target Name="_GetDefaultResourceLanguage" />
+</Project>

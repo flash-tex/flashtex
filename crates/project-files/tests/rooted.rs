@@ -1,15 +1,20 @@
 //! Issue #18: rooted, symlink-refusing, lock-serialized saves.
-#![cfg(unix)]
+//!
+//! These run on every platform with rooted file operations. The behaviour
+//! under test — a symlinked path component is refused, never followed — is
+//! the same everywhere; only the call that *creates* the link differs, so it
+//! lives behind `common::symlink_dir`/`symlink_file` and the test bodies are
+//! shared. Windows additionally gets a junction case, which no POSIX
+//! equivalent covers and which needs no special privilege to create.
 
 mod common;
 
 use std::fs;
-use std::os::unix::fs::{MetadataExt, symlink};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
-use common::{TempDir, pp};
+use common::{TempDir, pp, symlink_dir, symlink_file};
 use flashtex_project_files::{
     Expected, ProjectRoot, Refused, SaveConflictKind, SaveError, save_atomic, sha256,
 };
@@ -26,7 +31,7 @@ fn issue_18_symlinked_parent_directory_is_refused() {
     let outside = TempDir::new("i18-outside");
     let victim = outside.write("victim.tex", "external content");
     let t = TempDir::new("i18-root");
-    symlink(outside.root(), t.root().join("linked")).unwrap();
+    symlink_dir(outside.root(), &t.root().join("linked"));
 
     let current = sha256(b"external content");
     let err = save_atomic(
@@ -62,7 +67,7 @@ fn issue_18_symlinked_parent_directory_is_refused() {
     assert!(is_refused_symlink(&err, "linked"));
     // Nested: a real directory containing a symlinked directory.
     fs::create_dir(t.root().join("real")).unwrap();
-    symlink(outside.root(), t.root().join("real/link")).unwrap();
+    symlink_dir(outside.root(), &t.root().join("real/link"));
     let err = root
         .save(&pp("real/link/victim.tex"), b"x", Expected::Any, true)
         .unwrap_err();
@@ -75,7 +80,7 @@ fn symlinked_file_is_refused_for_read_save_and_remove() {
     let outside = TempDir::new("file-outside");
     let victim = outside.write("victim.tex", "external");
     let t = TempDir::new("file-root");
-    symlink(&victim, t.root().join("alias.tex")).unwrap();
+    symlink_file(&victim, &t.root().join("alias.tex"));
     let root = ProjectRoot::open(t.root()).unwrap();
 
     assert!(is_refused_symlink(
@@ -111,10 +116,54 @@ fn symlinked_root_is_refused() {
     let real = TempDir::new("root-real");
     let holder = TempDir::new("root-holder");
     let link = holder.root().join("project");
-    symlink(real.root(), &link).unwrap();
+    symlink_dir(real.root(), &link);
     let err = ProjectRoot::open(&link).unwrap_err();
     assert!(is_refused_symlink(&err, "project"), "{err:?}");
     assert!(ProjectRoot::open(real.root()).is_ok());
+}
+
+/// The Windows-only escape route POSIX has no analogue for: a *junction*
+/// (`IO_REPARSE_TAG_MOUNT_POINT`) rather than a symlink
+/// (`IO_REPARSE_TAG_SYMLINK`). Junctions redirect exactly as symlinks do but
+/// need no Developer Mode or elevation to create, which makes them the
+/// likelier issue-#18 vector on Windows. They must be refused on the same
+/// name-surrogate grounds, both as the project root and as an interior
+/// component.
+#[cfg(windows)]
+#[test]
+fn junctions_are_refused_as_root_and_as_a_parent_component() {
+    fn mklink_junction(link: &std::path::Path, target: &std::path::Path) -> bool {
+        std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
+    let outside = TempDir::new("junction-outside");
+    let victim = outside.write("victim.tex", "external content");
+    let t = TempDir::new("junction-root");
+    let link = t.root().join("linked");
+    if !mklink_junction(&link, outside.root()) {
+        panic!("`mklink /J` failed; a junction is required for this test");
+    }
+
+    let root = ProjectRoot::open(t.root()).unwrap();
+    let err = root
+        .save(&pp("linked/victim.tex"), b"overwritten", Expected::Any, true)
+        .unwrap_err();
+    assert!(is_refused_symlink(&err, "linked"), "{err:?}");
+    let err = root.read(&pp("linked/victim.tex"), 1 << 20).unwrap_err();
+    assert!(is_refused_symlink(&err, "linked"), "{err:?}");
+    assert_eq!(fs::read_to_string(&victim).unwrap(), "external content");
+
+    // The same refusal when the junction *is* the root handed to `open`.
+    let holder = TempDir::new("junction-holder");
+    let root_link = holder.root().join("project");
+    assert!(mklink_junction(&root_link, outside.root()));
+    let err = ProjectRoot::open(&root_link).unwrap_err();
+    assert!(is_refused_symlink(&err, "project"), "{err:?}");
 }
 
 #[test]
@@ -188,10 +237,12 @@ fn durability_bytes_hash_and_identity_match_after_save() {
     assert_eq!(receipt.sha256, sha256(&on_disk));
     assert_eq!(receipt.bytes, on_disk.len() as u64);
     let meta = fs::metadata(t.root().join("deep/er/file.tex")).unwrap();
-    assert_eq!(receipt.identity.ino, meta.ino());
-    assert_eq!(receipt.identity.dev, meta.dev());
     assert_eq!(receipt.mtime, meta.modified().unwrap());
-    // A rooted read agrees with the receipt.
+    // A freshly observed identity for the same file equals the receipt's.
+    // Compared as whole `FileIdentity` values rather than through raw
+    // `st_dev`/`st_ino`, so this asserts the property that matters -- "the
+    // receipt names the file that is actually there" -- on every platform,
+    // whatever the identity is made of underneath.
     let read = root
         .read(&pp("deep/er/file.tex"), 1 << 20)
         .unwrap()
@@ -209,6 +260,12 @@ fn durability_bytes_hash_and_identity_match_after_save() {
         .map(|e| e.unwrap().file_name())
         .collect();
     assert_eq!(no_temp, ["file.tex"]);
+    // A *different* file is never mistaken for it, so the identity the
+    // receipt carries actually discriminates.
+    let other = root
+        .save(&pp("deep/er/other.tex"), b"other", Expected::NewFile, false)
+        .unwrap();
+    assert_ne!(other.identity, receipt.identity);
 }
 
 #[test]
@@ -259,7 +316,7 @@ fn racing_symlink_swap_never_reaches_the_outside_file() {
             while !stop.load(Ordering::Relaxed) {
                 let _ = fs::remove_file(&target);
                 if flips.is_multiple_of(2) {
-                    let _ = symlink(&victim, &target);
+                    common::try_symlink_file(&victim, &target);
                 } else {
                     let _ = fs::write(&target, "racer");
                 }
@@ -269,7 +326,7 @@ fn racing_symlink_swap_never_reaches_the_outside_file() {
         })
     };
     let root = ProjectRoot::open(t.root()).unwrap();
-    let mut outcomes = [0u32; 3];
+    let mut outcomes = [0u32; 4];
     for i in 0..400 {
         let payload = format!("mine-{i}");
         match root.save(&pp("a.tex"), payload.as_bytes(), Expected::Any, true) {
@@ -281,6 +338,26 @@ fn racing_symlink_swap_never_reaches_the_outside_file() {
             Err(SaveError::Conflict(c)) => {
                 assert_eq!(c.kind, SaveConflictKind::ModifiedDuringSave);
                 outcomes[2] += 1;
+            }
+            // Windows file sharing is mandatory rather than advisory, and a
+            // deleted name lingers in a "delete pending" state instead of
+            // vanishing atomically. So a save racing a writer that keeps
+            // recreating the target can be refused outright where POSIX
+            // would simply have succeeded:
+            //
+            //   32 ERROR_SHARING_VIOLATION - the racer holds the name while
+            //      `CreateSymbolicLinkW` or its write is in flight.
+            //    5 ERROR_ACCESS_DENIED     - likewise, for a delete in flight.
+            //    2 ERROR_FILE_NOT_FOUND    - the target is delete-pending, so
+            //      renaming over it is refused; `sys` maps that onto `ENOENT`
+            //      because the name is, to any caller, already gone.
+            //
+            // Each is a transient refusal to act, never a partial write. The
+            // invariant this test exists for -- the outside file is never
+            // reached -- is asserted on every iteration regardless.
+            #[cfg(windows)]
+            Err(SaveError::Io(e)) if matches!(e.raw_os_error(), Some(2 | 5 | 32)) => {
+                outcomes[3] += 1
             }
             Err(other) => panic!("unexpected {other:?}"),
         }
@@ -294,5 +371,13 @@ fn racing_symlink_swap_never_reaches_the_outside_file() {
     let flips = racer.join().unwrap();
     assert!(flips > 0);
     assert_eq!(fs::read_to_string(&victim).unwrap(), "untouchable");
-    eprintln!("racing outcomes ok/refused/conflict = {outcomes:?}, racer flips = {flips}");
+    // The run must have actually exercised the save path rather than bailing
+    // out every time, or it would prove nothing.
+    assert!(
+        outcomes[0] + outcomes[1] + outcomes[2] > 0,
+        "every save was a transient sharing failure: {outcomes:?}"
+    );
+    eprintln!(
+        "racing outcomes ok/refused/conflict/sharing = {outcomes:?}, racer flips = {flips}"
+    );
 }

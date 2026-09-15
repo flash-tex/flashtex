@@ -532,9 +532,8 @@ impl ReviewInbox {
             let mut file = tempfile::NamedTempFile::new_in(&self.root)?;
             file.write_all(&output.bytes)?;
             file.as_file().sync_all()?;
-            file.persist(self.root.join("inbox.json"))
-                .map_err(|e| InboxError::Io(e.error))?;
-            File::open(&self.root)?.sync_all()?;
+            replace_with_temporary(file, &self.root.join("inbox.json")).map_err(InboxError::Io)?;
+            open_dir_for_sync(&self.root)?.sync_all()?;
             Ok(())
         })();
         if let Err(error) = persisted {

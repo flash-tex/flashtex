@@ -1,14 +1,23 @@
 mod common;
 
+// Used only by the `#[cfg(unix)]` symlink and TOCTOU-race tests below, so
+// gated to match them -- otherwise they read as unused on every other target.
+#[cfg(unix)]
 use std::fs;
+#[cfg(unix)]
 use std::sync::Arc;
+#[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
 use std::thread;
+
+#[cfg(unix)]
+use flashtex_project_files::sha256;
 
 use common::{TempDir, pp};
 use flashtex_project_files::{
     DiagnosticKind, DiscoverError, FileKind, FileSource, Overlay, PathError, ProjectGraph,
-    ProjectPath, ReferenceKind, Severity, json::Json, sha256,
+    ProjectPath, ReferenceKind, Severity, json::Json,
 };
 
 fn paths(g: &ProjectGraph) -> Vec<&str> {

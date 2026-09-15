@@ -1,0 +1,16 @@
+// NativeMethods.txt
+// purpose: CsWin32 (Microsoft.Windows.CsWin32) generation manifest -- the exact
+//   Win32/COM surface Win32SpellChecker.cs needs from the OS spellchecking
+//   service (spellcheck.h): ISpellCheckerFactory (to create a per-locale
+//   ISpellChecker via CreateSpellChecker), ISpellChecker itself (Check,
+//   Suggest, Add, Ignore -- CsWin32 generates every method of a COM interface
+//   together, since a COM vtable cannot be partially bound), and
+//   IEnumSpellingError/ISpellingError to walk Check's results.
+//   CLSID_SpellCheckerFactory is the class CoCreateInstance activates.
+// author: Claude Sonnet 5
+// date: 2026-09-14
+ISpellCheckerFactory
+ISpellChecker
+IEnumSpellingError
+ISpellingError
+SpellCheckerFactory

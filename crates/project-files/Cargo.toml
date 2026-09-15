@@ -12,3 +12,19 @@ path = "src/lib.rs"
 
 [dependencies]
 unicode-normalization = "0.1.25"
+
+# Windows has no `openat` family; `src/sys.rs` emulates it with the NT native
+# API (`NtCreateFile`/`NtSetInformationFile` against a pinned directory
+# handle). `windows-sys` supplies the typed signatures and constants for that
+# instead of hand-transcribed `extern "C"` declarations and magic numbers.
+# Pinned exactly: 0.61 is the first release to export `Wdk::Storage::
+# FileSystem::NtCreateFile`, which the emulation cannot be written without.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+] }

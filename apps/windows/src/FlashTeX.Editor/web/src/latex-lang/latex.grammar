@@ -1,0 +1,133 @@
+// name: latex.grammar
+// purpose: Lezer LR grammar for LaTeX source, compiled by @lezer/generator into
+//   parser.ts. Covers control sequences, commands with required/optional
+//   arguments, begin/end environments (with nesting), inline and display math,
+//   line comments (with \% correctly excluded), and brace/bracket groups tagged
+//   for CodeMirror's bracket-matching extension. See web/src/latex-lang/index.ts
+//   for the CodeMirror LanguageSupport wrapper and web/test/latex-lang.test.ts
+//   for coverage notes and known limitations.
+// author: Claude Sonnet 5
+// date: 2026-09-14
+
+@top Document { content* }
+
+@skip { space | LineComment }
+
+@precedence { argAttach }
+
+content {
+  Environment |
+  DisplayMathBracket |
+  DisplayMathDollar |
+  InlineMath |
+  Command |
+  ControlSymbol |
+  Group |
+  BracketGroup |
+  Text
+}
+
+// mathContent reuses the plain `Text` token for math prose runs rather than
+// defining a separate "MathText" token with an identical character class
+// (backslash/brace/bracket/dollar/percent are excluded either way): a second
+// token that matches exactly the same characters is ambiguous to the
+// generator wherever the two contexts' states can be reached from each
+// other (which happens here, since Group/BracketGroup/Command are shared by
+// both `content` and `mathContent` and can recurse back into either). Math
+// content is still structurally distinct in the tree -- it is always wrapped
+// in InlineMath/DisplayMathDollar/DisplayMathBracket -- and web/src/latex-lang
+// /index.ts uses that (via @lezer/highlight's "InlineMath/..." path selector
+// syntax) to style math text differently from prose without a redundant token.
+mathContent {
+  Command |
+  ControlSymbol |
+  Group |
+  BracketGroup |
+  Text
+}
+
+Environment {
+  BeginKw EnvNameGroup content* EndKw EnvNameGroup
+}
+
+BeginKw { @specialize[@name="BeginKw"]<ControlWord, "\\begin"> }
+EndKw { @specialize[@name="EndKw"]<ControlWord, "\\end"> }
+
+EnvNameGroup { OpenBrace EnvName CloseBrace }
+
+Command {
+  ControlWord commandArg*
+}
+
+// A brace/bracket group immediately following a command name is always
+// attached to that command as an argument (matching how real LaTeX macros
+// consume their arguments), rather than being ambiguously left as a sibling
+// content node -- !argAttach tells the generated LR parser to prefer shifting
+// into another argument over reducing the Command early.
+commandArg { !argAttach (BracketGroup | Group) }
+
+Group { OpenBrace content* CloseBrace }
+
+BracketGroup { OpenBracket content* CloseBracket }
+
+InlineMath { InlineMathDelim mathContent* InlineMathDelim }
+
+DisplayMathDollar { DisplayMathDollarDelim mathContent* DisplayMathDollarDelim }
+
+DisplayMathBracket { DisplayMathOpen mathContent* DisplayMathClose }
+
+@tokens {
+  space { @whitespace+ }
+
+  LineComment { "%" ![\n]* }
+
+  ControlWord { "\\" @asciiLetter+ "*"? }
+
+  // A control symbol is `\` followed by exactly one character that is *not*
+  // a letter (matching real TeX/LaTeX catcode rules: `\%`, `\$`, `\\`, `\ `,
+  // etc. are single-character control sequences, while a letter after `\`
+  // always starts a (possibly multi-letter) control word instead). Excluding
+  // letters here means ControlWord and ControlSymbol can never match the same
+  // input -- e.g. "\A" can only ever be a one-letter ControlWord, never a
+  // one-off ControlSymbol -- so there is no ambiguity for the generator to
+  // resolve, rather than papering over it with an arbitrary @precedence.
+  ControlSymbol { "\\" ![a-zA-Z] }
+
+  EnvName { @asciiLetter+ "*"? }
+
+  DisplayMathDollarDelim { "$" "$" }
+  InlineMathDelim { "$" }
+
+  DisplayMathOpen { "\\" "[" }
+  DisplayMathClose { "\\" "]" }
+
+  OpenBrace[closedBy="CloseBrace"] { "{" }
+  CloseBrace[openedBy="OpenBrace"] { "}" }
+  OpenBracket[closedBy="CloseBracket"] { "[" }
+  CloseBracket[openedBy="OpenBracket"] { "]" }
+
+  // Text excludes `[` and `]` too (not just brace/dollar/percent/backslash)
+  // so that BracketGroup's OpenBracket/CloseBracket tokens stay distinctly
+  // tokenizable everywhere Text can appear, including inside math content --
+  // otherwise a bare "[" would tie in length with OpenBracket and the
+  // generator could not tell which one a lone "[" should become.
+  //
+  // Text deliberately includes embedded whitespace, so a run of ordinary
+  // prose like "hello world" tokenizes as one Text node rather than being
+  // fragmented at every space -- @skip only ever gets a chance to consume
+  // whitespace that sits at a `content*`/`mathContent*` repetition boundary
+  // (i.e. between two already-distinct nodes; verified in
+  // latex-lang.test.ts's "switches back to prose Text" case), never in the
+  // middle of a Text token that's already started. Because Text's character
+  // class does not exclude whitespace, though, `space` and `Text` can still
+  // produce an equal-length match at one specific position: a maximal run
+  // that is purely whitespace with no adjacent non-whitespace character for
+  // Text to extend into (e.g. a lone "\t" right at such a boundary). The
+  // @precedence declaration below resolves that exact tie in favour of
+  // `space`, so a whitespace-only run is skipped like any other whitespace
+  // instead of surfacing as a degenerate all-whitespace Text node.
+  Text { ![\\{}\[\]$%]+ }
+
+  @precedence { DisplayMathOpen, DisplayMathClose, ControlSymbol }
+  @precedence { space, Text }
+}

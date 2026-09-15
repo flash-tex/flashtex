@@ -1,0 +1,11 @@
+# name: .gitignore
+# purpose: Excludes installed packages and the Lezer parser generated from
+#   latex.grammar by `npm run build:grammar` (wired as this package's pretest
+#   hook, so it is always regenerated before `npm test`/`npm run typecheck`
+#   rather than needing to be kept in sync by hand).
+# author: Claude Sonnet 5
+# date: 2026-09-14
+
+node_modules/
+src/latex-lang/parser.ts
+src/latex-lang/parser.terms.ts

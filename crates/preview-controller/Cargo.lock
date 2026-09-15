@@ -108,6 +108,7 @@ name = "flashtex-project-files"
 version = "0.1.0"
 dependencies = [
  "unicode-normalization",
+ "windows-sys",
 ]
 
 [[package]]

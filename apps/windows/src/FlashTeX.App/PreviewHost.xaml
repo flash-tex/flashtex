@@ -1,0 +1,13 @@
+<!-- Native runtime-v1 preview surface: text/rules are positioned from compiler points. -->
+<UserControl
+    x:Class="FlashTeX.App.PreviewHost"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <ScrollViewer x:Name="PreviewScroller" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="PagesPanel" HorizontalAlignment="Center" Spacing="18" Padding="20" />
+        </ScrollViewer>
+        <TextBlock x:Name="EmptyText" Text="Compile to see a preview" HorizontalAlignment="Center" VerticalAlignment="Center"
+                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+    </Grid>
+</UserControl>

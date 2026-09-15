@@ -162,7 +162,7 @@ fn refusals_and_bad_requests_are_errors_and_write_nothing() {
     let outside = common::TempDir::new("helper-bin-outside");
     let secret = outside.root().join("secret.tex");
     std::fs::write(&secret, "secret\n").unwrap();
-    std::os::unix::fs::symlink(&secret, root.join("link.tex")).unwrap();
+    common::symlink_file(&secret, &root.join("link.tex"));
     let replies = run(
         root,
         &[
@@ -203,7 +203,7 @@ fn symlinked_root_is_refused_at_startup() {
     let real = common::TempDir::new("helper-bin-realroot");
     let holder = common::TempDir::new("helper-bin-holder");
     let link = holder.root().join("root-link");
-    std::os::unix::fs::symlink(real.root(), &link).unwrap();
+    common::symlink_dir(real.root(), &link);
     let out = Command::new(env!("CARGO_BIN_EXE_flashtex-project-files"))
         .arg("--root")
         .arg(&link)

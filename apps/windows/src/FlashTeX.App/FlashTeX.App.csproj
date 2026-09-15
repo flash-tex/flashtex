@@ -1,0 +1,109 @@
+<!--
+  name: FlashTeX.App.csproj
+  purpose: WinUI3 desktop app head (unpackaged, WindowsPackageType=None). Two
+    MSBuild properties below (AppxGeneratePriEnabled, IncludeCopyLocalFilesOutputGroup)
+    are set to false because this machine has no Visual Studio "Windows
+    application development" workload installed, so
+    Microsoft.Build.Packaging.Pri.Tasks.dll / Microsoft.Build.AppxPackage.dll
+    (which Microsoft.WindowsAppSDK's buildTransitive targets look for under
+    $(MSBuildExtensionsPath)\Microsoft\VisualStudio\v17.0\AppxPackage\) do not
+    exist on disk. Actual XAML/C#/WinRT-projection compilation succeeds fine
+    without them; only PRI resource-index generation and an MSIX-packaging
+    output-group step need that tooling, and neither is required for an
+    unpackaged app. Remove both properties once the workload is installed, or
+    once producing a real MSIX package (WindowsPackageType=Msix) is needed —
+    at that point PRI generation in particular becomes necessary for real
+    localized resources/app icons.
+  author: Claude Sonnet 5
+  date: 2026-09-14
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Platforms>x64</Platforms>
+    <AppxGeneratePriEnabled>false</AppxGeneratePriEnabled>
+    <IncludeCopyLocalFilesOutputGroup>false</IncludeCopyLocalFilesOutputGroup>
+    <RootNamespace>FlashTeX.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <WindowsPackageType>None</WindowsPackageType>
+    <!--
+      Self-contained mode (bundling the WindowsAppSDK native runtime DLLs
+      alongside the app) crashes on launch with STATUS_ENTRYPOINT_NOT_FOUND
+      deep inside the bundled Microsoft.UI.Xaml.dll (confirmed via Windows
+      Error Reporting) — a native ABI mismatch in that deployment mode on
+      this machine. This machine already has Microsoft.WindowsAppRuntime.1.6
+      (matching version) installed system-wide as a framework package
+      (`Get-AppxPackage Microsoft.WindowsAppRuntime.1.6`), so use that
+      known-good, already-registered runtime instead.
+    -->
+    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
+    <!--
+      CVE check (2026-09-14): no open CVEs for the Microsoft.Web.WebView2 NuGet
+      package on the GitHub Advisory Database / NVD as of this date. The actual
+      Chromium security surface lives in the separately-serviced WebView2
+      Runtime installed on the OS (Windows Update patches it independently of
+      this SDK package's version); this package is only the WinRT/WinUI3
+      control + native loader shim. Pinned to the latest stable release
+      (1.0.4191.47, per the NuGet gallery) per org dependency policy.
+    -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+    <!--
+      Win2D: the Direct2D/DirectWrite immediate-mode surface the rendering-v2
+      precision preview paints on (PreviewV2Host). Needed because the v2 wire
+      format positions individual GLYPHS by original font glyph id at absolute
+      baseline origins, which no XAML TextBlock can express; DrawGlyphRun can.
+      CVE check (2026-09-14): the GitHub Advisory Database has no advisory for
+      the NuGet package Microsoft.Graphics.Win2D (0 results, NuGet ecosystem),
+      and the NVD keyword search for "Win2D" returns 0 CVEs. Pinned to the exact
+      latest stable release, 1.4.0; it is the build whose dependency is
+      Microsoft.WindowsAppSDK.WinUI (1.8.260204000 or newer), which the
+      Microsoft.WindowsAppSDK 2.4.0 reference above satisfies at 2.3.6.
+      The older 1.3.2 still pins whole-SDK Microsoft.WindowsAppSDK 1.6.
+    -->
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      FlashTeX.Shell has no WinUI dependency of its own (ShellModel, CommandRegistry,
+      Navigation, ShellChrome, KeyboardShortcut) — this app head is the first WinUI
+      consumer of it. FlashTeX.Editor is now wired in (EditorHost.xaml hosts a real
+      WebView2 control over its web/dist build — see EditorHost.xaml.cs); Win2D
+      preview rendering and real file-system project loading
+      (FlashTeX.Preview/FlashTeX.ProjectFiles) remain separate, not-yet-attempted
+      milestones (a placeholder still stands in for the preview pane).
+    -->
+    <ProjectReference Include="..\FlashTeX.Shell\FlashTeX.Shell.csproj" />
+    <ProjectReference Include="..\FlashTeX.Editor\FlashTeX.Editor.csproj" />
+    <ProjectReference Include="..\FlashTeX.ProjectFiles\FlashTeX.ProjectFiles.csproj" />
+    <!-- Rendering-v2 preview: content-addressed font resolution, per-page caching and the hit-test index. -->
+    <ProjectReference Include="..\FlashTeX.Preview\FlashTeX.Preview.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The editor pane's WebView2 host page: web/dist is the Vite production
+      build output (`npm run build` under src/FlashTeX.Editor/web) — index.html
+      + assets/*.js, no dev-server/network dependency. Copied next to the app
+      executable so EditorHost.xaml.cs's SetVirtualHostNameToFolderMapping call
+      can find it at run time via a path relative to AppContext.BaseDirectory
+      instead of walking up to the repo root in a published (non-repo) build.
+      Regenerate this directory with `npm run build` after editing anything
+      under web/src; it is not restored automatically by `dotnet build`.
+    -->
+    <None Include="..\FlashTeX.Editor\web\dist\**" Condition="Exists('..\FlashTeX.Editor\web\dist')">
+      <Link>EditorWeb\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

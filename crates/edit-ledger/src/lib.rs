@@ -12,6 +12,71 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Opens `path` (a directory) so `sync_all` can fsync it after a rename.
+///
+/// Plain `File::open` cannot open a directory on Windows at all (it fails
+/// with `ERROR_ACCESS_DENIED`, unlike POSIX's `open(2)`); it needs
+/// `FILE_FLAG_BACKUP_SEMANTICS`. A read-only handle isn't enough either:
+/// `sync_all`'s `FlushFileBuffers` itself requires write access on the
+/// handle, or it fails with the same `ERROR_ACCESS_DENIED` (measured). See
+/// `crates/project-files/src/sys.rs`'s `open_dir_std`/`open_at` for the same
+/// two fixes applied there.
+#[cfg(windows)]
+fn open_dir_for_sync(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn open_dir_for_sync(path: &Path) -> std::io::Result<File> {
+    File::open(path)
+}
+
+/// Atomically replaces `destination` with `temporary`, via `std::fs::rename`
+/// rather than `NamedTempFile::persist`.
+///
+/// The two are not equivalent on Windows, and the difference is a correctness
+/// bug rather than a style preference. `tempfile`'s `persist` calls
+/// `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`, which replaces the destination
+/// through the ordinary delete path: it needs `DELETE` access on the existing
+/// file, so it fails with `ERROR_ACCESS_DENIED` whenever *any* other handle to
+/// the destination is open. `std::fs::rename` instead asks for
+/// `FileRenameInfoEx` with `FILE_RENAME_FLAG_POSIX_SEMANTICS` (Windows 10 1607+,
+/// with a `MoveFileExW` fallback), which unlinks the old file from the directory
+/// and lets existing readers keep reading their now-nameless handle — the same
+/// observable behaviour POSIX `rename(2)` has always had, and the behaviour the
+/// rest of this module's durability reasoning assumes.
+///
+/// Measured on Windows 11, 300 replacements against one thread doing a bare
+/// `std::fs::read` of the destination in a loop: `persist` failed 231 times with
+/// `ERROR_ACCESS_DENIED`, `std::fs::rename` failed 0 times. That reader is not a
+/// contrived case — the editor UI, a backup agent or a virus scanner reading
+/// `document.json` was enough to make a durable save report `storage_error` and
+/// leave the document at its previous revision, even though nothing was wrong
+/// with the data or the disk.
+///
+/// `keep` disarms the temporary's delete-on-drop; on a rename failure the now
+/// unowned file is removed explicitly so a failed save leaves no debris. The
+/// file handle is dropped before the rename purely for tidiness: POSIX-semantics
+/// rename does not require it (measured — the same 300/300 succeeded with the
+/// handle still open).
+fn replace_with_temporary(temporary: tempfile::NamedTempFile, destination: &Path) -> Result<()> {
+    let (file, path) = temporary.keep().map_err(|e| Error::from(e.error))?;
+    drop(file);
+    match fs::rename(&path, destination) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&path);
+            Err(Error::from(error))
+        }
+    }
+}
+
 pub mod checkpoint;
 pub mod history;
 pub mod recovery;
@@ -338,6 +403,7 @@ impl Drop for Store {
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let root = path.as_ref().to_path_buf();
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]
         {
@@ -345,7 +411,7 @@ impl Store {
             builder.mode(0o700);
         }
         match builder.create(&root) {
-            Ok(()) => File::open(
+            Ok(()) => open_dir_for_sync(
                 root.parent()
                     .filter(|p| !p.as_os_str().is_empty())
                     .unwrap_or(Path::new(".")),
@@ -382,9 +448,16 @@ impl Store {
         // Reestablish durability if a prior writer died after rename but before
         // syncing the directory. No receipt can escape open() before this gate.
         if state.is_some() {
-            File::open(root.join("document.json"))?.sync_all()?;
+            // `sync_all`'s `FlushFileBuffers` requires write access on the
+            // handle on Windows, even for a file this call never writes to
+            // (measured; see `open_dir_for_sync` above for the same rule
+            // applied to directory handles).
+            OpenOptions::new()
+                .write(true)
+                .open(root.join("document.json"))?
+                .sync_all()?;
         }
-        File::open(&root)?.sync_all()?;
+        open_dir_for_sync(&root)?.sync_all()?;
         Ok(Self {
             root,
             _lock: lock,
@@ -623,12 +696,10 @@ impl Store {
         temporary.as_file().sync_all()?;
         #[cfg(test)]
         self.inject("before_rename")?;
-        temporary
-            .persist(self.root.join("document.json"))
-            .map_err(|e| Error::from(e.error))?;
+        replace_with_temporary(temporary, &self.root.join("document.json"))?;
         #[cfg(test)]
         self.inject("after_rename")?;
-        File::open(&self.root)?.sync_all()?;
+        open_dir_for_sync(&self.root)?.sync_all()?;
         Ok(())
     }
     #[cfg(test)]

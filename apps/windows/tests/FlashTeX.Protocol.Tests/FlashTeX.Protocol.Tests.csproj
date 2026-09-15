@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\FlashTeX.Protocol\FlashTeX.Protocol.csproj" />
+  </ItemGroup>
+
+  <!-- Real wire-format fixtures shared with the Rust/Swift sides (protocol/fixtures/),
+       copied next to the test binaries so round-trip tests find them regardless of
+       the test runner's working directory. -->
+  <ItemGroup>
+    <None Include="..\..\..\..\protocol\fixtures\*.json" Link="fixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Shared byte-offset conversion vectors, consumed identically by
+       web/test/byte-offsets.test.ts (TypeScript) and this project's
+       ByteOffsetsCrossLanguageParityTests.cs (C#), to prove both language
+       implementations agree on the same fixture data. -->
+  <ItemGroup>
+    <None Include="..\..\src\FlashTeX.Editor\web\test\byte-offset-vectors.json" Link="fixtures\byte-offset-vectors.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

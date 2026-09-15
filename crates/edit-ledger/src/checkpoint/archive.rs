@@ -291,7 +291,7 @@ impl Store {
             self.inject("checkpoint_before_publish")?;
         }
         fs::rename(pending, root.join(final_name))?;
-        File::open(root)?.sync_all()?;
+        crate::open_dir_for_sync(&root)?.sync_all()?;
         Ok(())
     }
     fn publish_index(
@@ -358,7 +358,7 @@ impl Store {
                 removed.push(info.file_name.clone());
             }
         }
-        File::open(root)?.sync_all()?;
+        crate::open_dir_for_sync(&root)?.sync_all()?;
         Ok(removed)
     }
     /// Publish the new checkpoint and then its authoritative index atomically.
@@ -394,6 +394,7 @@ impl Store {
         }
         let identity = checkpoint.identity.clone();
         let root = self.root.join("checkpoints");
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]
         {
@@ -401,7 +402,7 @@ impl Store {
             builder.mode(0o700);
         }
         match builder.create(&root) {
-            Ok(()) => File::open(&self.root)?.sync_all()?,
+            Ok(()) => crate::open_dir_for_sync(&self.root)?.sync_all()?,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 if !fs::symlink_metadata(&root)?.file_type().is_dir() {
                     return Err(Error::new(
@@ -433,8 +434,13 @@ impl Store {
         // directory sync. Establish that observed index durably before pruning
         // any file an older on-disk index could still reference.
         if !retained.is_empty() {
-            File::open(root.join("index.json"))?.sync_all()?;
-            File::open(&root)?.sync_all()?;
+            // Write access is required for `sync_all` on Windows even though
+            // this handle never writes (see `open_dir_for_sync` in lib.rs).
+            OpenOptions::new()
+                .write(true)
+                .open(root.join("index.json"))?
+                .sync_all()?;
+            crate::open_dir_for_sync(&root)?.sync_all()?;
         }
         let mut removed_files = self.clean_unreferenced(&physical, &retained)?;
         let generation = physical

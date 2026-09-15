@@ -1,0 +1,25 @@
+<!-- Singleton auxiliary window: the active document's durable edit-ledger undo/redo history. -->
+<Window
+    x:Class="FlashTeX.App.EditHistoryWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Padding="16" RowSpacing="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
+            <TextBlock x:Name="DocumentText" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <Button x:Name="RefreshButton" Content="Refresh" />
+        </StackPanel>
+
+        <TextBlock x:Name="SummaryText" Grid.Row="1" Opacity="0.75" TextWrapping="Wrap" />
+
+        <ScrollViewer Grid.Row="2">
+            <StackPanel x:Name="EntriesPanel" Spacing="4" />
+        </ScrollViewer>
+    </Grid>
+</Window>

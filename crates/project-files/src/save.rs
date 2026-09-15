@@ -13,11 +13,18 @@
 //! contract: writers that do not take the lock are out of contract; their
 //! interference is *detected* (pre-rename re-verification and post-rename
 //! identity/hash verification) and reported as a conflict, not prevented.
+//!
+//! Every one of those primitives is provided by [`crate::sys`], which
+//! implements them natively per platform — `openat`/`renameat`/`flock` on
+//! POSIX, the NT native API on Windows. Two of them cannot be expressed
+//! identically on both, and this module is written to the weaker guarantee:
+//! the `..` identity check is delegated to [`sys::verify_parent`] rather than
+//! open-coded, and POSIX permission bits are carried as `Option<u32>`, absent
+//! on platforms that have no such concept.
 
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
@@ -40,7 +47,7 @@ pub struct SaveReceipt {
     pub sha256: Digest,
     /// Modification time reported by `fstat` on the renamed file.
     pub mtime: SystemTime,
-    /// Device/inode of the file that now sits at `path`.
+    /// Filesystem identity of the file that now sits at `path`.
     pub identity: FileIdentity,
 }
 
@@ -50,11 +57,35 @@ impl SaveReceipt {
     }
 }
 
-/// Device and inode number.
+/// Which file on which volume — the value that answers "is this still the
+/// same file I opened earlier?".
+///
+/// The fields are platform-specific because the underlying concept is:
+///
+/// * **POSIX** uses `(st_dev, st_ino)`.
+/// * **Windows** uses `GetFileInformationByHandleEx(FileIdInfo)`'s
+///   `(VolumeSerialNumber, 128-bit FileId)`. The 128-bit form is chosen over
+///   `BY_HANDLE_FILE_INFORMATION`'s 64-bit `nFileIndex*` pair because ReFS
+///   file IDs genuinely exceed 64 bits, and a truncated identity that
+///   collides would defeat the post-rename verification this exists for.
+///
+/// Only equality is meaningful, and equality works identically everywhere,
+/// so cross-platform callers should compare whole `FileIdentity` values
+/// rather than reach for a field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FileIdentity {
+    #[cfg(unix)]
     pub dev: u64,
+    #[cfg(unix)]
     pub ino: u64,
+    #[cfg(windows)]
+    pub volume_serial: u64,
+    #[cfg(windows)]
+    pub file_index: u128,
+    /// Targets with no rooted file operations never construct one of these;
+    /// `ProjectRoot::open` refuses before anything is opened.
+    #[cfg(not(any(unix, windows)))]
+    _unsupported: (),
 }
 
 /// A bounded, symlink-refusing read of one project file.
@@ -65,8 +96,10 @@ pub struct RootedRead {
     pub sha256: Digest,
     pub mtime: SystemTime,
     pub identity: FileIdentity,
-    /// Permission bits (`st_mode & 0o7777`).
-    pub mode: u32,
+    /// POSIX permission bits (`st_mode & 0o7777`), or `None` on a platform
+    /// with no such concept. Windows files carry an ACL inherited from their
+    /// directory instead; no POSIX mode is invented for them.
+    pub mode: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,11 +218,67 @@ impl Drop for ProjectLock<'_> {
     }
 }
 
-fn identity(meta: &std::fs::Metadata) -> FileIdentity {
-    FileIdentity {
+/// Filesystem identity of an already-open handle.
+///
+/// This takes the `File` rather than its `Metadata` because Windows exposes
+/// no file ID through `std::fs::Metadata` on stable Rust — `MetadataExt`'s
+/// `volume_serial_number`/`file_index` are unstable — so the identity has to
+/// be queried from the handle. Every caller already holds the handle, and an
+/// open handle's identity cannot change under it, so nothing is lost.
+#[cfg(unix)]
+fn identity(file: &File) -> io::Result<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = file.metadata()?;
+    Ok(FileIdentity {
         dev: meta.dev(),
         ino: meta.ino(),
+    })
+}
+
+#[cfg(windows)]
+fn identity(file: &File) -> io::Result<FileIdentity> {
+    let (volume_serial, file_index) = sys::file_id(file)?;
+    Ok(FileIdentity {
+        volume_serial,
+        file_index,
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn identity(_: &File) -> io::Result<FileIdentity> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "file identity is not available on this target",
+    ))
+}
+
+/// POSIX permission bits of an already-open file, or `None` where the
+/// platform has none. See [`RootedRead::mode`].
+#[cfg(unix)]
+fn permission_bits(meta: &std::fs::Metadata) -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    Some(meta.mode() & 0o7777)
+}
+
+#[cfg(not(unix))]
+fn permission_bits(_: &std::fs::Metadata) -> Option<u32> {
+    None
+}
+
+/// Copies `mode` onto a freshly written temp file so a save preserves the
+/// permission bits the target already had. A no-op where there are none.
+#[cfg(unix)]
+fn copy_permission_bits(file: &File, mode: Option<u32>) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    match mode {
+        Some(bits) => file.set_permissions(std::fs::Permissions::from_mode(bits)),
+        None => Ok(()),
     }
+}
+
+#[cfg(not(unix))]
+fn copy_permission_bits(_: &File, _: Option<u32>) -> io::Result<()> {
+    Ok(())
 }
 
 fn refused(r: Refused) -> SaveError {
@@ -218,7 +307,7 @@ struct Observation {
     size: u64,
     mtime: SystemTime,
     sha256: Digest,
-    mode: u32,
+    mode: Option<u32>,
 }
 
 impl ProjectRoot {
@@ -248,8 +337,17 @@ impl ProjectRoot {
     }
 
     /// Walks to the directory containing `path`, refusing symlinks and
-    /// verifying each `..` against the handle it was reached from. With
-    /// `create`, missing intermediate directories are created (mode 0o755).
+    /// verifying each walked directory really is a child of the handle it was
+    /// reached from. With `create`, missing intermediate directories are
+    /// created (mode 0o755 where modes exist).
+    ///
+    /// The parenthood proof is [`sys::verify_parent`] rather than an
+    /// open-coded `..` comparison: POSIX opens `..` and compares device/inode,
+    /// but Windows cannot open `".."` relative to a directory handle at all,
+    /// so it compares canonical paths instead. Both answer the same question —
+    /// "was this directory swapped or moved out from under the walk?" — and
+    /// keeping the choice inside `sys` is what lets this function stay
+    /// platform-free.
     fn walk(&self, path: &ProjectPath, create: bool) -> Result<File, SaveError> {
         let mut cur = self.dir.try_clone()?;
         let parent = path.parent_dir();
@@ -270,8 +368,7 @@ impl ProjectRoot {
                 }
                 Err(e) => return Err(classify_open(e, component)),
             };
-            let up = sys::open_at(&child, "..", sys::O_RDONLY | sys::O_DIRECTORY, 0)?;
-            if identity(&up.metadata()?) != identity(&cur.metadata()?) {
+            if !sys::verify_parent(&cur, &child)? {
                 return Err(refused(Refused::EscapesRoot {
                     component: component.to_string(),
                 }));
@@ -320,11 +417,11 @@ impl ProjectRoot {
             }));
         }
         let obs = Observation {
-            identity: identity(&meta),
+            identity: identity(&file)?,
             size: meta.len(),
             mtime: meta.modified()?,
             sha256: sha256(&bytes),
-            mode: meta.mode() & 0o7777,
+            mode: permission_bits(&meta),
         };
         Ok(Some((obs, bytes)))
     }
@@ -558,17 +655,15 @@ impl ProjectLock<'_> {
 
         // Step 3: temp write.
         let temp_name = temp_name(name);
-        let mode = before.as_ref().map_or(0o644, |o| o.mode);
+        let mode = before.as_ref().and_then(|o| o.mode);
         let flags = sys::O_WRONLY | sys::O_CREAT | sys::O_EXCL | sys::O_NOFOLLOW;
-        let mut temp = sys::open_at(&dir, &temp_name, flags, mode)
+        let mut temp = sys::open_at(&dir, &temp_name, flags, mode.unwrap_or(0o644))
             .map_err(|e| classify_open(e, &temp_name))?;
         let temp_identity = match (|| -> io::Result<FileIdentity> {
             temp.write_all(bytes)?;
             temp.sync_all()?;
-            if before.is_some() {
-                temp.set_permissions(std::fs::Permissions::from_mode(mode))?;
-            }
-            Ok(identity(&temp.metadata()?))
+            copy_permission_bits(&temp, mode)?;
+            identity(&temp)
         })() {
             Ok(id) => id,
             Err(e) => {

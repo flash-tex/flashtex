@@ -133,7 +133,31 @@ mod project_root_tests {
         std::fs::write(canonical.join("file.tex"), "x").unwrap();
         assert!(canonical_project_root(&canonical.join("file.tex")).is_err());
         std::fs::create_dir(canonical.join("real")).unwrap();
-        assert!(canonical_project_root(&canonical.join("real/../real")).is_err());
+        // Spell the non-canonical path textually rather than through
+        // `PathBuf::join`. Measured on Windows: `canonicalize` returns a
+        // verbatim (`\\?\`) path, and joining `real/../real` onto a verbatim
+        // base yields `…\real` — std normalizes `.`/`..` itself when pushing
+        // onto one, because the OS deliberately does not normalize verbatim
+        // paths and an unnormalized result would be unopenable. Going through
+        // `join` would therefore hand this function an already-clean path and
+        // assert nothing. Both platforms still refuse the textual spelling: on
+        // POSIX `canonicalize` resolves it to `…/real`, which differs from the
+        // argument; on Windows the literal `..` component does not exist under a
+        // verbatim root, so `canonicalize` fails outright.
+        let sep = std::path::MAIN_SEPARATOR;
+        let dotdot =
+            std::path::PathBuf::from(format!("{}{sep}real{sep}..{sep}real", canonical.display()));
+        assert!(canonical_project_root(&dotdot).is_err());
+        #[cfg(windows)]
+        {
+            // The spelling a Win32 client reaches for first: a plain
+            // drive-letter path. It names the same directory, but
+            // `canonicalize` reports the verbatim form, so it is not the
+            // canonical spelling and is refused. Callers on Windows must
+            // forward the `\\?\`-prefixed path.
+            let drive = canonical.to_str().unwrap().strip_prefix(r"\\?\").unwrap();
+            assert!(canonical_project_root(std::path::Path::new(drive)).is_err());
+        }
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(canonical.join("real"), canonical.join("link")).unwrap();

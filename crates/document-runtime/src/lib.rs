@@ -762,18 +762,85 @@ fn safe_path(p: &str) -> bool {
 /// bounded, no NUL/control characters and no empty, `.` or `..` components.
 /// Existence, directory-ness and symlink canonicalization are the caller's
 /// filesystem checks (preview-controller canonicalizes before forwarding).
+///
+/// Both POSIX (`/a/b`) and Windows (`C:\a\b`, `\\?\C:\a\b`, `\\server\share\a`)
+/// spellings are accepted on every platform, rather than the host's spelling
+/// only. Measured: `Path::canonicalize` on Windows returns a *verbatim* path
+/// (`\\?\C:\Users\…`), so the original leading-`/` rule rejected every real
+/// Windows root and `Controller::set_project_root` could not be used at all
+/// there. Deliberate, not an oversight, that the accepted set is not
+/// host-conditional: this is the wire format's shape check, so the same input
+/// must validate identically wherever the frame is built, encoded or re-checked,
+/// and a root that is absolute for the machine that will open it should not be
+/// rejected by a peer that merely passes it along. Nothing is weakened by the
+/// extra shapes — `..`, `.`, empty components and control characters stay
+/// refused in both spellings, and a path that does not name a real directory on
+/// the producer's machine still fails the caller's filesystem checks.
 pub fn validate_project_root(root: &str) -> Result<(), String> {
-    let components = root.strip_prefix('/').map(|rest| rest.split('/'));
     let ok = root.len() <= 4096
         && !root.chars().any(char::is_control)
-        && components.is_some_and(|mut parts| {
-            root == "/" || parts.all(|s| !s.is_empty() && s != "." && s != "..")
-        });
+        && (posix_root_is_normalized(root) || windows_root_is_normalized(root));
     if ok {
         Ok(())
     } else {
         Err("project_root must be a normalized absolute directory path".into())
     }
+}
+/// `/` alone, or `/` followed by non-empty, non-`.`, non-`..` components.
+/// `\` is an ordinary filename character on POSIX, so it is not a separator here.
+fn posix_root_is_normalized(root: &str) -> bool {
+    root.strip_prefix('/')
+        .is_some_and(|rest| rest.is_empty() || components_are_normalized(rest, false))
+}
+/// A Windows absolute path whose components are non-empty, non-`.`, non-`..`.
+///
+/// Recognized roots, in the forms that actually occur: `\\?\C:\…` and
+/// `\\?\UNC\server\share\…` (verbatim — what `Path::canonicalize` produces),
+/// `C:\…` or `C:/…` (drive-absolute), and `\\server\share\…` (UNC).
+///
+/// Drive-*relative* (`C:dir`) and rooted-but-driveless (`\dir`) paths are
+/// deliberately refused even though Windows will resolve them: both resolve
+/// against hidden per-process state — the drive's current directory, and the
+/// process's current drive — so they are not absolute in the sense this check
+/// exists to guarantee, and the directory they name depends on who resolves them.
+fn windows_root_is_normalized(root: &str) -> bool {
+    let rest = if let Some(verbatim) = root.strip_prefix(r"\\?\") {
+        match verbatim.strip_prefix(r"UNC\") {
+            Some(unc) => after_unc_root(unc),
+            None => after_drive_root(verbatim),
+        }
+    } else if let Some(unc) = root.strip_prefix(r"\\").or_else(|| root.strip_prefix("//")) {
+        after_unc_root(unc)
+    } else {
+        after_drive_root(root)
+    };
+    rest.is_some_and(|rest| rest.is_empty() || components_are_normalized(rest, true))
+}
+fn is_win_sep(c: char) -> bool {
+    c == '\\' || c == '/'
+}
+/// The path below a `C:\` / `C:/` drive root, or `None` when `rest` does not
+/// start with one. Drive-relative `C:dir` has no separator and so is refused.
+fn after_drive_root(rest: &str) -> Option<&str> {
+    let b = rest.as_bytes();
+    (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && is_win_sep(b[2] as char))
+        .then(|| &rest[3..])
+}
+/// The path below a `server\share` UNC root (the leading `\\` or `UNC\` already
+/// stripped), or `None` when either name is missing or empty. The share may end
+/// the path, in which case the share directory itself is the root.
+fn after_unc_root(rest: &str) -> Option<&str> {
+    let server_end = rest.find(is_win_sep).filter(|end| *end > 0)?;
+    let below = &rest[server_end + 1..];
+    let share_end = below.find(is_win_sep).unwrap_or(below.len());
+    if share_end == 0 {
+        return None;
+    }
+    Some(below[share_end..].strip_prefix(is_win_sep).unwrap_or(""))
+}
+fn components_are_normalized(rest: &str, windows: bool) -> bool {
+    rest.split(|c: char| c == '/' || (windows && c == '\\'))
+        .all(|s| !s.is_empty() && s != "." && s != "..")
 }
 #[cfg(test)]
 fn encode(r: &Request, limit: usize, capabilities: &[String]) -> Result<Vec<u8>, String> {
@@ -1055,7 +1122,19 @@ mod project_root_tests {
     }
     #[test]
     fn project_root_textual_validation() {
-        for ok in ["/", "/Users/me/paper", "/private/var/folders/a b/π"] {
+        for ok in [
+            "/",
+            "/Users/me/paper",
+            "/private/var/folders/a b/π",
+            // Windows spellings, accepted on every platform (see the doc comment).
+            r"C:\",
+            r"C:\Users\me\paper dir",
+            "C:/Users/me/paper",
+            r"\\?\C:\Users\me\AppData\Local\Temp\.tmpAbC",
+            r"\\server\share",
+            r"\\server\share\paper",
+            r"\\?\UNC\server\share\paper",
+        ] {
             assert!(validate_project_root(ok).is_ok(), "{ok}");
         }
         let long = format!("/{}", "a".repeat(4096));
@@ -1070,6 +1149,16 @@ mod project_root_tests {
             "/a\0b",
             "/a\nb",
             long.as_str(),
+            // Windows shapes that are refused for the same reasons.
+            r"C:\a\\b",
+            r"C:\a\",
+            r"C:\a\.\b",
+            r"C:\a\..\b",
+            r"C:relative",  // drive-relative: resolves against that drive's cwd
+            r"\rooted",     // driveless: resolves against the current drive
+            r"\\server",    // UNC without a share is not a usable root
+            r"\\server\",   // empty share name
+            r"\\?\C:relative",
         ] {
             assert!(validate_project_root(bad).is_err(), "{bad:?}");
         }

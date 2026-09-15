@@ -1,0 +1,27 @@
+# Force LF line endings for text files regardless of the checking-out
+# platform's core.autocrlf setting. Without this, a Windows checkout with
+# core.autocrlf=true (the common Windows Git default) silently rewrites
+# committed LF fixtures to CRLF, which breaks any test that pins a SHA-256 or
+# does an exact byte comparison against a checked-in fixture — discovered
+# 2026-09-14 while porting to Windows: crates/font-engine, crates/bibtex-bst
+# and crates/rendering-core all have fixtures/tests that fail this way on a
+# fresh Windows clone until this file exists. `text=auto` still leaves git's
+# own binary-detection heuristic as a safety net for extensions not listed
+# explicitly below.
+* text=auto eol=lf
+
+# Fonts, images and other binaries: never touch line endings, never diff as
+# text. Listed explicitly rather than relying only on `text=auto`'s content
+# sniffing, since a text=auto misdetection here would corrupt a real binary
+# rather than just a line-ending style.
+*.otf binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary

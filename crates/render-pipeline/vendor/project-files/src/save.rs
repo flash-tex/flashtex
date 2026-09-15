@@ -17,6 +17,14 @@
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read, Write};
+// Windows port (apps/windows, uncommitted): this vendored snapshot predates the
+// cross-platform rework the live `crates/project-files` already carries, so it
+// would not COMPILE on a non-unix target at all. `sys.rs` here already reports
+// `SUPPORTED = false` off unix, so every save path is inert on Windows; the
+// cfg-gated shims below exist purely so `crates/render-pipeline` (which only
+// ever uses the read side, for rooted TFM reads) builds. Unix behaviour is
+// byte-identical: the `#[cfg(unix)]` arms are the original expressions.
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -185,11 +193,42 @@ impl Drop for ProjectLock<'_> {
     }
 }
 
+#[cfg(unix)]
 fn identity(meta: &std::fs::Metadata) -> FileIdentity {
     FileIdentity {
         dev: meta.dev(),
         ino: meta.ino(),
     }
+}
+
+/// Non-unix shim: see the cfg note at the top of this file. Never reached at
+/// run time (`sys::SUPPORTED` is false, so every caller refuses first).
+#[cfg(not(unix))]
+fn identity(_meta: &std::fs::Metadata) -> FileIdentity {
+    FileIdentity { dev: 0, ino: 0 }
+}
+
+/// The unix permission bits of `meta`; the non-unix shim reports the same
+/// default this module already uses when there is no prior observation.
+#[cfg(unix)]
+fn permission_mode(meta: &std::fs::Metadata) -> u32 {
+    meta.mode() & 0o7777
+}
+
+#[cfg(not(unix))]
+fn permission_mode(_meta: &std::fs::Metadata) -> u32 {
+    0o644
+}
+
+/// Restores `mode` on a freshly created temp file (unix only; a no-op elsewhere).
+#[cfg(unix)]
+fn restore_mode(file: &File, mode: u32) -> io::Result<()> {
+    file.set_permissions(std::fs::Permissions::from_mode(mode))
+}
+
+#[cfg(not(unix))]
+fn restore_mode(_file: &File, _mode: u32) -> io::Result<()> {
+    Ok(())
 }
 
 fn refused(r: Refused) -> SaveError {
@@ -324,7 +363,7 @@ impl ProjectRoot {
             size: meta.len(),
             mtime: meta.modified()?,
             sha256: sha256(&bytes),
-            mode: meta.mode() & 0o7777,
+            mode: permission_mode(&meta),
         };
         Ok(Some((obs, bytes)))
     }
@@ -477,7 +516,7 @@ impl ProjectLock<'_> {
             temp.write_all(bytes)?;
             temp.sync_all()?;
             if before.is_some() {
-                temp.set_permissions(std::fs::Permissions::from_mode(mode))?;
+                restore_mode(&temp, mode)?;
             }
             Ok(identity(&temp.metadata()?))
         })() {

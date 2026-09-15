@@ -9,7 +9,9 @@ use std::{
 };
 /// The interpreter for the fake compilers (#207): `FLASHTEX_TEST_PYTHON`, else
 /// `/usr/bin/python3` when it exists (what CI has always used), else the first
-/// `python3` on `PATH` (NixOS has no `/usr/bin/python3`).
+/// `python3` on `PATH` (NixOS has no `/usr/bin/python3`). Windows has no
+/// `/usr/bin/python3`, so this also accepts `python3.exe`/`python.exe` and
+/// falls back to launching `python3` then `python` by name.
 fn python3() -> std::path::PathBuf {
     if let Some(path) = std::env::var_os("FLASHTEX_TEST_PYTHON") {
         return path.into();
@@ -18,13 +20,37 @@ fn python3() -> std::path::PathBuf {
     if system.is_file() {
         return system;
     }
-    std::env::var_os("PATH")
-        .and_then(|paths| {
-            std::env::split_paths(&paths)
-                .map(|dir| dir.join("python3"))
+    if let Some(path) = std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths).find_map(|dir| {
+            ["python3", "python3.exe", "python", "python.exe"]
+                .into_iter()
+                .map(|name| dir.join(name))
                 .find(|candidate| candidate.is_file())
         })
-        .unwrap_or(system)
+    }) {
+        return path;
+    }
+    #[cfg(windows)]
+    {
+        for name in ["python3", "python"] {
+            if Command::new(name)
+                .arg("-c")
+                .arg("pass")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+            {
+                return std::path::PathBuf::from(name);
+            }
+        }
+        panic!("these fixtures need a working python3 on PATH or FLASHTEX_TEST_PYTHON");
+    }
+    #[cfg(not(windows))]
+    {
+        system
+    }
 }
 fn command(dir: &std::path::Path, body: &str) -> Command {
     let path = dir.join("compiler.py");

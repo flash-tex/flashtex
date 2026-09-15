@@ -69,6 +69,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
+name = "flashtex-document-style"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-font-engine"
 version = "0.1.0"
 dependencies = [
@@ -93,8 +97,16 @@ name = "flashtex-math-layout"
 version = "0.1.0"
 
 [[package]]
+name = "flashtex-microtype"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-paragraph-layout"
 version = "0.1.0"
+dependencies = [
+ "flashtex-document-style",
+ "flashtex-microtype",
+]
 
 [[package]]
 name = "flashtex-pdf"
@@ -103,6 +115,10 @@ version = "0.1.0"
 [[package]]
 name = "flashtex-project-files"
 version = "0.1.0"
+dependencies = [
+ "unicode-normalization",
+ "windows-sys",
+]
 
 [[package]]
 name = "flashtex-rendering-core"
@@ -285,6 +301,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyvec"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -295,6 +317,15 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "version_check"

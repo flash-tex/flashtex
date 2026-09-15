@@ -10,13 +10,55 @@ use flashtex_conversion_jobs::{
 use sha2::{Digest, Sha256};
 use std::{
     error::Error,
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{Cursor, Write},
     path::Path,
     thread,
     time::{Duration, Instant},
 };
 type AdapterResult<T> = Result<T, Box<dyn Error>>;
+
+/// Opens `path` (a directory) so `sync_all` can fsync it after a rename. See
+/// `crates/project-files/src/sys.rs`'s `open_dir_std`/`open_at` — plain
+/// `File::open` can't open a directory on Windows at all, and even once
+/// opened (via `FILE_FLAG_BACKUP_SEMANTICS`), `sync_all` needs write access
+/// on the handle too (measured).
+#[cfg(windows)]
+fn open_dir_for_sync(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn open_dir_for_sync(path: &Path) -> std::io::Result<File> {
+    File::open(path)
+}
+
+/// Atomically replaces `destination` with `temporary`, via `std::fs::rename`
+/// rather than `NamedTempFile::persist` — not equivalent on Windows, where
+/// `persist`'s `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` needs `DELETE` access
+/// on the existing file and fails if any other handle to it is open, unlike
+/// `fs::rename`'s POSIX-semantics replace. See `crates/edit-ledger/src/lib.rs`'s
+/// `replace_with_temporary` for the measured failure-rate comparison.
+fn replace_with_temporary(
+    temporary: tempfile::NamedTempFile,
+    destination: &Path,
+) -> std::io::Result<()> {
+    let (file, path) = temporary.keep().map_err(|e| e.error)?;
+    drop(file);
+    match fs::rename(&path, destination) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&path);
+            Err(error)
+        }
+    }
+}
 fn fingerprint(documents: &[Document]) -> ContextFingerprint {
     ContextFingerprint {
         revision: documents[0].revision,
@@ -31,8 +73,8 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> AdapterResult<()> {
     let mut file = tempfile::NamedTempFile::new_in(parent)?;
     file.write_all(bytes)?;
     file.as_file().sync_all()?;
-    file.persist(path)?;
-    File::open(parent)?.sync_all()?;
+    replace_with_temporary(file, path)?;
+    open_dir_for_sync(parent)?.sync_all()?;
     Ok(())
 }
 fn capture() -> AdapterResult<CaptureSubmit> {
@@ -135,7 +177,7 @@ fn pipeline(
     record.proposal = Some((*proposal).clone());
     bridge.store.save(&record)?;
     fs::remove_file(intent)?;
-    File::open(directory)?.sync_all()?;
+    open_dir_for_sync(directory)?.sync_all()?;
     scheduler.forget(&id).map_err(|e| format!("{e:?}"))?;
     // No source insertion: the Mac must display proposal/diagnostics and obtain review.
     Ok((*proposal).clone())

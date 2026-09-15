@@ -1141,6 +1141,27 @@ mod configuration_tests {
         assert!(!stopped.load(Ordering::SeqCst));
     }
 
+    /// A system shell plus the arguments that make it print
+    /// `FLASHTEX_MAX_REPLY_BYTES` from *its own* environment, so the assertion
+    /// covers what a spawned producer would really inherit rather than what the
+    /// builder recorded.
+    ///
+    /// Both spellings are always present: `/bin/sh` is required by POSIX, and
+    /// `cmd.exe` resolves through `PATH`/`ComSpec` on every Windows install. The
+    /// Windows form prints a trailing CRLF (`echo` always terminates the line)
+    /// and `printf` does not, so the caller trims line endings instead of
+    /// comparing them. `%VAR%` is expanded by the child `cmd` against the
+    /// environment block we hand it, which is exactly the value under test.
+    fn echo_reply_budget_argv() -> (&'static str, [&'static str; 2]) {
+        #[cfg(unix)]
+        {
+            ("/bin/sh", ["-c", "printf '%s' \"$FLASHTEX_MAX_REPLY_BYTES\""])
+        }
+        #[cfg(windows)]
+        {
+            ("cmd", ["/c", "echo %FLASHTEX_MAX_REPLY_BYTES%"])
+        }
+    }
     #[test]
     fn producer_launch_bounds_reply_and_preserves_stricter_settings() {
         let limits = compiler_limits(&json!({"compiler_max_frame_bytes":4096})).unwrap();
@@ -1158,19 +1179,15 @@ mod configuration_tests {
             (Some("0007"), "7"),
             (Some("99999999999999999999999999999999999"), "4095"),
         ] {
-            let mut command = producer_command_with_limit(
-                "/bin/sh",
-                &limits,
-                inherited.map(std::ffi::OsStr::new),
-            );
+            let (shell, args) = echo_reply_budget_argv();
+            let mut command =
+                producer_command_with_limit(shell, &limits, inherited.map(std::ffi::OsStr::new));
             // Exercise the actual child environment without changing the test
             // process environment or racing other test threads.
-            let output = command
-                .args(["-c", "printf '%s' \"$FLASHTEX_MAX_REPLY_BYTES\""])
-                .output()
-                .unwrap();
+            let output = command.args(args).output().unwrap();
             assert!(output.status.success());
-            assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+            let printed = String::from_utf8(output.stdout).unwrap();
+            assert_eq!(printed.trim_end_matches(['\r', '\n']), expected);
         }
     }
     #[test]
@@ -1190,16 +1207,48 @@ mod configuration_tests {
             ]
         );
     }
+    /// An `OsString` that is deliberately *not* valid UTF-8, spelled the way
+    /// each platform can actually represent one.
+    ///
+    /// Measured, not assumed: `OsStr` has no portable "arbitrary bytes"
+    /// constructor. On Unix an `OsStr` is a bag of bytes, so a lone `0xff` (never
+    /// a legal UTF-8 lead byte) is the shortest non-UTF-8 value and
+    /// `OsStrExt::from_bytes` accepts it. On Windows an `OsStr` is WTF-8 over
+    /// UTF-16, `std::os::unix` does not exist, and there is no `from_bytes`; the
+    /// representable equivalent is an *unpaired surrogate*, which
+    /// `OsStringExt::from_wide` accepts and `to_str` still rejects. The caller
+    /// asserts that rejection so this stays a real non-UTF-8 value on both
+    /// platforms rather than quietly degrading into an ordinary string on one.
+    ///
+    /// Both spellings exercise the same launcher branch: an inherited
+    /// `FLASHTEX_MAX_REPLY_BYTES` that cannot be read as a number must be
+    /// replaced by the computed budget, never forwarded to the producer.
+    fn non_utf8_setting() -> std::ffi::OsString {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            std::ffi::OsString::from_vec(vec![0xff])
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            std::ffi::OsString::from_wide(&[0xd800])
+        }
+    }
     #[test]
     fn producer_budget_boundary_and_non_utf8_settings() {
-        use std::os::unix::ffi::OsStrExt;
+        let non_utf8 = non_utf8_setting();
+        assert!(
+            non_utf8.to_str().is_none(),
+            "the fixture must stay non-UTF-8 on this platform"
+        );
         for frame in [128, 8 * 1024 * 1024, MAX_COMPILER_FRAME] {
             let limits = compiler_limits(&json!({"compiler_max_frame_bytes":frame})).unwrap();
             let equal = (frame - 1).to_string();
             for inherited in [
                 None,
                 Some(std::ffi::OsStr::new("")),
-                Some(std::ffi::OsStr::from_bytes(&[0xff])),
+                Some(non_utf8.as_os_str()),
                 Some(std::ffi::OsStr::new(&equal)),
             ] {
                 let command = producer_command_with_limit("unused", &limits, inherited);

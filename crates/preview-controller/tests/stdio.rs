@@ -1784,7 +1784,16 @@ fn stalled_optional_display_write_triggers_watchdog_with_no_source_loss() {
     );
 }
 
+// POSIX-only fixture, like the other `#[cfg(unix)]` tests in this file: the
+// producer is a `#!/usr/bin/python3` script marked executable with `chmod 0700`
+// and then spawned by path. Windows has no shebang dispatch and no executable
+// permission bit, so the fixture cannot run there at all — `PermissionsExt` and
+// `Permissions::from_mode` do not even exist off Unix. Gated rather than
+// ported: the controller logic under test is platform-independent, but giving
+// it a Windows producer needs a different fixture shape (a `.cmd` shim around
+// the interpreter), which belongs in a deliberate test-harness change.
 #[test]
+#[cfg(unix)]
 fn producer_reply_limit_is_applied_on_startup_and_restart() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
@@ -1850,7 +1859,10 @@ fn offline_full_and_metadata_edits_ack_save_without_compile_identity() {
     }
 }
 
+// POSIX-only fixture (executable `#!/usr/bin/python3` producer); see the note
+// on `producer_reply_limit_is_applied_on_startup_and_restart`.
 #[test]
+#[cfg(unix)]
 fn full_and_metadata_edit_admissions_match_wire_previews() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
@@ -1895,7 +1907,10 @@ for line in sys.stdin:
     }
 }
 
+// POSIX-only fixture (executable `#!/usr/bin/python3` producer); see the note
+// on `producer_reply_limit_is_applied_on_startup_and_restart`.
 #[test]
+#[cfg(unix)]
 fn grouped_retry_retains_command_identity_but_admits_current_source_compile() {
     use std::os::unix::fs::PermissionsExt;
     for mode in ["full", "metadata"] {

@@ -1,0 +1,21 @@
+<!--
+  name: Directory.Build.props
+  purpose: Shared MSBuild settings for every FlashTeX Windows project (nullable
+    reference types, warnings-as-errors, analyzers) per the org's "TypeScript
+    over JS / type hints" and hygiene standards applied to C#.
+  author: Claude Sonnet 5 (paired with Akilesh S)
+  date: 2026-09-13
+-->
+<Project>
+  <PropertyGroup>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>CS1591</WarningsNotAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <Company>FlashTeX</Company>
+  </PropertyGroup>
+</Project>

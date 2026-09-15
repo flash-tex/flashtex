@@ -1,0 +1,101 @@
+<Window
+    x:Class="FlashTeX.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:FlashTeX.App">
+
+    <Grid x:Name="RootGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition x:Name="ProblemsPanelRow" Height="0" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!--
+          Fluent extended title bar (Windows Terminal/File Explorer/Notepad style):
+          this row is the system title bar area (MainWindow.TitleBar.cs sets
+          ExtendsContentIntoTitleBar + SetTitleBar(TitleBarRow)), with the menu bar
+          living inside it instead of a separate row below a native title bar. The
+          trailing "*" column is empty, so it stays draggable; the menu bar's own
+          rectangle is carved out as a click-through region in code-behind.
+        -->
+        <Grid x:Name="TitleBarRow" Grid.Row="0" Height="40">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <MenuBar x:Name="AppMenuBar" Grid.Column="0" VerticalAlignment="Stretch" />
+        </Grid>
+
+        <!--
+          A plain StackPanel of Buttons rather than a CommandBar: this app builds without
+          the VS Appx/PRI packaging workload (FlashTeX.App.csproj's header comment), and
+          CommandBar's automatic-overflow layout depends on MRT-indexed theme resources
+          that silently fail to resolve without a generated PRI file — observed dropping
+          every toolbar button but the last with no visible overflow indicator. A
+          StackPanel has no such dependency.
+        -->
+        <StackPanel x:Name="Toolbar" Grid.Row="1" Orientation="Horizontal" Spacing="4" Padding="8,6"
+                    Background="{ThemeResource LayerFillColorDefaultBrush}" />
+
+        <Grid x:Name="BodyGrid" Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="ProjectTreeColumn" Width="220" MinWidth="140" />
+                <ColumnDefinition Width="6" />
+                <ColumnDefinition Width="*" MinWidth="300" />
+            </Grid.ColumnDefinitions>
+
+            <Border x:Name="ProjectTreeHost" Grid.Column="0" Background="{ThemeResource LayerFillColorDefaultBrush}" BorderThickness="0,0,1,0"
+                    BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
+            </Border>
+
+            <Border x:Name="LeftSplitter" Grid.Column="1" Background="Transparent" />
+
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <ScrollViewer Grid.Row="0" HorizontalScrollMode="Auto" HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="TabStripPanel" Orientation="Horizontal" Height="36" />
+                </ScrollViewer>
+
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition x:Name="EditorColumn" Width="420" MinWidth="200" />
+                        <ColumnDefinition Width="6" />
+                        <ColumnDefinition x:Name="PreviewColumn" Width="*" MinWidth="200" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border x:Name="EditorPaneHost" Grid.Column="0" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                    <Border x:Name="CenterSplitter" Grid.Column="1" Background="Transparent" />
+
+                    <Border x:Name="PreviewPaneHost" Grid.Column="2" BorderThickness="1,1,0,0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
+                    </Border>
+                </Grid>
+            </Grid>
+        </Grid>
+
+        <!--
+          Collapsible Problems panel (VS Code/Xcode "Problems"/"Issues" style): docked full-width
+          below the editor+preview body and above the status bar. Hidden by collapsing
+          ProblemsPanelRow to 0 height rather than toggling Visibility on this Border alone, so the
+          BodyGrid row above reclaims the space when the panel is closed. Content (header + grouped
+          diagnostics list) is built in code-behind (MainWindow.Problems.cs), matching this file's
+          existing convention for ProjectTreeHost/PreviewPaneHost/StatusBarPanel.
+        -->
+        <Border x:Name="ProblemsPanelHost" Grid.Row="3" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                Background="{ThemeResource LayerFillColorDefaultBrush}" Visibility="Collapsed">
+        </Border>
+
+        <Border Grid.Row="4" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                Background="{ThemeResource LayerFillColorDefaultBrush}">
+            <StackPanel x:Name="StatusBarPanel" Orientation="Horizontal" Spacing="16" Padding="10,4" />
+        </Border>
+    </Grid>
+</Window>

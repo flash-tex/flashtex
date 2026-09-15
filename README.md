@@ -8,7 +8,9 @@ This project actually consists of two things:
   
 - A native, lightweight, and snappy TeX IDE with live (sub-10ms)
   previews, which pairs with a companion iPad app (FlashTeXPad)
-  for inline LaTeX/TiKZ OCR (including diagrams).
+  for inline LaTeX/TiKZ OCR (including diagrams). The shipping GUI is
+  macOS; a native Windows app lives under `apps/windows/` and is **work
+  in progress, not stable**.
 
 ## See Also
 
@@ -19,7 +21,9 @@ This project actually consists of two things:
 ---
 
 **An incremental LaTeX engine with a command line, and a native macOS IDE
-built on it — no TeX distribution required.**
+built on it — no TeX distribution required.** A native Windows IDE is
+under development (`apps/windows/`); it is a work in progress and is
+**not stable**.
 
 FlashTeX is a Rust LaTeX engine. `flashtex build main.tex` lexes, lays out
 and paints a document in tens of milliseconds, using the same TeX font
@@ -69,6 +73,9 @@ inventory and coverage; see [Supported LaTeX](docs/user/compiler.md#supported-la
 - **iPad companion** — pair FlashTeXPad over the local network, capture a
   sketch or photo, review the proposed LaTeX/TikZ on the Mac and insert it as
   one undoable edit.
+- **Windows native app (WIP, not stable)** — a WinUI 3 IDE under
+  `apps/windows/` that drives the same worker protocol. It is not a
+  supported product yet; see [apps/windows/README.md](apps/windows/README.md).
 - **Helper-process architecture** — engine, PDF writer, capture bridge, edit
   ledger and project index are separate Rust binaries with documented JSON
   Lines contracts, usable from any editor or script.
@@ -166,8 +173,9 @@ for i in 1 2 3 4 5; do /usr/bin/time -p /Library/TeX/texbin/pdflatex -interactio
 
 ## Installation
 
-FlashTeX is two things — a LaTeX engine with a command line, and a native Mac
-app built on it — and they install separately.
+FlashTeX is a LaTeX engine with a command line plus native GUIs built on
+it, and they install separately. The Mac app is the supported GUI. The
+Windows app is a work in progress and is **not stable**.
 
 ### A. Engine + CLI (macOS or Linux)
 
@@ -205,9 +213,16 @@ download `FlashTeX.dmg` from
 into Applications yourself — the app is ad-hoc signed, not notarized, so the
 first time: **right-click → Open** and confirm.
 
-Other platforms aren't ruled out, just not built yet: the GUI is SwiftUI today
-(macOS only), but the CLI already runs anywhere it's built for, and any editor
-or CI can drive the engine over the documented JSON Lines `worker` protocol
+### C. Native GUI (Windows) — work in progress, not stable
+
+There is no installer and no release yet. `apps/windows/` is a WinUI 3
+shell that talks to the same `flashtex worker` protocol as the Mac app.
+Expect missing features, preview mismatches, and breaking changes. Build
+instructions and an honest status list are in
+[apps/windows/README.md](apps/windows/README.md).
+
+The CLI already runs anywhere it is built for, and any editor or CI can
+drive the engine over the documented JSON Lines `worker` protocol
 (see [Extending FlashTeX](docs/extensibility.md)).
 
 **From source** (either path; Xcode Command Line Tools with Swift 6, stable
@@ -285,6 +300,7 @@ crates/
   bridge/            iPad capture receipt, conversion, reviewed edits (flashtex-bridge)
   project-files/, edit-ledger/, project-index/, preview-controller/, …
 apps/mac/            the SwiftUI/AppKit IDE, bundled fonts and TeX metrics, packaging scripts
+apps/windows/        native WinUI 3 IDE (work in progress, not stable)
 apps/ios/            FlashTeXPad, the iPad capture companion
 protocol/            rendering-v2 schema and wire fixtures
 fixtures/            real-world documents with pdfLaTeX reference PDFs
