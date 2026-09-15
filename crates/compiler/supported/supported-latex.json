@@ -895,6 +895,7 @@
     {"name": "verbatim", "mode": "text", "description": "literal monospaced lines"},
     {"name": "verbatim*", "mode": "text", "description": "literal monospaced lines with visible spaces"},
     {"name": "lstlisting", "mode": "text", "description": "literal monospaced lines (basic listings)"},
+    {"name": "comment", "mode": "text", "description": "body discarded unread, even invalid commands inside (comment package)"},
     {"name": "proof", "mode": "text", "description": "amsthm proof with a closing square"},
     {"name": "thebibliography", "mode": "text", "description": "References section with numbered \\bibitem entries"},
     {"name": "multicols", "mode": "text", "description": "multicol {n}[preface][premulticols]: balanced columns, laid out by the render pipeline"},

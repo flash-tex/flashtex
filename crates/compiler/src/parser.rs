@@ -4203,6 +4203,12 @@ impl P<'_> {
                 self.verbatim_environment(span, argument_span, &environment, blocks, para);
                 return;
             }
+            if environment == "comment" {
+                // Not gated on `in_body`: a comment body vanishes in the
+                // preamble too, exactly as real LaTeX discards it.
+                self.comment_environment(span, argument_span);
+                return;
+            }
             self.env_alignments.push(self.declared_alignment);
             if environment == "document" && self.has_document {
                 self.in_body = true;
@@ -4784,6 +4790,54 @@ impl P<'_> {
             span: Span::in_document(document, open.start, tag_end),
         });
         self.finish_block_dependencies();
+    }
+
+    /// The `comment` package's `comment` environment: the entire body
+    /// vanishes. It is never tokenized, expanded, typeset, or diagnosed —
+    /// no output block is pushed, the pending paragraph is untouched (so
+    /// text before and after the block stays in one paragraph), and the
+    /// environment is never entered on `env_stack`.
+    ///
+    /// Like `verbatim_environment` above, this scans the raw source bytes
+    /// directly for a plain literal `\end{comment}` and fast-forwards
+    /// `self.i` past every token the raw region swallowed, so `%`, `\`,
+    /// `$`, `{`, `}` and unknown commands inside are never even seen.
+    /// There is deliberately no nesting: real `comment.sty` (v3.8,
+    /// verified against TeX Live 2026 pdflatex) scoops the body line by
+    /// line and ends it at the first `\end{comment}` line — an inner
+    /// `\begin{comment}` is inert discarded text, and garbage (even
+    /// `\badcommand`s or unbalanced braces) compiles with zero errors.
+    /// One deliberate simplification: `comment.sty` only accepts the end
+    /// tag alone on its line (its whole-line `\ifx` comparison runs past
+    /// `\end{comment}After` to end of file), while this search also ends
+    /// there, exactly like this compiler's verbatim scanner. The two
+    /// agree on all documented usage, where the end tag stands on its
+    /// own line.
+    fn comment_environment(&mut self, open: Span, argument_span: Span) {
+        let document = open.document;
+        let source = self.documents[document.0].text;
+        let content_start = argument_span.end;
+        let end_tag = "\\end{comment}";
+        let (tag_end, found) = match source[content_start..].find(end_tag) {
+            Some(offset) => {
+                let tag_start = content_start + offset;
+                (tag_start + end_tag.len(), true)
+            }
+            None => (source.len(), false),
+        };
+        if !found {
+            self.diags.push(Diagnostic::error(
+                "unterminated environment 'comment' — no matching \\end",
+                Some(open),
+                Some("discarded the comment body to end of input".into()),
+            ));
+        }
+        while self.i < self.t.len()
+            && self.t[self.i].token.span.document == document
+            && self.t[self.i].token.span.start < tag_end
+        {
+            self.i += 1;
+        }
     }
 
     fn equation_environment(
@@ -10002,6 +10056,83 @@ mod tests {
             panic!("expected a Block::Verbatim, got {:?}", parsed.blocks[0]);
         };
         assert_eq!(lines[0].text, "abc");
+    }
+
+    /// The `comment` package's `comment` environment discards its entire
+    /// body unread: real LaTeX never tokenizes it (verified against TeX
+    /// Live 2026 pdflatex + comment.sty v3.8, which scoops the body line
+    /// by line and ends it at the first line that is `\end{comment}`),
+    /// so garbage — even fake commands and unbalanced braces — leaves no
+    /// output and no diagnostics.
+    #[test]
+    fn comment_environment_discards_garbage_body_entirely() {
+        let source =
+            "Before\\begin{comment}This should vanish, including \\badcommand{x}.\\end{comment}After";
+        let parsed = parse(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(parsed.blocks.len(), 1, "{:?}", parsed.blocks);
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks[0]);
+        };
+        let text: String = inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "BeforeAfter");
+    }
+
+    /// Nesting does not exist for `comment`: like real `comment.sty` (no
+    /// brace or environment matching — just a search for `\end{comment}`),
+    /// an inner `\begin{comment}`, other environments' tags, stray braces,
+    /// `%` and `$` inside the body are all inert discarded text. The first
+    /// `\end{comment}` ends the block.
+    #[test]
+    fn comment_environment_ignores_nested_begins_and_unbalanced_braces() {
+        let source = "A\\begin{comment}\n\\begin{comment}\n\\begin{itemize}\n\\item x\n\\end{itemize}\n% a percent and $math$ and } unbalanced {{{ braces\n\\badcommand{1}{2}\n\\end{comment}B";
+        let parsed = parse(source);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        assert_eq!(parsed.blocks.len(), 1, "{:?}", parsed.blocks);
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks[0]);
+        };
+        let text: String = inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "AB");
+    }
+
+    /// A `comment` block that never closes discards through end of input
+    /// and says so under its own name, mirroring unterminated `verbatim`.
+    #[test]
+    fn unterminated_comment_environment_recovers_at_end_of_input() {
+        let source = "Keep \\begin{comment}\n\\badcommand swallowed";
+        let parsed = parse(source);
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("unterminated environment 'comment'")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        let Block::Paragraph(inlines) = &parsed.blocks[0] else {
+            panic!("expected a paragraph, got {:?}", parsed.blocks[0]);
+        };
+        let text: String = inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "Keep");
     }
 
     #[test]
