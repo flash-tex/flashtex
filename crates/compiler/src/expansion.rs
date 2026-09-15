@@ -44,11 +44,15 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
+use std::sync::OnceLock;
 
+use flashtex_font_engine::{Core14Face, Face as _};
 use flashtex_tex_expansion::{self as tex, CatCode, Edit, Engine, IncrementalExpander, Limits, TokenKind as TexKind};
 
 use crate::diagnostics::Diagnostic;
+use crate::layout::{BODY_SIZE_PT, Font};
 use crate::lexer::{tokenize_document, Token, TokenKind};
+use crate::text_builtins::pt_to_sp;
 use crate::parser::{path_is_safe, SourceDocument, BUILT_INS, INCLUDE_DEPTH_LIMIT};
 use crate::{DocumentId, Span};
 
@@ -632,10 +636,83 @@ fn limits_for(bytes: usize) -> Limits {
     }
 }
 
+/// Baseline face for `\settowidth`/`\settoheight`/`\settodepth`.
+///
+/// The engine's [`tex::BoxMeasurer`] hook receives only the already-expanded
+/// content tokens — no font, size or style context — so a measurement cannot
+/// know what was active at the call site (e.g. inside `{\Large ... }`). It
+/// therefore always measures at the fixed baseline the layout pass uses for
+/// plain body text: [`Font::TimesRoman`] at [`BODY_SIZE_PT`]. Cached exactly
+/// like `layout`'s own faces; measuring happens at most once per `\setto...`
+/// call, so one shared face is plenty.
+fn body_face() -> &'static Core14Face {
+    static FACE: OnceLock<Core14Face> = OnceLock::new();
+    FACE.get_or_init(|| Core14Face::new(Font::TimesRoman))
+}
+
+/// Real [`tex::BoxMeasurer`] for the compiler, replacing the engine's
+/// zero-reporting [`tex::DefaultBoxMeasurer`] placeholder.
+///
+/// `width` renders the content tokens to plain text and shapes them with the
+/// same glyph data the layout pass uses ([`crate::layout::text_width`]), so
+/// `\settowidth` grows with the text. `height`/`depth` report the baseline
+/// face's real AFM ascender/descender (not the line-spacing fallback used
+/// for `line_ascent`/`line_descent` in layout): the [`flashtex_font_engine::Face`]
+/// API exposes no per-glyph ink bounding boxes, so TeX's exact behavior —
+/// the ink extent of only the glyphs actually present, e.g. zero depth for
+/// `Hi` — is unreachable without new font-engine plumbing. A content-free
+/// but honest font metric beats an invented per-glyph guess.
+struct CompilerBoxMeasurer;
+
+/// Plain text of the box content, minus TeX grouping.
+///
+/// The engine collects the measured content with [`Engine::expand_fully`],
+/// which wraps it in a synthetic group, so the braces reach the measurer as
+/// `BeginGroup`/`EndGroup` character tokens (alongside any grouping the
+/// content itself contained). TeX grouping contributes no ink — a typeset
+/// brace always arrives as `\{`, a control sequence — so drop group-catcode
+/// characters before shaping. Without this, even `{Hi}` shapes with two
+/// 480-unit brace glyphs (23.52pt instead of 12.0pt at 12pt Times).
+fn measurable_text(tokens: &[tex::Token]) -> String {
+    let inner: Vec<tex::Token> = tokens
+        .iter()
+        .filter(|t| {
+            !matches!(
+                t.kind,
+                TexKind::Char(_, CatCode::BeginGroup | CatCode::EndGroup)
+            )
+        })
+        .cloned()
+        .collect();
+    tex::tokens_to_display_string(&inner)
+}
+
+impl tex::BoxMeasurer for CompilerBoxMeasurer {
+    fn width(&self, tokens: &[tex::Token]) -> i64 {
+        let text = measurable_text(tokens);
+        let pt = crate::layout::text_width(&text, BODY_SIZE_PT, Font::TimesRoman);
+        i64::from(pt_to_sp(pt))
+    }
+
+    fn height(&self, _tokens: &[tex::Token]) -> i64 {
+        let face = body_face();
+        let ascender = face.vertical_metrics().ascender;
+        i64::from(pt_to_sp(face.to_points(i64::from(ascender), BODY_SIZE_PT)))
+    }
+
+    fn depth(&self, _tokens: &[tex::Token]) -> i64 {
+        let face = body_face();
+        // AFM descenders are negative-or-zero (Times-Roman: -217/1000 em).
+        let descender = face.vertical_metrics().descender;
+        i64::from(pt_to_sp(face.to_points(-i64::from(descender), BODY_SIZE_PT)))
+    }
+}
+
 /// Host setup shared by the full and the incremental path. Everything it
 /// sets is part of the engine's checkpointed state.
 fn configure(engine: &mut Engine) {
     engine.run_host_prelude(HOST_PRELUDE);
+    engine.set_box_measurer(Rc::new(CompilerBoxMeasurer));
     engine.set_emit_unbalanced_close(true);
     for name in BUILT_INS {
         engine.declare_host_command(name);
