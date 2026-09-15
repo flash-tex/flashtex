@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/compiler-fuzz",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/577",
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-15T06:12:19Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-COMPILER-FUZZ",
-  "updated_utc": "2026-09-15T06:12:19Z"
+  "updated_utc": "2026-09-15T08:06:36Z"
 }
