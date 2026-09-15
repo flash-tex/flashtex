@@ -1,11 +1,11 @@
 {
   "actor": "daniel-muse-lead",
   "branch": "agent/daniel-muse-lead/textsuperscript",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/507",
   "machine": "Overpriced-Hardware",
   "note": null,
   "started_utc": "2026-09-15T04:29:11Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-TEXTSUPERSCRIPT",
-  "updated_utc": "2026-09-15T04:29:11Z"
+  "updated_utc": "2026-09-15T05:55:34Z"
 }
