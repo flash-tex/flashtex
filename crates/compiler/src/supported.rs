@@ -329,6 +329,7 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("goodbreak", "", "ends the paragraph, then \\penalty-500"),
     ("filbreak", "", "ends the paragraph, then \\vfil\\penalty-200\\vfilneg"),
     ("discretionary", "{pre}{post}{nobreak}", "discretionary break (plain text of each argument)"),
+    ("nobreakdash", "- -- ---", "amsmath: the dashes that follow, with no line break after them (\\nobreak)"),
     ("tolerance", "=<number>", "line-breaking parameter, restored at the end of its group"),
     ("pretolerance", "=<number>", "line-breaking parameter, restored at the end of its group"),
     ("looseness", "=<number>", "line-breaking parameter for the next paragraph end"),
