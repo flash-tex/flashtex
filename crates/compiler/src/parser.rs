@@ -5619,6 +5619,8 @@ impl P<'_> {
     }
 
     /// Brackets stay ordinary lexer word characters, preserving normal text.
+    /// Like LaTeX's `]`-delimited argument, a `]` inside braces does not
+    /// close it: `[caption={[short]long}]` is one option.
     fn optional_bracket_argument(&mut self) -> Option<(String, Span)> {
         self.skip_spaces();
         let first = self.peek()?;
@@ -5631,33 +5633,36 @@ impl P<'_> {
         let start = first.span.start;
         let document = first.span.document;
         let mut end = first.span.end;
-        let mut found = first_word.contains(']');
+        // The byte of `raw` holding the closing `]`.
+        let mut close = first_word.find(']');
         let mut raw = first_word.clone();
+        let mut depth = 0usize;
         self.i += 1;
-        while !found && self.i < self.t.len() {
+        while close.is_none() && self.i < self.t.len() {
             let token = &self.t[self.i].token;
             end = token.span.end;
             match &token.kind {
                 TokenKind::Word(word) => {
+                    if depth == 0 {
+                        close = word.find(']').map(|k| raw.len() + k);
+                    }
                     raw.push_str(word);
-                    found = word.contains(']');
                 }
                 TokenKind::Space | TokenKind::ParBreak => raw.push(' '),
                 TokenKind::Command(name) => {
                     raw.push('\\');
                     raw.push_str(name);
                 }
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => depth = depth.saturating_sub(1),
                 _ => {}
             }
             self.i += 1;
         }
+        let found = close.is_some();
         let span = Span::in_document(document, start, end);
-        let content = raw
-            .strip_prefix('[')
-            .unwrap_or(&raw)
-            .split_once(']')
-            .map_or(raw.as_str(), |(inside, _)| inside)
-            .to_string();
+        let inside = close.map_or(raw.as_str(), |k| &raw[..k]);
+        let content = inside.strip_prefix('[').unwrap_or(inside).to_string();
         if !found {
             self.diags.push(Diagnostic::error(
                 "optional argument is missing its closing ']'",
@@ -9923,6 +9928,22 @@ mod tests {
             panic!("expected a Block::Verbatim, got {:?}", parsed.blocks[0]);
         };
         assert_eq!(lines[0].text, "print(1)");
+    }
+
+    /// `caption={[short]long}`: the `]` inside the braces does not end the
+    /// options, so the body is still the listing's.
+    #[test]
+    fn lstlisting_options_hold_a_braced_bracket() {
+        let source = "\\begin{lstlisting}[caption={[Short]A long caption},nolol]\nx = 1\n\\end{lstlisting}\nAfter.";
+        let parsed = parse(source);
+        let Block::Verbatim { lines, .. } = &parsed.blocks[0] else {
+            panic!("expected a Block::Verbatim, got {:?}", parsed.blocks[0]);
+        };
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["x = 1"]);
+        let options = parsed.diagnostics.iter().find(|d| d.message.contains("lstlisting options")).expect("options diagnosed");
+        let span = options.span.expect("options span");
+        assert_eq!(&source[span.start..span.end], "[caption={[Short]A long caption},nolol]");
     }
 
     #[test]

@@ -378,10 +378,21 @@ fn after_bracket_option(text: &str, from: usize) -> usize {
     if newlines >= 2 || bytes.get(j) != Some(&b'[') {
         return from;
     }
-    match text[j..].find(']') {
-        Some(offset) => j + offset + 1,
-        None => from,
+    // A `]` inside braces does not close the option
+    // (`[caption={[short]long}]`).
+    let mut depth = 0usize;
+    let mut k = j + 1;
+    while k < bytes.len() {
+        match bytes[k] {
+            b'\\' => k += 1,
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            b']' if depth == 0 => return k + 1,
+            _ => {}
+        }
+        k += 1;
     }
+    from
 }
 
 struct Converter<'d> {
