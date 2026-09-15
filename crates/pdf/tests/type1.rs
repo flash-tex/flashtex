@@ -190,6 +190,7 @@ fn type1_subset_embeds_as_a_simple_font_and_reads_back() {
     assert_eq!(subset.glyphs, vec![".notdef", "a", "c", "grave"]);
     let doc = ExactDocument {
         images: Default::default(),
+        patterns: Default::default(),
         pages: vec![ExactPage {
             width: Decimal::from_i64(100),
             height: Decimal::from_i64(100),
