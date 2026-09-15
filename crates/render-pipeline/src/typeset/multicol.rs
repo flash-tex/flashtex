@@ -57,7 +57,7 @@ use crate::display::Diagnostic;
 use crate::pagebuild::{badness, BuiltPage, PageParams, Placed, VBlock, AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_BAD, INF_PENALTY};
 use crate::style::Stylesheet;
 
-use super::{floatpage, BoxRec, BuiltBlock, Context, Laid};
+use super::{floatpage, BoxRec, BuiltBlock, Context, Laid, NO_SOURCE_SPAN};
 
 const COLUMNBREAK: i32 = -10005;
 const END_PENALTY: i32 = -10006;
@@ -2049,7 +2049,9 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
         }
     }
     m.finish();
-    let span0 = Span::in_document(DocumentId(0), 0, 0);
+    // The inter-column separator rule is typesetter-made page chrome
+    // with no source of its own.
+    let span0 = NO_SOURCE_SPAN;
     let mut built = Vec::with_capacity(m.pages.len());
     let mut dx = Vec::with_capacity(m.pages.len());
     for page in std::mem::take(&mut m.pages) {

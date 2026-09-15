@@ -399,3 +399,234 @@ fn trailing_spaces_are_stripped_before_endlinechar() {
 fn active_endlinechar_under_obeylines_style_catcode() {
     assert_eq!(run("\\catcode`\\^^M=13 \\def^^M{|}%\na\nb"), "a|b");
 }
+
+/// Fuzz findings: TeX's integer and dimension ranges (tex.web §445, §448,
+/// §1236-1240, e-TeX `\numexpr`). Out-of-range values are clamped or
+/// rejected with TeX's error, never an i64 overflow panic.
+#[test]
+fn numeric_ranges_follow_tex_instead_of_overflowing() {
+    let cases: &[(&str, &str, &str)] = &[
+        (r"\count1=99999999999999999999 \the\count1", "2147483647", "Number too big."),
+        (r#"\count1="FFFFFFFFFFFFFFFFFF \the\count1"#, "2147483647", "Number too big."),
+        (r"\count1=99999999999999999999 \advance\count1 by 1 \the\count1", "-2147483648", "Number too big."),
+        (
+            r"\count1=2147483647 \multiply\count1 by 2147483647 \multiply\count1 by 2147483647 \the\count1",
+            "2147483647",
+            "Arithmetic overflow.",
+        ),
+        (r"\dimen0=20000pt \the\dimen0", "16383.99998pt", "Dimension too large."),
+        (r"\dimen0=99999999999999999999\dimen1 \the\dimen0", "0.0pt", "Number too big."),
+        (r"\the\numexpr 2147483647+1\relax", "0", "Arithmetic overflow."),
+        (r"\the\numexpr 2147483647*2147483647*2147483647*2147483647\relax", "0", "Arithmetic overflow."),
+    ];
+    for (src, value, message) in cases {
+        let r = expand_str(src);
+        assert_eq!(text(&r.tokens).trim(), *value, "{src}");
+        assert!(r.diagnostics.iter().any(|d| d.message == *message), "{src}: {:?}", r.diagnostics);
+    }
+    // `\advance` has no range check: it wraps in 32-bit arithmetic without a
+    // diagnostic. Values measured with pdfTeX 3.141592653-2.6-1.40.29 (TeX
+    // Live 2026), plain and -etex alike, via \message{\the...}.
+    // `\dimen9` is `\maxdimen` (2^30-1 sp), written in sp to avoid decimal rounding.
+    let maxdimen = r"\dimen9=1073741823sp ";
+    let wrapping: &[(&str, &str)] = &[
+        (r"\count1=2147483647 \advance\count1 by 1 \the\count1", "-2147483648"),
+        (r"\count1=-2147483647 \advance\count1 by -2 \the\count1", "2147483647"),
+        (r"\dimen0=\dimen9 \advance\dimen0 by 1sp \the\dimen0", "16384.0pt"),
+        (r"\dimen0=16383pt \advance\dimen0 by 16383pt \the\dimen0", "32766.0pt"),
+        (r"\dimen0=\dimen9 \advance\dimen0 by \dimen9 \advance\dimen0 by \dimen9 \the\dimen0", "-16384.00005pt"),
+        (
+            r"\dimen0=\dimen9 \advance\dimen0 by \dimen9 \advance\dimen0 by \dimen9 \advance\dimen0 by \dimen9 \advance\dimen0 by 1sp \the\dimen0",
+            "-0.00005pt",
+        ),
+        (
+            r"\skip0=1073741823sp plus 1073741823sp minus 1pt \advance\skip0 by 1073741823sp plus 1073741823sp minus 2pt{}\the\skip0",
+            "32767.99997pt plus 32767.99997pt minus 3.0pt",
+        ),
+        (
+            r"\skip0=1073741823sp plus 1073741823sp \advance\skip0 by 1073741823sp plus 1073741823sp \advance\skip0 by 1073741823sp plus 1073741823sp \advance\skip0 by 1073741823sp plus 1073741823sp \advance\skip0 by 1sp plus 1sp{}\the\skip0",
+            "-0.00005pt plus -0.00005pt",
+        ),
+    ];
+    for (src, value) in wrapping {
+        let r = expand_str(&format!("{maxdimen}{src}"));
+        assert_eq!(text(&r.tokens).trim(), *value, "{src}");
+        assert!(r.diagnostics.is_empty(), "{src}: {:?}", r.diagnostics);
+    }
+    let fil = format!(r"\skip0=0pt plus 1fi{} \the\skip0", "l".repeat(300));
+    // 300 `l`s overflowed the u8 order counter.
+    let r = expand_str(&fil);
+    assert!(r.diagnostics.iter().any(|d| d.message == "Illegal unit of measure (replaced by filll)."));
+}
+
+/// Fuzz finding: `\loop` whose `\repeat` never comes. The file ends while
+/// its argument is scanned; TeX aborts the call (§339) rather than running
+/// `\iterate` on the partial body, which looped to the step limit and
+/// flooded "Extra \fi." diagnostics.
+#[test]
+fn a_macro_call_cut_off_by_the_end_of_file_is_aborted() {
+    let r = expand_str(r"\loop{x}");
+    let messages: Vec<&str> = r.diagnostics.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["Runaway argument?\n! File ended while scanning use of \\loop."]);
+    assert_eq!(text(&r.tokens).trim(), "");
+}
+
+/// Fuzz finding (hang): a macro that doubles its argument on every call
+/// exhausted memory long before the expansion-step limit.
+#[test]
+fn an_argument_that_doubles_every_call_exceeds_capacity() {
+    let started = std::time::Instant::now();
+    let r = expand_str(r"\def\a#1{\a{#1#1}}\a x");
+    assert!(
+        r.diagnostics.iter().any(|d| d.message == "TeX capacity exceeded, sorry [main memory size=5000000]."),
+        "{:?}",
+        r.diagnostics
+    );
+    assert!(started.elapsed().as_secs() < 60, "{:?}", started.elapsed());
+}
+
+/// Fuzz finding (36 GB resident): a self-invocation that is not a tail call
+/// (`\csname a` re-enters `\a` before the rest of its body is read) adds an
+/// input level holding the whole remaining body on every call.
+#[test]
+fn a_non_tail_self_call_exceeds_capacity_instead_of_memory() {
+    let body = format!("{}x{}", "[".repeat(10_000), "]".repeat(10_000));
+    let src = format!(r"\def\a{{\csname a\endcsname {body}}}\a");
+    let started = std::time::Instant::now();
+    let r = expand_str(&src);
+    assert!(
+        r.diagnostics.iter().any(|d| d.message.starts_with("TeX capacity exceeded, sorry [")),
+        "{:?}",
+        &r.diagnostics[..r.diagnostics.len().min(3)]
+    );
+    assert!(started.elapsed().as_secs() < 60, "{:?}", started.elapsed());
+    // A plain non-tail recursion with a short body stops at the input stack.
+    let r = expand_str(r"\def\b{\b x}\b");
+    assert!(
+        r.diagnostics.iter().any(|d| d.message == "TeX capacity exceeded, sorry [input stack size=10000]."),
+        "{:?}",
+        &r.diagnostics[..r.diagnostics.len().min(3)]
+    );
+}
+
+/// Fuzz finding (22 s for a mutated oracle fixture): every `\if` counted the
+/// newlines before it for a message only an unterminated conditional
+/// prints, so a runaway loop of conditionals late in a long file was
+/// quadratic.
+#[test]
+fn conditionals_in_a_runaway_loop_do_not_rescan_the_source() {
+    let src = format!("{}\\def\\a{{\\ifnum1<2 \\fi\\a}}\\a", "% filler line\n".repeat(20_000));
+    let started = std::time::Instant::now();
+    let r = expand_str(&src);
+    assert!(r.diagnostics.iter().any(|d| d.message.contains("step limit")), "{:?}", r.diagnostics);
+    assert!(started.elapsed().as_secs() < 30, "{:?}", started.elapsed());
+    // The line still appears where TeX prints it.
+    let r = expand_str("\n\n\\iffalse never closed");
+    assert!(
+        r.diagnostics.iter().any(|d| d.message == "Incomplete \\iffalse; all text was ignored after line 3."),
+        "{:?}",
+        r.diagnostics
+    );
+}
+
+fn limited_diagnostics(src: &str, limits: flashtex_tex_expansion::Limits) -> Vec<String> {
+    let mut e = flashtex_tex_expansion::Engine::with_limits(src, limits);
+    e.run();
+    e.take_diagnostics().into_iter().map(|d| d.message).collect()
+}
+
+/// A `{` or `\if` past the nesting limit is dropped with an error. It used to
+/// be reported once per dropped token (a runaway `\def\a{{\a}` reported it
+/// until the step limit); now once per excursion past the limit.
+#[test]
+fn nesting_limits_are_reported_once_per_excursion() {
+    use flashtex_tex_expansion::Limits;
+    let limits = Limits { max_group_depth: 3, max_conditional_depth: 3, ..Limits::default() };
+    let count = |messages: &[String], what: &str| messages.iter().filter(|m| *m == what).count();
+
+    // Three `{` refused in a row, then (after a `}` and an accepted `{`) two more.
+    let groups = limited_diagnostics("{{{{{{}{{{", limits);
+    assert_eq!(count(&groups, "group nesting limit exceeded"), 2, "{groups:?}");
+
+    let conditionals = limited_diagnostics(r"\iftrue\iftrue\iftrue\iftrue\iftrue\iftrue\fi\iftrue\iftrue", limits);
+    assert_eq!(count(&conditionals, "conditional nesting limit exceeded"), 2, "{conditionals:?}");
+
+    let steps = Limits { max_expansion_steps: 50_000, ..limits };
+    let runaway = limited_diagnostics(r"\let\x={ \def\a{\x\a}\a", steps);
+    assert_eq!(count(&runaway, "group nesting limit exceeded"), 1, "{runaway:?}");
+    let runaway = limited_diagnostics(r"\def\b{\iftrue\b}\b", steps);
+    assert_eq!(count(&runaway, "conditional nesting limit exceeded"), 1, "{runaway:?}");
+}
+
+/// A runaway loop never returns to a safe point, so each of its errors is
+/// recorded once rather than once per iteration.
+#[test]
+fn a_runaway_loop_records_each_error_once() {
+    use flashtex_tex_expansion::Limits;
+    let limits = Limits { max_expansion_steps: 50_000, ..Limits::default() };
+    let messages = limited_diagnostics(r"\def\a{\ifnum\relax<1 \fi\a}\a", limits);
+    assert_eq!(
+        messages,
+        [
+            "Missing number, treated as zero.",
+            "Missing = inserted for \\ifnum.",
+            "expansion step limit exceeded (possible infinite macro loop)"
+        ],
+    );
+    // Separate lines are separate reports, even when identical.
+    let r = expand_str("\\count1=\\relax\n\\count1=\\relax\n");
+    assert_eq!(r.diagnostics.iter().filter(|d| d.message == "Missing number, treated as zero.").count(), 2, "{:?}", r.diagnostics);
+}
+
+#[test]
+fn a_long_environment_name_is_shortened_only_in_messages() {
+    let name = "x".repeat(100_000);
+    let r = expand_str(&format!("\\begin{{a}}\\end{{{name}}}"));
+    let mismatch = r.diagnostics.iter().find(|d| d.message.contains("ended by")).expect("mismatch reported");
+    assert_eq!(mismatch.message, format!("LaTeX Error: \\begin{{a}} ended by \\end{{{}...}}.", "x".repeat(100)));
+    // The comparison itself uses the whole name.
+    let r = expand_str(&format!("\\begin{{{name}}}\\end{{{name}}}"));
+    assert!(!r.diagnostics.iter().any(|d| d.message.contains("ended by")), "{:?}", r.diagnostics.len());
+    let r = expand_str(&format!("\\begin{{{name}}}\\end{{{name}y}}"));
+    assert!(r.diagnostics.iter().any(|d| d.message.contains("ended by")));
+    let r = expand_str(r"\begin{foo}\end{bar}");
+    assert!(r.diagnostics.iter().any(|d| d.message == "LaTeX Error: \\begin{foo} ended by \\end{bar}."), "{:?}", r.diagnostics);
+}
+
+/// What happens past a nesting limit, as the compiler's recovery notes
+/// describe it: the extra `{` is dropped without opening a group, the extra
+/// conditional is dropped without evaluating its test (what follows is read
+/// as ordinary text), and expansion continues in both cases.
+#[test]
+fn past_a_nesting_limit_the_extra_group_or_conditional_is_ignored_and_expansion_continues() {
+    use flashtex_tex_expansion::{Engine, Limits, TokenKind};
+    let limits = Limits { max_group_depth: 1, max_conditional_depth: 1, ..Limits::default() };
+    let run = |src: &str| {
+        let mut e = Engine::with_limits(src, limits);
+        let text: String = e
+            .run()
+            .iter()
+            .map(|t| match &t.kind {
+                TokenKind::Char(c, _) => c.to_string(),
+                TokenKind::ControlSequence(cs) => format!("\\{cs}"),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        let messages: Vec<String> = e.take_diagnostics().into_iter().map(|d| d.message).collect();
+        (text, messages)
+    };
+
+    // The second `{` is dropped; its `}` closes the first group, and the last
+    // `}` is then unbalanced. `\def` after the limit still takes effect.
+    let (text, messages) = run(r"{{a}b}\def\m{M}\m");
+    assert_eq!(text, "{a}bM");
+    assert_eq!(messages, ["group nesting limit exceeded", "Too many }'s."]);
+
+    // Two conditionals may be open; the third, `\ifnum`, is dropped
+    // unevaluated: its test `1>2` is text, the `\else` belongs to the second
+    // `\iftrue`, and the last `\fi` is extra.
+    let (text, messages) = run(r"\iftrue\iftrue\ifnum1>2 X\else Y\fi\fi\fi Z");
+    assert_eq!(text, "1>2 XZ");
+    assert_eq!(messages[0], "conditional nesting limit exceeded");
+    assert!(messages[1..].iter().any(|m| m.starts_with("Extra ")), "{messages:?}");
+}
