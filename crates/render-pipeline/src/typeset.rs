@@ -2879,9 +2879,10 @@ impl<'a> Context<'a> {
         }
         let trailing_skip = drop_trailing_break(&mut list, &mut recs, &mut skips, style);
         // `\item`: the label box `\hskip-\labelwidth \hskip-\labelsep
-        // \hbox to\labelwidth{\hfil <label>} \hskip\labelsep` opens the
-        // first line (`\@item`'s `\everypar`); a label wider than
-        // `\labelwidth` keeps its own width and pushes the text right.
+        // \hbox to\labelwidth{\hss <label>} \hskip\labelsep` opens the
+        // first line (`\@item`'s `\everypar`). itemize/enumerate
+        // additionally use `\llap`, so a wide label extends left
+        // without moving the item text.
         let mut hang_pt = 0.0;
         let mut inner_margin_pt = 0.0;
         if let Some(geom) = list_geom {
@@ -2889,10 +2890,11 @@ impl<'a> Context<'a> {
             hang_pt = hang;
             inner_margin_pt = inner;
             if let Some((text, span)) = geom.label.as_ref().filter(|_| starts_paragraph) {
-                if let Some(nb) = self.label_box(text, *span, size, geom.description) {
+                if let Some(nb) = self.label_box(text, *span, size, geom.description || geom.label_bold, geom.label_symbol) {
                     let labelsep = self.style.labelsep_pt;
                     let protrude = self.item_left_protrusion(&list, &recs);
-                    let mut lead = vec![(pl::Item::kern(-(labelsep + nb.width.min(labelwidth))), None)];
+                    let box_width = if geom.llap { nb.width } else { nb.width.min(labelwidth) };
+                    let mut lead = vec![(pl::Item::kern(-(labelsep + box_width)), None)];
                     // `\descriptionlabel`: `\hspace\labelsep \normalfont
                     // \bfseries #1` — the label box itself opens with
                     // `\labelsep`, so the bold text starts at the margin the
@@ -3536,7 +3538,8 @@ impl<'a> Context<'a> {
     /// the `\item` command's bytes: the words of `text` in the
     /// list's label style (`\descriptionlabel`'s `\bfseries` for a
     /// `description`), separated by interword glue at natural width.
-    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool) -> Option<NumberBox> {
+    fn label_box(&mut self, text: &str, span: Span, size: f64, bold: bool, symbol: bool) -> Option<NumberBox> {
+        let text = if symbol && text == "⋅" { "·" } else { text };
         let boxed = self.word_box(text, span, size, TextStyle { bold, ..TextStyle::default() });
         if let Some(nb) = &boxed {
             for (_, rec, _) in &nb.pieces {
@@ -3624,8 +3627,8 @@ impl<'a> Context<'a> {
         let description = list_geom.is_some_and(|g| g.description);
         let linewidth = s.text_width_pt - hang;
         let label = list_geom
-            .and_then(|g| g.label.as_ref().map(|l| (l, g.description)))
-            .and_then(|((text, span), bold)| self.label_box(text, *span, size, bold));
+            .and_then(|g| g.label.as_ref().map(|l| (l, g.description || g.label_bold, g.label_symbol)))
+            .and_then(|((text, span), bold, symbol)| self.label_box(text, *span, size, bold, symbol));
         let mut width = hang + if bracket { 0.6 * linewidth } else { 0.0 };
         let (mut runs, mut items, mut recs) = (Vec::new(), Vec::new(), Vec::new());
         let (mut height, mut depth) = (0.0, 0.0);
@@ -3646,7 +3649,13 @@ impl<'a> Context<'a> {
                     // list's `\leftmargin`, so this is `hang + \itemindent`.
                     hang - inner
                 } else {
-                    hang - s.labelsep_pt - nb.width.min(labelwidth)
+                    hang
+                        - s.labelsep_pt
+                        - if list_geom.is_some_and(|g| g.llap) {
+                            nb.width
+                        } else {
+                            nb.width.min(labelwidth)
+                        }
                 };
                 height = nb.height;
                 depth = nb.depth;
