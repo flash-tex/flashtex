@@ -45,7 +45,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "makebox", "fbox", "framebox", "parbox", "raisebox", "rule", "newline",
     "clearpage", "cleardoublepage", "thispagestyle",
     "indent", "phantom", "hphantom", "vphantom", "smash", "strut", "addvspace",
-    "vskip", "hskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
+    "vskip", "kern", "enspace", "thinspace", "negthinspace", "hline", "cline",
     "multicolumn", "tabularnewline", "arraystretch",
     // Fonts and text symbols.
     "textsuperscript", "textsubscript", "underbar", "LaTeX",

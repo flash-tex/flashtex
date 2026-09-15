@@ -195,11 +195,21 @@ pub enum Inline {
         /// or dots (`\dotfill`).
         leader: FillLeader,
     },
-    /// `\hspace{<dimen>}`/`\hspace*{<dimen>}`: a fixed, non-stretching space.
-    /// `pt` is already converted (see `parse_dimen_pt`). Real TeX also lets
-    /// plain `\hspace` glue (unlike the starred form) be discarded when it
-    /// falls at a line break; this layout never discards glue at a line
-    /// start, so both forms behave identically here.
+    /// `\hspace{<dimen>}`/`\hspace*{<dimen>}` and `\hskip<glue>`: horizontal
+    /// glue. `pt` is the fixed part, already converted (see `parse_dimen_pt`
+    /// and `parse_fil_dimen_pt_at`). Real TeX also lets plain `\hspace` glue
+    /// (unlike the starred form) be discarded when it falls at a line break;
+    /// this layout never discards glue at a line start, so both forms behave
+    /// identically here.
+    ///
+    /// The stretch/shrink pairs only ever come from `\hskip`'s optional
+    /// `plus`/`minus` clauses (tex.web §461): each is finite points when its
+    /// `fil` order is 0, or the `fil`/`fill`/`filll` coefficient when the
+    /// order is 1/2/3. `\hspace{...}` takes no glue spec, so its pairs are
+    /// always zero. Finite stretch/shrink is recorded but not acted on —
+    /// this greedy layout has no badness model to stretch short lines with
+    /// (see `layout::LayoutCursor::hspace`); infinite stretch joins the
+    /// line's `\hfill` marks instead.
     HSpace {
         pt: f64,
         /// Inter-word glue immediately before/after the command. It is
@@ -208,6 +218,10 @@ pub enum Inline {
         space_before_pt: f64,
         space_after_pt: f64,
         span: Span,
+        stretch_pt: f64,
+        stretch_fil: u8,
+        shrink_pt: f64,
+        shrink_fil: u8,
     },
     /// `\footnote[<n>]{..}`, `\footnotemark[<n>]` or `\footnotetext[<n>]{..}`.
     /// `number` is the resolved `\thefootnote` (arabic). `span` is the
@@ -1128,6 +1142,7 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "dotfill",
     "hfil",
     "hspace",
+    "hskip",
     "footnote",
     "footnotemark",
     "footnotetext",
@@ -1496,6 +1511,28 @@ fn parse_dimen_pt_with_units(text: &str, em_pt: f64, ex_pt: f64) -> Option<f64> 
         _ => return None,
     };
     Some(value * per_pt)
+}
+
+/// A `<fil dimen>` for `\hskip`'s `plus`/`minus` clauses (tex.web §461-463):
+/// `<number><fil unit>` with unit `fil`/`fill`/`filll` (orders 1/2/3), or a
+/// plain `<dimen>` (order 0). Returns the value with its fil order: points
+/// for order 0, the infinite-unit coefficient otherwise. A bare `fil` reads
+/// as `1fil`, and signs (`-1fil`) ride on the number, as in TeX. Longest
+/// unit first, so `1fill` is order 2, not `1` + `fil` misread.
+fn parse_fil_dimen_pt_current(text: &str, units: (i64, i64)) -> Option<(f64, u8)> {
+    let s = text.trim();
+    for (unit, order) in [("filll", 3u8), ("fill", 2u8), ("fil", 1u8)] {
+        if let Some(number) = s.strip_suffix(unit) {
+            let number = number.trim();
+            let value = if number.is_empty() {
+                1.0
+            } else {
+                number.parse::<f64>().ok()?
+            };
+            return Some((value, order));
+        }
+    }
+    parse_dimen_pt_current(s, units).map(|pt| (pt, 0))
 }
 
 /// Parses TeX glue (`<dimen> plus <dimen> minus <dimen>`) to
@@ -2839,6 +2876,15 @@ impl P<'_> {
             // latex.ltx `\discretionary` is TeX's primitive; `\-` is
             // `\discretionary{\char\hyphenchar\font}{}{}`.
             "-" => self.horizontal_command(name, span, para),
+            // `\hskip<dimen> plus<dimen> minus<dimen>`: TeX's kernel
+            // horizontal-glue primitive (tex.web §461, the `<glue>`
+            // production), which `\hspace{<dimen>}` is built on. Unlike
+            // `\hspace`, the spec takes no braces, the `plus`/`minus`
+            // clauses are optional, and stretch/shrink may use infinite
+            // `fil`/`fill`/`filll` units. A trailing `\relax` — the
+            // idiomatic glue terminator (`\def\enskip{\hskip.5em\relax}`)
+            // — is consumed so it is not diagnosed as unsupported.
+            "hskip" => self.hskip(span, para),
             "footnote" | "footnotemark" | "footnotetext" => self.footnote(name, span, para),
             "fnsymbol" => self.fnsymbol_command(span, para),
             "par" => self.flush_paragraph(blocks, para),
@@ -3521,6 +3567,10 @@ impl P<'_> {
                         space_before_pt: if space_before { word_space } else { 0.0 },
                         space_after_pt: if space_after { word_space } else { 0.0 },
                         span: span.merge(argument_span),
+                        stretch_pt: 0.0,
+                        stretch_fil: 0,
+                        shrink_pt: 0.0,
+                        shrink_fil: 0,
                     });
                 }
                 None => self.diags.push(Diagnostic::error(
@@ -7241,6 +7291,121 @@ impl P<'_> {
         }
     }
 
+    /// Reads TeX's `<glue>` after `\hskip`: one dimension word, then up to
+    /// one `plus` and one `minus` clause (either order) each followed by a
+    /// `<fil dimen>` word. Words are read atomically — a number split from
+    /// its unit by a space (`1 em`) is not rejoined — and anything that is
+    /// not a dimension word or clause keyword ends the spec, leaving the
+    /// following text (including a second use of the same keyword) for the
+    /// ordinary token loop.
+    fn hskip(&mut self, span: Span, para: &mut Vec<Inline>) {
+        self.skip_spaces();
+        let units = self.font_setup().em_ex_sp(self.style);
+        let (base_text, mut end) = match self.peek().cloned() {
+            Some(Token {
+                kind: TokenKind::Word(word),
+                span: word_span,
+            }) => (word, word_span),
+            _ => {
+                self.diags.push(Diagnostic::error(
+                    "\\hskip requires a glue spec such as '1em' or '1em plus 2pt minus 1pt'",
+                    Some(span),
+                    Some("ignored the \\hskip with no usable glue and continued".into()),
+                ));
+                return;
+            }
+        };
+        let Some(base_pt) = parse_dimen_pt_current(&base_text, units) else {
+            // Unlike a `plus`/`minus` dimension below — where the keyword
+            // already commits the author to writing glue — a bare word may
+            // be ordinary prose after a spec-less `\hskip`, so it is left
+            // for the token loop instead of being swallowed (see the
+            // prose-preservation policy on `unsupported`).
+            self.diags.push(Diagnostic::error(
+                format!("\\hskip requires a recognised dimension, got '{base_text}'"),
+                Some(span.merge(end)),
+                Some("left the word for the paragraph and continued".into()),
+            ));
+            return;
+        };
+        self.i += 1;
+        let mut stretch = (0.0, 0u8);
+        let mut shrink = (0.0, 0u8);
+        let mut seen_plus = false;
+        let mut seen_minus = false;
+        for _ in 0..2 {
+            self.skip_spaces();
+            let keyword = match self.peek() {
+                Some(Token {
+                    kind: TokenKind::Word(word),
+                    ..
+                }) if word == "plus" || word == "minus" => word.clone(),
+                _ => break,
+            };
+            if (keyword == "plus" && seen_plus) || (keyword == "minus" && seen_minus) {
+                break;
+            }
+            let keyword_span = self.peek().map(|token| token.span).unwrap_or(span);
+            self.i += 1;
+            self.skip_spaces();
+            let (text, dimen_span) = match self.peek().cloned() {
+                Some(Token {
+                    kind: TokenKind::Word(word),
+                    span: word_span,
+                }) => {
+                    self.i += 1;
+                    (word, word_span)
+                }
+                _ => {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\hskip '{keyword}' requires a dimension, but none followed"),
+                        Some(span.merge(keyword_span)),
+                        Some("used the glue without that stretch".into()),
+                    ));
+                    break;
+                }
+            };
+            match parse_fil_dimen_pt_current(&text, units) {
+                Some((value, order)) => {
+                    end = end.merge(dimen_span);
+                    if keyword == "plus" {
+                        seen_plus = true;
+                        stretch = (value, order);
+                    } else {
+                        seen_minus = true;
+                        shrink = (value, order);
+                    }
+                }
+                None => {
+                    self.diags.push(Diagnostic::error(
+                        format!("\\hskip '{keyword}' requires a recognised dimension, got '{text}'"),
+                        Some(span.merge(dimen_span)),
+                        Some("used the glue without that stretch".into()),
+                    ));
+                    break;
+                }
+            }
+        }
+        // TeX's idiomatic glue terminator; without this it falls through to
+        // `unsupported` and earns a spurious "not supported" diagnostic.
+        if matches!(
+            self.peek().map(|token| &token.kind),
+            Some(TokenKind::Command(name)) if name == "relax"
+        ) {
+            self.i += 1;
+        }
+        para.push(Inline::HSpace {
+            pt: base_pt,
+            space_before_pt: 0.0,
+            space_after_pt: 0.0,
+            span: span.merge(end),
+            stretch_pt: stretch.0,
+            stretch_fil: stretch.1,
+            shrink_pt: shrink.0,
+            shrink_fil: shrink.1,
+        });
+    }
+
     /// The `{` span when the next token opens a group that closes in this
     /// token stream. Unclosed arguments keep `required_group`'s diagnostics.
     fn closed_group_start(&self) -> Option<Span> {
@@ -7541,6 +7706,10 @@ impl P<'_> {
                                 },
                                 space_after_pt: if space_after { word_space } else { 0.0 },
                                 span: input.token.span.merge(argument_span),
+                                stretch_pt: 0.0,
+                                stretch_fil: 0,
+                                shrink_pt: 0.0,
+                                shrink_fil: 0,
                             });
                         } else {
                             self.diags.push(Diagnostic::error(
@@ -11818,6 +11987,119 @@ mod tests {
             ],
             "{body_words:?}"
         );
+    }
+
+    #[test]
+    fn hskip_fixed_glue_matches_hspace() {
+        let (parsed, hskip_items) = items(r"A\hskip 1em B");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let (_, hspace_items) = items(r"A\hspace{1em}B");
+        let b_x = |list: &[crate::layout::TextItem]| {
+            list.iter()
+                .find(|i| i.text == "B")
+                .unwrap_or_else(|| panic!("no item B in {list:?}"))
+                .x_pt
+        };
+        assert!(
+            (b_x(&hskip_items) - b_x(&hspace_items)).abs() < 0.02,
+            "hskip={} hspace={}",
+            b_x(&hskip_items),
+            b_x(&hspace_items)
+        );
+    }
+
+    #[test]
+    fn hskip_plus_and_minus_are_recorded() {
+        let parsed = parse(r"A\hskip 1em plus 2pt minus 1pt B");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let mut found = None;
+        for block in &parsed.blocks {
+            if let Block::Paragraph(inlines) = block {
+                for inline in inlines {
+                    if let Inline::HSpace {
+                        pt,
+                        stretch_pt,
+                        stretch_fil,
+                        shrink_pt,
+                        shrink_fil,
+                        ..
+                    } = inline
+                    {
+                        found = Some((*pt, *stretch_pt, *stretch_fil, *shrink_pt, *shrink_fil));
+                    }
+                }
+            }
+        }
+        let (pt, stretch_pt, stretch_fil, shrink_pt, shrink_fil) =
+            found.expect("an HSpace node for the \\hskip glue");
+        // `1em` is the active font's quad (cmr10's \fontdimen6, 10.00002pt,
+        // with no document class) — see `parse_dimen_pt_current`.
+        assert!(
+            (pt - 655_361.0 / 65_536.0).abs() < 1e-9,
+            "base 1em, got {pt}"
+        );
+        assert_eq!((stretch_pt, stretch_fil), (2.0, 0));
+        assert_eq!((shrink_pt, shrink_fil), (1.0, 0));
+    }
+
+    #[test]
+    fn hskip_fil_stretch_parses_and_fills_the_line() {
+        let parsed = parse(r"A\hskip 0pt plus 1fil B");
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let mut found = None;
+        for block in &parsed.blocks {
+            if let Block::Paragraph(inlines) = block {
+                for inline in inlines {
+                    if let Inline::HSpace {
+                        stretch_pt, stretch_fil, ..
+                    } = inline
+                    {
+                        found = Some((*stretch_pt, *stretch_fil));
+                    }
+                }
+            }
+        }
+        assert_eq!(found, Some((1.0, 1)), "plus 1fil must be recorded");
+        // Infinite stretch is real fill glue: like `\hfill`, it pushes `B`
+        // to the right margin (see `hfil_behaves_like_hfill`).
+        let (_, fill_items) = items(r"A \hfil B");
+        let (_, hskip_items) = items(r"A\hskip 0pt plus 1fil B");
+        let b_right = |list: &[crate::layout::TextItem]| {
+            let b = list
+                .iter()
+                .find(|i| i.text == "B")
+                .unwrap_or_else(|| panic!("no item B in {list:?}"));
+            b.x_pt + layout::text_width("B", b.font_size_pt, b.font)
+        };
+        assert!(
+            (b_right(&hskip_items) - b_right(&fill_items)).abs() < 0.5,
+            "hskip={} hfil={}",
+            b_right(&hskip_items),
+            b_right(&fill_items)
+        );
+    }
+
+    #[test]
+    fn hskip_unrecognised_base_leaves_prose_in_place() {
+        let (parsed, items) = items(r"A\hskip banana B");
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains(r"\hskip requires a recognised dimension")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        assert!(
+            !parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("not supported")),
+            "{:?}",
+            parsed.diagnostics
+        );
+        assert!(items.iter().any(|i| i.text == "banana"));
+        assert!(items.iter().any(|i| i.text == "B"));
     }
 
     #[test]

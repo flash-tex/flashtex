@@ -2790,8 +2790,18 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
                 pt,
                 space_before_pt,
                 space_after_pt,
+                stretch_fil,
+                span,
                 ..
-            } => c.hspace(*pt, *space_before_pt, *space_after_pt),
+            } => {
+                c.hspace(*pt, *space_before_pt, *space_after_pt);
+                // `\hskip 0pt plus 1fil` is real TeX `\hfil`, so infinite
+                // stretch joins the line's fill marks; finite stretch and
+                // all shrink stay recorded on the node (see `Inline::HSpace`).
+                if *stretch_fil > 0 {
+                    c.mark_hfill(FillLeader::None, size, font, *span);
+                }
+            }
             Inline::Footnote {
                 number,
                 span,
