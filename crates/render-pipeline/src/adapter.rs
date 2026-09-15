@@ -5322,11 +5322,13 @@ fn widest_label(env: &str, depth: usize, label_key: Option<&str>, template: Opti
             .fold(label.to_string(), |text, (command, default)| text.replace(command, &counter(default)));
     }
     if env == "itemize" {
+        // Named, not spelled: the typesetter measures `\labelitemii`'s en
+        // dash bold and, without `lmodern`, the TS1 symbols in `tcrm`.
         return match depth {
-            1 => "•",
-            2 => "–",
-            3 => "∗",
-            _ => "·",
+            1 => "\\labelitemi",
+            2 => "\\labelitemii",
+            3 => "\\labelitemiii",
+            _ => "\\labelitemiv",
         }
         .to_string();
     }
@@ -5416,7 +5418,11 @@ fn length_register(source: &str, at: usize, name: &str, size: u32, em_ex: Option
 fn list_margins(index: &SourceIndex, source: &str, at: usize, size: u32, natbib_bib: bool, family: crate::fonts::Family) -> (Vec<ListMargin>, Option<f64>, f64) {
     let calls = &index.setlist;
     let em_ex = list_em_ex(size, family);
-    let class_margin = |depth: usize| ListMargin::Fixed(parse_dimen_in(&format!("{}em", article_leftmargin_em(depth)), size, em_ex).unwrap_or(0.0));
+    // The class sets `\leftmargin<i>` while it loads, before `fontenc`, so
+    // its `em` is OT1 `cmr`'s quad (Latin Modern's), not the EC font's
+    // (`ecrm1095`'s quad is 0.06 pt smaller at 11 pt).
+    let class_em_ex = if family == crate::fonts::Family::ComputerModern { list_em_ex(size, crate::fonts::Family::LatinModern) } else { em_ex };
+    let class_margin = |depth: usize| ListMargin::Fixed(parse_dimen_in(&format!("{}em", article_leftmargin_em(depth)), size, class_em_ex).unwrap_or(0.0));
     let (mut labelsep_pt, mut itemindent_pt) = (None, 0.0);
     let margins = index
         .list_stack(at)

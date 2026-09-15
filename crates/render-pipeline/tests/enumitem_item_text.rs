@@ -11,9 +11,8 @@
 //! Coordinates: pdflatex (TeX Live 2026) PDFs of the fixture files, read
 //! with PyMuPDF `get_texttrace()` origins, in bp. No TeX runs here.
 //!
-//! Not gated: the itemize bullet's x (`K..j`). In a document without
-//! `lmodern`, `\textbullet` is TS1 `tcrm` (5pt wide); ours is Latin Modern's
-//! wider bullet, so the label sits ~3bp left. The item text is gated.
+//! The itemize rows (`K..j`) have no `lmodern`, so their bullet is TS1
+//! `tcrm`'s 0.5em one, not `ts1-lmr`'s 0.7778em (`itemize_ts1_symbols`).
 
 mod common;
 
@@ -38,7 +37,7 @@ const CASES: [[Case; 13]; 3] = [
         Case { text: "K10g", label: Some(("1.", 80.579002)), text_x: 93.311203 },
         Case { text: "K10h", label: Some(("1.", 72.000000)), text_x: 89.713501 },
         Case { text: "K10i", label: Some(("1.", 72.000000)), text_x: 84.732201 },
-        Case { text: "K10j", label: None, text_x: 97.461601 },
+        Case { text: "K10j", label: Some(("•", 87.499001)), text_x: 97.461601 },
         Case { text: "K10k", label: Some(("1.", 72.000000)), text_x: 99.676102 },
         Case { text: "K10l", label: Some(("(a)", 102.995003)), text_x: 135.652405 },
         Case { text: "K10m", label: Some(("1.", 89.158005)), text_x: 101.890205 },
@@ -53,7 +52,7 @@ const CASES: [[Case; 13]; 3] = [
         Case { text: "K11g", label: Some(("1.", 81.393990)), text_x: 95.335823 },
         Case { text: "K11h", label: Some(("1.", 71.999992)), text_x: 91.396378 },
         Case { text: "K11i", label: Some(("1.", 71.999992)), text_x: 85.941826 },
-        Case { text: "K11j", label: None, text_x: 99.877365 },
+        Case { text: "K11j", label: Some(("•", 89.000992)), text_x: 99.877365 },
         Case { text: "K11k", label: Some(("1.", 71.999992)), text_x: 102.305473 },
         Case { text: "K11l", label: Some(("(a)", 105.938995)), text_x: 141.699020 },
         Case { text: "K11m", label: Some(("1.", 90.787994)), text_x: 104.729828 },
@@ -68,7 +67,7 @@ const CASES: [[Case; 13]; 3] = [
         Case { text: "K12g", label: Some(("1.", 82.080002)), text_x: 97.047913 },
         Case { text: "K12h", label: Some(("1.", 72.000000)), text_x: 92.814003 },
         Case { text: "K12i", label: Some(("1.", 72.000000)), text_x: 86.967911 },
-        Case { text: "K12j", label: None, text_x: 101.918091 },
+        Case { text: "K12j", label: Some(("•", 90.201996)), text_x: 101.918091 },
         Case { text: "K12k", label: Some(("1.", 72.000000)), text_x: 104.518143 },
         Case { text: "K12l", label: Some(("(a)", 108.418999)), text_x: 146.795197 },
         Case { text: "K12m", label: Some(("1.", 92.159996)), text_x: 107.127907 },
