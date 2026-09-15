@@ -1,4 +1,6 @@
-use flashtex_tex_expansion::{expand_str, is_group_token, tokens_to_display_string, Token};
+use flashtex_tex_expansion::{
+    expand_str, is_group_token, tokens_to_display_string, Engine, Limits, Token,
+};
 
 /// Content text with grouping tokens removed (they are emitted for the
 /// typesetter; see `grouping_tokens_are_emitted_with_spans`).
@@ -171,6 +173,54 @@ fn nested_conditionals_with_else_skipping() {
         run(r"\iftrue \iffalse inner-true\else inner-false\fi \else outer-false\fi"),
         "inner-false"
     );
+}
+
+#[test]
+fn conditional_depth_limit_allows_exactly_n_open_conditionals() {
+    let n: usize = 2;
+    let limit_diagnostics = |depth| {
+        let source = format!("{}X{}", r"\iftrue ".repeat(depth), r"\fi ".repeat(depth));
+        let mut engine = Engine::with_limits(
+            &source,
+            Limits {
+                max_conditional_depth: n as u32,
+                ..Limits::default()
+            },
+        );
+        engine.run();
+        engine
+            .take_diagnostics()
+            .into_iter()
+            .filter(|d| d.message == "conditional nesting limit exceeded")
+            .count()
+    };
+
+    assert_eq!(limit_diagnostics(n), 0);
+    assert_eq!(limit_diagnostics(n + 1), 1);
+}
+
+#[test]
+fn group_depth_limit_allows_exactly_n_open_groups() {
+    let n: usize = 2;
+    let limit_diagnostics = |depth| {
+        let source = format!("{}X{}", "{".repeat(depth), "}".repeat(depth));
+        let mut engine = Engine::with_limits(
+            &source,
+            Limits {
+                max_group_depth: n as u32,
+                ..Limits::default()
+            },
+        );
+        engine.run();
+        engine
+            .take_diagnostics()
+            .into_iter()
+            .filter(|d| d.message == "group nesting limit exceeded")
+            .count()
+    };
+
+    assert_eq!(limit_diagnostics(n), 0);
+    assert_eq!(limit_diagnostics(n + 1), 1);
 }
 
 #[test]

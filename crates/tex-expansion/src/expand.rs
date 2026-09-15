@@ -3901,7 +3901,7 @@ impl Engine {
 
     fn do_conditional(&mut self, prim: Primitive, unless: bool, if_tok: &Token) {
         use Primitive::*;
-        if self.st.conditionals.depth() as u32 > self.limits.max_conditional_depth {
+        if self.st.conditionals.depth() as u32 >= self.limits.max_conditional_depth {
             self.err("conditional nesting limit exceeded", if_tok.span);
             return;
         }
