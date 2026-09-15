@@ -305,8 +305,15 @@ final class CaptureAcceptanceTests: XCTestCase {
         defer { h.stop() }
         let r = reconnector(port: h.port, policy: .immediate)
         let session = try await r.connect()
-        XCTAssertEqual(session.destination, .init(destinationId: advertised.destinationId, projectId: advertised.projectId,
-                                                  path: advertised.path, baseRevision: advertised.baseRevision))
+        // The session names the advertised anchor. Asserted field by field
+        // rather than against a rebuilt `Destination`: the announced one also
+        // carries `caret_context` (what the companion shows before sending),
+        // and the wire contract is additive, so a whole-value comparison
+        // breaks on every new optional field rather than on a real change.
+        XCTAssertEqual(session.destination?.destinationId, advertised.destinationId)
+        XCTAssertEqual(session.destination?.projectId, advertised.projectId)
+        XCTAssertEqual(session.destination?.path, advertised.path)
+        XCTAssertEqual(session.destination?.baseRevision, advertised.baseRevision)
         let stale = try session.makeCapture(captureId: "acceptance-stale-1", image: Self.fixturePNG, mimeType: "image/png", instructions: "stale anchor")
 
         // The user deletes the space the pin sits on (bytes 5..<6): the edit overlaps the anchor.
@@ -450,7 +457,12 @@ final class CaptureAcceptanceTests: XCTestCase {
         XCTAssertEqual(outcome, .inserted(byteOffset: 17))
         let pending = try XCTUnwrap(model.pendingEdit)
         XCTAssertEqual(pending.nsRange, NSRange(location: 17, length: 0))
-        XCTAssertEqual(pending.text, Insertion.insertionText(proposal.latex, into: before, atByte: 17))
+        // A capture goes through `captureInsertion`, not `insertionText`: it
+        // normalises the proposal for the caret it lands on. Byte 17 is the
+        // start of the line holding "Hello durable world.", so the caret is
+        // inline text and the sample's `\begin{equation}` is rewritten to
+        // `$…$` -- display there would split the sentence.
+        XCTAssertEqual(pending.text, Insertion.captureInsertion(proposal.latex, into: before, atByte: 17).text)
         XCTAssertEqual(model.activeText, before, "the editor has not adopted it yet")
         XCTAssertEqual(model.controllerState.durable["main.tex"]?.revision, durableBefore, "nothing durable until the editor adopts the edit")
         let after = "\\begin{document}\n" + pending.text + "Hello durable world.\n\\end{document}\n"
