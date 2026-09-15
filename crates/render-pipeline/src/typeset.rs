@@ -6568,7 +6568,18 @@ pub fn convert_math_classed(
                     },
                 }
             }
-            N::Fraction { numerator, denominator } => vec![ml::Atom::frac(sub(numerator, sink), sub(denominator, sink))],
+            // `\frac` is `{\begingroup#1\endgroup\over#2}` (latex.ltx 15742,
+            // amsmath.sty 233): the braces make the fraction an Ord atom, not
+            // the Inner atom of a bare `\over` (math-layout's `Atom::frac`).
+            // As Inner it took a thin space (3mu) before a following Ord, e.g.
+            // `\frac{2}{5} \quad \text{as }` was 1.82 bp wide at 11 pt. A bare
+            // `\over` fills its whole group, so it has no neighbours to space
+            // against and Ord is right for it too.
+            N::Fraction { numerator, denominator } => {
+                let mut frac = ml::Atom::frac(sub(numerator, sink), sub(denominator, sink));
+                frac.class = ml::AtomClass::Ord;
+                vec![frac]
+            }
             N::Radical(r) => vec![ml::Atom::sqrt(sub(r, sink))],
             // `\mathbf{...}` (fontmath.ltx OT1/cmr/bx/n): a run in the bold
             // roman text font; spaces in math take no part.
