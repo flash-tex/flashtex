@@ -281,6 +281,8 @@
     {"name": "sout", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)", "renders": true},
     {"name": "newtheorem", "mode": "text", "origin": "text_dispatch", "arguments": "{env}[counter]{name}", "description": "defines a numbered theorem-like environment (amsthm)", "renders": true},
     {"name": "theoremstyle", "mode": "text", "origin": "text_dispatch", "arguments": "{style}", "description": "selects the amsthm style for following \\newtheorem", "renders": true},
+    {"name": "so", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)", "renders": true},
+    {"name": "hl", "mode": "text", "origin": "text_dispatch", "arguments": "{...}", "description": "soul highlight: yellow behind-text rule at the argument's natural width, 0.75ex deeper (single-line; needs soul)", "renders": true},
     {"name": "long", "mode": "text", "origin": "expansion", "arguments": "", "description": "prefix: the following definition accepts \\par in arguments", "renders": true},
     {"name": "protected", "mode": "text", "origin": "expansion", "arguments": "", "description": "e-TeX prefix: the following macro is not expanded inside \\edef-like contexts", "renders": true},
     {"name": "providecommand", "mode": "text", "origin": "expansion", "arguments": "{\\name}[n][default]{body}", "description": "defines the macro only when \\name is undefined", "renders": true},
@@ -935,7 +937,8 @@
     {"name": "siunitx", "silent_options": "any \\sisetup keys", "description": "v3 \\num, \\unit, \\qty, lists, ranges, \\ang, \\sisetup and \\DeclareSIUnit; unmodelled keys are diagnosed"},
     {"name": "multicol", "silent_options": "", "description": "multicols and multicols* with preface, \\columnbreak, \\raggedcolumns (columns set by the render pipeline)"},
     {"name": "natbib", "silent_options": "numbers, authoryear, round, square, angle, curly, comma, semicolon, colon, nobibstyle, bibstyle, sectionbib, longnamesfirst, nonamebreak", "description": "\\citet/\\citep/\\citealt/\\citealp/\\citeauthor/\\citeyear/\\citeyearpar/\\citenum/\\citetext and the \\cite it redefines, with [Author(Year)] \\bibitem labels; sort, compress, super and openbib are diagnosed"},
-    {"name": "ulem", "silent_options": "normalem", "description": "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined"}
+    {"name": "ulem", "silent_options": "normalem", "description": "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined"},
+    {"name": "soul", "silent_options": "", "description": "\\so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \\hl: yellow behind-text rule at natural width, 0.75ex deeper (single-line); \\st stays unsupported"}
   ],
   "coverage": {
     "sources": [
@@ -965,8 +968,8 @@
       {"set": "tikz", "kind": "command", "canonical": 43, "supported": 0, "percent": 0},
       {"set": "tikz", "kind": "environment", "canonical": 2, "supported": 0, "percent": 0},
       {"set": "xcolor", "kind": "command", "canonical": 71, "supported": 14, "percent": 19.7},
-      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 18, "percent": 7.5}
+      {"set": "siunitx", "kind": "command", "canonical": 240, "supported": 19, "percent": 7.9}
     ],
-    "total": {"canonical": 1314, "supported": 525, "percent": 40}
+    "total": {"canonical": 1314, "supported": 526, "percent": 40}
   }
 }

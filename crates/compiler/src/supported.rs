@@ -125,8 +125,15 @@ pub struct Inventory {
 /// inventory entry rather than a diagnostic.
 pub const TEXT_DIAGNOSTIC_ONLY: &[&str] = &["frac", "sqrt", "thanks", "and"];
 
-/// Dispatch arms that are not `parser::BUILT_INS` entries.
-const TEXT_EXTRA_ARMS: &[&str] = &["newtheorem", "theoremstyle"];
+/// Dispatch arms that are not `parser::BUILT_INS` entries: amsthm's
+/// `newtheorem`/`theoremstyle`, and soul's `so`/`hl`. The soul names stay
+/// out of `BUILT_INS` on purpose — the expansion engine must leave them
+/// undefined so a user's own `\newcommand{\hl}`/`\newcommand{\so}` wins
+/// when soul is not loaded (neither is a kernel command); the parser arm
+/// still diagnoses a bare use without `\usepackage{soul}` and implements
+/// the built-in behavior with it. They are implemented commands, so the
+/// diagnostic vocabulary (`crate::vocabulary`) counts them as known.
+pub(crate) const TEXT_EXTRA_ARMS: &[&str] = &["newtheorem", "theoremstyle", "so", "hl"];
 
 /// Canonical commands the expansion pass executes itself (engine primitives
 /// and kernel-prelude macros of `flashtex-tex-expansion`); their effect
@@ -310,6 +317,8 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("uline", "{...}", "ulem underline: 0.4pt rule under the argument (single-line; needs ulem)"),
     ("underline", "{...}", "kernel text underline: TeXbook Rule 10 math-rule under an unbreakable hbox"),
     ("sout", "{...}", "ulem strike-out: 0.4pt rule 0.55ex above the baseline (single-line; needs ulem)"),
+    ("so", "{...}", "soul letterspacing: 0.25em kern between the argument's letters, 0.65em word spaces (0.55em at the edges) (single-line; needs soul)"),
+    ("hl", "{...}", "soul highlight: yellow behind-text rule at the argument's natural width, 0.75ex deeper (single-line; needs soul)"),
     ("thinspace", "", "text kern .16667em (math: thin muskip)"),
     ("negthinspace", "", "text kern -.16667em"),
     ("medspace", "", "text kern .2222em"),
@@ -943,6 +952,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "ulem",
         "normalem",
         "\\uline: 0.4pt rule under the argument (single-line); \\sout: 0.4pt strike at 0.55ex; \\emph is not redefined",
+    ),
+    (
+        "soul",
+        "",
+        "\\so: letterspaced argument (0.25em between letters, 0.65em word spaces, 0.55em at the edges, single-line); \\hl: yellow behind-text rule at natural width, 0.75ex deeper (single-line); \\st stays unsupported",
     ),
 ];
 

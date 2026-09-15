@@ -119,6 +119,7 @@ fn implemented_commands() -> impl Iterator<Item = &'static str> {
     BUILT_INS
         .iter()
         .copied()
+        .chain(crate::supported::TEXT_EXTRA_ARMS.iter().copied())
         .chain(MATH_COMMANDS.iter().copied())
         .chain(COMMAND_GLYPHS.iter().map(|(name, _)| *name))
         .chain(crate::amssymb::command_names())
