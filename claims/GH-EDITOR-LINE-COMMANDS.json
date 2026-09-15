@@ -1,11 +1,11 @@
 {
   "actor": "daniel-parent",
   "branch": "agent/daniel-parent/editor-line-commands",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/426",
   "machine": "mac-m5pro-dq222",
   "note": "Mac IDE lane (Cursor Grok); feature verified absent on main",
   "started_utc": "2026-09-14T17:02:45Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "GH-EDITOR-LINE-COMMANDS",
-  "updated_utc": "2026-09-14T18:23:30Z"
+  "updated_utc": "2026-09-15T07:07:28Z"
 }
