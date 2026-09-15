@@ -893,6 +893,10 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("huge", "the huge size for the environment body"),
     ("Huge", "the Huge size for the environment body"),
     ("verse", "indented lines; each \\\\ ends a line"),
+    (
+        "tabbing",
+        "tab stops: \\= sets a stop, \\> jumps right, \\\\ ends a row, \\kill ends a row silently (\\<, \\+ and \\- warn and are ignored)",
+    ),
     ("itemize", "bulleted list; article labels per depth, \\item[label]"),
     (
         "enumerate",
@@ -904,6 +908,7 @@ const TEXT_ENVIRONMENTS: &[(&str, &str)] = &[
     ("verbatim", "literal monospaced lines"),
     ("verbatim*", "literal monospaced lines with visible spaces"),
     ("lstlisting", "literal monospaced lines (basic listings)"),
+    ("comment", "body discarded unread, even invalid commands inside (comment package)"),
     ("proof", "amsthm proof with a closing square"),
     (
         "thebibliography",
