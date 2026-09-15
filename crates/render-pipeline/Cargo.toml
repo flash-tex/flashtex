@@ -104,6 +104,13 @@ par-leading = []
 # Turning it on is then a one-line default-feature edit, like `amsmath-inline`
 # was.
 linebreak-skip = []
+# `\marginpar` margin notes (compiler `parser::Inline::Marginpar`, the
+# marginpar lane's slice 1). Needs the compiler's `Inline::Marginpar`
+# variant; off until vendor/ is re-pinned past that change, and with it off
+# `\marginpar` keeps the pinned vendor's `unsupported_feature` diagnostic.
+# Turning it on is then a one-line default-feature edit, like `amsmath-inline`
+# was.
+marginpar = []
 
 [dependencies]
 flashtex-compiler = { path = "vendor/compiler" }
