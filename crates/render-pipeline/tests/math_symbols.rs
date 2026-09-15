@@ -255,6 +255,169 @@ fn math_face_glyphs(body: &str, text: &str) -> Vec<(u16, f64, f64, f64)> {
     out
 }
 
+#[derive(Debug)]
+struct PositionedMathGlyph {
+    text: String,
+    x: f64,
+    baseline: f64,
+    advance: f64,
+    font_id: String,
+    gid: u16,
+    font_size: f64,
+}
+
+fn positioned_math_glyphs(r: &flashtex_render_pipeline::Rendered) -> Vec<PositionedMathGlyph> {
+    let mut out = Vec::new();
+    for page in &r.v2.pages {
+        for item in &page.items {
+            let Item::GlyphRun(run) = item else { continue };
+            if run.role != RunRole::Math {
+                continue;
+            }
+            for glyph in &run.glyphs {
+                let cluster = &run.clusters[glyph.cluster as usize];
+                out.push(PositionedMathGlyph {
+                    text: run.text[cluster.text_start_byte as usize..cluster.text_end_byte as usize].to_string(),
+                    x: glyph.origin_x.to_bp(),
+                    baseline: glyph.baseline_y.to_bp(),
+                    advance: glyph.advance_x.to_bp(),
+                    font_id: run.font_id.to_string(),
+                    gid: glyph.gid,
+                    font_size: run.font_size.to_bp(),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The vertical oracle was measured with `/Library/TeX/texbin/pdflatex` on
+/// this source (12pt article):
+///
+/// ```tex
+/// \documentclass[12pt]{article}
+/// \usepackage{lmodern}
+/// \usepackage{mathtools}
+/// \pdfcompresslevel=0
+/// \newwrite\probeout
+/// \newcommand{\probe}[2]{%
+///   \sbox0{$a#2 b$}%
+///   \immediate\write\probeout{#1 width=\the\wd0 height=\the\ht0 depth=\the\dp0}%
+///   \noindent\pdfsavepos\write\probeout{#1 baseline=\the\pdflastypos}%
+///   $a#2 b$\par}
+/// \begin{document}
+/// \immediate\openout\probeout=probe.dat
+/// \probe{vcentcolon}{\vcentcolon}
+/// \probe{coloneqq}{\coloneqq}
+/// \probe{dblcolon}{\dblcolon}
+/// \probe{plain}{:}
+/// \immediate\closeout\probeout
+/// \end{document}
+/// ```
+///
+/// `\sbox` records each formula's width/height/depth. `\pdfsavepos` is placed
+/// before each formula and the deferred `\write` records the line position at
+/// shipout; the PDF content stream then gives each glyph's baseline. At 12pt,
+/// the measured colon baseline offsets were `-0.415bp` for `\vcentcolon`, the
+/// colon component of `\coloneqq`, and both `\dblcolon` colons, and `0.000bp`
+/// for a literal `:`. The corresponding `probe.dat` box measurements were
+/// `21.0943pt` for `\vcentcolon`, `29.43333pt` for `\coloneqq`, `23.75832pt`
+/// for `\dblcolon`, and `21.0943pt` for the plain control, all with
+/// `height=8.33331pt depth=0.0pt`. The x positions and advances below are the
+/// current-main control, in bp, and must not change when only vertical
+/// placement changes.
+#[test]
+fn mathtools_colons_match_pdflatex_vertical_oracle_without_spacing_changes() {
+    if !lm_available() {
+        return;
+    }
+    let source = r#"\documentclass[12pt]{article}
+\usepackage{lmodern}
+\usepackage{mathtools}
+\begin{document}
+\noindent$a\vcentcolon b$\par$a\coloneqq b$\par$a\dblcolon b$\par$a:b$
+\end{document}"#;
+    let fonts = flashtex_render_pipeline::FontSet::with_default_dirs(&[]);
+    let rendered = render_one_with(source, &fonts);
+    assert!(rendered.v2.diagnostics.iter().all(|d| d.severity != flashtex_render_pipeline::display::Severity::Error), "{:?}", rendered.v2.diagnostics);
+    let glyphs = positioned_math_glyphs(&rendered);
+    let texts: Vec<&str> = glyphs.iter().map(|g| g.text.as_str()).collect();
+    assert_eq!(texts, ["a", ":", "b", "a", "≔", "b", "a", ":", ":", "b", "a", ":", "b"]);
+
+    let check_layout = |name: &str, formula: &[PositionedMathGlyph], x: &[f64], advances: &[f64]| {
+        assert_eq!(formula.len(), x.len(), "{name}: x oracle length");
+        assert_eq!(formula.len(), advances.len(), "{name}: advance oracle length");
+        let first_x = formula[0].x;
+        for (i, glyph) in formula.iter().enumerate() {
+            assert!((glyph.x - first_x - x[i]).abs() < 0.001, "{name} glyph {i} x={} expected {}", glyph.x - first_x, x[i]);
+            assert!((glyph.advance - advances[i]).abs() < 0.001, "{name} glyph {i} advance={} expected {}", glyph.advance, advances[i]);
+        }
+    };
+    check_layout(
+        "vcentcolon",
+        &glyphs[0..3],
+        &[0.0, 9.4657698, 16.0384083],
+        &[6.1449404, 3.2518091, 4.9770937],
+    );
+    check_layout(
+        "coloneqq",
+        &glyphs[3..6],
+        &[0.0, 6.1449404, 16.9763231],
+        &[6.1449404, 10.8313828, 4.9770937],
+    );
+    check_layout(
+        "dblcolon",
+        &glyphs[6..10],
+        &[0.0, 9.4657698, 12.1198306, 18.6924681],
+        &[6.1449404, 3.2518091, 3.2518091, 4.9770937],
+    );
+    check_layout(
+        "plain",
+        &glyphs[10..13],
+        &[0.0, 9.4657698, 16.0384083],
+        &[6.1449404, 3.2518091, 4.9770937],
+    );
+
+    let vcent_shift = glyphs[1].baseline - glyphs[0].baseline;
+    let coloneqq_shift = glyphs[4].baseline - glyphs[3].baseline;
+    let dblcolon_shifts = [glyphs[7].baseline - glyphs[6].baseline, glyphs[8].baseline - glyphs[6].baseline];
+    let plain_shift = glyphs[11].baseline - glyphs[10].baseline;
+    assert!((vcent_shift + 0.415).abs() < 0.1, "vcentcolon shift {vcent_shift:.3}bp");
+    assert!(coloneqq_shift.abs() < 0.1, "coloneqq precomposed glyph shift {coloneqq_shift:.3}bp");
+    for shift in dblcolon_shifts {
+        assert!((shift + 0.415).abs() < 0.1, "dblcolon shift {shift:.3}bp");
+    }
+    assert!(plain_shift.abs() < 0.1, "literal colon shift {plain_shift:.3}bp");
+
+    // The compiler still emits `\coloneqq`'s existing U+2254 glyph, rather
+    // than a separate colon cluster. Its full Latin Modern Math ink is already
+    // centred on the 12pt text math axis (3bp), so preserve that representation
+    // while the new conversion only moves forced-Rel colon atoms.
+    let coloneqq = &glyphs[4];
+    let face = fonts.by_font_id(&coloneqq.font_id).expect("coloneqq font resource");
+    let bounds = face.bounds(flashtex_render_pipeline::ids::GlyphId(coloneqq.gid), None);
+    let top = face.pt(i64::from(bounds.y_max), coloneqq.font_size);
+    let bottom = face.pt(-i64::from(bounds.y_min), coloneqq.font_size);
+    assert!(((top - bottom) / 2.0 - 3.0).abs() < 0.1, "coloneqq ink centre {:.3}bp, expected 3bp", (top - bottom) / 2.0);
+
+    for (name, control) in [
+        (
+            "kernel colon",
+            r#"\documentclass[12pt]{article}\begin{document}$a\colon b$\end{document}"#,
+        ),
+        (
+            "amsmath colon",
+            r#"\documentclass[12pt]{article}\usepackage{amsmath}\begin{document}$a\colon b$\end{document}"#,
+        ),
+    ] {
+        let control_rendered = render_one_with(control, &fonts);
+        let control_glyphs = positioned_math_glyphs(&control_rendered);
+        assert_eq!(control_glyphs.iter().map(|g| g.text.as_str()).collect::<Vec<_>>(), ["a", ":", "b"], "{name}");
+        let shift = control_glyphs[1].baseline - control_glyphs[0].baseline;
+        assert!(shift.abs() < 0.1, "{name} moved by {shift:.3}bp");
+    }
+}
+
 /// The cmex chain step math-layout selects (`\Big(` = cmex 0x10, 18 pt, for
 /// a `\left(` around a text-style fraction; `\bigg(` = 0x12, 24 pt, in
 /// display — pdflatex sets `lmex10` codes 0x10/0x12 there in the oracle
