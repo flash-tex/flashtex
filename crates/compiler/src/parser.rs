@@ -582,12 +582,14 @@ pub enum ListLeftMargin {
 }
 
 /// Font selection for one text item, as set by `\textbf`, `\itshape`, etc.
-/// Slanted shapes (`\textsl`, `\slshape`) are recorded as italic: the Core 14
-/// faces have no slanted Times.
+/// Slanted shapes remain italic for Core 14 layout, while `slanted` and
+/// `small_caps` preserve the NFSS shape used for `em`/`ex`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct TextStyle {
     pub bold: bool,
     pub italic: bool,
+    pub slanted: bool,
+    pub small_caps: bool,
     pub family: TextFamily,
     /// The active `\tiny`..`\Huge` declaration, if any (`None` is
     /// `\normalsize`, the body size). Resolved to an actual point size in
@@ -633,6 +635,8 @@ impl TextStyle {
     pub const BOLD: TextStyle = TextStyle {
         bold: true,
         italic: false,
+        slanted: false,
+        small_caps: false,
         family: TextFamily::Roman,
         size: None,
         color: None,
@@ -702,13 +706,31 @@ fn apply_style(style: TextStyle, name: &str) -> TextStyle {
     match name {
         "textbf" | "bfseries" => next.bold = true,
         "textmd" | "mdseries" => next.bold = false,
-        "textit" | "textsl" | "itshape" | "slshape" => next.italic = true,
-        // Small capitals (latex.ltx `\textsc`/`\scshape`): the Core 14
-        // layout has no small-caps faces and keeps the current style; the
-        // render pipeline selects the NFSS `sc` shape from the source.
-        "textsc" | "scshape" => {}
-        "textup" | "upshape" => next.italic = false,
-        "emph" | "em" => next.italic = !style.italic,
+        "textit" | "itshape" => {
+            next.italic = true;
+            next.slanted = false;
+            next.small_caps = false;
+        }
+        "textsl" | "slshape" => {
+            next.italic = true;
+            next.slanted = true;
+            next.small_caps = false;
+        }
+        "textsc" | "scshape" => {
+            next.italic = false;
+            next.slanted = false;
+            next.small_caps = true;
+        }
+        "textup" | "upshape" => {
+            next.italic = false;
+            next.slanted = false;
+            next.small_caps = false;
+        }
+        "emph" | "em" => {
+            next.italic = !style.italic;
+            next.slanted = false;
+            next.small_caps = false;
+        }
         "texttt" | "ttfamily" => next.family = TextFamily::Mono,
         "textrm" | "rmfamily" => next.family = TextFamily::Roman,
         "textsf" | "sffamily" => next.family = TextFamily::Sans,
@@ -716,14 +738,25 @@ fn apply_style(style: TextStyle, name: &str) -> TextStyle {
         // LaTeX 2.09 forms reset the other attributes: `\bf` is
         // `\normalfont\bfseries`.
         "bf" => next = TextStyle::BOLD,
-        "it" | "sl" => {
+        "it" => {
             next = TextStyle {
                 italic: true,
                 ..TextStyle::default()
             }
         }
-        // `\sc` is `\normalfont\scshape`: upright roman here.
-        "sc" => next = TextStyle::default(),
+        "sl" => {
+            next = TextStyle {
+                italic: true,
+                slanted: true,
+                ..TextStyle::default()
+            }
+        }
+        "sc" => {
+            next = TextStyle {
+                small_caps: true,
+                ..TextStyle::default()
+            }
+        }
         "tt" | "rm" | "sf" => next = apply_style(TextStyle::default(), &format!("{name}family")),
         "tiny" => next.size = Some(FontSizeLevel::Tiny),
         "scriptsize" => next.size = Some(FontSizeLevel::ScriptSize),

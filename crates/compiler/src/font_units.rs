@@ -3,8 +3,9 @@
 //! `em` is the current font's `\fontdimen6` (quad) and `ex` its
 //! `\fontdimen5` (x-height), not the point size: cmr12's quad is 11.74988pt,
 //! so `3em` under `\documentclass[12pt]` is 35.24963pt, and `\small`,
-//! `\bfseries`, `\sffamily`, `\ttfamily`, italics, `fontenc` T1 and `lmodern`
-//! each load another TFM with other values. [`crate::text_fontdimens`] records
+//! `\bfseries`, `\sffamily`, `\ttfamily`, italics, slanted, small-caps,
+//! `fontenc` T1 and `lmodern` each load another TFM with other values.
+//! [`crate::text_fontdimens`] records
 //! them per NFSS font from pdflatex. This is independent of the compiler's own
 //! Core14 layout faces: these are the values `\the`/`\showthe` report.
 
@@ -50,7 +51,16 @@ impl FontSetup {
             TextFamily::Sans => 1,
             TextFamily::Mono => 2,
         };
-        let cells = &FONTDIMENS[row(self.latin_modern, self.t1, family, style.bold, style.italic)];
+        let shape = if style.small_caps {
+            3
+        } else if style.slanted {
+            2
+        } else if style.italic {
+            1
+        } else {
+            0
+        };
+        let cells = &FONTDIMENS[row(self.latin_modern, self.t1, family, style.bold, shape)];
         let size = self.size_pt(style.size);
         let (index, nearest) = SIZES_PT
             .iter()
@@ -77,6 +87,9 @@ impl FontSetup {
 const SIZE: u32 = 0xF;
 const BOLD: u32 = 1 << 4;
 const ITALIC: u32 = 1 << 5;
+const SLANTED: u32 = 1 << 9;
+const SMALL_CAPS: u32 = 1 << 10;
+const SHAPE: u32 = ITALIC | SLANTED | SMALL_CAPS;
 const FAMILY: u32 = 3 << 6;
 const SANS: u32 = 1 << 6;
 const MONO: u32 = 2 << 6;
@@ -124,7 +137,7 @@ fn argument(mut switch: tex::FontSwitch) -> tex::FontSwitch {
 /// `parser::apply_style` for the attributes `TextStyle` models).
 pub(crate) fn font_switches() -> Vec<(&'static str, tex::FontSwitch)> {
     let emph = tex::FontSwitch {
-        clear: 0,
+        clear: SLANTED | SMALL_CAPS,
         set: 0,
         toggle: ITALIC,
         argument: false,
@@ -134,12 +147,14 @@ pub(crate) fn font_switches() -> Vec<(&'static str, tex::FontSwitch)> {
         ("textbf", argument(switch(BOLD, BOLD))),
         ("mdseries", switch(BOLD, 0)),
         ("textmd", argument(switch(BOLD, 0))),
-        ("itshape", switch(ITALIC, ITALIC)),
-        ("slshape", switch(ITALIC, ITALIC)),
-        ("textit", argument(switch(ITALIC, ITALIC))),
-        ("textsl", argument(switch(ITALIC, ITALIC))),
-        ("upshape", switch(ITALIC, 0)),
-        ("textup", argument(switch(ITALIC, 0))),
+        ("itshape", switch(SHAPE, ITALIC)),
+        ("slshape", switch(SHAPE, ITALIC | SLANTED)),
+        ("textit", argument(switch(SHAPE, ITALIC))),
+        ("textsl", argument(switch(SHAPE, ITALIC | SLANTED))),
+        ("scshape", switch(SHAPE, SMALL_CAPS)),
+        ("textsc", argument(switch(SHAPE, SMALL_CAPS))),
+        ("upshape", switch(SHAPE, 0)),
+        ("textup", argument(switch(SHAPE, 0))),
         ("em", emph),
         ("emph", argument(emph)),
         ("rmfamily", switch(FAMILY, 0)),
@@ -149,15 +164,16 @@ pub(crate) fn font_switches() -> Vec<(&'static str, tex::FontSwitch)> {
         ("ttfamily", switch(FAMILY, MONO)),
         ("texttt", argument(switch(FAMILY, MONO))),
         // `\normalfont` keeps the size.
-        ("normalfont", switch(BOLD | ITALIC | FAMILY, 0)),
-        ("textnormal", argument(switch(BOLD | ITALIC | FAMILY, 0))),
+        ("normalfont", switch(BOLD | SHAPE | FAMILY, 0)),
+        ("textnormal", argument(switch(BOLD | SHAPE | FAMILY, 0))),
         // LaTeX 2.09 forms are `\normalfont` plus one attribute.
-        ("rm", switch(BOLD | ITALIC | FAMILY, 0)),
-        ("sf", switch(BOLD | ITALIC | FAMILY, SANS)),
-        ("tt", switch(BOLD | ITALIC | FAMILY, MONO)),
-        ("bf", switch(BOLD | ITALIC | FAMILY, BOLD)),
-        ("it", switch(BOLD | ITALIC | FAMILY, ITALIC)),
-        ("sl", switch(BOLD | ITALIC | FAMILY, ITALIC)),
+        ("rm", switch(BOLD | SHAPE | FAMILY, 0)),
+        ("sf", switch(BOLD | SHAPE | FAMILY, SANS)),
+        ("tt", switch(BOLD | SHAPE | FAMILY, MONO)),
+        ("bf", switch(BOLD | SHAPE | FAMILY, BOLD)),
+        ("it", switch(BOLD | SHAPE | FAMILY, ITALIC)),
+        ("sl", switch(BOLD | SHAPE | FAMILY, ITALIC | SLANTED)),
+        ("sc", switch(BOLD | SHAPE | FAMILY, SMALL_CAPS)),
         ("normalsize", switch(SIZE, 0)),
         ("document", switch(BODY, BODY)),
     ];
@@ -181,6 +197,8 @@ impl EngineFontMetrics {
         let style = TextStyle {
             bold: font & BOLD != 0,
             italic: font & ITALIC != 0,
+            slanted: font & SLANTED != 0,
+            small_caps: font & SMALL_CAPS != 0,
             family: match font & FAMILY {
                 SANS => TextFamily::Sans,
                 MONO => TextFamily::Mono,
