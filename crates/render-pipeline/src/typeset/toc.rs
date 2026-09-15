@@ -133,6 +133,8 @@ impl Context<'_> {
             baselineskip: Some(self.style.baselineskip_pt),
             vskip_after: Vec::new(),
             broken_penalty: Vec::new(),
+            vadjust_penalty: Vec::new(),
+            fil_break: false,
             pre_space_after: None,
             lineskip: None,
             contributed: None,
