@@ -99,7 +99,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
 /// Environments this compiler implements outside math mode.
 #[rustfmt::skip]
 const IMPLEMENTED_ENVIRONMENTS: &[&str] = &[
-    "document", "figure", "center", "flushright", "flushleft", "quote", "quotation", "itemize",
+    "document", "figure", "frame", "center", "flushright", "flushleft", "quote", "quotation", "itemize",
     "enumerate", "equation", "equation*", "displaymath", "gather", "gather*", "align", "align*",
     "alignat", "alignat*", "flalign", "flalign*", "multline", "multline*",
 ];
@@ -112,7 +112,7 @@ const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "list", "trivlist", "picture", "math", "eqnarray", "eqnarray*", "gathered", "multlined",
     "subequations", "dcases", "rcases", "proof", "tikzpicture", "lstlisting", "minted",
     "wrapfigure", "subfigure", "comment", "landscape", "samepage", "sloppypar", "filecontents",
-    "frame", "tabbing", "small", "footnotesize",
+    "tabbing", "small", "footnotesize",
 ];
 
 fn implemented_commands() -> impl Iterator<Item = &'static str> {

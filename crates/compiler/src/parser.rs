@@ -4159,9 +4159,17 @@ impl P<'_> {
         blocks: &mut Vec<Block>,
         para: &mut Vec<Inline>,
     ) {
+        let space_before = self.space_precedes(self.i - 1);
         let (tokens, argument_span) = self.required_group(kind, span);
         let environment = token_text(&tokens).trim().to_string();
         if kind == "begin" {
+            // The bordered-box `frame` environment is consumed synchronously
+            // (through its `\end`), so nothing is pushed on the environment
+            // stacks for it.
+            if environment == "frame" && self.in_body {
+                self.frame_environment(span, argument_span, space_before, para);
+                return;
+            }
             if matches!(
                 environment.as_str(),
                 "equation" | "equation*" | "displaymath"
@@ -4703,6 +4711,77 @@ impl P<'_> {
             space_before: true,
         });
         self.style = TextStyle::default();
+    }
+
+    /// `\begin{frame} body \end{frame}`: a rule-bordered box around its body.
+    /// This is the bordered-box `frame` environment, not a beamer slide:
+    /// nothing in this engine implements beamer's slide semantics, so the
+    /// box reading is the only one available. It is an `\fbox` in
+    /// environment form: the body is parsed with the ordinary dispatch in
+    /// `box_inlines`' restricted horizontal mode and set as one
+    /// `Inline::ColorBox`, so the box sizes to its content with `\fboxsep`
+    /// padding and an `\fboxrule` rule in the current colour (black without
+    /// one). Like `\fbox` the box has no fill of its own, so it takes the
+    /// page colour (white without `\pagecolor`) and stays invisible on the
+    /// page it sits on. A blank line inside joins the paragraphs into the
+    /// one box rather than breaking it (real `\fbox` forbids `\par`
+    /// outright); anything `box_inlines` cannot place inline behaves as in
+    /// `\colorbox`.
+    fn frame_environment(
+        &mut self,
+        open: Span,
+        argument_span: Span,
+        space_before: bool,
+        para: &mut Vec<Inline>,
+    ) {
+        // The body runs to the matching `\end{frame}`; nested `frame`
+        // environments nest the boxes.
+        let mut depth = 1usize;
+        let mut cursor = self.i;
+        let mut end = None;
+        while cursor < self.t.len() {
+            let is_begin =
+                matches!(&self.t[cursor].token.kind, TokenKind::Command(name) if name == "begin");
+            let is_end = !is_begin
+                && matches!(&self.t[cursor].token.kind, TokenKind::Command(name) if name == "end");
+            if (is_begin || is_end) && environment_name_at(&self.t, cursor) == Some("frame") {
+                if is_end {
+                    if depth == 1 {
+                        if let Some(found) = environment_end_at(&self.t, cursor, "frame") {
+                            end = Some(found);
+                            break;
+                        }
+                    } else {
+                        depth -= 1;
+                    }
+                } else {
+                    depth += 1;
+                }
+            }
+            cursor += 1;
+        }
+        let (body, end_span, after) = match end {
+            Some((after, end_span)) => (self.t[self.i..cursor].to_vec(), end_span, after),
+            None => {
+                self.diags.push(Diagnostic::error(
+                    "unterminated environment 'frame' — no matching \\end",
+                    Some(open),
+                    Some("boxed the rest of the input".into()),
+                ));
+                (self.t[self.i..].to_vec(), open, self.t.len())
+            }
+        };
+        self.i = after;
+        let content = self.box_inlines(body);
+        para.push(Inline::ColorBox(Box::new(ColorBox {
+            fill: self.page_color.unwrap_or(DeviceColor::WHITE),
+            frame: Some(self.style.color.unwrap_or(DeviceColor::BLACK)),
+            content,
+            fboxsep_pt: self.fboxsep_pt,
+            fboxrule_pt: self.fboxrule_pt,
+            span: open.merge(argument_span).merge(end_span),
+            space_before,
+        })));
     }
 
     /// `verbatim`, `verbatim*`, and basic `lstlisting`. The body is not read
