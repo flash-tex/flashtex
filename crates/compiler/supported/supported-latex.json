@@ -101,6 +101,7 @@
     {"name": "dotfill", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "\\hfill filled with dots in 0.44em boxes, centred (latex.ltx \\cleaders)", "renders": true},
     {"name": "hfil", "mode": "text", "origin": "text_dispatch", "arguments": "", "description": "infinite-stretch horizontal glue (same order as \\hfill)", "renders": true},
     {"name": "hspace", "mode": "text", "origin": "text_dispatch", "arguments": "{dimension}", "description": "fixed horizontal space; starred form identical", "renders": true},
+    {"name": "hskip", "mode": "text", "origin": "text_dispatch", "arguments": "<glue>", "description": "TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll", "renders": true},
     {"name": "footnote", "mode": "text", "origin": "text_dispatch", "arguments": "[n]{...}", "description": "numbered mark and page-bottom footnote text", "renders": true},
     {"name": "footnotemark", "mode": "text", "origin": "text_dispatch", "arguments": "[n]", "description": "footnote mark only", "renders": true},
     {"name": "footnotetext", "mode": "text", "origin": "text_dispatch", "arguments": "[n]{...}", "description": "footnote text without a mark", "renders": true},

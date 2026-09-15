@@ -300,7 +300,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 307 text-mode and 551 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 308 text-mode and 551 math-mode command entries, 49 environments and 21 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -439,6 +439,7 @@ Canonical sources:
 | `\dotfill` |  | \hfill filled with dots in 0.44em boxes, centred (latex.ltx \cleaders) |
 | `\hfil` |  | infinite-stretch horizontal glue (same order as \hfill) |
 | `\hspace` | `{dimension}` | fixed horizontal space; starred form identical |
+| `\hskip` | `<glue>` | TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll |
 | `\footnote` | `[n]{...}` | numbered mark and page-bottom footnote text |
 | `\footnotemark` | `[n]` | footnote mark only |
 | `\footnotetext` | `[n]{...}` | footnote text without a mark |
