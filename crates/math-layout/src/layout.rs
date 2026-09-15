@@ -6,11 +6,13 @@
 
 use crate::boxes::{BoxKind, Child, Flex, MathBox};
 use crate::mathlist::{Atom, AtomClass, BigSizing, Limits, MathList, Nucleus};
-use crate::metrics::{Extensible, Glyph, MathFontMetrics, MathParams, SizeClass};
-use crate::metrics::{MathChar, OrdLigature, OrdPair};
+use crate::metrics::{Extensible, Glyph, MathFontMetrics, MathParams};
+use crate::metrics::{MathChar, OrdPair};
 use crate::source::SourceTag;
 use crate::spacing::{Space, between};
 use crate::style::Style;
+
+use crate::metrics::{OrdLigature, SizeClass};
 use std::borrow::Cow;
 
 /// Something the engine could not do exactly; the layout still completes with
