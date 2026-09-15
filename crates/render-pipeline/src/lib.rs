@@ -25,6 +25,7 @@ pub mod incremental;
 pub mod listings;
 pub mod longtable;
 pub mod mathalpha;
+pub mod memsize;
 pub mod mathfont;
 pub mod mathgrid;
 pub mod mathtex;

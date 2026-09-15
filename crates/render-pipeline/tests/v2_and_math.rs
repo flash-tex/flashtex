@@ -257,7 +257,7 @@ fn joined_word_fragments_keep_carets_inside_their_clusters() {
                 runs += 1;
                 for (ci, c) in run.clusters.iter().enumerate() {
                     let range = c.text_start_byte..=c.text_end_byte;
-                    for caret in c.carets.iter() {
+                    for caret in run.carets_of(ci).iter() {
                         assert!(range.contains(&caret.text_byte), "run {:?} cluster {ci}: caret {} outside {:?}", run.text, caret.text_byte, range);
                     }
                 }
