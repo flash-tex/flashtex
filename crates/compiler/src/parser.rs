@@ -8882,7 +8882,10 @@ mod tests {
 
     #[test]
     fn self_referential_macro_hits_explicit_recursion_limit() {
-        let source = "\\newcommand{\\loop}{\\loop} \\loop";
+        // Not `\\loop`: the kernel defines it, so `\\newcommand` keeps the
+        // kernel's `\\loop#1\\repeat`, whose argument runs away to the end of
+        // the file and aborts the call, as in TeX.
+        let source = "\\newcommand{\\recurse}{\\recurse} \\recurse";
         let (parsed, _) = items(source);
         // The expansion pass bounds runaway expansion by its step limit.
         assert!(parsed.diagnostics.iter().any(|diagnostic| {
