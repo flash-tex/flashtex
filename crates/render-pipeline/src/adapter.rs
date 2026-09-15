@@ -2645,6 +2645,9 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
     // for the closing skip too).
     let mut prev_list = false;
     let mut list_vmode = false;
+    // The same, per nesting level (index = depth - 1), for the closing
+    // skips of several lists that end together.
+    let mut list_vmode_by_depth: Vec<bool> = Vec::new();
     // `tikzpicture` environments per document, and those already emitted.
     let pictures: Vec<Vec<flashtex_vector_graphics::tikz::PictureSource>> = texts.iter().map(|t| flashtex_vector_graphics::tikz::find_pictures(t)).collect();
     let mut emitted_pictures: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
@@ -2740,16 +2743,41 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
         let mut addvspace_flex = (0.0f64, 0.0f64);
         let mut vspace_flex = (0.0f64, 0.0f64);
         let mut endlist_adjust = 0.0;
+        // `\endtrivlist` of the lists closed in the gap: each is
+        // `\addvspace\@topsepadd` with its own level's `\topsep` (plus
+        // `\partopsep` when that list opened in vertical mode), and
+        // successive `\addvspace`s keep the larger natural skip — so does a
+        // following `\item`'s `\addvspace\itemsep`. (natural, stretch, shrink)
+        let mut list_end_skip: Option<(f64, f64, f64)> = None;
         if prev_list && !is_heading {
             if let Some(gap) = first.and_then(gap_before) {
                 if let Some(env) = gap_has_list_end(gap) {
                     let src = texts.get(prev_end.map_or(0, |p| p.document.0)).copied().unwrap_or("");
                     let stack = prev_end.map(|p| list_stack_at(src, p.end)).unwrap_or_default();
-                    let begin_keys = stack.last().map_or("", |(e, keys)| if *e == env && *e != "thebibliography" { keys } else { "" });
-                    let seps = list_seps_with(src, env, 1, size, style, begin_keys);
-                    addvspace_before += seps.topsep + if list_vmode { seps.partopsep } else { 0.0 };
-                    addvspace_flex.0 += seps.topsep_skip.stretch + if list_vmode { seps.partopsep_skip.stretch } else { 0.0 };
-                    addvspace_flex.1 += seps.topsep_skip.shrink + if list_vmode { seps.partopsep_skip.shrink } else { 0.0 };
+                    let topsepadd = |seps: &ListSeps, vmode: bool| {
+                        let p = if vmode { seps.partopsep_skip } else { crate::style::Skip::default() };
+                        (seps.topsep + p.natural, seps.topsep_skip.stretch + p.stretch, seps.topsep_skip.shrink + p.shrink)
+                    };
+                    for (k, closed) in list_env_ends(gap).enumerate() {
+                        let Some(depth) = stack.len().checked_sub(k).filter(|d| *d > 0) else { break };
+                        let (open, keys) = stack[depth - 1];
+                        if open != closed {
+                            break;
+                        }
+                        let keys = if open == "thebibliography" { "" } else { keys };
+                        let seps = list_seps_with(src, open, depth, size, style, keys);
+                        let skip = topsepadd(&seps, list_vmode_by_depth.get(depth - 1).copied().unwrap_or(list_vmode));
+                        list_end_skip = Some(match list_end_skip {
+                            Some(kept) if kept.0 >= skip.0 => kept,
+                            _ => skip,
+                        });
+                    }
+                    if list_end_skip.is_none() {
+                        // No open list to match (a list closed in another
+                        // document): the outermost level's skip.
+                        let begin_keys = stack.last().map_or("", |(e, keys)| if *e == env && *e != "thebibliography" { keys } else { "" });
+                        list_end_skip = Some(topsepadd(&list_seps_with(src, env, 1, size, style, begin_keys), list_vmode));
+                    }
                     if let Some(p) = prev_end {
                         endlist_adjust = list_end_adjust(src, p.end, gap, size, style);
                     }
@@ -2786,6 +2814,12 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                         Some((g, b)) if list_env_after_begin(&g[b..]) => {
                             let before = &g[..b];
                             list_vmode = prev_vmode || prev_end.is_none() || has_blank_line(before) || find_command(before, "par").is_some();
+                            if let Some(i) = stack.len().checked_sub(1) {
+                                if list_vmode_by_depth.len() <= i {
+                                    list_vmode_by_depth.resize(i + 1, false);
+                                }
+                                list_vmode_by_depth[i] = list_vmode;
+                            }
                             if prev_vmode {
                                 // `\@nbitem`: `\addvspace{\@outerparskip - \parskip}`.
                                 // A negative `\addvspace` is never absorbed:
@@ -2815,9 +2849,14 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                             }
                         }
                         _ => {
-                            addvspace_before += seps.itemsep;
-                            addvspace_flex.0 += seps.itemsep_skip.stretch;
-                            addvspace_flex.1 += seps.itemsep_skip.shrink;
+                            let itemsep = (seps.itemsep, seps.itemsep_skip.stretch, seps.itemsep_skip.shrink);
+                            let skip = match list_end_skip.take() {
+                                Some(end) if end.0 >= itemsep.0 => end,
+                                _ => itemsep,
+                            };
+                            addvspace_before += skip.0;
+                            addvspace_flex.0 += skip.1;
+                            addvspace_flex.1 += skip.2;
                         }
                     }
                 }
@@ -2842,6 +2881,12 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
                 });
             }
         }
+        if let Some(skip) = list_end_skip {
+            addvspace_before += skip.0;
+            addvspace_flex.0 += skip.1;
+            addvspace_flex.1 += skip.2;
+        }
+        let closed_list = prev_list;
         prev_list = list.is_some();
         let limitations = std::mem::take(&mut pending_limitations);
         let styled = match block {
@@ -2865,14 +2910,15 @@ fn split_at_page_breaks<'p>(texts: &[&str], blocks: &'p [(CBlock, ParLeading)], 
             Some(EnvOpen { vmode, skips: None })
         });
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
-        // or `\par` between them) is not indented.
+        // or `\par` between them) is not indented. A list's `\endtrivlist`
+        // is `\@endparenv` too.
         let after_env = styled.is_none()
-            && prev_styled
+            && (prev_styled || closed_list)
             && first.zip(prev_end).is_some_and(|(f, p)| {
                 p.document == f.document
                     && p.end <= f.start
                     && texts.get(f.document.0).and_then(|t| t.get(p.end..f.start)).is_some_and(|gap| {
-                        rfind_command(gap, "end").is_some_and(|end| {
+                        (prev_styled || gap_has_list_end(gap).is_some()) && rfind_command(gap, "end").is_some_and(|end| {
                             let after = gap[end..].split_once('}').map_or("", |(_, rest)| rest);
                             !has_blank_line(after) && find_command(after, "par").is_none()
                         })
@@ -4530,6 +4576,22 @@ pub(crate) fn list_end_skip(source: &str, run: &std::ops::Range<usize>, body_siz
     seps.topsep + if vmode { seps.partopsep } else { 0.0 }
 }
 
+/// The list environments `\end`ed in `gap`, in source order.
+fn list_env_ends(gap: &str) -> impl Iterator<Item = &'static str> + '_ {
+    let mut from = 0;
+    std::iter::from_fn(move || {
+        while let Some(at) = find_command(&gap[from..], "end") {
+            let abs = from + at;
+            from = abs + 1;
+            let rest = gap[abs + "\\end".len()..].trim_start();
+            if let Some(env) = LIST_ENVS.into_iter().find(|env| rest.strip_prefix('{').is_some_and(|r| r.starts_with(&format!("{env}}}")))) {
+                return Some(env);
+            }
+        }
+        None
+    })
+}
+
 fn gap_has_list_end(gap: &str) -> Option<&'static str> {
     let end = rfind_command(gap, "end")?;
     let rest = gap[end + "\\end".len()..].trim_start();
@@ -5245,6 +5307,25 @@ fn text_font_command(name: &str) -> Option<&'static [crate::nfss::Command]> {
         "emph" => &[C::Emph],
         _ => return None,
     })
+}
+
+/// Whether byte `at` of `source` opens the braced argument of a text font
+/// command (`\textbf{`, `\emph {`): the byte before it is `{` and the
+/// control word before that is one of [`text_font_command`].
+fn text_command_argument_at(source: &str, at: usize) -> bool {
+    let bytes = source.as_bytes();
+    if at == 0 || bytes.get(at - 1) != Some(&b'{') {
+        return false;
+    }
+    let mut end = at - 1;
+    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > 0 && bytes[start - 1].is_ascii_alphabetic() {
+        start -= 1;
+    }
+    start > 0 && start < end && bytes[start - 1] == b'\\' && text_font_command(&source[start..end]).is_some()
 }
 
 /// The NFSS commands of a font declaration. Its group's end never takes an
@@ -7642,6 +7723,25 @@ fn items_from_inlines_styled(texts: &[&str], inlines: &[Inline], styles: &[Style
                     gap_style.size_cpt = space_size(texts, prev_end, *span, prev_size_cpt, style.size_cpt);
                     push_gap(&mut items, has_space, gap_style, factor);
                     pending_accent = None;
+                }
+                // LaTeX's `\check@icl`: a text font command whose font is
+                // upright (`\fontdimen1 = 0`) runs `\maybe@ic` before its
+                // argument, and `\sw@slant` puts the italic correction of
+                // the character before it *under* the interword space
+                // (`of \textbf{x}`: `f`, kern 0.7922 pt, space). amsmath's
+                // `\eqref` is `\textup{\tagform@{..}}`, so it always does.
+                // Not when the argument opens with a `\nocorrlist` token.
+                let styles_here = styles_of(span.document);
+                let check_icl = if reference_spans.contains(span) {
+                    source.get(span.start..).is_some_and(|r| r.starts_with("\\eqref"))
+                } else {
+                    text_command_argument_at(source, span.start) && !styles_here.slanted_at(span.start) && !text.starts_with(['.', ','])
+                };
+                if check_icl && !style.literal {
+                    let at = items.len() - usize::from(matches!(items.last(), Some(Item::Space { .. })));
+                    if at > 0 && matches!(items[at - 1], Item::Word(_)) {
+                        items.insert(at, Item::ItalicCorrection);
+                    }
                 }
                 prev_size_cpt = style.size_cpt;
                 if let Some(mark) = accent_char {
