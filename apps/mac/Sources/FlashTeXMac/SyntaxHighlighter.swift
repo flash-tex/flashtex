@@ -601,23 +601,25 @@ struct SyntaxTheme: Sendable {
         }
     }
 
-    static let command = dynamic(light: (155, 35, 147), dark: (252, 95, 163))          // Xcode keyword
-    static let mathCommand = dynamic(light: (50, 109, 116), dark: (103, 183, 164))     // teal
-    static let environment = dynamic(light: (11, 79, 121), dark: (93, 216, 255))       // type
-    static let math = dynamic(light: (28, 0, 207), dark: (208, 168, 255))              // indigo
-    static let mathDelimiter = dynamic(light: (28, 0, 207), dark: (208, 168, 255))
-    static let number = dynamic(light: (28, 0, 207), dark: (208, 191, 105))            // Xcode number
-    static let comment = dynamic(light: (93, 108, 121), dark: (108, 121, 134))         // Xcode comment
-    static let brace = NSColor.secondaryLabelColor
-    static let reference = dynamic(light: (196, 26, 22), dark: (252, 106, 93))         // Xcode string
-    static let file = dynamic(light: (196, 26, 22), dark: (252, 106, 93))
-    static let definition = dynamic(light: (15, 104, 160), dark: (65, 161, 192))       // Xcode declaration
-    static let currentLine = NSColor(name: nil) { appearance in
-        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        return NSColor.labelColor.withAlphaComponent(isDark ? 0.06 : 0.045)
-    }
-    static let gutterText = NSColor.tertiaryLabelColor
-    static let gutterCurrentText = NSColor.secondaryLabelColor
+    // JetBrains' code vocabulary (IntelliJ Light / the New Dark theme), not
+    // Xcode's: commands are keywords (blue / soft orange), references are
+    // strings (green), math is the constant purple — the palette that makes
+    // the editor read as a JetBrains-class IDE pane
+    // (context/PROMPT-appearance-overhaul.md).
+    static let command = dynamic(light: (0, 51, 179), dark: (207, 142, 109))           // keyword
+    static let mathCommand = dynamic(light: (0, 98, 122), dark: (42, 172, 184))        // built-in
+    static let environment = dynamic(light: (0, 98, 122), dark: (86, 168, 245))        // declaration
+    static let math = dynamic(light: (135, 16, 148), dark: (199, 125, 187))            // constant
+    static let mathDelimiter = dynamic(light: (135, 16, 148), dark: (199, 125, 187))
+    static let number = dynamic(light: (23, 80, 235), dark: (42, 172, 184))            // number
+    static let comment = dynamic(light: (140, 140, 140), dark: (122, 126, 133))        // comment
+    static let brace = DS.Palette.textSecondary
+    static let reference = dynamic(light: (6, 125, 23), dark: (106, 171, 115))         // string
+    static let file = dynamic(light: (6, 125, 23), dark: (106, 171, 115))
+    static let definition = dynamic(light: (158, 136, 13), dark: (179, 174, 96))       // metadata
+    static let currentLine = DS.Palette.editorCurrentLine
+    static let gutterText = DS.Palette.editorLineNumber
+    static let gutterCurrentText = DS.Palette.editorLineNumberActive
 
     static func color(for kind: SyntaxHighlighter.Kind) -> NSColor? {
         switch kind {

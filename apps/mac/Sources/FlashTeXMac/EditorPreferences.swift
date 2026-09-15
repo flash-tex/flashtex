@@ -96,6 +96,8 @@ final class EditorPreferences {
     // MARK: defaults and ranges
 
     static let fontSizeRange: ClosedRange<Double> = 8...36
+    /// Editor leading: JetBrains ships 1.2 (`FontPreferences.DEFAULT_LINE_SPACING`).
+    static let lineHeightMultiple: CGFloat = 1.2
     static let tabWidthRange: ClosedRange<Int> = 2...8
 
     static let defaultSnapshot = Snapshot(
@@ -269,6 +271,18 @@ final class EditorPreferences {
     static func resolveFont(family: String?, size: Double) -> NSFont {
         let size = clampedFontSize(size)
         if let family, let font = installedFont(family: family, size: size), font.isFixedPitch { return font }
+        return defaultEditorFont(size: size)
+    }
+
+    /// The default editor face when no family is chosen: bundled JetBrains
+    /// Mono (context/PROMPT-appearance-overhaul.md §5), falling back to the
+    /// system monospaced face (SF Mono) when the bundle is unavailable.
+    static func defaultEditorFont(size: Double) -> NSFont {
+        let size = clampedFontSize(size)
+        if EditorFontRegistration.registerIfNeeded(),
+           let font = NSFont(name: EditorFontRegistration.regularPostScriptName, size: size) {
+            return font
+        }
         return .monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
@@ -417,6 +431,8 @@ final class EditorPreferences {
         let style = (textView.defaultParagraphStyle ?? NSParagraphStyle.default).mutableCopy() as! NSMutableParagraphStyle
         style.tabStops = []
         style.defaultTabInterval = tabInterval
+        // JetBrains' editor leading (FontPreferences: 1.2 line spacing).
+        style.lineHeightMultiple = Self.lineHeightMultiple
         // Font first: `NSText.font` re-fonts the whole storage and the typing
         // attributes; the paragraph style then goes to both as well.
         if textView.font != font { textView.font = font }
@@ -437,6 +453,17 @@ final class EditorPreferences {
         let host: NSView = textView.enclosingScrollView ?? textView
         let wanted = appearance.nsAppearance
         if host.appearance?.name != wanted?.name { host.appearance = wanted }
+
+        // The Islands editor surface (context/PROMPT-appearance-overhaul.md
+        // §3): fixed dynamic colours instead of the system text-view
+        // vocabulary, so the editor reads as an IDE pane in both appearances.
+        textView.backgroundColor = DS.NSColors.editorBackground
+        textView.enclosingScrollView?.backgroundColor = DS.NSColors.editorBackground
+        textView.enclosingScrollView?.drawsBackground = true
+        textView.textColor = DS.NSColors.editorForeground
+        textView.insertionPointColor = DS.NSColors.editorForeground
+        textView.selectedTextAttributes[.backgroundColor] = DS.NSColors.editorSelection
+        textView.typingAttributes[.foregroundColor] = DS.NSColors.editorForeground
 
         if let completing = textView as? CompletingTextView, completing.vimEnabledOverride == nil { completing.applyVimPreference(vimKeybindings) } // VimMode.swift
 

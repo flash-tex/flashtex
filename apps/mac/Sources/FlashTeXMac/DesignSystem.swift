@@ -50,8 +50,16 @@ enum DS {
         /// not the number).
         static let completion: CGFloat = 24
         static let paletteResult: CGFloat = 28
-        static let tab: CGFloat = 30
-        static let statusBar: CGFloat = 24
+        /// Editor tabs: 35 (VS Code `EDITOR_TAB_HEIGHT.normal`; the brief's
+        /// verified number — JetBrains' is derived, not a constant).
+        static let tab: CGFloat = 35
+        /// Status bar: 22 (VS Code `statusbarpart.css`).
+        static let statusBar: CGFloat = 22
+        /// Tool-window header row (Project / Outline / Problems). JetBrains'
+        /// 41 includes a toolbar; ours carries only a label and one control,
+        /// so 41 reads empty — 30 is the calm variant (owner: match the
+        /// surface, not the number).
+        static let toolWindowHeader: CGFloat = 30
     }
 
     // MARK: typography — base 13, secondary 11, headers 11 semibold; ≤3 sizes per surface
@@ -75,51 +83,153 @@ enum DS {
         static let pairingCode = Font.system(size: 34, weight: .semibold, design: .monospaced)
     }
 
-    // MARK: colour — semantic AppKit colours so all three appearance modes are correct
+    // MARK: colour — the JetBrains Islands palette (context/PROMPT-appearance-overhaul.md §3)
+    //
+    // Every value is a fixed light/dark pair from JetBrains' Islands theme
+    // (platform-resources/themes/islands in JetBrains/intellij-community),
+    // resolved per drawing appearance, so the app carries an IDE identity
+    // instead of the system's utility-app surfaces. The severity colours are
+    // VS Code's registry values. The one native concession the brief permits:
+    // `accentSelection` stays the system accent colour.
+
+    /// Dynamic appearance-resolved AppKit colours, the single source of truth;
+    /// `Colors` wraps them for SwiftUI. Hex is 0xRRGGBB.
+    enum Palette {
+        static func dynamic(light: UInt32, dark: UInt32,
+                            lightAlpha: CGFloat = 1, darkAlpha: CGFloat = 1) -> NSColor {
+            NSColor(name: nil) { appearance in
+                let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                let hex = isDark ? dark : light
+                return NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+                               green: CGFloat((hex >> 8) & 0xFF) / 255,
+                               blue: CGFloat(hex & 0xFF) / 255,
+                               alpha: isDark ? darkAlpha : lightAlpha)
+            }
+        }
+
+        // Surfaces.
+        /// Editor ground; also the tool windows (tree, outline, problems) and
+        /// the editor tab strip — Islands gives all three the same surface.
+        static let editorBackground = dynamic(light: 0xFFFFFF, dark: 0x191A1C)
+        /// Window chrome outside the panels: toolbar, icon rail, status bar.
+        static let windowChrome = dynamic(light: 0xE9EAEE, dark: 0x26282C)
+        /// Floating surfaces one step above the panels: completion popup,
+        /// palette, popovers (JetBrains popup ground).
+        static let raised = dynamic(light: 0xFFFFFF, dark: 0x2B2D30)
+        /// The preview column's neutral ground the page floats on.
+        static let previewGround = dynamic(light: 0xDFE1E5, dark: 0x1E1F22)
+
+        // Text.
+        static let editorForeground = dynamic(light: 0x080808, dark: 0xBCBEC4)
+        static let textPrimary = editorForeground
+        static let textSecondary = dynamic(light: 0x6C707E, dark: 0x9DA0A8)
+        static let textTertiary = dynamic(light: 0xA8ADBD, dark: 0x6F737A)
+
+        // Editor internals.
+        static let editorCurrentLine = dynamic(light: 0xF5F8FE, dark: 0x1F2024)
+        static let editorSelection = dynamic(light: 0xD0DFFE, dark: 0x2A4371)
+        static let editorLineNumber = dynamic(light: 0xAEB3C2, dark: 0x4B5059)
+        static let editorLineNumberActive = dynamic(light: 0x6C707E, dark: 0x9DA0A8)
+
+        // Lists and trees. JetBrains keeps the row's own text colour on the
+        // muted blue selection band — no white-on-accent macOS band.
+        static let selectionFocused = dynamic(light: 0xD0DFFE, dark: 0x2A4371)
+        static let selectionUnfocused = dynamic(light: 0xDFE1E5, dark: 0x393B40)
+        static let hover = dynamic(light: 0x000000, dark: 0xFFFFFF,
+                                   lightAlpha: 0.07, darkAlpha: 0.09)
+
+        // Tabs.
+        static let tabSelected = dynamic(light: 0xE3EBFE, dark: 0x233558)
+        static let tabSelectedInactive = dynamic(light: 0xE9EAEE, dark: 0x26282C)
+        static let tabUnderline = dynamic(light: 0xA7C5FF, dark: 0x2E4D89)
+
+        // Lines.
+        /// Panel-to-panel boundary: the chrome tone, so regions separate by
+        /// tone rather than by drawn lines (the flat Islands look).
+        static let border = dynamic(light: 0xE9EAEE, dark: 0x26282C)
+        /// Border of an actual control (fields, popups) — visible on purpose.
+        static let componentBorder = dynamic(light: 0xD1D3D9, dark: 0x40434A)
+        /// Keyboard-focus ring on custom controls; also the fix-available ring.
+        static let focus = dynamic(light: 0x3871E1, dark: 0x3871E1)
+
+        // State (VS Code registry severities; both themes).
+        static let severityError = dynamic(light: 0xE51400, dark: 0xF14C4C)
+        static let severityWarning = dynamic(light: 0xBF8803, dark: 0xCCA700)
+        static let severityInfo = dynamic(light: 0x0063D3, dark: 0x59A4F9)
+        static let severitySuccess = dynamic(light: 0x1A7F37, dark: 0x57AB5A)
+        /// The modified (unsaved) dot on tabs and tree rows — JetBrains blue,
+        /// not a warning colour: an unsaved edit is a state, not a problem.
+        static let statusModified = dynamic(light: 0x3574F0, dark: 0x548AF7)
+        /// A completed older snapshot shown while a newer revision compiles.
+        static let statusHistorical = dynamic(light: 0x834DF0, dark: 0xB189F5)
+
+        // File-type / outline identity (muted JetBrains icon palette).
+        static let typeBlue = dynamic(light: 0x3574F0, dark: 0x548AF7)
+        static let typeGreen = dynamic(light: 0x208A3C, dark: 0x5FAD65)
+        static let typePurple = dynamic(light: 0x834DF0, dark: 0xB189F5)
+        static let typeOrange = dynamic(light: 0xE56D17, dark: 0xE08855)
+        static let typeTeal = dynamic(light: 0x0E7C8E, dark: 0x24A394)
+        static let typeRed = dynamic(light: 0xDB3B4B, dark: 0xE55765)
+        static let typeGray = dynamic(light: 0x818594, dark: 0x6F737A)
+    }
 
     enum Colors {
-        /// Content ground: editor, lists, trees.
-        static let surfacePrimary = Color(nsColor: .controlBackgroundColor)
-        /// Chrome: bars, panel headers, tab strip, status bar.
-        static let surfaceSecondary = Color(nsColor: .windowBackgroundColor)
+        /// Content ground: editor, lists, trees, tab strip (Islands gives the
+        /// editor and the tool windows one surface).
+        static let surfacePrimary = Color(nsColor: Palette.editorBackground)
+        /// Chrome: toolbar, icon rail, panel headers, status bar.
+        static let surfaceSecondary = Color(nsColor: Palette.windowChrome)
         /// Floating surfaces: completion popup, palette, popovers.
-        static let surfaceRaised = Color(nsColor: .controlBackgroundColor)
+        static let surfaceRaised = Color(nsColor: Palette.raised)
         /// The preview column's neutral ground the page floats on.
-        static let surfaceGround = Color(nsColor: .underPageBackgroundColor)
+        static let surfaceGround = Color(nsColor: Palette.previewGround)
         /// QR ground: scanners need literal white behind the code in both
         /// appearances — the one deliberately non-semantic surface.
         static let qrGround = Color.white
-        static let separator = Color(nsColor: .separatorColor)
+        static let separator = Color(nsColor: Palette.border)
+        static let componentBorder = Color(nsColor: Palette.componentBorder)
 
-        static let textPrimary = Color(nsColor: .labelColor)
-        static let textSecondary = Color(nsColor: .secondaryLabelColor)
-        static let textTertiary = Color(nsColor: .tertiaryLabelColor)
+        static let textPrimary = Color(nsColor: Palette.textPrimary)
+        static let textSecondary = Color(nsColor: Palette.textSecondary)
+        static let textTertiary = Color(nsColor: Palette.textTertiary)
 
-        /// The system accent; honours the user's accent-colour setting.
+        /// The system accent; honours the user's accent-colour setting (the
+        /// one permitted native concession in the Islands palette).
         static let accentSelection = Color(nsColor: .controlAccentColor)
-        /// Focused selection band in lists and trees.
-        static let selectionFocused = Color(nsColor: .selectedContentBackgroundColor)
+        /// Focused selection band in lists and trees: JetBrains' muted blue,
+        /// which keeps the row's own text colour.
+        static let selectionFocused = Color(nsColor: Palette.selectionFocused)
         /// Selected-but-unfocused: visibly weaker than focused (macOS convention).
-        static let selectionUnfocused = Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
+        static let selectionUnfocused = Color(nsColor: Palette.selectionUnfocused)
+        /// Hover wash over rows, tabs and icon buttons.
+        static let hover = Color(nsColor: Palette.hover)
 
-        static let severityError = Color(nsColor: .systemRed)
-        static let severityWarning = Color(nsColor: .systemOrange)
-        static let severityInfo = Color(nsColor: .systemBlue)
-        static let severitySuccess = Color(nsColor: .systemGreen)
+        /// Editor tabs (Islands): selected fill, its inactive-window fade,
+        /// and the 4pt underline.
+        static let tabSelected = Color(nsColor: Palette.tabSelected)
+        static let tabSelectedInactive = Color(nsColor: Palette.tabSelectedInactive)
+        static let tabUnderline = Color(nsColor: Palette.tabUnderline)
+
+        static let severityError = Color(nsColor: Palette.severityError)
+        static let severityWarning = Color(nsColor: Palette.severityWarning)
+        static let severityInfo = Color(nsColor: Palette.severityInfo)
+        static let severitySuccess = Color(nsColor: Palette.severitySuccess)
 
         /// The modified (unsaved) dot on tabs and tree rows.
-        static let statusModified = Color(nsColor: .systemOrange)
+        static let statusModified = Color(nsColor: Palette.statusModified)
         /// A completed older snapshot shown while a newer revision compiles.
-        static let statusHistorical = Color(nsColor: .systemPurple)
+        static let statusHistorical = Color(nsColor: Palette.statusHistorical)
         /// Gutter marker on lines with an available fix.
-        static let gutterMarker = Color(nsColor: .controlAccentColor)
+        static let gutterMarker = Color(nsColor: Palette.focus)
+        /// Keyboard-focus ring on custom controls.
+        static let focus = Color(nsColor: Palette.focus)
 
         /// Outline item-type identity (typed icons, IntelliJ-fashion):
         /// colour tells the kind apart together with the glyph.
-        static let typeTable = Color(nsColor: .systemBlue)
-        static let typeFloat = Color(nsColor: .systemGreen)
-        static let typeMath = Color(nsColor: .systemPurple)
-        static let typeLabel = Color(nsColor: .systemOrange)
+        static let typeTable = Color(nsColor: Palette.typeBlue)
+        static let typeFloat = Color(nsColor: Palette.typeGreen)
+        static let typeMath = Color(nsColor: Palette.typePurple)
+        static let typeLabel = Color(nsColor: Palette.typeOrange)
     }
 
     /// AppKit type for panels the SwiftUI `Fonts` cannot reach (the
@@ -132,16 +242,32 @@ enum DS {
         static let monoCandidate = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
     }
 
-    /// AppKit paint paths (gutter marks, rulers) use `NSColor` directly;
-    /// same semantic mapping as `Colors`, one source of truth per meaning.
+    /// AppKit paint paths (gutter marks, rulers, the editor itself) use
+    /// `NSColor` directly; same semantic mapping as `Colors`, one source of
+    /// truth per meaning.
     enum NSColors {
-        static let severityError = NSColor.systemRed
-        static let severityWarning = NSColor.systemOrange
-        static let gapDot = NSColor.tertiaryLabelColor
-        static let gutterGlyph = NSColor.secondaryLabelColor
-        static let gutterHairline = NSColor.separatorColor.withAlphaComponent(0.5)
+        static let severityError = Palette.severityError
+        static let severityWarning = Palette.severityWarning
+        static let gapDot = Palette.textTertiary
+        static let gutterGlyph = Palette.textSecondary
+        static let gutterHairline = Palette.border
         /// Ring around a severity dot whose line carries a Tab-applicable fix.
-        static let fixRing = NSColor.controlAccentColor
+        static let fixRing = Palette.focus
+        /// The editor surface (also painted behind the gutter).
+        static let editorBackground = Palette.editorBackground
+        static let editorForeground = Palette.editorForeground
+        static let editorSelection = Palette.editorSelection
+        static let editorCurrentLine = Palette.editorCurrentLine
+        static let editorLineNumber = Palette.editorLineNumber
+        static let editorLineNumberActive = Palette.editorLineNumberActive
+        static let raised = Palette.raised
+        static let componentBorder = Palette.componentBorder
+        static let windowChrome = Palette.windowChrome
+        static let panelBackground = Palette.editorBackground
+        static let textSecondary = Palette.textSecondary
+        static let selectionFocused = Palette.selectionFocused
+        static let selectionUnfocused = Palette.selectionUnfocused
+        static let hover = Palette.hover
     }
 
     // MARK: interaction states
@@ -177,7 +303,10 @@ enum DS {
         /// File-type icon column in trees and tabs.
         static let fileIcon: CGFloat = 14
         /// Rail buttons: icon hit target on the tool-window stripe.
-        static let railButton: CGFloat = 28
+        static let railButton: CGFloat = 32
+        /// The active tab's underline (JetBrains `EditorTabs.underlineHeight`),
+        /// drawn as a rounded bar (`underlineArc`).
+        static let tabUnderline: CGFloat = 4
         /// Hairline separators drawn as frames.
         static let hairline: CGFloat = 1
         /// Short vertical divider between inline groups (status bar).
@@ -196,16 +325,20 @@ enum DS {
     // MARK: layout — split minimums and panel bounds
 
     enum Layout {
-        /// The left icon rail (tool-window stripe).
-        static let railWidth: CGFloat = 40
+        /// The left icon rail (tool-window stripe): 48 (VS Code activity bar).
+        static let railWidth: CGFloat = 48
         /// The window itself: usable from ~900pt wide (design-principles §4).
         static let windowMinWidth: CGFloat = 900
         static let windowMinHeight: CGFloat = 600
         static let editorMinWidth: CGFloat = 340
         static let previewMinWidth: CGFloat = 380
-        static let sidebarMinWidth: CGFloat = 200
-        static let sidebarIdealWidth: CGFloat = 240
-        static let sidebarMaxWidth: CGFloat = 360
+        /// Sidebar floors at 170 (VS Code `sidebarPart.ts`); defaults to
+        /// `min(300, windowWidth / 4)` (VS Code `layout.ts`), which the split
+        /// controller computes at first layout.
+        static let sidebarMinWidth: CGFloat = 170
+        static let sidebarDefaultWidth: CGFloat = 300
+        static let sidebarIdealWidth: CGFloat = 260
+        static let sidebarMaxWidth: CGFloat = 420
         static let inspectorMinWidth: CGFloat = 300
         static let inspectorIdealWidth: CGFloat = 360
         static let inspectorMaxWidth: CGFloat = 560
@@ -370,13 +503,13 @@ enum FileTypeStyle {
 
     var color: Color {
         switch self {
-        case .tex, .texEntry: return Color(nsColor: .systemBlue)
-        case .bibliography: return Color(nsColor: .systemPurple)
-        case .classOrStyle: return Color(nsColor: .systemTeal)
-        case .pdf: return Color(nsColor: .systemRed)
-        case .image: return Color(nsColor: .systemGreen)
-        case .generated: return Color(nsColor: .systemGray)
-        case .other: return Color(nsColor: .secondaryLabelColor)
+        case .tex, .texEntry: return Color(nsColor: DS.Palette.typeBlue)
+        case .bibliography: return Color(nsColor: DS.Palette.typePurple)
+        case .classOrStyle: return Color(nsColor: DS.Palette.typeTeal)
+        case .pdf: return Color(nsColor: DS.Palette.typeRed)
+        case .image: return Color(nsColor: DS.Palette.typeGreen)
+        case .generated: return Color(nsColor: DS.Palette.typeGray)
+        case .other: return DS.Colors.textSecondary
         }
     }
 }
