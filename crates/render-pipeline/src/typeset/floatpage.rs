@@ -61,7 +61,8 @@ use super::{BoxRec, BuiltBlock, Context};
 #[derive(Debug, Clone)]
 pub struct FloatSpec {
     pub kind: FloatKind,
-    pub number: u32,
+    /// `\thefigure`/`\thetable` (`2`, or `1.2` in a chapter).
+    pub number: String,
     /// A `figure*`/`table*` in a two-column document: `\@dbflt`, so
     /// `\@xdblfloat` sets the box at `\hsize\textwidth
     /// \linewidth\textwidth`, `\count\@currbox` is `\tw@` and the depth
@@ -74,6 +75,10 @@ pub struct FloatSpec {
     /// The environment's source span (`\begin` .. `\end`).
     pub span: Span,
     pub hmode: bool,
+    /// float.sty's `[H]` (`\@float@HH`): not a float at all. The box is set
+    /// in the text where the environment stands, between two
+    /// `\vskip\intextsep` (`\float@endH`), and never deferred or counted.
+    pub exact_here: bool,
     pub parts: Vec<FloatPart>,
     pub labels: Vec<String>,
 }
@@ -796,6 +801,63 @@ impl Placer<'_> {
 }
 
 /// The column's float material for `\@makecol` (`\@cflt`/`\@cflb`).
+/// The nodes float.sty's `\float@endH` contributes for `[H]` float `f`,
+/// whose marker is `nodes[at]`: `\vskip\intextsep \box\@currbox
+/// \vskip\intextsep`. Being in the main vertical list, the box gets TeX's
+/// interline glue against the line above (`\prevdepth` survives the
+/// `\vskip`), and the next line's interline glue is computed against the
+/// box's zero depth instead of that line's, so the glue already in the list
+/// before the next line is replaced (`nodes` is edited in place there).
+fn exact_here_nodes(nodes: &[N], at: usize, list: &[VItem], p: &PageParams, boxes: &[FloatBox], f: usize, fp: &FloatParams) -> Vec<N> {
+    let i = fp.intextsep;
+    let h = boxes[f].height;
+    let rule = |g: f64| if g < p.lineskiplimit { p.lineskip } else { g };
+    let prev_depth = nodes[..at].iter().rev().find_map(|n| match n {
+        N::V(j) => match list[*j] {
+            VItem::Box { depth, .. } => Some(depth),
+            _ => None,
+        },
+        N::FBox(_) => Some(0.0),
+        _ => None,
+    });
+    let mut out = vec![N::Glue(i.n, i.st, i.sh)];
+    if let Some(d) = prev_depth {
+        out.push(N::Glue(rule(p.baselineskip - d - h), 0.0, 0.0));
+    }
+    out.push(N::FBox(f));
+    out.push(N::Glue(i.n, i.st, i.sh));
+    out
+}
+
+/// Before an `[H]` box is spliced in after `nodes[at]`, the interline glue
+/// before the next line was computed against the previous line's depth;
+/// TeX computes it against the box's (zero) depth.
+fn fix_glue_after_exact_here(nodes: &mut [N], at: usize, list: &[VItem], p: &PageParams) {
+    let rule = |g: f64| if g < p.lineskiplimit { p.lineskip } else { g };
+    let Some(prev_depth) = nodes[..at].iter().rev().find_map(|n| match n {
+        N::V(j) => match list[*j] {
+            VItem::Box { depth, .. } => Some(depth),
+            _ => None,
+        },
+        N::FBox(_) => Some(0.0),
+        _ => None,
+    }) else {
+        return;
+    };
+    let Some(next) = nodes[at..].iter().position(|n| matches!(n, N::V(j) if matches!(list[*j], VItem::Box { .. }) )).map(|k| at + k) else { return };
+    let N::V(j) = nodes[next] else { return };
+    let VItem::Box { height: next_h, .. } = list[j] else { return };
+    // The interline glue is the last glue before the line (penalties may
+    // sit between them); only a glue that is exactly TeX's rule for the
+    // previous depth is replaced, so a `\parskip` or a skip is never taken
+    // for it.
+    let Some(g) = nodes[at..next].iter().rposition(|n| matches!(n, N::Glue(..))).map(|k| at + k) else { return };
+    let N::Glue(width, stretch, shrink) = nodes[g] else { return };
+    if stretch == 0.0 && shrink == 0.0 && (width - rule(p.baselineskip - prev_depth - next_h)).abs() < 1e-6 {
+        nodes[g] = N::Glue(rule(p.baselineskip - next_h), 0.0, 0.0);
+    }
+}
+
 fn column_floats(boxes: &[FloatBox], tops: &[usize], bots: &[usize], fp: &FloatParams) -> pagebuild::ColumnFloats {
     let sk = |s: Skip| (s.n, s.st, s.sh);
     pagebuild::ColumnFloats {
@@ -1073,6 +1135,13 @@ pub fn paginate(
             if let N::Marker(f) = nodes[i] {
                 if !processed[f] {
                     processed[f] = true;
+                    if specs[f].exact_here {
+                        fix_glue_after_exact_here(&mut nodes, i, list, p);
+                        let ins = exact_here_nodes(&nodes, i, list, p, &boxes, f, &fp);
+                        nodes.splice(i + 1..i + 1, ins);
+                        i += 1;
+                        continue;
+                    }
                     // `\@specialoutput`: `\@pageht` is the held page plus
                     // `\ht\footins + \skip\footins + \dp\footins`.
                     let mut pageht = if has_box { total + depth } else { 0.0 };
