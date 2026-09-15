@@ -449,13 +449,44 @@ use crate::RenderOptions;
 pub const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// `(float numbers per document in scan order, label key -> value)`.
-pub fn number(envs: &[Vec<FloatEnv>]) -> (Vec<Vec<u32>>, Vec<(String, String)>) {
+///
+/// `chapters` is `Some(book)` for report.cls/book.cls, whose `\thefigure`
+/// and `\thetable` are `\ifnum\c@chapter>\z@\thechapter.\fi\@arabic\c@figure`
+/// and whose `\@addtoreset{figure}{chapter}` restarts both counters at every
+/// `\refstepcounter{chapter}`. `\chapter*`, and book's `\chapter` outside
+/// `\mainmatter`, step nothing; `\appendix` sets the chapter counter to zero
+/// and `\thechapter` to `\@Alph`. The chapter commands are read from `texts`
+/// (the masked sources), in the same document order as the floats.
+pub fn number(envs: &[Vec<FloatEnv>], texts: &[&str], chapters: Option<bool>) -> (Vec<Vec<String>>, Vec<(String, String)>) {
+    use crate::adapter::{BodyKind, Matter};
     let (mut figures, mut tables) = (0u32, 0u32);
+    let (mut chapter, mut appendix, mut mainmatter) = (0u32, false, true);
     let mut numbers = Vec::new();
     let mut labels = Vec::new();
-    for doc in envs {
+    for (d, doc) in envs.iter().enumerate() {
+        let commands = match (chapters, texts.get(d)) {
+            (Some(book), Some(text)) => crate::adapter::body_commands(text, true, book),
+            _ => Vec::new(),
+        };
+        let mut next = 0;
         let mut nums = Vec::new();
         for f in doc {
+            while let Some(cmd) = commands.get(next).filter(|c| c.start < f.span.start) {
+                next += 1;
+                match cmd.kind {
+                    BodyKind::Chapter { starred: false, .. } if mainmatter => {
+                        chapter += 1;
+                        figures = 0;
+                        tables = 0;
+                    }
+                    BodyKind::Appendix => {
+                        chapter = 0;
+                        appendix = true;
+                    }
+                    BodyKind::Matter(m) => mainmatter = m == Matter::Main,
+                    _ => {}
+                }
+            }
             let has_caption = f.pieces.iter().any(|p| matches!(p, Piece::Caption { .. }));
             let counter = match f.kind {
                 FloatKind::Figure => &mut figures,
@@ -464,16 +495,22 @@ pub fn number(envs: &[Vec<FloatEnv>]) -> (Vec<Vec<u32>>, Vec<(String, String)>) 
             if has_caption {
                 *counter += 1;
             }
-            nums.push(*counter);
+            let value = if chapter > 0 {
+                let the_chapter = if appendix { flashtex_class_geometry::Numbering::UpperAlph.format(i64::from(chapter)) } else { chapter.to_string() };
+                format!("{the_chapter}.{counter}")
+            } else {
+                counter.to_string()
+            };
             // `\label` after `\caption` takes its number (`\@currentlabel`).
             let mut seen_caption = false;
             for p in &f.pieces {
                 match p {
                     Piece::Caption { .. } => seen_caption = true,
-                    Piece::Label { key, .. } => labels.push((key.clone(), if seen_caption { counter.to_string() } else { String::new() })),
+                    Piece::Label { key, .. } => labels.push((key.clone(), if seen_caption { value.clone() } else { String::new() })),
                     _ => {}
                 }
             }
+            nums.push(value);
         }
         numbers.push(nums);
     }
@@ -563,7 +600,7 @@ fn em_ex(body: f64) -> (f64, f64) {
 #[allow(clippy::too_many_arguments)]
 pub fn prepare(
     envs: &[Vec<FloatEnv>],
-    numbers: &[Vec<u32>],
+    numbers: &[Vec<String>],
     documents: &[SourceDocument<'_>],
     entry_index: usize,
     texts: &[&str],
@@ -591,7 +628,7 @@ pub fn prepare(
         let path: Rc<str> = Rc::from(documents[d].path);
         let src = |span: Span| SourceRange { path: path.clone(), start_byte: span.start, end_byte: span.end };
         for (fi, f) in doc_envs.iter().enumerate() {
-            let number = numbers[d][fi];
+            let number = numbers[d][fi].as_str();
             // `\figure*` is `\@dbflt` only `\if@twocolumn` (latex.ltx
             // 17419); in a one-column document the star does nothing.
             let wide = f.starred && twocolumn;
@@ -708,7 +745,7 @@ pub fn prepare(
                     }
                 }
             }
-            specs.push(FloatSpec { kind: f.kind, number, wide, bits, span: f.span, hmode: f.hmode, parts, labels: spec_labels });
+            specs.push(FloatSpec { kind: f.kind, number: number.to_string(), wide, bits, span: f.span, hmode: f.hmode, parts, labels: spec_labels });
         }
     }
     (specs, diags)
@@ -782,7 +819,7 @@ fn paragraph_start(parts: &[adapter::ParaPart]) -> Option<usize> {
 #[allow(clippy::too_many_arguments)]
 fn caption_items(
     kind: FloatKind,
-    number: u32,
+    number: &str,
     span: Span,
     arg: Span,
     d: usize,

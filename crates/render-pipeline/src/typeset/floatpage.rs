@@ -61,7 +61,8 @@ use super::{BoxRec, BuiltBlock, Context};
 #[derive(Debug, Clone)]
 pub struct FloatSpec {
     pub kind: FloatKind,
-    pub number: u32,
+    /// `\thefigure`/`\thetable` (`2`, or `1.2` in a chapter).
+    pub number: String,
     /// A `figure*`/`table*` in a two-column document: `\@dbflt`, so
     /// `\@xdblfloat` sets the box at `\hsize\textwidth
     /// \linewidth\textwidth`, `\count\@currbox` is `\tw@` and the depth
