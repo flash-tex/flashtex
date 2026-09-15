@@ -5,7 +5,7 @@
   "machine": "mac-m5pro-dq222",
   "note": null,
   "started_utc": "2026-09-15T12:39:20Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "GH-PIPELINE-FUZZ-2",
-  "updated_utc": "2026-09-15T12:39:44Z"
+  "updated_utc": "2026-09-15T12:52:12Z"
 }
