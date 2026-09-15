@@ -49,12 +49,28 @@ fn long_arrows_are_as_wide_as_pdftex_joins() {
         ("\\implies", 36.06642, "x=⇒y"),
         ("\\iff", 38.49976, "x⇐⇒y"),
         ("\\impliedby", 36.06642, "x⇐=y"),
+        // GH-LONGMAPSTO-PIECES: `\longmapsto` is `\mapstochar\longrightarrow`,
+        // bit-for-bit as wide as `\longrightarrow` (the flag nets zero width).
+        // Spelled as the literal U+27FC character because the vendored
+        // compiler pin on this branch predates PR #603's `("longmapsto", "⟼")`
+        // row, so the command does not reach the pipeline yet; the character
+        // exercises the identical `symbol_atoms` path. Switch this row to
+        // `"\\longmapsto"` when vendor/compiler is re-pinned past #603.
+        ("\u{27FC}", 29.9832, "x∣−→y"),
     ];
     for (arrow, pt, painted) in cases {
         let (xs, text) = formula(arrow);
-        assert_eq!(xs.len(), 4, "{arrow}: x, two pieces, y: {text:?}");
-        assert_eq!(text.replace('\u{2212}', "−").replace('-', "−"), painted, "{arrow}: pieces");
-        let span = xs[3] - xs[0];
+        assert_eq!(
+            xs.len(),
+            painted.chars().count(),
+            "{arrow}: x, pieces, y: {text:?}"
+        );
+        assert_eq!(
+            text.replace('\u{2212}', "−").replace('-', "−"),
+            painted,
+            "{arrow}: pieces"
+        );
+        let span = xs[xs.len() - 1] - xs[0];
         assert!((span - bp(pt)).abs() < 0.02, "{arrow}: x to y {span:.4}bp, pdfTeX {:.4}bp", bp(pt));
     }
 }
